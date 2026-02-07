@@ -5,11 +5,27 @@ namespace App\Http\Controllers;
 use App\Models\Campaign;
 use App\Models\Team;
 use App\Models\Player;
+use App\Services\CampaignSeasonService;
+use App\Services\CampaignPlayerService;
+use App\Services\CoachingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class TeamController extends Controller
 {
+    private CampaignSeasonService $seasonService;
+    private CampaignPlayerService $playerService;
+    private CoachingService $coachingService;
+
+    public function __construct(
+        CampaignSeasonService $seasonService,
+        CampaignPlayerService $playerService,
+        CoachingService $coachingService
+    ) {
+        $this->seasonService = $seasonService;
+        $this->playerService = $playerService;
+        $this->coachingService = $coachingService;
+    }
     /**
      * Get the user's team with full roster.
      */
@@ -29,6 +45,10 @@ class TeamController extends Controller
                   ->orderBy('overall_rating', 'desc');
         }, 'coach']);
 
+        // Load player stats from JSON file
+        $year = $campaign->currentSeason?->year ?? 2024;
+        $allPlayerStats = $this->seasonService->getAllPlayerStats($campaign->id, $year);
+
         return response()->json([
             'team' => [
                 'id' => $team->id,
@@ -43,9 +63,11 @@ class TeamController extends Controller
                 'total_payroll' => $team->total_payroll,
                 'cap_space' => $team->cap_space,
                 'facilities' => $team->facilities,
+                'coaching_scheme' => $team->coaching_scheme ?? 'balanced',
             ],
-            'roster' => $team->players->map(function ($player) {
-                return $this->formatPlayer($player);
+            'roster' => $team->players->map(function ($player) use ($allPlayerStats) {
+                $playerStats = $allPlayerStats[$player->id] ?? null;
+                return $this->formatPlayer($player, false, $playerStats);
             }),
             'coach' => $team->coach ? [
                 'id' => $team->coach->id,
@@ -54,6 +76,19 @@ class TeamController extends Controller
                 'offensive_scheme' => $team->coach->offensive_scheme,
                 'defensive_scheme' => $team->coach->defensive_scheme,
                 'attributes' => $team->coach->attributes,
+                // Career stats
+                'career_stats' => [
+                    'wins' => $team->coach->career_wins ?? 0,
+                    'losses' => $team->coach->career_losses ?? 0,
+                    'win_pct' => $team->coach->career_win_pct ?? 0,
+                    'playoff_wins' => $team->coach->playoff_wins ?? 0,
+                    'playoff_losses' => $team->coach->playoff_losses ?? 0,
+                    'playoff_win_pct' => $team->coach->playoff_win_pct ?? 0,
+                    'championships' => $team->coach->championships ?? 0,
+                    'conference_titles' => $team->coach->conference_titles ?? 0,
+                    'coach_of_year_awards' => $team->coach->coach_of_year_awards ?? 0,
+                    'seasons_coached' => $team->coach->seasons_coached ?? 0,
+                ],
             ] : null,
         ]);
     }
@@ -204,10 +239,36 @@ class TeamController extends Controller
             return response()->json(['message' => 'Team not in this campaign'], 404);
         }
 
-        $team->load(['players' => function ($query) {
-            $query->orderByRaw("CASE position WHEN 'PG' THEN 1 WHEN 'SG' THEN 2 WHEN 'SF' THEN 3 WHEN 'PF' THEN 4 WHEN 'C' THEN 5 ELSE 6 END")
-                  ->orderBy('overall_rating', 'desc');
-        }, 'coach']);
+        $team->load('coach');
+
+        // Load player stats from JSON file
+        $year = $campaign->currentSeason?->year ?? 2024;
+        $allPlayerStats = $this->seasonService->getAllPlayerStats($campaign->id, $year);
+
+        // Get roster from appropriate source (database for user team, JSON for others)
+        $rosterData = $this->playerService->getTeamRoster(
+            $campaign->id,
+            $team->abbreviation,
+            $campaign->team_id
+        );
+
+        // Format roster with season stats
+        $roster = array_map(function ($player) use ($allPlayerStats) {
+            // Player ID might be int (from DB) or string (from JSON)
+            $playerId = $player['id'] ?? null;
+            $playerStats = $playerId ? ($allPlayerStats[$playerId] ?? null) : null;
+
+            return $this->formatPlayerFromArray($player, $playerStats);
+        }, $rosterData);
+
+        // Sort by position then rating
+        usort($roster, function ($a, $b) {
+            $posOrder = ['PG' => 1, 'SG' => 2, 'SF' => 3, 'PF' => 4, 'C' => 5];
+            $posA = $posOrder[$a['position']] ?? 6;
+            $posB = $posOrder[$b['position']] ?? 6;
+            if ($posA !== $posB) return $posA - $posB;
+            return $b['overall_rating'] - $a['overall_rating'];
+        });
 
         return response()->json([
             'team' => [
@@ -218,11 +279,88 @@ class TeamController extends Controller
                 'primary_color' => $team->primary_color,
                 'secondary_color' => $team->secondary_color,
             ],
-            'roster' => $team->players->map(function ($player) {
-                return $this->formatPlayer($player);
-            }),
+            'roster' => $roster,
             'coach' => $team->coach,
         ]);
+    }
+
+    /**
+     * Format player data from array (works for both DB and JSON sources).
+     */
+    private function formatPlayerFromArray(array $player, ?array $seasonStats = null): array
+    {
+        // Handle camelCase (JSON) vs snake_case (DB) field names
+        $data = [
+            'id' => $player['id'] ?? null,
+            'name' => ($player['firstName'] ?? $player['first_name'] ?? '') . ' ' .
+                     ($player['lastName'] ?? $player['last_name'] ?? ''),
+            'first_name' => $player['firstName'] ?? $player['first_name'] ?? '',
+            'last_name' => $player['lastName'] ?? $player['last_name'] ?? '',
+            'position' => $player['position'] ?? 'SF',
+            'secondary_position' => $player['secondaryPosition'] ?? $player['secondary_position'] ?? null,
+            'jersey_number' => $player['jerseyNumber'] ?? $player['jersey_number'] ?? 0,
+            'overall_rating' => $player['overallRating'] ?? $player['overall_rating'] ?? 75,
+            'potential_rating' => $player['potentialRating'] ?? $player['potential_rating'] ?? 75,
+            'height' => $this->formatHeight($player['heightInches'] ?? $player['height_inches'] ?? 78),
+            'height_inches' => $player['heightInches'] ?? $player['height_inches'] ?? 78,
+            'weight' => $player['weightLbs'] ?? $player['weight_lbs'] ?? 220,
+            'age' => $this->calculateAge($player['birthDate'] ?? $player['birth_date'] ?? null),
+            'is_injured' => $player['isInjured'] ?? $player['is_injured'] ?? false,
+            'fatigue' => $player['fatigue'] ?? 0,
+            'contract' => [
+                'years_remaining' => $player['contractYearsRemaining'] ?? $player['contract_years_remaining'] ?? 1,
+                'salary' => $player['contractSalary'] ?? $player['contract_salary'] ?? 1000000,
+            ],
+            'badges' => $player['badges'] ?? [],
+            'attributes' => $player['attributes'] ?? [],
+        ];
+
+        // Include season stats if provided
+        if ($seasonStats && ($seasonStats['gamesPlayed'] ?? 0) > 0) {
+            $gp = $seasonStats['gamesPlayed'];
+            $data['season_stats'] = [
+                'games_played' => $gp,
+                'ppg' => round(($seasonStats['points'] ?? 0) / $gp, 1),
+                'rpg' => round(($seasonStats['rebounds'] ?? 0) / $gp, 1),
+                'apg' => round(($seasonStats['assists'] ?? 0) / $gp, 1),
+                'spg' => round(($seasonStats['steals'] ?? 0) / $gp, 1),
+                'bpg' => round(($seasonStats['blocks'] ?? 0) / $gp, 1),
+                'fg_pct' => ($seasonStats['fieldGoalsAttempted'] ?? 0) > 0
+                    ? round(($seasonStats['fieldGoalsMade'] ?? 0) / $seasonStats['fieldGoalsAttempted'] * 100, 1) : 0,
+                'three_pct' => ($seasonStats['threePointersAttempted'] ?? 0) > 0
+                    ? round(($seasonStats['threePointersMade'] ?? 0) / $seasonStats['threePointersAttempted'] * 100, 1) : 0,
+                'ft_pct' => ($seasonStats['freeThrowsAttempted'] ?? 0) > 0
+                    ? round(($seasonStats['freeThrowsMade'] ?? 0) / $seasonStats['freeThrowsAttempted'] * 100, 1) : 0,
+                'mpg' => round(($seasonStats['minutesPlayed'] ?? 0) / $gp, 1),
+            ];
+        }
+
+        return $data;
+    }
+
+    /**
+     * Format height in inches to display format (e.g., 6'10").
+     */
+    private function formatHeight(int $inches): string
+    {
+        $feet = floor($inches / 12);
+        $remainingInches = $inches % 12;
+        return "{$feet}'{$remainingInches}\"";
+    }
+
+    /**
+     * Calculate age from birth date.
+     */
+    private function calculateAge(?string $birthDate): int
+    {
+        if (!$birthDate) {
+            return 25;
+        }
+        try {
+            return (int) now()->diffInYears($birthDate);
+        } catch (\Exception $e) {
+            return 25;
+        }
     }
 
     /**
@@ -335,7 +473,7 @@ class TeamController extends Controller
     /**
      * Format player data for response.
      */
-    private function formatPlayer(Player $player, bool $detailed = false): array
+    private function formatPlayer(Player $player, bool $detailed = false, ?array $seasonStats = null): array
     {
         $data = [
             'id' => $player->id,
@@ -359,6 +497,26 @@ class TeamController extends Controller
             ],
         ];
 
+        // Include season stats from JSON file if provided
+        if ($seasonStats && ($seasonStats['gamesPlayed'] ?? 0) > 0) {
+            $gp = $seasonStats['gamesPlayed'];
+            $data['season_stats'] = [
+                'games_played' => $gp,
+                'ppg' => round(($seasonStats['points'] ?? 0) / $gp, 1),
+                'rpg' => round(($seasonStats['rebounds'] ?? 0) / $gp, 1),
+                'apg' => round(($seasonStats['assists'] ?? 0) / $gp, 1),
+                'spg' => round(($seasonStats['steals'] ?? 0) / $gp, 1),
+                'bpg' => round(($seasonStats['blocks'] ?? 0) / $gp, 1),
+                'fg_pct' => ($seasonStats['fieldGoalsAttempted'] ?? 0) > 0
+                    ? round(($seasonStats['fieldGoalsMade'] ?? 0) / $seasonStats['fieldGoalsAttempted'] * 100, 1) : 0,
+                'three_pct' => ($seasonStats['threePointersAttempted'] ?? 0) > 0
+                    ? round(($seasonStats['threePointersMade'] ?? 0) / $seasonStats['threePointersAttempted'] * 100, 1) : 0,
+                'ft_pct' => ($seasonStats['freeThrowsAttempted'] ?? 0) > 0
+                    ? round(($seasonStats['freeThrowsMade'] ?? 0) / $seasonStats['freeThrowsAttempted'] * 100, 1) : 0,
+                'mpg' => round(($seasonStats['minutesPlayed'] ?? 0) / $gp, 1),
+            ];
+        }
+
         if ($detailed) {
             $data['attributes'] = $player->attributes;
             $data['tendencies'] = $player->tendencies;
@@ -373,5 +531,68 @@ class TeamController extends Controller
         }
 
         return $data;
+    }
+
+    /**
+     * Get available coaching schemes with descriptions.
+     */
+    public function getCoachingSchemes(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $schemes = $this->coachingService->getSchemes();
+
+        // Get roster for scheme effectiveness calculation
+        $team = $campaign->team;
+        $roster = $this->playerService->getTeamRoster(
+            $campaign->id,
+            $team->abbreviation,
+            $campaign->team_id
+        );
+
+        // Calculate effectiveness for each scheme
+        $schemesWithEffectiveness = [];
+        foreach ($schemes as $id => $scheme) {
+            $schemesWithEffectiveness[$id] = array_merge($scheme, [
+                'id' => $id,
+                'effectiveness' => round($this->coachingService->calculateSchemeEffectiveness($id, $roster)),
+            ]);
+        }
+
+        // Get recommended scheme
+        $recommended = $this->coachingService->recommendScheme($roster);
+
+        return response()->json([
+            'schemes' => $schemesWithEffectiveness,
+            'recommended' => $recommended,
+            'current' => $team->coaching_scheme ?? 'balanced',
+        ]);
+    }
+
+    /**
+     * Update the team's coaching scheme.
+     */
+    public function updateCoachingScheme(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $validated = $request->validate([
+            'scheme' => 'required|string|in:balanced,motion,iso_heavy,post_centric,three_point,run_and_gun',
+        ]);
+
+        $team = $campaign->team;
+        $team->update(['coaching_scheme' => $validated['scheme']]);
+
+        $schemeData = $this->coachingService->getScheme($validated['scheme']);
+
+        return response()->json([
+            'message' => 'Coaching scheme updated',
+            'scheme' => $validated['scheme'],
+            'scheme_data' => $schemeData,
+        ]);
     }
 }

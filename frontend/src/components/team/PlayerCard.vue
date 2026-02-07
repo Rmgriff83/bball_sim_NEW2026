@@ -33,6 +33,8 @@ const positionColors = {
 
 const positionColor = computed(() => positionColors[props.player.position] || '#6B7280')
 
+const isInjured = computed(() => props.player.is_injured || props.player.isInjured)
+
 const ratingClass = computed(() => {
   const rating = props.player.overall_rating
   if (rating >= 90) return 'elite'
@@ -50,6 +52,14 @@ const topBadges = computed(() => {
     .sort((a, b) => (levelOrder[a.level] || 4) - (levelOrder[b.level] || 4))
     .slice(0, 3)
 })
+
+function formatBadgeName(badgeId) {
+  if (!badgeId) return ''
+  return badgeId
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
 
 function formatSalary(salary) {
   if (!salary) return '-'
@@ -73,23 +83,27 @@ function getBadgeLevelColor(level) {
 <template>
   <div
     class="player-card"
-    :class="{ selected, compact, [ratingClass]: true }"
+    :class="{ selected, compact, injured: isInjured, [ratingClass]: true }"
     @click="emit('click', player)"
   >
     <!-- Compact View -->
     <template v-if="compact">
       <div class="flex items-center gap-3 p-3">
-        <StatBadge :value="player.overall_rating" size="sm" />
+        <div class="rating-wrapper">
+          <StatBadge :value="player.overall_rating" size="sm" />
+          <span v-if="isInjured" class="injury-badge-sm" title="Injured">INJ</span>
+        </div>
         <div class="flex-1 min-w-0">
-          <p class="font-medium truncate">{{ player.name }}</p>
+          <p class="font-medium truncate" :class="{ 'text-injured': isInjured }">{{ player.name }}</p>
           <div class="flex items-center gap-2 text-xs text-secondary">
             <span
               class="position-badge"
               :style="{ backgroundColor: positionColor }"
             >
-              {{ player.position }}
+              {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
             </span>
-            <span v-if="player.contract">{{ formatSalary(player.contract.salary) }}</span>
+            <span v-if="isInjured" class="injury-label">Injured</span>
+            <span v-else-if="player.contract">{{ formatSalary(player.contract.salary) }}</span>
           </div>
         </div>
         <button
@@ -108,17 +122,19 @@ function getBadgeLevelColor(level) {
       <div class="card-header">
         <div class="rating-container">
           <StatBadge :value="player.overall_rating" size="lg" />
+          <span v-if="isInjured" class="injury-badge" title="Injured">INJ</span>
         </div>
         <div class="player-info">
-          <h3 class="player-name">{{ player.name }}</h3>
+          <h3 class="player-name" :class="{ 'text-injured': isInjured }">{{ player.name }}</h3>
           <div class="player-meta">
             <span
               class="position-badge"
               :style="{ backgroundColor: positionColor }"
             >
-              {{ player.position }}
+              {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
             </span>
             <span class="jersey-number">#{{ player.jersey_number || '00' }}</span>
+            <span v-if="isInjured" class="injury-tag">Injured</span>
           </div>
         </div>
       </div>
@@ -133,24 +149,28 @@ function getBadgeLevelColor(level) {
           <span>Age {{ player.age || 25 }}</span>
         </div>
 
-        <!-- Key Attributes -->
-        <div v-if="showDetails && player.attributes" class="attributes-grid">
-          <div class="attr-item">
-            <span class="attr-label">SPD</span>
-            <span class="attr-value">{{ player.attributes.speed || '-' }}</span>
+        <!-- Season Stats -->
+        <div v-if="player.season_stats" class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-label">PPG</span>
+            <span class="stat-value">{{ player.season_stats.ppg }}</span>
           </div>
-          <div class="attr-item">
-            <span class="attr-label">3PT</span>
-            <span class="attr-value">{{ player.attributes.three_point || '-' }}</span>
+          <div class="stat-item">
+            <span class="stat-label">RPG</span>
+            <span class="stat-value">{{ player.season_stats.rpg }}</span>
           </div>
-          <div class="attr-item">
-            <span class="attr-label">DNK</span>
-            <span class="attr-value">{{ player.attributes.dunk || '-' }}</span>
+          <div class="stat-item">
+            <span class="stat-label">APG</span>
+            <span class="stat-value">{{ player.season_stats.apg }}</span>
           </div>
-          <div class="attr-item">
-            <span class="attr-label">DEF</span>
-            <span class="attr-value">{{ player.attributes.perimeter_defense || '-' }}</span>
+          <div class="stat-item">
+            <span class="stat-label">GP</span>
+            <span class="stat-value">{{ player.season_stats.games_played }}</span>
           </div>
+        </div>
+        <!-- No stats yet -->
+        <div v-else class="no-stats">
+          <span class="text-secondary text-sm">No stats yet</span>
         </div>
 
         <!-- Badges -->
@@ -159,13 +179,13 @@ function getBadgeLevelColor(level) {
             v-for="badge in topBadges"
             :key="badge.id"
             class="badge-item"
-            :title="`${badge.name} (${badge.level})`"
+            :title="`${formatBadgeName(badge.id)} (${badge.level})`"
           >
             <span
               class="badge-dot"
               :style="{ backgroundColor: getBadgeLevelColor(badge.level) }"
             />
-            <span class="badge-name">{{ badge.name }}</span>
+            <span class="badge-name">{{ formatBadgeName(badge.id) }}</span>
           </div>
         </div>
 
@@ -285,30 +305,41 @@ function getBadgeLevelColor(level) {
   color: rgba(255, 255, 255, 0.2);
 }
 
-.attributes-grid {
+.stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   margin-bottom: 12px;
 }
 
-.attr-item {
+.stat-item {
   text-align: center;
   padding: 8px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 8px;
 }
 
-.attr-label {
+.stat-label {
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   color: var(--color-secondary);
   margin-bottom: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.attr-value {
+.stat-value {
   font-weight: 600;
   font-size: 1rem;
+  color: var(--color-primary);
+}
+
+.no-stats {
+  padding: 12px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  margin-bottom: 12px;
 }
 
 .badges-row {
@@ -405,5 +436,69 @@ function getBadgeLevelColor(level) {
   flex: none;
   padding: 4px 12px;
   font-size: 0.75rem;
+}
+
+/* Injury styles */
+.player-card.injured {
+  opacity: 0.75;
+  border-color: var(--color-error);
+}
+
+.player-card.injured .card-header {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.05)) !important;
+}
+
+.rating-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.rating-container {
+  position: relative;
+}
+
+.injury-badge,
+.injury-badge-sm {
+  position: absolute;
+  background: var(--color-error);
+  color: white;
+  font-weight: 700;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.injury-badge {
+  bottom: -4px;
+  right: -4px;
+  padding: 2px 4px;
+  font-size: 0.6rem;
+}
+
+.injury-badge-sm {
+  bottom: -2px;
+  right: -2px;
+  padding: 1px 3px;
+  font-size: 0.5rem;
+}
+
+.injury-tag {
+  padding: 2px 6px;
+  background: var(--color-error);
+  color: white;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.injury-label {
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+.text-injured {
+  color: var(--color-error) !important;
+  text-decoration: line-through;
+  text-decoration-color: rgba(239, 68, 68, 0.5);
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 
 const props = defineProps({
   boxScore: {
@@ -22,12 +22,65 @@ const props = defineProps({
 
 const emit = defineEmits(['update:activeTab'])
 
+// Sorting state
+const sortColumn = ref('points')
+const sortDirection = ref('desc')
+
 const homeStats = computed(() => Array.isArray(props.boxScore?.home) ? props.boxScore.home : [])
 const awayStats = computed(() => Array.isArray(props.boxScore?.away) ? props.boxScore.away : [])
 
-const activeStats = computed(() =>
+const rawActiveStats = computed(() =>
   props.activeTab === 'home' ? homeStats.value : awayStats.value
 )
+
+// Sorted stats
+const activeStats = computed(() => {
+  const stats = [...rawActiveStats.value]
+  const col = sortColumn.value
+  const dir = sortDirection.value === 'desc' ? -1 : 1
+
+  return stats.sort((a, b) => {
+    let aVal = a[col] || 0
+    let bVal = b[col] || 0
+
+    // Handle string sorting for name
+    if (col === 'name') {
+      aVal = a.name || ''
+      bVal = b.name || ''
+      return dir * aVal.localeCompare(bVal)
+    }
+
+    return dir * (aVal - bVal)
+  })
+})
+
+// Column definitions for sortable headers
+const columns = [
+  { key: 'name', label: 'Player', class: 'player-col' },
+  { key: 'minutes', label: 'MIN', class: 'stat-col' },
+  { key: 'points', label: 'PTS', class: 'stat-col' },
+  { key: 'rebounds', label: 'REB', class: 'stat-col' },
+  { key: 'assists', label: 'AST', class: 'stat-col' },
+  { key: 'steals', label: 'STL', class: 'stat-col' },
+  { key: 'blocks', label: 'BLK', class: 'stat-col' },
+  { key: 'turnovers', label: 'TO', class: 'stat-col' },
+]
+
+function sortBy(column) {
+  if (sortColumn.value === column) {
+    // Toggle direction if same column
+    sortDirection.value = sortDirection.value === 'desc' ? 'asc' : 'desc'
+  } else {
+    // New column, default to descending (except for name which defaults to asc)
+    sortColumn.value = column
+    sortDirection.value = column === 'name' ? 'asc' : 'desc'
+  }
+}
+
+function getSortIcon(column) {
+  if (sortColumn.value !== column) return ''
+  return sortDirection.value === 'desc' ? ' ▼' : ' ▲'
+}
 
 const activeTeam = computed(() =>
   props.activeTab === 'home' ? props.homeTeam : props.awayTeam
@@ -110,14 +163,14 @@ function formatShootingLine(made, attempted) {
       <table class="stats-table">
         <thead>
           <tr>
-            <th class="player-col">Player</th>
-            <th class="stat-col">MIN</th>
-            <th class="stat-col">PTS</th>
-            <th class="stat-col">REB</th>
-            <th class="stat-col">AST</th>
-            <th class="stat-col">STL</th>
-            <th class="stat-col">BLK</th>
-            <th class="stat-col">TO</th>
+            <th
+              v-for="col in columns"
+              :key="col.key"
+              :class="[col.class, 'sortable', { active: sortColumn === col.key }]"
+              @click="sortBy(col.key)"
+            >
+              {{ col.label }}{{ getSortIcon(col.key) }}
+            </th>
             <th class="stat-col shooting">FG</th>
             <th class="stat-col shooting">3PT</th>
             <th class="stat-col shooting">FT</th>
@@ -132,7 +185,7 @@ function formatShootingLine(made, attempted) {
             <td class="player-col">
               <div class="player-info">
                 <span class="player-name">{{ player.name }}</span>
-                <span class="player-pos">{{ player.position }}</span>
+                <span class="player-pos">{{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template></span>
               </div>
             </td>
             <td class="stat-col">{{ player.minutes || 0 }}</td>
@@ -251,6 +304,22 @@ function formatShootingLine(made, attempted) {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   white-space: nowrap;
+}
+
+.stats-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.stats-table th.sortable:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.stats-table th.sortable.active {
+  color: var(--color-primary);
+  background: rgba(124, 58, 237, 0.1);
 }
 
 .player-col {

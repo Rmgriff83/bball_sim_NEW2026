@@ -5,8 +5,10 @@ import api from '@/composables/useApi'
 export const useLeagueStore = defineStore('league', () => {
   // State
   const standings = ref({ east: [], west: [] })
+  const playerLeaders = ref([])
   const schedule = ref([])
   const loading = ref(false)
+  const loadingLeaders = ref(false)
   const error = ref(null)
 
   // Getters
@@ -70,11 +72,32 @@ export const useLeagueStore = defineStore('league', () => {
     standings.value = { east: [], west: [] }
   }
 
+  async function fetchPlayerLeaders(campaignId) {
+    loadingLeaders.value = true
+    error.value = null
+    try {
+      const response = await api.get(`/api/campaigns/${campaignId}/league-leaders`)
+      playerLeaders.value = response.data.leaders || []
+      return playerLeaders.value
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to fetch league leaders'
+      throw err
+    } finally {
+      loadingLeaders.value = false
+    }
+  }
+
+  function clearPlayerLeaders() {
+    playerLeaders.value = []
+  }
+
   return {
     // State
     standings,
+    playerLeaders,
     schedule,
     loading,
+    loadingLeaders,
     error,
     // Getters
     eastStandings,
@@ -85,10 +108,12 @@ export const useLeagueStore = defineStore('league', () => {
     leagueLeaders,
     // Actions
     fetchStandings,
+    fetchPlayerLeaders,
     updateStandings,
     getTeamRank,
     getWinPercentage,
     getGamesBehind,
     clearStandings,
+    clearPlayerLeaders,
   }
 })

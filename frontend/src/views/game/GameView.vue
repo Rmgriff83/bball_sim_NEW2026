@@ -136,7 +136,7 @@ const userTeamPlayers = computed(() => {
 // Position validation for lineup selection
 const { canPlayPosition } = usePositionValidation()
 
-// Eligible players per position slot (filtered by position)
+// Eligible players per position slot (filtered by position and injury status)
 const eligiblePlayersForSlot = computed(() => {
   const result = {}
   const players = userTeamPlayers.value
@@ -146,10 +146,11 @@ const eligiblePlayersForSlot = computed(() => {
     const excludeIds = selectedLineup.value
       .filter((id, i) => i !== index && id != null)
 
-    // Filter to players who can play this position and aren't selected elsewhere
+    // Filter to players who can play this position, aren't injured, and aren't selected elsewhere
     result[pos] = players.filter(p => {
       const canPlay = p.position === pos || p.secondary_position === pos
-      return canPlay && !excludeIds.includes(p.player_id)
+      const isHealthy = !p.is_injured && !p.isInjured
+      return canPlay && isHealthy && !excludeIds.includes(p.player_id)
     })
   })
 
@@ -569,6 +570,7 @@ onUnmounted(() => {
                       <!-- Lineup Adjustments -->
                       <div class="lineup-adjustments">
                         <div class="adjustment-section-title">Starting Lineup</div>
+                        <p class="injured-note">Injured players are not available</p>
                         <div v-for="(slot, index) in positionLabels" :key="slot" class="adjustment-row">
                           <label class="adjustment-label">{{ slot }}</label>
                           <select v-model="selectedLineup[index]" class="adjustment-select">
@@ -1090,15 +1092,14 @@ onUnmounted(() => {
 
 /* Quarter Break Overlay */
 .quarter-break-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.9);
-  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.92);
+  backdrop-filter: blur(12px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
-  border-radius: 8px;
+  z-index: 1000;
 }
 
 .quarter-break-content {
@@ -1247,6 +1248,14 @@ onUnmounted(() => {
   letter-spacing: 0.05em;
   margin-bottom: 12px;
   text-align: center;
+}
+
+.injured-note {
+  font-size: 0.7rem;
+  color: var(--color-error);
+  text-align: center;
+  margin-bottom: 8px;
+  opacity: 0.8;
 }
 
 .fade-enter-active,

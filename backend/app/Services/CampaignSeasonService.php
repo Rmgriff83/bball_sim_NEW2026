@@ -538,6 +538,15 @@ class CampaignSeasonService
     }
 
     /**
+     * Get all player stats for a season.
+     */
+    public function getAllPlayerStats(int $campaignId, int $year): array
+    {
+        $season = $this->loadSeason($campaignId, $year);
+        return $season['playerStats'] ?? [];
+    }
+
+    /**
      * Get team stats.
      */
     public function getTeamStats(int $campaignId, int $year, int $teamId): ?array

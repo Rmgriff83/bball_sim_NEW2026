@@ -65,6 +65,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/team', [TeamController::class, 'show']);
         Route::get('/team/lineup', [TeamController::class, 'show']);
         Route::put('/team/lineup', [TeamController::class, 'updateLineup']);
+        Route::get('/team/coaching-schemes', [TeamController::class, 'getCoachingSchemes']);
+        Route::put('/team/coaching-scheme', [TeamController::class, 'updateCoachingScheme']);
         Route::get('/teams', [TeamController::class, 'allTeams']);
         Route::get('/teams/{team}/roster', [TeamController::class, 'getTeamRoster']);
 
@@ -82,6 +84,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/games/{gameId}/continue', [GameController::class, 'continueGame']);
         Route::post('/simulate-day', [GameController::class, 'simulateDay']);
         Route::get('/standings', [GameController::class, 'standings']);
+        Route::get('/league-leaders', [GameController::class, 'leagueLeaders']);
 
         // Season management
         Route::get('/season', [SeasonController::class, 'show']);

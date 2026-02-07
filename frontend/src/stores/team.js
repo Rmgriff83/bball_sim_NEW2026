@@ -10,6 +10,8 @@ export const useTeamStore = defineStore('team', () => {
   const selectedPlayer = ref(null)
   const freeAgents = ref([])
   const allTeams = ref([])
+  const coachingSchemes = ref({})
+  const recommendedScheme = ref(null)
   const loading = ref(false)
   const error = ref(null)
 
@@ -187,6 +189,40 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
+  async function fetchCoachingSchemes(campaignId) {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await api.get(`/api/campaigns/${campaignId}/team/coaching-schemes`)
+      coachingSchemes.value = response.data.schemes
+      recommendedScheme.value = response.data.recommended
+      return response.data
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to fetch coaching schemes'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function updateCoachingScheme(campaignId, scheme) {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await api.put(`/api/campaigns/${campaignId}/team/coaching-scheme`, { scheme })
+      // Update local team state
+      if (team.value) {
+        team.value.coaching_scheme = scheme
+      }
+      return response.data
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to update coaching scheme'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
   function clearSelectedPlayer() {
     selectedPlayer.value = null
   }
@@ -195,6 +231,8 @@ export const useTeamStore = defineStore('team', () => {
     team.value = null
     roster.value = []
     coach.value = null
+    coachingSchemes.value = {}
+    recommendedScheme.value = null
   }
 
   // Utility functions
@@ -232,6 +270,8 @@ export const useTeamStore = defineStore('team', () => {
     selectedPlayer,
     freeAgents,
     allTeams,
+    coachingSchemes,
+    recommendedScheme,
     loading,
     error,
     // Getters
@@ -250,6 +290,8 @@ export const useTeamStore = defineStore('team', () => {
     fetchFreeAgents,
     signPlayer,
     releasePlayer,
+    fetchCoachingSchemes,
+    updateCoachingScheme,
     clearSelectedPlayer,
     clearTeam,
     // Utilities

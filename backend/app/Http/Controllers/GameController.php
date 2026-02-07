@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Campaign;
+use App\Models\Coach;
+use App\Models\Player;
 use App\Models\Team;
 use App\Services\CampaignSeasonService;
 use App\Services\GameSimulationService;
@@ -170,6 +172,9 @@ class GameController extends Controller
         // Update player stats
         $this->updatePlayerStats($campaign->id, $year, $result['box_score'], $homeTeam->id, $awayTeam->id);
 
+        // Update coach stats
+        $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
+
         // Advance campaign date
         $campaign->update(['current_date' => Carbon::parse($game['gameDate'])->addDay()]);
 
@@ -242,6 +247,9 @@ class GameController extends Controller
             // Update player stats
             $this->updatePlayerStats($campaign->id, $year, $result['box_score'], $homeTeam->id, $awayTeam->id);
 
+            // Update coach stats
+            $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
+
             $results[] = [
                 'game_id' => $game['id'],
                 'home_team' => $homeTeam->name,
@@ -287,7 +295,7 @@ class GameController extends Controller
 
         // Enrich with team data
         $teams = Team::where('campaign_id', $campaign->id)
-            ->select('id', 'name', 'abbreviation', 'primary_color', 'secondary_color')
+            ->select('id', 'name', 'city', 'abbreviation', 'primary_color', 'secondary_color')
             ->get()
             ->keyBy('id');
 
@@ -301,6 +309,79 @@ class GameController extends Controller
         }
 
         return response()->json(['standings' => $standings]);
+    }
+
+    /**
+     * Get league leaders (all player stats for the season).
+     */
+    public function leagueLeaders(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $year = $campaign->currentSeason?->year ?? 2024;
+        $allPlayerStats = $this->seasonService->getAllPlayerStats($campaign->id, $year);
+
+        // Get team info for each player
+        $teams = Team::where('campaign_id', $campaign->id)
+            ->select('id', 'name', 'abbreviation', 'primary_color')
+            ->get()
+            ->keyBy('id');
+
+        // Format player stats with calculated per-game averages
+        $leaders = [];
+        foreach ($allPlayerStats as $playerId => $stats) {
+            $gp = $stats['gamesPlayed'] ?? 0;
+            if ($gp === 0) continue; // Skip players who haven't played
+
+            $team = $teams[$stats['teamId']] ?? null;
+
+            $leaders[] = [
+                'playerId' => $playerId,
+                'name' => $stats['playerName'] ?? 'Unknown',
+                'teamId' => $stats['teamId'],
+                'teamAbbreviation' => $team?->abbreviation ?? '???',
+                'teamColor' => $team?->primary_color ?? '#6B7280',
+                'gamesPlayed' => $gp,
+                // Per game averages
+                'ppg' => round(($stats['points'] ?? 0) / $gp, 1),
+                'rpg' => round(($stats['rebounds'] ?? 0) / $gp, 1),
+                'apg' => round(($stats['assists'] ?? 0) / $gp, 1),
+                'spg' => round(($stats['steals'] ?? 0) / $gp, 1),
+                'bpg' => round(($stats['blocks'] ?? 0) / $gp, 1),
+                'topg' => round(($stats['turnovers'] ?? 0) / $gp, 1),
+                'mpg' => round(($stats['minutesPlayed'] ?? 0) / $gp, 1),
+                // Shooting percentages
+                'fgPct' => ($stats['fieldGoalsAttempted'] ?? 0) > 0
+                    ? round(($stats['fieldGoalsMade'] ?? 0) / $stats['fieldGoalsAttempted'] * 100, 1)
+                    : 0,
+                'threePct' => ($stats['threePointersAttempted'] ?? 0) > 0
+                    ? round(($stats['threePointersMade'] ?? 0) / $stats['threePointersAttempted'] * 100, 1)
+                    : 0,
+                'ftPct' => ($stats['freeThrowsAttempted'] ?? 0) > 0
+                    ? round(($stats['freeThrowsMade'] ?? 0) / $stats['freeThrowsAttempted'] * 100, 1)
+                    : 0,
+                // Totals (for context)
+                'totalPoints' => $stats['points'] ?? 0,
+                'totalRebounds' => $stats['rebounds'] ?? 0,
+                'totalAssists' => $stats['assists'] ?? 0,
+                'totalSteals' => $stats['steals'] ?? 0,
+                'totalBlocks' => $stats['blocks'] ?? 0,
+                // Shooting totals
+                'fgm' => $stats['fieldGoalsMade'] ?? 0,
+                'fga' => $stats['fieldGoalsAttempted'] ?? 0,
+                'fg3m' => $stats['threePointersMade'] ?? 0,
+                'fg3a' => $stats['threePointersAttempted'] ?? 0,
+                'ftm' => $stats['freeThrowsMade'] ?? 0,
+                'fta' => $stats['freeThrowsAttempted'] ?? 0,
+            ];
+        }
+
+        // Sort by PPG descending by default
+        usort($leaders, fn($a, $b) => $b['ppg'] <=> $a['ppg']);
+
+        return response()->json(['leaders' => $leaders]);
     }
 
     /**
@@ -468,6 +549,9 @@ class GameController extends Controller
                 $awayTeam->id
             );
 
+            // Update coach stats
+            $this->updateCoachStats($homeTeam->id, $awayTeam->id, $finalResult['home_score'], $finalResult['away_score'], $game['isPlayoff'] ?? false);
+
             // Process evolution
             $this->evolutionService->processPostGameFromData(
                 $campaign,
@@ -533,6 +617,9 @@ class GameController extends Controller
                     $otherHomeTeam->id,
                     $otherAwayTeam->id
                 );
+
+                // Update coach stats
+                $this->updateCoachStats($otherHomeTeam->id, $otherAwayTeam->id, $simResult['home_score'], $simResult['away_score'], $otherGame['isPlayoff'] ?? false);
             }
 
             // Advance campaign date
@@ -562,16 +649,23 @@ class GameController extends Controller
     }
 
     /**
-     * Update player stats after a game.
+     * Update player stats after a game (both season and career stats).
      */
     private function updatePlayerStats(int $campaignId, int $year, array $boxScore, int $homeTeamId, int $awayTeamId): void
     {
+        // Get starters for determining if player started
+        $homeStarters = array_slice($boxScore['home'] ?? [], 0, 5);
+        $awayStarters = array_slice($boxScore['away'] ?? [], 0, 5);
+        $homeStarterIds = array_column($homeStarters, 'player_id');
+        $awayStarterIds = array_column($awayStarters, 'player_id');
+
         // Update home team player stats
         foreach ($boxScore['home'] ?? [] as $playerStats) {
             $playerId = $playerStats['player_id'] ?? $playerStats['playerId'] ?? null;
             $playerName = $playerStats['name'] ?? 'Unknown';
 
             if ($playerId) {
+                // Update season stats (JSON file)
                 $this->seasonService->updatePlayerStats(
                     $campaignId,
                     $year,
@@ -580,6 +674,13 @@ class GameController extends Controller
                     $homeTeamId,
                     $playerStats
                 );
+
+                // Update career stats (database) - only for DB players
+                $player = Player::find($playerId);
+                if ($player) {
+                    $started = in_array($playerId, $homeStarterIds);
+                    $player->recordGameStats($playerStats, $started);
+                }
             }
         }
 
@@ -589,6 +690,7 @@ class GameController extends Controller
             $playerName = $playerStats['name'] ?? 'Unknown';
 
             if ($playerId) {
+                // Update season stats (JSON file)
                 $this->seasonService->updatePlayerStats(
                     $campaignId,
                     $year,
@@ -597,7 +699,34 @@ class GameController extends Controller
                     $awayTeamId,
                     $playerStats
                 );
+
+                // Update career stats (database) - only for DB players
+                $player = Player::find($playerId);
+                if ($player) {
+                    $started = in_array($playerId, $awayStarterIds);
+                    $player->recordGameStats($playerStats, $started);
+                }
             }
+        }
+    }
+
+    /**
+     * Update coach stats after a game.
+     */
+    private function updateCoachStats(int $homeTeamId, int $awayTeamId, int $homeScore, int $awayScore, bool $isPlayoff = false): void
+    {
+        $homeWon = $homeScore > $awayScore;
+
+        // Update home team coach
+        $homeCoach = Coach::where('team_id', $homeTeamId)->first();
+        if ($homeCoach) {
+            $homeCoach->recordGameResult($homeWon, $isPlayoff);
+        }
+
+        // Update away team coach
+        $awayCoach = Coach::where('team_id', $awayTeamId)->first();
+        if ($awayCoach) {
+            $awayCoach->recordGameResult(!$homeWon, $isPlayoff);
         }
     }
 
@@ -643,6 +772,9 @@ class GameController extends Controller
 
             // Update player stats
             $this->updatePlayerStats($campaign->id, $year, $result['box_score'], $homeTeam->id, $awayTeam->id);
+
+            // Update coach stats
+            $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
 
             $results[] = [
                 'game_id' => $game['id'],
