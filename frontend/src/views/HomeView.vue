@@ -83,7 +83,7 @@ const isAuthenticated = computed(() => authStore.isAuthenticated)
 
     <!-- Footer -->
     <footer class="p-4 text-center text-tertiary text-sm">
-      <p>Basketball Simulator &copy; 2024</p>
+      <p>Basketball Simulator &copy; 2025</p>
     </footer>
   </div>
 </template>

@@ -1,14 +1,15 @@
 <script setup>
 import { ref, onMounted, watch, computed } from 'vue'
+import { NBA_COURT, COURT_CANVAS } from '@/config/courtConfig'
 
 const props = defineProps({
   width: {
     type: Number,
-    default: 800
+    default: COURT_CANVAS.DEFAULT_WIDTH
   },
   height: {
     type: Number,
-    default: 500
+    default: COURT_CANVAS.DEFAULT_HEIGHT
   },
   homeTeam: {
     type: Object,
@@ -20,7 +21,7 @@ const props = defineProps({
   },
   activePossession: {
     type: String,
-    default: 'home' // 'home' or 'away'
+    default: 'home'
   },
   ballPosition: {
     type: Object,
@@ -34,22 +35,18 @@ const props = defineProps({
     type: Boolean,
     default: true
   },
-  // Animation mode props
   animationMode: {
     type: Boolean,
     default: false
   },
-  // Interpolated positions from usePlayAnimation (keyed by player ID)
   interpolatedPositions: {
     type: Object,
     default: () => ({})
   },
-  // Interpolated ball position
   interpolatedBallPosition: {
     type: Object,
     default: null
   },
-  // Player roster data for animation mode (to get names/numbers)
   homeRoster: {
     type: Array,
     default: () => []
@@ -58,26 +55,24 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
-  // Show movement trails
   showTrails: {
     type: Boolean,
     default: true
   }
 })
 
-// Store previous positions for trails
 const positionHistory = ref({})
-
 const canvas = ref(null)
 const ctx = ref(null)
 
-// Court dimensions (NBA regulation court scaled)
 const courtWidth = computed(() => props.width)
 const courtHeight = computed(() => props.height)
 
 // Scale factors
-const scaleX = computed(() => courtWidth.value / 94) // NBA court is 94 feet
-const scaleY = computed(() => courtHeight.value / 50) // NBA court is 50 feet
+// X maps court width (50 feet) to canvas width
+// Y maps visible depth to canvas height
+const scaleX = computed(() => courtWidth.value / NBA_COURT.FULL_WIDTH)
+const scaleY = computed(() => courtHeight.value / COURT_CANVAS.VISIBLE_DEPTH)
 
 function drawCourt() {
   if (!ctx.value) return
@@ -92,51 +87,148 @@ function drawCourt() {
   c.clearRect(0, 0, w, h)
 
   // Court background
-  c.fillStyle = '#CD853F' // Hardwood color
+  c.fillStyle = COURT_CANVAS.COLORS.HARDWOOD
   c.fillRect(0, 0, w, h)
 
-  // Court markings
-  c.strokeStyle = '#FFFFFF'
-  c.lineWidth = 2
-  c.fillStyle = '#FFFFFF'
-
-  // Outer boundary
-  c.strokeRect(2, 2, w - 4, h - 4)
-
-  // Center court line
-  c.beginPath()
-  c.moveTo(w / 2, 2)
-  c.lineTo(w / 2, h - 2)
-  c.stroke()
-
-  // Center circle
-  c.beginPath()
-  c.arc(w / 2, h / 2, 6 * sy, 0, Math.PI * 2)
-  c.stroke()
-
-  // Inner center circle
-  c.beginPath()
-  c.arc(w / 2, h / 2, 2 * sy, 0, Math.PI * 2)
-  c.stroke()
-
-  // Draw both sides of the court
-  drawHalfCourt(c, 0, sx, sy, w, h, false) // Left side
-  drawHalfCourt(c, w, sx, sy, w, h, true) // Right side (mirrored)
-
-  // Add court texture overlay
+  // Wood grain texture
   drawWoodGrain(c, w, h)
+
+  // Court markings
+  c.strokeStyle = COURT_CANVAS.COLORS.COURT_LINES
+  c.lineWidth = COURT_CANVAS.LINE_WIDTH.DEFAULT
+  c.fillStyle = COURT_CANVAS.COLORS.COURT_LINES
+
+  const centerX = w / 2
+  const baselineY = h - 2
+
+  // Baseline
+  c.beginPath()
+  c.moveTo(0, baselineY)
+  c.lineTo(w, baselineY)
+  c.stroke()
+
+  // Sidelines
+  c.beginPath()
+  c.moveTo(2, 0)
+  c.lineTo(2, h)
+  c.moveTo(w - 2, 0)
+  c.lineTo(w - 2, h)
+  c.stroke()
+
+  // Court element positions (scaled from feet to pixels)
+  const rimY = h - (NBA_COURT.RIM_FROM_BASELINE * sy)
+  const backboardY = h - (NBA_COURT.BACKBOARD_FROM_BASELINE * sy)
+  const keyLength = NBA_COURT.KEY_LENGTH * sy
+  const keyWidth = NBA_COURT.KEY_WIDTH * sx
+  const ftLineY = h - keyLength
+  const keyLeft = centerX - keyWidth / 2
+  const keyRight = centerX + keyWidth / 2
+  const ftCircleRadius = NBA_COURT.FT_CIRCLE_RADIUS * sx
+  const restrictedRadius = NBA_COURT.RESTRICTED_RADIUS * sx
+
+  // 3-Point Line
+  // The NBA 3-point line has straight corners and an arc
+  const threeArcRadius = NBA_COURT.THREE_POINT_ARC_RADIUS * sx
+  const cornerThreeX = NBA_COURT.CORNER_THREE_FROM_SIDELINE * sx  // 3 feet from sideline
+
+  // Calculate where the arc meets the straight corner sections
+  // The corner 3 is 22 feet from basket, arc is 23.75 feet
+  // At x = cornerThreeX from sideline, the arc y position is:
+  // horizontalDist from center = centerX - cornerThreeX
+  const horizontalDistFromCenter = centerX - cornerThreeX
+
+  // The arc meets the corner line where the arc radius equals the distance
+  // If arcRadius^2 = horizontalDist^2 + verticalDist^2
+  // Then verticalDist = sqrt(arcRadius^2 - horizontalDist^2)
+  let arcMeetPoint
+  if (horizontalDistFromCenter <= threeArcRadius) {
+    const verticalDistFromRim = Math.sqrt(threeArcRadius * threeArcRadius - horizontalDistFromCenter * horizontalDistFromCenter)
+    arcMeetPoint = rimY - verticalDistFromRim
+  } else {
+    arcMeetPoint = rimY
+  }
+
+  // Draw 3-point line
+  c.beginPath()
+
+  // Left corner - straight line from baseline up to where arc begins
+  c.moveTo(cornerThreeX, baselineY)
+  c.lineTo(cornerThreeX, arcMeetPoint)
+
+  // Arc portion
+  // Calculate the angle where the arc meets the corner lines
+  const arcStartAngle = Math.PI - Math.asin(horizontalDistFromCenter / threeArcRadius)
+  const arcEndAngle = Math.asin(horizontalDistFromCenter / threeArcRadius)
+
+  // Draw the arc (from left corner angle to right corner angle, going up and over)
+  c.arc(centerX, rimY, threeArcRadius, arcStartAngle, arcEndAngle, false)
+
+  // Right corner - straight line down to baseline
+  c.lineTo(w - cornerThreeX, baselineY)
+  c.stroke()
+
+  // Key (paint area)
+  c.strokeRect(keyLeft, ftLineY, keyWidth, keyLength - 2)
+
+  // Free throw circle - solid half (away from basket)
+  c.beginPath()
+  c.arc(centerX, ftLineY, ftCircleRadius, Math.PI, 2 * Math.PI)
+  c.stroke()
+
+  // Free throw circle - dashed half (toward basket)
+  c.setLineDash([5, 5])
+  c.beginPath()
+  c.arc(centerX, ftLineY, ftCircleRadius, 0, Math.PI)
+  c.stroke()
+  c.setLineDash([])
+
+  // Restricted area arc
+  c.beginPath()
+  c.arc(centerX, rimY, restrictedRadius, Math.PI, 2 * Math.PI)
+  c.stroke()
+
+  // Backboard
+  c.lineWidth = COURT_CANVAS.LINE_WIDTH.BACKBOARD
+  const backboardWidth = NBA_COURT.BACKBOARD_WIDTH * sx
+  c.beginPath()
+  c.moveTo(centerX - backboardWidth / 2, backboardY)
+  c.lineTo(centerX + backboardWidth / 2, backboardY)
+  c.stroke()
+  c.lineWidth = COURT_CANVAS.LINE_WIDTH.DEFAULT
+
+  // Rim
+  const rimRadius = (NBA_COURT.RIM_DIAMETER / 2) * sx
+  c.beginPath()
+  c.arc(centerX, rimY, rimRadius, 0, Math.PI * 2)
+  c.strokeStyle = COURT_CANVAS.COLORS.RIM
+  c.lineWidth = COURT_CANVAS.LINE_WIDTH.RIM
+  c.stroke()
+  c.strokeStyle = COURT_CANVAS.COLORS.COURT_LINES
+  c.lineWidth = COURT_CANVAS.LINE_WIDTH.DEFAULT
+
+  // Key hash marks
+  const hashMarkLength = 2 * sx
+  const hashPositions = [7, 11, 14, 17] // Feet from baseline
+  hashPositions.forEach(pos => {
+    const hashY = baselineY - pos * sy
+    // Left side
+    c.beginPath()
+    c.moveTo(keyLeft - hashMarkLength, hashY)
+    c.lineTo(keyLeft, hashY)
+    c.stroke()
+    // Right side
+    c.beginPath()
+    c.moveTo(keyRight, hashY)
+    c.lineTo(keyRight + hashMarkLength, hashY)
+    c.stroke()
+  })
 
   // Animation mode rendering
   if (props.animationMode) {
-    // Draw movement trails
     if (props.showTrails) {
       drawMovementTrails(c)
     }
-
-    // Draw players from interpolated positions
     drawAnimatedPlayers(c)
-
-    // Draw ball from interpolated position
     if (props.interpolatedBallPosition) {
       const ballX = props.interpolatedBallPosition.x * w
       const ballY = props.interpolatedBallPosition.y * h
@@ -144,77 +236,19 @@ function drawCourt() {
       drawBall(c, ballX, ballY, inFlight)
     }
   } else {
-    // Standard mode rendering
     if (props.showPlayers && props.playerPositions.length > 0) {
       drawPlayers(c)
     }
-
-    // Draw ball
     if (props.ballPosition) {
       drawBall(c, props.ballPosition.x * w, props.ballPosition.y * h)
     }
   }
 }
 
-function drawHalfCourt(c, startX, sx, sy, w, h, mirrored) {
-  const dir = mirrored ? -1 : 1
-  const offset = mirrored ? startX : 0
-
-  // Three-point line (23.75 feet at top, 22 feet in corners)
-  c.beginPath()
-  // Corner three
-  c.moveTo(offset + dir * 4 * sx, 3 * sy)
-  c.lineTo(offset + dir * 14 * sx, 3 * sy)
-  // Arc
-  c.arc(offset + dir * 5.25 * sx, h / 2, 23.75 * sx, -Math.asin(22/23.75), Math.asin(22/23.75))
-  c.moveTo(offset + dir * 14 * sx, h - 3 * sy)
-  c.lineTo(offset + dir * 4 * sx, h - 3 * sy)
-  c.stroke()
-
-  // Paint/Key (16 feet wide, 19 feet long)
-  const paintWidth = 16 * sy
-  const paintLength = 19 * sx
-  const paintTop = (h - paintWidth) / 2
-
-  c.strokeRect(offset + (mirrored ? -paintLength : 0), paintTop, paintLength, paintWidth)
-
-  // Free throw circle
-  c.beginPath()
-  c.arc(offset + dir * 19 * sx, h / 2, 6 * sy, mirrored ? Math.PI / 2 : -Math.PI / 2, mirrored ? -Math.PI / 2 : Math.PI / 2)
-  c.stroke()
-
-  // Free throw line dashed part
-  c.setLineDash([5, 5])
-  c.beginPath()
-  c.arc(offset + dir * 19 * sx, h / 2, 6 * sy, mirrored ? -Math.PI / 2 : Math.PI / 2, mirrored ? Math.PI / 2 : -Math.PI / 2)
-  c.stroke()
-  c.setLineDash([])
-
-  // Restricted area (4 feet radius)
-  c.beginPath()
-  c.arc(offset + dir * 5.25 * sx, h / 2, 4 * sx, mirrored ? Math.PI / 2 : -Math.PI / 2, mirrored ? -Math.PI / 2 : Math.PI / 2)
-  c.stroke()
-
-  // Backboard
-  c.lineWidth = 4
-  c.beginPath()
-  c.moveTo(offset + dir * 4 * sx, h / 2 - 3 * sy)
-  c.lineTo(offset + dir * 4 * sx, h / 2 + 3 * sy)
-  c.stroke()
-  c.lineWidth = 2
-
-  // Rim
-  c.beginPath()
-  c.arc(offset + dir * 5.25 * sx, h / 2, 0.75 * sx, 0, Math.PI * 2)
-  c.stroke()
-}
-
 function drawWoodGrain(c, w, h) {
-  c.strokeStyle = 'rgba(139, 90, 43, 0.15)'
+  c.strokeStyle = COURT_CANVAS.COLORS.WOOD_GRAIN
   c.lineWidth = 1
-
-  // Horizontal wood planks
-  for (let y = 0; y < h; y += 20) {
+  for (let y = 0; y < h; y += 15) {
     c.beginPath()
     c.moveTo(0, y)
     c.lineTo(w, y)
@@ -228,7 +262,6 @@ function drawPlayers(c) {
     const y = player.y * courtHeight.value
     const isHome = player.team === 'home'
 
-    // Player circle
     c.beginPath()
     c.arc(x, y, 12, 0, Math.PI * 2)
     c.fillStyle = isHome ? (props.homeTeam?.primary_color || '#3B82F6') : (props.awayTeam?.primary_color || '#EF4444')
@@ -237,7 +270,6 @@ function drawPlayers(c) {
     c.lineWidth = 2
     c.stroke()
 
-    // Jersey number
     c.fillStyle = '#FFFFFF'
     c.font = 'bold 10px Arial'
     c.textAlign = 'center'
@@ -247,14 +279,12 @@ function drawPlayers(c) {
 }
 
 function drawBall(c, x, y, inFlight = false) {
-  // Ball shadow (offset more when in flight)
   const shadowOffset = inFlight ? 6 : 2
   c.beginPath()
   c.arc(x + shadowOffset, y + shadowOffset, 8, 0, Math.PI * 2)
   c.fillStyle = inFlight ? 'rgba(0, 0, 0, 0.2)' : 'rgba(0, 0, 0, 0.3)'
   c.fill()
 
-  // Ball
   const gradient = c.createRadialGradient(x - 2, y - 2, 0, x, y, 8)
   gradient.addColorStop(0, '#FF8C00')
   gradient.addColorStop(1, '#FF4500')
@@ -264,7 +294,6 @@ function drawBall(c, x, y, inFlight = false) {
   c.fillStyle = gradient
   c.fill()
 
-  // Ball lines
   c.strokeStyle = '#000000'
   c.lineWidth = 1
   c.beginPath()
@@ -275,7 +304,6 @@ function drawBall(c, x, y, inFlight = false) {
   c.arc(x, y, 6, 0, Math.PI * 2)
   c.stroke()
 
-  // Add glow effect when ball is in flight
   if (inFlight) {
     c.beginPath()
     c.arc(x, y, 12, 0, Math.PI * 2)
@@ -285,15 +313,11 @@ function drawBall(c, x, y, inFlight = false) {
   }
 }
 
-/**
- * Draw players from interpolated animation positions.
- */
 function drawAnimatedPlayers(c) {
   const w = courtWidth.value
   const h = courtHeight.value
   const positions = props.interpolatedPositions
 
-  // Build player lookup from rosters (handle both id and player_id formats)
   const playerLookup = {}
   props.homeRoster.forEach((player, idx) => {
     const playerId = player.id || player.player_id
@@ -318,10 +342,8 @@ function drawAnimatedPlayers(c) {
     }
   })
 
-  // Track positions for trails
   const newHistory = { ...positionHistory.value }
 
-  // Draw each player
   Object.entries(positions).forEach(([playerId, pos]) => {
     const x = pos.x * w
     const y = pos.y * h
@@ -329,17 +351,14 @@ function drawAnimatedPlayers(c) {
     const player = playerLookup[playerId]
     const isHome = player?.team === 'home'
 
-    // Update position history for trails
     if (!newHistory[playerId]) {
       newHistory[playerId] = []
     }
     newHistory[playerId].push({ x, y })
-    // Keep only last 10 positions for trail
     if (newHistory[playerId].length > 10) {
       newHistory[playerId].shift()
     }
 
-    // Player glow for ball handler
     if (hasBall) {
       c.beginPath()
       c.arc(x, y, 18, 0, Math.PI * 2)
@@ -347,7 +366,6 @@ function drawAnimatedPlayers(c) {
       c.fill()
     }
 
-    // Player circle
     c.beginPath()
     c.arc(x, y, 14, 0, Math.PI * 2)
     c.fillStyle = isHome
@@ -358,7 +376,6 @@ function drawAnimatedPlayers(c) {
     c.lineWidth = hasBall ? 3 : 2
     c.stroke()
 
-    // Jersey number
     c.fillStyle = '#FFFFFF'
     c.font = 'bold 11px Arial'
     c.textAlign = 'center'
@@ -369,16 +386,12 @@ function drawAnimatedPlayers(c) {
   positionHistory.value = newHistory
 }
 
-/**
- * Draw movement trails for players.
- */
 function drawMovementTrails(c) {
   const history = positionHistory.value
 
   Object.entries(history).forEach(([playerId, positions]) => {
     if (positions.length < 2) return
 
-    // Build player lookup to get team color (handle both id and player_id formats)
     const playerLookup = {}
     props.homeRoster.forEach(player => {
       const id = player.id || player.player_id
@@ -395,21 +408,17 @@ function drawMovementTrails(c) {
       ? (props.homeTeam?.primary_color || '#3B82F6')
       : (props.awayTeam?.primary_color || '#EF4444')
 
-    // Draw fading trail
     c.beginPath()
     c.moveTo(positions[0].x, positions[0].y)
-
     for (let i = 1; i < positions.length; i++) {
       c.lineTo(positions[i].x, positions[i].y)
     }
-
     c.strokeStyle = baseColor
     c.lineWidth = 3
     c.globalAlpha = 0.3
     c.stroke()
     c.globalAlpha = 1.0
 
-    // Draw trail dots
     positions.forEach((pos, i) => {
       const alpha = (i / positions.length) * 0.5
       c.beginPath()
@@ -422,28 +431,22 @@ function drawMovementTrails(c) {
   })
 }
 
-/**
- * Clear position history (call when starting new possession).
- */
 function clearTrails() {
   positionHistory.value = {}
 }
 
-// Initialize positions for a default formation
 function getDefaultPositions() {
   return [
-    // Home team (left side)
-    { x: 0.15, y: 0.5, team: 'home', number: '1' }, // PG
-    { x: 0.25, y: 0.25, team: 'home', number: '2' }, // SG
-    { x: 0.25, y: 0.75, team: 'home', number: '3' }, // SF
-    { x: 0.3, y: 0.35, team: 'home', number: '4' }, // PF
-    { x: 0.3, y: 0.65, team: 'home', number: '5' }, // C
-    // Away team (right side)
-    { x: 0.85, y: 0.5, team: 'away', number: '1' }, // PG
-    { x: 0.75, y: 0.25, team: 'away', number: '2' }, // SG
-    { x: 0.75, y: 0.75, team: 'away', number: '3' }, // SF
-    { x: 0.7, y: 0.35, team: 'away', number: '4' }, // PF
-    { x: 0.7, y: 0.65, team: 'away', number: '5' }, // C
+    { x: 0.5, y: 0.15, team: 'home', number: '1' },
+    { x: 0.2, y: 0.25, team: 'home', number: '2' },
+    { x: 0.8, y: 0.25, team: 'home', number: '3' },
+    { x: 0.35, y: 0.5, team: 'home', number: '4' },
+    { x: 0.65, y: 0.5, team: 'home', number: '5' },
+    { x: 0.5, y: 0.25, team: 'away', number: '1' },
+    { x: 0.25, y: 0.35, team: 'away', number: '2' },
+    { x: 0.75, y: 0.35, team: 'away', number: '3' },
+    { x: 0.4, y: 0.55, team: 'away', number: '4' },
+    { x: 0.6, y: 0.55, team: 'away', number: '5' },
   ]
 }
 
@@ -464,7 +467,6 @@ watch(() => [
   drawCourt()
 }, { deep: true })
 
-// Expose methods for external use
 defineExpose({
   redraw: drawCourt,
   getDefaultPositions,

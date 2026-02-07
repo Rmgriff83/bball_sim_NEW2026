@@ -5,6 +5,7 @@ import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton, FormInput, Badge } from '@/components/ui'
+import { ArrowLeft } from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -76,9 +77,7 @@ async function handleLogout() {
     <div class="container max-w-2xl">
       <div class="mb-8">
         <router-link to="/dashboard" class="link flex items-center gap-2 mb-2">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
+          <ArrowLeft :size="20" />
           Back to Dashboard
         </router-link>
         <h1 class="h2 text-gradient">Profile Settings</h1>

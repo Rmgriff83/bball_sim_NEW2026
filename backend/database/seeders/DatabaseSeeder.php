@@ -50,7 +50,7 @@ class DatabaseSeeder extends Seeder
         $campaign = Campaign::create([
             'user_id' => $user->id,
             'name' => 'Test Dynasty',
-            'current_date' => '2024-10-22', // Start of NBA season
+            'current_date' => '2025-10-21', // Start of NBA season
             'game_year' => 1,
             'difficulty' => 'pro',
             'settings' => [
@@ -76,7 +76,7 @@ class DatabaseSeeder extends Seeder
         // Create initial season
         $season = \App\Models\Season::create([
             'campaign_id' => $campaign->id,
-            'year' => 2024,
+            'year' => 2025,
             'phase' => 'regular',
             'standings' => $this->generateInitialStandings($campaign->id),
         ]);

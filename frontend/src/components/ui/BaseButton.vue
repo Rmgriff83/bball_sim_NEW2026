@@ -1,4 +1,6 @@
 <script setup>
+import { Loader2 } from 'lucide-vue-next'
+
 defineProps({
   variant: {
     type: String,
@@ -47,11 +49,7 @@ defineEmits(['click'])
     ]"
     @click="$emit('click', $event)"
   >
-    <span v-if="loading" class="animate-spin">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.4-5.4l-2.8 2.8M8.4 15.6l-2.8 2.8m12.8 0l-2.8-2.8M8.4 8.4L5.6 5.6" />
-      </svg>
-    </span>
+    <Loader2 v-if="loading" :size="16" class="animate-spin" />
     <slot v-else />
   </button>
 </template>

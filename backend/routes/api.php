@@ -83,6 +83,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/games/{gameId}/start', [GameController::class, 'startGame']);
         Route::post('/games/{gameId}/continue', [GameController::class, 'continueGame']);
         Route::post('/simulate-day', [GameController::class, 'simulateDay']);
+        Route::get('/simulate-to-next-game/preview', [GameController::class, 'simulateToNextGamePreview']);
+        Route::post('/simulate-to-next-game', [GameController::class, 'simulateToNextGame']);
         Route::get('/standings', [GameController::class, 'standings']);
         Route::get('/league-leaders', [GameController::class, 'leagueLeaders']);
 

@@ -206,9 +206,12 @@
 }
 
 /* Vue Transition Classes */
-.fade-enter-active,
+.fade-enter-active {
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+
 .fade-leave-active {
-  transition: opacity var(--duration-normal) var(--ease-default);
+  transition: opacity var(--duration-normal) var(--ease-in);
 }
 
 .fade-enter-from,

@@ -5,20 +5,25 @@ import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { GlassCard, BaseButton, BaseModal, LoadingSpinner, StatBadge } from '@/components/ui'
-import PlayerCard from '@/components/team/PlayerCard.vue'
+import { User, ArrowUpDown } from 'lucide-vue-next'
 
 const route = useRoute()
 const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
 
-const loading = ref(true)
-const activeTab = ref('roster')
+// Only show loading if we don't have cached team data
+const loading = ref(!teamStore.team)
+const activeTab = ref('team')
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 const playerModalTab = ref('stats')
-const showLineupEditor = ref(false)
-const editingLineup = ref({ PG: null, SG: null, SF: null, PF: null, C: null })
-const savingLineup = ref(false)
+
+// Move dropdown state
+const expandedMovePlayer = ref(null)
+const swappingLineup = ref(false)
+
+// Animation state for lineup changes - supports multiple players
+const animatingPlayers = ref({}) // { [playerId]: 'up' | 'down' }
 
 // Coach settings state
 const schemesFetched = ref(false)
@@ -29,17 +34,41 @@ const selectedScheme = ref(null)
 const { POSITIONS, canPlayPosition } = usePositionValidation()
 
 const campaignId = computed(() => route.params.id)
+const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => teamStore.team)
 const roster = computed(() => teamStore.roster)
-const sortedRoster = computed(() =>
-  [...(teamStore.roster || [])].sort((a, b) => b.overall_rating - a.overall_rating)
-)
 const coach = computed(() => teamStore.coach)
+
+// Starters in position order (PG, SG, SF, PF, C) - may contain nulls for empty slots
+const starters = computed(() => roster.value.slice(0, 5))
+
+// Starter slots - always 5 positions, with player or null
+const starterSlots = computed(() => {
+  return POSITIONS.map((pos, index) => ({
+    position: pos,
+    player: starters.value[index] || null
+  }))
+})
+
+// Bench players sorted by overall rating (highest to lowest)
+const benchPlayers = computed(() => {
+  return [...roster.value.slice(5)]
+    .filter(p => p !== null) // Filter out any nulls
+    .sort((a, b) => b.overall_rating - a.overall_rating)
+})
+
+// Available roster slots (max 15 players) - exclude nulls from count
+const availableRosterSlots = computed(() => {
+  const actualPlayers = roster.value.filter(p => p !== null).length
+  return Math.max(0, 15 - actualPlayers)
+})
 
 // Group roster by position (sorted by overall within each position)
 const rosterByPosition = computed(() => {
   const positions = { PG: [], SG: [], SF: [], PF: [], C: [] }
   roster.value.forEach(player => {
+    // Skip null players (empty starter slots)
+    if (!player) return
     if (positions[player.position]) {
       positions[player.position].push(player)
     }
@@ -51,65 +80,33 @@ const rosterByPosition = computed(() => {
   return positions
 })
 
-// Eligible players per position for lineup editing (filtered by position eligibility and injury status)
-const eligiblePlayersForPosition = computed(() => {
-  const result = {}
-  const selectedIds = Object.values(editingLineup.value).filter(Boolean)
-
-  POSITIONS.forEach(pos => {
-    // Get players who can play this position, aren't injured, and aren't selected elsewhere
-    result[pos] = roster.value.filter(p => {
-      const canPlay = canPlayPosition(p, pos)
-      const isHealthy = !p.is_injured && !p.isInjured
-      // Allow if this player is selected for THIS position or not selected at all
-      const isSelectedHere = editingLineup.value[pos] === p.id
-      const isSelectedElsewhere = selectedIds.includes(p.id) && !isSelectedHere
-      return canPlay && isHealthy && !isSelectedElsewhere
-    })
-  })
-
-  return result
-})
-
-// Current starters (first 5 in roster order)
-const starters = computed(() => roster.value.slice(0, 5))
-const bench = computed(() => roster.value.slice(5))
-
-// Team stats
-const teamStats = computed(() => {
-  if (roster.value.length === 0) return null
-
-  const avgOverall = Math.round(
-    roster.value.reduce((sum, p) => sum + p.overall_rating, 0) / roster.value.length
-  )
-
-  const totalSalary = roster.value.reduce((sum, p) => sum + (p.contract?.salary || 0), 0)
-
-  // Calculate average attributes
-  const avgAttrs = {}
-  const attrKeys = ['speed', 'three_point', 'mid_range', 'close_shot', 'dunk',
-                    'pass_accuracy', 'ball_handle', 'perimeter_defense', 'interior_defense', 'rebounding']
-
-  attrKeys.forEach(key => {
-    const values = roster.value.map(p => p.attributes?.[key] || 0).filter(v => v > 0)
-    avgAttrs[key] = values.length > 0 ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : 0
-  })
-
-  return {
-    avgOverall,
-    totalSalary,
-    avgAttrs,
-    rosterSize: roster.value.length
-  }
+// Conference label
+const conferenceLabel = computed(() => {
+  if (!team.value?.conference) return ''
+  return team.value.conference === 'east' ? 'EAST' : 'WEST'
 })
 
 onMounted(async () => {
-  try {
-    await teamStore.fetchTeam(campaignId.value)
-  } catch (err) {
-    console.error('Failed to load team:', err)
-  } finally {
-    loading.value = false
+  // If we already have team data, refresh in background without blocking
+  const hasCachedData = teamStore.team
+
+  const fetchAll = Promise.all([
+    teamStore.fetchTeam(campaignId.value),
+    campaignStore.fetchCampaign(campaignId.value)
+  ])
+
+  if (hasCachedData) {
+    // Refresh in background, don't wait
+    fetchAll.catch(err => console.error('Failed to refresh team:', err))
+  } else {
+    // No cached data, wait for fetch and show loading
+    try {
+      await fetchAll
+    } catch (err) {
+      console.error('Failed to load team:', err)
+    } finally {
+      loading.value = false
+    }
   }
 })
 
@@ -150,69 +147,146 @@ function closePlayerModal() {
   selectedPlayer.value = null
 }
 
-function openLineupEditor() {
-  // Initialize with best player for each position from current roster
-  const newLineup = { PG: null, SG: null, SF: null, PF: null, C: null }
-  const usedIds = []
-
-  // Helper to check if player is healthy
-  const isHealthy = (p) => !p.is_injured && !p.isInjured
-
-  // Try to assign current starters to their natural positions first (if healthy)
-  POSITIONS.forEach((pos, index) => {
-    const currentStarter = starters.value[index]
-    if (currentStarter && canPlayPosition(currentStarter, pos) && isHealthy(currentStarter) && !usedIds.includes(currentStarter.id)) {
-      newLineup[pos] = currentStarter.id
-      usedIds.push(currentStarter.id)
-    }
-  })
-
-  // Fill remaining positions with best available healthy players
-  POSITIONS.forEach(pos => {
-    if (newLineup[pos] === null) {
-      const eligible = roster.value.find(p =>
-        canPlayPosition(p, pos) && isHealthy(p) && !usedIds.includes(p.id)
-      )
-      if (eligible) {
-        newLineup[pos] = eligible.id
-        usedIds.push(eligible.id)
-      }
-    }
-  })
-
-  editingLineup.value = newLineup
-  showLineupEditor.value = true
-}
-
-function closeLineupEditor() {
-  showLineupEditor.value = false
-  editingLineup.value = { PG: null, SG: null, SF: null, PF: null, C: null }
-}
-
-// Count how many positions are filled
-const filledPositions = computed(() => {
-  return Object.values(editingLineup.value).filter(Boolean).length
-})
-
-async function saveLineup() {
-  if (filledPositions.value !== 5) {
-    alert('Please select a player for each position')
-    return
+// Move dropdown functions
+function toggleMoveDropdown(playerId) {
+  if (expandedMovePlayer.value === playerId) {
+    expandedMovePlayer.value = null
+  } else {
+    expandedMovePlayer.value = playerId
   }
+}
 
-  // Convert object to array in position order for API
-  const lineupArray = POSITIONS.map(pos => editingLineup.value[pos])
+function closeMoveDropdown() {
+  expandedMovePlayer.value = null
+}
 
-  savingLineup.value = true
+// Get swap candidates for a starter (bench players who can play this position)
+function getStarterSwapCandidates(slotPosition) {
+  return benchPlayers.value.filter(p => canPlayPosition(p, slotPosition))
+}
+
+// Get the starter that a bench player can swap with (based on position)
+function getBenchSwapCandidates(benchPlayer) {
+  // Find starters whose position matches what this bench player can play
+  return starterSlots.value.filter(slot =>
+    slot.player && canPlayPosition(benchPlayer, slot.position)
+  ).map(slot => ({
+    ...slot.player,
+    slotPosition: slot.position
+  }))
+}
+
+// Get empty starter slots that a bench player can fill
+function getEmptySlotCandidates(benchPlayer) {
+  return starterSlots.value.filter(slot =>
+    !slot.player && canPlayPosition(benchPlayer, slot.position)
+  ).map(slot => ({
+    position: slot.position,
+    slotIndex: POSITIONS.indexOf(slot.position)
+  }))
+}
+
+// Swap a starter with a bench player
+async function swapPlayers(starterIndex, benchPlayerId) {
+  if (swappingLineup.value) return
+  swappingLineup.value = true
+
+  // Get the starter being replaced (will move down)
+  const starterBeingReplaced = starters.value[starterIndex]
+
   try {
-    await teamStore.updateLineup(campaignId.value, lineupArray)
+    // Build new lineup array (handle null values for empty slots)
+    const newLineup = starters.value.map(p => p ? p.id : null)
+    newLineup[starterIndex] = benchPlayerId
+
+    closeMoveDropdown()
+
+    await teamStore.updateLineup(campaignId.value, newLineup)
     await teamStore.fetchTeam(campaignId.value)
-    closeLineupEditor()
+
+    // Trigger animations for both players
+    animatingPlayers.value = {
+      [benchPlayerId]: 'up',
+      ...(starterBeingReplaced ? { [starterBeingReplaced.id]: 'down' } : {})
+    }
+
+    // Clear animations after they complete
+    setTimeout(() => {
+      animatingPlayers.value = {}
+    }, 400)
   } catch (err) {
-    console.error('Failed to save lineup:', err)
-    alert('Failed to save lineup')
+    console.error('Failed to swap players:', err)
+    animatingPlayers.value = {}
   } finally {
-    savingLineup.value = false
+    swappingLineup.value = false
+  }
+}
+
+// Move starter to bench without replacement (leaves empty slot)
+async function moveToBench(starterIndex) {
+  if (swappingLineup.value) return
+  swappingLineup.value = true
+
+  const playerToMove = starters.value[starterIndex]
+
+  try {
+    // Build new lineup with null for the empty position (handle existing nulls)
+    const newLineup = starters.value.map((p, i) => i === starterIndex ? null : (p ? p.id : null))
+
+    closeMoveDropdown()
+
+    await teamStore.updateLineup(campaignId.value, newLineup)
+    await teamStore.fetchTeam(campaignId.value)
+
+    // Trigger slide down animation
+    animatingPlayers.value = { [playerToMove.id]: 'down' }
+
+    // Clear animation after it completes
+    setTimeout(() => {
+      animatingPlayers.value = {}
+    }, 400)
+  } catch (err) {
+    console.error('Failed to move player to bench:', err)
+    animatingPlayers.value = {}
+  } finally {
+    swappingLineup.value = false
+  }
+}
+
+// Promote bench player to starter (into empty slot or swap)
+async function promoteToStarter(benchPlayer, targetPosition) {
+  if (swappingLineup.value) return
+  swappingLineup.value = true
+
+  // Get the starter being replaced (if any)
+  const posIndex = POSITIONS.indexOf(targetPosition)
+  const starterBeingReplaced = starters.value[posIndex]
+
+  try {
+    // Build new lineup (handle null values for empty slots)
+    const newLineup = starters.value.map(p => p ? p.id : null)
+    newLineup[posIndex] = benchPlayer.id
+
+    closeMoveDropdown()
+
+    await teamStore.updateLineup(campaignId.value, newLineup)
+    await teamStore.fetchTeam(campaignId.value)
+
+    // Trigger animations for both players
+    animatingPlayers.value = {
+      [benchPlayer.id]: 'up',
+      ...(starterBeingReplaced ? { [starterBeingReplaced.id]: 'down' } : {})
+    }
+
+    // Clear animations after they complete
+    setTimeout(() => {
+      animatingPlayers.value = {}
+    }, 400)
+  } catch (err) {
+    console.error('Failed to promote player:', err)
+    animatingPlayers.value = {}
+  } finally {
+    swappingLineup.value = false
   }
 }
 
@@ -253,9 +327,19 @@ function getAttrColor(value) {
   return 'var(--color-error)'
 }
 
-function formatBadgeName(badgeId) {
+function formatBadgeName(badge) {
+  // Handle both badge object and string id
+  if (!badge) return ''
+
+  // If passed a badge object with a name, use it directly
+  if (typeof badge === 'object' && badge.name) {
+    return badge.name
+  }
+
+  // Otherwise format the id (handle both object.id and raw string)
+  const badgeId = typeof badge === 'object' ? badge.id : badge
   if (!badgeId) return ''
-  // Convert snake_case to Title Case
+
   return badgeId
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
@@ -264,7 +348,6 @@ function formatBadgeName(badgeId) {
 
 function formatAttrName(attrKey) {
   if (!attrKey) return ''
-  // Convert camelCase to Title Case with spaces
   return attrKey
     .replace(/([A-Z])/g, ' $1')
     .replace(/^./, str => str.toUpperCase())
@@ -273,7 +356,6 @@ function formatAttrName(attrKey) {
 
 function formatWeight(weight) {
   if (!weight) return '210'
-  // Handle malformed weight data (e.g., 1950 instead of 195)
   const w = parseInt(weight)
   if (w > 400) return Math.round(w / 10)
   return w
@@ -285,157 +367,454 @@ function getEffectivenessClass(value) {
   return 'low'
 }
 
+function getRatingClass(rating) {
+  if (rating >= 90) return 'elite'
+  if (rating >= 80) return 'star'
+  if (rating >= 70) return 'starter'
+  if (rating >= 60) return 'rotation'
+  return 'bench'
+}
+
+// Get top 3 badges sorted by level
+function getTopBadges(badges) {
+  if (!badges) return []
+  const levelOrder = { hof: 0, gold: 1, silver: 2, bronze: 3 }
+  return [...badges]
+    .sort((a, b) => (levelOrder[a.level] || 4) - (levelOrder[b.level] || 4))
+    .slice(0, 3)
+}
+
 // Mock player news - in production this would come from backend
 const playerNews = computed(() => {
   if (!selectedPlayer.value) return []
-  // TODO: Fetch actual news from backend
   return []
 })
 </script>
 
 <template>
-  <div class="p-6">
+  <div class="roster-view">
     <!-- Loading -->
-    <div v-if="loading" class="flex justify-center py-12">
-      <LoadingSpinner size="lg" />
+    <div v-if="loading" class="loading-container">
+      <LoadingSpinner size="md" />
     </div>
 
     <template v-else-if="team">
-      <!-- Header -->
-      <div class="flex items-start justify-between mb-8">
-        <div class="flex items-center gap-4">
+      <!-- Team Header - Same style as home page -->
+      <section class="team-header">
+        <div class="team-header-row">
           <div
-            class="w-16 h-16 rounded-xl flex items-center justify-center text-white text-xl font-bold"
-            :style="{ backgroundColor: team.primary_color || '#7c3aed' }"
+            class="team-logo-badge"
+            :style="{ backgroundColor: team.primary_color || '#E85A4F' }"
           >
             {{ team.abbreviation }}
           </div>
-          <div>
-            <h1 class="h2 text-gradient">{{ team.name }}</h1>
-            <p class="text-secondary">{{ team.city }} - {{ team.conference?.toUpperCase() }} Conference</p>
+          <div class="team-header-text">
+            <p class="team-city">{{ team.city }} · {{ conferenceLabel }}</p>
+            <h1 class="team-name">{{ team.name }}</h1>
           </div>
         </div>
-
-        <BaseButton variant="primary" @click="openLineupEditor">
-          Edit Lineup
-        </BaseButton>
-      </div>
+      </section>
 
       <!-- Tab Navigation -->
-      <div class="flex gap-2 mb-6">
+      <div class="tab-nav">
         <button
           class="tab-btn"
-          :class="{ active: activeTab === 'roster' }"
-          @click="activeTab = 'roster'"
+          :class="{ active: activeTab === 'team' }"
+          @click="activeTab = 'team'"
         >
-          Full Roster
-        </button>
-        <button
-          class="tab-btn"
-          :class="{ active: activeTab === 'starters' }"
-          @click="activeTab = 'starters'"
-        >
-          Starting Lineup
-        </button>
-        <button
-          class="tab-btn"
-          :class="{ active: activeTab === 'position' }"
-          @click="activeTab = 'position'"
-        >
-          By Position
+          Team
         </button>
         <button
           class="tab-btn"
           :class="{ active: activeTab === 'coach' }"
           @click="activeTab = 'coach'"
         >
-          Coach Settings
+          Coach
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: activeTab === 'finances' }"
+          @click="activeTab = 'finances'"
+        >
+          Finances
         </button>
       </div>
 
-      <!-- Full Roster View -->
-      <div v-if="activeTab === 'roster'" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <PlayerCard
-          v-for="player in sortedRoster"
-          :key="player.id"
-          :player="player"
-          :show-details="true"
-          @click="openPlayerModal"
-        />
-      </div>
-
-      <!-- Starting Lineup View -->
-      <div v-else-if="activeTab === 'starters'" class="space-y-6">
-        <GlassCard padding="lg" :hoverable="false">
-          <h3 class="h4 mb-4">Starting Five</h3>
-          <div class="grid md:grid-cols-5 gap-4">
-            <div
-              v-for="(player, index) in starters"
-              :key="player.id"
-              class="starter-card"
-              @click="openPlayerModal(player)"
-            >
-              <div class="starter-position">
-                {{ ['PG', 'SG', 'SF', 'PF', 'C'][index] }}
+      <!-- Roster View -->
+      <div v-if="activeTab === 'team'" class="roster-content">
+        <!-- Starters Section -->
+        <div class="roster-list-header card-cosmic">
+          <h3 class="list-header-text">STARTERS</h3>
+        </div>
+        <div class="players-grid">
+          <template v-for="(slot, index) in starterSlots" :key="slot.position">
+            <!-- Empty Slot -->
+            <div v-if="!slot.player" class="player-card empty-slot">
+              <div class="card-header">
+                <div class="player-avatar empty">
+                  <span class="empty-position">{{ slot.position }}</span>
+                </div>
+                <div class="player-main-info">
+                  <h4 class="player-name empty-name">Empty Slot</h4>
+                  <div class="player-meta">
+                    <span class="position-badge" :style="{ backgroundColor: getPositionColor(slot.position) }">
+                      {{ slot.position }}
+                    </span>
+                    <span class="role-badge starter">STARTER</span>
+                  </div>
+                </div>
+                <div class="rating-container">
+                  <button class="move-btn" @click.stop="toggleMoveDropdown(`starter-empty-${index}`)" title="Add player">
+                    <ArrowUpDown :size="14" />
+                  </button>
+                  <div class="empty-rating">--</div>
+                </div>
               </div>
-              <StatBadge :value="player.overall_rating" size="lg" />
-              <p class="starter-name">{{ player.name }}</p>
-              <p class="starter-pos">{{ player.position }}</p>
+              <!-- Empty slot dropdown - show bench players who can play this position -->
+              <Transition name="dropdown-slide">
+                <div v-if="expandedMovePlayer === `starter-empty-${index}`" class="move-dropdown">
+                  <div class="dropdown-header">Select player for {{ slot.position }}</div>
+                  <div class="dropdown-list">
+                    <button
+                      v-for="candidate in getStarterSwapCandidates(slot.position)"
+                      :key="candidate.id"
+                      class="dropdown-item"
+                      :class="{ injured: candidate.is_injured || candidate.isInjured }"
+                      @click.stop="promoteToStarter(candidate, slot.position)"
+                    >
+                      <ArrowUpDown :size="14" class="dropdown-move-icon" />
+                      <div class="dropdown-avatar">
+                        <User :size="16" />
+                      </div>
+                      <span class="dropdown-name">{{ candidate.name }}</span>
+                      <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
+                        {{ candidate.position }}
+                      </span>
+                      <span v-if="candidate.is_injured || candidate.isInjured" class="dropdown-injury">INJ</span>
+                      <StatBadge :value="candidate.overall_rating" size="sm" />
+                    </button>
+                    <div v-if="getStarterSwapCandidates(slot.position).length === 0" class="dropdown-empty">
+                      No available players
+                    </div>
+                  </div>
+                </div>
+              </Transition>
+            </div>
+
+            <!-- Filled Slot -->
+            <div
+              v-else
+              class="player-card"
+              :class="{
+                injured: slot.player.is_injured || slot.player.isInjured,
+                [getRatingClass(slot.player.overall_rating)]: true,
+                'dropdown-open': expandedMovePlayer === `starter-${slot.player.id}`,
+                'animate-slide-up': animatingPlayers[slot.player.id] === 'up',
+                'animate-slide-down': animatingPlayers[slot.player.id] === 'down'
+              }"
+              @click="expandedMovePlayer !== `starter-${slot.player.id}` && openPlayerModal(slot.player)"
+            >
+              <div class="card-header">
+                <div class="player-avatar">
+                  <User class="avatar-icon" :size="28" />
+                </div>
+                <div class="player-main-info">
+                  <h4 class="player-name" :class="{ 'text-injured': slot.player.is_injured || slot.player.isInjured }">
+                    {{ slot.player.name }}
+                  </h4>
+                  <div class="player-meta">
+                    <span
+                      class="position-badge"
+                      :style="{ backgroundColor: getPositionColor(slot.player.position) }"
+                    >
+                      {{ slot.player.position }}<template v-if="slot.player.secondary_position">/{{ slot.player.secondary_position }}</template>
+                    </span>
+                    <span class="role-badge starter">STARTER</span>
+                    <span v-if="slot.player.is_injured || slot.player.isInjured" class="injury-tag">Injured</span>
+                  </div>
+                  <div class="vitals-row">{{ slot.player.height || "6'6\"" }} · {{ formatWeight(slot.player.weight) }} lbs · {{ slot.player.age || 25 }} yrs</div>
+                </div>
+                <div class="rating-container">
+                  <button class="move-btn" :class="{ active: expandedMovePlayer === `starter-${slot.player.id}` }" @click.stop="toggleMoveDropdown(`starter-${slot.player.id}`)" title="Adjust lineup">
+                    <ArrowUpDown :size="14" />
+                  </button>
+                  <StatBadge :value="slot.player.overall_rating" size="md" />
+                </div>
+              </div>
+
+              <!-- Move Dropdown for Starters -->
+              <Transition name="dropdown-slide">
+                <div v-if="expandedMovePlayer === `starter-${slot.player.id}`" class="move-dropdown">
+                  <div class="dropdown-header">Replace {{ slot.player.name }}</div>
+                  <div class="dropdown-list">
+                    <!-- Move to Bench option (empty-looking) -->
+                    <button class="dropdown-item empty-option" @click.stop="moveToBench(index)">
+                      <ArrowUpDown :size="14" class="dropdown-move-icon" />
+                      <div class="dropdown-avatar empty">
+                        <span class="empty-icon">−</span>
+                      </div>
+                      <span class="dropdown-name">Move to Bench</span>
+                      <span class="dropdown-hint">No replacement</span>
+                    </button>
+                    <!-- Bench players who can play this position -->
+                    <button
+                      v-for="candidate in getStarterSwapCandidates(slot.position)"
+                      :key="candidate.id"
+                      class="dropdown-item"
+                      :class="{ injured: candidate.is_injured || candidate.isInjured }"
+                      @click.stop="swapPlayers(index, candidate.id)"
+                    >
+                      <ArrowUpDown :size="14" class="dropdown-move-icon" />
+                      <div class="dropdown-avatar">
+                        <User :size="16" />
+                      </div>
+                      <span class="dropdown-name">{{ candidate.name }}</span>
+                      <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
+                        {{ candidate.position }}
+                      </span>
+                      <span v-if="candidate.is_injured || candidate.isInjured" class="dropdown-injury">INJ</span>
+                      <StatBadge :value="candidate.overall_rating" size="sm" />
+                    </button>
+                  </div>
+                </div>
+              </Transition>
+
+              <!-- Card body only shows when dropdown is closed -->
+              <div v-if="expandedMovePlayer !== `starter-${slot.player.id}`" class="card-body">
+                <!-- Season Stats -->
+                <div v-if="slot.player.season_stats" class="stats-grid">
+                  <div class="stat-item">
+                    <span class="stat-label">PPG</span>
+                    <span class="stat-value">{{ slot.player.season_stats.ppg }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">RPG</span>
+                    <span class="stat-value">{{ slot.player.season_stats.rpg }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">APG</span>
+                    <span class="stat-value">{{ slot.player.season_stats.apg }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">SPG</span>
+                    <span class="stat-value">{{ slot.player.season_stats.spg }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">BPG</span>
+                    <span class="stat-value">{{ slot.player.season_stats.bpg }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">FG%</span>
+                    <span class="stat-value">{{ slot.player.season_stats.fg_pct }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">3PT%</span>
+                    <span class="stat-value">{{ slot.player.season_stats.three_pct }}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">GP</span>
+                    <span class="stat-value">{{ slot.player.season_stats.games_played }}</span>
+                  </div>
+                </div>
+                <div v-else class="no-stats">
+                  <span class="text-secondary text-sm">No stats yet</span>
+                </div>
+
+                <!-- Badges -->
+                <div v-if="slot.player.badges?.length > 0" class="badges-row">
+                  <div
+                    v-for="badge in getTopBadges(slot.player.badges)"
+                    :key="badge.id"
+                    class="badge-item"
+                    :title="`${formatBadgeName(badge)} (${badge.level})`"
+                  >
+                    <span
+                      class="badge-dot"
+                      :style="{ backgroundColor: getBadgeLevelColor(badge.level) }"
+                    />
+                    <span class="badge-name">{{ formatBadgeName(badge) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Bench Section -->
+        <div class="roster-list-header card-cosmic">
+          <h3 class="list-header-text">BENCH</h3>
+        </div>
+        <div class="players-grid">
+          <!-- Bench Players -->
+          <div
+            v-for="player in benchPlayers"
+            :key="player.id"
+            class="player-card"
+            :class="{
+              injured: player.is_injured || player.isInjured,
+              [getRatingClass(player.overall_rating)]: true,
+              'dropdown-open': expandedMovePlayer === `bench-${player.id}`,
+              'animate-slide-up': animatingPlayers[player.id] === 'up',
+              'animate-slide-down': animatingPlayers[player.id] === 'down'
+            }"
+            @click="expandedMovePlayer !== `bench-${player.id}` && openPlayerModal(player)"
+          >
+            <div class="card-header">
+              <div class="player-avatar">
+                <User class="avatar-icon" :size="28" />
+              </div>
+              <div class="player-main-info">
+                <h4 class="player-name" :class="{ 'text-injured': player.is_injured || player.isInjured }">
+                  {{ player.name }}
+                </h4>
+                <div class="player-meta">
+                  <span
+                    class="position-badge"
+                    :style="{ backgroundColor: getPositionColor(player.position) }"
+                  >
+                    {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
+                  </span>
+                  <span class="role-badge bench">BENCH</span>
+                  <span v-if="player.is_injured || player.isInjured" class="injury-tag">Injured</span>
+                </div>
+                <div class="vitals-row">{{ player.height || "6'6\"" }} · {{ formatWeight(player.weight) }} lbs · {{ player.age || 25 }} yrs</div>
+              </div>
+              <div class="rating-container">
+                <button class="move-btn" :class="{ active: expandedMovePlayer === `bench-${player.id}` }" @click.stop="toggleMoveDropdown(`bench-${player.id}`)" title="Adjust lineup">
+                  <ArrowUpDown :size="14" />
+                </button>
+                <StatBadge :value="player.overall_rating" size="md" />
+              </div>
+            </div>
+
+            <!-- Move Dropdown for Bench Players -->
+            <Transition name="dropdown-slide">
+              <div v-if="expandedMovePlayer === `bench-${player.id}`" class="move-dropdown">
+                <div class="dropdown-header">Move to starting lineup</div>
+                <div class="dropdown-list">
+                  <!-- Empty starter slots this player can fill -->
+                  <button
+                    v-for="emptySlot in getEmptySlotCandidates(player)"
+                    :key="`empty-${emptySlot.position}`"
+                    class="dropdown-item empty-slot-option"
+                    @click.stop="promoteToStarter(player, emptySlot.position)"
+                  >
+                    <ArrowUpDown :size="14" class="dropdown-move-icon" />
+                    <div class="dropdown-avatar empty">
+                      <span class="empty-icon">+</span>
+                    </div>
+                    <span class="dropdown-name">Fill Empty Slot</span>
+                    <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(emptySlot.position) }">
+                      {{ emptySlot.position }}
+                    </span>
+                  </button>
+                  <!-- Starters this player can replace (based on position) -->
+                  <button
+                    v-for="candidate in getBenchSwapCandidates(player)"
+                    :key="candidate.id"
+                    class="dropdown-item"
+                    :class="{ injured: candidate.is_injured || candidate.isInjured }"
+                    @click.stop="promoteToStarter(player, candidate.slotPosition)"
+                  >
+                    <ArrowUpDown :size="14" class="dropdown-move-icon" />
+                    <div class="dropdown-avatar">
+                      <User :size="16" />
+                    </div>
+                    <span class="dropdown-name">{{ candidate.name }}</span>
+                    <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
+                      {{ candidate.slotPosition }}
+                    </span>
+                    <span v-if="candidate.is_injured || candidate.isInjured" class="dropdown-injury">INJ</span>
+                    <StatBadge :value="candidate.overall_rating" size="sm" />
+                  </button>
+                  <div v-if="getBenchSwapCandidates(player).length === 0 && getEmptySlotCandidates(player).length === 0" class="dropdown-empty">
+                    No compatible positions
+                  </div>
+                </div>
+              </div>
+            </Transition>
+
+            <!-- Card body only shows when dropdown is closed -->
+            <div v-if="expandedMovePlayer !== `bench-${player.id}`" class="card-body">
+              <!-- Season Stats -->
+              <div v-if="player.season_stats" class="stats-grid">
+                <div class="stat-item">
+                  <span class="stat-label">PPG</span>
+                  <span class="stat-value">{{ player.season_stats.ppg }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">RPG</span>
+                  <span class="stat-value">{{ player.season_stats.rpg }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">APG</span>
+                  <span class="stat-value">{{ player.season_stats.apg }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">SPG</span>
+                  <span class="stat-value">{{ player.season_stats.spg }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">BPG</span>
+                  <span class="stat-value">{{ player.season_stats.bpg }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">FG%</span>
+                  <span class="stat-value">{{ player.season_stats.fg_pct }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">3PT%</span>
+                  <span class="stat-value">{{ player.season_stats.three_pct }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">GP</span>
+                  <span class="stat-value">{{ player.season_stats.games_played }}</span>
+                </div>
+              </div>
+              <div v-else class="no-stats">
+                <span class="text-secondary text-sm">No stats yet</span>
+              </div>
+
+              <!-- Badges -->
+              <div v-if="player.badges?.length > 0" class="badges-row">
+                <div
+                  v-for="badge in getTopBadges(player.badges)"
+                  :key="badge.id"
+                  class="badge-item"
+                  :title="`${formatBadgeName(badge)} (${badge.level})`"
+                >
+                  <span
+                    class="badge-dot"
+                    :style="{ backgroundColor: getBadgeLevelColor(badge.level) }"
+                  />
+                  <span class="badge-name">{{ formatBadgeName(badge) }}</span>
+                </div>
+              </div>
             </div>
           </div>
-        </GlassCard>
 
-        <GlassCard padding="lg" :hoverable="false">
-          <h3 class="h4 mb-4">Bench</h3>
-          <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <PlayerCard
-              v-for="player in bench"
-              :key="player.id"
-              :player="player"
-              compact
-              @click="openPlayerModal"
-            />
+          <!-- Empty Roster Slots -->
+          <div v-for="n in availableRosterSlots" :key="`empty-roster-${n}`" class="player-card empty-slot roster-slot">
+            <div class="card-header">
+              <div class="player-avatar empty">
+                <span class="empty-icon">+</span>
+              </div>
+              <div class="player-main-info">
+                <h4 class="player-name empty-name">Empty Roster Slot</h4>
+                <div class="player-meta">
+                  <span class="empty-hint">{{ 15 - roster.length - n + 1 }} of {{ availableRosterSlots }} available</span>
+                </div>
+              </div>
+              <div class="rating-container">
+                <div class="empty-rating">--</div>
+              </div>
+            </div>
           </div>
-        </GlassCard>
-      </div>
-
-      <!-- By Position View -->
-      <div v-else-if="activeTab === 'position'" class="space-y-6">
-        <GlassCard
-          v-for="(players, position) in rosterByPosition"
-          :key="position"
-          padding="lg"
-          :hoverable="false"
-        >
-          <div class="flex items-center gap-3 mb-4">
-            <span
-              class="position-badge-lg"
-              :style="{ backgroundColor: getPositionColor(position) }"
-            >
-              {{ position }}
-            </span>
-            <h3 class="h4">
-              {{ { PG: 'Point Guards', SG: 'Shooting Guards', SF: 'Small Forwards', PF: 'Power Forwards', C: 'Centers' }[position] }}
-            </h3>
-            <span class="text-secondary">({{ players.length }})</span>
-          </div>
-          <div v-if="players.length === 0" class="text-secondary">
-            No players at this position
-          </div>
-          <div v-else class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <PlayerCard
-              v-for="player in players"
-              :key="player.id"
-              :player="player"
-              compact
-              @click="openPlayerModal"
-            />
-          </div>
-        </GlassCard>
+        </div>
       </div>
 
       <!-- Coach Settings View -->
-      <div v-else-if="activeTab === 'coach'" class="space-y-6">
+      <div v-else-if="activeTab === 'coach'" class="coach-content">
         <!-- Coach Info Card -->
         <GlassCard v-if="coach" padding="lg" :hoverable="false">
           <h3 class="h4 mb-4">Head Coach</h3>
@@ -503,7 +882,7 @@ const playerNews = computed(() => {
         </GlassCard>
 
         <!-- Coaching Scheme Selection -->
-        <GlassCard padding="lg" :hoverable="false">
+        <GlassCard padding="lg" :hoverable="false" class="mt-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="h4">Offensive Scheme</h3>
             <div v-if="teamStore.recommendedScheme" class="recommended-badge">
@@ -572,6 +951,14 @@ const playerNews = computed(() => {
           </div>
         </GlassCard>
       </div>
+
+      <!-- Finances View -->
+      <div v-else-if="activeTab === 'finances'" class="finances-content">
+        <GlassCard padding="lg" :hoverable="false">
+          <h3 class="h4 mb-4">Team Finances</h3>
+          <p class="text-secondary">Financial management features coming soon.</p>
+        </GlassCard>
+      </div>
     </template>
 
     <!-- Player Detail Modal -->
@@ -585,6 +972,9 @@ const playerNews = computed(() => {
         <!-- Player Header -->
         <div class="player-modal-header" :class="{ 'injured-header': selectedPlayer.is_injured || selectedPlayer.isInjured }">
           <div class="flex items-center gap-4">
+            <div class="modal-player-avatar">
+              <User class="avatar-icon" :size="36" />
+            </div>
             <div class="rating-with-injury">
               <StatBadge :value="selectedPlayer.overall_rating" size="lg" />
               <span v-if="selectedPlayer.is_injured || selectedPlayer.isInjured" class="injury-badge-modal">INJ</span>
@@ -615,26 +1005,6 @@ const playerNews = computed(() => {
           </div>
         </div>
 
-        <!-- Badges -->
-        <div v-if="selectedPlayer.badges?.length > 0" class="badges-section">
-          <div class="badges-grid">
-            <div
-              v-for="badge in selectedPlayer.badges"
-              :key="badge.id"
-              class="badge-card"
-              :style="{ borderColor: getBadgeLevelColor(badge.level) }"
-            >
-              <span
-                class="badge-level"
-                :style="{ backgroundColor: getBadgeLevelColor(badge.level) }"
-              >
-                {{ badge.level?.toUpperCase() }}
-              </span>
-              <span class="badge-name">{{ formatBadgeName(badge.id) }}</span>
-            </div>
-          </div>
-        </div>
-
         <!-- Tab Navigation -->
         <div class="modal-tabs">
           <button
@@ -642,7 +1012,7 @@ const playerNews = computed(() => {
             :class="{ active: playerModalTab === 'stats' }"
             @click="playerModalTab = 'stats'"
           >
-            Season Stats
+            Stats
           </button>
           <button
             class="modal-tab"
@@ -650,6 +1020,13 @@ const playerNews = computed(() => {
             @click="playerModalTab = 'attributes'"
           >
             Attributes
+          </button>
+          <button
+            class="modal-tab"
+            :class="{ active: playerModalTab === 'badges' }"
+            @click="playerModalTab = 'badges'"
+          >
+            Badges
           </button>
           <button
             class="modal-tab"
@@ -666,9 +1043,9 @@ const playerNews = computed(() => {
           <div v-if="playerModalTab === 'stats'" class="tab-panel">
             <template v-if="selectedPlayer.season_stats">
               <!-- Scoring Stats -->
-              <div class="stats-section">
+              <div class="stats-section-modal">
                 <h4 class="stats-section-title">Scoring</h4>
-                <div class="stats-grid">
+                <div class="stats-grid-modal">
                   <div class="stat-cell">
                     <span class="stat-label">PPG</span>
                     <span class="stat-value highlight">{{ selectedPlayer.season_stats.ppg }}</span>
@@ -689,9 +1066,9 @@ const playerNews = computed(() => {
               </div>
 
               <!-- Playmaking Stats -->
-              <div class="stats-section">
+              <div class="stats-section-modal">
                 <h4 class="stats-section-title">Playmaking</h4>
-                <div class="stats-grid">
+                <div class="stats-grid-modal">
                   <div class="stat-cell">
                     <span class="stat-label">APG</span>
                     <span class="stat-value highlight">{{ selectedPlayer.season_stats.apg }}</span>
@@ -712,9 +1089,9 @@ const playerNews = computed(() => {
               </div>
 
               <!-- Defense Stats -->
-              <div class="stats-section">
+              <div class="stats-section-modal">
                 <h4 class="stats-section-title">Defense</h4>
-                <div class="stats-grid">
+                <div class="stats-grid-modal">
                   <div class="stat-cell">
                     <span class="stat-label">SPG</span>
                     <span class="stat-value">{{ selectedPlayer.season_stats.spg }}</span>
@@ -803,6 +1180,72 @@ const playerNews = computed(() => {
             </div>
           </div>
 
+          <!-- Badges Tab -->
+          <div v-if="playerModalTab === 'badges'" class="tab-panel">
+            <div v-if="selectedPlayer.badges?.length > 0" class="badges-tab-content">
+              <!-- Group badges by level -->
+              <div v-if="selectedPlayer.badges.filter(b => b.level === 'hof').length > 0" class="badge-level-section">
+                <h4 class="badge-level-title hof">Hall of Fame</h4>
+                <div class="badges-grid-modal">
+                  <div
+                    v-for="badge in selectedPlayer.badges.filter(b => b.level === 'hof')"
+                    :key="badge.id"
+                    class="badge-card-modal hof"
+                  >
+                    <span class="badge-icon">HOF</span>
+                    <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="selectedPlayer.badges.filter(b => b.level === 'gold').length > 0" class="badge-level-section">
+                <h4 class="badge-level-title gold">Gold</h4>
+                <div class="badges-grid-modal">
+                  <div
+                    v-for="badge in selectedPlayer.badges.filter(b => b.level === 'gold')"
+                    :key="badge.id"
+                    class="badge-card-modal gold"
+                  >
+                    <span class="badge-icon">G</span>
+                    <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="selectedPlayer.badges.filter(b => b.level === 'silver').length > 0" class="badge-level-section">
+                <h4 class="badge-level-title silver">Silver</h4>
+                <div class="badges-grid-modal">
+                  <div
+                    v-for="badge in selectedPlayer.badges.filter(b => b.level === 'silver')"
+                    :key="badge.id"
+                    class="badge-card-modal silver"
+                  >
+                    <span class="badge-icon">S</span>
+                    <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="selectedPlayer.badges.filter(b => b.level === 'bronze').length > 0" class="badge-level-section">
+                <h4 class="badge-level-title bronze">Bronze</h4>
+                <div class="badges-grid-modal">
+                  <div
+                    v-for="badge in selectedPlayer.badges.filter(b => b.level === 'bronze')"
+                    :key="badge.id"
+                    class="badge-card-modal bronze"
+                  >
+                    <span class="badge-icon">B</span>
+                    <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="empty-state">
+              <p>No badges earned yet.</p>
+              <p class="text-sm text-secondary">Badges are earned through gameplay performance.</p>
+            </div>
+          </div>
+
           <!-- News Tab -->
           <div v-if="playerModalTab === 'news'" class="tab-panel">
             <div v-if="playerNews.length > 0" class="news-list">
@@ -817,565 +1260,744 @@ const playerNews = computed(() => {
             </div>
           </div>
         </div>
-
-        <!-- Contract Footer -->
-        <div v-if="selectedPlayer.contract" class="contract-footer">
-          <div class="contract-item">
-            <span class="contract-label">Salary</span>
-            <span class="contract-value text-success">{{ formatSalary(selectedPlayer.contract.salary) }}/yr</span>
-          </div>
-          <div class="contract-item">
-            <span class="contract-label">Years Remaining</span>
-            <span class="contract-value">{{ selectedPlayer.contract.years_remaining }}</span>
-          </div>
-        </div>
-      </div>
-    </BaseModal>
-
-    <!-- Lineup Editor Modal -->
-    <BaseModal
-      :show="showLineupEditor"
-      @close="closeLineupEditor"
-      title="Edit Starting Lineup"
-      size="lg"
-    >
-      <div class="space-y-6">
-        <p class="text-secondary">
-          Select a player for each position. Players can only be assigned to positions matching their primary or secondary position.
-          <span class="injured-note">Injured players are not available for selection.</span>
-        </p>
-
-        <!-- Position-based Selection -->
-        <div class="lineup-position-grid">
-          <div
-            v-for="position in POSITIONS"
-            :key="position"
-            class="lineup-position-row"
-          >
-            <label class="position-label">{{ position }}</label>
-            <select
-              v-model="editingLineup[position]"
-              class="position-select"
-            >
-              <option :value="null">Select {{ position }}...</option>
-              <option
-                v-for="player in eligiblePlayersForPosition[position]"
-                :key="player.id"
-                :value="player.id"
-              >
-                {{ player.name }} ({{ player.overall_rating }})
-                <template v-if="player.position !== position"> - {{ player.position }}</template>
-              </option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="flex gap-3 justify-end">
-          <BaseButton variant="secondary" @click="closeLineupEditor">
-            Cancel
-          </BaseButton>
-          <BaseButton
-            variant="primary"
-            :loading="savingLineup"
-            :disabled="filledPositions !== 5"
-            @click="saveLineup"
-          >
-            Save Lineup
-          </BaseButton>
-        </div>
       </div>
     </BaseModal>
   </div>
 </template>
 
 <style scoped>
-.tab-btn {
+.roster-view {
   padding: 8px 16px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--color-secondary);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
+  padding-bottom: 100px;
+  max-width: 1024px;
+  margin: 0 auto;
 }
 
-.tab-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.tab-btn.active {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: white;
-}
-
-.starter-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 20px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.starter-card:hover {
-  background: rgba(255, 255, 255, 0.1);
-  transform: translateY(-2px);
-}
-
-.starter-position {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-
-.starter-name {
-  font-weight: 600;
-  text-align: center;
-}
-
-.starter-pos {
-  font-size: 0.875rem;
-  color: var(--color-secondary);
-}
-
-.position-badge-lg {
-  padding: 4px 12px;
-  border-radius: 6px;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: white;
-}
-
-.position-badge {
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: white;
-}
-
-.stat-box {
-  display: flex;
-  flex-direction: column;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-}
-
-.stat-label {
-  font-size: 0.75rem;
-  color: var(--color-secondary);
-  margin-bottom: 4px;
-}
-
-.stat-value {
-  font-size: 1.1rem;
-  font-weight: 600;
-}
-
-.attributes-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.attr-row {
-  display: grid;
-  grid-template-columns: 120px 1fr 40px;
-  align-items: center;
-  gap: 12px;
-}
-
-.attr-name {
-  font-size: 0.875rem;
-  color: var(--color-secondary);
-  text-transform: capitalize;
-}
-
-.attr-bar-container {
-  height: 8px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.attr-bar {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 0.3s ease;
-}
-
-.attr-value {
-  font-weight: 600;
-  text-align: right;
-}
-
-.badges-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.badge-card {
+.loading-container {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid;
-  border-radius: 6px;
+  justify-content: center;
+  min-height: 200px;
+  opacity: 0.6;
 }
 
-.badge-level {
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: white;
+/* Team Header - Matching home page */
+.team-header {
+  margin-bottom: 20px;
 }
 
-.badge-name {
-  font-size: 0.875rem;
-}
-
-/* Lineup Position Grid */
-.lineup-position-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.lineup-position-row {
+.team-header-row {
   display: flex;
   align-items: center;
   gap: 16px;
 }
 
-.position-label {
-  width: 40px;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--color-secondary);
-  text-transform: uppercase;
+.team-logo-badge {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+  border: 4px solid var(--color-bg-tertiary);
+  box-shadow: var(--shadow-md);
 }
 
-.position-select {
+.team-header-text {
   flex: 1;
-  padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  color: white;
-  font-size: 0.9rem;
+  min-width: 0;
+  text-align: left;
+}
+
+.team-city {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin: 0 0 2px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.team-name {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 2.25rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* Tab Navigation */
+.tab-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.tab-btn {
+  padding: 10px 20px;
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-secondary);
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 0.875rem;
 }
 
-.position-select:hover {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.3);
+.tab-btn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
 }
 
-.position-select:focus {
-  outline: none;
-  border-color: var(--color-primary);
+.tab-btn.active {
+  background: var(--gradient-cosmic);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #1a1520;
+  font-weight: 700;
 }
 
-.position-select option {
-  background: #1a1a2e;
-  color: white;
-}
-
-.text-success {
-  color: var(--color-success);
-}
-
-.stat-box-sm {
+/* Roster Sections */
+.roster-content {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  gap: 16px;
 }
 
-.stat-box-sm .stat-label {
-  font-size: 0.65rem;
-  margin-bottom: 2px;
+/* List Header - Cosmic gradient */
+.roster-list-header {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  margin-bottom: 4px;
 }
 
-.stat-box-sm .stat-value {
-  font-size: 1rem;
+.roster-list-header.card-cosmic {
+  background: var(--gradient-cosmic);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  position: relative;
+  overflow: hidden;
 }
 
-.position-badge.secondary {
-  background: rgba(255, 255, 255, 0.2) !important;
-  opacity: 0.8;
+.roster-list-header.card-cosmic::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(1.5px 1.5px at 10% 20%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 50% 60%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 80% 30%, rgba(255,255,255,0.4), transparent);
+  pointer-events: none;
 }
 
-/* Player Modal Styles */
-.player-modal-content {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+.list-header-text {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: #1a1520;
+  margin: 0;
+  letter-spacing: 0.05em;
+  position: relative;
+  z-index: 1;
 }
 
-.player-modal-header {
-  display: flex;
-  flex-direction: column;
+.players-grid {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
-.player-bio {
+@media (min-width: 768px) {
+  .players-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .players-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Player Card - Nebula style */
+.player-card {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.player-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.12) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.08) 0%, transparent 40%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.player-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.player-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: rgba(232, 90, 79, 0.3);
+}
+
+.player-card.injured {
+  opacity: 0.75;
+  border-color: var(--color-error);
+}
+
+.player-card.injured::before {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.05));
+}
+
+.player-card.dropdown-open {
+  transform: none;
+}
+
+.player-card.dropdown-open:hover {
+  transform: none;
+}
+
+/* Empty Slot Styles */
+.player-card.empty-slot {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.15);
+  cursor: default;
+}
+
+.player-card.empty-slot::before {
+  background: none;
+}
+
+.player-card.empty-slot:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.player-card.empty-slot .player-avatar.empty {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+}
+
+.empty-position {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+}
+
+.empty-icon {
+  font-size: 1.25rem;
+  font-weight: 300;
+  color: var(--color-text-tertiary);
+}
+
+.empty-name {
+  color: var(--color-text-tertiary) !important;
+  font-style: italic;
+}
+
+.empty-rating {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+.empty-hint {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+}
+
+.player-card.roster-slot {
+  opacity: 0.6;
+}
+
+/* Move Dropdown Styles */
+.move-dropdown {
+  background: rgba(0, 0, 0, 0.4);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.dropdown-header {
+  padding: 10px 12px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.dropdown-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-align: left;
+}
+
+.dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dropdown-item.injured {
+  opacity: 0.6;
+}
+
+.dropdown-item.empty-option {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  margin: 8px;
+  width: calc(100% - 16px);
+}
+
+.dropdown-item.empty-option:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.dropdown-item.empty-option .dropdown-avatar {
+  border-style: dashed;
+}
+
+.dropdown-item.empty-slot-option {
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px dashed rgba(34, 197, 94, 0.3);
+  border-radius: var(--radius-md);
+  margin: 8px;
+  width: calc(100% - 16px);
+}
+
+.dropdown-item.empty-slot-option:hover {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.dropdown-item.empty-slot-option .dropdown-avatar {
+  border-style: dashed;
+  border-color: rgba(34, 197, 94, 0.5);
+  background: rgba(34, 197, 94, 0.15);
+}
+
+.dropdown-item.empty-slot-option .dropdown-avatar .empty-icon {
+  color: var(--color-success);
+}
+
+.dropdown-avatar {
+  width: 28px;
+  height: 28px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.dropdown-avatar.empty {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.dropdown-name {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropdown-position {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+}
+
+.dropdown-injury {
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 2px 5px;
+  background: var(--color-error);
+  border-radius: 3px;
+  color: white;
+}
+
+.dropdown-hint {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+  margin-left: auto;
+}
+
+.dropdown-empty {
+  padding: 16px 12px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--color-text-tertiary);
+}
+
+.dropdown-move-icon {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.dropdown-item:hover .dropdown-move-icon {
+  color: var(--color-primary);
+}
+
+.dropdown-position-badge {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: white;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* Dropdown slide animation */
+.dropdown-slide-enter-active,
+.dropdown-slide-leave-active {
+  transition: all 0.25s ease;
+  max-height: 300px;
+}
+
+.dropdown-slide-enter-from,
+.dropdown-slide-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+
+/* Player card lineup change animations */
+.player-card.animate-slide-up {
+  animation: slideUp 0.4s ease-out;
+}
+
+.player-card.animate-slide-down {
+  animation: slideDown 0.4s ease-out;
+}
+
+@keyframes slideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  0% {
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.move-btn.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.player-avatar {
+  width: 48px;
+  height: 48px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.avatar-icon {
+  stroke-width: 1.5;
+}
+
+.player-main-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.player-name-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--color-secondary);
-  font-size: 0.875rem;
 }
 
-.player-bio .divider {
-  color: rgba(255, 255, 255, 0.2);
+.player-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-primary);
 }
 
-.badges-section {
-  padding: 16px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* Modal Tabs */
-.modal-tabs {
-  display: flex;
-  gap: 4px;
-  background: rgba(255, 255, 255, 0.05);
-  padding: 4px;
-  border-radius: 10px;
-}
-
-.modal-tab {
-  flex: 1;
-  padding: 10px 16px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--color-secondary);
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.modal-tab:hover {
+.starter-position-tag {
+  padding: 2px 6px;
+  background: var(--color-primary);
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
   color: white;
-  background: rgba(255, 255, 255, 0.05);
+  text-transform: uppercase;
+  flex-shrink: 0;
 }
 
-.modal-tab.active {
+.player-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.position-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: white;
+}
+
+.role-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.role-badge.starter {
   background: var(--color-primary);
   color: white;
 }
 
-.modal-tab-content {
-  min-height: 300px;
+.role-badge.bench {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--color-text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.tab-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-/* Stats Sections */
-.stats-section {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
-  padding: 16px;
-}
-
-.stats-section-title {
+.vitals-row {
   font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 12px;
+  color: var(--color-text-primary);
+  margin-top: 6px;
 }
 
+.rating-container {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.move-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.move-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--color-text-primary);
+  border-color: var(--color-primary);
+}
+
+.card-body {
+  padding: 4px 8px;
+}
+
+.physical-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  margin-bottom: 10px;
+}
+
+.physical-info .divider {
+  color: rgba(255, 255, 255, 0.15);
+}
+
+/* Stats grid */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 4px;
+  margin-bottom: 0;
 }
 
-.stat-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 12px 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+@media (max-width: 400px) {
+  .stats-grid {
+    grid-template-columns: repeat(6, 1fr);
+  }
+  .stats-grid .stat-item {
+    grid-column: span 2;
+  }
+  .stats-grid .stat-item:nth-last-child(-n+2) {
+    grid-column: span 3;
+  }
 }
 
-.stat-cell .stat-label {
-  font-size: 0.65rem;
-  color: var(--color-secondary);
+.stat-item {
+  text-align: center;
+  padding: 4px 2px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--radius-md);
+}
+
+.stat-label {
+  display: block;
+  font-size: 0.6rem;
+  color: var(--color-text-tertiary);
+  margin-bottom: 2px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-bottom: 4px;
 }
 
-.stat-cell .stat-value {
-  font-size: 1.25rem;
+.stat-value {
   font-weight: 700;
-  color: white;
-}
-
-.stat-cell .stat-value.highlight {
+  font-size: 0.9rem;
+  font-family: var(--font-mono);
   color: var(--color-primary);
 }
 
-/* Attribute Sections */
-.attr-section {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
-  padding: 16px;
-}
-
-.attr-section-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 12px;
-}
-
-/* News List */
-.news-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.news-item {
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
-  border-left: 3px solid var(--color-primary);
-}
-
-.news-headline {
-  font-weight: 500;
-  margin-bottom: 4px;
-}
-
-.news-date {
-  font-size: 0.75rem;
-  color: var(--color-secondary);
-}
-
-/* Empty State */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
+.no-stats {
+  padding: 10px;
   text-align: center;
-  color: var(--color-secondary);
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
 }
 
-.empty-state p:first-child {
-  font-size: 1rem;
-  margin-bottom: 8px;
-}
-
-/* Contract Footer */
-.contract-footer {
+/* Badges */
+.badges-row {
   display: flex;
-  gap: 24px;
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
-  margin-top: auto;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.contract-item {
+.badge-item {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 4px;
+  padding: 3px 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
 }
 
-.contract-label {
-  font-size: 0.75rem;
-  color: var(--color-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
 }
 
-.contract-value {
-  font-size: 1.1rem;
-  font-weight: 600;
+.badge-name {
+  color: var(--color-text-tertiary);
 }
 
 /* Injury styles */
-.injured-header {
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.05)) !important;
-  border-radius: 10px;
-  padding: 16px;
-  margin: -8px -8px 0 -8px;
-}
-
-.rating-with-injury {
-  position: relative;
-}
-
-.injury-badge-modal {
-  position: absolute;
-  bottom: -4px;
-  right: -4px;
-  padding: 2px 5px;
-  background: var(--color-error);
-  color: white;
-  font-size: 0.6rem;
-  font-weight: 700;
-  border-radius: 4px;
-  text-transform: uppercase;
-}
-
-.injured-name {
-  color: var(--color-error) !important;
-  text-decoration: line-through;
-  text-decoration-color: rgba(239, 68, 68, 0.5);
-}
-
 .injury-tag {
   padding: 2px 6px;
   background: var(--color-error);
   color: white;
   border-radius: 4px;
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   font-weight: 600;
   text-transform: uppercase;
 }
 
-.injured-note {
-  display: block;
-  margin-top: 4px;
-  color: var(--color-error);
-  font-size: 0.8rem;
+.text-injured {
+  color: var(--color-error) !important;
+  text-decoration: line-through;
+  text-decoration-color: rgba(239, 68, 68, 0.5);
 }
 
-/* Coach Settings Styles */
+/* Coach Content */
+.coach-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .coach-header {
   display: flex;
   align-items: center;
@@ -1386,7 +2008,7 @@ const playerNews = computed(() => {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--color-primary), #8b5cf6);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1404,6 +2026,7 @@ const playerNews = computed(() => {
 .coach-name {
   font-size: 1.25rem;
   font-weight: 600;
+  margin: 0;
 }
 
 .coach-rating {
@@ -1414,7 +2037,7 @@ const playerNews = computed(() => {
 
 .rating-label {
   font-size: 0.875rem;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
 }
 
 /* Career Stats Section */
@@ -1426,7 +2049,7 @@ const playerNews = computed(() => {
 .section-title {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 12px;
@@ -1443,14 +2066,14 @@ const playerNews = computed(() => {
   flex-direction: column;
   align-items: center;
   padding: 16px 12px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.2);
   border-radius: 10px;
   text-align: center;
 }
 
 .career-stat-box.highlight {
-  background: rgba(124, 58, 237, 0.15);
-  border: 1px solid rgba(124, 58, 237, 0.3);
+  background: rgba(232, 90, 79, 0.15);
+  border: 1px solid rgba(232, 90, 79, 0.3);
 }
 
 .career-stat-value {
@@ -1461,7 +2084,7 @@ const playerNews = computed(() => {
 
 .career-stat-label {
   font-size: 0.7rem;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   margin-top: 4px;
 }
@@ -1485,7 +2108,7 @@ const playerNews = computed(() => {
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 20px;
   font-size: 0.75rem;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
 }
 
 .award-badge.gold {
@@ -1514,14 +2137,14 @@ const playerNews = computed(() => {
 .coach-attr-item .attr-label {
   width: 100px;
   font-size: 0.8rem;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   text-transform: capitalize;
 }
 
 .attr-bar-mini {
   flex: 1;
   height: 6px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.3);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -1557,7 +2180,7 @@ const playerNews = computed(() => {
 .scheme-card {
   position: relative;
   padding: 20px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(0, 0, 0, 0.2);
   border: 2px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   cursor: pointer;
@@ -1565,12 +2188,12 @@ const playerNews = computed(() => {
 }
 
 .scheme-card:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.3);
   border-color: rgba(255, 255, 255, 0.2);
 }
 
 .scheme-card.active {
-  background: rgba(124, 58, 237, 0.1);
+  background: rgba(232, 90, 79, 0.1);
   border-color: var(--color-primary);
 }
 
@@ -1602,7 +2225,7 @@ const playerNews = computed(() => {
 
 .scheme-desc {
   font-size: 0.875rem;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   margin-bottom: 16px;
   line-height: 1.4;
 }
@@ -1622,7 +2245,7 @@ const playerNews = computed(() => {
 
 .detail-label {
   font-size: 0.7rem;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
 }
 
@@ -1637,11 +2260,11 @@ const playerNews = computed(() => {
 }
 
 .detail-value.medium {
-  color: var(--color-tertiary);
+  color: var(--color-text-tertiary);
 }
 
 .detail-value.slow {
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
 }
 
 .detail-value.high {
@@ -1666,7 +2289,7 @@ const playerNews = computed(() => {
 
 .trait-label {
   font-size: 0.7rem;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
 }
 
@@ -1703,20 +2326,484 @@ const playerNews = computed(() => {
   border-radius: 12px;
 }
 
+/* Finances Content */
+.finances-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Player Modal Styles */
+.player-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+  margin: -20px;
+  position: relative;
+  overflow: visible;
+}
+
+.player-modal-content::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.12) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.08) 0%, transparent 40%);
+  pointer-events: none;
+  z-index: 0;
+  border-radius: var(--radius-xl);
+}
+
+.player-modal-content > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Remove modal scrollbar */
+:deep(.modal-container) {
+  overflow-y: visible !important;
+  max-height: none !important;
+}
+
+.player-modal-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.player-modal-header.injured-header {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.05));
+  border-radius: 10px;
+  padding: 16px;
+  margin: -8px -8px 0 -8px;
+}
+
+.modal-player-avatar {
+  width: 60px;
+  height: 60px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.rating-with-injury {
+  position: relative;
+}
+
+.injury-badge-modal {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  padding: 2px 5px;
+  background: var(--color-error);
+  color: white;
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.injured-name {
+  color: var(--color-error) !important;
+  text-decoration: line-through;
+  text-decoration-color: rgba(239, 68, 68, 0.5);
+}
+
+.player-bio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+.player-bio .divider {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+/* Badges Section */
+.badges-section {
+  padding: 16px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.badges-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.badge-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid;
+  border-radius: 6px;
+}
+
+.badge-level {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: white;
+}
+
+.badge-card .badge-name {
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+}
+
+/* Modal Tabs */
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.modal-tab {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modal-tab:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.modal-tab.active {
+  background: var(--color-primary);
+  color: white;
+}
+
+.modal-tab-content {
+  min-height: 300px;
+}
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Stats Sections in Modal */
+.stats-section-modal {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.stats-section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+.stats-grid-modal {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.stat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.stat-cell .stat-label {
+  font-size: 0.65rem;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.stat-cell .stat-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.stat-cell .stat-value.highlight {
+  color: var(--color-primary);
+}
+
+/* Attribute Sections */
+.attr-section {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.attr-section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+.attributes-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attr-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 40px;
+  align-items: center;
+  gap: 12px;
+}
+
+.attr-name {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+}
+
+.attr-bar-container {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.attr-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.attr-value {
+  font-weight: 600;
+  text-align: right;
+}
+
+/* News List */
+.news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.news-item {
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+  border-left: 3px solid var(--color-primary);
+}
+
+.news-headline {
+  font-weight: 500;
+  margin: 0 0 4px 0;
+}
+
+.news-date {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* Empty State */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.empty-state p:first-child {
+  font-size: 1rem;
+  margin: 0 0 8px 0;
+}
+
+/* Position badge secondary */
+.position-badge.secondary {
+  background: rgba(255, 255, 255, 0.2) !important;
+  opacity: 0.8;
+}
+
+/* Badges Tab Styles */
+.badges-tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.badge-level-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.badge-level-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 2px solid;
+}
+
+.badge-level-title.hof {
+  color: #9B59B6;
+  border-color: #9B59B6;
+}
+
+.badge-level-title.gold {
+  color: #FFD700;
+  border-color: #FFD700;
+}
+
+.badge-level-title.silver {
+  color: #C0C0C0;
+  border-color: #C0C0C0;
+}
+
+.badge-level-title.bronze {
+  color: #CD7F32;
+  border-color: #CD7F32;
+}
+
+.badges-grid-modal {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.badge-card-modal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--radius-lg);
+  border-left: 3px solid;
+}
+
+.badge-card-modal.hof {
+  border-color: #9B59B6;
+  background: rgba(155, 89, 182, 0.15);
+}
+
+.badge-card-modal.gold {
+  border-color: #FFD700;
+  background: rgba(255, 215, 0, 0.1);
+}
+
+.badge-card-modal.silver {
+  border-color: #C0C0C0;
+  background: rgba(192, 192, 192, 0.1);
+}
+
+.badge-card-modal.bronze {
+  border-color: #CD7F32;
+  background: rgba(205, 127, 50, 0.1);
+}
+
+.badge-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 0.65rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.badge-card-modal.hof .badge-icon {
+  background: #9B59B6;
+  color: white;
+}
+
+.badge-card-modal.gold .badge-icon {
+  background: #FFD700;
+  color: #1a1520;
+}
+
+.badge-card-modal.silver .badge-icon {
+  background: #C0C0C0;
+  color: #1a1520;
+}
+
+.badge-card-modal.bronze .badge-icon {
+  background: #CD7F32;
+  color: white;
+}
+
+.badge-name-modal {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
 /* Responsive adjustments */
+@media (min-width: 1024px) {
+  .roster-view {
+    padding: 24px;
+    padding-bottom: 32px;
+  }
+
+  .team-logo-badge {
+    width: 88px;
+    height: 88px;
+    font-size: 1.5rem;
+  }
+
+  .team-name {
+    font-size: 3rem;
+  }
+
+  .team-city {
+    font-size: 1rem;
+  }
+}
+
 @media (max-width: 640px) {
-  .stats-grid {
+  .stats-grid-modal {
     grid-template-columns: repeat(2, 1fr);
   }
 
   .attr-row {
     grid-template-columns: 100px 1fr 35px;
     gap: 8px;
-  }
-
-  .contract-footer {
-    flex-direction: column;
-    gap: 12px;
   }
 
   .schemes-grid {
@@ -1730,5 +2817,144 @@ const playerNews = computed(() => {
   .career-stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* Light mode overrides */
+[data-theme="light"] .stat-item {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .stat-label {
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .no-stats {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .badge-item {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .modal-tabs {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .modal-tab {
+  background: white;
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .modal-tab:hover {
+  color: var(--color-text-primary);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .modal-tab.active {
+  background: var(--gradient-cosmic);
+  color: black;
+}
+
+[data-theme="light"] .move-btn {
+  background: white;
+  border-color: rgba(0, 0, 0, 0.15);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .move-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .move-btn.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+
+[data-theme="light"] .move-dropdown {
+  background: white;
+  border-top-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .dropdown-header {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .dropdown-item {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .dropdown-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .dropdown-item.empty-option {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .dropdown-item.empty-option:hover {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] .dropdown-avatar {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .dropdown-avatar.empty {
+  background: transparent;
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="light"] .dropdown-position {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .player-card.empty-slot {
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .role-badge.bench {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .stats-section-modal {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .stat-cell {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .badge-card-modal {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .badge-card-modal.hof {
+  background: rgba(155, 89, 182, 0.12);
+}
+
+[data-theme="light"] .badge-card-modal.gold {
+  background: rgba(255, 215, 0, 0.15);
+}
+
+[data-theme="light"] .badge-card-modal.silver {
+  background: rgba(192, 192, 192, 0.2);
+}
+
+[data-theme="light"] .badge-card-modal.bronze {
+  background: rgba(205, 127, 50, 0.12);
+}
+
+[data-theme="light"] .badges-tab-content {
+  color: var(--color-text-primary);
 }
 </style>

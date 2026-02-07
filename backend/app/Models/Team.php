@@ -25,6 +25,7 @@ class Team extends Model
         'logo_url',
         'coaching_scheme',
         'offensive_playbook',
+        'lineup_settings',
     ];
 
     protected $casts = [
@@ -33,6 +34,7 @@ class Team extends Model
         'total_payroll' => 'decimal:2',
         'luxury_tax_bill' => 'decimal:2',
         'offensive_playbook' => 'array',
+        'lineup_settings' => 'array',
     ];
 
     public function campaign(): BelongsTo

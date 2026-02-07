@@ -371,7 +371,7 @@ class PlayerSeeder extends Seeder
                 'salaries' => $salaries,
                 'options' => rand(0, 1) ? ['year' . ($yearsRemaining + 1) => rand(0, 1) ? 'player' : 'team'] : [],
                 'noTradeClause' => $overall >= 88 && rand(0, 1),
-                'signedYear' => 2024 - rand(0, 3),
+                'signedYear' => 2025 - rand(0, 3),
             ],
         ];
     }

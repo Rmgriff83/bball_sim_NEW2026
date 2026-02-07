@@ -4,6 +4,7 @@ import { useVuelidate } from '@vuelidate/core'
 import { required, email, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton, FormInput } from '@/components/ui'
+import { ArrowLeft } from 'lucide-vue-next'
 
 const authStore = useAuthStore()
 const form = ref({ email: '' })
@@ -37,9 +38,7 @@ async function handleSubmit() {
   <div class="min-h-screen flex items-center justify-center p-4">
     <div class="w-full max-w-md">
       <router-link to="/login" class="link flex items-center gap-2 mb-6">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M19 12H5M12 19l-7-7 7-7" />
-        </svg>
+        <ArrowLeft :size="20" />
         Back to Sign In
       </router-link>
 

@@ -40,14 +40,56 @@ class TeamController extends Controller
             return response()->json(['message' => 'No team assigned'], 404);
         }
 
-        $team->load(['players' => function ($query) {
-            $query->orderByRaw("CASE position WHEN 'PG' THEN 1 WHEN 'SG' THEN 2 WHEN 'SF' THEN 3 WHEN 'PF' THEN 4 WHEN 'C' THEN 5 ELSE 6 END")
-                  ->orderBy('overall_rating', 'desc');
-        }, 'coach']);
+        $team->load(['players', 'coach']);
 
         // Load player stats from JSON file
-        $year = $campaign->currentSeason?->year ?? 2024;
+        $year = $campaign->currentSeason?->year ?? 2025;
         $allPlayerStats = $this->seasonService->getAllPlayerStats($campaign->id, $year);
+
+        // Get saved lineup settings
+        $savedLineup = $campaign->settings['lineup']['starters'] ?? null;
+
+        // Format all players
+        $formattedPlayers = $team->players->map(function ($player) use ($allPlayerStats) {
+            $playerStats = $allPlayerStats[$player->id] ?? null;
+            return $this->formatPlayer($player, false, $playerStats);
+        });
+
+        // Reorder roster based on saved lineup
+        if ($savedLineup && count($savedLineup) === 5) {
+            // Convert to integers but preserve nulls for empty slots
+            $starterIds = array_map(fn($id) => $id !== null ? (int)$id : null, $savedLineup);
+            $starters = [];
+            $bench = [];
+
+            foreach ($formattedPlayers as $player) {
+                $starterIndex = array_search($player['id'], $starterIds, true);
+                if ($starterIndex !== false) {
+                    $starters[$starterIndex] = $player;
+                } else {
+                    $bench[] = $player;
+                }
+            }
+
+            // Fill empty starter slots with null placeholders
+            for ($i = 0; $i < 5; $i++) {
+                if (!isset($starters[$i]) && $starterIds[$i] === null) {
+                    $starters[$i] = null;
+                }
+            }
+
+            // Sort starters by position index, bench by overall rating
+            ksort($starters);
+            usort($bench, fn($a, $b) => $b['overall_rating'] - $a['overall_rating']);
+
+            $orderedRoster = array_merge(array_values($starters), $bench);
+        } else {
+            // Default: sort by position then rating
+            $orderedRoster = $formattedPlayers->sortBy([
+                fn($a, $b) => $this->getPositionOrder($a['position']) <=> $this->getPositionOrder($b['position']),
+                fn($a, $b) => $b['overall_rating'] <=> $a['overall_rating'],
+            ])->values()->all();
+        }
 
         return response()->json([
             'team' => [
@@ -65,10 +107,7 @@ class TeamController extends Controller
                 'facilities' => $team->facilities,
                 'coaching_scheme' => $team->coaching_scheme ?? 'balanced',
             ],
-            'roster' => $team->players->map(function ($player) use ($allPlayerStats) {
-                $playerStats = $allPlayerStats[$player->id] ?? null;
-                return $this->formatPlayer($player, false, $playerStats);
-            }),
+            'roster' => $orderedRoster,
             'coach' => $team->coach ? [
                 'id' => $team->coach->id,
                 'name' => $team->coach->first_name . ' ' . $team->coach->last_name,
@@ -140,7 +179,7 @@ class TeamController extends Controller
 
         $validated = $request->validate([
             'starters' => 'required|array|size:5',
-            'starters.*' => 'required|integer|exists:players,id',
+            'starters.*' => 'nullable|integer|exists:players,id',
             'rotation' => 'sometimes|array',
             'rotation.*' => 'sometimes|integer|exists:players,id',
         ]);
@@ -150,6 +189,9 @@ class TeamController extends Controller
         $teamPlayers = $team->players->keyBy('id');
 
         foreach ($validated['starters'] as $playerId) {
+            // Skip null values (empty starter slots)
+            if ($playerId === null) continue;
+
             if (!$teamPlayers->has($playerId)) {
                 return response()->json(['message' => 'Invalid player selection'], 400);
             }
@@ -160,6 +202,9 @@ class TeamController extends Controller
         $positionErrors = [];
 
         foreach ($validated['starters'] as $index => $playerId) {
+            // Skip null values (empty starter slots)
+            if ($playerId === null) continue;
+
             $player = $teamPlayers->get($playerId);
             $requiredPosition = $positions[$index];
 
@@ -242,7 +287,7 @@ class TeamController extends Controller
         $team->load('coach');
 
         // Load player stats from JSON file
-        $year = $campaign->currentSeason?->year ?? 2024;
+        $year = $campaign->currentSeason?->year ?? 2025;
         $allPlayerStats = $this->seasonService->getAllPlayerStats($campaign->id, $year);
 
         // Get roster from appropriate source (database for user team, JSON for others)
@@ -339,6 +384,21 @@ class TeamController extends Controller
     }
 
     /**
+     * Get position sort order.
+     */
+    private function getPositionOrder(string $position): int
+    {
+        return match ($position) {
+            'PG' => 1,
+            'SG' => 2,
+            'SF' => 3,
+            'PF' => 4,
+            'C' => 5,
+            default => 6,
+        };
+    }
+
+    /**
      * Format height in inches to display format (e.g., 6'10").
      */
     private function formatHeight(int $inches): string
@@ -421,7 +481,7 @@ class TeamController extends Controller
             'contract_details' => [
                 'totalYears' => $validated['years'],
                 'salaries' => array_fill(0, $validated['years'], $validated['salary']),
-                'signedYear' => $campaign->currentSeason?->year ?? 2024,
+                'signedYear' => $campaign->currentSeason?->year ?? 2025,
             ],
         ]);
 

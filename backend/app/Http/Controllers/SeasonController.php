@@ -114,7 +114,7 @@ class SeasonController extends Controller
     private function startNewSeason(Campaign $campaign): JsonResponse
     {
         $oldSeason = $campaign->currentSeason;
-        $newYear = ($oldSeason?->year ?? 2024) + 1;
+        $newYear = ($oldSeason?->year ?? 2025) + 1;
 
         // Create new season
         $newSeason = Season::create([

@@ -127,10 +127,16 @@ class GameSimulationService
 
     /**
      * Simulate a game from array data (for JSON-based storage).
+     *
+     * @param Campaign $campaign
+     * @param array $gameData
+     * @param Team $homeTeam
+     * @param Team $awayTeam
+     * @param array|null $userLineup Optional starting lineup for user's team (array of player IDs)
      */
-    public function simulateFromData(Campaign $campaign, array $gameData, Team $homeTeam, Team $awayTeam): array
+    public function simulateFromData(Campaign $campaign, array $gameData, Team $homeTeam, Team $awayTeam, ?array $userLineup = null): array
     {
-        $this->initializeGameFromData($campaign, $gameData, $homeTeam, $awayTeam);
+        $this->initializeGameFromData($campaign, $gameData, $homeTeam, $awayTeam, $userLineup);
 
         // Track scores at start of each quarter
         $homeScoreAtQuarterStart = 0;
@@ -196,15 +202,21 @@ class GameSimulationService
         $isUserHomeTeam = $homeTeam->id === $campaign->team_id;
         $isUserAwayTeam = $awayTeam->id === $campaign->team_id;
 
-        // Initialize lineups - use saved lineup for user's team if provided
+        // Initialize lineups - use saved lineup for user's team or AI team's saved lineup
         if ($isUserHomeTeam && $userLineup && count($userLineup) >= 5) {
             $this->homeLineup = $this->buildLineupFromIds($userLineup, $this->homePlayers);
+        } elseif (!$isUserHomeTeam && !empty($homeTeam->lineup_settings['starters'])) {
+            // Use AI team's saved lineup
+            $this->homeLineup = $this->buildLineupFromIds($homeTeam->lineup_settings['starters'], $this->homePlayers);
         } else {
             $this->homeLineup = $this->selectLineup($this->homePlayers);
         }
 
         if ($isUserAwayTeam && $userLineup && count($userLineup) >= 5) {
             $this->awayLineup = $this->buildLineupFromIds($userLineup, $this->awayPlayers);
+        } elseif (!$isUserAwayTeam && !empty($awayTeam->lineup_settings['starters'])) {
+            // Use AI team's saved lineup
+            $this->awayLineup = $this->buildLineupFromIds($awayTeam->lineup_settings['starters'], $this->awayPlayers);
         } else {
             $this->awayLineup = $this->selectLineup($this->awayPlayers);
         }
@@ -337,12 +349,17 @@ class GameSimulationService
     private function selectLineup(array $players): array
     {
         $lineup = [];
+        $usedPlayerIds = [];
         $positions = ['PG', 'SG', 'SF', 'PF', 'C'];
 
         foreach ($positions as $pos) {
             foreach ($players as $player) {
-                if (!isset($lineup[$pos]) && ($player['position'] === $pos || $player['secondary_position'] === $pos)) {
+                $playerId = $player['id'] ?? null;
+                // Check position slot is empty AND player isn't already in lineup
+                if (!isset($lineup[$pos]) && !in_array($playerId, $usedPlayerIds) &&
+                    ($player['position'] === $pos || $player['secondary_position'] === $pos)) {
                     $lineup[$pos] = $player;
+                    $usedPlayerIds[] = $playerId;
                     break;
                 }
             }
@@ -352,15 +369,10 @@ class GameSimulationService
         foreach ($positions as $pos) {
             if (!isset($lineup[$pos])) {
                 foreach ($players as $player) {
-                    $alreadyInLineup = false;
-                    foreach ($lineup as $lineupPlayer) {
-                        if ($lineupPlayer['id'] === $player['id']) {
-                            $alreadyInLineup = true;
-                            break;
-                        }
-                    }
-                    if (!$alreadyInLineup) {
+                    $playerId = $player['id'] ?? null;
+                    if (!in_array($playerId, $usedPlayerIds)) {
                         $lineup[$pos] = $player;
+                        $usedPlayerIds[] = $playerId;
                         break;
                     }
                 }
