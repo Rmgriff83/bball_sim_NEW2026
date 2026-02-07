@@ -1,0 +1,189 @@
+/* ═══════════════════════════════════════════════════════════
+   CSS VARIABLES - Design System Tokens
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ═══════════════════════════════════════════════════════════
+     BACKGROUND COLORS - Dark charcoal base
+     ═══════════════════════════════════════════════════════════ */
+  --color-bg-primary: #121214;
+  --color-bg-secondary: #1a1a1f;
+  --color-bg-tertiary: #242429;
+  --color-bg-elevated: #2d2d35;
+
+  /* ═══════════════════════════════════════════════════════════
+     ACCENT COLORS - Vaporwave palette
+     ═══════════════════════════════════════════════════════════ */
+  --color-primary: #7c3aed;
+  --color-primary-light: #a78bfa;
+  --color-primary-dark: #5b21b6;
+
+  --color-secondary: #ec4899;
+  --color-secondary-light: #f472b6;
+  --color-secondary-dark: #be185d;
+
+  --color-tertiary: #06b6d4;
+  --color-tertiary-light: #22d3ee;
+  --color-tertiary-dark: #0891b2;
+
+  /* ═══════════════════════════════════════════════════════════
+     GRADIENT DEFINITIONS - Signature vaporwave gradients
+     ═══════════════════════════════════════════════════════════ */
+  --gradient-primary: linear-gradient(135deg, #7c3aed 0%, #ec4899 100%);
+  --gradient-secondary: linear-gradient(135deg, #ec4899 0%, #06b6d4 100%);
+  --gradient-sunset: linear-gradient(180deg, #7c3aed 0%, #ec4899 50%, #f97316 100%);
+  --gradient-ocean: linear-gradient(135deg, #06b6d4 0%, #7c3aed 100%);
+  --gradient-subtle: linear-gradient(135deg, rgba(124, 58, 237, 0.1) 0%, rgba(236, 72, 153, 0.1) 100%);
+
+  /* ═══════════════════════════════════════════════════════════
+     TEXT COLORS
+     ═══════════════════════════════════════════════════════════ */
+  --color-text-primary: #f4f4f5;
+  --color-text-secondary: #a1a1aa;
+  --color-text-tertiary: #71717a;
+  --color-text-inverse: #121214;
+
+  /* ═══════════════════════════════════════════════════════════
+     SEMANTIC COLORS - Status indicators
+     ═══════════════════════════════════════════════════════════ */
+  --color-success: #10b981;
+  --color-success-light: #34d399;
+  --color-warning: #f59e0b;
+  --color-warning-light: #fbbf24;
+  --color-error: #ef4444;
+  --color-error-light: #f87171;
+  --color-info: #3b82f6;
+  --color-info-light: #60a5fa;
+
+  /* ═══════════════════════════════════════════════════════════
+     GLASSMORPHISM - Frosted glass effects
+     ═══════════════════════════════════════════════════════════ */
+  --glass-bg: rgba(26, 26, 31, 0.7);
+  --glass-bg-light: rgba(36, 36, 41, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-border-focus: rgba(124, 58, 237, 0.5);
+  --glass-blur: 12px;
+  --glass-blur-heavy: 20px;
+
+  /* ═══════════════════════════════════════════════════════════
+     SHADOWS & GLOWS
+     ═══════════════════════════════════════════════════════════ */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.6);
+  --glow-primary: 0 0 20px rgba(124, 58, 237, 0.4);
+  --glow-secondary: 0 0 20px rgba(236, 72, 153, 0.4);
+  --glow-tertiary: 0 0 20px rgba(6, 182, 212, 0.4);
+
+  /* ═══════════════════════════════════════════════════════════
+     SPACING SYSTEM (4px base)
+     ═══════════════════════════════════════════════════════════ */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* ═══════════════════════════════════════════════════════════
+     BORDER RADIUS
+     ═══════════════════════════════════════════════════════════ */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+
+  /* ═══════════════════════════════════════════════════════════
+     CONTAINER WIDTHS
+     ═══════════════════════════════════════════════════════════ */
+  --container-sm: 640px;
+  --container-md: 768px;
+  --container-lg: 1024px;
+  --container-xl: 1280px;
+  --container-2xl: 1536px;
+
+  /* ═══════════════════════════════════════════════════════════
+     BREAKPOINTS
+     ═══════════════════════════════════════════════════════════ */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+
+  /* ═══════════════════════════════════════════════════════════
+     ANIMATIONS
+     ═══════════════════════════════════════════════════════════ */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  --duration-slower: 600ms;
+
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+  /* ═══════════════════════════════════════════════════════════
+     ICON SIZES
+     ═══════════════════════════════════════════════════════════ */
+  --icon-sm: 16px;
+  --icon-md: 20px;
+  --icon-lg: 24px;
+  --icon-xl: 32px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LIGHT MODE - High Contrast Theme
+   ═══════════════════════════════════════════════════════════ */
+[data-theme="light"] {
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f8fafc;
+  --color-bg-tertiary: #f1f5f9;
+  --color-bg-elevated: #ffffff;
+
+  --color-primary: #6d28d9;
+  --color-primary-light: #7c3aed;
+  --color-primary-dark: #5b21b6;
+
+  --color-secondary: #db2777;
+  --color-secondary-light: #ec4899;
+  --color-secondary-dark: #be185d;
+
+  --color-tertiary: #0891b2;
+  --color-tertiary-light: #06b6d4;
+  --color-tertiary-dark: #0e7490;
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #94a3b8;
+  --color-text-inverse: #ffffff;
+
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-bg-light: rgba(248, 250, 252, 0.9);
+  --glass-border: rgba(0, 0, 0, 0.1);
+  --glass-border-focus: rgba(109, 40, 217, 0.5);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.15);
+
+  --gradient-primary: linear-gradient(135deg, #6d28d9 0%, #db2777 100%);
+  --gradient-secondary: linear-gradient(135deg, #db2777 0%, #0891b2 100%);
+  --gradient-subtle: linear-gradient(135deg, rgba(109, 40, 217, 0.05) 0%, rgba(219, 39, 119, 0.05) 100%);
+
+  --glow-primary: 0 0 15px rgba(109, 40, 217, 0.2);
+  --glow-secondary: 0 0 15px rgba(219, 39, 119, 0.2);
+  --glow-tertiary: 0 0 15px rgba(8, 145, 178, 0.2);
+}

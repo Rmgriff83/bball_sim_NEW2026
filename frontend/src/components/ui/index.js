@@ -1,0 +1,9 @@
+// UI Components barrel export
+export { default as GlassCard } from './GlassCard.vue'
+export { default as BaseButton } from './BaseButton.vue'
+export { default as BaseInput } from './BaseInput.vue'
+export { default as FormInput } from './FormInput.vue'
+export { default as StatBadge } from './StatBadge.vue'
+export { default as Badge } from './Badge.vue'
+export { default as BaseModal } from './BaseModal.vue'
+export { default as LoadingSpinner } from './LoadingSpinner.vue'

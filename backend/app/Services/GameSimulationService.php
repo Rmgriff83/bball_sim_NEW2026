@@ -1,0 +1,1715 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Campaign;
+use App\Models\Game;
+use App\Models\Team;
+use App\Models\Player;
+use App\Models\BadgeDefinition;
+use App\Models\BadgeSynergy;
+use App\Services\PlayerEvolution\PlayerEvolutionService;
+
+class GameSimulationService
+{
+    private const QUARTERS = 4;
+    private const QUARTER_LENGTH_MINUTES = 12;
+    private const POSSESSIONS_PER_MINUTE = 2.2; // ~100 possessions per game
+    private const SHOT_CLOCK_SECONDS = 24;
+
+    private array $badgeDefinitions = [];
+    private array $badgeSynergies = [];
+    private CampaignPlayerService $playerService;
+    private PlayerEvolutionService $evolutionService;
+    private PlayService $playService;
+    private PlayExecutionEngine $playEngine;
+    private CoachingService $coachingService;
+    private GameNewsService $gameNewsService;
+
+    // Game state
+    private array $homeBoxScore = [];
+    private array $awayBoxScore = [];
+    private array $playByPlay = [];
+    private array $animationData = [];
+    private int $homeScore = 0;
+    private int $awayScore = 0;
+    private int $currentQuarter = 1;
+    private float $timeRemaining = 12.0;
+    private array $quarterScores = ['home' => [], 'away' => []];
+    private int $possessionCount = 0;
+    private array $quarterEndPossessions = [];
+
+    // Team data
+    private Team $homeTeam;
+    private Team $awayTeam;
+    private array $homePlayers = [];
+    private array $awayPlayers = [];
+    private array $homeLineup = [];
+    private array $awayLineup = [];
+    private string $homeCoachingScheme = 'balanced';
+    private string $awayCoachingScheme = 'balanced';
+
+    // Clutch play tracking for game-winner news
+    private ?array $lastClutchPlay = null;
+    private ?Campaign $currentCampaign = null;
+
+    public function __construct(
+        CampaignPlayerService $playerService,
+        PlayerEvolutionService $evolutionService,
+        PlayService $playService,
+        PlayExecutionEngine $playEngine,
+        CoachingService $coachingService,
+        GameNewsService $gameNewsService
+    ) {
+        $this->playerService = $playerService;
+        $this->evolutionService = $evolutionService;
+        $this->playService = $playService;
+        $this->playEngine = $playEngine;
+        $this->coachingService = $coachingService;
+        $this->gameNewsService = $gameNewsService;
+        $this->loadBadgeData();
+    }
+
+    /**
+     * Load badge definitions and synergies.
+     */
+    private function loadBadgeData(): void
+    {
+        $this->badgeDefinitions = BadgeDefinition::all()->keyBy('id')->toArray();
+        $this->badgeSynergies = BadgeSynergy::all()->toArray();
+    }
+
+    /**
+     * Simulate a complete game.
+     * @deprecated Use simulateFromData instead for JSON-based storage
+     */
+    public function simulate(Game $game): array
+    {
+        $this->initializeGame($game);
+
+        // Track scores at start of each quarter
+        $homeScoreAtQuarterStart = 0;
+        $awayScoreAtQuarterStart = 0;
+
+        // Simulate each quarter
+        for ($quarter = 1; $quarter <= self::QUARTERS; $quarter++) {
+            $this->currentQuarter = $quarter;
+            $this->simulateQuarter();
+
+            // Track which possession ends this quarter
+            $this->quarterEndPossessions[] = $this->possessionCount;
+
+            // Record quarter scores (points scored in this quarter)
+            $this->quarterScores['home'][] = $this->homeScore - $homeScoreAtQuarterStart;
+            $this->quarterScores['away'][] = $this->awayScore - $awayScoreAtQuarterStart;
+            $homeScoreAtQuarterStart = $this->homeScore;
+            $awayScoreAtQuarterStart = $this->awayScore;
+        }
+
+        // Check for overtime
+        while ($this->homeScore === $this->awayScore) {
+            $this->currentQuarter++;
+            $this->timeRemaining = 5.0; // 5-minute OT
+            $this->simulateQuarter();
+
+            // Track OT quarter end
+            $this->quarterEndPossessions[] = $this->possessionCount;
+
+            // Record OT scores
+            $this->quarterScores['home'][] = $this->homeScore - $homeScoreAtQuarterStart;
+            $this->quarterScores['away'][] = $this->awayScore - $awayScoreAtQuarterStart;
+            $homeScoreAtQuarterStart = $this->homeScore;
+            $awayScoreAtQuarterStart = $this->awayScore;
+        }
+
+        return $this->finalizeGame($game);
+    }
+
+    /**
+     * Simulate a game from array data (for JSON-based storage).
+     */
+    public function simulateFromData(Campaign $campaign, array $gameData, Team $homeTeam, Team $awayTeam): array
+    {
+        $this->initializeGameFromData($campaign, $gameData, $homeTeam, $awayTeam);
+
+        // Track scores at start of each quarter
+        $homeScoreAtQuarterStart = 0;
+        $awayScoreAtQuarterStart = 0;
+
+        // Simulate each quarter
+        for ($quarter = 1; $quarter <= self::QUARTERS; $quarter++) {
+            $this->currentQuarter = $quarter;
+            $this->simulateQuarter();
+
+            // Track which possession ends this quarter
+            $this->quarterEndPossessions[] = $this->possessionCount;
+
+            // Record quarter scores (points scored in this quarter)
+            $this->quarterScores['home'][] = $this->homeScore - $homeScoreAtQuarterStart;
+            $this->quarterScores['away'][] = $this->awayScore - $awayScoreAtQuarterStart;
+            $homeScoreAtQuarterStart = $this->homeScore;
+            $awayScoreAtQuarterStart = $this->awayScore;
+        }
+
+        // Check for overtime
+        while ($this->homeScore === $this->awayScore) {
+            $this->currentQuarter++;
+            $this->timeRemaining = 5.0; // 5-minute OT
+            $this->simulateQuarter();
+
+            // Track OT quarter end
+            $this->quarterEndPossessions[] = $this->possessionCount;
+
+            // Record OT scores
+            $this->quarterScores['home'][] = $this->homeScore - $homeScoreAtQuarterStart;
+            $this->quarterScores['away'][] = $this->awayScore - $awayScoreAtQuarterStart;
+            $homeScoreAtQuarterStart = $this->homeScore;
+            $awayScoreAtQuarterStart = $this->awayScore;
+        }
+
+        return $this->finalizeGameFromData($campaign, $gameData);
+    }
+
+    /**
+     * Initialize game state from array data.
+     */
+    private function initializeGameFromData(Campaign $campaign, array $gameData, Team $homeTeam, Team $awayTeam, ?array $userLineup = null): void
+    {
+        $this->homeTeam = $homeTeam;
+        $this->awayTeam = $awayTeam;
+        $this->currentCampaign = $campaign;
+        $this->lastClutchPlay = null;
+
+        // Load players using hybrid storage
+        $homeRoster = $this->playerService->getTeamRoster($campaign->id, $homeTeam->abbreviation, $campaign->team_id);
+        $awayRoster = $this->playerService->getTeamRoster($campaign->id, $awayTeam->abbreviation, $campaign->team_id);
+
+        // Sort by overall rating
+        usort($homeRoster, fn($a, $b) => ($b['overallRating'] ?? 0) - ($a['overallRating'] ?? 0));
+        usort($awayRoster, fn($a, $b) => ($b['overallRating'] ?? 0) - ($a['overallRating'] ?? 0));
+
+        // Normalize player data format for simulation
+        $this->homePlayers = array_map([$this, 'normalizePlayerForSimulation'], $homeRoster);
+        $this->awayPlayers = array_map([$this, 'normalizePlayerForSimulation'], $awayRoster);
+
+        // Determine if user's team is home or away
+        $isUserHomeTeam = $homeTeam->id === $campaign->team_id;
+        $isUserAwayTeam = $awayTeam->id === $campaign->team_id;
+
+        // Initialize lineups - use saved lineup for user's team if provided
+        if ($isUserHomeTeam && $userLineup && count($userLineup) >= 5) {
+            $this->homeLineup = $this->buildLineupFromIds($userLineup, $this->homePlayers);
+        } else {
+            $this->homeLineup = $this->selectLineup($this->homePlayers);
+        }
+
+        if ($isUserAwayTeam && $userLineup && count($userLineup) >= 5) {
+            $this->awayLineup = $this->buildLineupFromIds($userLineup, $this->awayPlayers);
+        } else {
+            $this->awayLineup = $this->selectLineup($this->awayPlayers);
+        }
+
+        // Reset and initialize box scores (important: clear previous game's data!)
+        $this->homeBoxScore = [];
+        $this->awayBoxScore = [];
+        foreach ($this->homePlayers as $player) {
+            $this->homeBoxScore[$player['id']] = $this->emptyStatLine($player);
+        }
+        foreach ($this->awayPlayers as $player) {
+            $this->awayBoxScore[$player['id']] = $this->emptyStatLine($player);
+        }
+
+        $this->homeScore = 0;
+        $this->awayScore = 0;
+        $this->playByPlay = [];
+        $this->animationData = [];
+        $this->quarterScores = ['home' => [], 'away' => []];
+        $this->possessionCount = 0;
+        $this->quarterEndPossessions = [];
+
+        // Get coaching schemes from teams (default to balanced)
+        $this->homeCoachingScheme = $homeTeam->coaching_scheme ?? 'balanced';
+        $this->awayCoachingScheme = $awayTeam->coaching_scheme ?? 'balanced';
+    }
+
+    /**
+     * Finalize game from array data and return results (without updating DB).
+     */
+    private function finalizeGameFromData(Campaign $campaign, array $gameData): array
+    {
+        // Convert box score keys to snake_case for frontend
+        $homeBoxScoreFormatted = array_map(fn($stats) => $this->formatBoxScoreStats($stats), array_values($this->homeBoxScore));
+        $awayBoxScoreFormatted = array_map(fn($stats) => $this->formatBoxScoreStats($stats), array_values($this->awayBoxScore));
+
+        // Note: We don't update the game record here - that's done by the controller
+        // Process player evolution (fatigue, injuries, micro-development, morale)
+        // Create a minimal game-like object for evolution processing
+        $this->evolutionService->processPostGameFromData(
+            $campaign,
+            $gameData,
+            $this->homeScore,
+            $this->awayScore,
+            [
+                'home' => $this->homeBoxScore,
+                'away' => $this->awayBoxScore,
+            ]
+        );
+
+        // Generate news for game-winner (close game decided by clutch shot)
+        $this->generateGameNews($campaign);
+
+        return [
+            'game_id' => $gameData['id'],
+            'home_team' => $this->homeTeam->name,
+            'away_team' => $this->awayTeam->name,
+            'home_score' => $this->homeScore,
+            'away_score' => $this->awayScore,
+            'winner' => $this->homeScore > $this->awayScore ? 'home' : 'away',
+            'box_score' => [
+                'home' => $homeBoxScoreFormatted,
+                'away' => $awayBoxScoreFormatted,
+            ],
+            'quarter_scores' => $this->quarterScores,
+            'play_by_play' => $this->playByPlay,
+            'animation_data' => [
+                'possessions' => $this->animationData,
+                'total_possessions' => $this->possessionCount,
+                'quarter_end_indices' => $this->quarterEndPossessions,
+            ],
+        ];
+    }
+
+    /**
+     * Initialize game state.
+     */
+    private function initializeGame(Game $game): void
+    {
+        $this->homeTeam = $game->homeTeam;
+        $this->awayTeam = $game->awayTeam;
+        $this->currentCampaign = $game->campaign;
+        $this->lastClutchPlay = null;
+
+        // Load players using hybrid storage (DB for user's team, JSON for others)
+        $campaignId = $game->campaign_id;
+        $userTeamId = $game->campaign->team_id ?? null;
+
+        $homeRoster = $this->playerService->getTeamRoster($campaignId, $this->homeTeam->abbreviation, $userTeamId);
+        $awayRoster = $this->playerService->getTeamRoster($campaignId, $this->awayTeam->abbreviation, $userTeamId);
+
+        // Sort by overall rating
+        usort($homeRoster, fn($a, $b) => ($b['overallRating'] ?? 0) - ($a['overallRating'] ?? 0));
+        usort($awayRoster, fn($a, $b) => ($b['overallRating'] ?? 0) - ($a['overallRating'] ?? 0));
+
+        // Normalize player data format for simulation
+        $this->homePlayers = array_map([$this, 'normalizePlayerForSimulation'], $homeRoster);
+        $this->awayPlayers = array_map([$this, 'normalizePlayerForSimulation'], $awayRoster);
+
+        // Initialize lineups (top 5 players by position)
+        $this->homeLineup = $this->selectLineup($this->homePlayers);
+        $this->awayLineup = $this->selectLineup($this->awayPlayers);
+
+        // Reset and initialize box scores (important: clear previous game's data!)
+        $this->homeBoxScore = [];
+        $this->awayBoxScore = [];
+        foreach ($this->homePlayers as $player) {
+            $this->homeBoxScore[$player['id']] = $this->emptyStatLine($player);
+        }
+        foreach ($this->awayPlayers as $player) {
+            $this->awayBoxScore[$player['id']] = $this->emptyStatLine($player);
+        }
+
+        $this->homeScore = 0;
+        $this->awayScore = 0;
+        $this->playByPlay = [];
+        $this->animationData = [];
+        $this->quarterScores = ['home' => [], 'away' => []];
+        $this->possessionCount = 0;
+        $this->quarterEndPossessions = [];
+
+        // Get coaching schemes from teams (default to balanced)
+        $this->homeCoachingScheme = $this->homeTeam->coaching_scheme ?? 'balanced';
+        $this->awayCoachingScheme = $this->awayTeam->coaching_scheme ?? 'balanced';
+    }
+
+    /**
+     * Select starting lineup by position.
+     */
+    private function selectLineup(array $players): array
+    {
+        $lineup = [];
+        $positions = ['PG', 'SG', 'SF', 'PF', 'C'];
+
+        foreach ($positions as $pos) {
+            foreach ($players as $player) {
+                if (!isset($lineup[$pos]) && ($player['position'] === $pos || $player['secondary_position'] === $pos)) {
+                    $lineup[$pos] = $player;
+                    break;
+                }
+            }
+        }
+
+        // If we didn't fill all positions, fill with best available
+        foreach ($positions as $pos) {
+            if (!isset($lineup[$pos])) {
+                foreach ($players as $player) {
+                    $alreadyInLineup = false;
+                    foreach ($lineup as $lineupPlayer) {
+                        if ($lineupPlayer['id'] === $player['id']) {
+                            $alreadyInLineup = true;
+                            break;
+                        }
+                    }
+                    if (!$alreadyInLineup) {
+                        $lineup[$pos] = $player;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return array_values($lineup);
+    }
+
+    /**
+     * Build a lineup from an array of player IDs.
+     * Falls back to selectLineup() if the lineup can't be fully built.
+     */
+    private function buildLineupFromIds(array $playerIds, array $allPlayers): array
+    {
+        $positions = ['PG', 'SG', 'SF', 'PF', 'C'];
+        $lineup = [];
+
+        // Build a map of player ID to player data for quick lookup
+        $playerMap = [];
+        foreach ($allPlayers as $player) {
+            $playerMap[$player['id']] = $player;
+        }
+
+        // Build lineup from the provided IDs with position validation
+        foreach ($playerIds as $index => $id) {
+            if (!isset($playerMap[$id])) {
+                // Player not found - fall back to auto-selection
+                return $this->selectLineup($allPlayers);
+            }
+
+            $player = $playerMap[$id];
+            $requiredPosition = $positions[$index] ?? null;
+
+            // Validate position if we have one
+            if ($requiredPosition) {
+                $primaryPos = $player['position'] ?? null;
+                $secondaryPos = $player['secondary_position'] ?? null;
+
+                if ($primaryPos !== $requiredPosition && $secondaryPos !== $requiredPosition) {
+                    // Position mismatch - fall back to auto-selection
+                    \Log::warning("Lineup validation failed: {$player['first_name']} cannot play {$requiredPosition}");
+                    return $this->selectLineup($allPlayers);
+                }
+            }
+
+            $lineup[] = $player;
+        }
+
+        // If we couldn't build a full 5-player lineup, fall back to auto-selection
+        if (count($lineup) < 5) {
+            return $this->selectLineup($allPlayers);
+        }
+
+        return $lineup;
+    }
+
+    /**
+     * Create empty stat line for a player.
+     */
+    private function emptyStatLine(array $player): array
+    {
+        return [
+            'playerId' => $player['id'],
+            'name' => $player['first_name'] . ' ' . $player['last_name'],
+            'position' => $player['position'],
+            'secondary_position' => $player['secondary_position'] ?? null,
+            'minutes' => 0,
+            'points' => 0,
+            'rebounds' => 0,
+            'offensiveRebounds' => 0,
+            'defensiveRebounds' => 0,
+            'assists' => 0,
+            'steals' => 0,
+            'blocks' => 0,
+            'turnovers' => 0,
+            'fouls' => 0,
+            'fieldGoalsMade' => 0,
+            'fieldGoalsAttempted' => 0,
+            'threePointersMade' => 0,
+            'threePointersAttempted' => 0,
+            'freeThrowsMade' => 0,
+            'freeThrowsAttempted' => 0,
+            'plusMinus' => 0,
+        ];
+    }
+
+    /**
+     * Simulate a single quarter.
+     */
+    private function simulateQuarter(): void
+    {
+        $this->timeRemaining = $this->currentQuarter <= 4 ? self::QUARTER_LENGTH_MINUTES : 5.0;
+        $possessionTeam = rand(0, 1) === 0 ? 'home' : 'away';
+        $minutesSinceLastRotation = 0;
+
+        while ($this->timeRemaining > 0) {
+            // Realistic possession time: 10-24 seconds = 0.17 to 0.4 minutes
+            // This gives ~30-70 possessions per quarter per team combined
+            $possessionTime = rand(10, 24) / 60; // Convert seconds to minutes
+
+            if ($possessionTime > $this->timeRemaining) {
+                $possessionTime = $this->timeRemaining;
+            }
+
+            $this->simulatePossession($possessionTeam, $possessionTime);
+            $this->timeRemaining -= $possessionTime;
+            $minutesSinceLastRotation += $possessionTime;
+
+            // Switch possession
+            $possessionTeam = $possessionTeam === 'home' ? 'away' : 'home';
+
+            // Rotate players every ~4 minutes of game time
+            if ($minutesSinceLastRotation >= 4) {
+                $this->rotatePlayers();
+                $minutesSinceLastRotation = 0;
+            }
+        }
+    }
+
+    /**
+     * Simulate a single possession using play-based system.
+     */
+    private function simulatePossession(string $team, float $duration): void
+    {
+        $isHome = $team === 'home';
+        $offense = $isHome ? $this->homeLineup : $this->awayLineup;
+        $defense = $isHome ? $this->awayLineup : $this->homeLineup;
+        $coachingScheme = $isHome ? $this->homeCoachingScheme : $this->awayCoachingScheme;
+
+        // Update minutes for active players
+        foreach ($offense as $player) {
+            $playerId = $player['id'] ?? null;
+            if ($playerId) {
+                if ($isHome && isset($this->homeBoxScore[$playerId])) {
+                    $this->homeBoxScore[$playerId]['minutes'] += $duration;
+                } elseif (!$isHome && isset($this->awayBoxScore[$playerId])) {
+                    $this->awayBoxScore[$playerId]['minutes'] += $duration;
+                }
+            }
+        }
+        foreach ($defense as $defPlayer) {
+            $defPlayerId = $defPlayer['id'] ?? null;
+            if ($defPlayerId) {
+                if ($isHome && isset($this->awayBoxScore[$defPlayerId])) {
+                    $this->awayBoxScore[$defPlayerId]['minutes'] += $duration;
+                } elseif (!$isHome && isset($this->homeBoxScore[$defPlayerId])) {
+                    $this->homeBoxScore[$defPlayerId]['minutes'] += $duration;
+                }
+            }
+        }
+
+        $this->possessionCount++;
+
+        // Determine if this is a transition opportunity
+        $isTransition = $this->coachingService->getTransitionFrequency($coachingScheme) > (mt_rand() / mt_getrandmax());
+
+        // Select a play based on team, scheme, and game situation
+        $context = [
+            'isTransition' => $isTransition,
+            'shotClock' => self::SHOT_CLOCK_SECONDS,
+            'scoreDifferential' => $isHome ? ($this->homeScore - $this->awayScore) : ($this->awayScore - $this->homeScore),
+            'quarter' => $this->currentQuarter,
+            'timeRemaining' => $this->timeRemaining,
+        ];
+
+        $play = $this->playService->selectPlay($offense, $defense, $coachingScheme, $context);
+
+        // Execute the play
+        $playResult = $this->playEngine->executePlay($play, $offense, $defense);
+
+        // Process play result and update stats
+        $this->processPlayResult($playResult, $offense, $defense, $isHome);
+
+        // Record play-by-play entry
+        $this->recordPlayByPlay($playResult, $team);
+
+        // Store animation data with running scores
+        if (!empty($playResult['keyframes'])) {
+            $this->animationData[] = [
+                'possession_id' => $this->possessionCount,
+                'team' => $team,
+                'quarter' => $this->currentQuarter,
+                'time' => $this->timeRemaining,
+                'play_id' => $playResult['playId'],
+                'play_name' => $playResult['playName'],
+                'duration' => $playResult['duration'],
+                'keyframes' => $playResult['keyframes'],
+                'home_score' => $this->homeScore,
+                'away_score' => $this->awayScore,
+            ];
+        }
+
+    }
+
+    /**
+     * Process play result and update box scores.
+     */
+    private function processPlayResult(array $playResult, array $offense, array $defense, bool $isHome): void
+    {
+        $outcome = $playResult['outcome'];
+        $points = $playResult['points'] ?? 0;
+        $shotAttempt = $playResult['shotAttempt'] ?? null;
+        $freeThrows = $playResult['freeThrows'] ?? null;
+
+        // Store scores before update for clutch play tracking
+        $prevHomeScore = $this->homeScore;
+        $prevAwayScore = $this->awayScore;
+
+        // Update score
+        if ($isHome) {
+            $this->homeScore += $points;
+        } else {
+            $this->awayScore += $points;
+        }
+
+        // Track clutch plays in final 2 minutes (for game-winner news)
+        if ($points > 0 && $this->timeRemaining < 2.0 && $this->currentQuarter >= 4) {
+            // Check if this shot changed the lead or tied/broke tie
+            $wasTied = $prevHomeScore === $prevAwayScore;
+            $nowTied = $this->homeScore === $this->awayScore;
+            $leadChanged = ($prevHomeScore > $prevAwayScore) !== ($this->homeScore > $this->awayScore);
+            $margin = abs($this->homeScore - $this->awayScore);
+
+            if (($wasTied || $leadChanged || !$nowTied) && $margin <= 3) {
+                // Find the shooter from the play result
+                $shooter = null;
+                $shotType = 'shot';
+                if ($shotAttempt) {
+                    $shooterId = $shotAttempt['shooter'] ?? null;
+                    if ($shooterId) {
+                        foreach ($offense as $player) {
+                            if (($player['id'] ?? null) === $shooterId) {
+                                $shooter = $player;
+                                break;
+                            }
+                        }
+                    }
+                    $shotType = match($shotAttempt['shotType'] ?? 'midRange') {
+                        'threePoint' => 'three-pointer',
+                        'layup', 'dunk' => 'layup',
+                        default => 'jumper',
+                    };
+                }
+
+                if ($shooter) {
+                    $this->lastClutchPlay = [
+                        'player' => $shooter,
+                        'shotType' => $shotType,
+                        'isHomeTeam' => $isHome,
+                        'points' => $points,
+                    ];
+                }
+            }
+        }
+
+        // Process shot attempt
+        if ($shotAttempt) {
+            $shooterId = $shotAttempt['shooter'];
+            $boxScore = $isHome ? $this->homeBoxScore : $this->awayBoxScore;
+
+            if (isset($boxScore[$shooterId])) {
+                $boxScore[$shooterId]['fieldGoalsAttempted']++;
+                $boxScore[$shooterId]['points'] += $shotAttempt['points'] ?? 0;
+
+                if ($shotAttempt['made']) {
+                    $boxScore[$shooterId]['fieldGoalsMade']++;
+                }
+
+                if ($shotAttempt['shotType'] === 'threePoint') {
+                    $boxScore[$shooterId]['threePointersAttempted']++;
+                    if ($shotAttempt['made']) {
+                        $boxScore[$shooterId]['threePointersMade']++;
+                    }
+                }
+
+                // Assign assist (to a random teammate for now)
+                if ($shotAttempt['made'] && mt_rand(1, 100) <= 65) {
+                    foreach ($offense as $player) {
+                        $playerId = $player['id'] ?? null;
+                        if ($playerId && $playerId !== $shooterId && isset($boxScore[$playerId])) {
+                            $boxScore[$playerId]['assists']++;
+                            break;
+                        }
+                    }
+                }
+
+                // Save back
+                if ($isHome) {
+                    $this->homeBoxScore = $boxScore;
+                } else {
+                    $this->awayBoxScore = $boxScore;
+                }
+            }
+        }
+
+        // Process free throws
+        if ($freeThrows) {
+            $shooterId = $shotAttempt['shooter'] ?? null;
+            $boxScore = $isHome ? $this->homeBoxScore : $this->awayBoxScore;
+
+            if ($shooterId && isset($boxScore[$shooterId])) {
+                $boxScore[$shooterId]['freeThrowsAttempted'] += $freeThrows['attempted'];
+                $boxScore[$shooterId]['freeThrowsMade'] += $freeThrows['made'];
+                $boxScore[$shooterId]['points'] += $freeThrows['made'];
+
+                if ($isHome) {
+                    $this->homeScore += $freeThrows['made'];
+                    $this->homeBoxScore = $boxScore;
+                } else {
+                    $this->awayScore += $freeThrows['made'];
+                    $this->awayBoxScore = $boxScore;
+                }
+            }
+        }
+
+        // Handle turnover
+        if ($outcome === 'turnover') {
+            $ballHandlerRoles = ['ballHandler', 'point', 'passer'];
+            $turnoverPlayerId = null;
+
+            foreach ($playResult['roleAssignments'] ?? [] as $role => $playerId) {
+                if (in_array($role, $ballHandlerRoles)) {
+                    $turnoverPlayerId = $playerId;
+                    break;
+                }
+            }
+
+            $boxScore = $isHome ? $this->homeBoxScore : $this->awayBoxScore;
+            if ($turnoverPlayerId && isset($boxScore[$turnoverPlayerId])) {
+                $boxScore[$turnoverPlayerId]['turnovers']++;
+                if ($isHome) {
+                    $this->homeBoxScore = $boxScore;
+                } else {
+                    $this->awayBoxScore = $boxScore;
+                }
+            }
+
+            // Chance of steal
+            if (mt_rand(1, 100) <= 60 && !empty($defense)) {
+                $stealer = $defense[array_rand($defense)];
+                $stealerId = $stealer['id'] ?? null;
+                if ($stealerId) {
+                    if ($isHome && isset($this->awayBoxScore[$stealerId])) {
+                        $this->awayBoxScore[$stealerId]['steals']++;
+                    } elseif (!$isHome && isset($this->homeBoxScore[$stealerId])) {
+                        $this->homeBoxScore[$stealerId]['steals']++;
+                    }
+                }
+            }
+        }
+
+        // Handle rebound on miss
+        if ($outcome === 'missed' || $outcome === 'offensive_rebound') {
+            $this->handleRebound($offense, $defense, $isHome);
+        }
+
+        // Handle block
+        if ($shotAttempt && ($shotAttempt['blocked'] ?? false)) {
+            $blocker = $this->selectBlocker($defense);
+            $blockerId = $blocker['id'] ?? null;
+            if ($blockerId) {
+                if ($isHome && isset($this->awayBoxScore[$blockerId])) {
+                    $this->awayBoxScore[$blockerId]['blocks']++;
+                } elseif (!$isHome && isset($this->homeBoxScore[$blockerId])) {
+                    $this->homeBoxScore[$blockerId]['blocks']++;
+                }
+            }
+        }
+    }
+
+    /**
+     * Record play-by-play entry.
+     */
+    private function recordPlayByPlay(array $playResult, string $team): void
+    {
+        $keyframes = $playResult['keyframes'] ?? [];
+        $lastKeyframe = end($keyframes) ?: [];
+
+        $this->playByPlay[] = [
+            'possession' => $this->possessionCount,
+            'quarter' => $this->currentQuarter,
+            'time' => sprintf('%d:%02d', (int)$this->timeRemaining, (int)(($this->timeRemaining - (int)$this->timeRemaining) * 60)),
+            'team' => $team,
+            'play_name' => $playResult['playName'] ?? 'Play',
+            'play_id' => $playResult['playId'] ?? null,
+            'outcome' => $playResult['outcome'],
+            'points' => $playResult['points'] ?? 0,
+            'description' => $lastKeyframe['description'] ?? '',
+            'home_score' => $this->homeScore,
+            'away_score' => $this->awayScore,
+        ];
+    }
+
+    /**
+     * Select the primary ball handler for this possession.
+     */
+    private function selectBallHandler(array $lineup): array
+    {
+        // Return placeholder if lineup is empty
+        if (empty($lineup)) {
+            return [
+                'id' => 'unknown_ball_handler',
+                'first_name' => 'Unknown',
+                'last_name' => 'Player',
+                'position' => 'PG',
+                'overall_rating' => 70,
+                'attributes' => [],
+            ];
+        }
+
+        // Weight selection towards higher overall players and guards
+        $weights = [];
+        foreach ($lineup as $index => $player) {
+            $weight = $player['overall_rating'] ?? 70;
+            if (in_array($player['position'] ?? 'SG', ['PG', 'SG'])) {
+                $weight *= 1.5;
+            }
+            $weights[$index] = $weight;
+        }
+
+        $total = array_sum($weights);
+        if ($total <= 0) {
+            return $lineup[0];
+        }
+
+        $rand = mt_rand(1, (int)$total);
+        $running = 0;
+
+        foreach ($weights as $index => $weight) {
+            $running += $weight;
+            if ($rand <= $running) {
+                return $lineup[$index];
+            }
+        }
+
+        return $lineup[0];
+    }
+
+    /**
+     * Get the defender matching up against the ball handler.
+     */
+    private function getMatchingDefender(array $ballHandler, array $defense): array
+    {
+        // Return placeholder if defense is empty
+        if (empty($defense)) {
+            return [
+                'id' => 'unknown_defender',
+                'first_name' => 'Unknown',
+                'last_name' => 'Defender',
+                'position' => $ballHandler['position'] ?? 'SF',
+                'overall_rating' => 70,
+                'attributes' => [],
+            ];
+        }
+
+        $handlerPosition = $ballHandler['position'] ?? 'SF';
+        foreach ($defense as $defender) {
+            if (($defender['position'] ?? '') === $handlerPosition) {
+                return $defender;
+            }
+        }
+        return $defense[0];
+    }
+
+    /**
+     * Determine what type of play will be run.
+     */
+    private function determinePlayType(array $player): string
+    {
+        $tendencies = $player['tendencies'] ?? [];
+        $shotSelection = $tendencies['shotSelection'] ?? ['threePoint' => 0.33, 'midRange' => 0.33, 'paint' => 0.34];
+
+        $rand = mt_rand(1, 100) / 100;
+
+        // Small chance of turnover
+        if ($rand < 0.12) {
+            return 'turnover';
+        }
+
+        $rand = mt_rand(1, 100) / 100;
+
+        if ($rand < $shotSelection['threePoint']) {
+            return 'three_pointer';
+        } elseif ($rand < $shotSelection['threePoint'] + $shotSelection['midRange']) {
+            return 'mid_range';
+        } else {
+            return 'paint';
+        }
+    }
+
+    /**
+     * Execute a play and determine the outcome.
+     */
+    private function executePlay(array $shooter, array $defender, string $playType, array $offense, array $defense, bool $isHome): array
+    {
+        if ($isHome) {
+            $boxScore = &$this->homeBoxScore;
+            $defBoxScore = &$this->awayBoxScore;
+        } else {
+            $boxScore = &$this->awayBoxScore;
+            $defBoxScore = &$this->homeBoxScore;
+        }
+
+        if ($playType === 'turnover') {
+            $boxScore[$shooter['id']]['turnovers']++;
+
+            // Chance of steal
+            if (mt_rand(1, 100) <= 60) {
+                $stealer = $defense[array_rand($defense)];
+                $defBoxScore[$stealer['id']]['steals']++;
+            }
+
+            return ['outcome' => 'turnover', 'player' => $shooter];
+        }
+
+        // Calculate shot success probability
+        $shootingAttr = $shooter['attributes']['offense'] ?? [];
+        $defenseAttr = $defender['attributes']['defense'] ?? [];
+        $physicalAttr = $shooter['attributes']['physical'] ?? [];
+
+        $basePercentage = $this->getBasePercentage($playType, $shootingAttr);
+        $contestLevel = $this->calculateContestLevel($shooter, $defender, $playType);
+        $badgeBoost = $this->calculateBadgeBoost($shooter, $playType, $offense);
+        $fatigueModifier = $this->calculateFatigueModifier($shooter);
+
+        $finalPercentage = $basePercentage * (1 - $contestLevel * 0.3) * (1 + $badgeBoost) * $fatigueModifier;
+        $finalPercentage = max(0.15, min(0.85, $finalPercentage)); // Clamp between 15% and 85%
+
+        $made = mt_rand(1, 100) <= ($finalPercentage * 100);
+
+        // Determine if there was an assist
+        $assister = null;
+        if ($made && mt_rand(1, 100) <= 60) {
+            foreach ($offense as $player) {
+                if ($player['id'] !== $shooter['id']) {
+                    $assister = $player;
+                    break;
+                }
+            }
+        }
+
+        // Update stats
+        $points = 0;
+        if ($playType === 'three_pointer') {
+            $boxScore[$shooter['id']]['threePointersAttempted']++;
+            $boxScore[$shooter['id']]['fieldGoalsAttempted']++;
+            if ($made) {
+                $boxScore[$shooter['id']]['threePointersMade']++;
+                $boxScore[$shooter['id']]['fieldGoalsMade']++;
+                $points = 3;
+            }
+        } elseif ($playType === 'mid_range') {
+            $boxScore[$shooter['id']]['fieldGoalsAttempted']++;
+            if ($made) {
+                $boxScore[$shooter['id']]['fieldGoalsMade']++;
+                $points = 2;
+            }
+        } else { // paint
+            $boxScore[$shooter['id']]['fieldGoalsAttempted']++;
+            if ($made) {
+                $boxScore[$shooter['id']]['fieldGoalsMade']++;
+                $points = 2;
+
+                // Check for and-one
+                if (mt_rand(1, 100) <= 15) {
+                    $boxScore[$shooter['id']]['freeThrowsAttempted']++;
+                    if (mt_rand(1, 100) <= 75) {
+                        $boxScore[$shooter['id']]['freeThrowsMade']++;
+                        $points++;
+                    }
+                }
+            } else {
+                // Chance of foul on miss in the paint
+                if (mt_rand(1, 100) <= 20) {
+                    $fts = 2;
+                    $boxScore[$shooter['id']]['freeThrowsAttempted'] += $fts;
+                    $ftPct = ($shootingAttr['layup'] ?? 70) / 100 * 0.9;
+                    for ($i = 0; $i < $fts; $i++) {
+                        if (mt_rand(1, 100) <= ($ftPct * 100)) {
+                            $boxScore[$shooter['id']]['freeThrowsMade']++;
+                            $points++;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update points
+        $boxScore[$shooter['id']]['points'] += $points;
+        if ($isHome) {
+            $this->homeScore += $points;
+        } else {
+            $this->awayScore += $points;
+        }
+
+        // Assist
+        if ($assister && $made && $points > 0) {
+            $boxScore[$assister['id']]['assists']++;
+        }
+
+        // Rebound on miss
+        if (!$made && $points === 0) {
+            $this->handleRebound($offense, $defense, $isHome);
+        }
+
+        // Check for block
+        if (!$made && mt_rand(1, 100) <= 8) {
+            $blocker = $this->selectBlocker($defense);
+            $defBoxScore[$blocker['id']]['blocks']++;
+        }
+
+        return [
+            'outcome' => $made ? 'made' : 'missed',
+            'playType' => $playType,
+            'player' => $shooter,
+            'points' => $points,
+            'assister' => $assister,
+        ];
+    }
+
+    /**
+     * Get base shooting percentage for play type.
+     */
+    private function getBasePercentage(string $playType, array $shootingAttr): float
+    {
+        // Base percentages based on NBA averages:
+        // 3PT: ~36% league average, scale from 28% (50 rating) to 44% (99 rating)
+        // Mid-range: ~42% league average, scale from 35% (50 rating) to 52% (99 rating)
+        // Paint: ~62% league average, scale from 52% (50 rating) to 72% (99 rating)
+        return match ($playType) {
+            'three_pointer' => 0.28 + (($shootingAttr['threePoint'] ?? 70) / 100) * 0.16,
+            'mid_range' => 0.35 + (($shootingAttr['midRange'] ?? 70) / 100) * 0.17,
+            'paint' => 0.52 + (($shootingAttr['layup'] ?? 70) / 100) * 0.20,
+            default => 0.42,
+        };
+    }
+
+    /**
+     * Calculate how contested the shot is.
+     */
+    private function calculateContestLevel(array $shooter, array $defender, string $playType): float
+    {
+        $defenseAttr = $defender['attributes']['defense'] ?? [];
+        $shooterPhysical = $shooter['attributes']['physical'] ?? [];
+
+        $defenseRating = match ($playType) {
+            'three_pointer', 'mid_range' => $defenseAttr['perimeterD'] ?? 70,
+            'paint' => $defenseAttr['interiorD'] ?? 70,
+            default => 70,
+        };
+
+        // Speed and quickness help create separation
+        $separation = ($shooterPhysical['speed'] ?? 70) + ($shooterPhysical['acceleration'] ?? 70);
+        $separation = $separation / 200; // Normalize to 0-1
+
+        $contest = ($defenseRating / 100) * (1 - $separation * 0.3);
+
+        return max(0, min(1, $contest));
+    }
+
+    /**
+     * Calculate badge boost for the shot.
+     */
+    private function calculateBadgeBoost(array $shooter, string $playType, array $teammates): float
+    {
+        $badges = $shooter['badges'] ?? [];
+        $boost = 0;
+
+        foreach ($badges as $badge) {
+            $badgeId = $badge['id'];
+            $level = $badge['level'];
+
+            if (!isset($this->badgeDefinitions[$badgeId])) {
+                continue;
+            }
+
+            $effects = $this->badgeDefinitions[$badgeId]['effects'][$level] ?? [];
+
+            // Apply relevant badge effects based on play type
+            if ($playType === 'three_pointer') {
+                $boost += $effects['catchShootBoost'] ?? 0;
+                $boost += $effects['cornerThreeBoost'] ?? 0;
+                $boost += $effects['deepRangeBoost'] ?? 0;
+                $boost += $effects['contestReduction'] ?? 0;
+            } elseif ($playType === 'mid_range') {
+                $boost += $effects['movingShotBoost'] ?? 0;
+                $boost += $effects['contestReduction'] ?? 0;
+            } elseif ($playType === 'paint') {
+                $boost += $effects['contestedLayupBoost'] ?? 0;
+                $boost += $effects['contactFinishBoost'] ?? 0;
+                $boost += $effects['floaterBoost'] ?? 0;
+                $boost += $effects['giantSlayerBoost'] ?? 0;
+            }
+        }
+
+        // Check for badge synergies with teammates
+        $boost += $this->calculateSynergyBoost($shooter, $teammates, $playType);
+
+        return $boost;
+    }
+
+    /**
+     * Calculate synergy boost from teammates' badges.
+     */
+    private function calculateSynergyBoost(array $shooter, array $teammates, string $playType): float
+    {
+        $boost = 0;
+        $shooterBadgeIds = array_column($shooter['badges'] ?? [], 'id');
+
+        foreach ($this->badgeSynergies as $synergy) {
+            // Check if shooter has one of the synergy badges
+            if (!in_array($synergy['badge1_id'], $shooterBadgeIds) && !in_array($synergy['badge2_id'], $shooterBadgeIds)) {
+                continue;
+            }
+
+            $requiredBadge = in_array($synergy['badge1_id'], $shooterBadgeIds)
+                ? $synergy['badge2_id']
+                : $synergy['badge1_id'];
+
+            // Check if any teammate has the other badge
+            foreach ($teammates as $teammate) {
+                if ($teammate['id'] === $shooter['id']) continue;
+
+                $teammateBadgeIds = array_column($teammate['badges'] ?? [], 'id');
+                if (in_array($requiredBadge, $teammateBadgeIds)) {
+                    $effect = $synergy['effect'] ?? [];
+                    $boostValues = $effect['boost'] ?? [];
+
+                    // Apply relevant synergy boosts
+                    $boost += $boostValues['shotPercentage'] ?? 0;
+                    $boost += $boostValues['rollerFinishing'] ?? 0;
+                    break;
+                }
+            }
+        }
+
+        return $boost;
+    }
+
+    /**
+     * Calculate fatigue modifier.
+     */
+    private function calculateFatigueModifier(array $player): float
+    {
+        $stamina = $player['attributes']['physical']['stamina'] ?? 70;
+        $fatigue = $player['fatigue'] ?? 0;
+
+        // Higher stamina reduces fatigue impact
+        $fatigueImpact = ($fatigue / 100) * (1 - $stamina / 200);
+
+        return 1 - $fatigueImpact * 0.15;
+    }
+
+    /**
+     * Handle rebound after a missed shot.
+     */
+    private function handleRebound(array $offense, array $defense, bool $isHome): void
+    {
+        if ($isHome) {
+            $offBoxScore = &$this->homeBoxScore;
+            $defBoxScore = &$this->awayBoxScore;
+        } else {
+            $offBoxScore = &$this->awayBoxScore;
+            $defBoxScore = &$this->homeBoxScore;
+        }
+
+        // 70% defensive rebound, 30% offensive
+        $isOffensiveRebound = mt_rand(1, 100) <= 30;
+
+        $rebounders = $isOffensiveRebound ? $offense : $defense;
+        $boxScore = $isOffensiveRebound ? $offBoxScore : $defBoxScore;
+
+        // Weight towards big men
+        $weights = [];
+        foreach ($rebounders as $index => $player) {
+            $weight = $player['overall_rating'];
+            if (in_array($player['position'], ['C', 'PF'])) {
+                $weight *= 1.8;
+            } elseif ($player['position'] === 'SF') {
+                $weight *= 1.2;
+            }
+            $weights[$index] = $weight;
+        }
+
+        $total = array_sum($weights);
+
+        // Safety check: if total is 0 or negative, fallback to first rebounder
+        if ($total <= 0) {
+            $rebounder = reset($rebounders);
+            if ($rebounder) {
+                $rebounderId = $rebounder['id'] ?? null;
+                if ($rebounderId && isset($boxScore[$rebounderId])) {
+                    $boxScore[$rebounderId]['rebounds']++;
+                    if ($isOffensiveRebound) {
+                        $boxScore[$rebounderId]['offensiveRebounds']++;
+                    } else {
+                        $boxScore[$rebounderId]['defensiveRebounds']++;
+                    }
+                }
+            }
+        } else {
+            $rand = mt_rand(1, (int)$total);
+            $running = 0;
+
+            foreach ($weights as $index => $weight) {
+                $running += $weight;
+                if ($rand <= $running) {
+                    $rebounder = $rebounders[$index];
+                    $rebounderId = $rebounder['id'] ?? null;
+                    if ($rebounderId && isset($boxScore[$rebounderId])) {
+                        $boxScore[$rebounderId]['rebounds']++;
+                        if ($isOffensiveRebound) {
+                            $boxScore[$rebounderId]['offensiveRebounds']++;
+                        } else {
+                            $boxScore[$rebounderId]['defensiveRebounds']++;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        if ($isOffensiveRebound) {
+            $offBoxScore = $boxScore;
+        } else {
+            $defBoxScore = $boxScore;
+        }
+    }
+
+    /**
+     * Select a player likely to get a block.
+     */
+    private function selectBlocker(array $defense): array
+    {
+        // Return placeholder if defense is empty
+        if (empty($defense)) {
+            return [
+                'id' => 'unknown_blocker',
+                'first_name' => 'Unknown',
+                'last_name' => 'Defender',
+                'position' => 'C',
+                'attributes' => [],
+            ];
+        }
+
+        $weights = [];
+        foreach ($defense as $index => $player) {
+            $blockRating = $player['attributes']['defense']['block'] ?? 50;
+            $weights[$index] = $blockRating;
+        }
+
+        $total = array_sum($weights);
+        if ($total <= 0) {
+            return $defense[0];
+        }
+
+        $rand = mt_rand(1, (int)$total);
+        $running = 0;
+
+        foreach ($weights as $index => $weight) {
+            $running += $weight;
+            if ($rand <= $running) {
+                return $defense[$index];
+            }
+        }
+
+        return $defense[0];
+    }
+
+    /**
+     * Rotate players to manage fatigue.
+     */
+    private function rotatePlayers(): void
+    {
+        // Simple rotation - swap starter with first bench player of same position
+        // In a full implementation, this would be more sophisticated
+    }
+
+    /**
+     * Finalize game and return results.
+     */
+    private function finalizeGame(Game $game): array
+    {
+        // Convert box score keys to snake_case for frontend
+        $homeBoxScoreFormatted = array_map(fn($stats) => $this->formatBoxScoreStats($stats), array_values($this->homeBoxScore));
+        $awayBoxScoreFormatted = array_map(fn($stats) => $this->formatBoxScoreStats($stats), array_values($this->awayBoxScore));
+
+        // Update game record
+        $game->update([
+            'home_score' => $this->homeScore,
+            'away_score' => $this->awayScore,
+            'is_complete' => true,
+            'box_score' => [
+                'home' => $homeBoxScoreFormatted,
+                'away' => $awayBoxScoreFormatted,
+                'quarter_scores' => $this->quarterScores,
+            ],
+        ]);
+
+        // Process player evolution (fatigue, injuries, micro-development, morale)
+        $this->evolutionService->processPostGame($game->campaign, $game, [
+            'home' => $this->homeBoxScore,
+            'away' => $this->awayBoxScore,
+        ]);
+
+        // Generate news for game-winner and OT thrillers
+        $this->generateGameNews($game->campaign);
+
+        return [
+            'game_id' => $game->id,
+            'home_team' => $this->homeTeam->name,
+            'away_team' => $this->awayTeam->name,
+            'home_score' => $this->homeScore,
+            'away_score' => $this->awayScore,
+            'winner' => $this->homeScore > $this->awayScore ? 'home' : 'away',
+            'box_score' => [
+                'home' => $homeBoxScoreFormatted,
+                'away' => $awayBoxScoreFormatted,
+            ],
+            'quarter_scores' => $this->quarterScores,
+            'play_by_play' => $this->playByPlay,
+            'animation_data' => [
+                'possessions' => $this->animationData,
+                'total_possessions' => $this->possessionCount,
+                'quarter_end_indices' => $this->quarterEndPossessions,
+            ],
+        ];
+    }
+
+    /**
+     * Format box score stats with snake_case keys for frontend.
+     */
+    private function formatBoxScoreStats(array $stats): array
+    {
+        return [
+            'player_id' => $stats['playerId'],
+            'name' => $stats['name'],
+            'position' => $stats['position'],
+            'secondary_position' => $stats['secondary_position'] ?? null,
+            'minutes' => round($stats['minutes']),
+            'points' => $stats['points'],
+            'rebounds' => $stats['rebounds'] ?? ($stats['offensiveRebounds'] + $stats['defensiveRebounds']),
+            'offensive_rebounds' => $stats['offensiveRebounds'],
+            'defensive_rebounds' => $stats['defensiveRebounds'],
+            'assists' => $stats['assists'],
+            'steals' => $stats['steals'],
+            'blocks' => $stats['blocks'],
+            'turnovers' => $stats['turnovers'],
+            'fouls' => $stats['fouls'],
+            'fgm' => $stats['fieldGoalsMade'],
+            'fga' => $stats['fieldGoalsAttempted'],
+            'fg3m' => $stats['threePointersMade'],
+            'fg3a' => $stats['threePointersAttempted'],
+            'ftm' => $stats['freeThrowsMade'],
+            'fta' => $stats['freeThrowsAttempted'],
+            'plus_minus' => $stats['plusMinus'],
+        ];
+    }
+
+    /**
+     * Normalize player data from either DB (snake_case) or JSON (camelCase) format.
+     * Simulation expects snake_case keys matching Player model structure.
+     */
+    private function normalizePlayerForSimulation(array $player): array
+    {
+        // If already in snake_case format (from DB), ensure 'id' exists
+        if (isset($player['first_name'])) {
+            // Generate fallback ID if missing
+            if (empty($player['id'])) {
+                $player['id'] = strtolower(($player['first_name'] ?? 'unknown') . '-' . ($player['last_name'] ?? 'player') . '-' . uniqid());
+            }
+            return $player;
+        }
+
+        // Generate fallback ID if missing
+        $firstName = $player['firstName'] ?? '';
+        $lastName = $player['lastName'] ?? '';
+        $playerId = $player['id'] ?? null;
+
+        if (empty($playerId)) {
+            $playerId = strtolower(($firstName ?: 'unknown') . '-' . ($lastName ?: 'player') . '-' . uniqid());
+        }
+
+        // Convert from JSON camelCase to snake_case format
+        return [
+            'id' => $playerId,
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'position' => $player['position'] ?? 'SG',
+            'secondary_position' => $player['secondaryPosition'] ?? null,
+            'jersey_number' => $player['jerseyNumber'] ?? 0,
+            'height_inches' => $player['heightInches'] ?? 78,
+            'weight_lbs' => $player['weightLbs'] ?? 200,
+            'overall_rating' => $player['overallRating'] ?? 70,
+            'potential_rating' => $player['potentialRating'] ?? 70,
+            'attributes' => $player['attributes'] ?? [],
+            'badges' => $player['badges'] ?? [],
+            'tendencies' => $player['tendencies'] ?? [],
+            'fatigue' => $player['fatigue'] ?? 0,
+            'is_injured' => $player['isInjured'] ?? false,
+        ];
+    }
+
+    // =====================================================
+    // QUARTER-BY-QUARTER SIMULATION METHODS
+    // =====================================================
+
+    /**
+     * Start a new game and simulate the first quarter only.
+     * Returns Q1 results and serialized state for continuation.
+     *
+     * @param Campaign $campaign
+     * @param array $gameData
+     * @param Team $homeTeam
+     * @param Team $awayTeam
+     * @param array|null $userLineup Optional array of player IDs for the user's starting lineup
+     */
+    public function startGame(Campaign $campaign, array $gameData, Team $homeTeam, Team $awayTeam, ?array $userLineup = null): array
+    {
+        // Initialize the game (loads players, creates lineups, resets state)
+        $this->initializeGameFromData($campaign, $gameData, $homeTeam, $awayTeam, $userLineup);
+
+        // Validate that we have valid lineups
+        if (empty($this->homeLineup) || empty($this->awayLineup)) {
+            throw new \RuntimeException(
+                "Cannot simulate game: missing player lineup. " .
+                "Home lineup count: " . count($this->homeLineup) . ", " .
+                "Away lineup count: " . count($this->awayLineup) . ". " .
+                "Home players: " . count($this->homePlayers) . ", " .
+                "Away players: " . count($this->awayPlayers)
+            );
+        }
+
+        // Track score at start of quarter
+        $homeScoreAtQuarterStart = 0;
+        $awayScoreAtQuarterStart = 0;
+
+        // Simulate only Q1
+        $this->currentQuarter = 1;
+        $this->timeRemaining = self::QUARTER_LENGTH_MINUTES;
+        $this->simulateQuarterOnly();
+
+        // Record Q1 scores
+        $this->quarterScores['home'][] = $this->homeScore - $homeScoreAtQuarterStart;
+        $this->quarterScores['away'][] = $this->awayScore - $awayScoreAtQuarterStart;
+        $this->quarterEndPossessions[] = $this->possessionCount;
+
+        return [
+            'quarterResult' => $this->buildQuarterResult(1),
+            'gameState' => $this->serializeState(),
+        ];
+    }
+
+    /**
+     * Continue a game from saved state, simulate the next quarter.
+     * Accepts optional adjustments for lineup and coaching style changes.
+     */
+    public function continueGame(array $gameState, ?array $adjustments = null): array
+    {
+        // Restore the game state
+        $this->deserializeState($gameState);
+
+        // Apply user adjustments if provided
+        $this->applyAdjustments($adjustments);
+
+        // Determine which quarter to simulate
+        $nextQuarter = count($gameState['completedQuarters']) + 1;
+
+        // Track score at start of quarter
+        $homeScoreAtQuarterStart = $this->homeScore;
+        $awayScoreAtQuarterStart = $this->awayScore;
+
+        // Set up for next quarter
+        $this->currentQuarter = $nextQuarter;
+        $this->timeRemaining = $nextQuarter <= 4 ? self::QUARTER_LENGTH_MINUTES : 5.0; // OT is 5 min
+
+        // Simulate the quarter
+        $this->simulateQuarterOnly();
+
+        // Record quarter scores (points scored THIS quarter only)
+        $this->quarterScores['home'][] = $this->homeScore - $homeScoreAtQuarterStart;
+        $this->quarterScores['away'][] = $this->awayScore - $awayScoreAtQuarterStart;
+        $this->quarterEndPossessions[] = $this->possessionCount;
+
+        // Check if game is complete
+        $isComplete = $this->isGameComplete();
+
+        return [
+            'quarterResult' => $this->buildQuarterResult($nextQuarter),
+            'gameState' => $isComplete ? null : $this->serializeState(),
+            'isComplete' => $isComplete,
+            'finalResult' => $isComplete ? $this->buildFinalResult() : null,
+        ];
+    }
+
+    /**
+     * Simulate a single quarter without resetting timeRemaining.
+     * timeRemaining and currentQuarter must be set before calling.
+     */
+    private function simulateQuarterOnly(): void
+    {
+        $possessionTeam = rand(0, 1) === 0 ? 'home' : 'away';
+        $minutesSinceLastRotation = 0;
+
+        while ($this->timeRemaining > 0) {
+            // Realistic possession time: 10-24 seconds = 0.17 to 0.4 minutes
+            $possessionTime = rand(10, 24) / 60;
+
+            if ($possessionTime > $this->timeRemaining) {
+                $possessionTime = $this->timeRemaining;
+            }
+
+            $this->simulatePossession($possessionTeam, $possessionTime);
+            $this->timeRemaining -= $possessionTime;
+            $minutesSinceLastRotation += $possessionTime;
+
+            // Switch possession
+            $possessionTeam = $possessionTeam === 'home' ? 'away' : 'home';
+
+            // Rotate players every ~4 minutes of game time
+            if ($minutesSinceLastRotation >= 4) {
+                $this->rotatePlayers();
+                $minutesSinceLastRotation = 0;
+            }
+        }
+    }
+
+    /**
+     * Serialize current game state for storage between quarters.
+     */
+    public function serializeState(): array
+    {
+        return [
+            'version' => 1,
+            'status' => 'in_progress',
+            'currentQuarter' => $this->currentQuarter,
+            'completedQuarters' => range(1, $this->currentQuarter),
+            'homeScore' => $this->homeScore,
+            'awayScore' => $this->awayScore,
+            'quarterScores' => $this->quarterScores,
+            'homeBoxScore' => $this->homeBoxScore,
+            'awayBoxScore' => $this->awayBoxScore,
+            'homeLineup' => array_map(fn($p) => $p['id'], $this->homeLineup),
+            'awayLineup' => array_map(fn($p) => $p['id'], $this->awayLineup),
+            'homePlayers' => $this->homePlayers,
+            'awayPlayers' => $this->awayPlayers,
+            'homeCoachingScheme' => $this->homeCoachingScheme,
+            'awayCoachingScheme' => $this->awayCoachingScheme,
+            'possessionCount' => $this->possessionCount,
+            'quarterEndPossessions' => $this->quarterEndPossessions,
+            'homeTeamId' => $this->homeTeam->id,
+            'awayTeamId' => $this->awayTeam->id,
+            'lastUpdatedAt' => now()->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Restore game state from serialized data.
+     */
+    public function deserializeState(array $state): void
+    {
+        $this->homeScore = $state['homeScore'];
+        $this->awayScore = $state['awayScore'];
+        $this->quarterScores = $state['quarterScores'];
+        $this->homeBoxScore = $state['homeBoxScore'];
+        $this->awayBoxScore = $state['awayBoxScore'];
+        $this->homePlayers = $state['homePlayers'];
+        $this->awayPlayers = $state['awayPlayers'];
+        $this->homeCoachingScheme = $state['homeCoachingScheme'];
+        $this->awayCoachingScheme = $state['awayCoachingScheme'];
+        $this->possessionCount = $state['possessionCount'];
+        $this->quarterEndPossessions = $state['quarterEndPossessions'];
+        $this->currentQuarter = $state['currentQuarter'];
+
+        // Rebuild lineups from IDs
+        $this->homeLineup = $this->rebuildLineupFromIds($state['homeLineup'], $this->homePlayers);
+        $this->awayLineup = $this->rebuildLineupFromIds($state['awayLineup'], $this->awayPlayers);
+
+        // Reload team models
+        $this->homeTeam = Team::find($state['homeTeamId']);
+        $this->awayTeam = Team::find($state['awayTeamId']);
+
+        // Reset per-quarter data
+        $this->animationData = [];
+        $this->playByPlay = [];
+    }
+
+    /**
+     * Rebuild lineup array from player IDs.
+     */
+    private function rebuildLineupFromIds(array $playerIds, array $players): array
+    {
+        $playerMap = [];
+        foreach ($players as $player) {
+            $playerMap[$player['id']] = $player;
+        }
+
+        $lineup = [];
+        foreach ($playerIds as $id) {
+            if (isset($playerMap[$id])) {
+                $lineup[] = $playerMap[$id];
+            }
+        }
+
+        return $lineup;
+    }
+
+    /**
+     * Apply user adjustments (lineup, coaching styles) before simulating a quarter.
+     */
+    public function applyAdjustments(?array $adjustments): void
+    {
+        if (!$adjustments) {
+            return;
+        }
+
+        // Update home lineup if provided
+        if (!empty($adjustments['homeLineup'])) {
+            $this->homeLineup = $this->rebuildLineupFromIds(
+                $adjustments['homeLineup'],
+                $this->homePlayers
+            );
+        }
+
+        // Update away lineup if provided
+        if (!empty($adjustments['awayLineup'])) {
+            $this->awayLineup = $this->rebuildLineupFromIds(
+                $adjustments['awayLineup'],
+                $this->awayPlayers
+            );
+        }
+
+        // Update coaching styles if provided
+        if (!empty($adjustments['offensiveStyle'])) {
+            $this->homeCoachingScheme = $adjustments['offensiveStyle'];
+        }
+
+        // Note: defensiveStyle will be used when we implement defensive schemes
+        // For now, we just store it but the simulation uses homeCoachingScheme for offense
+    }
+
+    /**
+     * Check if game is complete (Q4+ and scores are not tied).
+     */
+    public function isGameComplete(): bool
+    {
+        return $this->currentQuarter >= 4 && $this->homeScore !== $this->awayScore;
+    }
+
+    /**
+     * Build result for a single quarter (for quarter-by-quarter simulation).
+     */
+    public function buildQuarterResult(int $quarter): array
+    {
+        $homeBoxScoreFormatted = array_map(
+            fn($stats) => $this->formatBoxScoreStats($stats),
+            array_values($this->homeBoxScore)
+        );
+        $awayBoxScoreFormatted = array_map(
+            fn($stats) => $this->formatBoxScoreStats($stats),
+            array_values($this->awayBoxScore)
+        );
+
+        return [
+            'quarter' => $quarter,
+            'scores' => [
+                'home' => $this->homeScore,
+                'away' => $this->awayScore,
+                'quarterScores' => $this->quarterScores,
+            ],
+            'animation_data' => [
+                'possessions' => $this->animationData,
+                'quarter_start_possession' => $quarter > 1
+                    ? ($this->quarterEndPossessions[$quarter - 2] ?? 0) + 1
+                    : 1,
+                'quarter_end_index' => $this->possessionCount,
+            ],
+            'box_score' => [
+                'home' => $homeBoxScoreFormatted,
+                'away' => $awayBoxScoreFormatted,
+            ],
+            'play_by_play' => $this->playByPlay,
+        ];
+    }
+
+    /**
+     * Build final game result (for when quarter-by-quarter game completes).
+     */
+    public function buildFinalResult(): array
+    {
+        $homeBoxScoreFormatted = array_map(
+            fn($stats) => $this->formatBoxScoreStats($stats),
+            array_values($this->homeBoxScore)
+        );
+        $awayBoxScoreFormatted = array_map(
+            fn($stats) => $this->formatBoxScoreStats($stats),
+            array_values($this->awayBoxScore)
+        );
+
+        return [
+            'home_score' => $this->homeScore,
+            'away_score' => $this->awayScore,
+            'winner' => $this->homeScore > $this->awayScore ? 'home' : 'away',
+            'box_score' => [
+                'home' => $homeBoxScoreFormatted,
+                'away' => $awayBoxScoreFormatted,
+            ],
+            'quarter_scores' => $this->quarterScores,
+        ];
+    }
+
+    /**
+     * Generate news events for notable game outcomes.
+     */
+    private function generateGameNews(Campaign $campaign): void
+    {
+        // Generate game-winner news if last clutch play was the difference
+        if ($this->lastClutchPlay !== null) {
+            $margin = abs($this->homeScore - $this->awayScore);
+            $scorerIsWinner = ($this->lastClutchPlay['isHomeTeam'] && $this->homeScore > $this->awayScore) ||
+                              (!$this->lastClutchPlay['isHomeTeam'] && $this->awayScore > $this->homeScore);
+
+            // Only generate if the clutch scorer's team won by a close margin
+            if ($scorerIsWinner && $margin <= 3) {
+                $this->gameNewsService->createGameWinnerNews(
+                    $campaign,
+                    $this->lastClutchPlay['player'],
+                    ['id' => $this->homeTeam->id, 'name' => $this->homeTeam->name],
+                    ['id' => $this->awayTeam->id, 'name' => $this->awayTeam->name],
+                    $this->homeScore,
+                    $this->awayScore,
+                    $this->lastClutchPlay['isHomeTeam'],
+                    $this->lastClutchPlay['shotType']
+                );
+            }
+        }
+
+        // Generate OT thriller news
+        if ($this->currentQuarter > 4) {
+            $overtimePeriods = $this->currentQuarter - 4;
+            $this->gameNewsService->createOvertimeThrillerNews(
+                $campaign,
+                ['id' => $this->homeTeam->id, 'name' => $this->homeTeam->name],
+                ['id' => $this->awayTeam->id, 'name' => $this->awayTeam->name],
+                $this->homeScore,
+                $this->awayScore,
+                $overtimePeriods
+            );
+        }
+    }
+}

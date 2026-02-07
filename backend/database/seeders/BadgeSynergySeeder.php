@@ -1,0 +1,226 @@
+<?php
+
+namespace Database\Seeders;
+
+use App\Models\BadgeSynergy;
+use Illuminate\Database\Seeder;
+
+class BadgeSynergySeeder extends Seeder
+{
+    public function run(): void
+    {
+        $synergies = [
+            // Pick and Roll Synergies
+            [
+                'badge1_id' => 'pick_and_roll_maestro',
+                'badge2_id' => 'brick_wall',
+                'synergy_name' => 'Pick & Roll Connection',
+                'description' => 'Ball handler and screener work in perfect harmony in pick and roll situations.',
+                'effect' => [
+                    'condition' => 'pick_and_roll',
+                    'boost' => ['screenEffectiveness' => 0.15, 'rollerFinishing' => 0.10],
+                ],
+                'min_level1' => 'silver',
+                'min_level2' => 'silver',
+            ],
+            [
+                'badge1_id' => 'pick_and_roll_maestro',
+                'badge2_id' => 'lob_city_finisher',
+                'synergy_name' => 'Alley-Oop Threat',
+                'description' => 'Point guard reads the defense perfectly to set up lob opportunities for the roller.',
+                'effect' => [
+                    'condition' => 'pick_and_roll',
+                    'boost' => ['alleyOopSuccess' => 0.20],
+                ],
+                'min_level1' => 'gold',
+                'min_level2' => 'gold',
+            ],
+
+            // Shooting Synergies
+            [
+                'badge1_id' => 'dimer',
+                'badge2_id' => 'catch_and_shoot',
+                'synergy_name' => 'Dish & Splash',
+                'description' => 'Perfect passes to set shooters create automatic buckets.',
+                'effect' => [
+                    'condition' => 'catch_and_shoot',
+                    'boost' => ['shotPercentage' => 0.08],
+                ],
+                'min_level1' => 'silver',
+                'min_level2' => 'silver',
+            ],
+            [
+                'badge1_id' => 'floor_general',
+                'badge2_id' => 'corner_specialist',
+                'synergy_name' => 'Corner Offense',
+                'description' => 'Floor general creates perfect spacing for corner shooters.',
+                'effect' => [
+                    'condition' => 'corner_three',
+                    'boost' => ['shotPercentage' => 0.06, 'openLookChance' => 0.10],
+                ],
+                'min_level1' => 'gold',
+                'min_level2' => 'silver',
+            ],
+            [
+                'badge1_id' => 'lob_city_passer',
+                'badge2_id' => 'lob_city_finisher',
+                'synergy_name' => 'Lob City',
+                'description' => 'Elite passer and finisher connect on alley-oops at an incredible rate.',
+                'effect' => [
+                    'condition' => 'alley_oop',
+                    'boost' => ['alleyOopSuccess' => 0.25, 'highlightChance' => 0.15],
+                ],
+                'min_level1' => 'gold',
+                'min_level2' => 'gold',
+            ],
+
+            // Defense Synergies
+            [
+                'badge1_id' => 'defensive_leader',
+                'badge2_id' => 'rim_protector',
+                'synergy_name' => 'Defensive Anchor',
+                'description' => 'Defensive leader and rim protector form an impenetrable paint defense.',
+                'effect' => [
+                    'condition' => 'interior_defense',
+                    'boost' => ['paintDefense' => 0.12, 'helpDefense' => 0.08],
+                ],
+                'min_level1' => 'gold',
+                'min_level2' => 'gold',
+            ],
+            [
+                'badge1_id' => 'clamps',
+                'badge2_id' => 'rim_protector',
+                'synergy_name' => 'Lockdown Defense',
+                'description' => 'Perimeter defender funnels ball handlers into elite rim protector.',
+                'effect' => [
+                    'condition' => 'team_defense',
+                    'boost' => ['forcedBadShots' => 0.10, 'contestedShots' => 0.08],
+                ],
+                'min_level1' => 'silver',
+                'min_level2' => 'silver',
+            ],
+            [
+                'badge1_id' => 'interceptor',
+                'badge2_id' => 'break_starter',
+                'synergy_name' => 'Fast Break Igniter',
+                'description' => 'Steals turn into instant fast break opportunities.',
+                'effect' => [
+                    'condition' => 'transition',
+                    'boost' => ['fastBreakChance' => 0.15, 'transitionPoints' => 0.10],
+                ],
+                'min_level1' => 'silver',
+                'min_level2' => 'silver',
+            ],
+
+            // Rebounding Synergies
+            [
+                'badge1_id' => 'rebound_chaser',
+                'badge2_id' => 'box',
+                'synergy_name' => 'Board Dominance',
+                'description' => 'Elite rebounding duo controls the glass on both ends.',
+                'effect' => [
+                    'condition' => 'rebounding',
+                    'boost' => ['reboundRate' => 0.12, 'secondChancePoints' => 0.08],
+                ],
+                'min_level1' => 'silver',
+                'min_level2' => 'silver',
+            ],
+            [
+                'badge1_id' => 'putback_boss',
+                'badge2_id' => 'worm',
+                'synergy_name' => 'Second Chance Machine',
+                'description' => 'Creates and converts second chance opportunities at an elite rate.',
+                'effect' => [
+                    'condition' => 'offensive_rebound',
+                    'boost' => ['putbackChance' => 0.15, 'secondChancePoints' => 0.12],
+                ],
+                'min_level1' => 'gold',
+                'min_level2' => 'gold',
+            ],
+
+            // Playmaking Synergies
+            [
+                'badge1_id' => 'ankle_breaker',
+                'badge2_id' => 'space_creator',
+                'synergy_name' => 'Iso Master',
+                'description' => 'Devastating combination of moves creates easy scoring opportunities.',
+                'effect' => [
+                    'condition' => 'isolation',
+                    'boost' => ['defenderFreezeChance' => 0.15, 'openShotChance' => 0.10],
+                ],
+                'min_level1' => 'gold',
+                'min_level2' => 'silver',
+            ],
+            [
+                'badge1_id' => 'needle_threader',
+                'badge2_id' => 'slithery_finisher',
+                'synergy_name' => 'Traffic Navigator',
+                'description' => 'Passer finds cutter who expertly avoids contact in the lane.',
+                'effect' => [
+                    'condition' => 'cutting',
+                    'boost' => ['cutSuccessRate' => 0.12, 'layupConversion' => 0.08],
+                ],
+                'min_level1' => 'silver',
+                'min_level2' => 'silver',
+            ],
+
+            // Finishing Synergies
+            [
+                'badge1_id' => 'contact_finisher',
+                'badge2_id' => 'posterizer',
+                'synergy_name' => 'Freight Train',
+                'description' => 'Unstoppable force at the rim who finishes through any contact.',
+                'effect' => [
+                    'condition' => 'at_rim',
+                    'boost' => ['andOneChance' => 0.15, 'dunks' => 0.10],
+                ],
+                'min_level1' => 'gold',
+                'min_level2' => 'gold',
+            ],
+            [
+                'badge1_id' => 'giant_slayer',
+                'badge2_id' => 'floater_specialist',
+                'synergy_name' => 'Small Ball Specialist',
+                'description' => 'Expert at scoring over taller defenders with craft and touch.',
+                'effect' => [
+                    'condition' => 'mismatch',
+                    'boost' => ['floaterSuccess' => 0.12, 'heightPenaltyReduction' => 0.15],
+                ],
+                'min_level1' => 'silver',
+                'min_level2' => 'silver',
+            ],
+
+            // Leadership Synergies
+            [
+                'badge1_id' => 'floor_general',
+                'badge2_id' => 'defensive_leader',
+                'synergy_name' => 'Complete Leader',
+                'description' => 'True two-way leader elevates the entire team on both ends.',
+                'effect' => [
+                    'condition' => 'always',
+                    'boost' => ['teamRating' => 2, 'clutchPerformance' => 0.08],
+                ],
+                'min_level1' => 'gold',
+                'min_level2' => 'gold',
+            ],
+
+            // Screen Synergies
+            [
+                'badge1_id' => 'brick_wall',
+                'badge2_id' => 'pick_dodger',
+                'synergy_name' => 'Screen Game Master',
+                'description' => 'Team excels at using and defending screens.',
+                'effect' => [
+                    'condition' => 'screen_play',
+                    'boost' => ['screenOffense' => 0.10, 'screenDefense' => 0.10],
+                ],
+                'min_level1' => 'silver',
+                'min_level2' => 'silver',
+            ],
+        ];
+
+        foreach ($synergies as $synergy) {
+            BadgeSynergy::create($synergy);
+        }
+    }
+}
