@@ -1,48 +1,60 @@
 /* ═══════════════════════════════════════════════════════════
    COMPONENT STYLES - Buttons, Cards, Inputs, etc.
+   Cosmic Sports Design System
    ═══════════════════════════════════════════════════════════ */
 
 /* ═══════════════════════════════════════════════════════════
-   GLASS CARDS
+   CARDS
    ═══════════════════════════════════════════════════════════ */
 .glass-card {
   background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-md);
   transition: all var(--duration-normal) var(--ease-default);
 }
 
 .glass-card:hover {
-  border-color: var(--glass-border-focus);
-  box-shadow: var(--shadow-xl), var(--glow-primary);
+  box-shadow: var(--shadow-lg);
 }
 
 .glass-card-elevated {
   background: var(--glass-bg-light);
-  backdrop-filter: blur(var(--glass-blur-heavy));
-  -webkit-backdrop-filter: blur(var(--glass-blur-heavy));
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-xl);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-lg);
 }
 
 .glass-card-static {
   background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-sm);
 }
 
-/* Light mode adjustments */
-[data-theme="light"] .glass-card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+/* Cosmic gradient card */
+.card-cosmic {
+  background: var(--gradient-cosmic);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-md);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Stars overlay for cosmic cards */
+.card-cosmic::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(1px 1px at 15% 25%, rgba(255,255,255,0.6), transparent),
+    radial-gradient(1px 1px at 45% 15%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 75% 35%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 25% 75%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 85% 65%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 55% 85%, rgba(255,255,255,0.3), transparent);
+  pointer-events: none;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -53,17 +65,17 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   font-size: var(--text-sm);
-  font-weight: var(--font-bold);
-  letter-spacing: var(--tracking-wider);
-  text-transform: uppercase;
-  padding: var(--space-3) var(--space-6);
+  font-weight: 600;
+  padding: var(--space-3) var(--space-5);
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all var(--duration-normal) var(--ease-default);
   text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .btn:disabled {
@@ -71,56 +83,69 @@
   cursor: not-allowed;
 }
 
-/* Primary Button - Gradient with glow */
+/* Primary Button - Solid coral */
 .btn-primary {
-  background: var(--gradient-primary);
-  color: var(--color-text-primary);
-  box-shadow: var(--shadow-md);
+  background: var(--color-primary);
+  color: white;
 }
 
 .btn-primary:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg), var(--glow-primary);
+  background: var(--color-primary-dark);
 }
 
-.btn-primary:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-/* Secondary Button - Glass style */
+/* Secondary Button - Subtle background */
 .btn-secondary {
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
+  background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
   border: 1px solid var(--glass-border);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  box-shadow: var(--glow-primary);
+  background: var(--color-bg-elevated);
+  border-color: var(--color-text-tertiary);
+}
+
+/* Outline Button - Border only, transparent background */
+.btn-outline {
+  background: transparent;
+  color: var(--color-text-primary);
+  border: 1px solid var(--glass-border);
+}
+
+.btn-outline:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .btn-outline {
+  border-color: var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .btn-outline:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: var(--color-text-tertiary);
 }
 
 /* Ghost Button - Text only */
 .btn-ghost {
   background: transparent;
-  color: var(--color-primary-light);
+  color: var(--color-primary);
   padding: var(--space-2) var(--space-4);
 }
 
 .btn-ghost:hover:not(:disabled) {
-  background: rgba(124, 58, 237, 0.1);
+  background: rgba(232, 90, 79, 0.1);
 }
 
 /* Danger Button */
 .btn-danger {
   background: var(--color-error);
-  color: var(--color-text-primary);
-  box-shadow: var(--shadow-md);
+  color: white;
 }
 
 .btn-danger:hover:not(:disabled) {
   background: var(--color-error-light);
-  transform: translateY(-2px);
 }
 
 /* Button Sizes */
@@ -151,10 +176,9 @@
    ═══════════════════════════════════════════════════════════ */
 .input {
   width: 100%;
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
+  background: var(--color-bg-tertiary);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   color: var(--color-text-primary);
   font-family: var(--font-body);
   font-size: var(--text-base);
@@ -165,7 +189,7 @@
 .input:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: var(--glow-primary);
+  box-shadow: 0 0 0 2px rgba(232, 90, 79, 0.2);
 }
 
 .input::placeholder {
@@ -201,44 +225,33 @@
 .form-label {
   display: block;
   font-size: var(--text-sm);
-  font-weight: var(--font-medium);
+  font-weight: 500;
   color: var(--color-text-secondary);
   margin-bottom: var(--space-2);
 }
 
-/* Light mode inputs */
-[data-theme="light"] .input {
-  border-color: #e2e8f0;
-}
-
-[data-theme="light"] .input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(109, 40, 217, 0.1);
-}
-
 /* ═══════════════════════════════════════════════════════════
-   STAT BADGES
+   STAT BADGES - Coral themed
    ═══════════════════════════════════════════════════════════ */
 .stat-badge {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  font-weight: var(--font-bold);
+  font-weight: 700;
   padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   min-width: 2.5rem;
   text-align: center;
   display: inline-block;
+  background: var(--color-primary);
+  color: white;
 }
 
+/* Tier colors for ratings */
 .stat-elite { background: var(--color-success); color: white; }
-.stat-great { background: var(--color-tertiary); color: white; }
-.stat-good { background: var(--color-primary); color: white; }
+.stat-great { background: var(--color-primary); color: white; }
+.stat-good { background: #F4A259; color: white; }
 .stat-average { background: var(--color-warning); color: var(--color-text-inverse); }
 .stat-below { background: var(--color-error); color: white; }
-
-[data-theme="light"] .stat-badge {
-  color: var(--color-text-inverse);
-}
 
 /* ═══════════════════════════════════════════════════════════
    BADGES (Player Badges)
@@ -251,53 +264,52 @@
   border-radius: var(--radius-full);
   font-family: var(--font-body);
   font-size: var(--text-xs);
-  font-weight: var(--font-semibold);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: var(--tracking-wide);
+  letter-spacing: 0.02em;
 }
 
 .badge-bronze {
-  background: linear-gradient(135deg, #cd7f32 0%, #8b4513 100%);
+  background: #cd7f32;
   color: white;
 }
 
 .badge-silver {
-  background: linear-gradient(135deg, #c0c0c0 0%, #808080 100%);
+  background: #a0a0a0;
   color: white;
 }
 
 .badge-gold {
-  background: linear-gradient(135deg, #ffd700 0%, #daa520 100%);
+  background: #d4af37;
   color: var(--color-text-inverse);
 }
 
 .badge-hof {
-  background: var(--gradient-primary);
-  box-shadow: var(--glow-primary);
+  background: var(--color-primary);
   color: white;
 }
 
 /* Status Badges */
 .badge-success {
-  background: rgba(16, 185, 129, 0.2);
+  background: rgba(34, 197, 94, 0.15);
   color: var(--color-success);
   border: 1px solid var(--color-success);
 }
 
 .badge-warning {
-  background: rgba(245, 158, 11, 0.2);
+  background: rgba(245, 158, 11, 0.15);
   color: var(--color-warning);
   border: 1px solid var(--color-warning);
 }
 
 .badge-error {
-  background: rgba(239, 68, 68, 0.2);
+  background: rgba(239, 68, 68, 0.15);
   color: var(--color-error);
   border: 1px solid var(--color-error);
 }
 
 .badge-info {
-  background: rgba(59, 130, 246, 0.2);
+  background: rgba(59, 130, 246, 0.15);
   color: var(--color-info);
   border: 1px solid var(--color-info);
 }
@@ -355,13 +367,13 @@
    LINKS
    ═══════════════════════════════════════════════════════════ */
 .link {
-  color: var(--color-primary-light);
+  color: var(--color-primary);
   text-decoration: none;
   transition: color var(--duration-fast) var(--ease-default);
 }
 
 .link:hover {
-  color: var(--color-primary);
+  color: var(--color-primary-light);
   text-decoration: underline;
 }
 
@@ -383,5 +395,17 @@
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-primary);
+  background: var(--color-text-tertiary);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SECTION HEADERS
+   ═══════════════════════════════════════════════════════════ */
+.section-header {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-3);
 }

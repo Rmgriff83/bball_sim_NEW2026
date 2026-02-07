@@ -5,7 +5,9 @@ namespace App\Services\PlayerEvolution;
 use App\Models\Campaign;
 use App\Models\Game;
 use App\Models\Player;
+use App\Models\Team;
 use App\Services\CampaignPlayerService;
+use App\Services\AILineupService;
 
 class PlayerEvolutionService
 {
@@ -17,7 +19,8 @@ class PlayerEvolutionService
         private MoraleService $morale,
         private PersonalityEffects $personality,
         private BadgeSynergyService $badgeSynergy,
-        private EvolutionNewsService $news
+        private EvolutionNewsService $news,
+        private AILineupService $aiLineupService
     ) {}
 
     /**
@@ -112,6 +115,15 @@ class PlayerEvolutionService
 
                 // Create injury news
                 $this->news->createInjuryNews($campaign, $player, $injury);
+
+                // Handle AI team lineup adjustment for injured starters
+                $team = Team::where('campaign_id', $campaign->id)
+                    ->where('abbreviation', $teamAbbr)
+                    ->first();
+
+                if ($team && $team->id !== $campaign->team_id) {
+                    $this->aiLineupService->handleInjuredStarter($campaign, $team, $playerId);
+                }
             }
 
             // Update morale

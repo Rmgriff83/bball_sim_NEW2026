@@ -17,13 +17,13 @@ async function handleLogout() {
 <template>
   <div class="min-h-screen">
     <!-- Header -->
-    <header class="glass-card-static border-b border-white/10 sticky top-0 z-40">
+    <header class="app-header">
       <div class="container flex items-center justify-between py-4">
-        <router-link to="/" class="h3 text-gradient">BBALL SIM</router-link>
+        <router-link to="/" class="app-logo">BBALL SIM</router-link>
 
         <nav class="flex items-center gap-4">
-          <router-link to="/campaigns" class="link">Campaigns</router-link>
-          <router-link to="/profile" class="link">Profile</router-link>
+          <router-link to="/campaigns" class="nav-link">Campaigns</router-link>
+          <router-link to="/profile" class="nav-link">Profile</router-link>
           <button @click="handleLogout" class="btn btn-ghost btn-sm">
             Sign Out
           </button>
@@ -67,3 +67,36 @@ async function handleLogout() {
     </main>
   </div>
 </template>
+
+<style scoped>
+/* Header styles */
+.app-header {
+  background: var(--glass-bg);
+  border-bottom: 1px solid var(--glass-border);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  backdrop-filter: blur(12px);
+}
+
+.app-logo {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-style: italic;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.nav-link {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  transition: color var(--duration-fast) var(--ease-default);
+}
+
+.nav-link:hover {
+  color: var(--color-primary);
+}
+</style>

@@ -63,7 +63,7 @@ class CampaignController extends Controller
             $campaign = Campaign::create([
                 'user_id' => $request->user()->id,
                 'name' => $validated['name'],
-                'current_date' => '2024-10-22', // NBA season start
+                'current_date' => '2025-10-21', // NBA season start
                 'game_year' => 1,
                 'difficulty' => $validated['difficulty'],
                 'settings' => [
@@ -90,7 +90,7 @@ class CampaignController extends Controller
             // Create the initial season record (minimal - just for phase management)
             $season = Season::create([
                 'campaign_id' => $campaign->id,
-                'year' => 2024,
+                'year' => 2025,
                 'phase' => 'regular',
             ]);
 
@@ -101,8 +101,8 @@ class CampaignController extends Controller
             ]);
 
             // Initialize season data in JSON file and generate schedule
-            $this->seasonService->initializeSeason($campaign, 2024);
-            $gamesCreated = $this->seasonService->generateSchedule($campaign, 2024);
+            $this->seasonService->initializeSeason($campaign, 2025);
+            $gamesCreated = $this->seasonService->generateSchedule($campaign, 2025);
 
             DB::commit();
 
@@ -153,7 +153,7 @@ class CampaignController extends Controller
         ]);
 
         // Get standings from JSON file
-        $year = $campaign->currentSeason?->year ?? 2024;
+        $year = $campaign->currentSeason?->year ?? 2025;
         $standings = $this->seasonService->getStandings($campaign->id, $year);
 
         // Get upcoming games from JSON file

@@ -16,7 +16,7 @@ const gameStore = useGameStore()
 
 const loading = ref(true)
 const activeTab = ref('standings')
-const activeConference = ref('east')
+const activeConference = ref(null)
 
 // League leaders state
 const leadersFetched = ref(false)
@@ -39,9 +39,27 @@ const leaderColumns = [
   { key: 'ftPct', label: 'FT%', class: 'stat-col' },
 ]
 
-// Sorted league leaders
+// Get team IDs for each conference from standings
+const eastTeamIds = computed(() => {
+  return eastStandings.value.map(s => s.teamId)
+})
+
+const westTeamIds = computed(() => {
+  return westStandings.value.map(s => s.teamId)
+})
+
+// Sorted and filtered league leaders
 const sortedLeaders = computed(() => {
-  const leaders = [...(leagueStore.playerLeaders || [])]
+  let leaders = [...(leagueStore.playerLeaders || [])]
+
+  // Filter by conference (skip if null/all)
+  if (activeConference.value) {
+    const conferenceTeamIds = activeConference.value === 'east' ? eastTeamIds.value : westTeamIds.value
+    if (conferenceTeamIds.length > 0) {
+      leaders = leaders.filter(player => conferenceTeamIds.includes(player.teamId))
+    }
+  }
+
   const col = leadersSortColumn.value
   const dir = leadersSortDirection.value === 'desc' ? -1 : 1
 
@@ -106,9 +124,18 @@ const userTeam = computed(() => campaign.value?.team)
 const eastStandings = computed(() => leagueStore.eastStandings)
 const westStandings = computed(() => leagueStore.westStandings)
 
-const activeStandings = computed(() =>
-  activeConference.value === 'east' ? eastStandings.value : westStandings.value
-)
+const activeStandings = computed(() => {
+  if (activeConference.value === null) {
+    // Combine both conferences and sort by win percentage
+    const all = [...eastStandings.value, ...westStandings.value]
+    return all.sort((a, b) => {
+      const pctA = a.wins / (a.wins + a.losses) || 0
+      const pctB = b.wins / (b.wins + b.losses) || 0
+      return pctB - pctA
+    })
+  }
+  return activeConference.value === 'east' ? eastStandings.value : westStandings.value
+})
 
 // Recent games across the league
 const recentGames = computed(() => {
@@ -264,22 +291,13 @@ function formatSalary(salary) {
 </script>
 
 <template>
-  <div class="p-6">
+  <div class="league-view p-6">
     <!-- Loading -->
-    <div v-if="loading" class="flex justify-center py-12">
-      <LoadingSpinner size="lg" />
+    <div v-if="loading" class="flex justify-center items-center py-12 opacity-60">
+      <LoadingSpinner size="md" />
     </div>
 
     <template v-else>
-      <!-- Header -->
-      <div class="flex items-center justify-between mb-8">
-        <h1 class="h2 text-gradient">League</h1>
-        <div class="text-right">
-          <p class="text-sm text-secondary">Current Date</p>
-          <p class="font-semibold">{{ formatDate(campaign?.current_date) }}</p>
-        </div>
-      </div>
-
       <!-- Tab Navigation -->
       <div class="flex gap-2 mb-6">
         <button
@@ -311,17 +329,24 @@ function formatSalary(salary) {
         <div class="flex gap-2 mb-6">
           <button
             class="conf-btn"
+            :class="{ active: activeConference === null }"
+            @click="activeConference = null"
+          >
+            Both
+          </button>
+          <button
+            class="conf-btn"
             :class="{ active: activeConference === 'east' }"
             @click="activeConference = 'east'"
           >
-            Eastern Conference
+            Eastern
           </button>
           <button
             class="conf-btn"
             :class="{ active: activeConference === 'west' }"
             @click="activeConference = 'west'"
           >
-            Western Conference
+            Western
           </button>
         </div>
 
@@ -348,7 +373,7 @@ function formatSalary(salary) {
                   v-for="(standing, index) in activeStandings"
                   :key="standing.teamId"
                   class="standing-row clickable"
-                  :class="{ 'user-team': isUserTeam(standing.teamId), 'playoff-line': index === 7 }"
+                  :class="{ 'user-team': isUserTeam(standing.teamId), 'playoff-line': activeConference !== null && index === 7 }"
                   @click="openTeamModal(standing)"
                 >
                   <td class="rank-col">{{ index + 1 }}</td>
@@ -481,15 +506,40 @@ function formatSalary(salary) {
 
       <!-- League Leaders View -->
       <template v-else-if="activeTab === 'leaders'">
+        <!-- Conference Toggle -->
+        <div class="flex gap-2 mb-6">
+          <button
+            class="conf-btn"
+            :class="{ active: activeConference === null }"
+            @click="activeConference = null"
+          >
+            Both
+          </button>
+          <button
+            class="conf-btn"
+            :class="{ active: activeConference === 'east' }"
+            @click="activeConference = 'east'"
+          >
+            Eastern
+          </button>
+          <button
+            class="conf-btn"
+            :class="{ active: activeConference === 'west' }"
+            @click="activeConference = 'west'"
+          >
+            Western
+          </button>
+        </div>
+
         <GlassCard padding="none" :hoverable="false">
           <div class="leaders-header">
-            <h3 class="h4">League Leaders</h3>
+            <h3 class="h4">{{ activeConference === null ? 'League' : (activeConference === 'east' ? 'Eastern Conference' : 'Western Conference') }} Leaders</h3>
             <p class="text-secondary text-sm">Click column headers to sort</p>
           </div>
 
           <!-- Loading state -->
-          <div v-if="leagueStore.loadingLeaders" class="loading-state">
-            <LoadingSpinner size="lg" />
+          <div v-if="leagueStore.loadingLeaders" class="loading-state opacity-60">
+            <LoadingSpinner size="md" />
           </div>
 
           <!-- Leaders Table -->
@@ -878,46 +928,67 @@ function formatSalary(salary) {
 </template>
 
 <style scoped>
+.league-view {
+  padding-top: 45px;
+  padding-bottom: 100px;
+}
+
+@media (min-width: 1024px) {
+  .league-view {
+    padding-bottom: 24px;
+  }
+}
+
 .tab-btn {
-  padding: 8px 16px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--color-secondary);
-  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary);
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 0.8rem;
 }
 
 .tab-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-primary);
 }
 
 .tab-btn.active {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: white;
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
 }
 
 .conf-btn {
-  padding: 10px 20px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--color-secondary);
-  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary);
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 0.8rem;
 }
 
 .conf-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-primary);
 }
 
 .conf-btn.active {
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
+  background: var(--gradient-cosmic);
   border-color: transparent;
-  color: white;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
 }
 
 .table-container {
@@ -931,17 +1002,18 @@ function formatSalary(salary) {
 
 .standings-table th,
 .standings-table td {
-  padding: 12px 8px;
+  padding: 8px 6px;
   text-align: center;
 }
 
 .standings-table th {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--color-secondary);
-  font-weight: 500;
-  font-size: 0.75rem;
+  font-weight: 600;
+  font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .rank-col {
@@ -958,20 +1030,28 @@ function formatSalary(salary) {
 }
 
 .standing-row {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  transition: background 0.2s ease;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background 0.15s ease;
+}
+
+.standing-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .standing-row:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.standing-row:nth-child(even):hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .standing-row.user-team {
-  background: rgba(124, 58, 237, 0.1);
+  background: rgba(232, 90, 79, 0.1);
 }
 
 .standing-row.user-team:hover {
-  background: rgba(124, 58, 237, 0.15);
+  background: rgba(232, 90, 79, 0.15);
 }
 
 .standing-row.playoff-line {
@@ -1031,90 +1111,113 @@ function formatSalary(salary) {
 .playoff-bracket {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .playoff-team {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md);
+  transition: all 0.15s ease;
+}
+
+.playoff-team:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .playoff-team.user-team {
-  background: rgba(124, 58, 237, 0.15);
-  border: 1px solid var(--color-primary);
+  background: rgba(232, 90, 79, 0.12);
+  border: 1px solid rgba(232, 90, 79, 0.4);
+}
+
+.playoff-team.user-team:hover {
+  background: rgba(232, 90, 79, 0.18);
 }
 
 .playoff-team .seed {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-primary);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
   border-radius: 50%;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 700;
+  box-shadow: 0 1px 3px rgba(232, 90, 79, 0.3);
 }
 
 .playoff-team .team-abbr {
   flex: 1;
   font-weight: 600;
+  font-size: 0.875rem;
 }
 
 .playoff-team .record {
   color: var(--color-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
 }
 
 .game-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .game-card:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .game-card.user-game {
-  border-color: var(--color-primary);
+  border-color: rgba(232, 90, 79, 0.4);
+  background: rgba(232, 90, 79, 0.08);
+}
+
+.game-card.user-game:hover {
+  background: rgba(232, 90, 79, 0.12);
 }
 
 .game-date {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--color-secondary);
-  min-width: 60px;
+  min-width: 50px;
+  font-weight: 500;
 }
 
 .game-matchup {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .game-team {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .game-team .team-abbr {
   font-weight: 600;
+  font-size: 0.875rem;
 }
 
 .game-team .team-score {
   font-weight: 700;
   font-family: monospace;
+  font-size: 0.9rem;
 }
 
 .game-team.winner .team-score {
@@ -1123,20 +1226,25 @@ function formatSalary(salary) {
 
 .at-symbol {
   color: var(--color-secondary);
-  font-size: 0.875rem;
+  font-size: 0.75rem;
 }
 
 .game-status {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--color-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .game-badge {
-  padding: 2px 8px;
-  background: var(--color-primary);
+  padding: 2px 6px;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
   border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: 600;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .leaders-list {
@@ -1155,7 +1263,7 @@ function formatSalary(salary) {
 }
 
 .leader-row.user-team {
-  background: rgba(124, 58, 237, 0.1);
+  background: rgba(232, 90, 79, 0.1);
 }
 
 /* League Leaders Table */
@@ -1175,18 +1283,19 @@ function formatSalary(salary) {
 
 .leaders-table th,
 .leaders-table td {
-  padding: 12px 8px;
+  padding: 8px 6px;
   text-align: center;
 }
 
 .leaders-table th {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--color-secondary);
-  font-weight: 500;
-  font-size: 0.75rem;
+  font-weight: 600;
+  font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.03em;
   white-space: nowrap;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .leaders-table th.sortable {
@@ -1202,7 +1311,7 @@ function formatSalary(salary) {
 
 .leaders-table th.sortable.active {
   color: var(--color-primary);
-  background: rgba(124, 58, 237, 0.1);
+  background: rgba(232, 90, 79, 0.1);
 }
 
 .leaders-table .player-col {
@@ -1219,20 +1328,28 @@ function formatSalary(salary) {
 }
 
 .leader-row-table {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  transition: background 0.2s ease;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background 0.15s ease;
+}
+
+.leader-row-table:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .leader-row-table:hover {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.leader-row-table:nth-child(even):hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .leader-row-table.user-team {
-  background: rgba(124, 58, 237, 0.1);
+  background: rgba(232, 90, 79, 0.1);
 }
 
 .leader-row-table.user-team:hover {
-  background: rgba(124, 58, 237, 0.15);
+  background: rgba(232, 90, 79, 0.15);
 }
 
 .player-info-cell {
@@ -1321,7 +1438,7 @@ function formatSalary(salary) {
 }
 
 .standing-row.clickable.user-team:hover {
-  background: rgba(124, 58, 237, 0.2);
+  background: rgba(232, 90, 79, 0.2);
 }
 
 /* Team Modal */
@@ -1394,13 +1511,13 @@ function formatSalary(salary) {
 .roster-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  min-height: 64px;
+  gap: 10px;
+  padding: 10px 12px;
+  min-height: 56px;
   background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  transition: background-color 0.15s ease;
 }
 
 .roster-row:hover {
@@ -1628,32 +1745,35 @@ function formatSalary(salary) {
 .modal-tabs {
   display: flex;
   gap: 4px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.2);
   padding: 4px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 
 .modal-tab {
   flex: 1;
-  padding: 10px 16px;
+  padding: 8px 14px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-secondary);
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .modal-tab:hover {
   color: white;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .modal-tab.active {
-  background: var(--color-primary);
-  color: white;
+  background: var(--gradient-cosmic);
+  color: black;
+  box-shadow: 0 2px 6px rgba(232, 90, 79, 0.3);
 }
 
 .modal-tab-content {
@@ -1669,44 +1789,44 @@ function formatSalary(salary) {
 /* Stats Sections */
 .stats-section {
   background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
-  padding: 16px;
+  border-radius: var(--radius-md);
+  padding: 12px;
 }
 
 .stats-section-title {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 600;
   color: var(--color-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 12px;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
 }
 
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 8px;
 }
 
 .stat-cell {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  padding: 8px 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
 }
 
 .stat-cell .stat-label {
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   color: var(--color-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 4px;
+  letter-spacing: 0.03em;
+  margin-bottom: 2px;
 }
 
 .stat-cell .stat-value {
-  font-size: 1.25rem;
+  font-size: 1.1rem;
   font-weight: 700;
   color: white;
 }
@@ -1718,53 +1838,54 @@ function formatSalary(salary) {
 /* Attribute Sections */
 .attr-section {
   background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
-  padding: 16px;
+  border-radius: var(--radius-md);
+  padding: 12px;
 }
 
 .attr-section-title {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 600;
   color: var(--color-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 12px;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
 }
 
 .attributes-grid {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .attr-row {
   display: grid;
-  grid-template-columns: 120px 1fr 40px;
+  grid-template-columns: 100px 1fr 36px;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .attr-name {
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   color: var(--color-secondary);
   text-transform: capitalize;
 }
 
 .attr-bar-container {
-  height: 8px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .attr-bar {
   height: 100%;
-  border-radius: 4px;
+  border-radius: 3px;
   transition: width 0.3s ease;
 }
 
 .attr-value {
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 0.85rem;
   text-align: right;
 }
 
@@ -1787,29 +1908,29 @@ function formatSalary(salary) {
 /* Contract Footer */
 .contract-footer {
   display: flex;
-  gap: 24px;
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
+  gap: 20px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
   margin-top: auto;
 }
 
 .contract-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .contract-label {
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   color: var(--color-secondary);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 
 .contract-value {
-  font-size: 1.1rem;
-  font-weight: 600;
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 .text-success {
@@ -1821,11 +1942,12 @@ function formatSalary(salary) {
   .player-stats-compact {
     flex-direction: column;
     gap: 2px;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
   }
 
   .roster-row {
-    min-height: 72px;
+    min-height: 60px;
+    padding: 8px 10px;
   }
 
   .team-stats-row {
@@ -1835,16 +1957,109 @@ function formatSalary(salary) {
 
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+
+  .stat-cell {
+    padding: 6px 4px;
+  }
+
+  .stat-cell .stat-value {
+    font-size: 1rem;
   }
 
   .attr-row {
-    grid-template-columns: 100px 1fr 35px;
-    gap: 8px;
+    grid-template-columns: 90px 1fr 32px;
+    gap: 6px;
+  }
+
+  .attr-name {
+    font-size: 0.75rem;
   }
 
   .contract-footer {
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
   }
+
+  .tab-btn, .conf-btn {
+    padding: 5px 10px;
+    font-size: 0.7rem;
+  }
+
+  .playoff-team {
+    padding: 6px 8px;
+  }
+
+  .game-card {
+    padding: 8px 10px;
+  }
+}
+
+/* Light mode overrides */
+[data-theme="light"] .modal-tabs {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .modal-tab {
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .modal-tab:hover {
+  color: var(--color-text-primary);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .modal-tab.active {
+  background: var(--gradient-cosmic);
+  color: black;
+}
+
+[data-theme="light"] .stats-section {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .stat-cell {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .contract-footer {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .conf-btn {
+  background: white;
+  border-color: rgba(0, 0, 0, 0.1);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .conf-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .conf-btn.active {
+  background: var(--gradient-cosmic);
+  color: black;
+}
+
+[data-theme="light"] .tab-btn {
+  background: white;
+  border-color: rgba(0, 0, 0, 0.1);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .tab-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .tab-btn.active {
+  background: var(--gradient-cosmic);
+  color: black;
+}
+
+[data-theme="light"] .modal-tab {
+  background: white;
 }
 </style>

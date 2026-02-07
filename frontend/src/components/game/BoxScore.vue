@@ -240,14 +240,16 @@ function formatShootingLine(made, attempted) {
 
 <style scoped>
 .box-score {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 12px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-2xl);
   overflow: hidden;
 }
 
 .team-tabs {
   display: flex;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 4px;
+  padding: 6px;
+  background: rgba(0, 0, 0, 0.2);
 }
 
 .team-tab {
@@ -256,28 +258,36 @@ function formatShootingLine(made, attempted) {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 16px;
-  background: none;
-  border: none;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
   color: var(--color-secondary);
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .team-tab:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-primary);
 }
 
 .team-tab.active {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
 }
 
 .team-color {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .table-container {
@@ -292,18 +302,19 @@ function formatShootingLine(made, attempted) {
 
 .stats-table th,
 .stats-table td {
-  padding: 10px 8px;
+  padding: 6px 6px;
   text-align: center;
 }
 
 .stats-table th {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--color-secondary);
-  font-weight: 500;
-  font-size: 0.75rem;
+  font-weight: 600;
+  font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.03em;
   white-space: nowrap;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .stats-table th.sortable {
@@ -319,43 +330,56 @@ function formatShootingLine(made, attempted) {
 
 .stats-table th.sortable.active {
   color: var(--color-primary);
-  background: rgba(124, 58, 237, 0.1);
+  background: rgba(232, 90, 79, 0.1);
 }
 
 .player-col {
   text-align: left !important;
-  min-width: 150px;
+  min-width: 130px;
 }
 
 .stat-col {
-  min-width: 40px;
+  min-width: 36px;
 }
 
 .stat-col.shooting {
-  min-width: 70px;
+  min-width: 60px;
 }
 
 .player-row {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background 0.15s ease;
 }
 
 .player-row:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.player-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.player-row:nth-child(even):hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .player-info {
   display: flex;
   flex-direction: column;
+  gap: 1px;
 }
 
 .player-name {
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 0.8rem;
   white-space: nowrap;
 }
 
 .player-pos {
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   color: var(--color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .stat-col.points {
@@ -369,21 +393,121 @@ function formatShootingLine(made, attempted) {
 
 .shooting-line {
   display: block;
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 0.8rem;
 }
 
 .shooting-pct {
   display: block;
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   color: var(--color-secondary);
 }
 
 .totals-row {
-  background: rgba(255, 255, 255, 0.05);
-  font-weight: 600;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04));
+  font-weight: 700;
+  border-top: 2px solid rgba(255, 255, 255, 0.1);
 }
 
 .totals-row td {
-  padding: 12px 8px;
+  padding: 10px 6px;
+}
+
+.totals-row .player-col {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-secondary);
+}
+
+/* Mobile responsiveness */
+@media (max-width: 640px) {
+  .stats-table {
+    font-size: 0.75rem;
+  }
+
+  .stats-table th,
+  .stats-table td {
+    padding: 5px 4px;
+  }
+
+  .player-col {
+    min-width: 100px;
+  }
+
+  .stat-col {
+    min-width: 28px;
+  }
+
+  .stat-col.shooting {
+    min-width: 50px;
+  }
+
+  .player-name {
+    font-size: 0.75rem;
+  }
+
+  .shooting-line {
+    font-size: 0.7rem;
+  }
+
+  .shooting-pct {
+    font-size: 0.6rem;
+  }
+}
+
+/* Light mode overrides */
+[data-theme="light"] .team-tabs {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .team-tab {
+  color: var(--color-text-secondary);
+  background: white;
+}
+
+[data-theme="light"] .team-tab:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .team-tab.active {
+  background: var(--gradient-cosmic);
+  color: black;
+}
+
+[data-theme="light"] .stats-table th {
+  background: rgba(0, 0, 0, 0.04);
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .stats-table th.sortable:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .stats-table th.sortable.active {
+  background: rgba(232, 90, 79, 0.12);
+}
+
+[data-theme="light"] .player-row {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .player-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .player-row:nth-child(even) {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .player-row:nth-child(even):hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .totals-row {
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.03));
+  border-top-color: rgba(0, 0, 0, 0.1);
 }
 </style>

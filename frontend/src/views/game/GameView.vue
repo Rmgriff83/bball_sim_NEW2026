@@ -4,7 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/game'
 import { useCampaignStore } from '@/stores/campaign'
 import { useLeagueStore } from '@/stores/league'
-import { GlassCard, BaseButton, LoadingSpinner } from '@/components/ui'
+import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
+import { User } from 'lucide-vue-next'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
 import PlayAnimator from '@/components/game/PlayAnimator.vue'
@@ -116,6 +117,47 @@ const userWon = computed(() => {
          (!userIsHome.value && winner.value === 'away')
 })
 
+// Team standings for display
+const getTeamStanding = (team) => {
+  if (!team) return null
+  const conference = team.conference
+  const standings = conference === 'east'
+    ? leagueStore.eastStandings
+    : leagueStore.westStandings
+  return standings.find(s =>
+    s.teamId === team.id || s.team_id === team.id ||
+    s.team?.id === team.id || s.team?.abbreviation === team.abbreviation
+  )
+}
+
+const homeTeamStanding = computed(() => getTeamStanding(homeTeam.value))
+const awayTeamStanding = computed(() => getTeamStanding(awayTeam.value))
+
+const homeTeamRecord = computed(() => {
+  const s = homeTeamStanding.value
+  return s ? `${s.wins || 0}-${s.losses || 0}` : ''
+})
+
+const awayTeamRecord = computed(() => {
+  const s = awayTeamStanding.value
+  return s ? `${s.wins || 0}-${s.losses || 0}` : ''
+})
+
+const homeTeamRank = computed(() => {
+  if (!homeTeam.value) return null
+  return leagueStore.getTeamRank(homeTeam.value.id, homeTeam.value.conference)
+})
+
+const awayTeamRank = computed(() => {
+  if (!awayTeam.value) return null
+  return leagueStore.getTeamRank(awayTeam.value.id, awayTeam.value.conference)
+})
+
+const getConferenceLabel = (team) => {
+  if (!team?.conference) return ''
+  return team.conference === 'east' ? 'EAST' : 'WEST'
+}
+
 // Box score data
 const boxScore = computed(() => {
   const bs = game.value?.box_score
@@ -171,7 +213,22 @@ const quarterScores = computed(() => {
 
 onMounted(async () => {
   try {
-    await gameStore.fetchGame(campaignId.value, gameId.value)
+    // If no gameId provided (from /play route), get the next user game
+    if (!gameId.value) {
+      await gameStore.fetchGames(campaignId.value)
+      const nextGame = gameStore.nextUserGame
+      if (nextGame) {
+        // Load the game directly and update URL silently
+        await gameStore.fetchGame(campaignId.value, nextGame.id)
+        // Update the URL without triggering a navigation
+        router.replace(`/campaign/${campaignId.value}/game/${nextGame.id}`)
+      } else {
+        // No next game available, redirect to home
+        router.replace(`/campaign/${campaignId.value}`)
+      }
+    } else {
+      await gameStore.fetchGame(campaignId.value, gameId.value)
+    }
   } catch (err) {
     console.error('Failed to load game:', err)
   } finally {
@@ -330,6 +387,25 @@ function getTopPerformers(stats) {
 const homeTopPerformers = computed(() => getTopPerformers(boxScore.value.home))
 const awayTopPerformers = computed(() => getTopPerformers(boxScore.value.away))
 
+// Player modal state
+const showPlayerModal = ref(false)
+const selectedPlayer = ref(null)
+
+function openPlayerModal(player) {
+  selectedPlayer.value = player
+  showPlayerModal.value = true
+}
+
+function closePlayerModal() {
+  showPlayerModal.value = false
+  selectedPlayer.value = null
+}
+
+function getPositionColor(position) {
+  const colors = { PG: '#3B82F6', SG: '#10B981', SF: '#F59E0B', PF: '#EF4444', C: '#8B5CF6' }
+  return colors[position] || '#6B7280'
+}
+
 // Animation data from game result
 const gameAnimationData = computed(() => game.value?.animation_data || null)
 
@@ -413,10 +489,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="p-6">
+  <div class="game-view p-6">
     <!-- Loading -->
-    <div v-if="loading" class="flex justify-center py-12">
-      <LoadingSpinner size="lg" />
+    <div v-if="loading" class="flex justify-center items-center py-12 opacity-60">
+      <LoadingSpinner size="md" />
     </div>
 
     <template v-else-if="game">
@@ -430,15 +506,18 @@ onUnmounted(() => {
         <div class="game-header">
           <!-- Away Team -->
           <div class="team-side away" :class="{ winner: winner === 'away' }">
-            <div
-              class="team-logo-lg"
-              :style="{ backgroundColor: awayTeam?.primary_color || '#6B7280' }"
-            >
-              {{ awayTeam?.abbreviation }}
-            </div>
-            <div class="team-details">
-              <p class="team-name">{{ awayTeam?.name }}</p>
-              <p class="team-city">{{ awayTeam?.city }}</p>
+            <div class="team-badge-wrapper">
+              <div
+                class="team-badge-game"
+                :style="{ backgroundColor: awayTeam?.primary_color || '#6B7280' }"
+              >
+                <span class="badge-abbr">{{ awayTeam?.abbreviation }}</span>
+                <span class="badge-record">{{ awayTeamRecord }}</span>
+              </div>
+              <div class="team-info">
+                <span v-if="awayTeam?.overall_rating" class="team-rating">{{ awayTeam.overall_rating }} OVR</span>
+                <span v-if="awayTeamRank" class="team-rank">#{{ awayTeamRank }} {{ getConferenceLabel(awayTeam) }}</span>
+              </div>
             </div>
             <div v-if="isComplete" class="team-score-lg">
               {{ game.away_score }}
@@ -458,15 +537,18 @@ onUnmounted(() => {
             <div v-if="isComplete" class="team-score-lg">
               {{ game.home_score }}
             </div>
-            <div class="team-details text-right">
-              <p class="team-name">{{ homeTeam?.name }}</p>
-              <p class="team-city">{{ homeTeam?.city }}</p>
-            </div>
-            <div
-              class="team-logo-lg"
-              :style="{ backgroundColor: homeTeam?.primary_color || '#6B7280' }"
-            >
-              {{ homeTeam?.abbreviation }}
+            <div class="team-badge-wrapper">
+              <div
+                class="team-badge-game"
+                :style="{ backgroundColor: homeTeam?.primary_color || '#6B7280' }"
+              >
+                <span class="badge-abbr">{{ homeTeam?.abbreviation }}</span>
+                <span class="badge-record">{{ homeTeamRecord }}</span>
+              </div>
+              <div class="team-info">
+                <span v-if="homeTeam?.overall_rating" class="team-rating">{{ homeTeam.overall_rating }} OVR</span>
+                <span v-if="homeTeamRank" class="team-rank">#{{ homeTeamRank }} {{ getConferenceLabel(homeTeam) }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -852,44 +934,90 @@ onUnmounted(() => {
 
         <!-- Top Performers -->
         <div class="grid md:grid-cols-2 gap-6 mb-6">
-          <GlassCard padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">{{ awayTeam?.abbreviation }} Top Performers</h3>
+          <GlassCard padding="md" :hoverable="false">
+            <h3 class="performers-header">{{ awayTeam?.abbreviation }} Top Performers</h3>
             <div class="performers-list">
               <div
                 v-for="player in awayTopPerformers"
                 :key="player.player_id"
                 class="performer-card"
+                @click="openPlayerModal(player)"
               >
-                <div class="performer-info">
-                  <span class="performer-name">{{ player.name }}</span>
-                  <span class="performer-pos">{{ player.position }}</span>
+                <div class="performer-avatar">
+                  <User class="avatar-icon" :size="24" />
                 </div>
-                <div class="performer-stats">
-                  <span class="stat-pts">{{ player.points }} PTS</span>
-                  <span class="stat-secondary">{{ player.rebounds }} REB</span>
-                  <span class="stat-secondary">{{ player.assists }} AST</span>
+                <div class="performer-main">
+                  <div class="performer-identity">
+                    <span class="performer-name">{{ player.name }}</span>
+                    <div class="performer-meta">
+                      <span
+                        class="position-badge"
+                        :style="{ backgroundColor: getPositionColor(player.position) }"
+                      >
+                        {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="performer-stats">
+                    <div class="stat-item-inline">
+                      <span class="stat-value-highlight">{{ player.points }}</span>
+                      <span class="stat-label-sm">PTS</span>
+                    </div>
+                    <div class="stat-item-inline">
+                      <span class="stat-value-sm">{{ player.rebounds }}</span>
+                      <span class="stat-label-sm">REB</span>
+                    </div>
+                    <div class="stat-item-inline">
+                      <span class="stat-value-sm">{{ player.assists }}</span>
+                      <span class="stat-label-sm">AST</span>
+                    </div>
+                  </div>
                 </div>
+                <div class="performer-chevron">&rsaquo;</div>
               </div>
             </div>
           </GlassCard>
 
-          <GlassCard padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">{{ homeTeam?.abbreviation }} Top Performers</h3>
+          <GlassCard padding="md" :hoverable="false">
+            <h3 class="performers-header">{{ homeTeam?.abbreviation }} Top Performers</h3>
             <div class="performers-list">
               <div
                 v-for="player in homeTopPerformers"
                 :key="player.player_id"
                 class="performer-card"
+                @click="openPlayerModal(player)"
               >
-                <div class="performer-info">
-                  <span class="performer-name">{{ player.name }}</span>
-                  <span class="performer-pos">{{ player.position }}</span>
+                <div class="performer-avatar">
+                  <User class="avatar-icon" :size="24" />
                 </div>
-                <div class="performer-stats">
-                  <span class="stat-pts">{{ player.points }} PTS</span>
-                  <span class="stat-secondary">{{ player.rebounds }} REB</span>
-                  <span class="stat-secondary">{{ player.assists }} AST</span>
+                <div class="performer-main">
+                  <div class="performer-identity">
+                    <span class="performer-name">{{ player.name }}</span>
+                    <div class="performer-meta">
+                      <span
+                        class="position-badge"
+                        :style="{ backgroundColor: getPositionColor(player.position) }"
+                      >
+                        {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="performer-stats">
+                    <div class="stat-item-inline">
+                      <span class="stat-value-highlight">{{ player.points }}</span>
+                      <span class="stat-label-sm">PTS</span>
+                    </div>
+                    <div class="stat-item-inline">
+                      <span class="stat-value-sm">{{ player.rebounds }}</span>
+                      <span class="stat-label-sm">REB</span>
+                    </div>
+                    <div class="stat-item-inline">
+                      <span class="stat-value-sm">{{ player.assists }}</span>
+                      <span class="stat-label-sm">AST</span>
+                    </div>
+                  </div>
                 </div>
+                <div class="performer-chevron">&rsaquo;</div>
               </div>
             </div>
           </GlassCard>
@@ -936,26 +1064,120 @@ onUnmounted(() => {
         </GlassCard>
       </template>
     </template>
+
+    <!-- Player Details Modal -->
+    <BaseModal
+      :show="showPlayerModal"
+      @close="closePlayerModal"
+      :title="selectedPlayer?.name || 'Player Details'"
+      size="md"
+    >
+      <div v-if="selectedPlayer" class="player-modal-content">
+        <!-- Player Header -->
+        <div class="player-modal-header">
+          <div class="player-avatar-lg">
+            <User class="avatar-icon" :size="32" />
+          </div>
+          <div class="player-header-info">
+            <h2 class="player-modal-name">{{ selectedPlayer.name }}</h2>
+            <div class="player-header-meta">
+              <span
+                class="position-badge"
+                :style="{ backgroundColor: getPositionColor(selectedPlayer.position) }"
+              >
+                {{ selectedPlayer.position }}<template v-if="selectedPlayer.secondary_position">/{{ selectedPlayer.secondary_position }}</template>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Game Stats -->
+        <div class="game-stats-section">
+          <h4 class="stats-section-title">Game Stats</h4>
+          <div class="game-stats-grid">
+            <div class="game-stat-cell">
+              <span class="game-stat-value highlight">{{ selectedPlayer.points || 0 }}</span>
+              <span class="game-stat-label">PTS</span>
+            </div>
+            <div class="game-stat-cell">
+              <span class="game-stat-value">{{ selectedPlayer.rebounds || 0 }}</span>
+              <span class="game-stat-label">REB</span>
+            </div>
+            <div class="game-stat-cell">
+              <span class="game-stat-value">{{ selectedPlayer.assists || 0 }}</span>
+              <span class="game-stat-label">AST</span>
+            </div>
+            <div class="game-stat-cell">
+              <span class="game-stat-value">{{ selectedPlayer.steals || 0 }}</span>
+              <span class="game-stat-label">STL</span>
+            </div>
+            <div class="game-stat-cell">
+              <span class="game-stat-value">{{ selectedPlayer.blocks || 0 }}</span>
+              <span class="game-stat-label">BLK</span>
+            </div>
+            <div class="game-stat-cell turnover">
+              <span class="game-stat-value">{{ selectedPlayer.turnovers || 0 }}</span>
+              <span class="game-stat-label">TO</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Shooting Stats -->
+        <div class="shooting-stats-section">
+          <h4 class="stats-section-title">Shooting</h4>
+          <div class="shooting-stats-grid">
+            <div class="shooting-stat-cell">
+              <span class="shooting-stat-line">{{ selectedPlayer.fgm || 0 }}-{{ selectedPlayer.fga || 0 }}</span>
+              <span class="shooting-stat-label">FG</span>
+            </div>
+            <div class="shooting-stat-cell">
+              <span class="shooting-stat-line">{{ selectedPlayer.fg3m || 0 }}-{{ selectedPlayer.fg3a || 0 }}</span>
+              <span class="shooting-stat-label">3PT</span>
+            </div>
+            <div class="shooting-stat-cell">
+              <span class="shooting-stat-line">{{ selectedPlayer.ftm || 0 }}-{{ selectedPlayer.fta || 0 }}</span>
+              <span class="shooting-stat-label">FT</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Minutes -->
+        <div class="minutes-row">
+          <span class="minutes-label">Minutes Played</span>
+          <span class="minutes-value">{{ selectedPlayer.minutes || 0 }}</span>
+        </div>
+      </div>
+    </BaseModal>
   </div>
 </template>
 
 <style scoped>
+.game-view {
+  padding-bottom: 100px;
+}
+
+@media (min-width: 1024px) {
+  .game-view {
+    padding-bottom: 24px;
+  }
+}
+
 .back-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  color: var(--color-secondary);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease-default);
 }
 
 .back-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
 }
 
 .game-header {
@@ -980,35 +1202,61 @@ onUnmounted(() => {
   justify-content: flex-end;
 }
 
-.team-side.winner .team-name {
+.team-side.winner .badge-abbr {
   color: var(--color-success);
 }
 
-.team-logo-lg {
-  width: 80px;
-  height: 80px;
-  border-radius: 16px;
+.team-badge-wrapper {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-badge-game {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: white;
+  gap: 2px;
   flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
-.team-details {
-  min-width: 0;
+.badge-abbr {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: white;
+  letter-spacing: 0.02em;
 }
 
-.team-name {
-  font-size: 1.25rem;
+.badge-record {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.team-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.team-rating {
+  font-size: 0.8rem;
   font-weight: 700;
+  color: var(--color-text-primary);
 }
 
-.team-city {
-  color: var(--color-secondary);
-  font-size: 0.875rem;
+.team-rank {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
 }
 
 .team-score-lg {
@@ -1278,8 +1526,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-lg);
 }
 
 .matchup-label {
@@ -1339,48 +1587,269 @@ onUnmounted(() => {
   border-radius: 3px;
 }
 
+.performers-header {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
+}
+
 .performers-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
 }
 
 .performer-card {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.performer-info {
+.performer-card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.performer-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--gradient-cosmic);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.performer-avatar .avatar-icon {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.performer-main {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-width: 0;
+}
+
+.performer-identity {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 .performer-name {
   font-weight: 600;
+  font-size: 0.875rem;
 }
 
-.performer-pos {
-  font-size: 0.75rem;
-  color: var(--color-secondary);
+.performer-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.position-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: white;
+  text-transform: uppercase;
 }
 
 .performer-stats {
   display: flex;
-  gap: 12px;
-  font-size: 0.875rem;
+  gap: 10px;
 }
 
-.stat-pts {
+.stat-item-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 32px;
+}
+
+.stat-value-highlight {
+  font-size: 1rem;
   font-weight: 700;
   color: var(--color-primary);
 }
 
-.stat-secondary {
+.stat-value-sm {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.stat-label-sm {
+  font-size: 0.6rem;
   color: var(--color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.performer-chevron {
+  color: var(--color-secondary);
+  font-size: 1.25rem;
+  padding-left: 4px;
+}
+
+/* Player Modal Styles */
+.player-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.player-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.player-avatar-lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--gradient-cosmic);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.player-avatar-lg .avatar-icon {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.player-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.player-modal-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.player-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.game-stats-section,
+.shooting-stats-section {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.stats-section-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
+}
+
+.game-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+
+.game-stat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
+}
+
+.game-stat-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: white;
+}
+
+.game-stat-value.highlight {
+  color: var(--color-primary);
+}
+
+.game-stat-cell.turnover .game-stat-value {
+  color: var(--color-error);
+}
+
+.game-stat-label {
+  font-size: 0.6rem;
+  color: var(--color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-top: 2px;
+}
+
+.shooting-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.shooting-stat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
+}
+
+.shooting-stat-line {
+  font-size: 1rem;
+  font-weight: 700;
+  color: white;
+}
+
+.shooting-stat-label {
+  font-size: 0.65rem;
+  color: var(--color-secondary);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.minutes-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
+}
+
+.minutes-label {
+  font-size: 0.8rem;
+  color: var(--color-secondary);
+}
+
+.minutes-value {
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 .play-by-play {
@@ -1496,7 +1965,7 @@ onUnmounted(() => {
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 400px) {
   .game-header {
     flex-direction: column;
     gap: 16px;
@@ -1511,19 +1980,75 @@ onUnmounted(() => {
     flex-direction: row-reverse;
   }
 
-  .team-details {
-    text-align: center !important;
+  .team-badge-game {
+    width: 80px;
+    height: 80px;
+  }
+
+  .badge-abbr {
+    font-size: 1.25rem;
+  }
+
+  .badge-record {
+    font-size: 0.65rem;
   }
 
   .team-score-lg {
     font-size: 2rem;
-    min-width: 60px;
   }
 
-  .team-logo-lg {
-    width: 60px;
-    height: 60px;
-    font-size: 1.25rem;
+  .game-stats-grid {
+    grid-template-columns: repeat(3, 1fr);
   }
+
+  .performer-stats {
+    gap: 6px;
+  }
+
+  .stat-item-inline {
+    min-width: 26px;
+  }
+}
+
+/* Light mode overrides */
+[data-theme="light"] .performer-card {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .performer-card:hover {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .modal-tabs {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .modal-tab {
+  background: white;
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .modal-tab:hover {
+  color: var(--color-text-primary);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .modal-tab.active {
+  background: var(--gradient-cosmic);
+  color: black;
+}
+
+[data-theme="light"] .stats-section {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .stat-cell {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .contract-footer {
+  background: rgba(0, 0, 0, 0.04);
 }
 </style>

@@ -217,17 +217,18 @@ function getBadgeLevelColor(level) {
 
 <style scoped>
 .player-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
   overflow: hidden;
   transition: all 0.2s ease;
 }
 
 .player-card:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--glass-bg-light);
   border-color: rgba(255, 255, 255, 0.2);
   transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 
 .player-card.selected {
@@ -236,11 +237,11 @@ function getBadgeLevelColor(level) {
 }
 
 .player-card.elite .card-header {
-  background: linear-gradient(135deg, rgba(147, 51, 234, 0.2), rgba(236, 72, 153, 0.2));
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(232, 90, 79, 0.15));
 }
 
 .player-card.star .card-header {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(147, 51, 234, 0.2));
+  background: linear-gradient(135deg, rgba(232, 90, 79, 0.15), rgba(244, 162, 89, 0.15));
 }
 
 .card-header {
@@ -248,7 +249,7 @@ function getBadgeLevelColor(level) {
   align-items: center;
   gap: 12px;
   padding: 16px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--color-bg-tertiary);
 }
 
 .rating-container {
@@ -315,14 +316,14 @@ function getBadgeLevelColor(level) {
 .stat-item {
   text-align: center;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-lg);
 }
 
 .stat-label {
   display: block;
   font-size: 0.65rem;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   margin-bottom: 2px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -331,14 +332,15 @@ function getBadgeLevelColor(level) {
 .stat-value {
   font-weight: 600;
   font-size: 1rem;
+  font-family: var(--font-mono);
   color: var(--color-primary);
 }
 
 .no-stats {
   padding: 12px;
   text-align: center;
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-lg);
   margin-bottom: 12px;
 }
 
@@ -354,8 +356,8 @@ function getBadgeLevelColor(level) {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
   font-size: 0.75rem;
 }
 
@@ -389,28 +391,32 @@ function getBadgeLevelColor(level) {
   display: flex;
   gap: 8px;
   padding: 12px 16px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--color-bg-secondary);
+  border-top: 1px solid var(--glass-border);
 }
 
 .view-btn,
 .select-btn {
   flex: 1;
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease-default);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .view-btn {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: white;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
 }
 
 .view-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-tertiary);
 }
 
 .select-btn {
@@ -420,7 +426,7 @@ function getBadgeLevelColor(level) {
 }
 
 .select-btn:hover {
-  filter: brightness(1.1);
+  background: var(--color-primary-dark);
 }
 
 .select-btn.active {
@@ -500,5 +506,18 @@ function getBadgeLevelColor(level) {
   color: var(--color-error) !important;
   text-decoration: line-through;
   text-decoration-color: rgba(239, 68, 68, 0.5);
+}
+
+/* Light mode overrides */
+[data-theme="light"] .player-card:hover {
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .contract-info {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .empty-slot {
+  color: rgba(0, 0, 0, 0.3);
 }
 </style>

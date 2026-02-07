@@ -1,5 +1,6 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { X } from 'lucide-vue-next'
 
 const props = defineProps({
   show: {
@@ -84,9 +85,7 @@ const sizeClasses = {
               @click="close"
               aria-label="Close"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
+              <X :size="20" />
             </button>
           </header>
 

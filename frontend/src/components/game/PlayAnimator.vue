@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { Play, Pause, Square, SkipBack, SkipForward } from 'lucide-vue-next'
 
 const props = defineProps({
   // Animation state from usePlayAnimation
@@ -138,9 +139,7 @@ function handleSeek(event) {
           @click="emit('previous-possession')"
           title="Previous Possession"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
-          </svg>
+          <SkipBack :size="20" fill="currentColor" />
         </button>
 
         <!-- Play/Pause -->
@@ -149,12 +148,8 @@ function handleSeek(event) {
           @click="emit('toggle-play-pause')"
           :title="isPlaying ? 'Pause' : 'Play'"
         >
-          <svg v-if="!isPlaying" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z"/>
-          </svg>
-          <svg v-else xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-          </svg>
+          <Play v-if="!isPlaying" :size="24" fill="currentColor" />
+          <Pause v-else :size="24" fill="currentColor" />
         </button>
 
         <!-- Stop -->
@@ -163,9 +158,7 @@ function handleSeek(event) {
           @click="emit('stop')"
           title="Stop"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M6 6h12v12H6z"/>
-          </svg>
+          <Square :size="20" fill="currentColor" />
         </button>
 
         <!-- Next -->
@@ -175,9 +168,7 @@ function handleSeek(event) {
           @click="emit('next-possession')"
           title="Next Possession"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
-          </svg>
+          <SkipForward :size="20" fill="currentColor" />
         </button>
       </div>
 
@@ -308,11 +299,11 @@ function handleSeek(event) {
 .control-btn-primary {
   width: 48px;
   height: 48px;
-  background: #3B82F6;
+  background: var(--color-primary, #E85A4F);
 }
 
 .control-btn-primary:hover {
-  background: #2563EB;
+  background: var(--color-primary-dark, #C94A40);
 }
 
 .speed-control {
@@ -347,6 +338,6 @@ function handleSeek(event) {
 }
 
 .speed-btn.active {
-  background: #3B82F6;
+  background: var(--color-primary, #E85A4F);
 }
 </style>

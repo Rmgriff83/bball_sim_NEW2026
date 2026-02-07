@@ -628,8 +628,14 @@ class PlayExecutionEngine
             $defRebRating += $player['attributes']['defense']['defensiveRebound'] ?? 50;
         }
 
+        // Safety check: ensure we don't divide by zero
+        $totalRebRating = $offRebRating + $defRebRating;
+        if ($totalRebRating <= 0) {
+            $totalRebRating = 1; // Fallback to prevent division by zero
+        }
+
         // Defensive rebounds are more common (70% base)
-        $offRebChance = 0.25 * ($offRebRating / ($offRebRating + $defRebRating));
+        $offRebChance = 0.25 * ($offRebRating / $totalRebRating);
 
         if (mt_rand() / mt_getrandmax() < $offRebChance) {
             $this->playResult['outcome'] = 'offensive_rebound';

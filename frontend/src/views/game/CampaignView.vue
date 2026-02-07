@@ -1,8 +1,10 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useAuthStore } from '@/stores/auth'
+import { BottomNav } from '@/components/ui'
+import { ArrowLeft, Play } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,12 +15,34 @@ const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => campaign.value?.team)
 
+// Current in-game date for mobile header
+const formattedCurrentDate = computed(() => {
+  if (!campaign.value?.current_date) return null
+  const date = new Date(campaign.value.current_date)
+  return {
+    weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
+    month: date.toLocaleDateString('en-US', { month: 'short' }),
+    day: date.getDate(),
+    year: date.getFullYear()
+  }
+})
+
 const mobileMenuOpen = ref(false)
+const isMobile = ref(window.innerWidth < 1024)
+
+function handleResize() {
+  isMobile.value = window.innerWidth < 1024
+}
 
 onMounted(async () => {
+  window.addEventListener('resize', handleResize)
   if (!campaign.value || campaign.value.id !== campaignId.value) {
     await campaignStore.fetchCampaign(campaignId.value)
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
 })
 
 async function handleLogout() {
@@ -36,19 +60,19 @@ function closeMobileMenu() {
 </script>
 
 <template>
-  <div class="min-h-screen">
-    <!-- Campaign Header -->
-    <header class="campaign-header">
+  <div class="campaign-layout">
+    <!-- Campaign Header - Minimal on mobile, full on desktop -->
+    <header class="campaign-header" :class="{ 'mobile-minimal': isMobile }">
       <div class="header-content">
-        <!-- Left: Logo & Team -->
+        <!-- Left: Back + Team Badge (Back hidden on mobile) -->
         <div class="header-left">
-          <router-link to="/campaigns" class="logo-link">
-            <span class="logo-text">BBALL SIM</span>
+          <router-link v-if="!isMobile" to="/campaigns" class="back-link">
+            <ArrowLeft :size="20" />
           </router-link>
-          <div v-if="team" class="team-badge">
+          <div v-if="team && !isMobile" class="team-badge">
             <div
               class="team-icon"
-              :style="{ backgroundColor: team.primary_color || '#7c3aed' }"
+              :style="{ backgroundColor: team.primary_color || '#E85A4F' }"
             >
               {{ team.abbreviation }}
             </div>
@@ -56,8 +80,8 @@ function closeMobileMenu() {
           </div>
         </div>
 
-        <!-- Center: Navigation -->
-        <nav class="desktop-nav">
+        <!-- Center: Navigation (Desktop only) -->
+        <nav v-if="!isMobile" class="desktop-nav">
           <router-link
             :to="`/campaign/${campaignId}`"
             class="nav-link"
@@ -70,7 +94,7 @@ function closeMobileMenu() {
             class="nav-link"
             :class="{ active: route.name === 'team-management' }"
           >
-            Roster
+            GM View
           </router-link>
           <router-link
             :to="`/campaign/${campaignId}/league`"
@@ -79,10 +103,18 @@ function closeMobileMenu() {
           >
             League
           </router-link>
+          <router-link
+            :to="`/campaign/${campaignId}/play`"
+            class="nav-link nav-link-play"
+            :class="{ active: route.name === 'game' || route.name === 'play' }"
+          >
+            <Play :size="16" fill="currentColor" />
+            Play
+          </router-link>
         </nav>
 
-        <!-- Right: User Actions -->
-        <div class="header-right">
+        <!-- Right: User Actions (Desktop) -->
+        <div v-if="!isMobile" class="header-right">
           <router-link to="/campaigns" class="nav-link-secondary">
             All Campaigns
           </router-link>
@@ -91,40 +123,27 @@ function closeMobileMenu() {
           </button>
         </div>
 
-        <!-- Mobile Menu Button -->
-        <button class="mobile-menu-btn" @click="toggleMobileMenu">
-          <span class="menu-icon" :class="{ open: mobileMenuOpen }">
-            <span></span>
-            <span></span>
-            <span></span>
-          </span>
-        </button>
+        <!-- Mobile: Date + Menu Button -->
+        <div v-if="isMobile" class="mobile-header-right">
+          <div v-if="formattedCurrentDate" class="current-date-mobile">
+            <span class="date-day">{{ formattedCurrentDate.day }}</span>
+            <div class="date-details">
+              <span class="date-month">{{ formattedCurrentDate.month }}</span>
+              <span class="date-weekday">{{ formattedCurrentDate.weekday }}</span>
+            </div>
+          </div>
+          <button class="mobile-menu-btn" @click="toggleMobileMenu">
+            <span class="menu-icon" :class="{ open: mobileMenuOpen }">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+          </button>
+        </div>
       </div>
 
-      <!-- Mobile Navigation -->
-      <div class="mobile-nav" :class="{ open: mobileMenuOpen }">
-        <router-link
-          :to="`/campaign/${campaignId}`"
-          class="mobile-nav-link"
-          @click="closeMobileMenu"
-        >
-          Home
-        </router-link>
-        <router-link
-          :to="`/campaign/${campaignId}/team`"
-          class="mobile-nav-link"
-          @click="closeMobileMenu"
-        >
-          Roster
-        </router-link>
-        <router-link
-          :to="`/campaign/${campaignId}/league`"
-          class="mobile-nav-link"
-          @click="closeMobileMenu"
-        >
-          League
-        </router-link>
-        <hr class="mobile-divider" />
+      <!-- Mobile Navigation Dropdown -->
+      <div v-if="isMobile" class="mobile-nav" :class="{ open: mobileMenuOpen }">
         <router-link
           to="/campaigns"
           class="mobile-nav-link"
@@ -142,17 +161,49 @@ function closeMobileMenu() {
     <main class="campaign-main">
       <router-view />
     </main>
+
+    <!-- Bottom Nav - Mobile/Tablet only -->
+    <BottomNav v-if="isMobile" :campaign-id="campaignId" />
   </div>
 </template>
 
 <style scoped>
+.campaign-layout {
+  min-height: 100vh;
+}
+
 .campaign-header {
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  background: rgba(15, 15, 20, 0.95);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--glass-border);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Nebula effect for header */
+.campaign-header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.05) 0%, transparent 40%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+[data-theme="light"] .campaign-header::before {
+  background:
+    radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.12) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.08) 0%, transparent 40%);
+}
+
+.campaign-header.mobile-minimal {
+  background: transparent;
+  border-bottom: none;
+}
+
+.campaign-header.mobile-minimal::before {
+  display: none;
 }
 
 .header-content {
@@ -162,64 +213,66 @@ function closeMobileMenu() {
   padding: 12px 24px;
   max-width: 1400px;
   margin: 0 auto;
+  position: relative;
+  z-index: 1;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
 }
 
-.logo-link {
-  text-decoration: none;
+.back-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+  transition: all 0.2s ease;
 }
 
-.logo-text {
-  font-size: 1.25rem;
-  font-weight: 800;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.back-link:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
 }
 
 .team-badge {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .team-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: white;
 }
 
 .team-name {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
 }
 
 .desktop-nav {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 
 .nav-link {
   padding: 8px 16px;
   border-radius: 8px;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   text-decoration: none;
   font-weight: 500;
   font-size: 0.9rem;
@@ -227,13 +280,31 @@ function closeMobileMenu() {
 }
 
 .nav-link:hover {
-  color: white;
-  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-primary);
+  background: var(--color-bg-tertiary);
 }
 
 .nav-link.active {
   color: white;
   background: var(--color-primary);
+}
+
+.nav-link-play {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.nav-link-play:hover {
+  background: transparent;
+  color: var(--color-primary);
+}
+
+.nav-link-play.active {
+  background: transparent;
+  color: var(--color-primary);
 }
 
 .header-right {
@@ -243,37 +314,87 @@ function closeMobileMenu() {
 }
 
 .nav-link-secondary {
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   text-decoration: none;
   font-size: 0.875rem;
   transition: color 0.2s ease;
 }
 
 .nav-link-secondary:hover {
-  color: white;
+  color: var(--color-text-primary);
 }
 
 .logout-btn {
   padding: 6px 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
   border-radius: 6px;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .logout-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+}
+
+.mobile-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.current-date-mobile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+}
+
+.current-date-mobile .date-day {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--color-primary);
+}
+
+.current-date-mobile .date-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.current-date-mobile .date-month {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.current-date-mobile .date-weekday {
+  font-size: 0.6rem;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  line-height: 1.2;
 }
 
 .mobile-menu-btn {
-  display: none;
-  padding: 8px;
-  background: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: var(--color-bg-tertiary);
   border: none;
+  border-radius: 10px;
   cursor: pointer;
 }
 
@@ -281,13 +402,13 @@ function closeMobileMenu() {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  width: 24px;
+  width: 18px;
 }
 
 .menu-icon span {
   display: block;
   height: 2px;
-  background: white;
+  background: var(--color-text-primary);
   border-radius: 1px;
   transition: all 0.3s ease;
 }
@@ -307,8 +428,10 @@ function closeMobileMenu() {
 .mobile-nav {
   display: none;
   flex-direction: column;
-  padding: 0 24px 24px;
+  padding: 0 16px 16px;
   gap: 4px;
+  position: relative;
+  z-index: 1;
 }
 
 .mobile-nav.open {
@@ -318,9 +441,9 @@ function closeMobileMenu() {
 .mobile-nav-link {
   display: block;
   padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 8px;
-  color: var(--color-secondary);
+  background: var(--color-bg-tertiary);
+  border-radius: 10px;
+  color: var(--color-text-secondary);
   text-decoration: none;
   font-weight: 500;
   transition: all 0.2s ease;
@@ -331,41 +454,34 @@ function closeMobileMenu() {
 }
 
 .mobile-nav-link:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
 }
 
 .mobile-nav-link.logout {
   color: var(--color-error);
 }
 
-.mobile-divider {
-  border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin: 8px 0;
-}
-
 .campaign-main {
   max-width: 1400px;
-  margin: 0 auto;
+  margin: -40px auto 0;
 }
 
-@media (max-width: 768px) {
+@media (min-width: 1024px) {
+  .campaign-main {
+    margin-top: 0;
+  }
+
+  .campaign-header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+  }
+}
+
+@media (max-width: 1023px) {
   .header-content {
     padding: 12px 16px;
-  }
-
-  .desktop-nav,
-  .header-right {
-    display: none;
-  }
-
-  .mobile-menu-btn {
-    display: block;
-  }
-
-  .team-badge {
-    display: none;
   }
 }
 </style>

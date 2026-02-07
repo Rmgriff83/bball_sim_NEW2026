@@ -169,7 +169,7 @@ class CampaignSeasonService
         }
 
         $teams = Team::where('campaign_id', $campaign->id)->get();
-        $startDate = Carbon::parse('2024-10-22');
+        $startDate = Carbon::parse('2025-10-21');
         $teamIds = $teams->pluck('id')->toArray();
         $teamConferences = $teams->pluck('conference', 'id')->toArray();
         $teamAbbreviations = $teams->pluck('abbreviation', 'id')->toArray();
@@ -594,5 +594,41 @@ class CampaignSeasonService
     public function clearCache(): void
     {
         $this->loadedSeasons = [];
+    }
+
+    /**
+     * Get preview data for simulating to the user's next game.
+     * Returns the next user game and all intermediate AI games grouped by date.
+     */
+    public function getSimulateToNextGamePreview(int $campaignId, int $year, int $userTeamId, Carbon $currentDate): ?array
+    {
+        // Get user's next incomplete game
+        $nextUserGame = $this->getNextTeamGame($campaignId, $year, $userTeamId);
+        if (!$nextUserGame) {
+            return null;
+        }
+
+        $nextGameDate = $nextUserGame['gameDate'];
+        $currentDateStr = $currentDate->format('Y-m-d');
+
+        // Get all incomplete games between current date and next game date (exclusive)
+        $schedule = $this->getSchedule($campaignId, $year);
+        $gamesByDate = [];
+
+        foreach ($schedule as $game) {
+            if (!$game['isComplete'] &&
+                $game['gameDate'] >= $currentDateStr &&
+                $game['gameDate'] < $nextGameDate) {
+                $gamesByDate[$game['gameDate']][] = $game;
+            }
+        }
+        ksort($gamesByDate);
+
+        return [
+            'nextUserGame' => $nextUserGame,
+            'daysToSimulate' => count($gamesByDate),
+            'gamesByDate' => $gamesByDate,
+            'totalGamesToSimulate' => array_sum(array_map('count', $gamesByDate)),
+        ];
     }
 }

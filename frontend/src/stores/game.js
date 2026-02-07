@@ -16,6 +16,10 @@ export const useGameStore = defineStore('game', () => {
   const currentSimQuarter = ref(0)
   const quarterAnimationData = ref([])
 
+  // Simulate to next game state
+  const simulatePreview = ref(null)
+  const loadingPreview = ref(false)
+
   // Getters
   const upcomingGames = computed(() =>
     games.value.filter(g => !g.is_complete).slice(0, 10)
@@ -264,6 +268,66 @@ export const useGameStore = defineStore('game', () => {
     quarterAnimationData.value = []
   }
 
+  /**
+   * Fetch preview data for simulating to the next user game.
+   */
+  async function fetchSimulateToNextGamePreview(campaignId) {
+    loadingPreview.value = true
+    error.value = null
+    try {
+      const response = await api.get(`/api/campaigns/${campaignId}/simulate-to-next-game/preview`)
+      simulatePreview.value = response.data
+      return response.data
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to fetch preview'
+      throw err
+    } finally {
+      loadingPreview.value = false
+    }
+  }
+
+  /**
+   * Simulate all games up to and including the next user game.
+   */
+  async function simulateToNextGame(campaignId) {
+    simulating.value = true
+    error.value = null
+    try {
+      const response = await api.post(`/api/campaigns/${campaignId}/simulate-to-next-game`)
+
+      // Update games list with simulated results
+      if (response.data.simulatedDays) {
+        for (const day of response.data.simulatedDays) {
+          for (const result of day.results || []) {
+            const index = games.value.findIndex(g => g.id === result.game_id)
+            if (index !== -1) {
+              games.value[index] = {
+                ...games.value[index],
+                is_complete: true,
+                home_score: result.home_score,
+                away_score: result.away_score,
+              }
+            }
+          }
+        }
+      }
+
+      return response.data
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to simulate to next game'
+      throw err
+    } finally {
+      simulating.value = false
+    }
+  }
+
+  /**
+   * Clear the simulate preview state.
+   */
+  function clearSimulatePreview() {
+    simulatePreview.value = null
+  }
+
   return {
     // State
     games,
@@ -275,6 +339,8 @@ export const useGameStore = defineStore('game', () => {
     isLiveSimulation,
     currentSimQuarter,
     quarterAnimationData,
+    simulatePreview,
+    loadingPreview,
     // Getters
     upcomingGames,
     completedGames,
@@ -290,5 +356,8 @@ export const useGameStore = defineStore('game', () => {
     clearSimulationResult,
     clearCurrentGame,
     clearLiveSimulation,
+    fetchSimulateToNextGamePreview,
+    simulateToNextGame,
+    clearSimulatePreview,
   }
 })

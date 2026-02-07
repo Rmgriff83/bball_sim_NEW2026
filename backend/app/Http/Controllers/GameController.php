@@ -8,6 +8,7 @@ use App\Models\Player;
 use App\Models\Team;
 use App\Services\CampaignSeasonService;
 use App\Services\GameSimulationService;
+use App\Services\AILineupService;
 use App\Services\PlayerEvolution\PlayerEvolutionService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -18,7 +19,8 @@ class GameController extends Controller
     public function __construct(
         private CampaignSeasonService $seasonService,
         private GameSimulationService $simulationService,
-        private PlayerEvolutionService $evolutionService
+        private PlayerEvolutionService $evolutionService,
+        private AILineupService $aiLineupService
     ) {}
 
     /**
@@ -30,7 +32,7 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $year = $campaign->currentSeason?->year ?? 2024;
+        $year = $campaign->currentSeason?->year ?? 2025;
         $schedule = $this->seasonService->getSchedule($campaign->id, $year);
 
         // Get team info for formatting
@@ -65,7 +67,7 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $year = $campaign->currentSeason?->year ?? 2024;
+        $year = $campaign->currentSeason?->year ?? 2025;
         $game = $this->seasonService->getGame($campaign->id, $year, $gameId);
 
         if (!$game) {
@@ -106,6 +108,9 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
+        // Initialize AI team lineups if not already set
+        $this->aiLineupService->initializeAllTeamLineups($campaign);
+
         // Get simulation mode (animated or quick)
         $mode = $request->input('mode', 'animated');
 
@@ -113,7 +118,7 @@ class GameController extends Controller
         $lineup = $request->input('lineup', null);
         $playbook = $request->input('playbook', null);
 
-        $year = $campaign->currentSeason?->year ?? 2024;
+        $year = $campaign->currentSeason?->year ?? 2025;
         $game = $this->seasonService->getGame($campaign->id, $year, $gameId);
 
         if (!$game) {
@@ -146,8 +151,14 @@ class GameController extends Controller
         $homeTeam = Team::find($game['homeTeamId']);
         $awayTeam = Team::find($game['awayTeamId']);
 
+        // Get user's saved starting lineup if this is their game
+        $userLineup = null;
+        if ($game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id) {
+            $userLineup = $campaign->settings['lineup']['starters'] ?? null;
+        }
+
         // Simulate the game
-        $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam);
+        $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $userLineup);
 
         // Update game in JSON
         $this->seasonService->updateGame($campaign->id, $year, $gameId, [
@@ -206,7 +217,10 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $year = $campaign->currentSeason?->year ?? 2024;
+        // Initialize AI team lineups if not already set
+        $this->aiLineupService->initializeAllTeamLineups($campaign);
+
+        $year = $campaign->currentSeason?->year ?? 2025;
         $currentDate = $campaign->current_date->format('Y-m-d');
         $games = $this->seasonService->getGamesByDate($campaign->id, $year, $currentDate);
 
@@ -216,13 +230,20 @@ class GameController extends Controller
         // Get all teams for this campaign
         $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
 
+        // Get user's saved starting lineup
+        $userLineup = $campaign->settings['lineup']['starters'] ?? null;
+
         $results = [];
         foreach ($games as $game) {
             $homeTeam = $teams[$game['homeTeamId']];
             $awayTeam = $teams[$game['awayTeamId']];
 
+            // Determine if this is the user's game and pass their lineup
+            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
+            $gameLineup = $isUserGame ? $userLineup : null;
+
             // Simulate the game
-            $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam);
+            $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
 
             // Update game in JSON
             $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
@@ -252,10 +273,19 @@ class GameController extends Controller
 
             $results[] = [
                 'game_id' => $game['id'],
-                'home_team' => $homeTeam->name,
-                'away_team' => $awayTeam->name,
+                'home_team' => [
+                    'id' => $homeTeam->id,
+                    'name' => $homeTeam->name,
+                    'abbreviation' => $homeTeam->abbreviation,
+                ],
+                'away_team' => [
+                    'id' => $awayTeam->id,
+                    'name' => $awayTeam->name,
+                    'abbreviation' => $awayTeam->abbreviation,
+                ],
                 'home_score' => $result['home_score'],
                 'away_score' => $result['away_score'],
+                'is_user_game' => $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id,
             ];
         }
 
@@ -264,7 +294,7 @@ class GameController extends Controller
         $campaign->update(['current_date' => $newDate]);
 
         // Check for weekly evolution updates (every 7 days)
-        $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2024-10-22'));
+        $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
         if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
             $this->evolutionService->processWeeklyUpdates($campaign);
         }
@@ -290,7 +320,7 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $year = $campaign->currentSeason?->year ?? 2024;
+        $year = $campaign->currentSeason?->year ?? 2025;
         $standings = $this->seasonService->getStandings($campaign->id, $year);
 
         // Enrich with team data
@@ -320,7 +350,7 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $year = $campaign->currentSeason?->year ?? 2024;
+        $year = $campaign->currentSeason?->year ?? 2025;
         $allPlayerStats = $this->seasonService->getAllPlayerStats($campaign->id, $year);
 
         // Get team info for each player
@@ -393,7 +423,10 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $year = $campaign->currentSeason?->year ?? 2024;
+        // Initialize AI team lineups if not already set
+        $this->aiLineupService->initializeAllTeamLineups($campaign);
+
+        $year = $campaign->currentSeason?->year ?? 2025;
         $game = $this->seasonService->getGame($campaign->id, $year, $gameId);
 
         if (!$game) {
@@ -475,7 +508,7 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $year = $campaign->currentSeason?->year ?? 2024;
+        $year = $campaign->currentSeason?->year ?? 2025;
         $game = $this->seasonService->getGame($campaign->id, $year, $gameId);
 
         if (!$game) {
@@ -739,6 +772,9 @@ class GameController extends Controller
         $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
         $results = [];
 
+        // Get user's saved starting lineup for their games
+        $userLineup = $campaign->settings['lineup']['starters'] ?? null;
+
         foreach ($games as $game) {
             $homeTeam = $teams[$game['homeTeamId']] ?? null;
             $awayTeam = $teams[$game['awayTeamId']] ?? null;
@@ -747,8 +783,12 @@ class GameController extends Controller
                 continue;
             }
 
+            // Determine if this is the user's game and pass their lineup
+            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
+            $gameLineup = $isUserGame ? $userLineup : null;
+
             // Simulate the game
-            $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam);
+            $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
 
             // Update game in JSON
             $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
@@ -786,7 +826,7 @@ class GameController extends Controller
         }
 
         // Check for weekly/monthly evolution updates
-        $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2024-10-22'));
+        $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
         if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
             $this->evolutionService->processWeeklyUpdates($campaign);
         }
@@ -799,5 +839,240 @@ class GameController extends Controller
             'games_count' => count($results),
             'results' => $results,
         ];
+    }
+
+    /**
+     * Get preview data for simulating to next user game.
+     */
+    public function simulateToNextGamePreview(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $year = $campaign->currentSeason?->year ?? 2025;
+        $preview = $this->seasonService->getSimulateToNextGamePreview(
+            $campaign->id,
+            $year,
+            $campaign->team_id,
+            $campaign->current_date
+        );
+
+        if (!$preview) {
+            return response()->json([
+                'hasNextGame' => false,
+                'message' => 'No upcoming games found',
+            ]);
+        }
+
+        // Get team info for the user's next game
+        $nextUserGame = $preview['nextUserGame'];
+        $homeTeam = Team::find($nextUserGame['homeTeamId']);
+        $awayTeam = Team::find($nextUserGame['awayTeamId']);
+
+        // Enrich games by date with team info
+        $teams = Team::where('campaign_id', $campaign->id)
+            ->select('id', 'name', 'abbreviation', 'primary_color')
+            ->get()
+            ->keyBy('id');
+
+        $enrichedGamesByDate = [];
+        foreach ($preview['gamesByDate'] as $date => $games) {
+            $enrichedGames = [];
+            foreach ($games as $game) {
+                $enrichedGames[] = [
+                    'id' => $game['id'],
+                    'homeTeam' => [
+                        'id' => $game['homeTeamId'],
+                        'abbreviation' => $teams[$game['homeTeamId']]->abbreviation ?? '???',
+                        'name' => $teams[$game['homeTeamId']]->name ?? 'Unknown',
+                        'color' => $teams[$game['homeTeamId']]->primary_color ?? '#666',
+                    ],
+                    'awayTeam' => [
+                        'id' => $game['awayTeamId'],
+                        'abbreviation' => $teams[$game['awayTeamId']]->abbreviation ?? '???',
+                        'name' => $teams[$game['awayTeamId']]->name ?? 'Unknown',
+                        'color' => $teams[$game['awayTeamId']]->primary_color ?? '#666',
+                    ],
+                ];
+            }
+            $enrichedGamesByDate[$date] = $enrichedGames;
+        }
+
+        // Check if user's next game is today
+        $isGameToday = $nextUserGame['gameDate'] === $campaign->current_date->format('Y-m-d');
+
+        return response()->json([
+            'hasNextGame' => true,
+            'isGameToday' => $isGameToday,
+            'nextUserGame' => [
+                'id' => $nextUserGame['id'],
+                'gameDate' => $nextUserGame['gameDate'],
+                'homeTeam' => [
+                    'id' => $homeTeam->id,
+                    'name' => $homeTeam->name,
+                    'abbreviation' => $homeTeam->abbreviation,
+                    'color' => $homeTeam->primary_color,
+                ],
+                'awayTeam' => [
+                    'id' => $awayTeam->id,
+                    'name' => $awayTeam->name,
+                    'abbreviation' => $awayTeam->abbreviation,
+                    'color' => $awayTeam->primary_color,
+                ],
+                'isHome' => $nextUserGame['homeTeamId'] === $campaign->team_id,
+            ],
+            'daysToSimulate' => $preview['daysToSimulate'],
+            'totalGamesToSimulate' => $preview['totalGamesToSimulate'],
+            'gamesByDate' => $enrichedGamesByDate,
+        ]);
+    }
+
+    /**
+     * Simulate all games up to and including the user's next game.
+     */
+    public function simulateToNextGame(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // Initialize AI team lineups if not already set
+        $this->aiLineupService->initializeAllTeamLineups($campaign);
+
+        $year = $campaign->currentSeason?->year ?? 2025;
+
+        // Get user's next game
+        $nextUserGame = $this->seasonService->getNextTeamGame($campaign->id, $year, $campaign->team_id);
+        if (!$nextUserGame) {
+            return response()->json(['message' => 'No upcoming games found'], 400);
+        }
+
+        $gameDate = Carbon::parse($nextUserGame['gameDate']);
+        $currentDate = $campaign->current_date->copy();
+        $allSimulatedGames = [];
+
+        // Simulate all days between current date and game date (exclusive)
+        while ($currentDate->lt($gameDate)) {
+            $dateStr = $currentDate->format('Y-m-d');
+            $dayGames = $this->seasonService->getGamesByDate($campaign->id, $year, $dateStr);
+            $dayGames = array_filter($dayGames, fn($g) => !$g['isComplete']);
+
+            if (!empty($dayGames)) {
+                $dayResult = $this->simulateDayGames($campaign, $year, $dayGames);
+                $allSimulatedGames[] = $dayResult;
+            }
+
+            $currentDate = $currentDate->copy()->addDay();
+        }
+
+        // Get all teams for the user's game date
+        $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
+
+        // Get all games on the user's game date
+        $gameDateStr = $gameDate->format('Y-m-d');
+        $gameDateGames = $this->seasonService->getGamesByDate($campaign->id, $year, $gameDateStr);
+        $gameDateGames = array_filter($gameDateGames, fn($g) => !$g['isComplete']);
+
+        $userGameResult = null;
+        $gameDateResults = [];
+
+        // Get user's saved starting lineup
+        $userLineup = $campaign->settings['lineup']['starters'] ?? null;
+
+        foreach ($gameDateGames as $game) {
+            $homeTeam = $teams[$game['homeTeamId']] ?? null;
+            $awayTeam = $teams[$game['awayTeamId']] ?? null;
+
+            if (!$homeTeam || !$awayTeam) {
+                continue;
+            }
+
+            // Determine if this is the user's game and pass their lineup
+            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
+            $gameLineup = $isUserGame ? $userLineup : null;
+
+            // Simulate the game
+            $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
+
+            // Update game in JSON
+            $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
+                'isComplete' => true,
+                'homeScore' => $result['home_score'],
+                'awayScore' => $result['away_score'],
+                'boxScore' => $result['box_score'],
+            ]);
+
+            // Update standings
+            $this->seasonService->updateStandingsAfterGame(
+                $campaign->id,
+                $year,
+                $game['homeTeamId'],
+                $game['awayTeamId'],
+                $result['home_score'],
+                $result['away_score'],
+                $homeTeam->conference,
+                $awayTeam->conference
+            );
+
+            // Update player stats
+            $this->updatePlayerStats($campaign->id, $year, $result['box_score'], $homeTeam->id, $awayTeam->id);
+
+            // Update coach stats
+            $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
+
+            $gameResult = [
+                'game_id' => $game['id'],
+                'home_team' => [
+                    'id' => $homeTeam->id,
+                    'name' => $homeTeam->name,
+                    'abbreviation' => $homeTeam->abbreviation,
+                ],
+                'away_team' => [
+                    'id' => $awayTeam->id,
+                    'name' => $awayTeam->name,
+                    'abbreviation' => $awayTeam->abbreviation,
+                ],
+                'home_score' => $result['home_score'],
+                'away_score' => $result['away_score'],
+                'is_user_game' => $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id,
+            ];
+
+            if ($gameResult['is_user_game']) {
+                $userGameResult = $gameResult;
+            }
+
+            $gameDateResults[] = $gameResult;
+        }
+
+        // Add game date results to all simulated games
+        if (!empty($gameDateResults)) {
+            $allSimulatedGames[] = [
+                'date' => $gameDateStr,
+                'games_count' => count($gameDateResults),
+                'results' => $gameDateResults,
+            ];
+        }
+
+        // Advance to next day
+        $newDate = $gameDate->copy()->addDay();
+        $campaign->update(['current_date' => $newDate]);
+
+        // Check for weekly/monthly evolution updates
+        $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+            $this->evolutionService->processWeeklyUpdates($campaign);
+        }
+        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+            $this->evolutionService->processMonthlyDevelopment($campaign);
+        }
+
+        return response()->json([
+            'message' => 'Simulated to next game successfully',
+            'userGameResult' => $userGameResult,
+            'simulatedDays' => $allSimulatedGames,
+            'totalGamesSimulated' => array_sum(array_map(fn($d) => $d['games_count'], $allSimulatedGames)),
+            'newDate' => $campaign->fresh()->current_date->format('Y-m-d'),
+        ]);
     }
 }
