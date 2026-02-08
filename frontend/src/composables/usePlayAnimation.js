@@ -76,6 +76,20 @@ export function usePlayAnimation() {
   })
 
   /**
+   * Current box score from animation data (updates per possession).
+   */
+  const currentBoxScore = computed(() => {
+    return currentPossession.value?.box_score || null
+  })
+
+  /**
+   * Activated badges from current possession (for canvas animations).
+   */
+  const currentActivatedBadges = computed(() => {
+    return currentPossession.value?.activated_badges || []
+  })
+
+  /**
    * Check if current possession ends a quarter (Q1-Q3 only, Q4 ends game).
    */
   const isAtQuarterEnd = computed(() => {
@@ -369,8 +383,11 @@ export function usePlayAnimation() {
     const deltaTime = (timestamp - lastTimestamp) / 1000 // Convert to seconds
     lastTimestamp = timestamp
 
+    // Calculate effective speed - 1x displays as 1x but runs at 0.85 for smoother viewing
+    const effectiveSpeed = playbackSpeed.value === 1 ? 0.85 : playbackSpeed.value
+
     // Update elapsed time based on playback speed
-    elapsedTime.value += deltaTime * playbackSpeed.value
+    elapsedTime.value += deltaTime * effectiveSpeed
 
     // Check if we've finished the current possession
     if (elapsedTime.value >= possessionDuration.value) {
@@ -459,6 +476,8 @@ export function usePlayAnimation() {
     currentQuarter,
     currentHomeScore,
     currentAwayScore,
+    currentBoxScore,
+    currentActivatedBadges,
     interpolatedPositions,
     interpolatedBallPosition,
     currentDescription,

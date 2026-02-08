@@ -69,4 +69,11 @@ defineProps({
     radial-gradient(ellipse at 15% 5%, rgba(232, 90, 79, 0.06) 0%, transparent 40%),
     radial-gradient(ellipse at 85% 95%, rgba(244, 162, 89, 0.04) 0%, transparent 35%);
 }
+
+/* Mobile: allow overflow for rotated court */
+@media (max-width: 620px) {
+  .card-nebula {
+    overflow: visible;
+  }
+}
 </style>

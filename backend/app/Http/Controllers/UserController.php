@@ -39,6 +39,8 @@ class UserController extends Controller
                 'play_time_minutes' => $user->profile->play_time_minutes,
                 'player_level' => $user->profile->player_level,
                 'experience_points' => $user->profile->experience_points,
+                'tokens' => $user->profile->getTokens(),
+                'lifetime_synergies' => $user->profile->getLifetimeSynergies(),
             ] : null,
         ]);
     }
@@ -210,6 +212,8 @@ class UserController extends Controller
                 'play_time_hours' => round($user->profile->play_time_minutes / 60, 1),
                 'player_level' => $user->profile->player_level,
                 'experience_points' => $user->profile->experience_points,
+                'tokens' => $user->profile->getTokens(),
+                'lifetime_synergies' => $user->profile->getLifetimeSynergies(),
             ],
         ]);
     }

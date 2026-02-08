@@ -85,9 +85,10 @@ class SocialAuthController extends Controller
                     ],
                 ]);
 
-                // Create user profile
+                // Create user profile with default rewards
                 UserProfile::create([
                     'user_id' => $user->id,
+                    'rewards' => UserProfile::defaultRewards(),
                 ]);
             }
 

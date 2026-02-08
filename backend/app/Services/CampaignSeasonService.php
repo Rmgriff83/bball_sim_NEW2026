@@ -56,7 +56,16 @@ class CampaignSeasonService
         // Update metadata
         $data['metadata']['updatedAt'] = now()->toIso8601String();
 
-        Storage::put($path, json_encode($data, JSON_PRETTY_PRINT));
+        // Use compact JSON (no pretty print) to reduce file size
+        // Also use JSON_INVALID_UTF8_SUBSTITUTE to handle any encoding issues
+        $json = json_encode($data, JSON_INVALID_UTF8_SUBSTITUTE);
+
+        if ($json === false) {
+            \Log::error("Failed to encode season data for campaign {$campaignId}, year {$year}: " . json_last_error_msg());
+            return;
+        }
+
+        Storage::put($path, $json);
 
         // Update cache
         $key = "{$campaignId}_{$year}";
@@ -316,8 +325,10 @@ class CampaignSeasonService
 
     /**
      * Update a game with results.
+     *
+     * @param bool $isUserGame If false, strips detailed box score to save space
      */
-    public function updateGame(int $campaignId, int $year, string $gameId, array $data): bool
+    public function updateGame(int $campaignId, int $year, string $gameId, array $data, bool $isUserGame = true): bool
     {
         $season = $this->loadSeason($campaignId, $year);
         if (!$season) return false;
@@ -325,10 +336,40 @@ class CampaignSeasonService
         $index = $this->getGameIndex($season['schedule'], $gameId);
         if ($index === null) return false;
 
+        // For AI vs AI games, strip detailed box score to save storage
+        if (!$isUserGame && isset($data['boxScore'])) {
+            $data['boxScore'] = $this->compactBoxScore($data['boxScore']);
+        }
+
         $season['schedule'][$index] = array_merge($season['schedule'][$index], $data);
         $this->saveSeason($campaignId, $year, $season);
 
         return true;
+    }
+
+    /**
+     * Compact box score for AI games - keeps only essential data.
+     */
+    private function compactBoxScore(array $boxScore): array
+    {
+        $compact = [];
+
+        foreach (['home', 'away'] as $team) {
+            $compact[$team] = [];
+            foreach ($boxScore[$team] ?? [] as $player) {
+                // Keep only essential stats for historical reference
+                $compact[$team][] = [
+                    'player_id' => $player['player_id'] ?? $player['playerId'] ?? null,
+                    'name' => $player['name'] ?? 'Unknown',
+                    'points' => $player['points'] ?? 0,
+                    'rebounds' => $player['rebounds'] ?? 0,
+                    'assists' => $player['assists'] ?? 0,
+                    'minutes' => $player['minutes'] ?? 0,
+                ];
+            }
+        }
+
+        return $compact;
     }
 
     /**
@@ -472,7 +513,8 @@ class CampaignSeasonService
     }
 
     /**
-     * Update player stats after a game.
+     * Update player stats after a game (in-memory only, requires explicit save).
+     * Call saveSeason() after updating all player stats to persist changes.
      */
     public function updatePlayerStats(int $campaignId, int $year, string $playerId, string $playerName, int $teamId, array $gameStats): void
     {
@@ -525,7 +567,21 @@ class CampaignSeasonService
         $stats['freeThrowsMade'] += $gameStats['freeThrowsMade'] ?? $gameStats['ftm'] ?? 0;
         $stats['freeThrowsAttempted'] += $gameStats['freeThrowsAttempted'] ?? $gameStats['fta'] ?? 0;
 
-        $this->saveSeason($campaignId, $year, $season);
+        // Update cache but don't save yet - caller should call flushSeason() after batch updates
+        $key = "{$campaignId}_{$year}";
+        $this->loadedSeasons[$key] = $season;
+    }
+
+    /**
+     * Flush any pending season changes to storage.
+     * Call this after batch operations like updating multiple player stats.
+     */
+    public function flushSeason(int $campaignId, int $year): void
+    {
+        $key = "{$campaignId}_{$year}";
+        if (isset($this->loadedSeasons[$key])) {
+            $this->saveSeason($campaignId, $year, $this->loadedSeasons[$key]);
+        }
     }
 
     /**
