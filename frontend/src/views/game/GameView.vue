@@ -6,10 +6,10 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
-import { User, Play, Pause, ArrowUpDown, ChevronRight } from 'lucide-vue-next'
+import { User, Play, Pause, ArrowUpDown, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap } from 'lucide-vue-next'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
-import { SimulateConfirmModal } from '@/components/game'
+import { SimulateConfirmModal, EvolutionSummary } from '@/components/game'
 import { usePlayAnimation } from '@/composables/usePlayAnimation'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 
@@ -24,6 +24,8 @@ const teamStore = useTeamStore()
 const {
   animationData,
   currentPossessionIndex,
+  currentKeyframeIndex,
+  currentKeyframe,
   isPlaying,
   playbackSpeed,
   progress,
@@ -74,6 +76,8 @@ const showLiveBoxScore = ref(false)
 const liveBoxScoreTab = ref('away') // Start with away team (visitor listed first traditionally)
 const liveBoxSortColumn = ref('points')
 const liveBoxSortDirection = ref('desc')
+const showAllLiveBoxPlayers = ref(false)
+const LIVE_BOX_INITIAL_COUNT = 7
 
 // Track previous stat values for animations { playerId: { points: 5, assists: 2, ... } }
 const prevPlayerStats = ref({})
@@ -83,6 +87,7 @@ const animatingStats = ref({})
 
 // Simulate modal state
 const showSimulateModal = ref(false)
+const simulatingPreGame = ref(false)
 
 // Coaching style selections for quarter breaks
 const selectedOffense = ref('balanced')
@@ -130,6 +135,9 @@ const isComplete = computed(() => game.value?.is_complete)
 const isInProgress = computed(() => game.value?.is_in_progress)
 const savedQuarter = computed(() => game.value?.current_quarter)
 const isUserGame = computed(() => game.value?.is_user_game)
+const evolutionData = computed(() => game.value?.evolution)
+const gameNews = computed(() => game.value?.news || [])
+const rewardsData = computed(() => game.value?.rewards)
 
 // Determine if user is home or away
 const userIsHome = computed(() =>
@@ -246,9 +254,29 @@ const activeLiveBoxStats = computed(() => {
       return dir * aVal.localeCompare(bVal)
     }
 
-    return dir * (aVal - bVal)
+    // Primary sort
+    const primaryCompare = dir * (aVal - bVal)
+
+    // Secondary sort by minutes
+    if (primaryCompare === 0 && col !== 'minutes') {
+      return -1 * ((a.minutes || 0) - (b.minutes || 0))
+    }
+
+    return primaryCompare
   })
 })
+
+// Displayed live box stats (limited unless showAll is true)
+const displayedLiveBoxStats = computed(() => {
+  if (showAllLiveBoxPlayers.value) {
+    return activeLiveBoxStats.value
+  }
+  return activeLiveBoxStats.value.slice(0, LIVE_BOX_INITIAL_COUNT)
+})
+
+// Check if there are more players
+const hasMoreLiveBoxPlayers = computed(() => activeLiveBoxStats.value.length > LIVE_BOX_INITIAL_COUNT)
+const hiddenLiveBoxPlayerCount = computed(() => activeLiveBoxStats.value.length - LIVE_BOX_INITIAL_COUNT)
 
 const activeLiveBoxTeam = computed(() => {
   return liveBoxScoreTab.value === 'home' ? homeTeam.value : awayTeam.value
@@ -297,6 +325,23 @@ function formatShootingLine(made, attempted) {
 function formatPercentage(made, attempted) {
   if (!attempted || attempted === 0) return '-'
   return ((made / attempted) * 100).toFixed(1) + '%'
+}
+
+// Format attribute name for display (e.g., "offense.threePoint" -> "3PT")
+function formatAttribute(attr) {
+  const attrMap = {
+    'offense.threePoint': '3PT',
+    'offense.midRange': 'MID',
+    'offense.layup': 'LAYUP',
+    'offense.passAccuracy': 'PASS',
+    'defense.defensiveRebound': 'DREB',
+    'defense.offensiveRebound': 'OREB',
+    'defense.steal': 'STL',
+    'defense.block': 'BLK',
+    'defense.interiorDefense': 'INT DEF',
+    'defense.perimeterDefense': 'PER DEF',
+  }
+  return attrMap[attr] || attr.split('.').pop().toUpperCase()
 }
 
 // Check if a stat is currently animating
@@ -390,15 +435,33 @@ function toggleSwapDropdown(slotIndex) {
 }
 
 // Swap a player into a position slot
-function swapPlayerIn(slotIndex, playerId) {
+async function swapPlayerIn(slotIndex, playerId) {
   selectedLineup.value[slotIndex] = playerId
   expandedSwapPlayer.value = null
+
+  // In pre-game mode (not animation), save the lineup to the backend
+  if (!showAnimationMode.value) {
+    try {
+      await teamStore.updateLineup(campaignId.value, selectedLineup.value)
+    } catch (err) {
+      console.error('Failed to save lineup:', err)
+    }
+  }
 }
 
 // Move starter to bench (clear slot)
-function moveStarterToBench(slotIndex) {
+async function moveStarterToBench(slotIndex) {
   selectedLineup.value[slotIndex] = null
   expandedSwapPlayer.value = null
+
+  // In pre-game mode (not animation), save the lineup to the backend
+  if (!showAnimationMode.value) {
+    try {
+      await teamStore.updateLineup(campaignId.value, selectedLineup.value)
+    } catch (err) {
+      console.error('Failed to save lineup:', err)
+    }
+  }
 }
 
 // Get position badge color
@@ -543,6 +606,15 @@ onMounted(async () => {
     // Refresh campaign data to get latest roster and lineup settings
     await campaignStore.fetchCampaign(campaignId.value)
 
+    // Load saved coaching styles from campaign settings
+    const campaignSettings = campaignStore.currentCampaign?.settings
+    if (campaignSettings?.offensive_style) {
+      selectedOffense.value = campaignSettings.offensive_style
+    }
+    if (campaignSettings?.defensive_style) {
+      selectedDefense.value = campaignSettings.defensive_style
+    }
+
     // Fetch standings for team records display
     await leagueStore.fetchStandings(campaignId.value)
 
@@ -610,26 +682,35 @@ function handleCloseSimulateModal() {
 
 /**
  * Handle confirm from simulate modal - simulate games then start user's game.
+ * From the game preview page, we exclude the user's game so they can play it live.
  */
 async function handleConfirmSimulate() {
-  showSimulateModal.value = false
-
   const preview = gameStore.simulatePreview
   const hasGamesToSimulate = preview?.totalGamesToSimulate > 0
 
   if (hasGamesToSimulate) {
-    // Simulate all games up to the user's game
+    // Keep modal open and show loading state
+    simulatingPreGame.value = true
+
+    // Simulate all games up to (but NOT including) the user's game
+    // Pass true for excludeUserGame since user wants to play their game live
     try {
-      await gameStore.simulateToNextGame(campaignId.value)
+      await gameStore.simulateToNextGame(campaignId.value, true)
       // Refresh standings after simulation
       await leagueStore.fetchStandings(campaignId.value)
     } catch (err) {
       console.error('Failed to simulate games:', err)
+      simulatingPreGame.value = false
+      showSimulateModal.value = false
       gameStore.clearSimulatePreview()
       return
     }
+
+    simulatingPreGame.value = false
   }
 
+  // Close modal after simulation completes
+  showSimulateModal.value = false
   gameStore.clearSimulatePreview()
   // Now start the user's game
   await startGame()
@@ -647,22 +728,48 @@ async function startGame() {
   try {
     let result
 
+    // Build settings with lineup
+    const settings = {
+      offensive_style: selectedOffense.value,
+      defensive_style: selectedDefense.value,
+    }
+
+    // Include lineup if valid
+    const validLineup = selectedLineup.value.filter(id => id !== null && id !== undefined)
+    if (validLineup.length === 5) {
+      if (userIsHome.value) {
+        settings.home_lineup = validLineup
+      } else {
+        settings.away_lineup = validLineup
+      }
+    }
+
     // If game is already in progress, continue from where we left off
     if (isInProgress.value) {
-      result = await gameStore.continueGame(campaignId.value, gameId.value, {
-        offensive_style: selectedOffense.value,
-        defensive_style: selectedDefense.value,
-      })
+      result = await gameStore.continueGame(campaignId.value, gameId.value, settings)
     } else {
-      result = await gameStore.startLiveGame(campaignId.value, gameId.value)
+      result = await gameStore.startLiveGame(campaignId.value, gameId.value, settings)
     }
 
     // Load animation data and auto-play
     if (result.animation_data?.possessions?.length > 0) {
       // Pass live mode options so composable knows to trigger quarter break at end
+      // For Q1, starting scores are 0-0. For Q2+, sum up previous quarters' scores.
+      const quarter = result.quarter || 1
+      let startingHomeScore = 0
+      let startingAwayScore = 0
+      if (quarter > 1 && quarterScores.value) {
+        // Sum scores from quarters before this one
+        for (let i = 0; i < quarter - 1; i++) {
+          startingHomeScore += quarterScores.value.home?.[i] || 0
+          startingAwayScore += quarterScores.value.away?.[i] || 0
+        }
+      }
       loadAnimationData(result.animation_data, {
         isLive: true,
-        quarter: result.quarter || 1
+        quarter,
+        startingHomeScore,
+        startingAwayScore
       })
       setTimeout(() => {
         play()
@@ -688,6 +795,10 @@ async function startGame() {
  * Continue to next quarter with coaching adjustments.
  */
 async function continueToNextQuarter() {
+  // Capture starting scores BEFORE async call (they reflect end of previous quarter)
+  const startingHomeScore = currentHomeScore.value
+  const startingAwayScore = currentAwayScore.value
+
   simulating.value = true
 
   try {
@@ -723,7 +834,9 @@ async function continueToNextQuarter() {
       // The overlay will show different content based on gameJustCompleted
       loadAnimationData(result.animation_data, {
         isLive: true,
-        quarter: result.quarter
+        quarter: result.quarter,
+        startingHomeScore,
+        startingAwayScore
       })
       setTimeout(() => {
         play()
@@ -757,11 +870,15 @@ function handleQuarterBreakContinue() {
 function viewBoxScore() {
   showAnimationMode.value = false
   gameJustCompleted.value = false
+  // Restore scroll when leaving overlay
+  document.body.style.overflow = ''
   // Refresh the game data to get final stats
   gameStore.fetchGame(campaignId.value, gameId.value)
 }
 
 function goBack() {
+  // Restore scroll when navigating away
+  document.body.style.overflow = ''
   router.push(`/campaign/${campaignId.value}`)
 }
 
@@ -831,19 +948,119 @@ watch(gameAnimationData, (newData) => {
   }
 }, { immediate: true })
 
-// Track previous scores to detect baskets
-const prevTotalScore = ref(0)
-
-// Watch for score changes and trigger basket animation
+// Watch for possession changes and trigger basket animation at END of each play
 watch(
-  [currentHomeScore, currentAwayScore],
-  ([homeScore, awayScore], [prevHome, prevAway]) => {
-    const newTotal = (homeScore || 0) + (awayScore || 0)
-    const oldTotal = (prevHome || 0) + (prevAway || 0)
-    const pointsScored = newTotal - oldTotal
+  currentPossessionIndex,
+  (newIndex, oldIndex) => {
+    // Only trigger when moving forward to a new possession (play just ended)
+    if (newIndex > oldIndex && animationData.value?.possessions) {
+      const possessions = animationData.value.possessions
+      const justEndedPossession = possessions[oldIndex]  // The possession that just finished
+      const previousPossession = oldIndex > 0 ? possessions[oldIndex - 1] : null
 
-    if (pointsScored > 0 && pointsScored <= 3 && courtRef.value) {
-      courtRef.value.triggerScoreAnimation(pointsScored)
+      if (justEndedPossession) {
+        // Calculate score change from the possession that just ended
+        const endedHomeScore = justEndedPossession.home_score || 0
+        const endedAwayScore = justEndedPossession.away_score || 0
+        const prevHomeScore = previousPossession?.home_score || 0
+        const prevAwayScore = previousPossession?.away_score || 0
+
+        const homePoints = endedHomeScore - prevHomeScore
+        const awayPoints = endedAwayScore - prevAwayScore
+
+        // Trigger animation for the team that scored
+        if (homePoints > 0 && homePoints <= 3 && courtRef.value) {
+          courtRef.value.triggerScoreAnimation(homePoints, true)  // Home team scored
+        } else if (awayPoints > 0 && awayPoints <= 3 && courtRef.value) {
+          courtRef.value.triggerScoreAnimation(awayPoints, false)  // Away team scored
+        }
+
+        // Check for defensive plays (blocks, steals) and trigger crowd celebration only
+        // The on-court animation is triggered in real-time by the keyframe watcher
+        if (courtRef.value) {
+          let defensivePlayDetected = false
+
+          // Search through keyframes for defensive outcomes
+          if (justEndedPossession.keyframes?.length > 0) {
+            for (const keyframe of justEndedPossession.keyframes) {
+              const outcome = keyframe?.outcome
+              if (outcome === 'blocked' || outcome === 'stolen' || outcome === 'turnover') {
+                defensivePlayDetected = true
+                break
+              }
+            }
+          }
+
+          // Trigger crowd celebration (fans jump) if defensive play occurred
+          if (defensivePlayDetected) {
+            const defendingTeamIsHome = justEndedPossession.team !== 'home'
+            // Just trigger crowd jump, on-court emojis are triggered in real-time by keyframe watcher
+            courtRef.value.triggerDefensiveCelebration(defendingTeamIsHome, 'block')
+          }
+        }
+      }
+    }
+  }
+)
+
+// Track which keyframes we've already triggered animations for (to prevent duplicates)
+const triggeredDefensiveKeyframes = ref(new Set())
+
+// Watch for keyframe changes to trigger defensive animations in real-time
+watch(
+  [currentKeyframeIndex, currentPossessionIndex],
+  ([keyframeIdx, possessionIdx], [oldKeyframeIdx, oldPossessionIdx]) => {
+    // Reset tracking when possession changes
+    if (possessionIdx !== oldPossessionIdx) {
+      triggeredDefensiveKeyframes.value.clear()
+    }
+
+    // Only process if we have a keyframe and court ref
+    if (!currentKeyframe.value || !courtRef.value || !showAnimationMode.value) return
+
+    const keyframe = currentKeyframe.value
+    const outcome = keyframe?.outcome
+    const keyframeId = `${possessionIdx}-${keyframeIdx}`
+
+    // Check if this is a defensive play we haven't animated yet
+    if ((outcome === 'blocked' || outcome === 'stolen' || outcome === 'turnover') &&
+        !triggeredDefensiveKeyframes.value.has(keyframeId)) {
+
+      triggeredDefensiveKeyframes.value.add(keyframeId)
+
+      const defenseType = outcome === 'blocked' ? 'block' : 'steal'
+
+      // Find the ball carrier's position from the keyframe positions
+      // The ball carrier is the player who got blocked/stolen from
+      const positions = keyframe.positions || {}
+      let ballCarrierPos = null
+
+      // Look for the player with the ball in this keyframe
+      for (const [playerId, pos] of Object.entries(positions)) {
+        if (pos.hasBall) {
+          ballCarrierPos = pos
+          break
+        }
+      }
+
+      // Fallback to ball position if no player has it
+      if (!ballCarrierPos && keyframe.ball) {
+        ballCarrierPos = keyframe.ball
+      }
+
+      // Default to center court if we can't find the position
+      const x = ballCarrierPos?.x ?? 0.5
+      const y = ballCarrierPos?.y ?? 0.5
+
+      console.log('[Defensive Play] Real-time trigger:', {
+        outcome,
+        defenseType,
+        position: { x, y },
+        keyframeId
+      })
+
+      // Trigger the on-court defensive animation at the player's position
+      courtRef.value.triggerDefensiveAnimationAtPosition(x, y, defenseType)
     }
   }
 )
@@ -993,6 +1210,198 @@ watch(
   { immediate: true }
 )
 
+// Initialize lineup from campaign settings when entering pre-game view
+watch(
+  () => campaign.value?.settings?.lineup?.starters,
+  (savedLineup) => {
+    // Only initialize in pre-game (not in animation mode)
+    if (!showAnimationMode.value && savedLineup?.length === 5) {
+      selectedLineup.value = [...savedLineup]
+    }
+  },
+  { immediate: true }
+)
+
+// Auto-save coaching styles when changed on pre-game page
+watch(
+  [selectedOffense, selectedDefense],
+  async ([offense, defense], [prevOffense, prevDefense]) => {
+    // Only save if values actually changed and we're not in animation mode
+    if (showAnimationMode.value) return
+    if (offense === prevOffense && defense === prevDefense) return
+
+    // Don't save on initial load (when prev values are undefined)
+    if (prevOffense === undefined || prevDefense === undefined) return
+
+    try {
+      await campaignStore.updateCampaign(campaignId.value, {
+        settings: {
+          offensive_style: offense,
+          defensive_style: defense
+        }
+      })
+    } catch (err) {
+      console.error('Failed to save coaching styles:', err)
+    }
+  }
+)
+
+// Also watch roster data to initialize lineup if no saved lineup exists
+watch(
+  [() => homeRoster.value, () => awayRoster.value, () => userIsHome.value],
+  ([home, away, isHome]) => {
+    // Only if not in animation mode and lineup not already set
+    if (showAnimationMode.value) return
+
+    const hasValidLineup = selectedLineup.value.filter(id => id !== null).length === 5
+    if (hasValidLineup) return
+
+    const roster = isHome ? home : away
+    if (!roster || roster.length < 5) return
+
+    // Build lineup from roster using best players per position
+    const positions = ['PG', 'SG', 'SF', 'PF', 'C']
+    const newLineup = []
+    const usedIds = new Set()
+    const sorted = [...roster].sort((a, b) => (b.overall_rating || 0) - (a.overall_rating || 0))
+
+    for (const pos of positions) {
+      const player = sorted.find(p =>
+        !usedIds.has(p.id) &&
+        (p.position === pos || p.secondary_position === pos)
+      )
+      if (player) {
+        newLineup.push(player.id)
+        usedIds.add(player.id)
+      } else {
+        newLineup.push(null)
+      }
+    }
+
+    if (newLineup.filter(id => id !== null).length === 5) {
+      selectedLineup.value = newLineup
+    }
+  },
+  { immediate: true }
+)
+
+// Reset show all players when switching live box score tabs
+watch(
+  () => liveBoxScoreTab.value,
+  () => {
+    showAllLiveBoxPlayers.value = false
+  }
+)
+
+// Pre-game roster for user's team (for lineup swap functionality)
+// Uses the roster fetched from the team roster API calls
+const preGameUserRoster = computed(() => {
+  const roster = userIsHome.value ? homeRoster.value : awayRoster.value
+  if (!roster || roster.length === 0) return []
+  return roster.map(p => ({
+    player_id: p.id,
+    name: `${p.first_name} ${p.last_name}`,
+    position: p.position,
+    secondary_position: p.secondary_position,
+    overall_rating: p.overall_rating,
+    is_injured: p.is_injured,
+    points: 0,
+    rebounds: 0,
+    assists: 0,
+  }))
+})
+
+// Pre-game starters with stats structure for lineup cards (similar to currentStartersWithStats)
+const preGameStartersWithStats = computed(() => {
+  const players = preGameUserRoster.value
+  if (!players || players.length === 0) return []
+
+  return positionLabels.map((pos, index) => {
+    const playerId = selectedLineup.value[index]
+    const player = players.find(p => p.player_id === playerId)
+    return {
+      slotPosition: pos,
+      slotIndex: index,
+      player: player || null
+    }
+  })
+})
+
+// Get pre-game swap candidates for a position slot
+function getPreGameSwapCandidates(slotPosition, slotIndex) {
+  const players = preGameUserRoster.value
+  if (!players) return []
+
+  // Get IDs already in lineup (except current slot)
+  const excludeIds = selectedLineup.value
+    .filter((id, i) => i !== slotIndex && id != null)
+
+  // Filter to players who can play this position and aren't in other slots
+  return players.filter(p => {
+    const canPlay = p.position === slotPosition || p.secondary_position === slotPosition
+    const isHealthy = !p.is_injured
+    const notInLineup = !excludeIds.includes(p.player_id)
+    const notCurrentStarter = p.player_id !== selectedLineup.value[slotIndex]
+    return canPlay && isHealthy && notInLineup && notCurrentStarter
+  }).sort((a, b) => (b.overall_rating || 0) - (a.overall_rating || 0))
+}
+
+// Pre-game starters for overlay (uses selectedLineup for user's team)
+const preGameHomeStarters = computed(() => {
+  if (userIsHome.value) {
+    // Build from selectedLineup using the fetched home roster
+    return buildStartersFromSelectedLineup(selectedLineup.value, homeRoster.value)
+  }
+  return selectStartersFromRoster(homeRoster.value)
+})
+
+const preGameAwayStarters = computed(() => {
+  if (!userIsHome.value) {
+    // Build from selectedLineup using the fetched away roster
+    return buildStartersFromSelectedLineup(selectedLineup.value, awayRoster.value)
+  }
+  return selectStartersFromRoster(awayRoster.value)
+})
+
+// Build starters from selectedLineup refs for pre-game display
+function buildStartersFromSelectedLineup(lineupIds, roster) {
+  if (!lineupIds || !roster || roster.length === 0) return []
+
+  const positions = ['PG', 'SG', 'SF', 'PF', 'C']
+  const starters = []
+
+  // Build a map for quick player lookup
+  const playerMap = new Map()
+  roster.forEach(p => playerMap.set(p.id, p))
+
+  // Get each starter by ID, assign the position slot
+  lineupIds.forEach((playerId, index) => {
+    if (playerId) {
+      const player = playerMap.get(playerId)
+      if (player) {
+        starters.push({
+          ...player,
+          slotPosition: positions[index]
+        })
+      }
+    }
+  })
+
+  return starters
+}
+
+// Get offensive strategy label
+function getOffenseLabel(scheme) {
+  const style = offensiveStyles.find(s => s.value === scheme)
+  return style?.label || 'Balanced'
+}
+
+// Get defensive strategy label
+function getDefenseLabel(scheme) {
+  const style = defensiveStyles.find(s => s.value === scheme)
+  return style?.label || 'Man-to-Man'
+}
+
 // Toggle animation mode
 function toggleAnimationMode() {
   showAnimationMode.value = !showAnimationMode.value
@@ -1014,9 +1423,20 @@ function handleSeek(percent) {
   }
 }
 
+// Lock body scroll when quarter break overlay is shown
+watch([isQuarterBreak, showAnimationMode], ([isBreak, isAnimating]) => {
+  if (isBreak && isAnimating) {
+    document.body.style.overflow = 'hidden'
+  } else {
+    document.body.style.overflow = ''
+  }
+})
+
 // Cleanup on unmount
 onUnmounted(() => {
   cleanup()
+  // Ensure scroll is restored on unmount
+  document.body.style.overflow = ''
 })
 </script>
 
@@ -1227,8 +1647,8 @@ onUnmounted(() => {
               <Transition name="fade">
                 <div v-if="isQuarterBreak" class="quarter-break-overlay">
                   <div class="quarter-break-content">
-                    <!-- Game Complete Header -->
-                    <template v-if="gameJustCompleted">
+                    <!-- Game Complete Header (use completedQuarter >= 4 as fallback) -->
+                    <template v-if="gameJustCompleted || completedQuarter >= 4">
                       <h2 class="quarter-break-title game-complete-title">Final</h2>
                       <p class="game-complete-subtitle">Game Complete</p>
                     </template>
@@ -1254,7 +1674,7 @@ onUnmounted(() => {
                     </div>
 
                     <!-- Coaching Adjustments (only in live mode during quarter breaks, not game complete) -->
-                    <div v-if="isLiveMode && !gameJustCompleted" class="coaching-adjustments-v2">
+                    <div v-if="isLiveMode && !gameJustCompleted && completedQuarter < 4" class="coaching-adjustments-v2">
                       <!-- Strategy Pills -->
                       <div class="strategy-section">
                         <div class="strategy-group">
@@ -1392,10 +1812,30 @@ onUnmounted(() => {
                       </div>
                     </div>
 
-                    <p v-if="!isLiveMode && !gameJustCompleted" class="break-hint">Replay mode - no adjustments available</p>
+                    <!-- Replay mode: show continue button (only for Q1-Q3) -->
+                    <template v-if="!isLiveMode && !gameJustCompleted && completedQuarter < 4">
+                      <p class="break-hint">Replay mode - no adjustments available</p>
+                      <BaseButton
+                        variant="secondary"
+                        size="md"
+                        @click="handleQuarterBreakContinue"
+                      >
+                        Continue
+                      </BaseButton>
+                    </template>
 
-                    <!-- Game Complete: View Box Score Button -->
-                    <template v-if="gameJustCompleted">
+                    <!-- Game Complete: View Box Score Button (use completedQuarter >= 4 as fallback) -->
+                    <template v-if="gameJustCompleted || completedQuarter >= 4">
+                      <!-- Evolution Summary for User's Team -->
+                      <div v-if="isUserGame" class="evolution-section">
+                        <EvolutionSummary
+                          :evolution="evolutionData"
+                          :team-key="userIsHome ? 'home' : 'away'"
+                          :team-name="userTeam?.name || 'Your Team'"
+                          :loading="!evolutionData"
+                        />
+                      </div>
+
                       <p class="break-hint">View the full box score and game statistics</p>
                       <BaseButton
                         variant="primary"
@@ -1532,7 +1972,7 @@ onUnmounted(() => {
                     </thead>
                     <tbody>
                       <tr
-                        v-for="player in activeLiveBoxStats"
+                        v-for="player in displayedLiveBoxStats"
                         :key="player.player_id"
                         class="player-row"
                       >
@@ -1586,6 +2026,18 @@ onUnmounted(() => {
                           <span class="shooting-pct">{{ formatPercentage(player.ftm, player.fta) }}</span>
                         </td>
                       </tr>
+                      <!-- Show more button row -->
+                      <tr v-if="hasMoreLiveBoxPlayers && !showAllLiveBoxPlayers" class="show-more-row">
+                        <td :colspan="11">
+                          <button
+                            class="show-more-btn"
+                            @click="showAllLiveBoxPlayers = true"
+                          >
+                            <ChevronDown :size="16" />
+                            Show {{ hiddenLiveBoxPlayerCount }} more players
+                          </button>
+                        </td>
+                      </tr>
                     </tbody>
                     <tfoot>
                       <tr class="totals-row">
@@ -1622,16 +2074,6 @@ onUnmounted(() => {
               <LoadingSpinner size="md" />
               <span class="ml-4 text-secondary">Preparing game simulation...</span>
             </div>
-
-            <!-- View Stats Button (after game is complete) -->
-            <div v-if="isComplete && hasAnimationData" class="mt-4 flex justify-center">
-              <BaseButton
-                variant="secondary"
-                @click="showAnimationMode = false"
-              >
-                View Game Stats
-              </BaseButton>
-            </div>
           </GlassCard>
         </template>
 
@@ -1657,10 +2099,21 @@ onUnmounted(() => {
                       {{ awayTeam?.abbreviation }}
                     </div>
                     <div class="starters-list">
-                      <div v-for="player in awayStarters" :key="player.id || player.player_id" class="starter-row">
+                      <div v-for="player in preGameAwayStarters" :key="player.id || player.player_id" class="starter-row">
                         <span class="starter-pos">{{ player.slotPosition }}</span>
                         <span class="starter-name">{{ player.last_name || player.lastName || player.name?.split(' ').pop() }}</span>
                         <span class="starter-ovr">{{ player.overall_rating || player.overallRating }}</span>
+                      </div>
+                    </div>
+                    <!-- Coach Settings for Away Team (use selections if user is away) -->
+                    <div class="team-coach-settings">
+                      <div class="coach-setting-row">
+                        <span class="coach-setting-label">Off:</span>
+                        <span class="coach-setting-value">{{ getOffenseLabel(!userIsHome && isUserGame ? selectedOffense : awayTeam?.coaching_scheme?.offensive) }}</span>
+                      </div>
+                      <div class="coach-setting-row">
+                        <span class="coach-setting-label">Def:</span>
+                        <span class="coach-setting-value">{{ getDefenseLabel(!userIsHome && isUserGame ? selectedDefense : awayTeam?.coaching_scheme?.defensive) }}</span>
                       </div>
                     </div>
                   </div>
@@ -1670,10 +2123,21 @@ onUnmounted(() => {
                       {{ homeTeam?.abbreviation }}
                     </div>
                     <div class="starters-list">
-                      <div v-for="player in homeStarters" :key="player.id || player.player_id" class="starter-row">
+                      <div v-for="player in preGameHomeStarters" :key="player.id || player.player_id" class="starter-row">
                         <span class="starter-pos">{{ player.slotPosition }}</span>
                         <span class="starter-name">{{ player.last_name || player.lastName || player.name?.split(' ').pop() }}</span>
                         <span class="starter-ovr">{{ player.overall_rating || player.overallRating }}</span>
+                      </div>
+                    </div>
+                    <!-- Coach Settings for Home Team (use selections if user is home) -->
+                    <div class="team-coach-settings">
+                      <div class="coach-setting-row">
+                        <span class="coach-setting-label">Off:</span>
+                        <span class="coach-setting-value">{{ getOffenseLabel(userIsHome && isUserGame ? selectedOffense : homeTeam?.coaching_scheme?.offensive) }}</span>
+                      </div>
+                      <div class="coach-setting-row">
+                        <span class="coach-setting-label">Def:</span>
+                        <span class="coach-setting-value">{{ getDefenseLabel(userIsHome && isUserGame ? selectedDefense : homeTeam?.coaching_scheme?.defensive) }}</span>
                       </div>
                     </div>
                   </div>
@@ -1681,7 +2145,7 @@ onUnmounted(() => {
               </div>
             </GlassCard>
 
-            <!-- Matchup Info -->
+            <!-- Matchup Info & User Team Settings -->
             <GlassCard padding="lg" :hoverable="false">
               <h3 class="h4 mb-4">Matchup Preview</h3>
               <div class="matchup-grid">
@@ -1692,6 +2156,39 @@ onUnmounted(() => {
                 <div class="matchup-item">
                   <span class="matchup-label">Game Type</span>
                   <span class="matchup-value">Regular Season</span>
+                </div>
+              </div>
+
+              <!-- User Team Strategy Pills (only for user's game) -->
+              <div v-if="isUserGame" class="pregame-strategy-section">
+                <h4 class="strategy-section-title">Game Plan</h4>
+                <div class="strategy-group">
+                  <span class="strategy-label">Offense</span>
+                  <div class="strategy-pills">
+                    <button
+                      v-for="style in offensiveStyles"
+                      :key="style.value"
+                      class="strategy-pill"
+                      :class="{ active: selectedOffense === style.value }"
+                      @click="selectedOffense = style.value"
+                    >
+                      {{ style.label }}
+                    </button>
+                  </div>
+                </div>
+                <div class="strategy-group">
+                  <span class="strategy-label">Defense</span>
+                  <div class="strategy-pills">
+                    <button
+                      v-for="style in defensiveStyles"
+                      :key="style.value"
+                      class="strategy-pill"
+                      :class="{ active: selectedDefense === style.value }"
+                      @click="selectedDefense = style.value"
+                    >
+                      {{ style.label }}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1720,6 +2217,93 @@ onUnmounted(() => {
               </div>
             </GlassCard>
           </div>
+
+          <!-- User Lineup Management (only for user's game) -->
+          <GlassCard v-if="isUserGame" padding="lg" :hoverable="false" class="mt-6">
+            <div class="pregame-lineup-section">
+              <div class="lineup-cards-header">
+                <span class="lineup-cards-title">Starting Lineup</span>
+                <span class="lineup-cards-hint">Tap swap icon to make changes</span>
+              </div>
+              <div class="lineup-cards-grid pregame-lineup-grid">
+                <div
+                  v-for="slot in preGameStartersWithStats"
+                  :key="slot.slotPosition"
+                  class="lineup-card"
+                  :class="{
+                    empty: !slot.player,
+                    'dropdown-open': expandedSwapPlayer === slot.slotIndex
+                  }"
+                >
+                  <!-- Empty Slot -->
+                  <template v-if="!slot.player">
+                    <div class="lineup-card-empty">
+                      <span class="slot-position-badge">{{ slot.slotPosition }}</span>
+                      <span class="empty-text">Empty</span>
+                      <button class="swap-btn" @click="toggleSwapDropdown(slot.slotIndex)">
+                        <ArrowUpDown :size="14" />
+                      </button>
+                    </div>
+                  </template>
+
+                  <!-- Filled Slot -->
+                  <template v-else>
+                    <div class="lineup-card-header">
+                      <span class="slot-position-badge" :style="{ backgroundColor: getPositionColor(slot.slotPosition) }">
+                        {{ slot.slotPosition }}
+                      </span>
+                      <div class="lineup-player-info">
+                        <span class="lineup-player-name">{{ slot.player.name }}</span>
+                        <span class="lineup-player-pos-secondary">{{ slot.player.position }}{{ slot.player.secondary_position ? ` / ${slot.player.secondary_position}` : '' }}</span>
+                      </div>
+                      <div class="lineup-card-actions">
+                        <button
+                          class="swap-btn"
+                          :class="{ active: expandedSwapPlayer === slot.slotIndex }"
+                          @click="toggleSwapDropdown(slot.slotIndex)"
+                        >
+                          <ArrowUpDown :size="14" />
+                        </button>
+                        <span class="lineup-player-ovr">{{ slot.player.overall_rating }}</span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- Swap Dropdown -->
+                  <Transition name="dropdown-slide">
+                    <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown">
+                      <div class="swap-dropdown-header">
+                        {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
+                      </div>
+                      <div class="swap-dropdown-list">
+                        <!-- Available players who can play this position -->
+                        <button
+                          v-for="candidate in getPreGameSwapCandidates(slot.slotPosition, slot.slotIndex)"
+                          :key="candidate.player_id || candidate.id"
+                          class="swap-option"
+                          :class="{ injured: candidate.is_injured }"
+                          @click="swapPlayerIn(slot.slotIndex, candidate.player_id || candidate.id)"
+                        >
+                          <ArrowUpDown :size="12" class="swap-option-icon" />
+                          <span
+                            class="swap-option-pos"
+                            :style="{ backgroundColor: getPositionColor(candidate.position) }"
+                          >
+                            {{ candidate.position }}
+                          </span>
+                          <span class="swap-option-name">{{ candidate.name }}</span>
+                          <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
+                        </button>
+                        <div v-if="getPreGameSwapCandidates(slot.slotPosition, slot.slotIndex).length === 0" class="swap-empty">
+                          No eligible players
+                        </div>
+                      </div>
+                    </div>
+                  </Transition>
+                </div>
+              </div>
+            </div>
+          </GlassCard>
         </template>
       </template>
 
@@ -1985,6 +2569,318 @@ onUnmounted(() => {
           />
         </GlassCard>
 
+        <!-- Post-Game Summary Section -->
+        <div v-if="isComplete && isUserGame" class="post-game-summary mb-6">
+          <h3 class="summary-header">
+            <Activity :size="20" />
+            Post-Game Summary
+          </h3>
+
+          <div class="summary-grid">
+            <!-- Rewards Card -->
+            <GlassCard v-if="rewardsData" padding="md" :hoverable="false" class="summary-card rewards-card">
+              <h4 class="card-title">
+                <Coins :size="16" />
+                Rewards Earned
+              </h4>
+              <div class="rewards-content">
+                <div class="reward-item">
+                  <span class="reward-label">Synergies Activated</span>
+                  <span class="reward-value">{{ rewardsData.synergies_activated || 0 }}</span>
+                </div>
+                <div class="reward-item highlight">
+                  <span class="reward-label">Tokens Earned</span>
+                  <span class="reward-value tokens">+{{ rewardsData.tokens_awarded || 0 }}</span>
+                </div>
+                <div v-if="rewardsData.win_bonus_applied" class="reward-bonus">
+                  <Trophy :size="14" />
+                  Win bonus applied (2x tokens)
+                </div>
+              </div>
+            </GlassCard>
+
+            <!-- Game Result Card -->
+            <GlassCard padding="md" :hoverable="false" class="summary-card result-card">
+              <h4 class="card-title">
+                <Trophy :size="16" />
+                Game Result
+              </h4>
+              <div class="result-content">
+                <div class="result-teams">
+                  <div class="result-team" :class="{ winner: winner === 'away' }">
+                    <span class="team-name">{{ awayTeam?.abbreviation }}</span>
+                    <span class="team-score">{{ game?.away_score }}</span>
+                  </div>
+                  <span class="result-at">@</span>
+                  <div class="result-team" :class="{ winner: winner === 'home' }">
+                    <span class="team-name">{{ homeTeam?.abbreviation }}</span>
+                    <span class="team-score">{{ game?.home_score }}</span>
+                  </div>
+                </div>
+                <div v-if="userWon !== null" class="user-result" :class="userWon ? 'win' : 'loss'">
+                  {{ userWon ? 'Victory!' : 'Defeat' }}
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+
+          <!-- Evolution Data - Home Team -->
+          <GlassCard v-if="evolutionData?.home && Object.keys(evolutionData.home).length > 0" padding="md" :hoverable="false" class="summary-card evolution-card mb-4">
+            <h4 class="card-title">
+              <Zap :size="16" />
+              {{ homeTeam?.name }} Updates
+            </h4>
+            <div class="evolution-content">
+              <!-- Injuries -->
+              <div v-if="evolutionData.home.injuries?.length" class="evolution-section">
+                <h5 class="section-label injury-label">
+                  <AlertTriangle :size="14" />
+                  Injuries
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="injury in evolutionData.home.injuries" :key="injury.player_id" class="evolution-item injury">
+                    <span class="player-name">{{ injury.name }}</span>
+                    <span class="injury-details">{{ injury.injury_type }} - Out {{ injury.games_out }} games</span>
+                    <span class="severity-badge" :class="injury.severity">{{ injury.severity }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Development -->
+              <div v-if="evolutionData.home.development?.length" class="evolution-section">
+                <h5 class="section-label positive-label">
+                  <TrendingUp :size="14" />
+                  Development
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="dev in evolutionData.home.development" :key="dev.player_id" class="evolution-item positive">
+                    <span class="player-name">{{ dev.name }}</span>
+                    <div class="attr-badges">
+                      <span v-for="attr in dev.attributes_improved" :key="attr" class="attr-badge positive">+{{ formatAttribute(attr) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Regression -->
+              <div v-if="evolutionData.home.regression?.length" class="evolution-section">
+                <h5 class="section-label negative-label">
+                  <TrendingDown :size="14" />
+                  Regression
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="reg in evolutionData.home.regression" :key="reg.player_id" class="evolution-item negative">
+                    <span class="player-name">{{ reg.name }}</span>
+                    <div class="attr-badges">
+                      <span v-for="attr in reg.attributes_declined" :key="attr" class="attr-badge negative">-{{ formatAttribute(attr) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Hot Streaks -->
+              <div v-if="evolutionData.home.hot_streaks?.length" class="evolution-section">
+                <h5 class="section-label hot-label">
+                  <Flame :size="14" />
+                  Hot Streaks
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="streak in evolutionData.home.hot_streaks" :key="streak.player_id" class="evolution-item hot">
+                    <span class="player-name">{{ streak.name }}</span>
+                    <span class="streak-info">{{ streak.games }} game streak</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Cold Streaks -->
+              <div v-if="evolutionData.home.cold_streaks?.length" class="evolution-section">
+                <h5 class="section-label cold-label">
+                  <Snowflake :size="14" />
+                  Cold Streaks
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="streak in evolutionData.home.cold_streaks" :key="streak.player_id" class="evolution-item cold">
+                    <span class="player-name">{{ streak.name }}</span>
+                    <span class="streak-info">{{ streak.games }} game slump</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Fatigue Warnings -->
+              <div v-if="evolutionData.home.fatigue_warnings?.length" class="evolution-section">
+                <h5 class="section-label warning-label">
+                  <Activity :size="14" />
+                  Fatigue Warnings
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="warn in evolutionData.home.fatigue_warnings" :key="warn.player_id" class="evolution-item warning">
+                    <span class="player-name">{{ warn.name }}</span>
+                    <span class="fatigue-bar">
+                      <span class="fatigue-fill" :style="{ width: warn.fatigue + '%' }"></span>
+                    </span>
+                    <span class="fatigue-value">{{ warn.fatigue }}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Morale Changes -->
+              <div v-if="evolutionData.home.morale_changes?.length" class="evolution-section">
+                <h5 class="section-label">
+                  <Heart :size="14" />
+                  Morale Changes
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="morale in evolutionData.home.morale_changes" :key="morale.player_id" class="evolution-item" :class="morale.change > 0 ? 'positive' : 'negative'">
+                    <span class="player-name">{{ morale.name }}</span>
+                    <span class="morale-change">{{ morale.change > 0 ? '+' : '' }}{{ morale.change }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </GlassCard>
+
+          <!-- Evolution Data - Away Team -->
+          <GlassCard v-if="evolutionData?.away && Object.keys(evolutionData.away).length > 0" padding="md" :hoverable="false" class="summary-card evolution-card mb-4">
+            <h4 class="card-title">
+              <Zap :size="16" />
+              {{ awayTeam?.name }} Updates
+            </h4>
+            <div class="evolution-content">
+              <!-- Injuries -->
+              <div v-if="evolutionData.away.injuries?.length" class="evolution-section">
+                <h5 class="section-label injury-label">
+                  <AlertTriangle :size="14" />
+                  Injuries
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="injury in evolutionData.away.injuries" :key="injury.player_id" class="evolution-item injury">
+                    <span class="player-name">{{ injury.name }}</span>
+                    <span class="injury-details">{{ injury.injury_type }} - Out {{ injury.games_out }} games</span>
+                    <span class="severity-badge" :class="injury.severity">{{ injury.severity }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Development -->
+              <div v-if="evolutionData.away.development?.length" class="evolution-section">
+                <h5 class="section-label positive-label">
+                  <TrendingUp :size="14" />
+                  Development
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="dev in evolutionData.away.development" :key="dev.player_id" class="evolution-item positive">
+                    <span class="player-name">{{ dev.name }}</span>
+                    <div class="attr-badges">
+                      <span v-for="attr in dev.attributes_improved" :key="attr" class="attr-badge positive">+{{ formatAttribute(attr) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Regression -->
+              <div v-if="evolutionData.away.regression?.length" class="evolution-section">
+                <h5 class="section-label negative-label">
+                  <TrendingDown :size="14" />
+                  Regression
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="reg in evolutionData.away.regression" :key="reg.player_id" class="evolution-item negative">
+                    <span class="player-name">{{ reg.name }}</span>
+                    <div class="attr-badges">
+                      <span v-for="attr in reg.attributes_declined" :key="attr" class="attr-badge negative">-{{ formatAttribute(attr) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Hot Streaks -->
+              <div v-if="evolutionData.away.hot_streaks?.length" class="evolution-section">
+                <h5 class="section-label hot-label">
+                  <Flame :size="14" />
+                  Hot Streaks
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="streak in evolutionData.away.hot_streaks" :key="streak.player_id" class="evolution-item hot">
+                    <span class="player-name">{{ streak.name }}</span>
+                    <span class="streak-info">{{ streak.games }} game streak</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Cold Streaks -->
+              <div v-if="evolutionData.away.cold_streaks?.length" class="evolution-section">
+                <h5 class="section-label cold-label">
+                  <Snowflake :size="14" />
+                  Cold Streaks
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="streak in evolutionData.away.cold_streaks" :key="streak.player_id" class="evolution-item cold">
+                    <span class="player-name">{{ streak.name }}</span>
+                    <span class="streak-info">{{ streak.games }} game slump</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Fatigue Warnings -->
+              <div v-if="evolutionData.away.fatigue_warnings?.length" class="evolution-section">
+                <h5 class="section-label warning-label">
+                  <Activity :size="14" />
+                  Fatigue Warnings
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="warn in evolutionData.away.fatigue_warnings" :key="warn.player_id" class="evolution-item warning">
+                    <span class="player-name">{{ warn.name }}</span>
+                    <span class="fatigue-bar">
+                      <span class="fatigue-fill" :style="{ width: warn.fatigue + '%' }"></span>
+                    </span>
+                    <span class="fatigue-value">{{ warn.fatigue }}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Morale Changes -->
+              <div v-if="evolutionData.away.morale_changes?.length" class="evolution-section">
+                <h5 class="section-label">
+                  <Heart :size="14" />
+                  Morale Changes
+                </h5>
+                <div class="evolution-items">
+                  <div v-for="morale in evolutionData.away.morale_changes" :key="morale.player_id" class="evolution-item" :class="morale.change > 0 ? 'positive' : 'negative'">
+                    <span class="player-name">{{ morale.name }}</span>
+                    <span class="morale-change">{{ morale.change > 0 ? '+' : '' }}{{ morale.change }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </GlassCard>
+
+          <!-- Game News -->
+          <GlassCard v-if="gameNews.length > 0" padding="md" :hoverable="false" class="summary-card news-card">
+            <h4 class="card-title">
+              <Newspaper :size="16" />
+              Game Headlines
+            </h4>
+            <div class="news-content">
+              <div v-for="news in gameNews" :key="news.id" class="news-item" :class="news.event_type">
+                <div class="news-icon">
+                  <AlertTriangle v-if="news.event_type === 'injury'" :size="16" />
+                  <Trophy v-else-if="news.event_type === 'game_winner'" :size="16" />
+                  <Flame v-else-if="news.event_type === 'hot_streak'" :size="16" />
+                  <Snowflake v-else-if="news.event_type === 'cold_streak'" :size="16" />
+                  <TrendingUp v-else-if="news.event_type === 'development' || news.event_type === 'breakout'" :size="16" />
+                  <TrendingDown v-else-if="news.event_type === 'decline'" :size="16" />
+                  <Heart v-else-if="news.event_type === 'recovery'" :size="16" />
+                  <Newspaper v-else :size="16" />
+                </div>
+                <div class="news-text">
+                  <div class="news-headline">{{ news.headline }}</div>
+                  <div class="news-body">{{ news.body }}</div>
+                </div>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+
         <!-- Play by Play Toggle -->
         <div v-if="playByPlay.length > 0" class="mb-6">
           <BaseButton
@@ -2109,7 +3005,7 @@ onUnmounted(() => {
       :show="showSimulateModal"
       :preview="gameStore.simulatePreview"
       :loading="gameStore.loadingPreview"
-      :simulating="gameStore.simulating"
+      :simulating="simulatingPreGame"
       :user-team="userTeam"
       @close="handleCloseSimulateModal"
       @confirm="handleConfirmSimulate"
@@ -2471,6 +3367,75 @@ onUnmounted(() => {
   font-size: 0.75rem;
 }
 
+/* Team Coach Settings in Overlay */
+.team-coach-settings {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.65rem;
+}
+
+.coach-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.coach-setting-label {
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  min-width: 24px;
+}
+
+.coach-setting-value {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+/* Pre-game Strategy Section */
+.pregame-strategy-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.strategy-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Pre-game Lineup Section */
+.pregame-lineup-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pregame-lineup-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}
+
+.lineup-player-pos-secondary {
+  font-size: 0.65rem;
+  color: var(--color-text-secondary);
+  opacity: 0.8;
+}
+
+/* Light mode coach settings */
+[data-theme="light"] .team-coach-settings {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
 /* Light mode starters overlay */
 [data-theme="light"] .starters-overlay {
   background: rgba(255, 255, 255, 0.95);
@@ -2561,6 +3526,11 @@ onUnmounted(() => {
 .break-divider {
   font-size: 2rem;
   color: var(--color-secondary);
+}
+
+.evolution-section {
+  width: 100%;
+  margin-bottom: 16px;
 }
 
 .break-hint {
@@ -3605,6 +4575,8 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.05);
   border-radius: 4px;
   padding: 6px 8px;
+  min-height: 44px;
+  max-height: 100px;
 }
 
 .live-stat-name {
@@ -4009,6 +4981,8 @@ onUnmounted(() => {
   }
 
   .court-stats-row {
+    flex-direction: column;
+    align-items: center;
     padding: 12px;
   }
 
@@ -4018,7 +4992,40 @@ onUnmounted(() => {
   }
 
   .live-stats-panel {
-    display: none;
+    width: 100%;
+    max-width: 100%;
+    margin-top: 8px;
+  }
+
+  .live-stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .live-stats-list {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 6px;
+  }
+
+  .live-stat-card {
+    width: 100%;
+    max-width: 100%;
+    padding: 4px 6px;
+    text-align: center;
+  }
+
+  .live-stat-name {
+    font-size: 0.65rem;
+    text-align: center;
+  }
+
+  .live-stat-line {
+    font-size: 0.55rem;
+    gap: 4px;
+    justify-content: center;
   }
 
   .animation-controls {
@@ -4033,6 +5040,28 @@ onUnmounted(() => {
   .speed-btn {
     padding: 5px 8px;
     font-size: 10px;
+  }
+}
+
+/* Extra small mobile: stack team stats vertically */
+@media (max-width: 465px) {
+  .live-stats-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .live-stats-team {
+    width: 100%;
+  }
+
+  .live-stats-list {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .live-stat-card {
+    width: 100%;
+    max-width: 100%;
   }
 }
 
@@ -4135,8 +5164,6 @@ onUnmounted(() => {
 
   .live-stat-card {
     flex: 0 0 calc(50% - 3px);
-    min-width: 80px;
-    max-width: calc(50% - 3px);
   }
 }
 
@@ -4181,8 +5208,10 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
+  margin: 12px 16px 0;
   background: rgba(0, 0, 0, 0.3);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: background 0.2s ease;
   position: relative;
@@ -4196,8 +5225,11 @@ onUnmounted(() => {
 .live-box-score-container {
   position: relative;
   z-index: 10;
+  margin: 8px 16px 16px;
   background: var(--color-bg-secondary);
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
 }
 
 .toggle-label {
@@ -4414,14 +5446,44 @@ onUnmounted(() => {
   color: var(--color-secondary);
 }
 
+.live-box-table .show-more-row td {
+  text-align: center;
+  padding: 8px;
+  background: transparent;
+}
+
+.live-box-table .show-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: rgba(var(--primary-rgb), 0.1);
+  border: 1px solid rgba(var(--primary-rgb), 0.2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.live-box-table .show-more-btn:hover {
+  background: rgba(var(--primary-rgb), 0.2);
+  border-color: rgba(var(--primary-rgb), 0.3);
+}
+
 /* Light mode overrides for live box score */
 [data-theme="light"] .live-box-score-toggle {
   background: rgba(0, 0, 0, 0.06);
-  border-top-color: rgba(0, 0, 0, 0.1);
+  border-color: rgba(0, 0, 0, 0.1);
 }
 
 [data-theme="light"] .live-box-score-toggle:hover {
   background: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .live-box-score-container {
+  border-color: rgba(0, 0, 0, 0.1);
 }
 
 [data-theme="light"] .live-box-tabs {
@@ -4476,5 +5538,392 @@ onUnmounted(() => {
 [data-theme="light"] .live-box-table .totals-row {
   background: linear-gradient(135deg, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.03));
   border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Pre-game lineup grid responsive adjustments */
+@media (max-width: 900px) {
+  .pregame-lineup-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 620px) {
+  .pregame-lineup-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .pregame-strategy-section {
+    margin-top: 16px;
+    padding-top: 12px;
+  }
+
+  .strategy-section-title {
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 400px) {
+  .pregame-lineup-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Post-Game Summary Styles */
+.post-game-summary {
+  margin-top: 24px;
+}
+
+.summary-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--color-text-primary);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.summary-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 0 16px 0;
+  color: var(--color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Rewards Card */
+.rewards-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.reward-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-md);
+}
+
+.reward-item.highlight {
+  background: rgba(var(--primary-rgb), 0.1);
+  border: 1px solid rgba(var(--primary-rgb), 0.2);
+}
+
+.reward-label {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.reward-value {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.reward-value.tokens {
+  color: var(--color-success);
+}
+
+.reward-bonus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: #fbbf24;
+  padding: 6px 10px;
+  background: rgba(251, 191, 36, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+/* Result Card */
+.result-content {
+  text-align: center;
+}
+
+.result-teams {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.result-team {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.result-team .team-name {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.result-team .team-score {
+  font-size: 2rem;
+  font-weight: 800;
+}
+
+.result-team.winner .team-score {
+  color: var(--color-success);
+}
+
+.result-at {
+  font-size: 1rem;
+  color: var(--color-text-secondary);
+}
+
+.user-result {
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+}
+
+.user-result.win {
+  color: var(--color-success);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.user-result.loss {
+  color: var(--color-error);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Evolution Card */
+.evolution-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.evolution-section {
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--radius-md);
+}
+
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 10px 0;
+  color: var(--color-text-secondary);
+}
+
+.section-label.injury-label { color: var(--color-error); }
+.section-label.positive-label { color: var(--color-success); }
+.section-label.negative-label { color: var(--color-error); }
+.section-label.hot-label { color: #ff6b35; }
+.section-label.cold-label { color: #4fc3f7; }
+.section-label.warning-label { color: var(--color-warning); }
+
+.evolution-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.evolution-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+}
+
+.evolution-item .player-name {
+  font-weight: 600;
+  min-width: 120px;
+}
+
+.evolution-item.injury { border-left: 3px solid var(--color-error); }
+.evolution-item.positive { border-left: 3px solid var(--color-success); }
+.evolution-item.negative { border-left: 3px solid var(--color-error); }
+.evolution-item.hot { border-left: 3px solid #ff6b35; }
+.evolution-item.cold { border-left: 3px solid #4fc3f7; }
+.evolution-item.warning { border-left: 3px solid var(--color-warning); }
+
+.injury-details {
+  flex: 1;
+  color: var(--color-text-secondary);
+}
+
+.severity-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.severity-badge.minor { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
+.severity-badge.moderate { background: rgba(251, 146, 60, 0.2); color: #fb923c; }
+.severity-badge.severe { background: rgba(239, 68, 68, 0.2); color: var(--color-error); }
+.severity-badge.season_ending { background: rgba(239, 68, 68, 0.3); color: var(--color-error); }
+
+.attr-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.attr-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.attr-badge.positive {
+  background: rgba(34, 197, 94, 0.2);
+  color: var(--color-success);
+}
+
+.attr-badge.negative {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--color-error);
+}
+
+.streak-info {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+}
+
+.fatigue-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  max-width: 100px;
+}
+
+.fatigue-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-warning), var(--color-error));
+  border-radius: 3px;
+}
+
+.fatigue-value {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-warning);
+  min-width: 40px;
+  text-align: right;
+}
+
+.morale-change {
+  margin-left: auto;
+  font-weight: 700;
+}
+
+.evolution-item.positive .morale-change { color: var(--color-success); }
+.evolution-item.negative .morale-change { color: var(--color-error); }
+
+/* News Card */
+.news-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.news-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--color-primary);
+}
+
+.news-item.injury { border-left-color: var(--color-error); }
+.news-item.game_winner { border-left-color: #fbbf24; }
+.news-item.hot_streak { border-left-color: #ff6b35; }
+.news-item.cold_streak { border-left-color: #4fc3f7; }
+.news-item.development, .news-item.breakout { border-left-color: var(--color-success); }
+.news-item.decline { border-left-color: var(--color-error); }
+.news-item.recovery { border-left-color: #4ade80; }
+
+.news-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+}
+
+.news-item.injury .news-icon { color: var(--color-error); }
+.news-item.game_winner .news-icon { color: #fbbf24; }
+.news-item.hot_streak .news-icon { color: #ff6b35; }
+.news-item.cold_streak .news-icon { color: #4fc3f7; }
+.news-item.development .news-icon, .news-item.breakout .news-icon { color: var(--color-success); }
+.news-item.decline .news-icon { color: var(--color-error); }
+.news-item.recovery .news-icon { color: #4ade80; }
+
+.news-text {
+  flex: 1;
+}
+
+.news-headline {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--color-text-primary);
+}
+
+.news-body {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+/* Light mode overrides */
+[data-theme="light"] .evolution-item,
+[data-theme="light"] .reward-item,
+[data-theme="light"] .news-item,
+[data-theme="light"] .evolution-section {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .fatigue-bar {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .news-icon {
+  background: rgba(0, 0, 0, 0.05);
 }
 </style>

@@ -86,6 +86,9 @@ export const useGameStore = defineStore('game', () => {
         }
       }
 
+      console.log('[simulateGame] Evolution data:', response.data.result.evolution)
+      console.log('[simulateGame] Rewards data:', response.data.result.rewards)
+
       currentGame.value = {
         ...currentGame.value,
         is_complete: true,
@@ -95,6 +98,8 @@ export const useGameStore = defineStore('game', () => {
         quarter_scores: response.data.result.quarter_scores,
         play_by_play: response.data.result.play_by_play,
         animation_data: response.data.result.animation_data,
+        evolution: response.data.result.evolution,
+        rewards: response.data.result.rewards,
       }
 
       return response.data.result
@@ -144,8 +149,9 @@ export const useGameStore = defineStore('game', () => {
 
   /**
    * Start a live quarter-by-quarter game simulation (Q1).
+   * @param {Object} settings - Optional { home_lineup, away_lineup, offensive_style, defensive_style }
    */
-  async function startLiveGame(campaignId, gameId) {
+  async function startLiveGame(campaignId, gameId, settings = null) {
     simulating.value = true
     isLiveSimulation.value = true
     currentSimQuarter.value = 0
@@ -153,7 +159,7 @@ export const useGameStore = defineStore('game', () => {
     error.value = null
 
     try {
-      const response = await api.post(`/api/campaigns/${campaignId}/games/${gameId}/start`)
+      const response = await api.post(`/api/campaigns/${campaignId}/games/${gameId}/start`, settings || {})
       currentSimQuarter.value = 1
 
       // Store Q1 animation data
@@ -214,6 +220,9 @@ export const useGameStore = defineStore('game', () => {
         const allPossessions = quarterAnimationData.value.flatMap(q => q.possessions)
         const quarterEndIndices = quarterAnimationData.value.map(q => q.quarterEndIndex)
 
+        console.log('[continueGame] Evolution data:', response.data.result.evolution)
+        console.log('[continueGame] Rewards data:', response.data.result.rewards)
+
         currentGame.value = {
           ...currentGame.value,
           is_complete: true,
@@ -222,6 +231,8 @@ export const useGameStore = defineStore('game', () => {
           away_score: response.data.result.away_score,
           box_score: response.data.result.box_score,
           quarter_scores: response.data.result.quarter_scores,
+          evolution: response.data.result.evolution,
+          rewards: response.data.result.rewards,
           animation_data: {
             possessions: allPossessions,
             quarter_end_indices: quarterEndIndices,
@@ -288,12 +299,15 @@ export const useGameStore = defineStore('game', () => {
 
   /**
    * Simulate all games up to and including the next user game.
+   * @param {boolean} excludeUserGame - If true, only simulate games BEFORE user's game (for live play)
    */
-  async function simulateToNextGame(campaignId) {
+  async function simulateToNextGame(campaignId, excludeUserGame = false) {
     simulating.value = true
     error.value = null
     try {
-      const response = await api.post(`/api/campaigns/${campaignId}/simulate-to-next-game`)
+      const response = await api.post(`/api/campaigns/${campaignId}/simulate-to-next-game`, {
+        excludeUserGame,
+      })
 
       // Update games list with simulated results
       if (response.data.simulatedDays) {
@@ -306,6 +320,24 @@ export const useGameStore = defineStore('game', () => {
                 is_complete: true,
                 home_score: result.home_score,
                 away_score: result.away_score,
+              }
+            }
+
+            // If this is the user's game, update currentGame with full details
+            if (result.is_user_game) {
+              console.log('[simulateToNextGame] User game evolution data:', result.evolution)
+              console.log('[simulateToNextGame] User game rewards data:', result.rewards)
+
+              if (currentGame.value?.id === result.game_id) {
+                currentGame.value = {
+                  ...currentGame.value,
+                  is_complete: true,
+                  home_score: result.home_score,
+                  away_score: result.away_score,
+                  box_score: result.box_score,
+                  evolution: result.evolution,
+                  rewards: result.rewards,
+                }
               }
             }
           }

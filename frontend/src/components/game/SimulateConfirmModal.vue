@@ -126,8 +126,15 @@ const opponentTeamData = computed(() => {
 
           <!-- Content -->
           <main class="modal-content">
+            <!-- Simulating Overlay -->
+            <div v-if="simulating" class="simulating-overlay">
+              <LoadingSpinner size="lg" />
+              <p class="simulating-text">Simulating games...</p>
+              <span class="simulating-sub">Please wait while AI games are processed</span>
+            </div>
+
             <!-- Loading State -->
-            <div v-if="loading" class="loading-state">
+            <div v-else-if="loading" class="loading-state">
               <LoadingSpinner size="md" />
               <p>Loading preview...</p>
             </div>
@@ -356,6 +363,29 @@ const opponentTeamData = computed(() => {
   flex: 1;
   overflow-y: auto;
   padding: 20px;
+}
+
+/* Simulating Overlay */
+.simulating-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.simulating-text {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.simulating-sub {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
 }
 
 /* Loading & Empty States */

@@ -35,6 +35,7 @@ class Team extends Model
         'luxury_tax_bill' => 'decimal:2',
         'offensive_playbook' => 'array',
         'lineup_settings' => 'array',
+        'coaching_scheme' => 'array',
     ];
 
     public function campaign(): BelongsTo

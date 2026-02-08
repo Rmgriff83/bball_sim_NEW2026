@@ -7,6 +7,7 @@ use App\Models\Team;
 use App\Models\Player;
 use App\Models\Coach;
 use App\Models\Season;
+use App\Services\AILineupService;
 use App\Services\CampaignPlayerService;
 use App\Services\CampaignSeasonService;
 use Illuminate\Http\Request;
@@ -18,7 +19,8 @@ use Database\Seeders\CoachSeeder;
 class CampaignController extends Controller
 {
     public function __construct(
-        private CampaignSeasonService $seasonService
+        private CampaignSeasonService $seasonService,
+        private AILineupService $lineupService
     ) {}
     /**
      * Get all campaigns for the authenticated user.
@@ -103,6 +105,10 @@ class CampaignController extends Controller
             // Initialize season data in JSON file and generate schedule
             $this->seasonService->initializeSeason($campaign, 2025);
             $gamesCreated = $this->seasonService->generateSchedule($campaign, 2025);
+
+            // Initialize user's team default lineup based on best players per position
+            $campaign->refresh(); // Reload to get team relationship
+            $this->lineupService->initializeUserTeamLineup($campaign);
 
             DB::commit();
 
@@ -229,6 +235,21 @@ class CampaignController extends Controller
                 $campaign->settings ?? [],
                 $validated['settings']
             );
+
+            // Sync coaching styles to Team.coaching_scheme if updated
+            $newSettings = $validated['settings'];
+            if (isset($newSettings['offensive_style']) || isset($newSettings['defensive_style'])) {
+                $team = $campaign->team;
+                if ($team) {
+                    $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'];
+                    $team->update([
+                        'coaching_scheme' => [
+                            'offensive' => $newSettings['offensive_style'] ?? $currentScheme['offensive'],
+                            'defensive' => $newSettings['defensive_style'] ?? $currentScheme['defensive'],
+                        ]
+                    ]);
+                }
+            }
         }
 
         $campaign->update($validated);

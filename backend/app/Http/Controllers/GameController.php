@@ -88,6 +88,31 @@ class GameController extends Controller
             $awayScore = $game['gameState']['awayScore'] ?? 0;
         }
 
+        // Determine if this is the user's game
+        $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
+
+        // Get news events for this game date (for completed games)
+        $gameNews = [];
+        if ($game['isComplete']) {
+            $gameNews = $campaign->newsEvents()
+                ->where('game_date', $game['gameDate'])
+                ->where(function ($query) use ($homeTeam, $awayTeam) {
+                    $query->whereIn('team_id', [$homeTeam->id, $awayTeam->id])
+                        ->orWhereNull('team_id');
+                })
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(fn($news) => [
+                    'id' => $news->id,
+                    'event_type' => $news->event_type,
+                    'headline' => $news->headline,
+                    'body' => $news->body,
+                    'player_id' => $news->player_id,
+                    'team_id' => $news->team_id,
+                ])
+                ->toArray();
+        }
+
         return response()->json([
             'game' => [
                 'id' => $game['id'],
@@ -100,8 +125,12 @@ class GameController extends Controller
                 'is_in_progress' => $game['isInProgress'] ?? false,
                 'current_quarter' => $game['currentQuarter'] ?? null,
                 'is_playoff' => $game['isPlayoff'],
+                'is_user_game' => $isUserGame,
                 'box_score' => $game['boxScore'],
                 'quarter_scores' => $game['quarterScores'] ?? null,
+                'evolution' => $game['evolution'] ?? null,
+                'rewards' => $game['rewards'] ?? null,
+                'news' => $gameNews,
             ],
         ]);
     }
@@ -178,6 +207,8 @@ class GameController extends Controller
             'awayScore' => $result['away_score'],
             'boxScore' => $result['box_score'],
             'quarterScores' => $result['quarter_scores'] ?? null,
+            'evolution' => $result['evolution'] ?? null,
+            'rewards' => $result['rewards'] ?? null,
         ], true);
 
         // Update standings
@@ -482,13 +513,49 @@ class GameController extends Controller
         $awayTeam = Team::find($game['awayTeamId']);
 
         // Get user's saved starting lineup if this is their team
+        // Allow override from request for pre-game lineup changes
         $userLineup = null;
-        if ($game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id) {
-            $userLineup = $campaign->settings['lineup']['starters'] ?? null;
+        $isUserHome = $game['homeTeamId'] === $campaign->team_id;
+        $isUserAway = $game['awayTeamId'] === $campaign->team_id;
+
+        if ($isUserHome || $isUserAway) {
+            // Use request lineup if provided, otherwise use saved
+            if ($isUserHome && $request->has('home_lineup')) {
+                $userLineup = $request->input('home_lineup');
+            } elseif ($isUserAway && $request->has('away_lineup')) {
+                $userLineup = $request->input('away_lineup');
+            } else {
+                $userLineup = $campaign->settings['lineup']['starters'] ?? null;
+            }
+        }
+
+        // Get coaching adjustments from request, falling back to saved campaign settings
+        $coachingAdjustments = [];
+        $settingsToSave = [];
+
+        if ($request->has('offensive_style')) {
+            $coachingAdjustments['offensiveStyle'] = $request->input('offensive_style');
+            $settingsToSave['offensive_style'] = $request->input('offensive_style');
+        } elseif (isset($campaign->settings['offensive_style'])) {
+            $coachingAdjustments['offensiveStyle'] = $campaign->settings['offensive_style'];
+        }
+
+        if ($request->has('defensive_style')) {
+            $coachingAdjustments['defensiveStyle'] = $request->input('defensive_style');
+            $settingsToSave['defensive_style'] = $request->input('defensive_style');
+        } elseif (isset($campaign->settings['defensive_style'])) {
+            $coachingAdjustments['defensiveStyle'] = $campaign->settings['defensive_style'];
+        }
+
+        // Save updated coaching styles to campaign settings
+        if (!empty($settingsToSave)) {
+            $campaign->update([
+                'settings' => array_merge($campaign->settings ?? [], $settingsToSave)
+            ]);
         }
 
         // Start game and simulate Q1
-        $result = $this->simulationService->startGame($campaign, $game, $homeTeam, $awayTeam, $userLineup);
+        $result = $this->simulationService->startGame($campaign, $game, $homeTeam, $awayTeam, $userLineup, $coachingAdjustments);
 
         // Save game state to JSON
         $this->seasonService->updateGame($campaign->id, $year, $gameId, [
@@ -539,17 +606,35 @@ class GameController extends Controller
 
         // Get user adjustments for next quarter
         $adjustments = [];
+        $settingsToSave = [];
+
         if ($request->has('home_lineup')) {
             $adjustments['homeLineup'] = $request->input('home_lineup');
         }
         if ($request->has('away_lineup')) {
             $adjustments['awayLineup'] = $request->input('away_lineup');
         }
+
+        // Get coaching styles from request, falling back to saved campaign settings
         if ($request->has('offensive_style')) {
             $adjustments['offensiveStyle'] = $request->input('offensive_style');
+            $settingsToSave['offensive_style'] = $request->input('offensive_style');
+        } elseif (isset($campaign->settings['offensive_style'])) {
+            $adjustments['offensiveStyle'] = $campaign->settings['offensive_style'];
         }
+
         if ($request->has('defensive_style')) {
             $adjustments['defensiveStyle'] = $request->input('defensive_style');
+            $settingsToSave['defensive_style'] = $request->input('defensive_style');
+        } elseif (isset($campaign->settings['defensive_style'])) {
+            $adjustments['defensiveStyle'] = $campaign->settings['defensive_style'];
+        }
+
+        // Save updated coaching styles to campaign settings
+        if (!empty($settingsToSave)) {
+            $campaign->update([
+                'settings' => array_merge($campaign->settings ?? [], $settingsToSave)
+            ]);
         }
 
         // Continue simulation
@@ -600,17 +685,25 @@ class GameController extends Controller
             // Update coach stats
             $this->updateCoachStats($homeTeam->id, $awayTeam->id, $finalResult['home_score'], $finalResult['away_score'], $game['isPlayoff'] ?? false);
 
-            // Process evolution
-            $this->evolutionService->processPostGameFromData(
-                $campaign,
-                $game,
-                $finalResult['home_score'],
-                $finalResult['away_score'],
-                [
-                    'home' => $finalResult['box_score']['home'],
-                    'away' => $finalResult['box_score']['away'],
-                ]
-            );
+            // Process evolution and capture summary
+            $evolutionSummary = null;
+            try {
+                $evolutionSummary = $this->evolutionService->processPostGameFromData(
+                    $campaign,
+                    $game,
+                    $finalResult['home_score'],
+                    $finalResult['away_score'],
+                    [
+                        'home' => $finalResult['box_score']['home'],
+                        'away' => $finalResult['box_score']['away'],
+                    ]
+                );
+            } catch (\Exception $e) {
+                \Log::error('Evolution processing failed: ' . $e->getMessage(), [
+                    'game_id' => $gameId,
+                    'trace' => $e->getTraceAsString(),
+                ]);
+            }
 
             // Process synergy rewards for user's team
             $rewardSummary = null;
@@ -637,6 +730,12 @@ class GameController extends Controller
                     }
                 }
             }
+
+            // Update game with evolution and rewards data
+            $this->seasonService->updateGame($campaign->id, $year, $gameId, [
+                'evolution' => $evolutionSummary,
+                'rewards' => $rewardSummary,
+            ], true);
 
             // Simulate remaining games on this day
             $gameDate = $game['gameDate'];
@@ -704,7 +803,9 @@ class GameController extends Controller
                 'message' => 'Game complete',
                 'quarter' => $result['quarterResult']['quarter'],
                 'isGameComplete' => true,
-                'result' => $finalResult,
+                'result' => array_merge($finalResult, [
+                    'evolution' => $evolutionSummary,
+                ]),
                 'rewards' => $rewardSummary,
                 ...$result['quarterResult'],
             ]);
@@ -978,12 +1079,15 @@ class GameController extends Controller
 
     /**
      * Simulate all games up to and including the user's next game.
+     * If excludeUserGame is true, only simulate games BEFORE the user's game (for live play from preview page).
      */
     public function simulateToNextGame(Request $request, Campaign $campaign): JsonResponse
     {
         if ($campaign->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
+
+        $excludeUserGame = $request->boolean('excludeUserGame', false);
 
         // Initialize AI team lineups if not already set
         $this->aiLineupService->initializeAllTeamLineups($campaign);
@@ -1036,14 +1140,20 @@ class GameController extends Controller
                 continue;
             }
 
-            // Determine if this is the user's game and pass their lineup
+            // Determine if this is the user's game
             $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
+
+            // Skip user's game if excludeUserGame is true (user wants to play it live)
+            if ($isUserGame && $excludeUserGame) {
+                continue;
+            }
+
             $gameLineup = $isUserGame ? $userLineup : null;
 
             // Simulate the game
             $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
 
-            // Update game in JSON
+            // Update game in JSON (include evolution/rewards only for user's game)
             $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
             $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
                 'isComplete' => true,
@@ -1051,6 +1161,8 @@ class GameController extends Controller
                 'awayScore' => $result['away_score'],
                 'boxScore' => $result['box_score'],
                 'quarterScores' => $result['quarter_scores'] ?? null,
+                'evolution' => $isUserGame ? ($result['evolution'] ?? null) : null,
+                'rewards' => $isUserGame ? ($result['rewards'] ?? null) : null,
             ], $isUserGame);
 
             // Update standings
@@ -1071,6 +1183,12 @@ class GameController extends Controller
             // Update coach stats
             $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
 
+            $userTeamId = (int) $campaign->team_id;
+            $homeTeamId = (int) $game['homeTeamId'];
+            $awayTeamId = (int) $game['awayTeamId'];
+            $isUserGame = $homeTeamId === $userTeamId || $awayTeamId === $userTeamId;
+            $isUserHome = $homeTeamId === $userTeamId;
+
             $gameResult = [
                 'game_id' => $game['id'],
                 'home_team' => [
@@ -1085,10 +1203,15 @@ class GameController extends Controller
                 ],
                 'home_score' => $result['home_score'],
                 'away_score' => $result['away_score'],
-                'is_user_game' => $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id,
+                'is_user_game' => $isUserGame,
+                'is_user_home' => $isUserGame ? $isUserHome : null,
             ];
 
-            if ($gameResult['is_user_game']) {
+            // Include evolution and rewards for user's game
+            if ($isUserGame) {
+                $gameResult['evolution'] = $result['evolution'] ?? null;
+                $gameResult['rewards'] = $result['rewards'] ?? null;
+                $gameResult['box_score'] = $result['box_score'] ?? null;
                 $userGameResult = $gameResult;
             }
 
@@ -1104,17 +1227,24 @@ class GameController extends Controller
             ];
         }
 
-        // Advance to next day
-        $newDate = $gameDate->copy()->addDay();
-        $campaign->update(['current_date' => $newDate]);
+        // Advance date: if excluding user game, stay on game date; otherwise advance past it
+        if ($excludeUserGame) {
+            // Move to the game date (user will play their game there)
+            $newDate = $gameDate->copy();
+            $campaign->update(['current_date' => $newDate]);
+        } else {
+            // Advance to next day (all games including user's were simulated)
+            $newDate = $gameDate->copy()->addDay();
+            $campaign->update(['current_date' => $newDate]);
 
-        // Check for weekly/monthly evolution updates
-        $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
-        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-            $this->evolutionService->processWeeklyUpdates($campaign);
-        }
-        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
-            $this->evolutionService->processMonthlyDevelopment($campaign);
+            // Check for weekly/monthly evolution updates (only when advancing past game date)
+            $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+            if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                $this->evolutionService->processWeeklyUpdates($campaign);
+            }
+            if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                $this->evolutionService->processMonthlyDevelopment($campaign);
+            }
         }
 
         return response()->json([

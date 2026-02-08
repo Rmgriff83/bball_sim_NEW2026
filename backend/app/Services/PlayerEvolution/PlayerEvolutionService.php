@@ -53,6 +53,7 @@ class PlayerEvolutionService
 
     /**
      * Process evolution after a game using array data (for JSON-based storage).
+     * Returns summary of evolution changes for the response.
      */
     public function processPostGameFromData(
         Campaign $campaign,
@@ -60,11 +61,11 @@ class PlayerEvolutionService
         int $homeScore,
         int $awayScore,
         array $boxScores
-    ): void {
+    ): array {
         $isPlayoff = $campaign->currentSeason?->phase === 'playoffs';
 
         // Process home team
-        $this->processTeamPostGame(
+        $homeSummary = $this->processTeamPostGame(
             $campaign,
             $gameData['homeTeamAbbreviation'],
             $boxScores['home'] ?? [],
@@ -73,17 +74,23 @@ class PlayerEvolutionService
         );
 
         // Process away team
-        $this->processTeamPostGame(
+        $awaySummary = $this->processTeamPostGame(
             $campaign,
             $gameData['awayTeamAbbreviation'],
             $boxScores['away'] ?? [],
             $awayScore > $homeScore,
             $isPlayoff
         );
+
+        return [
+            'home' => $homeSummary,
+            'away' => $awaySummary,
+        ];
     }
 
     /**
      * Process a single team's players after a game.
+     * Returns summary of changes for each player.
      */
     private function processTeamPostGame(
         Campaign $campaign,
@@ -91,7 +98,7 @@ class PlayerEvolutionService
         array $boxScores,
         bool $won,
         bool $isPlayoff
-    ): void {
+    ): array {
         $roster = $this->playerService->getTeamRoster($campaign->id, $teamAbbr);
         $isUserTeam = $this->isUserTeam($campaign, $teamAbbr);
 
@@ -101,12 +108,41 @@ class PlayerEvolutionService
         // Collect updates for batch saving (for non-user teams)
         $leaguePlayerUpdates = [];
 
-        foreach ($boxScores as $playerId => $stats) {
+        // Evolution summary for response
+        $evolutionSummary = [
+            'injuries' => [],
+            'development' => [],
+            'regression' => [],
+            'fatigue_warnings' => [],
+            'morale_changes' => [],
+            'hot_streaks' => [],
+            'cold_streaks' => [],
+        ];
+
+        foreach ($boxScores as $stats) {
+            // Handle both keyed (by player_id) and indexed arrays
+            $playerId = $stats['player_id'] ?? $stats['playerId'] ?? null;
+            if (!$playerId) continue;
+
             $player = $this->findPlayerInRoster($roster, $playerId);
             if (!$player) continue;
 
+            $playerName = $this->getPlayerName($player);
+            $oldMorale = $player['personality']['morale'] ?? 80;
+
             // Update fatigue
+            $oldFatigue = $player['fatigue'] ?? 0;
             $player = $this->updateFatigue($player, $stats['minutes'] ?? 0);
+            $newFatigue = $player['fatigue'] ?? 0;
+
+            // Fatigue warning if getting high
+            if ($newFatigue >= 70 && $oldFatigue < 70) {
+                $evolutionSummary['fatigue_warnings'][] = [
+                    'player_id' => $playerId,
+                    'name' => $playerName,
+                    'fatigue' => round($newFatigue),
+                ];
+            }
 
             // Check for injury
             $injury = $this->injuries->checkForInjury($player, $stats['minutes'] ?? 0, $isPlayoff);
@@ -118,6 +154,15 @@ class PlayerEvolutionService
 
                 // Create injury news
                 $this->news->createInjuryNews($campaign, $player, $injury);
+
+                // Add to summary
+                $evolutionSummary['injuries'][] = [
+                    'player_id' => $playerId,
+                    'name' => $playerName,
+                    'injury_type' => $injury['name'] ?? 'Unknown',
+                    'games_out' => $injury['games_remaining'] ?? $injury['gamesRemaining'] ?? 0,
+                    'severity' => $injury['severity'] ?? 'minor',
+                ];
 
                 // Handle AI team lineup adjustment for injured starters
                 $team = Team::where('campaign_id', $campaign->id)
@@ -132,22 +177,73 @@ class PlayerEvolutionService
             // Update morale
             $gameResult = ['won' => $won, 'streak' => $streak];
             $player = $this->morale->updateAfterGame($player, $gameResult, $stats);
+            $newMorale = $player['personality']['morale'] ?? 80;
+
+            // Track significant morale changes
+            $moraleDiff = $newMorale - $oldMorale;
+            if (abs($moraleDiff) >= 3) {
+                $evolutionSummary['morale_changes'][] = [
+                    'player_id' => $playerId,
+                    'name' => $playerName,
+                    'change' => $moraleDiff,
+                    'new_morale' => $newMorale,
+                ];
+            }
 
             // Apply micro-development (if not injured)
             if (!$this->injuries->isInjured($player)) {
                 $microDev = $this->development->calculateMicroDevelopment($player, $stats);
                 if (!empty($microDev['attributeChanges'])) {
                     $player = $this->applyAttributeChanges($player, $microDev['attributeChanges']);
+
+                    // Add to development or regression summary
+                    if ($microDev['type'] === 'development') {
+                        $evolutionSummary['development'][] = [
+                            'player_id' => $playerId,
+                            'name' => $playerName,
+                            'performance_rating' => round($microDev['performanceRating'], 1),
+                            'attributes_improved' => array_keys($microDev['attributeChanges']),
+                        ];
+                    } elseif ($microDev['type'] === 'regression') {
+                        $evolutionSummary['regression'][] = [
+                            'player_id' => $playerId,
+                            'name' => $playerName,
+                            'performance_rating' => round($microDev['performanceRating'], 1),
+                            'attributes_declined' => array_keys($microDev['attributeChanges']),
+                        ];
+                    }
                 }
 
                 // Track performance for streaks
+                $oldStreakData = $player['streak_data'] ?? $player['streakData'] ?? null;
                 $player = $this->trackPerformance($player, $microDev['performanceRating']);
+
+                // Check for new streak
+                $newStreakData = $player['streak_data'] ?? $player['streakData'] ?? null;
+                if ($newStreakData && (!$oldStreakData || $newStreakData['games'] > ($oldStreakData['games'] ?? 0))) {
+                    if ($newStreakData['type'] === 'hot') {
+                        $evolutionSummary['hot_streaks'][] = [
+                            'player_id' => $playerId,
+                            'name' => $playerName,
+                            'games' => $newStreakData['games'],
+                        ];
+                    } elseif ($newStreakData['type'] === 'cold') {
+                        $evolutionSummary['cold_streaks'][] = [
+                            'player_id' => $playerId,
+                            'name' => $playerName,
+                            'games' => $newStreakData['games'],
+                        ];
+                    }
+                }
             }
 
-            // Update season stats
-            $player['games_played_this_season'] = ($player['games_played_this_season'] ?? $player['gamesPlayedThisSeason'] ?? 0) + 1;
-            $player['gamesPlayedThisSeason'] = $player['games_played_this_season'];
-            $player['minutes_played_this_season'] = ($player['minutes_played_this_season'] ?? $player['minutesPlayedThisSeason'] ?? 0) + ($stats['minutes'] ?? 0);
+            // Update season stats - only count as game played if player had minutes
+            $minutesPlayed = $stats['minutes'] ?? 0;
+            if ($minutesPlayed > 0) {
+                $player['games_played_this_season'] = ($player['games_played_this_season'] ?? $player['gamesPlayedThisSeason'] ?? 0) + 1;
+                $player['gamesPlayedThisSeason'] = $player['games_played_this_season'];
+            }
+            $player['minutes_played_this_season'] = ($player['minutes_played_this_season'] ?? $player['minutesPlayedThisSeason'] ?? 0) + $minutesPlayed;
             $player['minutesPlayedThisSeason'] = $player['minutes_played_this_season'];
 
             // Collect for batch save or save immediately for user team
@@ -166,6 +262,9 @@ class PlayerEvolutionService
         if (!empty($leaguePlayerUpdates)) {
             $this->playerService->updateLeaguePlayersBatch($campaign->id, $leaguePlayerUpdates);
         }
+
+        // Filter out empty arrays
+        return array_filter($evolutionSummary, fn($arr) => !empty($arr));
     }
 
     /**
@@ -460,10 +559,17 @@ class PlayerEvolutionService
     }
 
     /**
-     * Apply attribute changes from micro-development.
+     * Apply attribute changes from micro-development and record to history.
      */
     private function applyAttributeChanges(array $player, array $changes): array
     {
+        // Initialize development_history if not exists
+        if (!isset($player['development_history'])) {
+            $player['development_history'] = [];
+        }
+
+        $today = date('Y-m-d');
+
         foreach ($changes as $path => $change) {
             $parts = explode('.', $path);
             if (count($parts) === 2) {
@@ -471,10 +577,27 @@ class PlayerEvolutionService
                 $attr = $parts[1];
                 if (isset($player['attributes'][$category][$attr])) {
                     $current = $player['attributes'][$category][$attr];
-                    $player['attributes'][$category][$attr] = max(25, min(99, $current + $change));
+                    $newValue = max(25, min(99, $current + $change));
+                    $player['attributes'][$category][$attr] = $newValue;
+
+                    // Record to development history
+                    $player['development_history'][] = [
+                        'date' => $today,
+                        'category' => $category,
+                        'attribute' => $attr,
+                        'change' => round($change, 2),
+                        'old_value' => $current,
+                        'new_value' => $newValue,
+                    ];
                 }
             }
         }
+
+        // Limit history to last 200 entries to prevent bloat
+        if (count($player['development_history']) > 200) {
+            $player['development_history'] = array_slice($player['development_history'], -200);
+        }
+
         return $player;
     }
 

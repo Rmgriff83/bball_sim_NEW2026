@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { ChevronDown } from 'lucide-vue-next'
 
 const props = defineProps({
   boxScore: {
@@ -26,6 +27,15 @@ const emit = defineEmits(['update:activeTab'])
 const sortColumn = ref('points')
 const sortDirection = ref('desc')
 
+// Show more state
+const showAllPlayers = ref(false)
+const INITIAL_PLAYER_COUNT = 7
+
+// Reset showAll when tab changes
+watch(() => props.activeTab, () => {
+  showAllPlayers.value = false
+})
+
 const homeStats = computed(() => Array.isArray(props.boxScore?.home) ? props.boxScore.home : [])
 const awayStats = computed(() => Array.isArray(props.boxScore?.away) ? props.boxScore.away : [])
 
@@ -47,12 +57,37 @@ const activeStats = computed(() => {
     if (col === 'name') {
       aVal = a.name || ''
       bVal = b.name || ''
-      return dir * aVal.localeCompare(bVal)
+      const nameCompare = dir * aVal.localeCompare(bVal)
+      // Secondary sort by minutes if names are equal
+      if (nameCompare === 0) {
+        return -1 * ((a.minutes || 0) - (b.minutes || 0))  // Higher minutes first
+      }
+      return nameCompare
     }
 
-    return dir * (aVal - bVal)
+    // Primary sort by selected column
+    const primaryCompare = dir * (aVal - bVal)
+
+    // Secondary sort by minutes (always descending - more minutes = higher priority)
+    if (primaryCompare === 0 && col !== 'minutes') {
+      return -1 * ((a.minutes || 0) - (b.minutes || 0))
+    }
+
+    return primaryCompare
   })
 })
+
+// Displayed stats (limited unless showAll is true)
+const displayedStats = computed(() => {
+  if (showAllPlayers.value) {
+    return activeStats.value
+  }
+  return activeStats.value.slice(0, INITIAL_PLAYER_COUNT)
+})
+
+// Check if there are more players to show
+const hasMorePlayers = computed(() => activeStats.value.length > INITIAL_PLAYER_COUNT)
+const hiddenPlayerCount = computed(() => activeStats.value.length - INITIAL_PLAYER_COUNT)
 
 // Column definitions for sortable headers
 const columns = [
@@ -178,7 +213,7 @@ function formatShootingLine(made, attempted) {
         </thead>
         <tbody>
           <tr
-            v-for="player in activeStats"
+            v-for="player in displayedStats"
             :key="player.player_id"
             class="player-row"
           >
@@ -206,6 +241,15 @@ function formatShootingLine(made, attempted) {
             <td class="stat-col shooting">
               <span class="shooting-line">{{ formatShootingLine(player.ftm, player.fta) }}</span>
               <span class="shooting-pct">{{ formatPercentage(player.ftm, player.fta) }}</span>
+            </td>
+          </tr>
+          <!-- Show More Row -->
+          <tr v-if="hasMorePlayers && !showAllPlayers" class="show-more-row" @click="showAllPlayers = true">
+            <td :colspan="columns.length + 3" class="show-more-cell">
+              <button class="show-more-btn">
+                <ChevronDown :size="16" />
+                Show {{ hiddenPlayerCount }} more players
+              </button>
             </td>
           </tr>
         </tbody>
@@ -403,6 +447,40 @@ function formatShootingLine(made, attempted) {
   color: var(--color-secondary);
 }
 
+/* Show More Row */
+.show-more-row {
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.show-more-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.show-more-cell {
+  text-align: center !important;
+  padding: 8px !important;
+}
+
+.show-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: var(--radius-md);
+  transition: all 0.2s ease;
+}
+
+.show-more-btn:hover {
+  background: rgba(232, 90, 79, 0.1);
+}
+
 .totals-row {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04));
   font-weight: 700;
@@ -509,5 +587,13 @@ function formatShootingLine(made, attempted) {
 [data-theme="light"] .totals-row {
   background: linear-gradient(135deg, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.03));
   border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .show-more-row:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .show-more-btn:hover {
+  background: rgba(232, 90, 79, 0.08);
 }
 </style>

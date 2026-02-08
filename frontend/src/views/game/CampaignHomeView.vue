@@ -266,7 +266,7 @@ async function handleConfirmSimulate() {
 
     // Show toast for user's game result
     if (response.userGameResult) {
-      const isUserHome = response.userGameResult.home_team?.id === team.value?.id
+      // Use the authoritative is_user_home from the backend
       toastStore.showGameResult({
         homeTeam: response.userGameResult.home_team?.abbreviation || response.userGameResult.home_team?.name || 'HOME',
         awayTeam: response.userGameResult.away_team?.abbreviation || response.userGameResult.away_team?.name || 'AWAY',
@@ -274,7 +274,7 @@ async function handleConfirmSimulate() {
         awayScore: response.userGameResult.away_score,
         gameId: response.userGameResult.game_id,
         campaignId: campaignId.value,
-        isUserHome
+        isUserHome: response.userGameResult.is_user_home
       })
     }
 

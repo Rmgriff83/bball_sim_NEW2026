@@ -233,4 +233,47 @@ class AILineupService
     {
         return $team->lineup_settings['starters'] ?? null;
     }
+
+    /**
+     * Initialize lineup for the user's team.
+     * Sets the default starters in campaign settings based on best players per position.
+     */
+    public function initializeUserTeamLineup(Campaign $campaign): array
+    {
+        $team = $campaign->team;
+        if (!$team) {
+            return [];
+        }
+
+        // Get roster from database (user's team players)
+        $roster = $team->players->map(function ($player) {
+            return [
+                'id' => $player->id,
+                'position' => $player->position,
+                'secondaryPosition' => $player->secondary_position,
+                'overallRating' => $player->overall_rating,
+                'isInjured' => $player->is_injured,
+            ];
+        })->toArray();
+
+        if (empty($roster)) {
+            return [];
+        }
+
+        // Sort by overall rating (highest first)
+        usort($roster, fn($a, $b) => ($b['overallRating'] ?? 0) - ($a['overallRating'] ?? 0));
+
+        // Select best lineup by position
+        $starters = $this->selectBestLineup($roster);
+
+        // Save to campaign settings
+        $settings = $campaign->settings ?? [];
+        $settings['lineup'] = [
+            'starters' => $starters,
+            'rotation' => [],
+        ];
+        $campaign->update(['settings' => $settings]);
+
+        return $starters;
+    }
 }

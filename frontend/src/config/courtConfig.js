@@ -57,12 +57,16 @@ export const COURT_CANVAS = {
   // This determines the vertical scaling
   VISIBLE_DEPTH: 32,
 
+  // Crowd area below baseline (in pixels)
+  CROWD_AREA_HEIGHT: 45,
+
   // Court colors
   COLORS: {
     HARDWOOD: '#CD853F',
     WOOD_GRAIN: 'rgba(139, 90, 43, 0.15)',
     COURT_LINES: '#FFFFFF',
     RIM: '#FF4500',
+    CROWD_FLOOR: '#1a1a2e',  // Dark floor behind baseline
   },
 
   // Line widths
