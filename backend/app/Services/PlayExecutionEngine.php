@@ -10,6 +10,7 @@ class PlayExecutionEngine
     private array $keyframes = [];
     private float $elapsedTime = 0;
     private array $playResult = [];
+    private array $activatedBadges = [];
 
     /**
      * Execute a play through its action points.
@@ -238,13 +239,26 @@ class PlayExecutionEngine
         $playerBadges = $actor['badges'] ?? [];
         foreach ($playerBadges as $badge) {
             if (in_array($badge['id'], $relevantBadges)) {
-                $boost += match($badge['level']) {
+                $badgeBoost = match($badge['level']) {
                     'hof' => 0.08,
                     'gold' => 0.05,
                     'silver' => 0.03,
                     'bronze' => 0.01,
                     default => 0,
                 };
+
+                if ($badgeBoost > 0) {
+                    $boost += $badgeBoost;
+                    // Track badge activation for animation
+                    $this->activatedBadges[] = [
+                        'badgeId' => $badge['id'],
+                        'level' => $badge['level'],
+                        'playerId' => $actor['id'] ?? 'unknown',
+                        'playerName' => ($actor['first_name'] ?? $actor['firstName'] ?? '') . ' ' . ($actor['last_name'] ?? $actor['lastName'] ?? ''),
+                        'actionId' => $actionId,
+                        'time' => $this->elapsedTime,
+                    ];
+                }
             }
         }
 
@@ -722,6 +736,7 @@ class PlayExecutionEngine
             'freeThrows' => $this->playResult['freeThrows'] ?? null,
             'keyframes' => $this->keyframes,
             'roleAssignments' => $this->roleAssignments,
+            'activatedBadges' => $this->activatedBadges,
         ];
     }
 
@@ -736,6 +751,7 @@ class PlayExecutionEngine
         $this->keyframes = [];
         $this->elapsedTime = 0;
         $this->playResult = [];
+        $this->activatedBadges = [];
     }
 
     /**

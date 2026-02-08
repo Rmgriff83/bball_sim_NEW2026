@@ -1,15 +1,21 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton, FormInput, Badge } from '@/components/ui'
-import { ArrowLeft } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Sparkles } from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
+
+// Fetch fresh user data on mount to get latest rewards
+onMounted(async () => {
+  await authStore.fetchUser()
+})
 const user = computed(() => authStore.user)
+const profile = computed(() => authStore.profile)
 
 const profileForm = ref({ username: user.value?.username || '' })
 const passwordForm = ref({ current_password: '', password: '', password_confirmation: '' })
@@ -95,6 +101,31 @@ async function handleLogout() {
             <Badge v-else variant="warning" size="sm" class="mt-1">Email not verified</Badge>
           </div>
         </div>
+      </GlassCard>
+
+      <GlassCard padding="lg" class="mb-6" :hoverable="false">
+        <h3 class="h4 mb-4">Rewards</h3>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="flex items-center gap-3 p-4 rounded-lg bg-surface-dark/50">
+            <div class="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center">
+              <Coins :size="20" class="text-yellow-500" />
+            </div>
+            <div>
+              <p class="text-2xl font-bold">{{ profile?.tokens ?? 0 }}</p>
+              <p class="text-sm text-secondary">Tokens</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 p-4 rounded-lg bg-surface-dark/50">
+            <div class="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">
+              <Sparkles :size="20" class="text-purple-500" />
+            </div>
+            <div>
+              <p class="text-2xl font-bold">{{ profile?.lifetime_synergies ?? 0 }}</p>
+              <p class="text-sm text-secondary">Synergies</p>
+            </div>
+          </div>
+        </div>
+        <p class="text-xs text-secondary mt-3">Earn tokens when your team's badge synergies activate during games.</p>
       </GlassCard>
 
       <GlassCard padding="lg" class="mb-6" :hoverable="false">

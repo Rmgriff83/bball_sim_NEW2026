@@ -98,6 +98,9 @@ class PlayerEvolutionService
         // Calculate team streak
         $streak = $this->getTeamStreak($campaign, $teamAbbr);
 
+        // Collect updates for batch saving (for non-user teams)
+        $leaguePlayerUpdates = [];
+
         foreach ($boxScores as $playerId => $stats) {
             $player = $this->findPlayerInRoster($roster, $playerId);
             if (!$player) continue;
@@ -147,8 +150,21 @@ class PlayerEvolutionService
             $player['minutes_played_this_season'] = ($player['minutes_played_this_season'] ?? $player['minutesPlayedThisSeason'] ?? 0) + ($stats['minutes'] ?? 0);
             $player['minutesPlayedThisSeason'] = $player['minutes_played_this_season'];
 
-            // Save player
-            $this->savePlayer($campaign->id, $player, $isUserTeam);
+            // Collect for batch save or save immediately for user team
+            if ($isUserTeam && is_numeric($player['id'] ?? null)) {
+                $dbPlayer = Player::find($player['id']);
+                if ($dbPlayer) {
+                    $dbPlayer->update($this->normalizeForDatabase($player));
+                }
+            } else {
+                // Collect for batch update
+                $leaguePlayerUpdates[$player['id']] = $player;
+            }
+        }
+
+        // Batch save all league player updates at once
+        if (!empty($leaguePlayerUpdates)) {
+            $this->playerService->updateLeaguePlayersBatch($campaign->id, $leaguePlayerUpdates);
         }
     }
 

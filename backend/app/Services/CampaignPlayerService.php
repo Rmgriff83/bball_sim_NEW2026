@@ -136,19 +136,25 @@ class CampaignPlayerService
 
         if ($dbPlayers->count() > 0) {
             // User's team - return from database
+            \Log::info("getTeamRoster: Found {$dbPlayers->count()} DB players for {$teamAbbreviation} in campaign {$campaignId}");
             return $dbPlayers->map(fn($p) => $this->playerModelToArray($p))->toArray();
         }
 
         // League team - return from JSON
         $leaguePlayers = $this->loadLeaguePlayers($campaignId);
 
-        return array_values(array_filter($leaguePlayers, fn($p) =>
+        $filtered = array_values(array_filter($leaguePlayers, fn($p) =>
             ($p['teamAbbreviation'] ?? '') === $teamAbbreviation
         ));
+
+        \Log::info("getTeamRoster: Found " . count($filtered) . " JSON players for {$teamAbbreviation} in campaign {$campaignId} (total league players: " . count($leaguePlayers) . ")");
+
+        return $filtered;
     }
 
     /**
      * Update a player in the league JSON file.
+     * WARNING: This loads/saves the entire file. For batch updates, use updateLeaguePlayersBatch.
      */
     public function updateLeaguePlayer(int $campaignId, string $playerId, array $changes): bool
     {
@@ -168,6 +174,35 @@ class CampaignPlayerService
         }
 
         return $found;
+    }
+
+    /**
+     * Batch update multiple players in the league JSON file.
+     * Much more efficient than calling updateLeaguePlayer in a loop.
+     * @param array $playerUpdates Array of [playerId => playerData]
+     */
+    public function updateLeaguePlayersBatch(int $campaignId, array $playerUpdates): int
+    {
+        if (empty($playerUpdates)) {
+            return 0;
+        }
+
+        $leaguePlayers = $this->loadLeaguePlayers($campaignId);
+        $updatedCount = 0;
+
+        foreach ($leaguePlayers as &$player) {
+            $playerId = $player['id'] ?? '';
+            if (isset($playerUpdates[$playerId])) {
+                $player = array_merge($player, $playerUpdates[$playerId]);
+                $updatedCount++;
+            }
+        }
+
+        if ($updatedCount > 0) {
+            $this->saveLeaguePlayers($campaignId, $leaguePlayers);
+        }
+
+        return $updatedCount;
     }
 
     /**

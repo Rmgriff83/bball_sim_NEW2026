@@ -10,6 +10,7 @@ use App\Services\CampaignSeasonService;
 use App\Services\GameSimulationService;
 use App\Services\AILineupService;
 use App\Services\PlayerEvolution\PlayerEvolutionService;
+use App\Services\RewardService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,7 +21,8 @@ class GameController extends Controller
         private CampaignSeasonService $seasonService,
         private GameSimulationService $simulationService,
         private PlayerEvolutionService $evolutionService,
-        private AILineupService $aiLineupService
+        private AILineupService $aiLineupService,
+        private RewardService $rewardService
     ) {}
 
     /**
@@ -78,19 +80,28 @@ class GameController extends Controller
         $homeTeam = Team::find($game['homeTeamId']);
         $awayTeam = Team::find($game['awayTeamId']);
 
+        // For in-progress games, get scores from gameState
+        $homeScore = $game['homeScore'];
+        $awayScore = $game['awayScore'];
+        if (($game['isInProgress'] ?? false) && isset($game['gameState'])) {
+            $homeScore = $game['gameState']['homeScore'] ?? 0;
+            $awayScore = $game['gameState']['awayScore'] ?? 0;
+        }
+
         return response()->json([
             'game' => [
                 'id' => $game['id'],
                 'home_team' => $homeTeam,
                 'away_team' => $awayTeam,
                 'game_date' => $game['gameDate'],
-                'home_score' => $game['homeScore'],
-                'away_score' => $game['awayScore'],
+                'home_score' => $homeScore,
+                'away_score' => $awayScore,
                 'is_complete' => $game['isComplete'],
                 'is_in_progress' => $game['isInProgress'] ?? false,
                 'current_quarter' => $game['currentQuarter'] ?? null,
                 'is_playoff' => $game['isPlayoff'],
                 'box_score' => $game['boxScore'],
+                'quarter_scores' => $game['quarterScores'] ?? null,
             ],
         ]);
     }
@@ -160,13 +171,14 @@ class GameController extends Controller
         // Simulate the game
         $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $userLineup);
 
-        // Update game in JSON
+        // Update game in JSON (this is the user's game since they triggered it)
         $this->seasonService->updateGame($campaign->id, $year, $gameId, [
             'isComplete' => true,
             'homeScore' => $result['home_score'],
             'awayScore' => $result['away_score'],
             'boxScore' => $result['box_score'],
-        ]);
+            'quarterScores' => $result['quarter_scores'] ?? null,
+        ], true);
 
         // Update standings
         $this->seasonService->updateStandingsAfterGame(
@@ -246,12 +258,14 @@ class GameController extends Controller
             $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
 
             // Update game in JSON
+            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
             $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
                 'isComplete' => true,
                 'homeScore' => $result['home_score'],
                 'awayScore' => $result['away_score'],
                 'boxScore' => $result['box_score'],
-            ]);
+                'quarterScores' => $result['quarter_scores'] ?? null,
+            ], $isUserGame);
 
             // Update standings
             $this->seasonService->updateStandingsAfterGame(
@@ -551,7 +565,7 @@ class GameController extends Controller
 
             $finalResult = $result['finalResult'];
 
-            // Update game in JSON (remove gameState, mark complete)
+            // Update game in JSON (remove gameState, mark complete) - this is user's game
             $this->seasonService->updateGame($campaign->id, $year, $gameId, [
                 'isComplete' => true,
                 'isInProgress' => false,
@@ -559,7 +573,8 @@ class GameController extends Controller
                 'homeScore' => $finalResult['home_score'],
                 'awayScore' => $finalResult['away_score'],
                 'boxScore' => $finalResult['box_score'],
-            ]);
+                'quarterScores' => $finalResult['quarter_scores'] ?? null,
+            ], true);
 
             // Update standings
             $this->seasonService->updateStandingsAfterGame(
@@ -597,6 +612,32 @@ class GameController extends Controller
                 ]
             );
 
+            // Process synergy rewards for user's team
+            $rewardSummary = null;
+            if ($game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id) {
+                $isHome = $game['homeTeamId'] === $campaign->team_id;
+                $didWin = ($isHome && $finalResult['home_score'] > $finalResult['away_score'])
+                    || (!$isHome && $finalResult['away_score'] > $finalResult['home_score']);
+
+                $synergiesActivated = $finalResult['synergies_activated'] ?? [];
+                $userSynergies = $isHome
+                    ? ($synergiesActivated['home'] ?? 0)
+                    : ($synergiesActivated['away'] ?? 0);
+
+                if ($userSynergies > 0) {
+                    $campaign->loadMissing('user.profile');
+                    if ($campaign->user && $campaign->user->profile) {
+                        $tokensPerSynergy = $didWin ? 2 : 1;
+                        $tokensAwarded = $campaign->user->profile->awardSynergyTokens($userSynergies, $tokensPerSynergy);
+                        $rewardSummary = [
+                            'synergies_activated' => $userSynergies,
+                            'tokens_awarded' => $tokensAwarded,
+                            'win_bonus_applied' => $didWin,
+                        ];
+                    }
+                }
+            }
+
             // Simulate remaining games on this day
             $gameDate = $game['gameDate'];
             $allGames = $this->seasonService->getGamesByDate($campaign->id, $year, $gameDate);
@@ -622,13 +663,14 @@ class GameController extends Controller
                     $otherAwayTeam
                 );
 
-                // Update game in storage
+                // Update game in storage (AI vs AI game, use compact box score)
                 $this->seasonService->updateGame($campaign->id, $year, $otherGame['id'], [
                     'isComplete' => true,
                     'homeScore' => $simResult['home_score'],
                     'awayScore' => $simResult['away_score'],
                     'boxScore' => $simResult['box_score'],
-                ]);
+                    'quarterScores' => $simResult['quarter_scores'] ?? null,
+                ], false);
 
                 // Update standings
                 $this->seasonService->updateStandingsAfterGame(
@@ -663,6 +705,7 @@ class GameController extends Controller
                 'quarter' => $result['quarterResult']['quarter'],
                 'isGameComplete' => true,
                 'result' => $finalResult,
+                'rewards' => $rewardSummary,
                 ...$result['quarterResult'],
             ]);
         }
@@ -698,7 +741,7 @@ class GameController extends Controller
             $playerName = $playerStats['name'] ?? 'Unknown';
 
             if ($playerId) {
-                // Update season stats (JSON file)
+                // Update season stats (JSON file) - batched, not saved yet
                 $this->seasonService->updatePlayerStats(
                     $campaignId,
                     $year,
@@ -723,7 +766,7 @@ class GameController extends Controller
             $playerName = $playerStats['name'] ?? 'Unknown';
 
             if ($playerId) {
-                // Update season stats (JSON file)
+                // Update season stats (JSON file) - batched, not saved yet
                 $this->seasonService->updatePlayerStats(
                     $campaignId,
                     $year,
@@ -741,6 +784,9 @@ class GameController extends Controller
                 }
             }
         }
+
+        // Flush all batched player stat updates to storage in one write
+        $this->seasonService->flushSeason($campaignId, $year);
     }
 
     /**
@@ -791,12 +837,14 @@ class GameController extends Controller
             $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
 
             // Update game in JSON
+            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
             $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
                 'isComplete' => true,
                 'homeScore' => $result['home_score'],
                 'awayScore' => $result['away_score'],
                 'boxScore' => $result['box_score'],
-            ]);
+                'quarterScores' => $result['quarter_scores'] ?? null,
+            ], $isUserGame);
 
             // Update standings
             $this->seasonService->updateStandingsAfterGame(
@@ -996,12 +1044,14 @@ class GameController extends Controller
             $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
 
             // Update game in JSON
+            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
             $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
                 'isComplete' => true,
                 'homeScore' => $result['home_score'],
                 'awayScore' => $result['away_score'],
                 'boxScore' => $result['box_score'],
-            ]);
+                'quarterScores' => $result['quarter_scores'] ?? null,
+            ], $isUserGame);
 
             // Update standings
             $this->seasonService->updateStandingsAfterGame(

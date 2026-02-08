@@ -53,6 +53,10 @@ class GameSimulationService
     private ?array $lastClutchPlay = null;
     private ?Campaign $currentCampaign = null;
 
+    // Synergy tracking for rewards
+    private int $homeSynergiesActivated = 0;
+    private int $awaySynergiesActivated = 0;
+
     public function __construct(
         CampaignPlayerService $playerService,
         PlayerEvolutionService $evolutionService,
@@ -238,6 +242,8 @@ class GameSimulationService
         $this->quarterScores = ['home' => [], 'away' => []];
         $this->possessionCount = 0;
         $this->quarterEndPossessions = [];
+        $this->homeSynergiesActivated = 0;
+        $this->awaySynergiesActivated = 0;
 
         // Get coaching schemes from teams (default to balanced)
         $this->homeCoachingScheme = $homeTeam->coaching_scheme ?? 'balanced';
@@ -270,6 +276,22 @@ class GameSimulationService
         // Generate news for game-winner (close game decided by clutch shot)
         $this->generateGameNews($campaign);
 
+        // Process synergy rewards for user's team
+        $rewardSummary = null;
+        if ($campaign->user && ($this->homeTeam->id === $campaign->team_id || $this->awayTeam->id === $campaign->team_id)) {
+            $isHome = $this->homeTeam->id === $campaign->team_id;
+            $didWin = ($isHome && $this->homeScore > $this->awayScore) || (!$isHome && $this->awayScore > $this->homeScore);
+
+            $rewardService = app(RewardService::class);
+            $rewardSummary = $rewardService->processGameRewards(
+                $campaign,
+                ['possessions' => $this->animationData],
+                $campaign->team_id,
+                $isHome,
+                $didWin
+            );
+        }
+
         return [
             'game_id' => $gameData['id'],
             'home_team' => $this->homeTeam->name,
@@ -288,6 +310,7 @@ class GameSimulationService
                 'total_possessions' => $this->possessionCount,
                 'quarter_end_indices' => $this->quarterEndPossessions,
             ],
+            'rewards' => $rewardSummary,
         ];
     }
 
@@ -337,6 +360,8 @@ class GameSimulationService
         $this->quarterScores = ['home' => [], 'away' => []];
         $this->possessionCount = 0;
         $this->quarterEndPossessions = [];
+        $this->homeSynergiesActivated = 0;
+        $this->awaySynergiesActivated = 0;
 
         // Get coaching schemes from teams (default to balanced)
         $this->homeCoachingScheme = $this->homeTeam->coaching_scheme ?? 'balanced';
@@ -544,13 +569,45 @@ class GameSimulationService
         // Execute the play
         $playResult = $this->playEngine->executePlay($play, $offense, $defense);
 
+        // Calculate synergies for this possession (PlayExecutionEngine only tracks individual badges)
+        $activatedSynergies = [];
+        if (!empty($playResult['shotAttempt'])) {
+            $shooterId = $playResult['shotAttempt']['shooter'] ?? null;
+            $shooter = null;
+            foreach ($offense as $player) {
+                if (($player['id'] ?? null) === $shooterId) {
+                    $shooter = $player;
+                    break;
+                }
+            }
+            if ($shooter) {
+                $shotType = match($playResult['shotAttempt']['shotType'] ?? 'paint') {
+                    'threePoint' => 'three_pointer',
+                    'midRange' => 'mid_range',
+                    default => 'paint',
+                };
+                $synergyResult = $this->calculateSynergyBoostWithActivations($shooter, $offense, $shotType);
+                $activatedSynergies = $synergyResult['activatedSynergies'];
+
+                // Track synergies by team for rewards
+                if (!empty($activatedSynergies)) {
+                    if ($isHome) {
+                        $this->homeSynergiesActivated += count($activatedSynergies);
+                    } else {
+                        $this->awaySynergiesActivated += count($activatedSynergies);
+                    }
+                }
+            }
+        }
+        $playResult['activatedSynergies'] = $activatedSynergies;
+
         // Process play result and update stats
         $this->processPlayResult($playResult, $offense, $defense, $isHome);
 
         // Record play-by-play entry
         $this->recordPlayByPlay($playResult, $team);
 
-        // Store animation data with running scores
+        // Store animation data with running scores and box score snapshot
         if (!empty($playResult['keyframes'])) {
             $this->animationData[] = [
                 'possession_id' => $this->possessionCount,
@@ -563,6 +620,12 @@ class GameSimulationService
                 'keyframes' => $playResult['keyframes'],
                 'home_score' => $this->homeScore,
                 'away_score' => $this->awayScore,
+                'box_score' => [
+                    'home' => array_values(array_map(fn($s) => $this->formatBoxScoreStats($s), $this->homeBoxScore)),
+                    'away' => array_values(array_map(fn($s) => $this->formatBoxScoreStats($s), $this->awayBoxScore)),
+                ],
+                'activated_badges' => $playResult['activatedBadges'] ?? [],
+                'activated_synergies' => $playResult['activatedSynergies'] ?? [],
             ];
         }
 
@@ -896,7 +959,10 @@ class GameSimulationService
 
         $basePercentage = $this->getBasePercentage($playType, $shootingAttr);
         $contestLevel = $this->calculateContestLevel($shooter, $defender, $playType);
-        $badgeBoost = $this->calculateBadgeBoost($shooter, $playType, $offense);
+        $badgeResult = $this->calculateBadgeBoostWithActivations($shooter, $playType, $offense);
+        $badgeBoost = $badgeResult['boost'];
+        $activatedBadges = $badgeResult['activatedBadges'];
+        $activatedSynergies = $badgeResult['activatedSynergies'];
         $fatigueModifier = $this->calculateFatigueModifier($shooter);
 
         $finalPercentage = $basePercentage * (1 - $contestLevel * 0.3) * (1 + $badgeBoost) * $fatigueModifier;
@@ -991,6 +1057,8 @@ class GameSimulationService
             'player' => $shooter,
             'points' => $points,
             'assister' => $assister,
+            'activatedBadges' => $activatedBadges,
+            'activatedSynergies' => $activatedSynergies,
         ];
     }
 
@@ -1039,8 +1107,19 @@ class GameSimulationService
      */
     private function calculateBadgeBoost(array $shooter, string $playType, array $teammates): float
     {
+        $result = $this->calculateBadgeBoostWithActivations($shooter, $playType, $teammates);
+        return $result['boost'];
+    }
+
+    /**
+     * Calculate badge boost and return activated badges/synergies for animation.
+     */
+    private function calculateBadgeBoostWithActivations(array $shooter, string $playType, array $teammates): array
+    {
         $badges = $shooter['badges'] ?? [];
         $boost = 0;
+        $activatedBadges = [];
+        $activatedSynergies = [];
 
         foreach ($badges as $badge) {
             $badgeId = $badge['id'];
@@ -1051,28 +1130,47 @@ class GameSimulationService
             }
 
             $effects = $this->badgeDefinitions[$badgeId]['effects'][$level] ?? [];
+            $badgeBoost = 0;
 
             // Apply relevant badge effects based on play type
             if ($playType === 'three_pointer') {
-                $boost += $effects['catchShootBoost'] ?? 0;
-                $boost += $effects['cornerThreeBoost'] ?? 0;
-                $boost += $effects['deepRangeBoost'] ?? 0;
-                $boost += $effects['contestReduction'] ?? 0;
+                $badgeBoost += $effects['catchShootBoost'] ?? 0;
+                $badgeBoost += $effects['cornerThreeBoost'] ?? 0;
+                $badgeBoost += $effects['deepRangeBoost'] ?? 0;
+                $badgeBoost += $effects['contestReduction'] ?? 0;
             } elseif ($playType === 'mid_range') {
-                $boost += $effects['movingShotBoost'] ?? 0;
-                $boost += $effects['contestReduction'] ?? 0;
+                $badgeBoost += $effects['movingShotBoost'] ?? 0;
+                $badgeBoost += $effects['contestReduction'] ?? 0;
             } elseif ($playType === 'paint') {
-                $boost += $effects['contestedLayupBoost'] ?? 0;
-                $boost += $effects['contactFinishBoost'] ?? 0;
-                $boost += $effects['floaterBoost'] ?? 0;
-                $boost += $effects['giantSlayerBoost'] ?? 0;
+                $badgeBoost += $effects['contestedLayupBoost'] ?? 0;
+                $badgeBoost += $effects['contactFinishBoost'] ?? 0;
+                $badgeBoost += $effects['floaterBoost'] ?? 0;
+                $badgeBoost += $effects['giantSlayerBoost'] ?? 0;
+            }
+
+            if ($badgeBoost > 0) {
+                $boost += $badgeBoost;
+                $badgeDef = $this->badgeDefinitions[$badgeId];
+                $activatedBadges[] = [
+                    'id' => $badgeId,
+                    'name' => $badgeDef['name'] ?? $badgeId,
+                    'level' => $level,
+                    'playerId' => $shooter['id'],
+                    'playerName' => ($shooter['firstName'] ?? $shooter['first_name'] ?? '') . ' ' . ($shooter['lastName'] ?? $shooter['last_name'] ?? ''),
+                ];
             }
         }
 
         // Check for badge synergies with teammates
-        $boost += $this->calculateSynergyBoost($shooter, $teammates, $playType);
+        $synergyResult = $this->calculateSynergyBoostWithActivations($shooter, $teammates, $playType);
+        $boost += $synergyResult['boost'];
+        $activatedSynergies = $synergyResult['activatedSynergies'];
 
-        return $boost;
+        return [
+            'boost' => $boost,
+            'activatedBadges' => $activatedBadges,
+            'activatedSynergies' => $activatedSynergies,
+        ];
     }
 
     /**
@@ -1080,7 +1178,17 @@ class GameSimulationService
      */
     private function calculateSynergyBoost(array $shooter, array $teammates, string $playType): float
     {
+        $result = $this->calculateSynergyBoostWithActivations($shooter, $teammates, $playType);
+        return $result['boost'];
+    }
+
+    /**
+     * Calculate synergy boost and return activated synergies for animation.
+     */
+    private function calculateSynergyBoostWithActivations(array $shooter, array $teammates, string $playType): array
+    {
         $boost = 0;
+        $activatedSynergies = [];
         $shooterBadgeIds = array_column($shooter['badges'] ?? [], 'id');
 
         foreach ($this->badgeSynergies as $synergy) {
@@ -1089,6 +1197,9 @@ class GameSimulationService
                 continue;
             }
 
+            $shooterBadge = in_array($synergy['badge1_id'], $shooterBadgeIds)
+                ? $synergy['badge1_id']
+                : $synergy['badge2_id'];
             $requiredBadge = in_array($synergy['badge1_id'], $shooterBadgeIds)
                 ? $synergy['badge2_id']
                 : $synergy['badge1_id'];
@@ -1102,15 +1213,35 @@ class GameSimulationService
                     $effect = $synergy['effect'] ?? [];
                     $boostValues = $effect['boost'] ?? [];
 
-                    // Apply relevant synergy boosts
-                    $boost += $boostValues['shotPercentage'] ?? 0;
-                    $boost += $boostValues['rollerFinishing'] ?? 0;
+                    $synergyBoost = 0;
+                    $synergyBoost += $boostValues['shotPercentage'] ?? 0;
+                    $synergyBoost += $boostValues['rollerFinishing'] ?? 0;
+
+                    if ($synergyBoost > 0) {
+                        $boost += $synergyBoost;
+                        $activatedSynergies[] = [
+                            'badge1' => $shooterBadge,
+                            'badge2' => $requiredBadge,
+                            'effect' => $synergy['effect_type'] ?? $synergy['name'] ?? 'synergy',
+                            'player1' => [
+                                'id' => $shooter['id'],
+                                'name' => ($shooter['firstName'] ?? $shooter['first_name'] ?? '') . ' ' . ($shooter['lastName'] ?? $shooter['last_name'] ?? ''),
+                            ],
+                            'player2' => [
+                                'id' => $teammate['id'],
+                                'name' => ($teammate['firstName'] ?? $teammate['first_name'] ?? '') . ' ' . ($teammate['lastName'] ?? $teammate['last_name'] ?? ''),
+                            ],
+                        ];
+                    }
                     break;
                 }
             }
         }
 
-        return $boost;
+        return [
+            'boost' => $boost,
+            'activatedSynergies' => $activatedSynergies,
+        ];
     }
 
     /**
@@ -1403,7 +1534,10 @@ class GameSimulationService
                 "Home lineup count: " . count($this->homeLineup) . ", " .
                 "Away lineup count: " . count($this->awayLineup) . ". " .
                 "Home players: " . count($this->homePlayers) . ", " .
-                "Away players: " . count($this->awayPlayers)
+                "Away players: " . count($this->awayPlayers) . ". " .
+                "Home team: " . ($this->homeTeam->abbreviation ?? 'unknown') . ", " .
+                "Away team: " . ($this->awayTeam->abbreviation ?? 'unknown') . ", " .
+                "Campaign: " . ($this->currentCampaign->id ?? 'unknown')
             );
         }
 
@@ -1503,11 +1637,12 @@ class GameSimulationService
 
     /**
      * Serialize current game state for storage between quarters.
+     * Uses compact player data to reduce storage size.
      */
     public function serializeState(): array
     {
         return [
-            'version' => 1,
+            'version' => 2,
             'status' => 'in_progress',
             'currentQuarter' => $this->currentQuarter,
             'completedQuarters' => range(1, $this->currentQuarter),
@@ -1518,15 +1653,36 @@ class GameSimulationService
             'awayBoxScore' => $this->awayBoxScore,
             'homeLineup' => array_map(fn($p) => $p['id'], $this->homeLineup),
             'awayLineup' => array_map(fn($p) => $p['id'], $this->awayLineup),
-            'homePlayers' => $this->homePlayers,
-            'awayPlayers' => $this->awayPlayers,
+            'homePlayers' => array_map([$this, 'compactPlayerData'], $this->homePlayers),
+            'awayPlayers' => array_map([$this, 'compactPlayerData'], $this->awayPlayers),
             'homeCoachingScheme' => $this->homeCoachingScheme,
             'awayCoachingScheme' => $this->awayCoachingScheme,
             'possessionCount' => $this->possessionCount,
             'quarterEndPossessions' => $this->quarterEndPossessions,
             'homeTeamId' => $this->homeTeam->id,
             'awayTeamId' => $this->awayTeam->id,
+            'homeSynergiesActivated' => $this->homeSynergiesActivated,
+            'awaySynergiesActivated' => $this->awaySynergiesActivated,
             'lastUpdatedAt' => now()->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Compact player data for serialization - removes fields not needed for mid-game simulation.
+     */
+    private function compactPlayerData(array $player): array
+    {
+        return [
+            'id' => $player['id'],
+            'first_name' => $player['first_name'],
+            'last_name' => $player['last_name'],
+            'position' => $player['position'],
+            'secondary_position' => $player['secondary_position'] ?? null,
+            'overall_rating' => $player['overall_rating'],
+            'attributes' => $player['attributes'] ?? [],
+            'badges' => $player['badges'] ?? [],
+            'tendencies' => $player['tendencies'] ?? [],
+            'fatigue' => $player['fatigue'] ?? 0,
         ];
     }
 
@@ -1555,6 +1711,10 @@ class GameSimulationService
         // Reload team models
         $this->homeTeam = Team::find($state['homeTeamId']);
         $this->awayTeam = Team::find($state['awayTeamId']);
+
+        // Restore synergy counters
+        $this->homeSynergiesActivated = $state['homeSynergiesActivated'] ?? 0;
+        $this->awaySynergiesActivated = $state['awaySynergiesActivated'] ?? 0;
 
         // Reset per-quarter data
         $this->animationData = [];
@@ -1682,6 +1842,10 @@ class GameSimulationService
                 'away' => $awayBoxScoreFormatted,
             ],
             'quarter_scores' => $this->quarterScores,
+            'synergies_activated' => [
+                'home' => $this->homeSynergiesActivated,
+                'away' => $this->awaySynergiesActivated,
+            ],
         ];
     }
 

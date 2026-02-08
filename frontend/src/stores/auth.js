@@ -4,6 +4,7 @@ import api from '@/composables/useApi'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
+  const profile = ref(null)
   const token = ref(localStorage.getItem('auth_token') || null)
   const initialized = ref(false)
   const loading = ref(false)
@@ -28,6 +29,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchUser() {
     const response = await api.get('/api/user')
     user.value = response.data.user
+    profile.value = response.data.profile
     return user.value
   }
 
@@ -67,6 +69,7 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       token.value = null
       user.value = null
+      profile.value = null
       localStorage.removeItem('auth_token')
     }
   }
@@ -120,6 +123,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   return {
     user,
+    profile,
     token,
     initialized,
     loading,
