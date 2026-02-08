@@ -22,6 +22,11 @@ export function usePlayAnimation() {
   let animationFrameId = null
   let lastTimestamp = null
 
+  // Delayed score display - syncs with the +2/+3 animation on court
+  const displayedHomeScore = ref(0)
+  const displayedAwayScore = ref(0)
+  let scoreUpdateTimeout = null
+
   // Computed properties
   const totalPossessions = computed(() => {
     return animationData.value?.possessions?.length || 0
@@ -65,14 +70,55 @@ export function usePlayAnimation() {
   })
 
   /**
-   * Running score from current possession.
+   * Running score - uses delayed display refs that sync with the +2/+3 animation.
+   * Scores update ~1 second after possession changes (when score animation finishes).
    */
-  const currentHomeScore = computed(() => {
-    return currentPossession.value?.home_score || 0
-  })
+  const currentHomeScore = computed(() => displayedHomeScore.value)
+  const currentAwayScore = computed(() => displayedAwayScore.value)
 
-  const currentAwayScore = computed(() => {
-    return currentPossession.value?.away_score || 0
+  // Watch for possession changes and update scores with delay to sync with +2/+3 animation
+  watch(currentPossessionIndex, (newIndex, oldIndex) => {
+    // Clear any pending score update
+    if (scoreUpdateTimeout) {
+      clearTimeout(scoreUpdateTimeout)
+      scoreUpdateTimeout = null
+    }
+
+    // Skip when resetting to 0 from a higher index (happens when loading new animation data)
+    // The loadAnimationData function handles setting the correct starting scores
+    if (newIndex === 0 && oldIndex > 0) return
+
+    // Only process when moving forward through possessions
+    if (newIndex <= oldIndex) return
+
+    if (!animationData.value?.possessions) return
+
+    // The possession that just finished
+    const justFinished = animationData.value.possessions[oldIndex]
+    // The possession before the one that just finished
+    const beforeJustFinished = oldIndex > 0 ? animationData.value.possessions[oldIndex - 1] : null
+
+    if (!justFinished) return
+
+    // Target score is from the just-finished possession
+    const targetHome = justFinished.home_score || 0
+    const targetAway = justFinished.away_score || 0
+
+    // Check if scoring happened in the just-finished possession
+    const homeScored = targetHome !== (beforeJustFinished?.home_score || 0)
+    const awayScored = targetAway !== (beforeJustFinished?.away_score || 0)
+
+    if (homeScored || awayScored) {
+      // Scoring happened - delay update to sync with the +2/+3 animation
+      scoreUpdateTimeout = setTimeout(() => {
+        displayedHomeScore.value = targetHome
+        displayedAwayScore.value = targetAway
+      }, 250)
+    } else {
+      // No score change - update immediately
+      displayedHomeScore.value = targetHome
+      displayedAwayScore.value = targetAway
+    }
   })
 
   /**
@@ -157,7 +203,8 @@ export function usePlayAnimation() {
       positions[playerId] = {
         x: lerp(prev.x, next.x, easeInOutQuad(t)),
         y: lerp(prev.y, next.y, easeInOutQuad(t)),
-        hasBall: next.hasBall
+        hasBall: next.hasBall,
+        lineupIndex: next.lineupIndex ?? prev.lineupIndex ?? null
       }
     }
 
@@ -250,10 +297,26 @@ export function usePlayAnimation() {
    */
   function loadAnimationData(data, options = {}) {
     stop()
+    // Clear any pending score update
+    if (scoreUpdateTimeout) {
+      clearTimeout(scoreUpdateTimeout)
+      scoreUpdateTimeout = null
+    }
     animationData.value = data
     currentPossessionIndex.value = 0
     currentKeyframeIndex.value = 0
     elapsedTime.value = 0
+
+    // Initialize displayed scores
+    // Use provided starting scores if available, otherwise default to 0-0
+    if (options.startingHomeScore !== undefined && options.startingAwayScore !== undefined) {
+      displayedHomeScore.value = options.startingHomeScore
+      displayedAwayScore.value = options.startingAwayScore
+    } else {
+      displayedHomeScore.value = 0
+      displayedAwayScore.value = 0
+    }
+
     // Initialize quarter break state
     quarterEndIndices.value = data?.quarter_end_indices || []
     isQuarterBreak.value = false
@@ -393,6 +456,12 @@ export function usePlayAnimation() {
     if (elapsedTime.value >= possessionDuration.value) {
       // Check for quarter break BEFORE advancing
       if (isAtQuarterEnd.value && completedQuarter.value < currentQuarter.value) {
+        // Update displayed scores immediately for quarter break
+        // (no next possession means no +2/+3 animation to wait for)
+        if (currentPossession.value) {
+          displayedHomeScore.value = currentPossession.value.home_score || 0
+          displayedAwayScore.value = currentPossession.value.away_score || 0
+        }
         completedQuarter.value = currentQuarter.value
         isQuarterBreak.value = true
         pause()
@@ -408,7 +477,11 @@ export function usePlayAnimation() {
         // Reached end of animation data
         if (isLiveMode.value) {
           // In live mode, reaching the end means quarter is complete
-          // Trigger quarter break so user can continue to next quarter
+          // Update displayed scores immediately for quarter break
+          if (currentPossession.value) {
+            displayedHomeScore.value = currentPossession.value.home_score || 0
+            displayedAwayScore.value = currentPossession.value.away_score || 0
+          }
           completedQuarter.value = currentQuarter.value
           isQuarterBreak.value = true
           pause()
@@ -450,6 +523,10 @@ export function usePlayAnimation() {
    */
   function cleanup() {
     pause()
+    if (scoreUpdateTimeout) {
+      clearTimeout(scoreUpdateTimeout)
+      scoreUpdateTimeout = null
+    }
   }
 
   return {

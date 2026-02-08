@@ -405,6 +405,21 @@ class CampaignPlayerService
             'tradeValue' => $player->trade_value ? (float) $player->trade_value : null,
             'tradeValueTotal' => $player->trade_value_total ? (float) $player->trade_value_total : null,
             'injuryRisk' => $player->injury_risk ?? 'M',
+            // Evolution tracking fields
+            'fatigue' => $player->fatigue ?? 0,
+            'is_injured' => $player->is_injured ?? false,
+            'isInjured' => $player->is_injured ?? false,
+            'injury_details' => $player->injury_details,
+            'injuryDetails' => $player->injury_details,
+            'games_played_this_season' => $player->games_played_this_season ?? 0,
+            'gamesPlayedThisSeason' => $player->games_played_this_season ?? 0,
+            'minutes_played_this_season' => $player->minutes_played_this_season ?? 0,
+            'minutesPlayedThisSeason' => $player->minutes_played_this_season ?? 0,
+            'development_history' => $player->development_history ?? [],
+            'streak_data' => $player->streak_data,
+            'streakData' => $player->streak_data,
+            'recent_performances' => $player->recent_performances ?? [],
+            'recentPerformances' => $player->recent_performances ?? [],
         ];
     }
 

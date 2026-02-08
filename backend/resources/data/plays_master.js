@@ -47,9 +47,10 @@ export const playsMaster = [
         "movement": { "ballHandler": { "x": 0.45, "y": 0.35 } },
         "attributes": { "offense": ["passVision"], "defense": ["helpDefenseIQ"] },
         "outcomes": {
-          "drive": { "next": "drive_to_rim", "probability": 0.4 },
-          "pull_up": { "next": "pull_up_jumper", "probability": 0.25 },
-          "pocket_pass": { "next": "roll_pass", "probability": 0.35 }
+          "drive": { "next": "drive_to_rim", "probability": 0.35 },
+          "pull_up": { "next": "pull_up_jumper", "probability": 0.20 },
+          "pocket_pass": { "next": "roll_pass", "probability": 0.30 },
+          "kick_out": { "next": "kick_out_three", "probability": 0.15 }
         }
       },
       {
@@ -60,9 +61,9 @@ export const playsMaster = [
         "movement": { "ballHandler": { "x": 0.5, "y": 0.75 }, "screener": { "x": 0.35, "y": 0.65 } },
         "attributes": { "offense": ["speedWithBall", "layup", "drivingDunk"], "defense": ["interiorDefense", "block"] },
         "outcomes": {
-          "finish": { "next": "finish_at_rim", "probability": 0.6 },
-          "kick_out": { "next": "kick_out_three", "probability": 0.3 },
-          "turnover": { "next": "end_turnover", "probability": 0.1 }
+          "finish": { "next": "finish_at_rim", "probability": 0.50 },
+          "kick_out": { "next": "kick_out_three", "probability": 0.40 },
+          "turnover": { "next": "end_turnover", "probability": 0.10 }
         }
       },
       {
@@ -89,6 +90,7 @@ export const playsMaster = [
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
           "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 },
           "fouled": { "next": "free_throws", "probability": 0.15 }
         }
       },
@@ -102,7 +104,8 @@ export const playsMaster = [
         "attributes": { "offense": ["midRange", "shotIQ"], "defense": ["perimeterDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.04 }
         }
       },
       {
@@ -126,7 +129,8 @@ export const playsMaster = [
         "attributes": { "offense": ["threePoint", "offensiveConsistency"], "defense": ["perimeterDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 3 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.02 }
         }
       }
     ],
@@ -179,10 +183,10 @@ export const playsMaster = [
         "movement": { "ballHandler": { "x": 0.4, "y": 0.55 } },
         "attributes": { "offense": ["ballHandling", "speedWithBall"], "defense": ["perimeterDefense", "steal"] },
         "outcomes": {
-          "beat_defender": { "next": "drive_finish", "probability": 0.45 },
-          "step_back": { "next": "step_back_jumper", "probability": 0.3 },
-          "pass_out": { "next": "kick_corner", "probability": 0.15 },
-          "turnover": { "next": "end_turnover", "probability": 0.1 }
+          "beat_defender": { "next": "drive_finish", "probability": 0.40 },
+          "step_back": { "next": "step_back_jumper", "probability": 0.25 },
+          "pass_out": { "next": "kick_corner", "probability": 0.25 },
+          "turnover": { "next": "end_turnover", "probability": 0.10 }
         }
       },
       {
@@ -196,6 +200,7 @@ export const playsMaster = [
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
           "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 },
           "fouled": { "next": "free_throws", "probability": 0.2 }
         }
       },
@@ -209,7 +214,8 @@ export const playsMaster = [
         "attributes": { "offense": ["midRange", "shotIQ"], "defense": ["perimeterDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.04 }
         }
       },
       {
@@ -233,7 +239,8 @@ export const playsMaster = [
         "attributes": { "offense": ["threePoint"], "defense": ["perimeterDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 3 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.02 }
         }
       }
     ],
@@ -287,10 +294,10 @@ export const playsMaster = [
         "movement": { "postPlayer": { "x": 0.4, "y": 0.75 } },
         "attributes": { "offense": ["postControl", "strength"], "defense": ["interiorDefense", "strength"] },
         "outcomes": {
-          "hook_shot": { "next": "post_hook", "probability": 0.35 },
-          "fade_away": { "next": "post_fade", "probability": 0.25 },
-          "drop_step": { "next": "post_dunk", "probability": 0.25 },
-          "kick_out": { "next": "kick_out_wing", "probability": 0.15 }
+          "hook_shot": { "next": "post_hook", "probability": 0.30 },
+          "fade_away": { "next": "post_fade", "probability": 0.20 },
+          "drop_step": { "next": "post_dunk", "probability": 0.20 },
+          "kick_out": { "next": "kick_out_wing", "probability": 0.30 }
         }
       },
       {
@@ -303,7 +310,8 @@ export const playsMaster = [
         "attributes": { "offense": ["postHook", "closeShot"], "defense": ["interiorDefense", "block"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.08 }
         }
       },
       {
@@ -316,7 +324,8 @@ export const playsMaster = [
         "attributes": { "offense": ["postFade", "midRange"], "defense": ["interiorDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.05 }
         }
       },
       {
@@ -330,6 +339,7 @@ export const playsMaster = [
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
           "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.08 },
           "fouled": { "next": "free_throws", "probability": 0.25 }
         }
       },
@@ -354,7 +364,8 @@ export const playsMaster = [
         "attributes": { "offense": ["threePoint"], "defense": ["perimeterDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 3 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.02 }
         }
       }
     ],
@@ -400,9 +411,9 @@ export const playsMaster = [
         },
         "attributes": { "offense": ["speed", "ballHandling"], "defense": ["speed"] },
         "outcomes": {
-          "numbers": { "next": "attack_rim", "probability": 0.7 },
-          "pull_up": { "next": "transition_three", "probability": 0.2 },
-          "turnover": { "next": "end_turnover", "probability": 0.1 }
+          "numbers": { "next": "attack_rim", "probability": 0.60 },
+          "pull_up": { "next": "transition_three", "probability": 0.30 },
+          "turnover": { "next": "end_turnover", "probability": 0.10 }
         }
       },
       {
@@ -429,6 +440,7 @@ export const playsMaster = [
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
           "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 },
           "fouled": { "next": "free_throws", "probability": 0.2 }
         }
       },
@@ -468,7 +480,8 @@ export const playsMaster = [
         "attributes": { "offense": ["layup"], "defense": ["block"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.08 }
         }
       },
       {
@@ -481,7 +494,8 @@ export const playsMaster = [
         "attributes": { "offense": ["threePoint"], "defense": ["closeout"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 3 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.02 }
         }
       }
     ],
@@ -497,7 +511,7 @@ export const playsMaster = [
     "category": "motion",
     "difficulty": 70,
     "tempo": "halfcourt",
-    "primaryPositions": ["PG"],
+    "primaryPositions": ["PG", "SG", "SF"],
     "tags": ["motion", "screens", "team_play"],
     "formation": {
       "point": { "x": 0.5, "y": 0.15 },
@@ -553,7 +567,8 @@ export const playsMaster = [
         "attributes": { "offense": ["layup", "closeShot"], "defense": ["interiorDefense", "block"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 }
         }
       },
       {
@@ -568,8 +583,8 @@ export const playsMaster = [
         },
         "attributes": { "offense": ["strength"], "defense": ["perimeterDefense"] },
         "outcomes": {
-          "shooter_open": { "next": "wing_catch_shoot", "probability": 0.6 },
-          "curl_drive": { "next": "curl_to_rim", "probability": 0.4 }
+          "shooter_open": { "next": "wing_catch_shoot", "probability": 0.70 },
+          "curl_drive": { "next": "curl_to_rim", "probability": 0.30 }
         }
       },
       {
@@ -581,7 +596,8 @@ export const playsMaster = [
         "attributes": { "offense": ["threePoint", "offensiveConsistency"], "defense": ["perimeterDefense", "closeout"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 3 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.02 }
         }
       },
       {
@@ -606,7 +622,8 @@ export const playsMaster = [
         "attributes": { "offense": ["layup"], "defense": ["block"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 }
         }
       }
     ],
@@ -647,9 +664,9 @@ export const playsMaster = [
         "movement": { "ballHandler": { "x": 0.4, "y": 0.5 } },
         "attributes": { "offense": ["speedWithBall", "passVision"], "defense": ["perimeterDefense", "helpDefenseIQ"] },
         "outcomes": {
-          "kick_corner": { "next": "corner_pass", "probability": 0.6 },
-          "finish": { "next": "floater", "probability": 0.3 },
-          "turnover": { "next": "end_turnover", "probability": 0.1 }
+          "kick_corner": { "next": "corner_pass", "probability": 0.70 },
+          "finish": { "next": "floater", "probability": 0.22 },
+          "turnover": { "next": "end_turnover", "probability": 0.08 }
         }
       },
       {
@@ -673,7 +690,8 @@ export const playsMaster = [
         "attributes": { "offense": ["threePoint", "offensiveConsistency"], "defense": ["perimeterDefense", "closeout"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 3 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.02 }
         }
       },
       {
@@ -686,7 +704,8 @@ export const playsMaster = [
         "attributes": { "offense": ["closeShot", "layup"], "defense": ["interiorDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.06 }
         }
       }
     ],
@@ -766,6 +785,7 @@ export const playsMaster = [
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
           "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 },
           "fouled": { "next": "free_throws", "probability": 0.15 }
         }
       },
@@ -805,7 +825,8 @@ export const playsMaster = [
         "attributes": { "offense": ["layup", "drivingDunk"], "defense": ["interiorDefense", "block"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 }
         }
       },
       {
@@ -817,7 +838,8 @@ export const playsMaster = [
         "attributes": { "offense": ["midRange"], "defense": ["perimeterDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.04 }
         }
       },
       {
@@ -841,7 +863,7 @@ export const playsMaster = [
     "category": "motion",
     "difficulty": 65,
     "tempo": "halfcourt",
-    "primaryPositions": ["PG"],
+    "primaryPositions": ["PG", "SG"],
     "tags": ["versatile", "options", "spacing"],
     "formation": {
       "point": { "x": 0.5, "y": 0.15 },
@@ -883,9 +905,9 @@ export const playsMaster = [
         },
         "attributes": { "offense": ["strength"], "defense": ["perimeterDefense", "helpDefenseIQ"] },
         "outcomes": {
-          "drive": { "next": "horns_drive", "probability": 0.5 },
-          "pop": { "next": "elbow_pop", "probability": 0.3 },
-          "roll": { "next": "elbow_roll", "probability": 0.2 }
+          "drive": { "next": "horns_drive", "probability": 0.40 },
+          "pop": { "next": "elbow_pop", "probability": 0.40 },
+          "roll": { "next": "elbow_roll", "probability": 0.20 }
         }
       },
       {
@@ -900,9 +922,9 @@ export const playsMaster = [
         },
         "attributes": { "offense": ["strength"], "defense": ["perimeterDefense", "helpDefenseIQ"] },
         "outcomes": {
-          "drive": { "next": "horns_drive", "probability": 0.5 },
-          "pop": { "next": "elbow_pop", "probability": 0.3 },
-          "roll": { "next": "elbow_roll", "probability": 0.2 }
+          "drive": { "next": "horns_drive", "probability": 0.40 },
+          "pop": { "next": "elbow_pop", "probability": 0.40 },
+          "roll": { "next": "elbow_roll", "probability": 0.20 }
         }
       },
       {
@@ -913,9 +935,9 @@ export const playsMaster = [
         "movement": { "point": { "x": 0.5, "y": 0.7 } },
         "attributes": { "offense": ["speedWithBall", "layup"], "defense": ["helpDefenseIQ", "block"] },
         "outcomes": {
-          "finish": { "next": "horns_finish", "probability": 0.5 },
-          "kick": { "next": "kick_corner_horns", "probability": 0.4 },
-          "turnover": { "next": "end_turnover", "probability": 0.1 }
+          "finish": { "next": "horns_finish", "probability": 0.40 },
+          "kick": { "next": "kick_corner_horns", "probability": 0.50 },
+          "turnover": { "next": "end_turnover", "probability": 0.10 }
         }
       },
       {
@@ -928,7 +950,8 @@ export const playsMaster = [
         "attributes": { "offense": ["layup", "closeShot"], "defense": ["interiorDefense", "block"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 }
         }
       },
       {
@@ -953,7 +976,8 @@ export const playsMaster = [
         "attributes": { "offense": ["threePoint", "midRange"], "defense": ["perimeterDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 3 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.02 }
         }
       },
       {
@@ -979,7 +1003,8 @@ export const playsMaster = [
         "attributes": { "offense": ["closeShot", "layup"], "defense": ["interiorDefense", "block"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 }
         }
       },
       {
@@ -1003,7 +1028,8 @@ export const playsMaster = [
         "attributes": { "offense": ["threePoint"], "defense": ["perimeterDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 3 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.02 }
         }
       },
       {
@@ -1043,7 +1069,8 @@ export const playsMaster = [
         "attributes": { "offense": ["midRange"], "defense": ["perimeterDefense"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.04 }
         }
       },
       {
@@ -1056,7 +1083,8 @@ export const playsMaster = [
         "attributes": { "offense": ["layup"], "defense": ["block"] },
         "outcomes": {
           "made": { "next": "end_made", "points": 2 },
-          "missed": { "next": "rebound_battle" }
+          "missed": { "next": "rebound_battle" },
+          "blocked": { "next": "rebound_battle", "probability": 0.10 }
         }
       }
     ],

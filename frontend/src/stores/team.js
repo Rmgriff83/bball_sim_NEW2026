@@ -205,14 +205,20 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
-  async function updateCoachingScheme(campaignId, scheme) {
+  async function updateCoachingScheme(campaignId, offensiveScheme, defensiveScheme = null) {
     loading.value = true
     error.value = null
     try {
-      const response = await api.put(`/api/campaigns/${campaignId}/team/coaching-scheme`, { scheme })
-      // Update local team state
+      // Get current defensive scheme if not provided
+      const currentDefensive = team.value?.coaching_scheme?.defensive || 'man'
+      const payload = {
+        offensive: offensiveScheme,
+        defensive: defensiveScheme || currentDefensive
+      }
+      const response = await api.put(`/api/campaigns/${campaignId}/team/coaching-scheme`, payload)
+      // Update local team state with new format
       if (team.value) {
-        team.value.coaching_scheme = scheme
+        team.value.coaching_scheme = response.data.coaching_scheme || payload
       }
       return response.data
     } catch (err) {

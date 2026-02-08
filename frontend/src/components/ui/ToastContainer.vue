@@ -12,12 +12,14 @@ function goToBoxScore(toast) {
 }
 
 function isWin(toast) {
-  if (!toast.userTeamId) return toast.homeScore > toast.awayScore
   // Check if user team won based on which side they're on
-  if (toast.isUserHome) {
+  if (toast.isUserHome === true) {
     return toast.homeScore > toast.awayScore
+  } else if (toast.isUserHome === false) {
+    return toast.awayScore > toast.homeScore
   }
-  return toast.awayScore > toast.homeScore
+  // Fallback: assume home team perspective
+  return toast.homeScore > toast.awayScore
 }
 </script>
 

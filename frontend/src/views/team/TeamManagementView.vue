@@ -18,6 +18,11 @@ const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 const playerModalTab = ref('stats')
 
+// Evolution history display state
+const showAllRecentEvolution = ref(false)
+const showAllTimeEvolution = ref(false)
+const showAllTimeExpanded = ref(false)
+
 // Move dropdown state
 const expandedMovePlayer = ref(null)
 const swappingLineup = ref(false)
@@ -29,6 +34,53 @@ const animatingPlayers = ref({}) // { [playerId]: 'up' | 'down' }
 const schemesFetched = ref(false)
 const updatingScheme = ref(false)
 const selectedScheme = ref(null)
+const selectedDefensiveScheme = ref(null)
+
+// Defensive schemes data
+const defensiveSchemes = {
+  man: {
+    name: 'Man-to-Man',
+    description: 'Each defender guards a specific opponent. Best for teams with strong individual defenders.',
+    type: 'aggressive',
+    strengths: ['1-on-1 Defense', 'Ball Pressure'],
+    weaknesses: ['Pick & Roll', 'Fatigue']
+  },
+  zone_2_3: {
+    name: '2-3 Zone',
+    description: 'Two guards up top, three defenders protecting the paint. Great for limiting interior scoring.',
+    type: 'passive',
+    strengths: ['Paint Protection', 'Rebounding'],
+    weaknesses: ['Corner 3s', 'Ball Movement']
+  },
+  zone_3_2: {
+    name: '3-2 Zone',
+    description: 'Three defenders up top, two protecting the baseline. Effective against perimeter shooters.',
+    type: 'balanced',
+    strengths: ['Perimeter D', 'Transition'],
+    weaknesses: ['High Post', 'Baseline Cuts']
+  },
+  zone_1_3_1: {
+    name: '1-3-1 Zone',
+    description: 'Trapping zone defense that forces turnovers. High risk, high reward.',
+    type: 'aggressive',
+    strengths: ['Turnovers', 'Fast Breaks'],
+    weaknesses: ['Corner Shots', 'Skip Passes']
+  },
+  press: {
+    name: 'Full Court Press',
+    description: 'Apply pressure the full length of the court. Exhausting but can create chaos.',
+    type: 'aggressive',
+    strengths: ['Turnovers', 'Tempo Control'],
+    weaknesses: ['Stamina', 'Easy Baskets']
+  },
+  trap: {
+    name: 'Trap Defense',
+    description: 'Aggressive double-teams on ball handlers. Creates turnovers but leaves shooters open.',
+    type: 'aggressive',
+    strengths: ['Ball Pressure', 'Steals'],
+    weaknesses: ['Open 3s', 'Rotation']
+  }
+}
 
 // Position validation
 const { POSITIONS, canPlayPosition } = usePositionValidation()
@@ -115,7 +167,10 @@ watch(activeTab, async (newTab) => {
   if (newTab === 'coach' && !schemesFetched.value) {
     try {
       await teamStore.fetchCoachingSchemes(campaignId.value)
-      selectedScheme.value = team.value?.coaching_scheme || 'balanced'
+      // coaching_scheme is now {offensive, defensive} object
+      const scheme = team.value?.coaching_scheme
+      selectedScheme.value = scheme?.offensive || scheme || 'balanced'
+      selectedDefensiveScheme.value = scheme?.defensive || 'man'
       schemesFetched.value = true
     } catch (err) {
       console.error('Failed to fetch coaching schemes:', err)
@@ -123,14 +178,27 @@ watch(activeTab, async (newTab) => {
   }
 })
 
-async function updateCoachingScheme(scheme) {
+async function updateOffensiveScheme(scheme) {
   if (updatingScheme.value) return
   updatingScheme.value = true
   try {
-    await teamStore.updateCoachingScheme(campaignId.value, scheme)
+    await teamStore.updateCoachingScheme(campaignId.value, scheme, selectedDefensiveScheme.value)
     selectedScheme.value = scheme
   } catch (err) {
-    console.error('Failed to update scheme:', err)
+    console.error('Failed to update offensive scheme:', err)
+  } finally {
+    updatingScheme.value = false
+  }
+}
+
+async function updateDefensiveScheme(scheme) {
+  if (updatingScheme.value) return
+  updatingScheme.value = true
+  try {
+    await teamStore.updateCoachingScheme(campaignId.value, selectedScheme.value, scheme)
+    selectedDefensiveScheme.value = scheme
+  } catch (err) {
+    console.error('Failed to update defensive scheme:', err)
   } finally {
     updatingScheme.value = false
   }
@@ -382,6 +450,74 @@ function getTopBadges(badges) {
   return [...badges]
     .sort((a, b) => (levelOrder[a.level] || 4) - (levelOrder[b.level] || 4))
     .slice(0, 3)
+}
+
+// Evolution history processing
+const evolutionHistory = computed(() => {
+  if (!selectedPlayer.value?.development_history) return []
+  return selectedPlayer.value.development_history || []
+})
+
+// Get date 7 days ago for filtering recent evolution
+const sevenDaysAgo = computed(() => {
+  const date = new Date()
+  date.setDate(date.getDate() - 7)
+  return date.toISOString().split('T')[0]
+})
+
+// Aggregate evolution by attribute (category.attribute as key)
+function aggregateEvolution(history) {
+  const aggregated = {}
+  for (const entry of history) {
+    const key = `${entry.category}.${entry.attribute}`
+    if (!aggregated[key]) {
+      aggregated[key] = {
+        category: entry.category,
+        attribute: entry.attribute,
+        totalChange: 0,
+        count: 0,
+      }
+    }
+    aggregated[key].totalChange += entry.change
+    aggregated[key].count++
+  }
+  // Convert to array and sort by total change (descending by absolute value, positive first)
+  return Object.values(aggregated)
+    .sort((a, b) => {
+      // Positive changes first, then by absolute value
+      if (a.totalChange > 0 && b.totalChange <= 0) return -1
+      if (a.totalChange <= 0 && b.totalChange > 0) return 1
+      return Math.abs(b.totalChange) - Math.abs(a.totalChange)
+    })
+}
+
+// Recent evolution (last 7 days)
+const recentEvolution = computed(() => {
+  const recent = evolutionHistory.value.filter(e => e.date >= sevenDaysAgo.value)
+  return aggregateEvolution(recent)
+})
+
+// All-time evolution
+const allTimeEvolution = computed(() => {
+  return aggregateEvolution(evolutionHistory.value)
+})
+
+// Format category name for display
+function formatCategoryName(category) {
+  return category.charAt(0).toUpperCase() + category.slice(1)
+}
+
+// Get color for evolution change
+function getEvolutionColor(change) {
+  if (change > 0) return '#22c55e' // green
+  if (change < 0) return '#ef4444' // red
+  return '#6b7280' // gray
+}
+
+// Format change with sign
+function formatChange(change) {
+  const rounded = Math.round(change * 10) / 10
+  return change > 0 ? `+${rounded}` : `${rounded}`
 }
 
 // Mock player news - in production this would come from backend
@@ -881,8 +1017,11 @@ const playerNews = computed(() => {
           </div>
         </GlassCard>
 
-        <!-- Coaching Scheme Selection -->
+        <!-- Offensive Scheme Selection -->
         <GlassCard padding="lg" :hoverable="false" class="mt-6">
+          <div class="scheme-section-header">
+            <div class="section-label">OFFENSE</div>
+          </div>
           <div class="flex items-center justify-between mb-4">
             <h3 class="h4">Offensive Scheme</h3>
             <div v-if="teamStore.recommendedScheme" class="recommended-badge">
@@ -904,10 +1043,10 @@ const playerNews = computed(() => {
               :key="schemeId"
               class="scheme-card"
               :class="{
-                active: (selectedScheme || team?.coaching_scheme) === schemeId,
+                active: (selectedScheme || team?.coaching_scheme?.offensive || team?.coaching_scheme) === schemeId,
                 recommended: teamStore.recommendedScheme === schemeId
               }"
-              @click="updateCoachingScheme(schemeId)"
+              @click="updateOffensiveScheme(schemeId)"
             >
               <div class="scheme-header">
                 <span class="scheme-name">{{ scheme.name }}</span>
@@ -944,7 +1083,63 @@ const playerNews = computed(() => {
                 </div>
               </div>
 
-              <div v-if="updatingScheme && (selectedScheme || team?.coaching_scheme) === schemeId" class="scheme-loading">
+              <div v-if="updatingScheme && (selectedScheme || team?.coaching_scheme?.offensive || team?.coaching_scheme) === schemeId" class="scheme-loading">
+                <LoadingSpinner size="sm" />
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        <!-- Defensive Scheme Selection -->
+        <GlassCard padding="lg" :hoverable="false" class="mt-6">
+          <div class="scheme-section-header">
+            <div class="section-label defense">DEFENSE</div>
+          </div>
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="h4">Defensive Scheme</h3>
+          </div>
+
+          <p class="text-secondary text-sm mb-6">
+            Select your team's defensive strategy. This determines how your players guard opponents and react to plays.
+          </p>
+
+          <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
+            <LoadingSpinner size="md" />
+          </div>
+
+          <div v-else class="schemes-grid">
+            <div
+              v-for="(scheme, schemeId) in defensiveSchemes"
+              :key="schemeId"
+              class="scheme-card defensive"
+              :class="{
+                active: (selectedDefensiveScheme || team?.coaching_scheme?.defensive || 'man') === schemeId
+              }"
+              @click="updateDefensiveScheme(schemeId)"
+            >
+              <div class="scheme-header">
+                <span class="scheme-name">{{ scheme.name }}</span>
+                <span class="scheme-type-tag" :class="scheme.type">{{ scheme.type }}</span>
+              </div>
+
+              <p class="scheme-desc">{{ scheme.description }}</p>
+
+              <div class="scheme-traits">
+                <div class="trait-section">
+                  <span class="trait-label">Strengths</span>
+                  <div class="trait-tags">
+                    <span v-for="str in scheme.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                  </div>
+                </div>
+                <div class="trait-section">
+                  <span class="trait-label">Weaknesses</span>
+                  <div class="trait-tags">
+                    <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="updatingScheme && (selectedDefensiveScheme || team?.coaching_scheme?.defensive || 'man') === schemeId" class="scheme-loading">
                 <LoadingSpinner size="sm" />
               </div>
             </div>
@@ -1175,6 +1370,76 @@ const playerNews = computed(() => {
                     />
                   </div>
                   <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Season Evolution Section -->
+            <div class="evolution-section">
+              <h4 class="attr-section-title">Season Evolution</h4>
+
+              <!-- Recent Evolution (Last 7 Days) -->
+              <div class="evolution-subsection">
+                <h5 class="evolution-subtitle">Recent (Last 7 Days)</h5>
+                <div v-if="recentEvolution.length > 0" class="evolution-list">
+                  <div
+                    v-for="(item, index) in (showAllRecentEvolution ? recentEvolution : recentEvolution.slice(0, 10))"
+                    :key="`recent-${item.category}-${item.attribute}`"
+                    class="evolution-item"
+                  >
+                    <span class="evolution-category">{{ formatCategoryName(item.category) }}</span>
+                    <span class="evolution-attr">{{ formatAttrName(item.attribute) }}</span>
+                    <span class="evolution-change" :style="{ color: getEvolutionColor(item.totalChange) }">
+                      {{ formatChange(item.totalChange) }}
+                    </span>
+                  </div>
+                  <button
+                    v-if="recentEvolution.length > 10"
+                    class="evolution-toggle"
+                    @click="showAllRecentEvolution = !showAllRecentEvolution"
+                  >
+                    {{ showAllRecentEvolution ? 'Show Less' : `Show All (${recentEvolution.length})` }}
+                  </button>
+                </div>
+                <div v-else class="evolution-empty">
+                  No recent development activity
+                </div>
+              </div>
+
+              <!-- All-Time Evolution -->
+              <div class="evolution-subsection">
+                <button
+                  class="evolution-alltime-header"
+                  @click="showAllTimeExpanded = !showAllTimeExpanded"
+                >
+                  <h5 class="evolution-subtitle">All-Time Evolution</h5>
+                  <span class="evolution-toggle-icon">{{ showAllTimeExpanded ? '▼' : '▶' }}</span>
+                </button>
+                <div v-if="showAllTimeExpanded" class="evolution-list">
+                  <template v-if="allTimeEvolution.length > 0">
+                    <div
+                      v-for="(item, index) in (showAllTimeEvolution ? allTimeEvolution : allTimeEvolution.slice(0, 10))"
+                      :key="`alltime-${item.category}-${item.attribute}`"
+                      class="evolution-item"
+                    >
+                      <span class="evolution-category">{{ formatCategoryName(item.category) }}</span>
+                      <span class="evolution-attr">{{ formatAttrName(item.attribute) }}</span>
+                      <span class="evolution-change" :style="{ color: getEvolutionColor(item.totalChange) }">
+                        {{ formatChange(item.totalChange) }}
+                      </span>
+                      <span class="evolution-count">({{ item.count }}x)</span>
+                    </div>
+                    <button
+                      v-if="allTimeEvolution.length > 10"
+                      class="evolution-toggle"
+                      @click="showAllTimeEvolution = !showAllTimeEvolution"
+                    >
+                      {{ showAllTimeEvolution ? 'Show Less' : `Show All (${allTimeEvolution.length})` }}
+                    </button>
+                  </template>
+                  <div v-else class="evolution-empty">
+                    No development history available
+                  </div>
                 </div>
               </div>
             </div>
@@ -2326,6 +2591,56 @@ const playerNews = computed(() => {
   border-radius: 12px;
 }
 
+.scheme-section-header {
+  margin-bottom: 12px;
+}
+
+.section-label {
+  display: inline-block;
+  padding: 4px 12px;
+  background: rgba(232, 90, 79, 0.15);
+  border: 1px solid rgba(232, 90, 79, 0.3);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--color-primary);
+}
+
+.section-label.defense {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #3B82F6;
+}
+
+.scheme-card.defensive.active {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: #3B82F6;
+}
+
+.scheme-type-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.scheme-type-tag.aggressive {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--color-error);
+}
+
+.scheme-type-tag.balanced {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-warning);
+}
+
+.scheme-type-tag.passive {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--color-success);
+}
+
 /* Finances Content */
 .finances-content {
   display: flex;
@@ -2608,6 +2923,112 @@ const playerNews = computed(() => {
 .attr-value {
   font-weight: 600;
   text-align: right;
+}
+
+/* Evolution Section */
+.evolution-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.evolution-subsection {
+  margin-bottom: 16px;
+}
+
+.evolution-subtitle {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 8px 0;
+}
+
+.evolution-alltime-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 8px 0;
+  cursor: pointer;
+  color: var(--color-text-primary);
+}
+
+.evolution-alltime-header:hover {
+  opacity: 0.8;
+}
+
+.evolution-toggle-icon {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+}
+
+.evolution-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.evolution-item {
+  display: grid;
+  grid-template-columns: 70px 1fr 50px 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.evolution-category {
+  color: var(--color-text-tertiary);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.evolution-attr {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.evolution-change {
+  font-weight: 700;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.evolution-count {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+  text-align: right;
+}
+
+.evolution-toggle {
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.evolution-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-primary);
+}
+
+.evolution-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: 0.8rem;
+  font-style: italic;
 }
 
 /* News List */

@@ -117,6 +117,11 @@ const showPlayerModal = ref(false)
 const selectedPlayer = ref(null)
 const playerModalTab = ref('stats')
 
+// Evolution history display state
+const showAllRecentEvolution = ref(false)
+const showAllTimeEvolution = ref(false)
+const showAllTimeExpanded = ref(false)
+
 const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
 const userTeam = computed(() => campaign.value?.team)
@@ -279,6 +284,74 @@ function formatWeight(weight) {
   const w = parseInt(weight)
   if (w > 400) return Math.round(w / 10)
   return w
+}
+
+// Evolution history processing
+const evolutionHistory = computed(() => {
+  if (!selectedPlayer.value?.development_history) return []
+  return selectedPlayer.value.development_history || []
+})
+
+// Get date 7 days ago for filtering recent evolution
+const sevenDaysAgo = computed(() => {
+  const date = new Date()
+  date.setDate(date.getDate() - 7)
+  return date.toISOString().split('T')[0]
+})
+
+// Aggregate evolution by attribute (category.attribute as key)
+function aggregateEvolution(history) {
+  const aggregated = {}
+  for (const entry of history) {
+    const key = `${entry.category}.${entry.attribute}`
+    if (!aggregated[key]) {
+      aggregated[key] = {
+        category: entry.category,
+        attribute: entry.attribute,
+        totalChange: 0,
+        count: 0,
+      }
+    }
+    aggregated[key].totalChange += entry.change
+    aggregated[key].count++
+  }
+  // Convert to array and sort by total change (descending by absolute value, positive first)
+  return Object.values(aggregated)
+    .sort((a, b) => {
+      // Positive changes first, then by absolute value
+      if (a.totalChange > 0 && b.totalChange <= 0) return -1
+      if (a.totalChange <= 0 && b.totalChange > 0) return 1
+      return Math.abs(b.totalChange) - Math.abs(a.totalChange)
+    })
+}
+
+// Recent evolution (last 7 days)
+const recentEvolution = computed(() => {
+  const recent = evolutionHistory.value.filter(e => e.date >= sevenDaysAgo.value)
+  return aggregateEvolution(recent)
+})
+
+// All-time evolution
+const allTimeEvolution = computed(() => {
+  return aggregateEvolution(evolutionHistory.value)
+})
+
+// Format category name for display
+function formatCategoryName(category) {
+  return category.charAt(0).toUpperCase() + category.slice(1)
+}
+
+// Get color for evolution change
+function getEvolutionColor(change) {
+  if (change > 0) return '#22c55e' // green
+  if (change < 0) return '#ef4444' // red
+  return '#6b7280' // gray
+}
+
+// Format change with sign
+function formatChange(change) {
+  const rounded = Math.round(change * 10) / 10
+  return change > 0 ? `+${rounded}` : `${rounded}`
 }
 
 function formatSalary(salary) {
@@ -905,6 +978,76 @@ function formatSalary(salary) {
                     />
                   </div>
                   <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Season Evolution Section -->
+            <div class="evolution-section">
+              <h4 class="attr-section-title">Season Evolution</h4>
+
+              <!-- Recent Evolution (Last 7 Days) -->
+              <div class="evolution-subsection">
+                <h5 class="evolution-subtitle">Recent (Last 7 Days)</h5>
+                <div v-if="recentEvolution.length > 0" class="evolution-list">
+                  <div
+                    v-for="(item, index) in (showAllRecentEvolution ? recentEvolution : recentEvolution.slice(0, 10))"
+                    :key="`recent-${item.category}-${item.attribute}`"
+                    class="evolution-item"
+                  >
+                    <span class="evolution-category">{{ formatCategoryName(item.category) }}</span>
+                    <span class="evolution-attr">{{ formatAttrName(item.attribute) }}</span>
+                    <span class="evolution-change" :style="{ color: getEvolutionColor(item.totalChange) }">
+                      {{ formatChange(item.totalChange) }}
+                    </span>
+                  </div>
+                  <button
+                    v-if="recentEvolution.length > 10"
+                    class="evolution-toggle"
+                    @click="showAllRecentEvolution = !showAllRecentEvolution"
+                  >
+                    {{ showAllRecentEvolution ? 'Show Less' : `Show All (${recentEvolution.length})` }}
+                  </button>
+                </div>
+                <div v-else class="evolution-empty">
+                  No recent development activity
+                </div>
+              </div>
+
+              <!-- All-Time Evolution -->
+              <div class="evolution-subsection">
+                <button
+                  class="evolution-alltime-header"
+                  @click="showAllTimeExpanded = !showAllTimeExpanded"
+                >
+                  <h5 class="evolution-subtitle">All-Time Evolution</h5>
+                  <span class="evolution-toggle-icon">{{ showAllTimeExpanded ? '▼' : '▶' }}</span>
+                </button>
+                <div v-if="showAllTimeExpanded" class="evolution-list">
+                  <template v-if="allTimeEvolution.length > 0">
+                    <div
+                      v-for="(item, index) in (showAllTimeEvolution ? allTimeEvolution : allTimeEvolution.slice(0, 10))"
+                      :key="`alltime-${item.category}-${item.attribute}`"
+                      class="evolution-item"
+                    >
+                      <span class="evolution-category">{{ formatCategoryName(item.category) }}</span>
+                      <span class="evolution-attr">{{ formatAttrName(item.attribute) }}</span>
+                      <span class="evolution-change" :style="{ color: getEvolutionColor(item.totalChange) }">
+                        {{ formatChange(item.totalChange) }}
+                      </span>
+                      <span class="evolution-count">({{ item.count }}x)</span>
+                    </div>
+                    <button
+                      v-if="allTimeEvolution.length > 10"
+                      class="evolution-toggle"
+                      @click="showAllTimeEvolution = !showAllTimeEvolution"
+                    >
+                      {{ showAllTimeEvolution ? 'Show Less' : `Show All (${allTimeEvolution.length})` }}
+                    </button>
+                  </template>
+                  <div v-else class="evolution-empty">
+                    No development history available
+                  </div>
                 </div>
               </div>
             </div>
@@ -2061,5 +2204,111 @@ function formatSalary(salary) {
 
 [data-theme="light"] .modal-tab {
   background: white;
+}
+
+/* Evolution Section */
+.evolution-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.evolution-subsection {
+  margin-bottom: 16px;
+}
+
+.evolution-subtitle {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 8px 0;
+}
+
+.evolution-alltime-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 8px 0;
+  cursor: pointer;
+  color: var(--color-text-primary);
+}
+
+.evolution-alltime-header:hover {
+  opacity: 0.8;
+}
+
+.evolution-toggle-icon {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+}
+
+.evolution-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.evolution-item {
+  display: grid;
+  grid-template-columns: 70px 1fr 50px 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.evolution-category {
+  color: var(--color-text-tertiary);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.evolution-attr {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.evolution-change {
+  font-weight: 700;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.evolution-count {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+  text-align: right;
+}
+
+.evolution-toggle {
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.evolution-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-primary);
+}
+
+.evolution-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: 0.8rem;
+  font-style: italic;
 }
 </style>

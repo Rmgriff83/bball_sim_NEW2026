@@ -8,6 +8,13 @@ const api = axios.create({
   }
 })
 
+// Toast store reference - set by main.js after pinia is initialized
+let toastStore = null
+
+export function setToastStore(store) {
+  toastStore = store
+}
+
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
@@ -42,6 +49,17 @@ api.interceptors.response.use(
                      'An error occurred'
 
       error.message = message
+
+      // Show error toast (skip 401s since we handle those with redirect)
+      if (toastStore && error.response.status !== 401) {
+        toastStore.showError(message)
+      }
+    } else if (error.request) {
+      // Network error
+      error.message = 'Network error. Please check your connection.'
+      if (toastStore) {
+        toastStore.showError(error.message)
+      }
     }
     return Promise.reject(error)
   }

@@ -46,8 +46,10 @@ class GameSimulationService
     private array $awayPlayers = [];
     private array $homeLineup = [];
     private array $awayLineup = [];
-    private string $homeCoachingScheme = 'balanced';
-    private string $awayCoachingScheme = 'balanced';
+    private string $homeOffensiveScheme = 'balanced';
+    private string $awayOffensiveScheme = 'balanced';
+    private string $homeDefensiveScheme = 'man';
+    private string $awayDefensiveScheme = 'man';
 
     // Clutch play tracking for game-winner news
     private ?array $lastClutchPlay = null;
@@ -245,9 +247,13 @@ class GameSimulationService
         $this->homeSynergiesActivated = 0;
         $this->awaySynergiesActivated = 0;
 
-        // Get coaching schemes from teams (default to balanced)
-        $this->homeCoachingScheme = $homeTeam->coaching_scheme ?? 'balanced';
-        $this->awayCoachingScheme = $awayTeam->coaching_scheme ?? 'balanced';
+        // Get coaching schemes from teams (now an object with offensive/defensive)
+        $homeScheme = $homeTeam->coaching_scheme ?? [];
+        $awayScheme = $awayTeam->coaching_scheme ?? [];
+        $this->homeOffensiveScheme = $homeScheme['offensive'] ?? 'balanced';
+        $this->homeDefensiveScheme = $homeScheme['defensive'] ?? 'man';
+        $this->awayOffensiveScheme = $awayScheme['offensive'] ?? 'balanced';
+        $this->awayDefensiveScheme = $awayScheme['defensive'] ?? 'man';
     }
 
     /**
@@ -261,8 +267,8 @@ class GameSimulationService
 
         // Note: We don't update the game record here - that's done by the controller
         // Process player evolution (fatigue, injuries, micro-development, morale)
-        // Create a minimal game-like object for evolution processing
-        $this->evolutionService->processPostGameFromData(
+        // Returns summary of evolution changes
+        $evolutionSummary = $this->evolutionService->processPostGameFromData(
             $campaign,
             $gameData,
             $this->homeScore,
@@ -311,6 +317,7 @@ class GameSimulationService
                 'quarter_end_indices' => $this->quarterEndPossessions,
             ],
             'rewards' => $rewardSummary,
+            'evolution' => $evolutionSummary,
         ];
     }
 
@@ -363,9 +370,13 @@ class GameSimulationService
         $this->homeSynergiesActivated = 0;
         $this->awaySynergiesActivated = 0;
 
-        // Get coaching schemes from teams (default to balanced)
-        $this->homeCoachingScheme = $this->homeTeam->coaching_scheme ?? 'balanced';
-        $this->awayCoachingScheme = $this->awayTeam->coaching_scheme ?? 'balanced';
+        // Get coaching schemes from teams (now an object with offensive/defensive)
+        $homeScheme = $this->homeTeam->coaching_scheme ?? [];
+        $awayScheme = $this->awayTeam->coaching_scheme ?? [];
+        $this->homeOffensiveScheme = $homeScheme['offensive'] ?? 'balanced';
+        $this->homeDefensiveScheme = $homeScheme['defensive'] ?? 'man';
+        $this->awayOffensiveScheme = $awayScheme['offensive'] ?? 'balanced';
+        $this->awayDefensiveScheme = $awayScheme['defensive'] ?? 'man';
     }
 
     /**
@@ -526,7 +537,9 @@ class GameSimulationService
         $isHome = $team === 'home';
         $offense = $isHome ? $this->homeLineup : $this->awayLineup;
         $defense = $isHome ? $this->awayLineup : $this->homeLineup;
-        $coachingScheme = $isHome ? $this->homeCoachingScheme : $this->awayCoachingScheme;
+        // Offensive team uses their offensive scheme, defensive team uses their defensive scheme
+        $offensiveScheme = $isHome ? $this->homeOffensiveScheme : $this->awayOffensiveScheme;
+        $defensiveScheme = $isHome ? $this->awayDefensiveScheme : $this->homeDefensiveScheme;
 
         // Update minutes for active players
         foreach ($offense as $player) {
@@ -552,8 +565,8 @@ class GameSimulationService
 
         $this->possessionCount++;
 
-        // Determine if this is a transition opportunity
-        $isTransition = $this->coachingService->getTransitionFrequency($coachingScheme) > (mt_rand() / mt_getrandmax());
+        // Determine if this is a transition opportunity (based on offensive scheme)
+        $isTransition = $this->coachingService->getTransitionFrequency($offensiveScheme) > (mt_rand() / mt_getrandmax());
 
         // Select a play based on team, scheme, and game situation
         $context = [
@@ -562,12 +575,16 @@ class GameSimulationService
             'scoreDifferential' => $isHome ? ($this->homeScore - $this->awayScore) : ($this->awayScore - $this->homeScore),
             'quarter' => $this->currentQuarter,
             'timeRemaining' => $this->timeRemaining,
+            'defensiveScheme' => $defensiveScheme, // Pass defensive scheme for future use
         ];
 
-        $play = $this->playService->selectPlay($offense, $defense, $coachingScheme, $context);
+        $play = $this->playService->selectPlay($offense, $defense, $offensiveScheme, $context);
 
-        // Execute the play
-        $playResult = $this->playEngine->executePlay($play, $offense, $defense);
+        // Calculate defensive modifiers based on scheme and play
+        $defensiveModifiers = $this->coachingService->calculateDefensiveModifiers($defensiveScheme, $play);
+
+        // Execute the play with defensive context
+        $playResult = $this->playEngine->executePlay($play, $offense, $defense, $defensiveScheme, $defensiveModifiers);
 
         // Calculate synergies for this possession (PlayExecutionEngine only tracks individual badges)
         $activatedSynergies = [];
@@ -1064,18 +1081,19 @@ class GameSimulationService
 
     /**
      * Get base shooting percentage for play type.
+     * Note: Base percentages boosted ~15% from original NBA averages for better game flow.
      */
     private function getBasePercentage(string $playType, array $shootingAttr): float
     {
-        // Base percentages based on NBA averages:
-        // 3PT: ~36% league average, scale from 28% (50 rating) to 44% (99 rating)
-        // Mid-range: ~42% league average, scale from 35% (50 rating) to 52% (99 rating)
-        // Paint: ~62% league average, scale from 52% (50 rating) to 72% (99 rating)
+        // Boosted base percentages for more exciting gameplay:
+        // 3PT: ~40% effective, scale from 32% (50 rating) to 50% (99 rating)
+        // Mid-range: ~48% effective, scale from 40% (50 rating) to 58% (99 rating)
+        // Paint: ~68% effective, scale from 58% (50 rating) to 78% (99 rating)
         return match ($playType) {
-            'three_pointer' => 0.28 + (($shootingAttr['threePoint'] ?? 70) / 100) * 0.16,
-            'mid_range' => 0.35 + (($shootingAttr['midRange'] ?? 70) / 100) * 0.17,
-            'paint' => 0.52 + (($shootingAttr['layup'] ?? 70) / 100) * 0.20,
-            default => 0.42,
+            'three_pointer' => 0.32 + (($shootingAttr['threePoint'] ?? 70) / 100) * 0.18,
+            'mid_range' => 0.40 + (($shootingAttr['midRange'] ?? 70) / 100) * 0.18,
+            'paint' => 0.58 + (($shootingAttr['layup'] ?? 70) / 100) * 0.20,
+            default => 0.46,
         };
     }
 
@@ -1521,11 +1539,17 @@ class GameSimulationService
      * @param Team $homeTeam
      * @param Team $awayTeam
      * @param array|null $userLineup Optional array of player IDs for the user's starting lineup
+     * @param array $coachingAdjustments Optional coaching style adjustments (offensiveStyle, defensiveStyle)
      */
-    public function startGame(Campaign $campaign, array $gameData, Team $homeTeam, Team $awayTeam, ?array $userLineup = null): array
+    public function startGame(Campaign $campaign, array $gameData, Team $homeTeam, Team $awayTeam, ?array $userLineup = null, array $coachingAdjustments = []): array
     {
         // Initialize the game (loads players, creates lineups, resets state)
         $this->initializeGameFromData($campaign, $gameData, $homeTeam, $awayTeam, $userLineup);
+
+        // Apply initial coaching adjustments if provided
+        if (!empty($coachingAdjustments)) {
+            $this->applyAdjustments($coachingAdjustments);
+        }
 
         // Validate that we have valid lineups
         if (empty($this->homeLineup) || empty($this->awayLineup)) {
@@ -1642,7 +1666,7 @@ class GameSimulationService
     public function serializeState(): array
     {
         return [
-            'version' => 2,
+            'version' => 3, // Bumped for coaching scheme structure change
             'status' => 'in_progress',
             'currentQuarter' => $this->currentQuarter,
             'completedQuarters' => range(1, $this->currentQuarter),
@@ -1655,8 +1679,10 @@ class GameSimulationService
             'awayLineup' => array_map(fn($p) => $p['id'], $this->awayLineup),
             'homePlayers' => array_map([$this, 'compactPlayerData'], $this->homePlayers),
             'awayPlayers' => array_map([$this, 'compactPlayerData'], $this->awayPlayers),
-            'homeCoachingScheme' => $this->homeCoachingScheme,
-            'awayCoachingScheme' => $this->awayCoachingScheme,
+            'homeOffensiveScheme' => $this->homeOffensiveScheme,
+            'homeDefensiveScheme' => $this->homeDefensiveScheme,
+            'awayOffensiveScheme' => $this->awayOffensiveScheme,
+            'awayDefensiveScheme' => $this->awayDefensiveScheme,
             'possessionCount' => $this->possessionCount,
             'quarterEndPossessions' => $this->quarterEndPossessions,
             'homeTeamId' => $this->homeTeam->id,
@@ -1698,8 +1724,22 @@ class GameSimulationService
         $this->awayBoxScore = $state['awayBoxScore'];
         $this->homePlayers = $state['homePlayers'];
         $this->awayPlayers = $state['awayPlayers'];
-        $this->homeCoachingScheme = $state['homeCoachingScheme'];
-        $this->awayCoachingScheme = $state['awayCoachingScheme'];
+
+        // Handle both old format (single scheme) and new format (offensive/defensive)
+        if (isset($state['homeOffensiveScheme'])) {
+            // New format (version 3+)
+            $this->homeOffensiveScheme = $state['homeOffensiveScheme'];
+            $this->homeDefensiveScheme = $state['homeDefensiveScheme'];
+            $this->awayOffensiveScheme = $state['awayOffensiveScheme'];
+            $this->awayDefensiveScheme = $state['awayDefensiveScheme'];
+        } else {
+            // Old format (version 2) - migrate to new structure
+            $this->homeOffensiveScheme = $state['homeCoachingScheme'] ?? 'balanced';
+            $this->homeDefensiveScheme = 'man';
+            $this->awayOffensiveScheme = $state['awayCoachingScheme'] ?? 'balanced';
+            $this->awayDefensiveScheme = 'man';
+        }
+
         $this->possessionCount = $state['possessionCount'];
         $this->quarterEndPossessions = $state['quarterEndPossessions'];
         $this->currentQuarter = $state['currentQuarter'];
@@ -1743,6 +1783,7 @@ class GameSimulationService
 
     /**
      * Apply user adjustments (lineup, coaching styles) before simulating a quarter.
+     * The adjustments are for the user's team, which may be home or away.
      */
     public function applyAdjustments(?array $adjustments): void
     {
@@ -1767,12 +1808,31 @@ class GameSimulationService
         }
 
         // Update coaching styles if provided
+        // These apply to the user's team - determine which team based on lineup
+        $isUserHome = !empty($adjustments['homeLineup']);
+        $isUserAway = !empty($adjustments['awayLineup']);
+
         if (!empty($adjustments['offensiveStyle'])) {
-            $this->homeCoachingScheme = $adjustments['offensiveStyle'];
+            if ($isUserHome) {
+                $this->homeOffensiveScheme = $adjustments['offensiveStyle'];
+            } elseif ($isUserAway) {
+                $this->awayOffensiveScheme = $adjustments['offensiveStyle'];
+            } else {
+                // Default to home if no lineup specified (backwards compatibility)
+                $this->homeOffensiveScheme = $adjustments['offensiveStyle'];
+            }
         }
 
-        // Note: defensiveStyle will be used when we implement defensive schemes
-        // For now, we just store it but the simulation uses homeCoachingScheme for offense
+        if (!empty($adjustments['defensiveStyle'])) {
+            if ($isUserHome) {
+                $this->homeDefensiveScheme = $adjustments['defensiveStyle'];
+            } elseif ($isUserAway) {
+                $this->awayDefensiveScheme = $adjustments['defensiveStyle'];
+            } else {
+                // Default to home if no lineup specified (backwards compatibility)
+                $this->homeDefensiveScheme = $adjustments['defensiveStyle'];
+            }
+        }
     }
 
     /**

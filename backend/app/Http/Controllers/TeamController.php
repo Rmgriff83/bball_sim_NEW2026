@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Campaign;
 use App\Models\Team;
 use App\Models\Player;
+use App\Services\AILineupService;
 use App\Services\CampaignSeasonService;
 use App\Services\CampaignPlayerService;
 use App\Services\CoachingService;
@@ -16,15 +17,18 @@ class TeamController extends Controller
     private CampaignSeasonService $seasonService;
     private CampaignPlayerService $playerService;
     private CoachingService $coachingService;
+    private AILineupService $lineupService;
 
     public function __construct(
         CampaignSeasonService $seasonService,
         CampaignPlayerService $playerService,
-        CoachingService $coachingService
+        CoachingService $coachingService,
+        AILineupService $lineupService
     ) {
         $this->seasonService = $seasonService;
         $this->playerService = $playerService;
         $this->coachingService = $coachingService;
+        $this->lineupService = $lineupService;
     }
     /**
      * Get the user's team with full roster.
@@ -46,8 +50,14 @@ class TeamController extends Controller
         $year = $campaign->currentSeason?->year ?? 2025;
         $allPlayerStats = $this->seasonService->getAllPlayerStats($campaign->id, $year);
 
-        // Get saved lineup settings
+        // Get saved lineup settings, or generate default if none exists
         $savedLineup = $campaign->settings['lineup']['starters'] ?? null;
+
+        // If no lineup is saved, generate a proper one based on positions
+        if (!$savedLineup || count(array_filter($savedLineup)) < 5) {
+            $savedLineup = $this->lineupService->initializeUserTeamLineup($campaign);
+            $campaign->refresh(); // Reload to get updated settings
+        }
 
         // Format all players
         $formattedPlayers = $team->players->map(function ($player) use ($allPlayerStats) {
@@ -105,7 +115,7 @@ class TeamController extends Controller
                 'total_payroll' => $team->total_payroll,
                 'cap_space' => $team->cap_space,
                 'facilities' => $team->facilities,
-                'coaching_scheme' => $team->coaching_scheme ?? 'balanced',
+                'coaching_scheme' => $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'],
             ],
             'roster' => $orderedRoster,
             'coach' => $team->coach ? [
@@ -380,6 +390,11 @@ class TeamController extends Controller
             ];
         }
 
+        // Include evolution tracking data
+        $data['development_history'] = $player['development_history'] ?? $player['developmentHistory'] ?? [];
+        $data['streak_data'] = $player['streak_data'] ?? $player['streakData'] ?? null;
+        $data['recent_performances'] = $player['recent_performances'] ?? $player['recentPerformances'] ?? [];
+
         return $data;
     }
 
@@ -590,6 +605,11 @@ class TeamController extends Controller
             $data['attributes'] = $player->attributes;
         }
 
+        // Always include evolution tracking data
+        $data['development_history'] = $player->development_history ?? [];
+        $data['streak_data'] = $player->streak_data;
+        $data['recent_performances'] = $player->recent_performances ?? [];
+
         return $data;
     }
 
@@ -624,15 +644,18 @@ class TeamController extends Controller
         // Get recommended scheme
         $recommended = $this->coachingService->recommendScheme($roster);
 
+        $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'];
+
         return response()->json([
             'schemes' => $schemesWithEffectiveness,
             'recommended' => $recommended,
-            'current' => $team->coaching_scheme ?? 'balanced',
+            'current' => $currentScheme,
         ]);
     }
 
     /**
      * Update the team's coaching scheme.
+     * Accepts either { offensive, defensive } or legacy { scheme } format.
      */
     public function updateCoachingScheme(Request $request, Campaign $campaign): JsonResponse
     {
@@ -640,19 +663,46 @@ class TeamController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
+        // Support both new format and legacy format
+        $offensiveStyles = ['balanced', 'motion', 'iso_heavy', 'post_centric', 'three_point', 'run_and_gun'];
+        $defensiveStyles = ['man', 'zone_2_3', 'zone_3_2', 'zone_1_3_1', 'press', 'trap'];
+
         $validated = $request->validate([
-            'scheme' => 'required|string|in:balanced,motion,iso_heavy,post_centric,three_point,run_and_gun',
+            'offensive' => 'sometimes|string|in:' . implode(',', $offensiveStyles),
+            'defensive' => 'sometimes|string|in:' . implode(',', $defensiveStyles),
+            'scheme' => 'sometimes|string|in:' . implode(',', $offensiveStyles), // Legacy support
         ]);
 
         $team = $campaign->team;
-        $team->update(['coaching_scheme' => $validated['scheme']]);
+        $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'];
 
-        $schemeData = $this->coachingService->getScheme($validated['scheme']);
+        // Handle legacy format (just 'scheme' for offensive)
+        if (isset($validated['scheme']) && !isset($validated['offensive'])) {
+            $validated['offensive'] = $validated['scheme'];
+        }
+
+        // Update schemes
+        $newScheme = [
+            'offensive' => $validated['offensive'] ?? $currentScheme['offensive'] ?? 'balanced',
+            'defensive' => $validated['defensive'] ?? $currentScheme['defensive'] ?? 'man',
+        ];
+
+        $team->update(['coaching_scheme' => $newScheme]);
+
+        // Sync to campaign settings so game view stays in sync
+        $campaign->update([
+            'settings' => array_merge($campaign->settings ?? [], [
+                'offensive_style' => $newScheme['offensive'],
+                'defensive_style' => $newScheme['defensive'],
+            ])
+        ]);
+
+        $offensiveSchemeData = $this->coachingService->getScheme($newScheme['offensive']);
 
         return response()->json([
             'message' => 'Coaching scheme updated',
-            'scheme' => $validated['scheme'],
-            'scheme_data' => $schemeData,
+            'coaching_scheme' => $newScheme,
+            'scheme_data' => $offensiveSchemeData,
         ]);
     }
 }

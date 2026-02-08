@@ -290,12 +290,17 @@ class Player extends Model
      */
     public function recordGameStats(array $stats, bool $started = false): void
     {
-        $this->increment('career_games_played');
-        if ($started) {
-            $this->increment('career_games_started');
+        $minutes = $stats['minutes'] ?? 0;
+
+        // Only count as a game played if the player actually played
+        if ($minutes > 0) {
+            $this->increment('career_games_played');
+            if ($started) {
+                $this->increment('career_games_started');
+            }
         }
 
-        $this->increment('career_minutes', $stats['minutes'] ?? 0);
+        $this->increment('career_minutes', $minutes);
         $this->increment('career_points', $stats['points'] ?? 0);
         $this->increment('career_rebounds', $stats['rebounds'] ?? 0);
         $this->increment('career_assists', $stats['assists'] ?? 0);
