@@ -603,6 +603,72 @@ class CampaignSeasonService
     }
 
     /**
+     * Migrate player stats from one player ID to another (used during trades).
+     * This handles the case where a player's ID changes when moving between DB and JSON storage.
+     */
+    public function migratePlayerStats(
+        int $campaignId,
+        int $year,
+        string $oldPlayerId,
+        string $newPlayerId,
+        int $newTeamId,
+        string $newPlayerName
+    ): bool {
+        $season = $this->loadSeason($campaignId, $year);
+        if (!$season) return false;
+
+        // Check if old player has stats
+        $oldStats = $season['playerStats'][(string)$oldPlayerId] ?? null;
+        if (!$oldStats) {
+            \Log::info("No stats to migrate for player {$oldPlayerId}");
+            return true; // No stats to migrate, not an error
+        }
+
+        // Copy stats to new player ID with updated info
+        $season['playerStats'][(string)$newPlayerId] = array_merge($oldStats, [
+            'playerId' => (string)$newPlayerId,
+            'playerName' => $newPlayerName,
+            'teamId' => $newTeamId,
+        ]);
+
+        // Remove old player stats entry
+        unset($season['playerStats'][(string)$oldPlayerId]);
+
+        // Save immediately
+        $this->saveSeason($campaignId, $year, $season);
+
+        \Log::info("Migrated player stats", [
+            'old_id' => $oldPlayerId,
+            'new_id' => $newPlayerId,
+            'team_id' => $newTeamId,
+            'games_played' => $oldStats['gamesPlayed'] ?? 0,
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Update player's team ID in their stats (for AI-to-AI trades where ID doesn't change).
+     */
+    public function updatePlayerStatsTeam(
+        int $campaignId,
+        int $year,
+        string $playerId,
+        int $newTeamId
+    ): bool {
+        $season = $this->loadSeason($campaignId, $year);
+        if (!$season) return false;
+
+        if (isset($season['playerStats'][(string)$playerId])) {
+            $season['playerStats'][(string)$playerId]['teamId'] = $newTeamId;
+            $this->saveSeason($campaignId, $year, $season);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Get team stats.
      */
     public function getTeamStats(int $campaignId, int $year, int $teamId): ?array
@@ -650,6 +716,70 @@ class CampaignSeasonService
     public function clearCache(): void
     {
         $this->loadedSeasons = [];
+    }
+
+    /**
+     * Get the playoff bracket from season data.
+     */
+    public function getPlayoffBracket(int $campaignId, int $year): ?array
+    {
+        $season = $this->loadSeason($campaignId, $year);
+        return $season['playoffBracket'] ?? null;
+    }
+
+    /**
+     * Save the playoff bracket to season data.
+     */
+    public function savePlayoffBracket(int $campaignId, int $year, array $bracket): void
+    {
+        $season = $this->loadSeason($campaignId, $year);
+        if ($season) {
+            $season['playoffBracket'] = $bracket;
+            $this->saveSeason($campaignId, $year, $season);
+        }
+    }
+
+    /**
+     * Check if regular season is complete.
+     * Season is complete when every team has played at least 82 games.
+     */
+    public function isRegularSeasonComplete(int $campaignId, int $year): bool
+    {
+        $schedule = $this->getSchedule($campaignId, $year);
+
+        // Filter to regular season games only
+        $regularSeasonGames = array_filter($schedule, fn($g) => !($g['isPlayoff'] ?? false));
+
+        if (empty($regularSeasonGames)) {
+            return false;
+        }
+
+        // Count completed games per team
+        $gamesPerTeam = [];
+        foreach ($regularSeasonGames as $game) {
+            if ($game['isComplete'] ?? false) {
+                $homeId = $game['homeTeamId'];
+                $awayId = $game['awayTeamId'];
+                $gamesPerTeam[$homeId] = ($gamesPerTeam[$homeId] ?? 0) + 1;
+                $gamesPerTeam[$awayId] = ($gamesPerTeam[$awayId] ?? 0) + 1;
+            }
+        }
+
+        // Need at least some teams in the count
+        if (empty($gamesPerTeam)) {
+            return false;
+        }
+
+        // Season is complete when all teams have played at least 82 games
+        $minGamesRequired = 82;
+        foreach ($gamesPerTeam as $teamId => $gamesPlayed) {
+            if ($gamesPlayed < $minGamesRequired) {
+                return false;
+            }
+        }
+
+        // Also verify we have all 30 teams
+        return count($gamesPerTeam) >= 30;
     }
 
     /**

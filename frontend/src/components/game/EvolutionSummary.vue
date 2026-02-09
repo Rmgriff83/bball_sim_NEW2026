@@ -1,6 +1,6 @@
 <script setup>
-import { computed } from 'vue'
-import { TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Loader2 } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Loader2, ChevronDown } from 'lucide-vue-next'
 
 const props = defineProps({
   evolution: {
@@ -18,26 +18,59 @@ const props = defineProps({
   loading: {
     type: Boolean,
     default: false
+  },
+  limit: {
+    type: Number,
+    default: 0 // 0 = no limit
   }
 })
+
+const expanded = ref(false)
 
 const teamEvolution = computed(() => {
   if (!props.evolution) return null
   return props.evolution[props.teamKey] || null
 })
 
-const hasAnyData = computed(() => {
-  if (!teamEvolution.value) return false
+// Flatten all items into a single array with type info
+const allItems = computed(() => {
+  if (!teamEvolution.value) return []
   const te = teamEvolution.value
-  return (
-    te.injuries?.length > 0 ||
-    te.development?.length > 0 ||
-    te.regression?.length > 0 ||
-    te.hot_streaks?.length > 0 ||
-    te.cold_streaks?.length > 0 ||
-    te.fatigue_warnings?.length > 0 ||
-    te.morale_changes?.length > 0
-  )
+  const items = []
+
+  // Add injuries first (most important)
+  te.injuries?.forEach(item => items.push({ ...item, type: 'injury' }))
+  // Then development
+  te.development?.forEach(item => items.push({ ...item, type: 'development' }))
+  // Then regression
+  te.regression?.forEach(item => items.push({ ...item, type: 'regression' }))
+  // Hot streaks
+  te.hot_streaks?.forEach(item => items.push({ ...item, type: 'hot_streak' }))
+  // Cold streaks
+  te.cold_streaks?.forEach(item => items.push({ ...item, type: 'cold_streak' }))
+  // Fatigue warnings
+  te.fatigue_warnings?.forEach(item => items.push({ ...item, type: 'fatigue' }))
+  // Morale changes
+  te.morale_changes?.forEach(item => items.push({ ...item, type: 'morale' }))
+
+  return items
+})
+
+const displayItems = computed(() => {
+  if (!props.limit || expanded.value) return allItems.value
+  return allItems.value.slice(0, props.limit)
+})
+
+const hasMore = computed(() => {
+  return props.limit > 0 && allItems.value.length > props.limit
+})
+
+const remainingCount = computed(() => {
+  return allItems.value.length - props.limit
+})
+
+const hasAnyData = computed(() => {
+  return allItems.value.length > 0
 })
 
 // Get injury severity color
@@ -84,117 +117,60 @@ function formatAttribute(attr) {
       {{ teamName }} Updates
     </h4>
 
-    <!-- Injuries -->
-    <div v-if="teamEvolution.injuries?.length" class="evolution-section injuries">
+    <!-- Unified Items Display -->
+    <div class="evolution-items">
       <div
-        v-for="injury in teamEvolution.injuries"
-        :key="injury.player_id"
-        class="evolution-item injury"
+        v-for="(item, index) in displayItems"
+        :key="`${item.type}-${item.player_id}-${index}`"
+        class="evolution-item"
+        :class="{
+          injury: item.type === 'injury',
+          positive: item.type === 'development' || (item.type === 'morale' && item.change > 0),
+          negative: item.type === 'regression' || (item.type === 'morale' && item.change < 0),
+          hot: item.type === 'hot_streak',
+          cold: item.type === 'cold_streak',
+          warning: item.type === 'fatigue'
+        }"
       >
-        <AlertTriangle :size="14" :style="{ color: getSeverityColor(injury.severity) }" />
-        <span class="player-name">{{ injury.name }}</span>
-        <span class="injury-info">
-          {{ injury.injury_type }} ({{ injury.games_out }} games)
-        </span>
-      </div>
-    </div>
+        <!-- Icon based on type -->
+        <AlertTriangle v-if="item.type === 'injury'" :size="14" :style="{ color: getSeverityColor(item.severity) }" />
+        <TrendingUp v-else-if="item.type === 'development'" :size="14" />
+        <TrendingDown v-else-if="item.type === 'regression'" :size="14" />
+        <Flame v-else-if="item.type === 'hot_streak'" :size="14" />
+        <Snowflake v-else-if="item.type === 'cold_streak'" :size="14" />
+        <Activity v-else-if="item.type === 'fatigue'" :size="14" />
+        <Heart v-else-if="item.type === 'morale'" :size="14" />
 
-    <!-- Development -->
-    <div v-if="teamEvolution.development?.length" class="evolution-section development">
-      <div
-        v-for="dev in teamEvolution.development"
-        :key="dev.player_id"
-        class="evolution-item positive"
-      >
-        <TrendingUp :size="14" />
-        <span class="player-name">{{ dev.name }}</span>
-        <span class="stat-badges">
-          <span
-            v-for="attr in dev.attributes_improved"
-            :key="attr"
-            class="attr-badge positive"
-          >
+        <span class="player-name">{{ item.name }}</span>
+
+        <!-- Content based on type -->
+        <span v-if="item.type === 'injury'" class="injury-info">
+          {{ item.injury_type }} ({{ item.games_out }} games)
+        </span>
+        <span v-else-if="item.type === 'development'" class="stat-badges">
+          <span v-for="attr in item.attributes_improved" :key="attr" class="attr-badge positive">
             +{{ formatAttribute(attr) }}
           </span>
         </span>
-      </div>
-    </div>
-
-    <!-- Regression -->
-    <div v-if="teamEvolution.regression?.length" class="evolution-section regression">
-      <div
-        v-for="reg in teamEvolution.regression"
-        :key="reg.player_id"
-        class="evolution-item negative"
-      >
-        <TrendingDown :size="14" />
-        <span class="player-name">{{ reg.name }}</span>
-        <span class="stat-badges">
-          <span
-            v-for="attr in reg.attributes_declined"
-            :key="attr"
-            class="attr-badge negative"
-          >
+        <span v-else-if="item.type === 'regression'" class="stat-badges">
+          <span v-for="attr in item.attributes_declined" :key="attr" class="attr-badge negative">
             -{{ formatAttribute(attr) }}
           </span>
         </span>
-      </div>
-    </div>
-
-    <!-- Hot Streaks -->
-    <div v-if="teamEvolution.hot_streaks?.length" class="evolution-section streaks">
-      <div
-        v-for="streak in teamEvolution.hot_streaks"
-        :key="streak.player_id"
-        class="evolution-item hot"
-      >
-        <Flame :size="14" />
-        <span class="player-name">{{ streak.name }}</span>
-        <span class="streak-info">{{ streak.games }} game hot streak!</span>
-      </div>
-    </div>
-
-    <!-- Cold Streaks -->
-    <div v-if="teamEvolution.cold_streaks?.length" class="evolution-section streaks">
-      <div
-        v-for="streak in teamEvolution.cold_streaks"
-        :key="streak.player_id"
-        class="evolution-item cold"
-      >
-        <Snowflake :size="14" />
-        <span class="player-name">{{ streak.name }}</span>
-        <span class="streak-info">{{ streak.games }} game cold streak</span>
-      </div>
-    </div>
-
-    <!-- Fatigue Warnings -->
-    <div v-if="teamEvolution.fatigue_warnings?.length" class="evolution-section fatigue">
-      <div
-        v-for="warn in teamEvolution.fatigue_warnings"
-        :key="warn.player_id"
-        class="evolution-item warning"
-      >
-        <Activity :size="14" />
-        <span class="player-name">{{ warn.name }}</span>
-        <span class="fatigue-info">Fatigue: {{ warn.fatigue }}%</span>
-      </div>
-    </div>
-
-    <!-- Morale Changes -->
-    <div v-if="teamEvolution.morale_changes?.length" class="evolution-section morale">
-      <div
-        v-for="morale in teamEvolution.morale_changes"
-        :key="morale.player_id"
-        class="evolution-item"
-        :class="morale.change > 0 ? 'positive' : 'negative'"
-      >
-        <Heart :size="14" />
-        <span class="player-name">{{ morale.name }}</span>
-        <span class="morale-info">
-          Morale {{ morale.change > 0 ? '+' : '' }}{{ morale.change }}
+        <span v-else-if="item.type === 'hot_streak'" class="streak-info">{{ item.games }} game hot streak!</span>
+        <span v-else-if="item.type === 'cold_streak'" class="streak-info">{{ item.games }} game cold streak</span>
+        <span v-else-if="item.type === 'fatigue'" class="fatigue-info">Fatigue: {{ item.fatigue }}%</span>
+        <span v-else-if="item.type === 'morale'" class="morale-info">
+          Morale {{ item.change > 0 ? '+' : '' }}{{ item.change }}
         </span>
       </div>
     </div>
+
+    <!-- View More Button -->
+    <button v-if="hasMore && !expanded" class="view-more-btn" @click="expanded = true">
+      <span>View {{ remainingCount }} more</span>
+      <ChevronDown :size="16" />
+    </button>
   </div>
 </template>
 
@@ -219,15 +195,10 @@ function formatAttribute(attr) {
   margin: 0 0 10px 0;
 }
 
-.evolution-section {
+.evolution-items {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-bottom: 8px;
-}
-
-.evolution-section:last-child {
-  margin-bottom: 0;
 }
 
 .evolution-item {
@@ -331,8 +302,40 @@ function formatAttribute(attr) {
   }
 }
 
+/* View More Button */
+.view-more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px;
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.view-more-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-primary);
+}
+
 /* Light mode */
 [data-theme="light"] .evolution-item {
   background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .view-more-btn {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .view-more-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
 }
 </style>

@@ -3,20 +3,26 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
+import { useTradeStore } from '@/stores/trade'
+import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
-import { GlassCard, BaseButton, BaseModal, LoadingSpinner, StatBadge } from '@/components/ui'
+import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowUpDown } from 'lucide-vue-next'
+import TradeCenter from '@/components/trade/TradeCenter.vue'
+import FinancesTab from '@/components/team/FinancesTab.vue'
+import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 
 const route = useRoute()
 const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
+const tradeStore = useTradeStore()
+const toastStore = useToastStore()
 
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
 const activeTab = ref('team')
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
-const playerModalTab = ref('stats')
 
 // Evolution history display state
 const showAllRecentEvolution = ref(false)
@@ -162,8 +168,14 @@ onMounted(async () => {
   }
 })
 
-// Watch for tab change to fetch coaching schemes
-watch(activeTab, async (newTab) => {
+// Watch for tab change to fetch coaching schemes and clear trade state
+watch(activeTab, async (newTab, oldTab) => {
+  // Clear trade state when leaving the trades tab
+  if (oldTab === 'trades' && newTab !== 'trades') {
+    tradeStore.clearTrade()
+    tradeStore.clearSelectedTeam()
+  }
+
   if (newTab === 'coach' && !schemesFetched.value) {
     try {
       await teamStore.fetchCoachingSchemes(campaignId.value)
@@ -184,8 +196,10 @@ async function updateOffensiveScheme(scheme) {
   try {
     await teamStore.updateCoachingScheme(campaignId.value, scheme, selectedDefensiveScheme.value)
     selectedScheme.value = scheme
+    toastStore.showSuccess('Offensive scheme updated')
   } catch (err) {
     console.error('Failed to update offensive scheme:', err)
+    toastStore.showError('Failed to update scheme')
   } finally {
     updatingScheme.value = false
   }
@@ -197,8 +211,10 @@ async function updateDefensiveScheme(scheme) {
   try {
     await teamStore.updateCoachingScheme(campaignId.value, selectedScheme.value, scheme)
     selectedDefensiveScheme.value = scheme
+    toastStore.showSuccess('Defensive scheme updated')
   } catch (err) {
     console.error('Failed to update defensive scheme:', err)
+    toastStore.showError('Failed to update scheme')
   } finally {
     updatingScheme.value = false
   }
@@ -206,7 +222,6 @@ async function updateDefensiveScheme(scheme) {
 
 function openPlayerModal(player) {
   selectedPlayer.value = player
-  playerModalTab.value = 'stats'
   showPlayerModal.value = true
 }
 
@@ -272,6 +287,8 @@ async function swapPlayers(starterIndex, benchPlayerId) {
     await teamStore.updateLineup(campaignId.value, newLineup)
     await teamStore.fetchTeam(campaignId.value)
 
+    toastStore.showSuccess('Lineup updated')
+
     // Trigger animations for both players
     animatingPlayers.value = {
       [benchPlayerId]: 'up',
@@ -284,6 +301,7 @@ async function swapPlayers(starterIndex, benchPlayerId) {
     }, 400)
   } catch (err) {
     console.error('Failed to swap players:', err)
+    toastStore.showError('Failed to update lineup')
     animatingPlayers.value = {}
   } finally {
     swappingLineup.value = false
@@ -306,6 +324,8 @@ async function moveToBench(starterIndex) {
     await teamStore.updateLineup(campaignId.value, newLineup)
     await teamStore.fetchTeam(campaignId.value)
 
+    toastStore.showSuccess('Lineup updated')
+
     // Trigger slide down animation
     animatingPlayers.value = { [playerToMove.id]: 'down' }
 
@@ -315,6 +335,7 @@ async function moveToBench(starterIndex) {
     }, 400)
   } catch (err) {
     console.error('Failed to move player to bench:', err)
+    toastStore.showError('Failed to update lineup')
     animatingPlayers.value = {}
   } finally {
     swappingLineup.value = false
@@ -340,6 +361,8 @@ async function promoteToStarter(benchPlayer, targetPosition) {
     await teamStore.updateLineup(campaignId.value, newLineup)
     await teamStore.fetchTeam(campaignId.value)
 
+    toastStore.showSuccess('Lineup updated')
+
     // Trigger animations for both players
     animatingPlayers.value = {
       [benchPlayer.id]: 'up',
@@ -352,6 +375,7 @@ async function promoteToStarter(benchPlayer, targetPosition) {
     }, 400)
   } catch (err) {
     console.error('Failed to promote player:', err)
+    toastStore.showError('Failed to update lineup')
     animatingPlayers.value = {}
   } finally {
     swappingLineup.value = false
@@ -573,6 +597,13 @@ const playerNews = computed(() => {
           @click="activeTab = 'finances'"
         >
           Finances
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: activeTab === 'trades' }"
+          @click="activeTab = 'trades'"
+        >
+          Trades
         </button>
       </div>
 
@@ -1149,384 +1180,26 @@ const playerNews = computed(() => {
 
       <!-- Finances View -->
       <div v-else-if="activeTab === 'finances'" class="finances-content">
-        <GlassCard padding="lg" :hoverable="false">
-          <h3 class="h4 mb-4">Team Finances</h3>
-          <p class="text-secondary">Financial management features coming soon.</p>
-        </GlassCard>
+        <FinancesTab :campaign-id="campaignId" />
+      </div>
+
+      <!-- Trades View -->
+      <div v-else-if="activeTab === 'trades'" class="trades-content">
+        <TradeCenter :campaign-id="campaignId" @trade-completed="activeTab = 'team'" />
       </div>
     </template>
 
     <!-- Player Detail Modal -->
-    <BaseModal
+    <PlayerDetailModal
       :show="showPlayerModal"
+      :player="selectedPlayer"
+      :show-growth="true"
+      :recent-evolution="recentEvolution"
+      :all-time-evolution="allTimeEvolution"
+      :player-news="playerNews"
+      :show-history="true"
       @close="closePlayerModal"
-      :title="selectedPlayer?.name || 'Player Details'"
-      size="lg"
-    >
-      <div v-if="selectedPlayer" class="player-modal-content">
-        <!-- Player Header -->
-        <div class="player-modal-header" :class="{ 'injured-header': selectedPlayer.is_injured || selectedPlayer.isInjured }">
-          <div class="flex items-center gap-4">
-            <div class="modal-player-avatar">
-              <User class="avatar-icon" :size="36" />
-            </div>
-            <div class="rating-with-injury">
-              <StatBadge :value="selectedPlayer.overall_rating" size="lg" />
-              <span v-if="selectedPlayer.is_injured || selectedPlayer.isInjured" class="injury-badge-modal">INJ</span>
-            </div>
-            <div>
-              <h2 class="h3" :class="{ 'injured-name': selectedPlayer.is_injured || selectedPlayer.isInjured }">{{ selectedPlayer.name }}</h2>
-              <div class="flex items-center gap-2">
-                <span
-                  class="position-badge"
-                  :style="{ backgroundColor: getPositionColor(selectedPlayer.position) }"
-                >
-                  {{ selectedPlayer.position }}
-                </span>
-                <span v-if="selectedPlayer.secondary_position" class="position-badge secondary">
-                  {{ selectedPlayer.secondary_position }}
-                </span>
-                <span v-if="selectedPlayer.is_injured || selectedPlayer.isInjured" class="injury-tag">Injured</span>
-                <span v-else class="text-secondary">#{{ selectedPlayer.jersey_number || '00' }}</span>
-              </div>
-            </div>
-          </div>
-          <div class="player-bio">
-            <span>{{ selectedPlayer.height || "6'6\"" }}</span>
-            <span class="divider">|</span>
-            <span>{{ formatWeight(selectedPlayer.weight) }} lbs</span>
-            <span class="divider">|</span>
-            <span>Age {{ selectedPlayer.age || 25 }}</span>
-          </div>
-        </div>
-
-        <!-- Tab Navigation -->
-        <div class="modal-tabs">
-          <button
-            class="modal-tab"
-            :class="{ active: playerModalTab === 'stats' }"
-            @click="playerModalTab = 'stats'"
-          >
-            Stats
-          </button>
-          <button
-            class="modal-tab"
-            :class="{ active: playerModalTab === 'attributes' }"
-            @click="playerModalTab = 'attributes'"
-          >
-            Attributes
-          </button>
-          <button
-            class="modal-tab"
-            :class="{ active: playerModalTab === 'badges' }"
-            @click="playerModalTab = 'badges'"
-          >
-            Badges
-          </button>
-          <button
-            class="modal-tab"
-            :class="{ active: playerModalTab === 'news' }"
-            @click="playerModalTab = 'news'"
-          >
-            News
-          </button>
-        </div>
-
-        <!-- Tab Content -->
-        <div class="modal-tab-content">
-          <!-- Stats Tab -->
-          <div v-if="playerModalTab === 'stats'" class="tab-panel">
-            <template v-if="selectedPlayer.season_stats">
-              <!-- Scoring Stats -->
-              <div class="stats-section-modal">
-                <h4 class="stats-section-title">Scoring</h4>
-                <div class="stats-grid-modal">
-                  <div class="stat-cell">
-                    <span class="stat-label">PPG</span>
-                    <span class="stat-value highlight">{{ selectedPlayer.season_stats.ppg }}</span>
-                  </div>
-                  <div class="stat-cell">
-                    <span class="stat-label">FG%</span>
-                    <span class="stat-value">{{ selectedPlayer.season_stats.fg_pct }}%</span>
-                  </div>
-                  <div class="stat-cell">
-                    <span class="stat-label">3P%</span>
-                    <span class="stat-value">{{ selectedPlayer.season_stats.three_pct }}%</span>
-                  </div>
-                  <div class="stat-cell">
-                    <span class="stat-label">FT%</span>
-                    <span class="stat-value">{{ selectedPlayer.season_stats.ft_pct }}%</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Playmaking Stats -->
-              <div class="stats-section-modal">
-                <h4 class="stats-section-title">Playmaking</h4>
-                <div class="stats-grid-modal">
-                  <div class="stat-cell">
-                    <span class="stat-label">APG</span>
-                    <span class="stat-value highlight">{{ selectedPlayer.season_stats.apg }}</span>
-                  </div>
-                  <div class="stat-cell">
-                    <span class="stat-label">RPG</span>
-                    <span class="stat-value">{{ selectedPlayer.season_stats.rpg }}</span>
-                  </div>
-                  <div class="stat-cell">
-                    <span class="stat-label">MPG</span>
-                    <span class="stat-value">{{ selectedPlayer.season_stats.mpg }}</span>
-                  </div>
-                  <div class="stat-cell">
-                    <span class="stat-label">GP</span>
-                    <span class="stat-value">{{ selectedPlayer.season_stats.games_played }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Defense Stats -->
-              <div class="stats-section-modal">
-                <h4 class="stats-section-title">Defense</h4>
-                <div class="stats-grid-modal">
-                  <div class="stat-cell">
-                    <span class="stat-label">SPG</span>
-                    <span class="stat-value">{{ selectedPlayer.season_stats.spg }}</span>
-                  </div>
-                  <div class="stat-cell">
-                    <span class="stat-label">BPG</span>
-                    <span class="stat-value">{{ selectedPlayer.season_stats.bpg }}</span>
-                  </div>
-                </div>
-              </div>
-            </template>
-            <div v-else class="empty-state">
-              <p>No stats available yet.</p>
-              <p class="text-sm text-secondary">Play some games to see this player's stats.</p>
-            </div>
-          </div>
-
-          <!-- Attributes Tab -->
-          <div v-if="playerModalTab === 'attributes'" class="tab-panel">
-            <!-- Offensive Attributes -->
-            <div v-if="selectedPlayer.attributes?.offense" class="attr-section">
-              <h4 class="attr-section-title">Offense</h4>
-              <div class="attributes-grid">
-                <div v-for="(value, key) in selectedPlayer.attributes.offense" :key="key" class="attr-row">
-                  <span class="attr-name">{{ formatAttrName(key) }}</span>
-                  <div class="attr-bar-container">
-                    <div
-                      class="attr-bar"
-                      :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"
-                    />
-                  </div>
-                  <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Defensive Attributes -->
-            <div v-if="selectedPlayer.attributes?.defense" class="attr-section">
-              <h4 class="attr-section-title">Defense</h4>
-              <div class="attributes-grid">
-                <div v-for="(value, key) in selectedPlayer.attributes.defense" :key="key" class="attr-row">
-                  <span class="attr-name">{{ formatAttrName(key) }}</span>
-                  <div class="attr-bar-container">
-                    <div
-                      class="attr-bar"
-                      :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"
-                    />
-                  </div>
-                  <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Physical Attributes -->
-            <div v-if="selectedPlayer.attributes?.physical" class="attr-section">
-              <h4 class="attr-section-title">Physical</h4>
-              <div class="attributes-grid">
-                <div v-for="(value, key) in selectedPlayer.attributes.physical" :key="key" class="attr-row">
-                  <span class="attr-name">{{ formatAttrName(key) }}</span>
-                  <div class="attr-bar-container">
-                    <div
-                      class="attr-bar"
-                      :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"
-                    />
-                  </div>
-                  <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Mental Attributes -->
-            <div v-if="selectedPlayer.attributes?.mental" class="attr-section">
-              <h4 class="attr-section-title">Mental</h4>
-              <div class="attributes-grid">
-                <div v-for="(value, key) in selectedPlayer.attributes.mental" :key="key" class="attr-row">
-                  <span class="attr-name">{{ formatAttrName(key) }}</span>
-                  <div class="attr-bar-container">
-                    <div
-                      class="attr-bar"
-                      :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"
-                    />
-                  </div>
-                  <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Season Evolution Section -->
-            <div class="evolution-section">
-              <h4 class="attr-section-title">Season Evolution</h4>
-
-              <!-- Recent Evolution (Last 7 Days) -->
-              <div class="evolution-subsection">
-                <h5 class="evolution-subtitle">Recent (Last 7 Days)</h5>
-                <div v-if="recentEvolution.length > 0" class="evolution-list">
-                  <div
-                    v-for="(item, index) in (showAllRecentEvolution ? recentEvolution : recentEvolution.slice(0, 10))"
-                    :key="`recent-${item.category}-${item.attribute}`"
-                    class="evolution-item"
-                  >
-                    <span class="evolution-category">{{ formatCategoryName(item.category) }}</span>
-                    <span class="evolution-attr">{{ formatAttrName(item.attribute) }}</span>
-                    <span class="evolution-change" :style="{ color: getEvolutionColor(item.totalChange) }">
-                      {{ formatChange(item.totalChange) }}
-                    </span>
-                  </div>
-                  <button
-                    v-if="recentEvolution.length > 10"
-                    class="evolution-toggle"
-                    @click="showAllRecentEvolution = !showAllRecentEvolution"
-                  >
-                    {{ showAllRecentEvolution ? 'Show Less' : `Show All (${recentEvolution.length})` }}
-                  </button>
-                </div>
-                <div v-else class="evolution-empty">
-                  No recent development activity
-                </div>
-              </div>
-
-              <!-- All-Time Evolution -->
-              <div class="evolution-subsection">
-                <button
-                  class="evolution-alltime-header"
-                  @click="showAllTimeExpanded = !showAllTimeExpanded"
-                >
-                  <h5 class="evolution-subtitle">All-Time Evolution</h5>
-                  <span class="evolution-toggle-icon">{{ showAllTimeExpanded ? '▼' : '▶' }}</span>
-                </button>
-                <div v-if="showAllTimeExpanded" class="evolution-list">
-                  <template v-if="allTimeEvolution.length > 0">
-                    <div
-                      v-for="(item, index) in (showAllTimeEvolution ? allTimeEvolution : allTimeEvolution.slice(0, 10))"
-                      :key="`alltime-${item.category}-${item.attribute}`"
-                      class="evolution-item"
-                    >
-                      <span class="evolution-category">{{ formatCategoryName(item.category) }}</span>
-                      <span class="evolution-attr">{{ formatAttrName(item.attribute) }}</span>
-                      <span class="evolution-change" :style="{ color: getEvolutionColor(item.totalChange) }">
-                        {{ formatChange(item.totalChange) }}
-                      </span>
-                      <span class="evolution-count">({{ item.count }}x)</span>
-                    </div>
-                    <button
-                      v-if="allTimeEvolution.length > 10"
-                      class="evolution-toggle"
-                      @click="showAllTimeEvolution = !showAllTimeEvolution"
-                    >
-                      {{ showAllTimeEvolution ? 'Show Less' : `Show All (${allTimeEvolution.length})` }}
-                    </button>
-                  </template>
-                  <div v-else class="evolution-empty">
-                    No development history available
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Badges Tab -->
-          <div v-if="playerModalTab === 'badges'" class="tab-panel">
-            <div v-if="selectedPlayer.badges?.length > 0" class="badges-tab-content">
-              <!-- Group badges by level -->
-              <div v-if="selectedPlayer.badges.filter(b => b.level === 'hof').length > 0" class="badge-level-section">
-                <h4 class="badge-level-title hof">Hall of Fame</h4>
-                <div class="badges-grid-modal">
-                  <div
-                    v-for="badge in selectedPlayer.badges.filter(b => b.level === 'hof')"
-                    :key="badge.id"
-                    class="badge-card-modal hof"
-                  >
-                    <span class="badge-icon">HOF</span>
-                    <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div v-if="selectedPlayer.badges.filter(b => b.level === 'gold').length > 0" class="badge-level-section">
-                <h4 class="badge-level-title gold">Gold</h4>
-                <div class="badges-grid-modal">
-                  <div
-                    v-for="badge in selectedPlayer.badges.filter(b => b.level === 'gold')"
-                    :key="badge.id"
-                    class="badge-card-modal gold"
-                  >
-                    <span class="badge-icon">G</span>
-                    <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div v-if="selectedPlayer.badges.filter(b => b.level === 'silver').length > 0" class="badge-level-section">
-                <h4 class="badge-level-title silver">Silver</h4>
-                <div class="badges-grid-modal">
-                  <div
-                    v-for="badge in selectedPlayer.badges.filter(b => b.level === 'silver')"
-                    :key="badge.id"
-                    class="badge-card-modal silver"
-                  >
-                    <span class="badge-icon">S</span>
-                    <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div v-if="selectedPlayer.badges.filter(b => b.level === 'bronze').length > 0" class="badge-level-section">
-                <h4 class="badge-level-title bronze">Bronze</h4>
-                <div class="badges-grid-modal">
-                  <div
-                    v-for="badge in selectedPlayer.badges.filter(b => b.level === 'bronze')"
-                    :key="badge.id"
-                    class="badge-card-modal bronze"
-                  >
-                    <span class="badge-icon">B</span>
-                    <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div v-else class="empty-state">
-              <p>No badges earned yet.</p>
-              <p class="text-sm text-secondary">Badges are earned through gameplay performance.</p>
-            </div>
-          </div>
-
-          <!-- News Tab -->
-          <div v-if="playerModalTab === 'news'" class="tab-panel">
-            <div v-if="playerNews.length > 0" class="news-list">
-              <div v-for="news in playerNews" :key="news.id" class="news-item">
-                <p class="news-headline">{{ news.headline }}</p>
-                <p class="news-date">{{ news.date }}</p>
-              </div>
-            </div>
-            <div v-else class="empty-state">
-              <p>No news available for this player.</p>
-              <p class="text-sm text-secondary">News will appear as the season progresses.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </BaseModal>
+    />
   </div>
 </template>
 
@@ -2821,6 +2494,66 @@ const playerNews = computed(() => {
   gap: 20px;
 }
 
+/* Awards Grid */
+.awards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.award-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 16px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.award-card svg {
+  color: var(--color-text-secondary);
+}
+
+.award-card.gold {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.15), rgba(255, 140, 0, 0.1));
+  border-color: rgba(255, 215, 0, 0.3);
+}
+
+.award-card.gold svg {
+  color: #ffd700;
+}
+
+.award-card.silver {
+  background: linear-gradient(135deg, rgba(192, 192, 192, 0.15), rgba(128, 128, 128, 0.1));
+  border-color: rgba(192, 192, 192, 0.3);
+}
+
+.award-card.silver svg {
+  color: #c0c0c0;
+}
+
+.award-count {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.award-label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.empty-icon {
+  color: var(--color-text-tertiary);
+  opacity: 0.3;
+  margin-bottom: 8px;
+}
+
 /* Stats Sections in Modal */
 .stats-section-modal {
   background: var(--color-bg-tertiary);
@@ -3237,6 +2970,13 @@ const playerNews = computed(() => {
 
   .career-stats-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 500px) {
+  .tab-nav {
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 }
 

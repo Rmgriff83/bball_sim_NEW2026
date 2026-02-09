@@ -25,6 +25,7 @@ export function usePlayAnimation() {
   // Delayed score display - syncs with the +2/+3 animation on court
   const displayedHomeScore = ref(0)
   const displayedAwayScore = ref(0)
+  const displayedBoxScore = ref(null)
   let scoreUpdateTimeout = null
 
   // Computed properties
@@ -108,24 +109,30 @@ export function usePlayAnimation() {
     const homeScored = targetHome !== (beforeJustFinished?.home_score || 0)
     const awayScored = targetAway !== (beforeJustFinished?.away_score || 0)
 
+    // Get the box score from the just-finished possession
+    const targetBoxScore = justFinished.box_score || null
+
     if (homeScored || awayScored) {
       // Scoring happened - delay update to sync with the +2/+3 animation
       scoreUpdateTimeout = setTimeout(() => {
         displayedHomeScore.value = targetHome
         displayedAwayScore.value = targetAway
+        displayedBoxScore.value = targetBoxScore
       }, 250)
     } else {
       // No score change - update immediately
       displayedHomeScore.value = targetHome
       displayedAwayScore.value = targetAway
+      displayedBoxScore.value = targetBoxScore
     }
   })
 
   /**
    * Current box score from animation data (updates per possession).
+   * Uses delayed display ref that syncs with the +2/+3 animation.
    */
   const currentBoxScore = computed(() => {
-    return currentPossession.value?.box_score || null
+    return displayedBoxScore.value
   })
 
   /**
@@ -307,7 +314,7 @@ export function usePlayAnimation() {
     currentKeyframeIndex.value = 0
     elapsedTime.value = 0
 
-    // Initialize displayed scores
+    // Initialize displayed scores and box score
     // Use provided starting scores if available, otherwise default to 0-0
     if (options.startingHomeScore !== undefined && options.startingAwayScore !== undefined) {
       displayedHomeScore.value = options.startingHomeScore
@@ -315,6 +322,15 @@ export function usePlayAnimation() {
     } else {
       displayedHomeScore.value = 0
       displayedAwayScore.value = 0
+    }
+
+    // Initialize box score from starting box score or first possession
+    if (options.startingBoxScore) {
+      displayedBoxScore.value = options.startingBoxScore
+    } else if (data?.possessions?.[0]?.box_score) {
+      displayedBoxScore.value = data.possessions[0].box_score
+    } else {
+      displayedBoxScore.value = null
     }
 
     // Initialize quarter break state
@@ -446,8 +462,8 @@ export function usePlayAnimation() {
     const deltaTime = (timestamp - lastTimestamp) / 1000 // Convert to seconds
     lastTimestamp = timestamp
 
-    // Calculate effective speed - 1x displays as 1x but runs at 0.85 for smoother viewing
-    const effectiveSpeed = playbackSpeed.value === 1 ? 0.85 : playbackSpeed.value
+    // Calculate effective speed - 1x displays as 1x but runs at 0.935 for smoother viewing
+    const effectiveSpeed = playbackSpeed.value === 1 ? 0.935 : playbackSpeed.value
 
     // Update elapsed time based on playback speed
     elapsedTime.value += deltaTime * effectiveSpeed
@@ -456,11 +472,12 @@ export function usePlayAnimation() {
     if (elapsedTime.value >= possessionDuration.value) {
       // Check for quarter break BEFORE advancing
       if (isAtQuarterEnd.value && completedQuarter.value < currentQuarter.value) {
-        // Update displayed scores immediately for quarter break
+        // Update displayed scores and box score immediately for quarter break
         // (no next possession means no +2/+3 animation to wait for)
         if (currentPossession.value) {
           displayedHomeScore.value = currentPossession.value.home_score || 0
           displayedAwayScore.value = currentPossession.value.away_score || 0
+          displayedBoxScore.value = currentPossession.value.box_score || null
         }
         completedQuarter.value = currentQuarter.value
         isQuarterBreak.value = true
@@ -477,10 +494,11 @@ export function usePlayAnimation() {
         // Reached end of animation data
         if (isLiveMode.value) {
           // In live mode, reaching the end means quarter is complete
-          // Update displayed scores immediately for quarter break
+          // Update displayed scores and box score immediately for quarter break
           if (currentPossession.value) {
             displayedHomeScore.value = currentPossession.value.home_score || 0
             displayedAwayScore.value = currentPossession.value.away_score || 0
+            displayedBoxScore.value = currentPossession.value.box_score || null
           }
           completedQuarter.value = currentQuarter.value
           isQuarterBreak.value = true

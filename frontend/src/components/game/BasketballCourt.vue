@@ -584,7 +584,9 @@ const courtWidth = computed(() => props.width)
 const courtHeight = computed(() => props.height)
 // Smaller crowd on mobile, slightly smaller overall (mobile increased 10% for more space)
 const crowdAreaHeight = computed(() => isMobile.value ? 38 : 35)
-const totalCanvasHeight = computed(() => props.height + crowdAreaHeight.value)
+// On mobile, crowd is on the side so canvas height stays the same (no extra space needed at bottom)
+// On desktop, crowd is below baseline so canvas height includes crowd area
+const totalCanvasHeight = computed(() => isMobile.value ? props.height : props.height + crowdAreaHeight.value)
 
 // Scale factors
 // X maps court width (50 feet) to canvas width
@@ -1539,7 +1541,7 @@ defineExpose({
 <template>
   <div
     class="basketball-court-container"
-    :style="isMobile ? { width: totalCanvasHeight + 'px', height: width + 'px' } : {}"
+    :style="isMobile ? { width: height + 'px', height: width + 'px' } : {}"
   >
     <canvas
       ref="canvas"
@@ -1623,7 +1625,7 @@ defineExpose({
 /* Play Description Overlay - bottom right of court, above crowd area */
 .play-description-overlay {
   position: absolute;
-  bottom: 55px;
+  bottom: 45px;
   right: 3%;
   background: rgba(0, 0, 0, 0.6);
   padding: 6px 10px;
@@ -1687,9 +1689,11 @@ defineExpose({
     display: none;
   }
 
+  /* Play scheme (play name) - top left on mobile */
   .play-name-overlay {
     top: 4px;
-    right: 4px;
+    left: 4px;
+    right: auto;
     padding: 3px 6px;
     opacity: 0.75;
   }
@@ -1698,12 +1702,15 @@ defineExpose({
     font-size: 8px;
   }
 
+  /* Contextual game news (play description) - top right on mobile */
   .play-description-overlay {
-    bottom: 15px;
+    top: 4px;
     right: 4px;
+    bottom: auto;
     max-width: 150px;
     padding: 4px 8px;
     opacity: 0.75;
+    animation: none;
   }
 
   .play-description-text {

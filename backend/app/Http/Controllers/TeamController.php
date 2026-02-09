@@ -9,6 +9,7 @@ use App\Services\AILineupService;
 use App\Services\CampaignSeasonService;
 use App\Services\CampaignPlayerService;
 use App\Services\CoachingService;
+use App\Services\FinanceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -18,17 +19,20 @@ class TeamController extends Controller
     private CampaignPlayerService $playerService;
     private CoachingService $coachingService;
     private AILineupService $lineupService;
+    private FinanceService $financeService;
 
     public function __construct(
         CampaignSeasonService $seasonService,
         CampaignPlayerService $playerService,
         CoachingService $coachingService,
-        AILineupService $lineupService
+        AILineupService $lineupService,
+        FinanceService $financeService
     ) {
         $this->seasonService = $seasonService;
         $this->playerService = $playerService;
         $this->coachingService = $coachingService;
         $this->lineupService = $lineupService;
+        $this->financeService = $financeService;
     }
     /**
      * Get the user's team with full roster.
@@ -505,6 +509,17 @@ class TeamController extends Controller
             'total_payroll' => $team->total_payroll + $validated['salary'],
         ]);
 
+        // Record transaction
+        $this->financeService->recordTransaction($campaign, 'signing', [
+            'playerId' => $player->id,
+            'playerName' => $player->first_name . ' ' . $player->last_name,
+            'teamId' => $team->id,
+            'teamName' => $team->city . ' ' . $team->name,
+            'years' => $validated['years'],
+            'salary' => $validated['salary'],
+            'totalValue' => $validated['salary'] * $validated['years'],
+        ]);
+
         return response()->json([
             'message' => 'Player signed successfully',
             'player' => $this->formatPlayer($player->fresh()),
@@ -538,6 +553,15 @@ class TeamController extends Controller
         // Update team payroll
         $team->update([
             'total_payroll' => max(0, $team->total_payroll - $salary),
+        ]);
+
+        // Record transaction
+        $this->financeService->recordTransaction($campaign, 'release', [
+            'playerId' => $player->id,
+            'playerName' => $player->first_name . ' ' . $player->last_name,
+            'teamId' => $team->id,
+            'teamName' => $team->city . ' ' . $team->name,
+            'previousSalary' => $salary,
         ]);
 
         return response()->json([
@@ -592,16 +616,19 @@ class TeamController extends Controller
             ];
         }
 
+        // Use getAllBadges() to properly fetch from bridge table for user players
+        $badges = $player->getAllBadges();
+
         if ($detailed) {
             $data['attributes'] = $player->attributes;
             $data['tendencies'] = $player->tendencies;
-            $data['badges'] = $player->badges;
+            $data['badges'] = $badges;
             $data['personality'] = $player->personality;
             $data['contract_details'] = $player->contract_details;
             $data['injury_details'] = $player->injury_details;
         } else {
             // Include badges in non-detailed view too (for team view)
-            $data['badges'] = $player->badges;
+            $data['badges'] = $badges;
             $data['attributes'] = $player->attributes;
         }
 

@@ -347,6 +347,7 @@ function getBadgeLevelColor(level) {
 .badges-row {
   display: flex;
   flex-wrap: wrap;
+  margin-top:4px;
   gap: 8px;
   margin-bottom: 12px;
 }

@@ -437,4 +437,161 @@ class CampaignPlayerService
             Storage::delete($path);
         }
     }
+
+    /**
+     * Update a JSON player's contract.
+     */
+    public function updatePlayerContract(int $campaignId, string $playerId, int $years, float $salary): bool
+    {
+        $leaguePlayers = $this->loadLeaguePlayers($campaignId);
+        $updated = false;
+
+        foreach ($leaguePlayers as &$player) {
+            if (($player['id'] ?? '') == $playerId) {
+                $player['contractYearsRemaining'] = $years;
+                $player['contract_years_remaining'] = $years;
+                $player['contractSalary'] = $salary;
+                $player['contract_salary'] = $salary;
+                $updated = true;
+                break;
+            }
+        }
+
+        if ($updated) {
+            $this->saveLeaguePlayers($campaignId, $leaguePlayers);
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Release a JSON player (remove team assignment).
+     */
+    public function releaseJsonPlayer(int $campaignId, string $playerId): bool
+    {
+        $leaguePlayers = $this->loadLeaguePlayers($campaignId);
+        $updated = false;
+
+        foreach ($leaguePlayers as &$player) {
+            if (($player['id'] ?? '') == $playerId) {
+                $player['teamAbbreviation'] = 'FA';
+                $player['team_abbreviation'] = 'FA';
+                $player['contractYearsRemaining'] = 0;
+                $player['contract_years_remaining'] = 0;
+                $player['contractSalary'] = 0;
+                $player['contract_salary'] = 0;
+                $updated = true;
+                break;
+            }
+        }
+
+        if ($updated) {
+            $this->saveLeaguePlayers($campaignId, $leaguePlayers);
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Sign a free agent to an AI team (JSON player).
+     */
+    public function signFreeAgentToAiTeam(
+        int $campaignId,
+        string $playerId,
+        string $teamAbbr,
+        int $years,
+        float $salary
+    ): bool {
+        $leaguePlayers = $this->loadLeaguePlayers($campaignId);
+        $updated = false;
+
+        foreach ($leaguePlayers as &$player) {
+            if (($player['id'] ?? '') == $playerId) {
+                $currentTeam = $player['teamAbbreviation'] ?? $player['team_abbreviation'] ?? null;
+
+                // Only sign if currently a free agent
+                if (empty($currentTeam) || $currentTeam === 'FA') {
+                    $player['teamAbbreviation'] = $teamAbbr;
+                    $player['team_abbreviation'] = $teamAbbr;
+                    $player['contractYearsRemaining'] = $years;
+                    $player['contract_years_remaining'] = $years;
+                    $player['contractSalary'] = $salary;
+                    $player['contract_salary'] = $salary;
+                    $updated = true;
+                }
+                break;
+            }
+        }
+
+        if ($updated) {
+            $this->saveLeaguePlayers($campaignId, $leaguePlayers);
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Decrement contract years for all players at end of season.
+     */
+    public function decrementContractYears(int $campaignId): array
+    {
+        $expiredPlayers = [];
+
+        // Update DB players
+        $dbPlayers = Player::where('campaign_id', $campaignId)->get();
+        foreach ($dbPlayers as $player) {
+            if ($player->contract_years_remaining > 0) {
+                $newYears = $player->contract_years_remaining - 1;
+                $player->update(['contract_years_remaining' => $newYears]);
+
+                if ($newYears === 0) {
+                    // Player becomes a free agent
+                    $player->update([
+                        'team_id' => null,
+                        'contract_salary' => 0,
+                    ]);
+                    $expiredPlayers[] = [
+                        'id' => $player->id,
+                        'name' => $player->first_name . ' ' . $player->last_name,
+                        'source' => 'database',
+                    ];
+                }
+            }
+        }
+
+        // Update JSON players
+        $leaguePlayers = $this->loadLeaguePlayers($campaignId);
+        $updated = false;
+
+        foreach ($leaguePlayers as &$player) {
+            $years = $player['contractYearsRemaining'] ?? $player['contract_years_remaining'] ?? 0;
+            if ($years > 0) {
+                $newYears = $years - 1;
+                $player['contractYearsRemaining'] = $newYears;
+                $player['contract_years_remaining'] = $newYears;
+                $updated = true;
+
+                if ($newYears === 0) {
+                    // Player becomes a free agent
+                    $player['teamAbbreviation'] = 'FA';
+                    $player['team_abbreviation'] = 'FA';
+                    $player['contractSalary'] = 0;
+                    $player['contract_salary'] = 0;
+
+                    $expiredPlayers[] = [
+                        'id' => $player['id'],
+                        'name' => ($player['firstName'] ?? $player['first_name']) . ' ' .
+                                 ($player['lastName'] ?? $player['last_name']),
+                        'source' => 'json',
+                    ];
+                }
+            }
+        }
+
+        if ($updated) {
+            $this->saveLeaguePlayers($campaignId, $leaguePlayers);
+        }
+
+        return $expiredPlayers;
+    }
 }

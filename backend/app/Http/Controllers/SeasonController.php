@@ -4,6 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\Campaign;
 use App\Models\Season;
+use App\Services\AIContractService;
+use App\Services\CampaignPlayerService;
+use App\Services\DraftPickService;
+use App\Services\PlayoffService;
 use App\Services\PlayerEvolution\PlayerEvolutionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,7 +15,11 @@ use Illuminate\Http\Request;
 class SeasonController extends Controller
 {
     public function __construct(
-        private PlayerEvolutionService $evolutionService
+        private PlayerEvolutionService $evolutionService,
+        private DraftPickService $draftPickService,
+        private PlayoffService $playoffService,
+        private AIContractService $aiContractService,
+        private CampaignPlayerService $playerService
     ) {}
 
     /**
@@ -62,6 +70,10 @@ class SeasonController extends Controller
         $season->update(['phase' => $newPhase]);
 
         // Handle phase-specific logic
+        if ($newPhase === 'playoffs') {
+            return $this->enterPlayoffs($campaign);
+        }
+
         if ($newPhase === 'offseason') {
             return $this->processOffseason($request, $campaign);
         }
@@ -69,6 +81,29 @@ class SeasonController extends Controller
         return response()->json([
             'message' => "Advanced to {$newPhase}",
             'phase' => $newPhase,
+        ]);
+    }
+
+    /**
+     * Enter playoffs phase - generate bracket and schedule.
+     */
+    private function enterPlayoffs(Campaign $campaign): JsonResponse
+    {
+        // Generate playoff bracket
+        $bracket = $this->playoffService->generatePlayoffBracket($campaign);
+
+        // Generate schedule for round 1
+        $gamesCreated = $this->playoffService->generatePlayoffSchedule($campaign, 1);
+
+        // Get user's playoff status
+        $userStatus = $this->playoffService->getUserPlayoffStatus($campaign);
+
+        return response()->json([
+            'message' => 'Playoffs started',
+            'phase' => 'playoffs',
+            'bracket' => $bracket,
+            'gamesCreated' => $gamesCreated,
+            'userStatus' => $userStatus,
         ]);
     }
 
@@ -89,6 +124,19 @@ class SeasonController extends Controller
         // Process player evolution for all players
         $results = $this->evolutionService->processOffseason($campaign);
 
+        // Decrement contract years and handle expired contracts
+        $expiredContracts = $this->playerService->decrementContractYears($campaign->id);
+
+        // Process AI team contract decisions (re-signings and free agent signings)
+        $contractResults = $this->aiContractService->runAIContractDecisions($campaign);
+
+        // Assign draft pick numbers based on final standings
+        $draftYear = $season->year;
+        $this->draftPickService->assignPickNumbers($campaign, $draftYear);
+
+        // Roll forward picks (generate new year 5 picks)
+        $this->draftPickService->rollForwardPicks($campaign);
+
         // Update season phase
         $season->update(['phase' => 'offseason']);
 
@@ -104,6 +152,9 @@ class SeasonController extends Controller
                 'developed' => array_slice($results['developed'], 0, 10), // Top 10
                 'regressed' => array_slice($results['regressed'], 0, 10),
                 'retired' => $results['retired'],
+                'expired_contracts' => count($expiredContracts),
+                'ai_extensions' => count($contractResults['extensions']),
+                'ai_signings' => count($contractResults['signings']),
             ],
         ]);
     }

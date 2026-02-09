@@ -81,7 +81,7 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
-  function showSuccess(message, duration = 4000) {
+  function showSuccess(message, duration = 2000) {
     return addMinimalToast({
       type: 'success',
       message,
@@ -89,7 +89,7 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
-  function showError(message, duration = 6000) {
+  function showError(message, duration = 4000) {
     return addMinimalToast({
       type: 'error',
       message,

@@ -10,6 +10,7 @@ use App\Models\Season;
 use App\Services\AILineupService;
 use App\Services\CampaignPlayerService;
 use App\Services\CampaignSeasonService;
+use App\Services\DraftPickService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -20,7 +21,8 @@ class CampaignController extends Controller
 {
     public function __construct(
         private CampaignSeasonService $seasonService,
-        private AILineupService $lineupService
+        private AILineupService $lineupService,
+        private DraftPickService $draftPickService
     ) {}
     /**
      * Get all campaigns for the authenticated user.
@@ -106,8 +108,11 @@ class CampaignController extends Controller
             $this->seasonService->initializeSeason($campaign, 2025);
             $gamesCreated = $this->seasonService->generateSchedule($campaign, 2025);
 
+            // Generate draft picks (5 years of picks for all teams)
+            $campaign->refresh(); // Reload to get relationships
+            $this->draftPickService->generateInitialPicks($campaign);
+
             // Initialize user's team default lineup based on best players per position
-            $campaign->refresh(); // Reload to get team relationship
             $this->lineupService->initializeUserTeamLineup($campaign);
 
             DB::commit();
@@ -195,7 +200,7 @@ class CampaignController extends Controller
                     'weight' => $player->weight_lbs,
                     'age' => $player->age,
                     'attributes' => $player->attributes,
-                    'badges' => $player->badges,
+                    'badges' => $player->getAllBadges(),
                     'contract' => [
                         'years_remaining' => $player->contract_years_remaining,
                         'salary' => $player->contract_salary,

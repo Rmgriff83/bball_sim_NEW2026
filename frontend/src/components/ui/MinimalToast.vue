@@ -67,6 +67,14 @@ const toastStore = useToastStore()
   color: white;
 }
 
+.toast-success {
+  background: var(--color-success);
+}
+
+.toast-success .toast-message {
+  color: white;
+}
+
 .toast-error {
   background: var(--color-error);
 }
