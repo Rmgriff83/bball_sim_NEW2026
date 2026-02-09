@@ -4,6 +4,8 @@ namespace App\Services\PlayerEvolution;
 
 use App\Models\NewsEvent;
 use App\Models\Campaign;
+use App\Models\Player;
+use App\Models\Team;
 
 class EvolutionNewsService
 {
@@ -24,7 +26,7 @@ class EvolutionNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => $this->getPlayerId($player),
+            'player_id' => $this->getPlayerId($player, $campaign),
             'team_id' => $this->getTeamId($player, $campaign),
             'event_type' => 'injury',
             'headline' => $headlines[array_rand($headlines)],
@@ -49,7 +51,7 @@ class EvolutionNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => $this->getPlayerId($player),
+            'player_id' => $this->getPlayerId($player, $campaign),
             'team_id' => $this->getTeamId($player, $campaign),
             'event_type' => 'recovery',
             'headline' => $headlines[array_rand($headlines)],
@@ -74,7 +76,7 @@ class EvolutionNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => $this->getPlayerId($player),
+            'player_id' => $this->getPlayerId($player, $campaign),
             'team_id' => $this->getTeamId($player, $campaign),
             'event_type' => 'hot_streak',
             'headline' => $headlines[array_rand($headlines)],
@@ -98,7 +100,7 @@ class EvolutionNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => $this->getPlayerId($player),
+            'player_id' => $this->getPlayerId($player, $campaign),
             'team_id' => $this->getTeamId($player, $campaign),
             'event_type' => 'cold_streak',
             'headline' => $headlines[array_rand($headlines)],
@@ -123,7 +125,7 @@ class EvolutionNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => $this->getPlayerId($player),
+            'player_id' => $this->getPlayerId($player, $campaign),
             'team_id' => $this->getTeamId($player, $campaign),
             'event_type' => 'development',
             'headline' => $headlines[array_rand($headlines)],
@@ -148,7 +150,7 @@ class EvolutionNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => $this->getPlayerId($player),
+            'player_id' => $this->getPlayerId($player, $campaign),
             'team_id' => $this->getTeamId($player, $campaign),
             'event_type' => 'breakout',
             'headline' => $headlines[array_rand($headlines)],
@@ -173,7 +175,7 @@ class EvolutionNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => $this->getPlayerId($player),
+            'player_id' => $this->getPlayerId($player, $campaign),
             'team_id' => $this->getTeamId($player, $campaign),
             'event_type' => 'decline',
             'headline' => $headlines[array_rand($headlines)],
@@ -197,7 +199,7 @@ class EvolutionNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => $this->getPlayerId($player),
+            'player_id' => $this->getPlayerId($player, $campaign),
             'team_id' => $this->getTeamId($player, $campaign),
             'event_type' => 'trade_request',
             'headline' => $headlines[array_rand($headlines)],
@@ -221,7 +223,7 @@ class EvolutionNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => $this->getPlayerId($player),
+            'player_id' => $this->getPlayerId($player, $campaign),
             'team_id' => $this->getTeamId($player, $campaign),
             'event_type' => 'retirement',
             'headline' => $headlines[array_rand($headlines)],
@@ -241,24 +243,37 @@ class EvolutionNewsService
     }
 
     /**
-     * Get player ID (may be database ID or string ID for JSON players).
+     * Get player ID if it exists in the database.
+     * AI team players exist only in JSON files, so return null for them.
      */
-    private function getPlayerId(array $player): ?int
+    private function getPlayerId(array $player, Campaign $campaign): ?int
     {
         $id = $player['id'] ?? null;
-        return is_numeric($id) ? (int) $id : null;
+        if (!is_numeric($id)) {
+            return null;
+        }
+
+        // Verify the player actually exists in the database
+        // This handles traded players and prevents FK violations for AI players
+        if (Player::where('id', $id)->exists()) {
+            return (int) $id;
+        }
+
+        return null;
     }
 
     /**
-     * Get team ID for player.
+     * Get team ID if it exists in the database.
      */
     private function getTeamId(array $player, Campaign $campaign): ?int
     {
-        if (isset($player['team_id'])) {
-            return $player['team_id'];
+        // First try the player's team_id if it exists in the database
+        $playerTeamId = $player['team_id'] ?? null;
+        if ($playerTeamId && Team::where('id', $playerTeamId)->exists()) {
+            return (int) $playerTeamId;
         }
 
-        // For JSON players, lookup team by abbreviation
+        // Fallback: lookup team by abbreviation to get database ID
         $abbr = $player['teamAbbreviation'] ?? null;
         if ($abbr) {
             $team = $campaign->teams()->where('abbreviation', $abbr)->first();

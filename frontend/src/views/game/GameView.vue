@@ -6,7 +6,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
-import { User, Play, Pause, ArrowUpDown, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap } from 'lucide-vue-next'
+import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap } from 'lucide-vue-next'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
 import { SimulateConfirmModal, EvolutionSummary } from '@/components/game'
@@ -72,7 +72,7 @@ const prevAwayRanking = ref([])
 const prevHomeRanking = ref([])
 
 // Live box score state
-const showLiveBoxScore = ref(false)
+const showLiveBoxScore = ref(true)
 const liveBoxScoreTab = ref('away') // Start with away team (visitor listed first traditionally)
 const liveBoxSortColumn = ref('points')
 const liveBoxSortDirection = ref('desc')
@@ -99,6 +99,8 @@ const positionLabels = ['PG', 'SG', 'SF', 'PF', 'C']
 
 // Expanded swap dropdown state for quarter break
 const expandedSwapPlayer = ref(null)
+// Track if substitutions view is open in quarter break modal
+const showSubstitutionsView = ref(false)
 
 // Available coaching styles
 const offensiveStyles = [
@@ -214,16 +216,127 @@ const boxScore = computed(() => {
   }
 })
 
-// Top 5 scorers for live stats (sorted by points)
+// Persistent tracking of on-court players to prevent "popping" during transitions
+const lastKnownOnCourtIds = ref([])
+
+// Get on-court player IDs from current keyframe positions (most stable source)
+// Updates lastKnownOnCourtIds when valid data is available
+const onCourtPlayerIds = computed(() => {
+  // First try: current keyframe positions (direct from animation data)
+  const keyframePositions = currentKeyframe.value?.positions
+  if (keyframePositions && Object.keys(keyframePositions).length >= 10) {
+    const ids = Object.keys(keyframePositions)
+    // Update persistent tracking
+    lastKnownOnCourtIds.value = ids
+    return ids
+  }
+  // Second try: interpolated positions
+  const interpPositions = interpolatedPositions.value
+  if (interpPositions && Object.keys(interpPositions).length >= 10) {
+    const ids = Object.keys(interpPositions)
+    lastKnownOnCourtIds.value = ids
+    return ids
+  }
+  // Use last known on-court IDs during transitions
+  if (lastKnownOnCourtIds.value.length >= 10) {
+    return lastKnownOnCourtIds.value
+  }
+  // No animation data available
+  return []
+})
+
+// Normalize ID for comparison (handles both string and number IDs)
+function normalizeId(id) {
+  return String(id).trim()
+}
+
+// Get user's current lineup IDs (from selectedLineup during live mode)
+const userLineupIds = computed(() => {
+  if (isLiveMode.value && selectedLineup.value) {
+    return selectedLineup.value.filter(id => id != null).map(normalizeId)
+  }
+  return []
+})
+
+// Sort players by points (descending) - ensure numeric comparison
+function sortByPoints(players) {
+  return [...players].sort((a, b) => {
+    const ptsA = Number(a.points) || 0
+    const ptsB = Number(b.points) || 0
+    return ptsB - ptsA
+  })
+}
+
+// Players currently on court for live stats
+// For user's team in live mode, use selectedLineup for guaranteed accuracy
+// For opponent team, use keyframe positions
 const topAwayScorers = computed(() => {
-  return [...boxScore.value.away]
-    .sort((a, b) => (b.points || 0) - (a.points || 0))
+  const awayPlayers = boxScore.value.away || []
+  if (awayPlayers.length === 0) return []
+
+  // Get on-court IDs from keyframe positions (works for both teams)
+  const onCourtIds = onCourtPlayerIds.value.map(normalizeId)
+
+  // If user is away team and we're in live mode, prioritize selectedLineup
+  if (!userIsHome.value && isLiveMode.value && userLineupIds.value.length === 5) {
+    // Try to match by selectedLineup first
+    const lineupPlayers = awayPlayers.filter(player =>
+      userLineupIds.value.includes(normalizeId(player.player_id))
+    )
+    // Return if we found at least some players (don't require exactly 5)
+    if (lineupPlayers.length >= 3) {
+      return sortByPoints(lineupPlayers)
+    }
+  }
+
+  // Use keyframe positions for opponent team or as fallback
+  if (onCourtIds.length >= 5) {
+    const onCourtPlayers = awayPlayers.filter(player =>
+      onCourtIds.includes(normalizeId(player.player_id))
+    )
+    if (onCourtPlayers.length >= 3) {
+      return sortByPoints(onCourtPlayers)
+    }
+  }
+
+  // Final fallback: top 5 by minutes played (those who've played the most are likely starters)
+  return [...awayPlayers]
+    .sort((a, b) => (Number(b.minutes) || 0) - (Number(a.minutes) || 0))
     .slice(0, 5)
 })
 
 const topHomeScorers = computed(() => {
-  return [...boxScore.value.home]
-    .sort((a, b) => (b.points || 0) - (a.points || 0))
+  const homePlayers = boxScore.value.home || []
+  if (homePlayers.length === 0) return []
+
+  // Get on-court IDs from keyframe positions (works for both teams)
+  const onCourtIds = onCourtPlayerIds.value.map(normalizeId)
+
+  // If user is home team and we're in live mode, prioritize selectedLineup
+  if (userIsHome.value && isLiveMode.value && userLineupIds.value.length === 5) {
+    // Try to match by selectedLineup first
+    const lineupPlayers = homePlayers.filter(player =>
+      userLineupIds.value.includes(normalizeId(player.player_id))
+    )
+    // Return if we found at least some players (don't require exactly 5)
+    if (lineupPlayers.length >= 3) {
+      return sortByPoints(lineupPlayers)
+    }
+  }
+
+  // Use keyframe positions for opponent team or as fallback
+  if (onCourtIds.length >= 5) {
+    const onCourtPlayers = homePlayers.filter(player =>
+      onCourtIds.includes(normalizeId(player.player_id))
+    )
+    if (onCourtPlayers.length >= 3) {
+      return sortByPoints(onCourtPlayers)
+    }
+  }
+
+  // Final fallback: top 5 by minutes played (those who've played the most are likely starters)
+  return [...homePlayers]
+    .sort((a, b) => (Number(b.minutes) || 0) - (Number(a.minutes) || 0))
     .slice(0, 5)
 })
 
@@ -948,6 +1061,11 @@ watch(gameAnimationData, (newData) => {
   }
 }, { immediate: true })
 
+// Clear cached on-court IDs when quarter changes (new lineup may be in effect)
+watch(currentQuarter, () => {
+  lastKnownOnCourtIds.value = []
+})
+
 // Watch for possession changes and trigger basket animation at END of each play
 watch(
   currentPossessionIndex,
@@ -1429,6 +1547,8 @@ watch([isQuarterBreak, showAnimationMode], ([isBreak, isAnimating]) => {
     document.body.style.overflow = 'hidden'
   } else {
     document.body.style.overflow = ''
+    // Reset substitutions view when quarter break closes
+    showSubstitutionsView.value = false
   }
 })
 
@@ -1645,206 +1765,253 @@ onUnmounted(() => {
 
               <!-- Quarter Break / Game Complete Overlay -->
               <Transition name="fade">
-                <div v-if="isQuarterBreak" class="quarter-break-overlay">
-                  <div class="quarter-break-content">
-                    <!-- Game Complete Header (use completedQuarter >= 4 as fallback) -->
-                    <template v-if="gameJustCompleted || completedQuarter >= 4">
-                      <h2 class="quarter-break-title game-complete-title">Final</h2>
-                      <p class="game-complete-subtitle">Game Complete</p>
-                    </template>
-                    <!-- Quarter Break Header -->
-                    <template v-else>
-                      <h2 class="quarter-break-title">End of Quarter {{ completedQuarter }}</h2>
-                    </template>
+                <div v-if="isQuarterBreak" class="qb-modal-overlay">
+                  <div class="qb-modal-container">
+                    <!-- Header -->
+                    <header class="qb-modal-header" :class="{ 'game-complete-header': gameJustCompleted || completedQuarter >= 4 }">
+                      <!-- Game Complete Header (use completedQuarter >= 4 as fallback) -->
+                      <template v-if="gameJustCompleted || completedQuarter >= 4">
+                        <h2 class="qb-modal-title game-complete">Final</h2>
+                        <button class="qb-header-btn" @click="viewBoxScore">
+                          View Box Score
+                        </button>
+                      </template>
+                      <!-- Quarter Break Header -->
+                      <template v-else>
+                        <h2 class="qb-modal-title">End of Q{{ completedQuarter }}</h2>
+                      </template>
+                    </header>
 
-                    <div class="quarter-break-score">
-                      <div class="break-team">
-                        <span class="break-team-name">{{ awayTeam?.name }}</span>
-                        <span class="break-team-score" :style="{ color: awayTeam?.primary_color }">
-                          {{ currentAwayScore }}
-                        </span>
-                      </div>
-                      <div class="break-divider">-</div>
-                      <div class="break-team">
-                        <span class="break-team-name">{{ homeTeam?.name }}</span>
-                        <span class="break-team-score" :style="{ color: homeTeam?.primary_color }">
-                          {{ currentHomeScore }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <!-- Coaching Adjustments (only in live mode during quarter breaks, not game complete) -->
-                    <div v-if="isLiveMode && !gameJustCompleted && completedQuarter < 4" class="coaching-adjustments-v2">
-                      <!-- Strategy Pills -->
-                      <div class="strategy-section">
-                        <div class="strategy-group">
-                          <span class="strategy-label">Offense</span>
-                          <div class="strategy-pills">
-                            <button
-                              v-for="style in offensiveStyles"
-                              :key="style.value"
-                              class="strategy-pill"
-                              :class="{ active: selectedOffense === style.value }"
-                              @click="selectedOffense = style.value"
+                    <!-- Content -->
+                    <main class="qb-modal-content">
+                      <!-- Score Display - Cosmic Theme (hidden in substitutions view) -->
+                      <div v-show="!showSubstitutionsView" class="qb-score-card card-cosmic">
+                        <div class="qb-matchup">
+                          <!-- Away Team -->
+                          <div class="qb-matchup-team">
+                            <div
+                              class="qb-team-badge"
+                              :style="{ backgroundColor: awayTeam?.primary_color || '#666' }"
                             >
-                              {{ style.label }}
-                            </button>
+                              <span class="qb-badge-abbr">{{ awayTeam?.abbreviation }}</span>
+                              <span class="qb-badge-record">{{ awayTeamRecord }}</span>
+                            </div>
+                            <span class="qb-team-name">{{ awayTeam?.name }}</span>
+                          </div>
+
+                          <!-- Score -->
+                          <div class="qb-score-center">
+                            <div class="qb-scores">
+                              <span class="qb-score away">{{ currentAwayScore }}</span>
+                              <span class="qb-score-divider">-</span>
+                              <span class="qb-score home">{{ currentHomeScore }}</span>
+                            </div>
+                          </div>
+
+                          <!-- Home Team -->
+                          <div class="qb-matchup-team">
+                            <div
+                              class="qb-team-badge"
+                              :style="{ backgroundColor: homeTeam?.primary_color || '#666' }"
+                            >
+                              <span class="qb-badge-abbr">{{ homeTeam?.abbreviation }}</span>
+                              <span class="qb-badge-record">{{ homeTeamRecord }}</span>
+                            </div>
+                            <span class="qb-team-name">{{ homeTeam?.name }}</span>
                           </div>
                         </div>
-                        <div class="strategy-group">
-                          <span class="strategy-label">Defense</span>
-                          <div class="strategy-pills">
-                            <button
-                              v-for="style in defensiveStyles"
-                              :key="style.value"
-                              class="strategy-pill"
-                              :class="{ active: selectedDefense === style.value }"
-                              @click="selectedDefense = style.value"
-                            >
-                              {{ style.label }}
-                            </button>
+                      </div>
+
+                      <!-- Coaching Adjustments (only in live mode during quarter breaks, not game complete) -->
+                      <div v-if="isLiveMode && !gameJustCompleted && completedQuarter < 4" class="qb-coaching-section">
+                        <!-- Main View -->
+                        <template v-if="!showSubstitutionsView">
+                          <!-- Strategy Settings - Full Width -->
+                          <div class="qb-strategy-card">
+                            <div class="strategy-row">
+                              <div class="strategy-group">
+                                <span class="strategy-label">Offense</span>
+                                <div class="strategy-pills">
+                                  <button
+                                    v-for="style in offensiveStyles"
+                                    :key="style.value"
+                                    class="strategy-pill"
+                                    :class="{ active: selectedOffense === style.value }"
+                                    @click="selectedOffense = style.value"
+                                  >
+                                    {{ style.label }}
+                                  </button>
+                                </div>
+                              </div>
+                              <div class="strategy-group">
+                                <span class="strategy-label">Defense</span>
+                                <div class="strategy-pills">
+                                  <button
+                                    v-for="style in defensiveStyles"
+                                    :key="style.value"
+                                    class="strategy-pill"
+                                    :class="{ active: selectedDefense === style.value }"
+                                    @click="selectedDefense = style.value"
+                                  >
+                                    {{ style.label }}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <!-- Continue Button -->
-                        <div class="strategy-continue">
-                          <BaseButton
-                            variant="primary"
-                            size="md"
-                            class="continue-btn"
-                            :loading="simulating"
+
+                          <!-- Substitutions Button -->
+                          <button
+                            class="qb-subs-btn"
+                            @click="showSubstitutionsView = true"
+                          >
+                            <Users :size="18" />
+                            <span>Substitutions</span>
+                          </button>
+
+                          <!-- Continue Button -->
+                          <button
+                            class="qb-continue-btn"
+                            :disabled="simulating"
                             @click="handleQuarterBreakContinue"
                           >
-                            <span>{{ simulating ? 'Simulating...' : 'Continue' }}</span>
-                            <ChevronRight v-if="!simulating" :size="18" />
-                          </BaseButton>
-                        </div>
-                      </div>
-
-                      <!-- Lineup Cards -->
-                      <div class="lineup-cards-section">
-                        <div class="lineup-cards-header">
-                          <span class="lineup-cards-title">Starting Lineup</span>
-                          <span class="lineup-cards-hint">Tap swap icon to make changes</span>
-                        </div>
-                        <div class="lineup-cards-grid">
-                          <div
-                            v-for="slot in currentStartersWithStats"
-                            :key="slot.slotPosition"
-                            class="lineup-card"
-                            :class="{
-                              empty: !slot.player,
-                              'dropdown-open': expandedSwapPlayer === slot.slotIndex,
-                              [slot.player ? getRatingClass(slot.player.overall_rating) : '']: !!slot.player
-                            }"
-                          >
-                            <!-- Empty Slot -->
-                            <template v-if="!slot.player">
-                              <div class="lineup-card-empty">
-                                <span class="slot-position-badge">{{ slot.slotPosition }}</span>
-                                <span class="empty-text">Empty</span>
-                                <button class="swap-btn" @click="toggleSwapDropdown(slot.slotIndex)">
-                                  <ArrowUpDown :size="14" />
-                                </button>
-                              </div>
-                            </template>
-
-                            <!-- Filled Slot -->
+                            <span v-if="simulating" class="qb-btn-loading"></span>
                             <template v-else>
-                              <div class="lineup-card-header">
-                                <span class="slot-position-badge" :style="{ backgroundColor: getPositionColor(slot.slotPosition) }">
-                                  {{ slot.slotPosition }}
-                                </span>
-                                <div class="lineup-player-info">
-                                  <span class="lineup-player-name">{{ slot.player.name }}</span>
-                                  <span class="lineup-inline-stats">
-                                    {{ slot.player.points || 0 }}p {{ slot.player.rebounds || 0 }}r {{ slot.player.assists || 0 }}a
-                                  </span>
-                                </div>
-                                <div class="lineup-card-actions">
-                                  <button
-                                    class="swap-btn"
-                                    :class="{ active: expandedSwapPlayer === slot.slotIndex }"
-                                    @click="toggleSwapDropdown(slot.slotIndex)"
-                                  >
-                                    <ArrowUpDown :size="14" />
-                                  </button>
-                                  <span class="lineup-player-ovr">{{ slot.player.overall_rating }}</span>
-                                </div>
-                              </div>
+                              <ChevronRight :size="20" />
+                              <span>Continue</span>
                             </template>
+                          </button>
+                        </template>
 
-                            <!-- Swap Dropdown -->
-                            <Transition name="dropdown-slide">
-                              <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown">
-                                <div class="swap-dropdown-header">
-                                  {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
-                                </div>
-                                <div class="swap-dropdown-list">
-                                  <!-- Available bench players -->
-                                  <button
-                                    v-for="candidate in getSwapCandidates(slot.slotPosition, slot.slotIndex)"
-                                    :key="candidate.player_id"
-                                    class="swap-option"
-                                    :class="{ injured: candidate.is_injured || candidate.isInjured }"
-                                    @click="swapPlayerIn(slot.slotIndex, candidate.player_id)"
-                                  >
-                                    <ArrowUpDown :size="12" class="swap-option-icon" />
-                                    <span
-                                      class="swap-option-pos"
-                                      :style="{ backgroundColor: getPositionColor(candidate.position) }"
-                                    >
-                                      {{ candidate.position }}
-                                    </span>
-                                    <span class="swap-option-name">{{ candidate.name }}</span>
-                                    <span class="swap-option-stats">
-                                      {{ candidate.points || 0 }}p {{ candidate.rebounds || 0 }}r
-                                    </span>
-                                    <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
-                                  </button>
-                                  <div v-if="getSwapCandidates(slot.slotPosition, slot.slotIndex).length === 0" class="swap-empty">
-                                    No eligible players
+                        <!-- Substitutions View -->
+                        <template v-else>
+                          <!-- Back Button -->
+                          <button
+                            class="qb-back-btn"
+                            @click="showSubstitutionsView = false; expandedSwapPlayer = null"
+                          >
+                            <ArrowLeft :size="18" />
+                            <span>Back</span>
+                          </button>
+
+                          <!-- Lineup Cards -->
+                          <div class="lineup-cards-section">
+                            <div class="lineup-cards-header">
+                              <span class="lineup-cards-title">Current Lineup</span>
+                              <span class="lineup-cards-hint">Tap swap icon to make changes</span>
+                            </div>
+                            <div class="lineup-cards-grid">
+                              <div
+                                v-for="slot in currentStartersWithStats"
+                                :key="slot.slotPosition"
+                                class="lineup-card"
+                                :class="{
+                                  empty: !slot.player,
+                                  'dropdown-open': expandedSwapPlayer === slot.slotIndex,
+                                  [slot.player ? getRatingClass(slot.player.overall_rating) : '']: !!slot.player
+                                }"
+                              >
+                                <!-- Empty Slot -->
+                                <template v-if="!slot.player">
+                                  <div class="lineup-card-empty">
+                                    <span class="slot-position-badge">{{ slot.slotPosition }}</span>
+                                    <span class="empty-text">Empty</span>
+                                    <button class="swap-btn" @click="toggleSwapDropdown(slot.slotIndex)">
+                                      <ArrowUpDown :size="14" />
+                                    </button>
                                   </div>
-                                </div>
+                                </template>
+
+                                <!-- Filled Slot -->
+                                <template v-else>
+                                  <div class="lineup-card-header">
+                                    <span class="slot-position-badge" :style="{ backgroundColor: getPositionColor(slot.slotPosition) }">
+                                      {{ slot.slotPosition }}
+                                    </span>
+                                    <div class="lineup-player-info">
+                                      <span class="lineup-player-name">{{ slot.player.name }}</span>
+                                      <span class="lineup-inline-stats">
+                                        {{ slot.player.points || 0 }}p {{ slot.player.rebounds || 0 }}r {{ slot.player.assists || 0 }}a
+                                      </span>
+                                    </div>
+                                    <div class="lineup-card-actions">
+                                      <button
+                                        class="swap-btn"
+                                        :class="{ active: expandedSwapPlayer === slot.slotIndex }"
+                                        @click="toggleSwapDropdown(slot.slotIndex)"
+                                      >
+                                        <ArrowUpDown :size="14" />
+                                      </button>
+                                      <span class="lineup-player-ovr">{{ slot.player.overall_rating }}</span>
+                                    </div>
+                                  </div>
+                                </template>
+
+                                <!-- Swap Dropdown -->
+                                <Transition name="dropdown-slide">
+                                  <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown">
+                                    <div class="swap-dropdown-header">
+                                      {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
+                                    </div>
+                                    <div class="swap-dropdown-list">
+                                      <!-- Available bench players -->
+                                      <button
+                                        v-for="candidate in getSwapCandidates(slot.slotPosition, slot.slotIndex)"
+                                        :key="candidate.player_id"
+                                        class="swap-option"
+                                        :class="{ injured: candidate.is_injured || candidate.isInjured }"
+                                        @click="swapPlayerIn(slot.slotIndex, candidate.player_id)"
+                                      >
+                                        <ArrowUpDown :size="12" class="swap-option-icon" />
+                                        <span
+                                          class="swap-option-pos"
+                                          :style="{ backgroundColor: getPositionColor(candidate.position) }"
+                                        >
+                                          {{ candidate.position }}
+                                        </span>
+                                        <span class="swap-option-name">{{ candidate.name }}</span>
+                                        <span class="swap-option-stats">
+                                          {{ candidate.points || 0 }}p {{ candidate.rebounds || 0 }}r
+                                        </span>
+                                        <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
+                                      </button>
+                                      <div v-if="getSwapCandidates(slot.slotPosition, slot.slotIndex).length === 0" class="swap-empty">
+                                        No eligible players
+                                      </div>
+                                    </div>
+                                  </div>
+                                </Transition>
                               </div>
-                            </Transition>
+                            </div>
                           </div>
+                        </template>
+                      </div>
+
+                      <!-- Replay mode: show continue button (only for Q1-Q3) -->
+                      <div v-if="!isLiveMode && !gameJustCompleted && completedQuarter < 4" class="qb-replay-mode">
+                        <p class="qb-replay-hint">Replay mode - no adjustments available</p>
+                        <button
+                          class="qb-replay-btn"
+                          @click="handleQuarterBreakContinue"
+                        >
+                          Continue
+                        </button>
+                      </div>
+
+                      <!-- Game Complete: Evolution Summary (use completedQuarter >= 4 as fallback) -->
+                      <div v-if="gameJustCompleted || completedQuarter >= 4" class="qb-game-complete">
+                        <!-- Evolution Summary for User's Team -->
+                        <div v-if="isUserGame" class="evolution-section">
+                          <EvolutionSummary
+                            :evolution="evolutionData"
+                            :team-key="userIsHome ? 'home' : 'away'"
+                            :team-name="userTeam?.name || 'Your Team'"
+                            :loading="!evolutionData"
+                            :limit="5"
+                          />
                         </div>
                       </div>
-                    </div>
-
-                    <!-- Replay mode: show continue button (only for Q1-Q3) -->
-                    <template v-if="!isLiveMode && !gameJustCompleted && completedQuarter < 4">
-                      <p class="break-hint">Replay mode - no adjustments available</p>
-                      <BaseButton
-                        variant="secondary"
-                        size="md"
-                        @click="handleQuarterBreakContinue"
-                      >
-                        Continue
-                      </BaseButton>
-                    </template>
-
-                    <!-- Game Complete: View Box Score Button (use completedQuarter >= 4 as fallback) -->
-                    <template v-if="gameJustCompleted || completedQuarter >= 4">
-                      <!-- Evolution Summary for User's Team -->
-                      <div v-if="isUserGame" class="evolution-section">
-                        <EvolutionSummary
-                          :evolution="evolutionData"
-                          :team-key="userIsHome ? 'home' : 'away'"
-                          :team-name="userTeam?.name || 'Your Team'"
-                          :loading="!evolutionData"
-                        />
-                      </div>
-
-                      <p class="break-hint">View the full box score and game statistics</p>
-                      <BaseButton
-                        variant="primary"
-                        size="lg"
-                        @click="viewBoxScore"
-                      >
-                        View Box Score
-                      </BaseButton>
-                    </template>
+                    </main>
                   </div>
                 </div>
               </Transition>
@@ -3066,7 +3233,7 @@ onUnmounted(() => {
 }
 
 .game-header-card .team-score-lg {
-  color: var(--color-text-primary);
+  color: #000000;
   text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3);
 }
 
@@ -3079,9 +3246,12 @@ onUnmounted(() => {
 
 [data-theme="light"] .game-header-card .vs-text,
 [data-theme="light"] .game-header-card .final-text,
-[data-theme="light"] .game-header-card .in-progress-text,
-[data-theme="light"] .game-header-card .team-score-lg {
+[data-theme="light"] .game-header-card .in-progress-text {
   color: white;
+}
+
+[data-theme="light"] .game-header-card .team-score-lg {
+  color: #000000;
 }
 
 [data-theme="light"] .game-header-card .user-game-badge {
@@ -3456,76 +3626,360 @@ onUnmounted(() => {
   }
 }
 
-/* Quarter Break Overlay */
-.quarter-break-overlay {
+/* Quarter Break Modal - New Design */
+.qb-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.92);
-  backdrop-filter: blur(12px);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
   z-index: 9999;
-  overflow-y: auto;
-  padding: 20px;
-}
-
-.quarter-break-content {
-  text-align: center;
-  padding: 24px;
-  max-width: 100%;
-  margin: auto 0;
-}
-
-.quarter-break-title {
-  font-size: 1.75rem;
-  font-weight: 700;
-  margin-bottom: 24px;
-  color: var(--color-primary);
-}
-
-.quarter-break-title.game-complete-title {
-  font-size: 2.5rem;
-  margin-bottom: 8px;
-  color: var(--color-success);
-}
-
-.game-complete-subtitle {
-  font-size: 1rem;
-  color: var(--color-secondary);
-  margin-bottom: 24px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-
-.quarter-break-score {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 32px;
-  margin-bottom: 24px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
 }
 
-.break-team {
+.qb-modal-container {
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.qb-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.qb-modal-header.game-complete-header {
+  justify-content: space-between;
+}
+
+.qb-header-btn {
+  padding: 8px 16px;
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-lg);
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.qb-header-btn:hover {
+  background: var(--color-primary-dark);
+}
+
+.qb-modal-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.qb-modal-title.game-complete {
+  font-size: 2rem;
+  color: var(--color-success);
+}
+
+.qb-modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.qb-modal-content::-webkit-scrollbar {
+  display: none;
+}
+
+/* Score Display - Cosmic Card */
+.qb-score-card {
+  margin-bottom: 16px;
+}
+
+.qb-score-card.card-cosmic {
+  background: var(--gradient-cosmic);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+.qb-score-card.card-cosmic::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(1.5px 1.5px at 10% 20%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 30% 60%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1.5px 1.5px at 50% 10%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 70% 40%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1.5px 1.5px at 90% 70%, rgba(255,255,255,0.4), transparent);
+  pointer-events: none;
+}
+
+.qb-matchup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.qb-matchup-team {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.qb-team-badge {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  border: 3px solid rgba(255, 255, 255, 0.3);
+}
+
+.qb-badge-abbr {
+  font-size: 1rem;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  line-height: 1;
+}
+
+.qb-badge-record {
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  line-height: 1;
+}
+
+.qb-team-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #1a1520;
+  text-align: center;
+  max-width: 100px;
+}
+
+.qb-score-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.qb-scores {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 
-.break-team-name {
-  font-size: 0.875rem;
-  color: var(--color-secondary);
-}
-
-.break-team-score {
-  font-size: 3rem;
+.qb-score {
+  font-size: 2.25rem;
   font-weight: 800;
-  font-family: monospace;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  color: #1a1520;
+  min-width: 48px;
+  text-align: center;
 }
 
-.break-divider {
-  font-size: 2rem;
-  color: var(--color-secondary);
+.qb-score-divider {
+  font-size: 1.5rem;
+  color: rgba(26, 21, 32, 0.4);
+  font-weight: 300;
+}
+
+/* Coaching Section - Full Width */
+.qb-coaching-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.qb-strategy-card {
+  padding: 16px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+}
+
+.strategy-row {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+}
+
+/* Substitutions Button - Nebula Style */
+.qb-subs-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 24px;
+  background: var(--gradient-nebula, linear-gradient(135deg, #667eea 0%, #764ba2 100%));
+  border: none;
+  border-radius: var(--radius-xl);
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.qb-subs-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 60% 70%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 80% 20%, rgba(255,255,255,0.3), transparent);
+  pointer-events: none;
+}
+
+.qb-subs-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+/* Back Button */
+.qb-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 12px;
+}
+
+.qb-back-btn:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+/* Continue Button */
+.qb-continue-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 24px;
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-xl);
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.qb-continue-btn:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.qb-continue-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.qb-btn-loading {
+  width: 20px;
+  height: 20px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Replay Mode */
+.qb-replay-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+}
+
+.qb-replay-hint {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  margin: 0;
+}
+
+.qb-replay-btn {
+  padding: 12px 32px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  color: var(--color-text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.qb-replay-btn:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+/* Game Complete */
+.qb-game-complete {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
 }
 
 .evolution-section {
@@ -3533,130 +3987,18 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
-.break-hint {
-  font-size: 0.875rem;
-  color: var(--color-secondary);
-  margin-bottom: 24px;
-  font-style: italic;
-}
-
-/* Coaching Adjustments in Quarter Break */
-.coaching-adjustments {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
-  justify-content: center;
-  margin-bottom: 24px;
-}
-
-.adjustment-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  text-align: left;
-}
-
-.adjustment-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.adjustment-select {
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
-  color: white;
-  font-size: 0.875rem;
-  min-width: 160px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.adjustment-select:hover {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-.adjustment-select:focus {
-  outline: none;
-  border-color: var(--color-primary);
-}
-
-.adjustment-select option {
-  background: #1a1a2e;
-  color: white;
-}
-
-.lineup-adjustments {
-  width: 100%;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.lineup-adjustments .adjustment-row {
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.lineup-adjustments .adjustment-label {
-  width: 32px;
-  text-align: right;
-}
-
-.lineup-adjustments .adjustment-select {
-  min-width: 200px;
-}
-
-.adjustment-section-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 12px;
-  text-align: center;
-}
-
-.injured-note {
-  font-size: 0.7rem;
-  color: var(--color-error);
-  text-align: center;
-  margin-bottom: 8px;
-  opacity: 0.8;
-}
-
-/* Quarter Break V2 Styles */
-.coaching-adjustments-v2 {
-  width: 100%;
-  max-width: 600px;
-  margin: 0 auto 24px;
-}
-
-.strategy-section {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
+/* Quarter Break Strategy Styles */
 .strategy-group {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
 }
 
 .strategy-label {
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 600;
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   text-align: center;
@@ -3670,12 +4012,12 @@ onUnmounted(() => {
 }
 
 .strategy-pill {
-  padding: 6px 12px;
+  padding: 5px 10px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 20px;
+  border-radius: 16px;
   color: var(--color-text-secondary);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -3693,29 +4035,27 @@ onUnmounted(() => {
   color: white;
 }
 
-.strategy-continue {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
+/* Light mode strategy pills */
+[data-theme="light"] .strategy-pill {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.15);
+  color: var(--color-text-primary);
 }
 
-.strategy-continue .continue-btn {
-  width: 33.333%;
-  min-width: 120px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+[data-theme="light"] .strategy-pill:hover {
+  background: rgba(0, 0, 0, 0.1);
+  border-color: rgba(0, 0, 0, 0.2);
 }
 
-.strategy-continue .continue-btn span {
-  flex-shrink: 0;
+[data-theme="light"] .strategy-pill.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
 }
 
 /* Lineup Cards Section */
 .lineup-cards-section {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  padding-top: 20px;
+  margin-top: 4px;
 }
 
 .lineup-cards-header {
@@ -3992,49 +4332,55 @@ onUnmounted(() => {
 }
 
 /* Light mode adjustments */
-[data-theme="light"] .coaching-adjustments-v2 .strategy-pill {
+[data-theme="light"] .qb-coaching-section .strategy-pill {
   background: rgba(0, 0, 0, 0.05);
   border-color: rgba(0, 0, 0, 0.1);
   color: var(--color-text-secondary);
 }
 
-[data-theme="light"] .coaching-adjustments-v2 .strategy-pill:hover {
+[data-theme="light"] .qb-coaching-section .strategy-pill:hover {
   background: rgba(0, 0, 0, 0.08);
 }
 
-[data-theme="light"] .coaching-adjustments-v2 .lineup-card {
+[data-theme="light"] .qb-coaching-section .lineup-card {
   border-color: rgba(0, 0, 0, 0.1);
 }
 
-[data-theme="light"] .coaching-adjustments-v2 .lineup-card::before {
+[data-theme="light"] .qb-coaching-section .lineup-card::before {
   background:
     radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.08) 0%, transparent 50%),
     radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.05) 0%, transparent 40%);
 }
 
-[data-theme="light"] .coaching-adjustments-v2 .lineup-card.empty {
+[data-theme="light"] .qb-coaching-section .lineup-card.empty {
   border-color: rgba(0, 0, 0, 0.15);
 }
 
-[data-theme="light"] .coaching-adjustments-v2 .lineup-card-header {
+[data-theme="light"] .qb-coaching-section .lineup-card-header {
   background: rgba(0, 0, 0, 0.04);
 }
 
-[data-theme="light"] .coaching-adjustments-v2 .swap-dropdown {
+[data-theme="light"] .qb-coaching-section .swap-dropdown {
   border-top-color: rgba(0, 0, 0, 0.1);
 }
 
-[data-theme="light"] .coaching-adjustments-v2 .swap-dropdown-header {
+[data-theme="light"] .qb-coaching-section .swap-dropdown-header {
   background: rgba(0, 0, 0, 0.04);
   border-bottom-color: rgba(0, 0, 0, 0.08);
 }
 
-[data-theme="light"] .coaching-adjustments-v2 .swap-option {
+[data-theme="light"] .qb-coaching-section .swap-option {
   border-bottom-color: rgba(0, 0, 0, 0.06);
 }
 
-[data-theme="light"] .coaching-adjustments-v2 .swap-option:hover {
+[data-theme="light"] .qb-coaching-section .swap-option:hover {
   background: rgba(0, 0, 0, 0.06);
+}
+
+/* Light mode quarter break modal */
+[data-theme="light"] .qb-strategy-card {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.1);
 }
 
 .fade-enter-active,
@@ -4045,6 +4391,37 @@ onUnmounted(() => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Quarter break modal scale animation */
+.fade-enter-active .qb-modal-container {
+  animation: qbScaleIn 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.fade-leave-active .qb-modal-container {
+  animation: qbScaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes qbScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes qbScaleOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
 }
 
 .matchup-grid {
@@ -4889,6 +5266,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding-bottom: 12px;
+  width: 100%;
 }
 
 .play-pause-btn {

@@ -11,6 +11,9 @@ use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\GameController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\SeasonController;
+use App\Http\Controllers\TradeController;
+use App\Http\Controllers\PlayoffController;
+use App\Http\Controllers\FinanceController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -92,6 +95,32 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/season', [SeasonController::class, 'show']);
         Route::post('/season/advance', [SeasonController::class, 'advancePhase']);
         Route::post('/season/offseason', [SeasonController::class, 'processOffseason']);
+
+        // Trade center
+        Route::get('/trade/teams', [TradeController::class, 'getTeams']);
+        Route::get('/trade/teams/{team}', [TradeController::class, 'getTeamDetails']);
+        Route::get('/trade/user-assets', [TradeController::class, 'getUserAssets']);
+        Route::post('/trade/validate', [TradeController::class, 'validateTrade']);
+        Route::post('/trade/propose', [TradeController::class, 'proposeTrade']);
+        Route::post('/trade/execute', [TradeController::class, 'executeTrade']);
+        Route::get('/trade/history', [TradeController::class, 'getTradeHistory']);
+
+        // Playoffs
+        Route::get('/playoffs/bracket', [PlayoffController::class, 'getBracket']);
+        Route::post('/playoffs/generate', [PlayoffController::class, 'generateBracket']);
+        Route::get('/playoffs/series/{seriesId}', [PlayoffController::class, 'getSeries']);
+        Route::get('/playoffs/check-regular-season-end', [PlayoffController::class, 'checkRegularSeasonEnd']);
+        Route::get('/playoffs/next-series', [PlayoffController::class, 'getNextUserSeries']);
+        Route::post('/playoffs/generate-round-schedule', [PlayoffController::class, 'generateRoundSchedule']);
+
+        // Finances
+        Route::get('/finances/summary', [FinanceController::class, 'summary']);
+        Route::get('/finances/roster', [FinanceController::class, 'rosterContracts']);
+        Route::get('/finances/free-agents', [FinanceController::class, 'freeAgents']);
+        Route::get('/finances/transactions', [FinanceController::class, 'transactions']);
+        Route::post('/finances/resign/{player}', [FinanceController::class, 'resignPlayer']);
+        Route::post('/finances/sign/{playerId}', [FinanceController::class, 'signFreeAgent']);
+        Route::post('/finances/drop/{player}', [FinanceController::class, 'dropPlayer']);
     });
 });
 

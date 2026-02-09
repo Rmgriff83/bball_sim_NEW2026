@@ -9,6 +9,7 @@ use App\Models\Team;
 use App\Services\CampaignSeasonService;
 use App\Services\GameSimulationService;
 use App\Services\AILineupService;
+use App\Services\PlayoffService;
 use App\Services\PlayerEvolution\PlayerEvolutionService;
 use App\Services\RewardService;
 use Carbon\Carbon;
@@ -22,7 +23,8 @@ class GameController extends Controller
         private GameSimulationService $simulationService,
         private PlayerEvolutionService $evolutionService,
         private AILineupService $aiLineupService,
-        private RewardService $rewardService
+        private RewardService $rewardService,
+        private PlayoffService $playoffService
     ) {}
 
     /**
@@ -229,6 +231,12 @@ class GameController extends Controller
         // Update coach stats
         $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
 
+        // Process playoff game completion if applicable
+        $playoffUpdate = null;
+        if ($game['isPlayoff'] ?? false) {
+            $playoffUpdate = $this->processPlayoffGameCompletion($campaign, $game, $result['home_score'], $result['away_score']);
+        }
+
         // Advance campaign date
         $campaign->update(['current_date' => Carbon::parse($game['gameDate'])->addDay()]);
 
@@ -246,6 +254,11 @@ class GameController extends Controller
         // Include info about simulated days if any
         if (!empty($simulatedDays)) {
             $response['simulated_days'] = $simulatedDays;
+        }
+
+        // Include playoff update if applicable
+        if ($playoffUpdate) {
+            $response['playoffUpdate'] = $playoffUpdate;
         }
 
         return response()->json($response);
@@ -737,6 +750,12 @@ class GameController extends Controller
                 'rewards' => $rewardSummary,
             ], true);
 
+            // Process playoff game completion if applicable
+            $playoffUpdate = null;
+            if ($game['isPlayoff'] ?? false) {
+                $playoffUpdate = $this->processPlayoffGameCompletion($campaign, $game, $finalResult['home_score'], $finalResult['away_score']);
+            }
+
             // Simulate remaining games on this day
             $gameDate = $game['gameDate'];
             $allGames = $this->seasonService->getGamesByDate($campaign->id, $year, $gameDate);
@@ -794,12 +813,17 @@ class GameController extends Controller
 
                 // Update coach stats
                 $this->updateCoachStats($otherHomeTeam->id, $otherAwayTeam->id, $simResult['home_score'], $simResult['away_score'], $otherGame['isPlayoff'] ?? false);
+
+                // Process playoff game completion for other games if applicable
+                if ($otherGame['isPlayoff'] ?? false) {
+                    $this->processPlayoffGameCompletion($campaign, $otherGame, $simResult['home_score'], $simResult['away_score']);
+                }
             }
 
             // Advance campaign date
             $campaign->update(['current_date' => Carbon::parse($game['gameDate'])->addDay()]);
 
-            return response()->json([
+            $response = [
                 'message' => 'Game complete',
                 'quarter' => $result['quarterResult']['quarter'],
                 'isGameComplete' => true,
@@ -808,7 +832,14 @@ class GameController extends Controller
                 ]),
                 'rewards' => $rewardSummary,
                 ...$result['quarterResult'],
-            ]);
+            ];
+
+            // Include playoff update if applicable
+            if ($playoffUpdate) {
+                $response['playoffUpdate'] = $playoffUpdate;
+            }
+
+            return response()->json($response);
         }
 
         // Game continues - save updated state
@@ -911,6 +942,69 @@ class GameController extends Controller
     }
 
     /**
+     * Process playoff game completion - update series, advance winners, persist awards.
+     * Returns playoff update data to include in response.
+     */
+    private function processPlayoffGameCompletion(Campaign $campaign, array $game, int $homeScore, int $awayScore): ?array
+    {
+        if (!($game['isPlayoff'] ?? false)) {
+            return null;
+        }
+
+        $year = $campaign->currentSeason?->year ?? 2025;
+
+        // Update series with game result
+        $seriesUpdate = $this->playoffService->updateSeriesAfterGame($campaign, $game, $homeScore, $awayScore);
+
+        if (!$seriesUpdate) {
+            return null;
+        }
+
+        $result = [
+            'seriesId' => $seriesUpdate['seriesId'],
+            'series' => $seriesUpdate['series'],
+            'seriesComplete' => $seriesUpdate['seriesComplete'],
+            'round' => $seriesUpdate['round'],
+        ];
+
+        if ($seriesUpdate['seriesComplete']) {
+            $result['winner'] = $seriesUpdate['winner'];
+            $result['seriesMVP'] = $seriesUpdate['seriesMVP'];
+
+            // Persist MVP awards
+            if ($seriesUpdate['seriesMVP']) {
+                $mvpPlayerId = $seriesUpdate['seriesMVP']['playerId'];
+
+                if ($seriesUpdate['round'] === 3) {
+                    // Conference Finals MVP
+                    $result['isConferenceFinals'] = true;
+                    $this->playoffService->persistPlayerAward($campaign, $mvpPlayerId, 'conference_finals_mvp', $year);
+                } elseif ($seriesUpdate['round'] === 4) {
+                    // Finals MVP
+                    $result['isFinals'] = true;
+                    $result['isChampion'] = true;
+                    $this->playoffService->persistPlayerAward($campaign, $mvpPlayerId, 'finals_mvp', $year);
+
+                    // Award championships to entire roster
+                    $winnerId = $seriesUpdate['winner']['teamId'];
+                    $this->playoffService->persistChampionshipToRoster($campaign, $winnerId, $year);
+                }
+            }
+
+            // Advance winner to next round
+            $this->playoffService->advanceWinnerToNextRound($campaign, $seriesUpdate);
+
+            // Generate schedule for next round if needed
+            $nextRound = $seriesUpdate['round'] + 1;
+            if ($nextRound <= 4) {
+                $this->playoffService->generatePlayoffSchedule($campaign, $nextRound);
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * Simulate all games for a given day (helper method).
      * Returns summary of simulated games.
      */
@@ -965,13 +1059,25 @@ class GameController extends Controller
             // Update coach stats
             $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
 
-            $results[] = [
+            // Process playoff game completion if applicable
+            $playoffUpdate = null;
+            if ($game['isPlayoff'] ?? false) {
+                $playoffUpdate = $this->processPlayoffGameCompletion($campaign, $game, $result['home_score'], $result['away_score']);
+            }
+
+            $gameResult = [
                 'game_id' => $game['id'],
                 'home_team' => $homeTeam->name,
                 'away_team' => $awayTeam->name,
                 'home_score' => $result['home_score'],
                 'away_score' => $result['away_score'],
             ];
+
+            if ($playoffUpdate) {
+                $gameResult['playoffUpdate'] = $playoffUpdate;
+            }
+
+            $results[] = $gameResult;
         }
 
         // Check for weekly/monthly evolution updates

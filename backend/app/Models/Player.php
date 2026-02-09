@@ -68,6 +68,7 @@ class Player extends Model
         'all_star_selections',
         'mvp_awards',
         'finals_mvp_awards',
+        'conference_finals_mvp_awards',
         'seasons_played',
     ];
 
@@ -121,6 +122,7 @@ class Player extends Model
         'all_star_selections' => 'integer',
         'mvp_awards' => 'integer',
         'finals_mvp_awards' => 'integer',
+        'conference_finals_mvp_awards' => 'integer',
         'seasons_played' => 'integer',
     ];
 

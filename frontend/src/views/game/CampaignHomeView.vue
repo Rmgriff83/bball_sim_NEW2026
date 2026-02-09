@@ -6,9 +6,14 @@ import { useTeamStore } from '@/stores/team'
 import { useGameStore } from '@/stores/game'
 import { useLeagueStore } from '@/stores/league'
 import { useToastStore } from '@/stores/toast'
+import { usePlayoffStore } from '@/stores/playoff'
 import { LoadingSpinner, BaseModal } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings } from 'lucide-vue-next'
+import SeasonEndModal from '@/components/playoffs/SeasonEndModal.vue'
+import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
+import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
+import PlayoffBracket from '@/components/playoffs/PlayoffBracket.vue'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,8 +22,10 @@ const teamStore = useTeamStore()
 const gameStore = useGameStore()
 const leagueStore = useLeagueStore()
 const toastStore = useToastStore()
+const playoffStore = usePlayoffStore()
 
 const showSimulateModal = ref(false)
+const showPlayoffBracket = ref(false)
 const showLineupWarningModal = ref(false)
 const pendingGameAction = ref(null) // 'simulate' or gameId for play
 
@@ -196,10 +203,14 @@ onMounted(async () => {
   if (hasCachedData) {
     // Refresh in background, don't wait
     fetchAll.catch(err => console.error('Failed to refresh campaign:', err))
+    // Also check playoff status in background
+    checkPlayoffStatus()
   } else {
     // No cached data, wait for fetch and show loading
     try {
       await fetchAll
+      // Check playoff status after initial load
+      await checkPlayoffStatus()
     } catch (err) {
       console.error('Failed to load campaign:', err)
     } finally {
@@ -207,6 +218,59 @@ onMounted(async () => {
     }
   }
 })
+
+// Check if regular season ended and handle playoffs
+async function checkPlayoffStatus() {
+  try {
+    await playoffStore.checkRegularSeasonEnd(campaignId.value)
+    // If bracket exists, also fetch it
+    if (playoffStore.bracketGenerated) {
+      await playoffStore.fetchBracket(campaignId.value)
+    }
+  } catch (err) {
+    console.error('Failed to check playoff status:', err)
+  }
+}
+
+// Handle season end modal continue
+async function handleSeasonEndContinue() {
+  playoffStore.closeSeasonEndModal()
+
+  if (playoffStore.userQualified) {
+    // Generate bracket and enter playoffs
+    const loadingToastId = toastStore.showLoading('Generating playoff bracket...')
+    try {
+      await playoffStore.generateBracket(campaignId.value)
+      toastStore.removeMinimalToast(loadingToastId)
+      toastStore.showSuccess('Playoffs have begun!')
+      showPlayoffBracket.value = true
+    } catch (err) {
+      toastStore.removeMinimalToast(loadingToastId)
+      toastStore.showError('Failed to generate bracket')
+    }
+  } else {
+    // Team didn't qualify - advance to offseason
+    toastStore.showSuccess('Advancing to offseason...')
+  }
+}
+
+// Handle playoff series result modal
+function handleSeriesResultClose() {
+  playoffStore.closeSeriesResultModal()
+  // Refresh bracket to show updated state
+  playoffStore.fetchBracket(campaignId.value)
+}
+
+// Handle championship modal
+function handleChampionshipClose() {
+  playoffStore.closeChampionshipModal()
+  toastStore.showSuccess('Congratulations, Champion!')
+}
+
+// Toggle playoff bracket view
+function togglePlayoffBracket() {
+  showPlayoffBracket.value = !showPlayoffBracket.value
+}
 
 function navigateToRoster() {
   router.push(`/campaign/${campaignId.value}/team`)
@@ -278,6 +342,11 @@ async function handleConfirmSimulate() {
       })
     }
 
+    // Handle playoff update if present
+    if (response.playoffUpdate) {
+      playoffStore.handlePlayoffUpdate(response.playoffUpdate)
+    }
+
     // Refresh campaign data after simulation
     await Promise.all([
       campaignStore.fetchCampaign(campaignId.value),
@@ -285,6 +354,9 @@ async function handleConfirmSimulate() {
       leagueStore.fetchStandings(campaignId.value),
       gameStore.fetchGames(campaignId.value)
     ])
+
+    // Check playoff status after simulation
+    await checkPlayoffStatus()
   } catch (err) {
     // Remove loading toast and show error
     toastStore.removeMinimalToast(loadingToastId)
@@ -419,7 +491,13 @@ function handleCloseSimulateModal() {
             </div>
             <span class="action-label">GM View</span>
           </button>
-          <button class="action-box" @click="router.push(`/campaign/${campaignId}/league`)">
+          <button v-if="playoffStore.isInPlayoffs" class="action-box playoffs" @click="togglePlayoffBracket">
+            <div class="action-icon">
+              <Trophy :size="24" />
+            </div>
+            <span class="action-label">Bracket</span>
+          </button>
+          <button v-else class="action-box" @click="router.push(`/campaign/${campaignId}/league`)">
             <div class="action-icon">
               <TrendingUp :size="24" />
             </div>
@@ -521,6 +599,46 @@ function handleCloseSimulateModal() {
         </div>
       </div>
     </BaseModal>
+
+    <!-- Playoff Bracket Modal -->
+    <BaseModal
+      :show="showPlayoffBracket"
+      title="Playoff Bracket"
+      size="xl"
+      @close="showPlayoffBracket = false"
+    >
+      <PlayoffBracket
+        :bracket="playoffStore.bracket"
+        :user-team-id="team?.id"
+        @select-series="(series) => console.log('Selected series:', series)"
+      />
+    </BaseModal>
+
+    <!-- Season End Modal -->
+    <SeasonEndModal
+      :show="playoffStore.showSeasonEndModal"
+      :user-status="playoffStore.userStatus"
+      :user-team="team"
+      @close="playoffStore.closeSeasonEndModal()"
+      @continue="handleSeasonEndContinue"
+    />
+
+    <!-- Series Result Modal -->
+    <SeriesResultModal
+      :show="playoffStore.showSeriesResultModal"
+      :series-result="playoffStore.seriesResult"
+      :user-team-id="team?.id"
+      @close="handleSeriesResultClose"
+    />
+
+    <!-- Championship Modal -->
+    <ChampionshipModal
+      :show="playoffStore.showChampionshipModal"
+      :series-result="playoffStore.seriesResult"
+      :year="campaign?.current_season?.year"
+      :user-team-id="team?.id"
+      @close="handleChampionshipClose"
+    />
   </div>
 </template>
 
@@ -765,6 +883,15 @@ function handleCloseSimulateModal() {
 
 .action-box:hover .action-label {
   color: var(--color-text-primary);
+}
+
+.action-box.playoffs .action-icon {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(255, 140, 0, 0.15));
+  color: #ffd700;
+}
+
+.action-box.playoffs .action-label {
+  color: #ffd700;
 }
 
 .btn-loading {
