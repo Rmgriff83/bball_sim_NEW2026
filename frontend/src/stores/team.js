@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/composables/useApi'
+import { campaignCacheService } from '@/services/CampaignCacheService'
 
 export const useTeamStore = defineStore('team', () => {
   // State
@@ -58,6 +59,14 @@ export const useTeamStore = defineStore('team', () => {
       team.value = response.data.team
       roster.value = response.data.roster
       coach.value = response.data.coach
+
+      // Update cache with team/roster data
+      await campaignCacheService.updateCampaign(campaignId, {
+        team: response.data.team,
+        roster: response.data.roster,
+        coach: response.data.coach,
+      })
+
       return response.data
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to fetch team'
@@ -90,6 +99,12 @@ export const useTeamStore = defineStore('team', () => {
         starters,
         rotation,
       })
+
+      // Mark cache as dirty (lineup changed)
+      await campaignCacheService.updateCampaign(campaignId, {
+        lineup: { starters, rotation }
+      })
+
       return response.data
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to update lineup'

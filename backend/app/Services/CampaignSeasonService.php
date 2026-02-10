@@ -817,4 +817,30 @@ class CampaignSeasonService
             'totalGamesToSimulate' => array_sum(array_map('count', $gamesByDate)),
         ];
     }
+
+    /**
+     * Bulk update standings (for sync operations).
+     */
+    public function updateStandings(int $campaignId, int $year, array $standings): void
+    {
+        $seasonData = $this->loadSeason($campaignId, $year);
+
+        if ($seasonData) {
+            $seasonData['standings'] = $standings;
+            $this->saveSeason($campaignId, $year, $seasonData);
+        }
+    }
+
+    /**
+     * Bulk update player stats (for sync operations).
+     */
+    public function updatePlayerStatsBulk(int $campaignId, int $year, array $playerStats): void
+    {
+        $seasonData = $this->loadSeason($campaignId, $year);
+
+        if ($seasonData) {
+            $seasonData['playerStats'] = $playerStats;
+            $this->saveSeason($campaignId, $year, $seasonData);
+        }
+    }
 }
