@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/composables/useApi'
+import { campaignCacheService } from '@/services/CampaignCacheService'
 
 export const useLeagueStore = defineStore('league', () => {
   // State
@@ -30,12 +31,18 @@ export const useLeagueStore = defineStore('league', () => {
   })
 
   // Actions
-  async function fetchStandings(campaignId) {
+  async function fetchStandings(campaignId, year = null) {
     loading.value = true
     error.value = null
     try {
       const response = await api.get(`/api/campaigns/${campaignId}/standings`)
       standings.value = response.data.standings
+
+      // Update standings in cache
+      if (year) {
+        await campaignCacheService.updateStandings(campaignId, year, standings.value)
+      }
+
       return standings.value
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to fetch standings'

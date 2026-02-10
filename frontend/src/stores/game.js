@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/composables/useApi'
+import { campaignCacheService } from '@/services/CampaignCacheService'
 
 export const useGameStore = defineStore('game', () => {
   // State
@@ -68,7 +69,7 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
-  async function simulateGame(campaignId, gameId, mode = 'animated') {
+  async function simulateGame(campaignId, gameId, mode = 'animated', year = null) {
     simulating.value = true
     error.value = null
     try {
@@ -100,6 +101,14 @@ export const useGameStore = defineStore('game', () => {
         animation_data: response.data.result.animation_data,
         evolution: response.data.result.evolution,
         rewards: response.data.result.rewards,
+      }
+
+      // Update cache with game result
+      if (year) {
+        await campaignCacheService.updateGameResult(campaignId, year, gameId, {
+          home_score: response.data.result.home_score,
+          away_score: response.data.result.away_score,
+        })
       }
 
       return response.data.result

@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/composables/useApi'
+import { campaignCacheService } from '@/services/CampaignCacheService'
+import { useSyncStore } from '@/stores/sync'
 
 export const useCampaignStore = defineStore('campaign', () => {
   // State
@@ -32,24 +34,44 @@ export const useCampaignStore = defineStore('campaign', () => {
     }
   }
 
-  async function fetchCampaign(id) {
+  async function fetchCampaign(id, forceRefresh = false) {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${id}`)
-      currentCampaign.value = {
-        ...response.data.campaign,
-        team: response.data.team,
-        roster: response.data.roster,
-        coach: response.data.coach,
-        season: response.data.season,
-        standings: response.data.standings,
-        upcoming_games: response.data.upcoming_games,
-        news: response.data.news,
+      // Set active campaign for sync
+      const syncStore = useSyncStore()
+      syncStore.setActiveCampaign(id)
+
+      let campaignData = null
+
+      // Force refresh bypasses cache entirely
+      if (forceRefresh) {
+        const response = await api.get(`/api/campaigns/${id}`)
+        campaignData = {
+          ...response.data.campaign,
+          team: response.data.team,
+          roster: response.data.roster,
+          coach: response.data.coach,
+          season: response.data.season,
+          standings: response.data.standings,
+          upcoming_games: response.data.upcoming_games,
+          news: response.data.news,
+        }
+        // Save fresh data to cache
+        await campaignCacheService.saveCampaign(id, campaignData)
+      } else {
+        // Use cache-first strategy (service handles cache + API fallback)
+        campaignData = await campaignCacheService.loadCampaign(id)
       }
+
+      if (!campaignData) {
+        throw new Error('Failed to load campaign')
+      }
+
+      currentCampaign.value = campaignData
       return currentCampaign.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch campaign'
+      error.value = err.response?.data?.message || err.message || 'Failed to fetch campaign'
       throw err
     } finally {
       loading.value = false
@@ -89,6 +111,9 @@ export const useCampaignStore = defineStore('campaign', () => {
       if (currentCampaign.value?.id === id) {
         currentCampaign.value = { ...currentCampaign.value, ...updated }
       }
+
+      // Update cache
+      await campaignCacheService.updateCampaign(id, updated)
 
       return updated
     } catch (err) {

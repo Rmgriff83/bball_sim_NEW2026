@@ -4,11 +4,13 @@ import { useRouter } from 'vue-router'
 import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
+import { useSyncStore } from '@/stores/sync'
 import { GlassCard, BaseButton, FormInput, Badge } from '@/components/ui'
-import { ArrowLeft, Coins, Sparkles, Sun, Moon } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload } from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const syncStore = useSyncStore()
 
 // Theme toggle
 const isDarkMode = ref(document.documentElement.getAttribute('data-theme') !== 'light')
@@ -86,6 +88,10 @@ async function handleLogout() {
   await authStore.logout()
   router.push('/login')
 }
+
+async function saveToCloud() {
+  await syncStore.syncNow()
+}
 </script>
 
 <template>
@@ -154,6 +160,27 @@ async function handleLogout() {
           </div>
         </div>
         <p class="reward-hint">Earn tokens when your team's badge synergies activate during games.</p>
+      </div>
+
+      <!-- Data & Sync Card -->
+      <div class="profile-section">
+        <h3 class="section-title">Data & Sync</h3>
+        <div class="sync-status-row">
+          <div class="sync-info">
+            <Cloud :size="20" />
+            <span>{{ syncStore.lastSyncText }}</span>
+          </div>
+          <span v-if="syncStore.hasPendingChanges" class="pending-badge">Unsaved</span>
+        </div>
+        <BaseButton
+          variant="primary"
+          @click="saveToCloud"
+          :loading="syncStore.isSyncing"
+          class="sync-button"
+        >
+          <CloudUpload :size="16" />
+          Save to Cloud
+        </BaseButton>
       </div>
 
       <!-- Update Profile Card -->
@@ -392,6 +419,36 @@ async function handleLogout() {
 .reward-hint {
   font-size: 0.75rem;
   color: var(--color-text-tertiary);
+}
+
+/* Sync Status */
+.sync-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.sync-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.pending-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  background: rgba(234, 179, 8, 0.2);
+  color: #EAB308;
+  border-radius: var(--radius-lg);
+}
+
+.sync-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 /* Forms */

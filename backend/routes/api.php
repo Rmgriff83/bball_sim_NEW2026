@@ -14,6 +14,7 @@ use App\Http\Controllers\SeasonController;
 use App\Http\Controllers\TradeController;
 use App\Http\Controllers\PlayoffController;
 use App\Http\Controllers\FinanceController;
+use App\Http\Controllers\SyncController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -121,6 +122,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/finances/resign/{player}', [FinanceController::class, 'resignPlayer']);
         Route::post('/finances/sign/{playerId}', [FinanceController::class, 'signFreeAgent']);
         Route::post('/finances/drop/{player}', [FinanceController::class, 'dropPlayer']);
+
+        // Sync (cloud save/load)
+        Route::get('/sync/status', [SyncController::class, 'status']);
+        Route::get('/sync/pull', [SyncController::class, 'pull']);
+        Route::post('/sync/push', [SyncController::class, 'push']);
     });
 });
 
