@@ -38,10 +38,11 @@ export const useLeagueStore = defineStore('league', () => {
       const response = await api.get(`/api/campaigns/${campaignId}/standings`)
       standings.value = response.data.standings
 
-      // Update standings in cache
-      if (year) {
-        await campaignCacheService.updateStandings(campaignId, year, standings.value)
-      }
+      // Get year from response or use current year
+      const seasonYear = year || response.data.year || new Date().getFullYear()
+
+      // Always update standings in cache
+      await campaignCacheService.updateStandings(campaignId, seasonYear, standings.value)
 
       return standings.value
     } catch (err) {

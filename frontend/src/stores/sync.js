@@ -95,6 +95,7 @@ export const useSyncStore = defineStore('sync', () => {
 
   /**
    * Trigger immediate sync (for "Save to Cloud" button)
+   * Push-only: local IndexedDB is always the source of truth
    */
   async function syncNow() {
     if (!activeCampaignId.value) return
@@ -106,11 +107,8 @@ export const useSyncStore = defineStore('sync', () => {
       isSyncing.value = true
       syncError.value = null
 
-      // Push local changes
+      // Push local changes to cloud (push-only, no pull)
       await pushChanges(activeCampaignId.value)
-
-      // Pull remote changes
-      await pullChanges(activeCampaignId.value)
 
       // Update sync timestamp
       lastSyncAt.value = new Date().toISOString()
@@ -245,15 +243,15 @@ export const useSyncStore = defineStore('sync', () => {
 
   /**
    * Queue a background sync check
+   * Now push-only: just pushes local changes if dirty, never pulls
    */
   async function queueSyncCheck(campaignId) {
-    // Check if we need to sync in the background
-    const status = await checkSyncStatus(campaignId)
+    // Only push if we have dirty local changes
+    const dirtyList = [...dirtyKeys.value].filter(k => k.startsWith(`campaign_${campaignId}`))
 
-    if (status.needsSync) {
-      // Pull changes silently
+    if (dirtyList.length > 0) {
       try {
-        await pullChanges(campaignId)
+        await pushChanges(campaignId)
         lastSyncAt.value = new Date().toISOString()
         await cache.updateLastSyncAt()
       } catch {

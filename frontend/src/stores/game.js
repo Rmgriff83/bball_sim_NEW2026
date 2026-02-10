@@ -259,6 +259,23 @@ export const useGameStore = defineStore('game', () => {
             away_score: response.data.result.away_score,
           }
         }
+
+        // Save game result to IndexedDB
+        const year = response.data.year || new Date().getFullYear()
+        await campaignCacheService.updateGameResult(campaignId, year, gameId, {
+          home_score: response.data.result.home_score,
+          away_score: response.data.result.away_score,
+        })
+
+        // Save updated standings if returned
+        if (response.data.standings) {
+          await campaignCacheService.updateStandings(campaignId, year, response.data.standings)
+        }
+
+        // Save updated player stats if returned
+        if (response.data.playerStats) {
+          await campaignCacheService.updatePlayerStats(campaignId, year, response.data.playerStats)
+        }
       } else {
         // Game continues
         currentGame.value = {
@@ -349,8 +366,27 @@ export const useGameStore = defineStore('game', () => {
                 }
               }
             }
+
+            // Save game result to IndexedDB
+            const year = response.data.year || new Date().getFullYear()
+            await campaignCacheService.updateGameResult(campaignId, year, result.game_id, {
+              home_score: result.home_score,
+              away_score: result.away_score,
+            })
           }
         }
+      }
+
+      // Save updated standings to IndexedDB if returned
+      if (response.data.standings) {
+        const year = response.data.year || new Date().getFullYear()
+        await campaignCacheService.updateStandings(campaignId, year, response.data.standings)
+      }
+
+      // Save updated player stats to IndexedDB if returned
+      if (response.data.playerStats) {
+        const year = response.data.year || new Date().getFullYear()
+        await campaignCacheService.updatePlayerStats(campaignId, year, response.data.playerStats)
       }
 
       return response.data
