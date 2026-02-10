@@ -843,4 +843,17 @@ class CampaignSeasonService
             $this->saveSeason($campaignId, $year, $seasonData);
         }
     }
+
+    /**
+     * Update schedule (for sync operations).
+     */
+    public function updateSchedule(int $campaignId, int $year, array $schedule): void
+    {
+        $seasonData = $this->loadSeason($campaignId, $year);
+
+        if ($seasonData) {
+            $seasonData['schedule'] = $schedule;
+            $this->saveSeason($campaignId, $year, $seasonData);
+        }
+    }
 }

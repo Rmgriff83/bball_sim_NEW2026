@@ -133,66 +133,40 @@ class SyncController extends Controller
         }
 
         $validated = $request->validate([
-            'campaign' => 'sometimes|array',
             'seasons' => 'sometimes|array',
             'players' => 'sometimes|array',
-            'clientUpdatedAt' => 'required|string',
+            'clientUpdatedAt' => 'sometimes|string',
         ]);
 
-        $conflicts = [];
-        $serverUpdatedAt = $this->getServerUpdatedAt($campaign);
-        $clientUpdatedAt = $validated['clientUpdatedAt'];
+        // Sync only handles JSON file data (AI teams, season data)
+        // User team data (lineup, settings) is in MySQL and handled by direct API calls
 
-        // Compare timestamps - if server is newer, we have potential conflicts
-        $serverTime = strtotime($serverUpdatedAt);
-        $clientTime = strtotime($clientUpdatedAt);
-
-        // Only accept client data if it's newer than server
-        $shouldUpdate = $clientTime >= $serverTime;
-
-        if ($shouldUpdate) {
-            // Update campaign settings if provided
-            if (isset($validated['campaign']['settings'])) {
-                $campaign->update([
-                    'settings' => array_merge(
-                        $campaign->settings ?? [],
-                        $validated['campaign']['settings']
-                    ),
-                ]);
-            }
-
-            // Update season data if provided
-            if (isset($validated['seasons'])) {
-                foreach ($validated['seasons'] as $year => $seasonData) {
-                    if (isset($seasonData['standings'])) {
-                        $this->seasonService->updateStandings($campaign->id, (int) $year, $seasonData['standings']);
-                    }
-                    if (isset($seasonData['playerStats'])) {
-                        $this->seasonService->updatePlayerStatsBulk($campaign->id, (int) $year, $seasonData['playerStats']);
-                    }
+        // Update season data if provided
+        if (isset($validated['seasons'])) {
+            foreach ($validated['seasons'] as $year => $seasonData) {
+                if (isset($seasonData['standings'])) {
+                    $this->seasonService->updateStandings($campaign->id, (int) $year, $seasonData['standings']);
+                }
+                if (isset($seasonData['playerStats'])) {
+                    $this->seasonService->updatePlayerStatsBulk($campaign->id, (int) $year, $seasonData['playerStats']);
+                }
+                if (isset($seasonData['schedule'])) {
+                    $this->seasonService->updateSchedule($campaign->id, (int) $year, $seasonData['schedule']);
                 }
             }
-
-            // Update league players if provided
-            if (isset($validated['players']['players'])) {
-                $this->playerService->saveLeaguePlayers($campaign->id, $validated['players']['players']);
-            }
-
-            // Update the campaign's updated_at
-            $campaign->touch();
-        } else {
-            $conflicts[] = [
-                'type' => 'timestamp',
-                'message' => 'Server data is newer than client data',
-                'serverUpdatedAt' => $serverUpdatedAt,
-                'clientUpdatedAt' => $clientUpdatedAt,
-            ];
         }
 
+        // Update league players if provided
+        if (isset($validated['players']['players'])) {
+            $this->playerService->saveLeaguePlayers($campaign->id, $validated['players']['players']);
+        }
+
+        // Update the campaign's updated_at
+        $campaign->touch();
+
         return response()->json([
-            'success' => $shouldUpdate,
+            'success' => true,
             'serverUpdatedAt' => $campaign->fresh()->updated_at->toISOString(),
-            'conflicts' => $conflicts,
         ]);
     }
 

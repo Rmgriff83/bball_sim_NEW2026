@@ -125,6 +125,9 @@ export const useSyncStore = defineStore('sync', () => {
 
   /**
    * Push dirty data to the server
+   *
+   * IMPORTANT: Only syncs JSON file data (AI teams, season data)
+   * User team data (lineup, settings) is stored in MySQL and handled by direct API calls
    */
   async function pushChanges(campaignId) {
     const dirtyList = [...dirtyKeys.value].filter(k => k.startsWith(`campaign_${campaignId}`))
@@ -133,39 +136,44 @@ export const useSyncStore = defineStore('sync', () => {
 
     const payload = {}
 
-    // Gather dirty data
+    // Gather dirty data - ONLY season and player data (JSON files)
+    // Do NOT include campaign meta/settings (those are in MySQL, not JSON)
     for (const key of dirtyList) {
-      if (key.includes('_meta')) {
-        const data = await cache.getCampaign(campaignId)
-        if (data) payload.campaign = data
-      } else if (key.includes('_season_')) {
+      if (key.includes('_season_')) {
         const match = key.match(/_season_(\d+)/)
         if (match) {
           const year = parseInt(match[1])
           const data = await cache.getSeason(campaignId, year)
           if (data) {
             payload.seasons = payload.seasons || {}
-            payload.seasons[year] = data
+            // Only include JSON file data, not settings
+            payload.seasons[year] = {
+              standings: data.standings,
+              playerStats: data.playerStats,
+              schedule: data.schedule,
+            }
           }
         }
       } else if (key.includes('_players')) {
         const data = await cache.getPlayers(campaignId)
         if (data) payload.players = data
       }
+      // Note: _meta keys are cleared but NOT pushed - campaign settings are in MySQL
     }
 
+    // Clear all dirty keys (including _meta which we're not pushing)
+    for (const key of dirtyList) {
+      await clearDirty(key)
+    }
+
+    // Only make API call if we have actual data to push
     if (Object.keys(payload).length === 0) return
 
-    // Add client timestamp for conflict resolution
+    // Add client timestamp
     payload.clientUpdatedAt = new Date().toISOString()
 
     // Push to server
     const response = await api.post(`/api/campaigns/${campaignId}/sync/push`, payload)
-
-    // Clear dirty keys on success
-    for (const key of dirtyList) {
-      await clearDirty(key)
-    }
 
     return response.data
   }

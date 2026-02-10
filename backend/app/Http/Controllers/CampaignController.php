@@ -180,6 +180,9 @@ class CampaignController extends Controller
         // Format roster and order by saved lineup
         $orderedRoster = $this->getOrderedRoster($campaign);
 
+        // Get the latest update timestamp (campaign + JSON files)
+        $serverUpdatedAt = $this->getServerUpdatedAt($campaign);
+
         return response()->json([
             'campaign' => [
                 'id' => $campaign->id,
@@ -188,6 +191,7 @@ class CampaignController extends Controller
                 'game_year' => $campaign->game_year,
                 'difficulty' => $campaign->difficulty,
                 'settings' => $campaign->settings,
+                'updated_at' => $campaign->updated_at->toISOString(),
             ],
             'team' => $campaign->team,
             'roster' => $orderedRoster,
@@ -199,6 +203,9 @@ class CampaignController extends Controller
             'standings' => $standings,
             'upcoming_games' => $upcomingGames,
             'news' => $recentNews,
+            'metadata' => [
+                'updatedAt' => $serverUpdatedAt,
+            ],
         ]);
     }
 
@@ -556,5 +563,35 @@ class CampaignController extends Controller
         } catch (\Exception $e) {
             return 25;
         }
+    }
+
+    /**
+     * Get the latest update timestamp for a campaign (DB + JSON files).
+     */
+    private function getServerUpdatedAt(Campaign $campaign): string
+    {
+        // Start with campaign updated_at
+        $latestTime = $campaign->updated_at;
+
+        // Check season file modification time
+        $year = $campaign->currentSeason?->year ?? 2025;
+        $seasonPath = "campaigns/{$campaign->id}/season_{$year}.json";
+        if (\Storage::exists($seasonPath)) {
+            $seasonTime = \Storage::lastModified($seasonPath);
+            if ($seasonTime > $latestTime->timestamp) {
+                $latestTime = \Carbon\Carbon::createFromTimestamp($seasonTime);
+            }
+        }
+
+        // Check league players file modification time
+        $playersPath = "campaigns/{$campaign->id}/league_players.json";
+        if (\Storage::exists($playersPath)) {
+            $playersTime = \Storage::lastModified($playersPath);
+            if ($playersTime > $latestTime->timestamp) {
+                $latestTime = \Carbon\Carbon::createFromTimestamp($playersTime);
+            }
+        }
+
+        return $latestTime->toISOString();
     }
 }

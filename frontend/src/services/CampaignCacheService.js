@@ -173,7 +173,10 @@ class CampaignCacheService {
   }
 
   /**
-   * Save campaign data to cache and mark as dirty
+   * Save campaign data to local cache
+   *
+   * Note: Campaign data is cached locally but NOT synced.
+   * User team data is in MySQL, handled by direct API calls.
    */
   async saveCampaign(campaignId, data) {
     try {
@@ -185,8 +188,8 @@ class CampaignCacheService {
       }
 
       await this.cache.setCampaign(campaignId, campaignData)
-      await this.getSyncStore().markDirty(`campaign_${campaignId}_meta`)
-      console.log('[CampaignCache] Saved and marked dirty:', campaignId)
+      // Note: NOT marking as dirty - campaign data is in MySQL, not synced via JSON
+      console.log('[CampaignCache] Saved campaign to local cache:', campaignId)
     } catch (err) {
       console.warn('[CampaignCache] Failed to save campaign:', err)
     }
@@ -194,6 +197,10 @@ class CampaignCacheService {
 
   /**
    * Update specific fields in campaign cache
+   *
+   * Note: Campaign meta is cached locally but NOT synced to server.
+   * User team data (lineup, settings) is stored in MySQL and handled by direct API calls.
+   * This cache is just for local performance, not for sync.
    */
   async updateCampaign(campaignId, updates) {
     try {
@@ -207,7 +214,7 @@ class CampaignCacheService {
           }
         }
         await this.cache.setCampaign(campaignId, updated)
-        await this.getSyncStore().markDirty(`campaign_${campaignId}_meta`)
+        // Note: NOT marking as dirty - campaign settings are in MySQL, not synced via JSON
       } else {
         // No existing cache, create new entry with just the updates
         const newData = {
@@ -217,7 +224,6 @@ class CampaignCacheService {
           }
         }
         await this.cache.setCampaign(campaignId, newData)
-        await this.getSyncStore().markDirty(`campaign_${campaignId}_meta`)
         console.log('[CampaignCache] Created new cache entry for:', campaignId)
       }
     } catch (err) {
