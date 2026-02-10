@@ -5,10 +5,20 @@ import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton, FormInput, Badge } from '@/components/ui'
-import { ArrowLeft, Coins, Sparkles } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Sparkles, Sun, Moon } from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
+
+// Theme toggle
+const isDarkMode = ref(document.documentElement.getAttribute('data-theme') !== 'light')
+
+function toggleTheme() {
+  isDarkMode.value = !isDarkMode.value
+  const theme = isDarkMode.value ? 'dark' : 'light'
+  document.documentElement.setAttribute('data-theme', theme)
+  localStorage.setItem('theme', theme)
+}
 
 // Fetch fresh user data on mount to get latest rewards
 onMounted(async () => {
@@ -79,71 +89,91 @@ async function handleLogout() {
 </script>
 
 <template>
-  <div class="min-h-screen p-4">
-    <div class="container max-w-2xl">
-      <div class="mb-8">
-        <router-link to="/dashboard" class="link flex items-center gap-2 mb-2">
-          <ArrowLeft :size="20" />
-          Back to Dashboard
+  <div class="profile-page">
+    <div class="profile-container">
+      <div class="profile-header">
+        <router-link to="/dashboard" class="back-link">
+          <ArrowLeft :size="18" />
+          <span>Back to Dashboard</span>
         </router-link>
-        <h1 class="h2 text-gradient">Profile Settings</h1>
+        <h1 class="profile-title">Profile Settings</h1>
       </div>
 
-      <GlassCard padding="lg" class="mb-6" :hoverable="false">
-        <div class="flex items-center gap-4">
-          <div class="w-16 h-16 rounded-full bg-gradient-to-r from-primary to-secondary flex items-center justify-center text-2xl font-bold">
+      <!-- User Info Card -->
+      <div class="profile-section">
+        <div class="user-info">
+          <div class="user-avatar">
             {{ user?.username?.[0]?.toUpperCase() || '?' }}
           </div>
-          <div>
-            <h2 class="h4">{{ user?.username }}</h2>
-            <p class="text-secondary">{{ user?.email }}</p>
+          <div class="user-details">
+            <h2 class="user-name">{{ user?.username }}</h2>
+            <p class="user-email">{{ user?.email }}</p>
             <Badge v-if="user?.email_verified" variant="success" size="sm" class="mt-1">Verified</Badge>
             <Badge v-else variant="warning" size="sm" class="mt-1">Email not verified</Badge>
           </div>
         </div>
-      </GlassCard>
+      </div>
 
-      <GlassCard padding="lg" class="mb-6" :hoverable="false">
-        <h3 class="h4 mb-4">Rewards</h3>
-        <div class="grid grid-cols-2 gap-4">
-          <div class="flex items-center gap-3 p-4 rounded-lg bg-surface-dark/50">
-            <div class="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center">
-              <Coins :size="20" class="text-yellow-500" />
+      <!-- Theme Toggle Card -->
+      <div class="profile-section">
+        <h3 class="section-title">Appearance</h3>
+        <div class="theme-toggle-row">
+          <div class="theme-label">
+            <component :is="isDarkMode ? Moon : Sun" :size="20" />
+            <span>{{ isDarkMode ? 'Dark Mode' : 'Light Mode' }}</span>
+          </div>
+          <button class="theme-toggle-btn" @click="toggleTheme" :class="{ active: isDarkMode }">
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Rewards Card -->
+      <div class="profile-section">
+        <h3 class="section-title">Rewards</h3>
+        <div class="rewards-grid">
+          <div class="reward-item">
+            <div class="reward-icon tokens">
+              <Coins :size="20" />
             </div>
-            <div>
-              <p class="text-2xl font-bold">{{ profile?.tokens ?? 0 }}</p>
-              <p class="text-sm text-secondary">Tokens</p>
+            <div class="reward-info">
+              <p class="reward-value">{{ profile?.tokens ?? 0 }}</p>
+              <p class="reward-label">Tokens</p>
             </div>
           </div>
-          <div class="flex items-center gap-3 p-4 rounded-lg bg-surface-dark/50">
-            <div class="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">
-              <Sparkles :size="20" class="text-purple-500" />
+          <div class="reward-item">
+            <div class="reward-icon synergies">
+              <Sparkles :size="20" />
             </div>
-            <div>
-              <p class="text-2xl font-bold">{{ profile?.lifetime_synergies ?? 0 }}</p>
-              <p class="text-sm text-secondary">Synergies</p>
+            <div class="reward-info">
+              <p class="reward-value">{{ profile?.lifetime_synergies ?? 0 }}</p>
+              <p class="reward-label">Synergies</p>
             </div>
           </div>
         </div>
-        <p class="text-xs text-secondary mt-3">Earn tokens when your team's badge synergies activate during games.</p>
-      </GlassCard>
+        <p class="reward-hint">Earn tokens when your team's badge synergies activate during games.</p>
+      </div>
 
-      <GlassCard padding="lg" class="mb-6" :hoverable="false">
-        <h3 class="h4 mb-4">Update Profile</h3>
-        <div v-if="profileSuccess" class="mb-4 p-3 rounded bg-success/20 border border-success text-success text-sm">{{ profileSuccess }}</div>
-        <div v-if="profileError" class="mb-4 p-3 rounded bg-error/20 border border-error text-error text-sm">{{ profileError }}</div>
-        <form @submit.prevent="handleProfileUpdate">
+      <!-- Update Profile Card -->
+      <div class="profile-section">
+        <h3 class="section-title">Update Profile</h3>
+        <div v-if="profileSuccess" class="form-message success">{{ profileSuccess }}</div>
+        <div v-if="profileError" class="form-message error">{{ profileError }}</div>
+        <form @submit.prevent="handleProfileUpdate" class="profile-form">
           <FormInput v-model="profileForm.username" label="Username" :error="v$Profile.username.$errors[0]?.$message"
             :touched="v$Profile.username.$dirty" required @blur="v$Profile.username.$touch()" />
           <BaseButton type="submit" variant="primary" :loading="authStore.loading">Save Changes</BaseButton>
         </form>
-      </GlassCard>
+      </div>
 
-      <GlassCard padding="lg" class="mb-6" :hoverable="false">
-        <h3 class="h4 mb-4">Change Password</h3>
-        <div v-if="passwordSuccess" class="mb-4 p-3 rounded bg-success/20 border border-success text-success text-sm">{{ passwordSuccess }}</div>
-        <div v-if="passwordError" class="mb-4 p-3 rounded bg-error/20 border border-error text-error text-sm">{{ passwordError }}</div>
-        <form @submit.prevent="handlePasswordUpdate">
+      <!-- Change Password Card -->
+      <div class="profile-section">
+        <h3 class="section-title">Change Password</h3>
+        <div v-if="passwordSuccess" class="form-message success">{{ passwordSuccess }}</div>
+        <div v-if="passwordError" class="form-message error">{{ passwordError }}</div>
+        <form @submit.prevent="handlePasswordUpdate" class="profile-form">
           <FormInput v-model="passwordForm.current_password" label="Current Password" type="password"
             :error="v$Password.current_password.$errors[0]?.$message" :touched="v$Password.current_password.$dirty" required
             @blur="v$Password.current_password.$touch()" />
@@ -155,12 +185,245 @@ async function handleLogout() {
             @blur="v$Password.password_confirmation.$touch()" />
           <BaseButton type="submit" variant="primary" :loading="authStore.loading">Update Password</BaseButton>
         </form>
-      </GlassCard>
+      </div>
 
-      <GlassCard padding="lg" :hoverable="false">
-        <h3 class="h4 mb-4">Session</h3>
+      <!-- Session Card -->
+      <div class="profile-section">
+        <h3 class="section-title">Session</h3>
         <BaseButton variant="danger" @click="handleLogout">Sign Out</BaseButton>
-      </GlassCard>
+      </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.profile-page {
+  min-height: 100vh;
+  padding: 2rem 1rem;
+}
+
+.profile-container {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.profile-header {
+  margin-bottom: 2rem;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  transition: color 0.2s ease;
+}
+
+.back-link:hover {
+  color: var(--color-primary);
+}
+
+.profile-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 2rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-tertiary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Section Cards */
+.profile-section {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 1rem;
+}
+
+/* User Info */
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.user-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--gradient-cosmic);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1a1520;
+  flex-shrink: 0;
+}
+
+.user-name {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.user-email {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+/* Theme Toggle */
+.theme-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.theme-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.theme-toggle-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.toggle-track {
+  display: block;
+  width: 48px;
+  height: 26px;
+  background: var(--color-bg-tertiary);
+  border-radius: 13px;
+  position: relative;
+  transition: background 0.2s ease;
+}
+
+.theme-toggle-btn.active .toggle-track {
+  background: var(--color-primary);
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+}
+
+.theme-toggle-btn.active .toggle-thumb {
+  transform: translateX(22px);
+}
+
+/* Rewards */
+.rewards-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.reward-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-lg);
+}
+
+[data-theme="light"] .reward-item {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.reward-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.reward-icon.tokens {
+  background: rgba(234, 179, 8, 0.2);
+  color: #EAB308;
+}
+
+.reward-icon.synergies {
+  background: rgba(147, 51, 234, 0.2);
+  color: #9333EA;
+}
+
+.reward-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.reward-label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.reward-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+}
+
+/* Forms */
+.profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-message {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-lg);
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+}
+
+.form-message.success {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #22C55E;
+}
+
+.form-message.error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #EF4444;
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+  .rewards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

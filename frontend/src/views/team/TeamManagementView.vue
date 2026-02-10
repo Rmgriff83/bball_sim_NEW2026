@@ -7,7 +7,7 @@ import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
-import { User, ArrowUpDown } from 'lucide-vue-next'
+import { User, ArrowUpDown, AlertTriangle } from 'lucide-vue-next'
 import TradeCenter from '@/components/trade/TradeCenter.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
@@ -108,11 +108,18 @@ const starterSlots = computed(() => {
   }))
 })
 
-// Bench players sorted by overall rating (highest to lowest)
+// Bench players sorted by overall rating (highest to lowest), injured players at end
 const benchPlayers = computed(() => {
   return [...roster.value.slice(5)]
     .filter(p => p !== null) // Filter out any nulls
-    .sort((a, b) => b.overall_rating - a.overall_rating)
+    .sort((a, b) => {
+      const aInjured = a.is_injured || a.isInjured ? 1 : 0
+      const bInjured = b.is_injured || b.isInjured ? 1 : 0
+      // Injured players go to the end
+      if (aInjured !== bInjured) return aInjured - bInjured
+      // Within same injury status, sort by rating
+      return b.overall_rating - a.overall_rating
+    })
 })
 
 // Available roster slots (max 15 players) - exclude nulls from count
@@ -419,6 +426,16 @@ function getAttrColor(value) {
   return 'var(--color-error)'
 }
 
+function getFatigueColor(fatigue) {
+  if (fatigue >= 70) return '#ef4444'  // red
+  if (fatigue >= 50) return '#f59e0b'  // amber/warning
+  return '#22c55e'  // green
+}
+
+function isOverFatigued(fatigue) {
+  return fatigue >= 70
+}
+
 function formatBadgeName(badge) {
   // Handle both badge object and string id
   if (!badge) return ''
@@ -683,29 +700,54 @@ const playerNews = computed(() => {
             >
               <div class="card-header">
                 <div class="player-avatar">
-                  <User class="avatar-icon" :size="28" />
+                  <User class="avatar-icon" :size="32" />
                 </div>
                 <div class="player-main-info">
                   <h4 class="player-name" :class="{ 'text-injured': slot.player.is_injured || slot.player.isInjured }">
                     {{ slot.player.name }}
                   </h4>
                   <div class="player-meta">
-                    <span
-                      class="position-badge"
-                      :style="{ backgroundColor: getPositionColor(slot.player.position) }"
-                    >
-                      {{ slot.player.position }}<template v-if="slot.player.secondary_position">/{{ slot.player.secondary_position }}</template>
+                    <div class="position-badges">
+                      <span
+                        class="position-badge"
+                        :style="{ backgroundColor: getPositionColor(slot.player.position) }"
+                      >
+                        {{ slot.player.position }}
+                      </span>
+                      <span
+                        v-if="slot.player.secondary_position"
+                        class="position-badge secondary"
+                        :style="{ backgroundColor: getPositionColor(slot.player.secondary_position) }"
+                      >
+                        {{ slot.player.secondary_position }}
+                      </span>
+                    </div>
+                    <span v-if="!(slot.player.is_injured || slot.player.isInjured)" class="role-badge starter">STARTER</span>
+                    <span v-if="slot.player.is_injured || slot.player.isInjured" class="injury-tag">
+                      Injured - {{ (slot.player.injury_details?.games_remaining || slot.player.injuryDetails?.games_remaining || 0) }} {{ (slot.player.injury_details?.games_remaining || slot.player.injuryDetails?.games_remaining || 0) === 1 ? 'game' : 'games' }}
                     </span>
-                    <span class="role-badge starter">STARTER</span>
-                    <span v-if="slot.player.is_injured || slot.player.isInjured" class="injury-tag">Injured</span>
                   </div>
                   <div class="vitals-row">{{ slot.player.height || "6'6\"" }} · {{ formatWeight(slot.player.weight) }} lbs · {{ slot.player.age || 25 }} yrs</div>
+                  <!-- Fatigue Meter -->
+                  <div class="fatigue-meter-row">
+                    <div class="fatigue-meter-bar">
+                      <div
+                        class="fatigue-meter-fill"
+                        :style="{
+                          width: (slot.player.fatigue || 0) + '%',
+                          backgroundColor: getFatigueColor(slot.player.fatigue || 0)
+                        }"
+                      ></div>
+                    </div>
+                    <span class="fatigue-value">{{ slot.player.fatigue || 0 }}%</span>
+                    <AlertTriangle v-if="isOverFatigued(slot.player.fatigue || 0)" :size="12" class="fatigue-warning-icon" />
+                  </div>
                 </div>
                 <div class="rating-container">
+                  <StatBadge :value="slot.player.overall_rating" size="md" />
                   <button class="move-btn" :class="{ active: expandedMovePlayer === `starter-${slot.player.id}` }" @click.stop="toggleMoveDropdown(`starter-${slot.player.id}`)" title="Adjust lineup">
                     <ArrowUpDown :size="14" />
                   </button>
-                  <StatBadge :value="slot.player.overall_rating" size="md" />
                 </div>
               </div>
 
@@ -735,7 +777,10 @@ const playerNews = computed(() => {
                       <div class="dropdown-avatar">
                         <User :size="16" />
                       </div>
-                      <span class="dropdown-name">{{ candidate.name }}</span>
+                      <div class="dropdown-name-row">
+                        <span class="dropdown-name">{{ candidate.name }}</span>
+                        <span class="dropdown-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ candidate.fatigue || 0 }}%</span>
+                      </div>
                       <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
                         {{ candidate.position }}
                       </span>
@@ -828,29 +873,47 @@ const playerNews = computed(() => {
           >
             <div class="card-header">
               <div class="player-avatar">
-                <User class="avatar-icon" :size="28" />
+                <User class="avatar-icon" :size="32" />
               </div>
               <div class="player-main-info">
                 <h4 class="player-name" :class="{ 'text-injured': player.is_injured || player.isInjured }">
                   {{ player.name }}
                 </h4>
                 <div class="player-meta">
-                  <span
-                    class="position-badge"
-                    :style="{ backgroundColor: getPositionColor(player.position) }"
-                  >
-                    {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
+                  <div class="position-badges">
+                    <span class="position-badge" :style="{ backgroundColor: getPositionColor(player.position) }">
+                      {{ player.position }}
+                    </span>
+                    <span v-if="player.secondary_position" class="position-badge secondary" :style="{ backgroundColor: getPositionColor(player.secondary_position) }">
+                      {{ player.secondary_position }}
+                    </span>
+                  </div>
+                  <span v-if="!(player.is_injured || player.isInjured)" class="role-badge bench">BENCH</span>
+                  <span v-if="player.is_injured || player.isInjured" class="injury-tag">
+                    Injured - {{ (player.injury_details?.games_remaining || player.injuryDetails?.games_remaining || 0) }} {{ (player.injury_details?.games_remaining || player.injuryDetails?.games_remaining || 0) === 1 ? 'game' : 'games' }}
                   </span>
-                  <span class="role-badge bench">BENCH</span>
-                  <span v-if="player.is_injured || player.isInjured" class="injury-tag">Injured</span>
                 </div>
                 <div class="vitals-row">{{ player.height || "6'6\"" }} · {{ formatWeight(player.weight) }} lbs · {{ player.age || 25 }} yrs</div>
+                <!-- Fatigue Meter -->
+                <div class="fatigue-meter-row">
+                  <div class="fatigue-meter-bar">
+                    <div
+                      class="fatigue-meter-fill"
+                      :style="{
+                        width: (player.fatigue || 0) + '%',
+                        backgroundColor: getFatigueColor(player.fatigue || 0)
+                      }"
+                    ></div>
+                  </div>
+                  <span class="fatigue-value">{{ player.fatigue || 0 }}%</span>
+                  <AlertTriangle v-if="isOverFatigued(player.fatigue || 0)" :size="12" class="fatigue-warning-icon" />
+                </div>
               </div>
               <div class="rating-container">
+                <StatBadge :value="player.overall_rating" size="md" />
                 <button class="move-btn" :class="{ active: expandedMovePlayer === `bench-${player.id}` }" @click.stop="toggleMoveDropdown(`bench-${player.id}`)" title="Adjust lineup">
                   <ArrowUpDown :size="14" />
                 </button>
-                <StatBadge :value="player.overall_rating" size="md" />
               </div>
             </div>
 
@@ -887,7 +950,10 @@ const playerNews = computed(() => {
                     <div class="dropdown-avatar">
                       <User :size="16" />
                     </div>
-                    <span class="dropdown-name">{{ candidate.name }}</span>
+                    <div class="dropdown-name-row">
+                      <span class="dropdown-name">{{ candidate.name }}</span>
+                      <span class="dropdown-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ candidate.fatigue || 0 }}%</span>
+                    </div>
                     <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
                       {{ candidate.slotPosition }}
                     </span>
@@ -1582,13 +1648,26 @@ const playerNews = computed(() => {
   border-color: rgba(255, 255, 255, 0.15);
 }
 
-.dropdown-name {
+.dropdown-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1;
+  min-width: 0;
+}
+
+.dropdown-name {
   font-size: 0.85rem;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.dropdown-fatigue {
+  font-size: 0.7rem;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
 .dropdown-position {
@@ -1700,8 +1779,8 @@ const playerNews = computed(() => {
 }
 
 .player-avatar {
-  width: 48px;
-  height: 48px;
+  width: 54px;
+  height: 54px;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 50%;
   display: flex;
@@ -1755,6 +1834,11 @@ const playerNews = computed(() => {
   flex-wrap: wrap;
 }
 
+.position-badges {
+  display: flex;
+  gap: 4px;
+}
+
 .position-badge {
   padding: 2px 6px;
   border-radius: 4px;
@@ -1789,11 +1873,52 @@ const playerNews = computed(() => {
   margin-top: 6px;
 }
 
+/* Fatigue Meter in Player Cards */
+.fatigue-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.fatigue-meter-bar {
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.fatigue-meter-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.fatigue-meter-row .fatigue-value {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  min-width: 28px;
+  text-align: right;
+}
+
+.fatigue-warning-icon {
+  color: var(--color-error);
+  animation: pulse-warning 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse-warning {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .rating-container {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -1890,6 +2015,7 @@ const playerNews = computed(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  padding-left: 10px;
 }
 
 .badge-item {
@@ -1897,8 +2023,6 @@ const playerNews = computed(() => {
   align-items: center;
   gap: 4px;
   padding: 3px 6px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: var(--radius-sm);
   font-size: 0.7rem;
 }
 
@@ -2807,8 +2931,7 @@ const playerNews = computed(() => {
 
 /* Position badge secondary */
 .position-badge.secondary {
-  background: rgba(255, 255, 255, 0.2) !important;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 /* Badges Tab Styles */
@@ -2993,9 +3116,6 @@ const playerNews = computed(() => {
   background: rgba(0, 0, 0, 0.04);
 }
 
-[data-theme="light"] .badge-item {
-  background: rgba(0, 0, 0, 0.06);
-}
 
 [data-theme="light"] .modal-tabs {
   background: rgba(0, 0, 0, 0.06);
@@ -3078,6 +3198,10 @@ const playerNews = computed(() => {
 
 [data-theme="light"] .player-card.empty-slot {
   border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .fatigue-meter-bar {
+  background: rgba(0, 0, 0, 0.1);
 }
 
 [data-theme="light"] .role-badge.bench {

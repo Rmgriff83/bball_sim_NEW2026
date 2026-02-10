@@ -122,6 +122,19 @@ const formattedCurrentDate = computed(() => {
 // Next upcoming user game
 const nextGame = computed(() => gameStore.nextUserGame)
 
+// Check if next game is in progress
+const isGameInProgress = computed(() => nextGame.value?.is_in_progress || false)
+
+// Get current scores for in-progress game
+const inProgressScores = computed(() => {
+  if (!isGameInProgress.value || !nextGame.value) return null
+  return {
+    homeScore: nextGame.value.home_score ?? 0,
+    awayScore: nextGame.value.away_score ?? 0,
+    quarter: nextGame.value.current_quarter ?? gameStore.currentSimQuarter ?? 1
+  }
+})
+
 // Get opponent info for next game
 const nextGameOpponent = computed(() => {
   if (!nextGame.value || !team.value) return null
@@ -417,11 +430,14 @@ function handleCloseSimulateModal() {
       </section>
 
       <!-- Next Game Card -->
-      <section v-if="nextGame" class="next-game-card glass-card-nebula">
+      <section v-if="nextGame" class="next-game-card glass-card-nebula" :class="{ 'in-progress': isGameInProgress }">
         <div class="next-game-header">
           <div class="next-game-label-group">
-            <h3 class="next-game-label">NEXT GAME</h3>
-            <span class="next-game-date">{{ formatGameDate(nextGame.game_date) }}</span>
+            <h3 class="next-game-label" :class="{ 'live': isGameInProgress }">
+              {{ isGameInProgress ? 'GAME IN PROGRESS' : 'NEXT GAME' }}
+            </h3>
+            <span v-if="isGameInProgress && inProgressScores" class="live-quarter">Q{{ inProgressScores.quarter }}</span>
+            <span v-else class="next-game-date">{{ formatGameDate(nextGame.game_date) }}</span>
           </div>
           <span class="next-game-location">{{ nextGameOpponent?.isHome ? 'HOME' : 'AWAY' }}</span>
         </div>
@@ -433,7 +449,10 @@ function handleCloseSimulateModal() {
                 :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
               >
                 <span class="badge-abbr">{{ team?.abbreviation }}</span>
-                <span class="badge-record">{{ wins }}-{{ losses }}</span>
+                <span v-if="isGameInProgress && inProgressScores" class="badge-score">
+                  {{ nextGameOpponent?.isHome ? inProgressScores.awayScore : inProgressScores.homeScore }}
+                </span>
+                <span v-else class="badge-record">{{ wins }}-{{ losses }}</span>
               </div>
               <div class="team-info">
                 <span v-if="userTeamRating" class="team-rating">{{ userTeamRating }} OVR</span>
@@ -441,7 +460,7 @@ function handleCloseSimulateModal() {
               </div>
             </div>
             <div class="matchup-vs">
-              <span class="vs-text">VS</span>
+              <span class="vs-text">{{ isGameInProgress ? '-' : 'VS' }}</span>
             </div>
             <div class="matchup-team opponent-team">
               <div
@@ -449,7 +468,10 @@ function handleCloseSimulateModal() {
                 :style="{ backgroundColor: nextGameOpponent?.color || '#666' }"
               >
                 <span class="badge-abbr">{{ nextGameOpponent?.abbreviation }}</span>
-                <span class="badge-record">{{ nextGameOpponent?.wins }}-{{ nextGameOpponent?.losses }}</span>
+                <span v-if="isGameInProgress && inProgressScores" class="badge-score">
+                  {{ nextGameOpponent?.isHome ? inProgressScores.homeScore : inProgressScores.awayScore }}
+                </span>
+                <span v-else class="badge-record">{{ nextGameOpponent?.wins }}-{{ nextGameOpponent?.losses }}</span>
               </div>
               <div class="team-info">
                 <span v-if="nextGameOpponent?.rating" class="team-rating">{{ nextGameOpponent.rating }} OVR</span>
@@ -458,11 +480,12 @@ function handleCloseSimulateModal() {
             </div>
           </div>
           <div class="next-game-buttons">
-            <button class="btn-play-game" @click="navigateToGame(nextGame.id)">
+            <button class="btn-play-game" :class="{ 'continue': isGameInProgress }" @click="navigateToGame(nextGame.id)">
               <Play class="btn-icon" :size="16" />
-              PLAY GAME
+              {{ isGameInProgress ? 'CONTINUE GAME' : 'PLAY GAME' }}
             </button>
             <button
+              v-if="!isGameInProgress"
               class="btn-simulate-game"
               @click="handleSimulateToNextGame"
               :disabled="gameStore.simulating"
@@ -1130,6 +1153,11 @@ function handleCloseSimulateModal() {
   margin-bottom: 16px;
 }
 
+.next-game-card.in-progress {
+  border-color: rgba(34, 197, 94, 0.4);
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.1);
+}
+
 .next-game-header {
   display: flex;
   justify-content: space-between;
@@ -1152,6 +1180,30 @@ function handleCloseSimulateModal() {
   color: var(--color-text-primary);
   margin: 0;
   line-height: 1;
+}
+
+.next-game-label.live {
+  color: #22c55e;
+  animation: pulse-live 2s ease-in-out infinite;
+}
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.live-quarter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  background: rgba(34, 197, 94, 0.2);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  border-radius: var(--radius-full);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #22c55e;
+  letter-spacing: 0.05em;
 }
 
 .next-game-date {
@@ -1215,6 +1267,13 @@ function handleCloseSimulateModal() {
   font-size: 0.85rem;
   font-weight: 600;
   opacity: 0.9;
+  line-height: 1;
+}
+
+.badge-score {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 1.5rem;
+  font-weight: 700;
   line-height: 1;
 }
 
@@ -1293,6 +1352,20 @@ function handleCloseSimulateModal() {
   height: 16px;
   stroke-width: 2.5;
   fill: currentColor;
+}
+
+.btn-play-game.continue {
+  background: #22c55e;
+  animation: pulse-continue 2s ease-in-out infinite;
+}
+
+.btn-play-game.continue:hover {
+  background: #16a34a;
+}
+
+@keyframes pulse-continue {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); }
 }
 
 .btn-simulate-game {

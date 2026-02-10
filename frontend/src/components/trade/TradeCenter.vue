@@ -477,14 +477,29 @@ function formatContractYears(years) {
     </div>
 
     <!-- Trade Wizard Modal -->
-    <BaseModal
-      :show="showTradeWizard"
-      @close="closeTradeWizard"
-      :title="wizardSteps[wizardStep - 1]?.title || 'Trade Wizard'"
-      size="xl"
-      :closable="true"
-    >
-      <div class="wizard-content">
+    <Teleport to="body">
+      <Transition name="modal">
+        <div
+          v-if="showTradeWizard"
+          class="wizard-modal-overlay"
+          @click.self="closeTradeWizard"
+        >
+          <div class="wizard-modal-container">
+            <!-- Header -->
+            <header class="wizard-modal-header">
+              <h2 class="wizard-modal-title">{{ wizardSteps[wizardStep - 1]?.title || 'Trade Wizard' }}</h2>
+              <button
+                class="wizard-btn-close"
+                @click="closeTradeWizard"
+                aria-label="Close"
+              >
+                <X :size="20" />
+              </button>
+            </header>
+
+            <!-- Content -->
+            <main class="wizard-modal-content">
+              <div class="wizard-content">
         <!-- Wizard Step Indicator -->
         <div class="wizard-step-indicator">
           <template v-for="(step, index) in wizardSteps" :key="step.number">
@@ -791,41 +806,46 @@ function formatContractYears(years) {
           </div>
         </div>
 
-        <!-- Wizard Navigation -->
-        <div class="wizard-navigation">
-          <BaseButton
-            v-if="canWizardBack"
-            variant="ghost"
-            @click="wizardBack"
-          >
-            <ChevronLeft :size="18" />
-            Back
-          </BaseButton>
-          <div v-else></div>
+              </div>
+            </main>
 
-          <div class="wizard-nav-right">
-            <BaseButton
-              v-if="wizardStep < 3"
-              variant="primary"
-              @click="wizardNext"
-              :disabled="!canWizardNext"
-            >
-              Next
-              <ChevronRight :size="18" />
-            </BaseButton>
-            <BaseButton
-              v-else
-              variant="primary"
-              @click="wizardNext"
-              :disabled="!canSubmitTrade"
-            >
-              Review Trade
-              <ArrowRight :size="18" />
-            </BaseButton>
+            <!-- Footer -->
+            <footer class="wizard-modal-footer">
+              <button
+                v-if="canWizardBack"
+                class="wizard-btn-back"
+                @click="wizardBack"
+              >
+                <ChevronLeft :size="18" />
+                Back
+              </button>
+              <div v-else></div>
+
+              <div class="wizard-nav-right">
+                <button
+                  v-if="wizardStep < 3"
+                  class="wizard-btn-next"
+                  @click="wizardNext"
+                  :disabled="!canWizardNext"
+                >
+                  Next
+                  <ChevronRight :size="18" />
+                </button>
+                <button
+                  v-else
+                  class="wizard-btn-next"
+                  @click="wizardNext"
+                  :disabled="!canSubmitTrade"
+                >
+                  Review Trade
+                  <ArrowRight :size="18" />
+                </button>
+              </div>
+            </footer>
           </div>
         </div>
-      </div>
-    </BaseModal>
+      </Transition>
+    </Teleport>
 
     <!-- Trade Confirmation Modal -->
     <BaseModal
@@ -2954,8 +2974,175 @@ function formatContractYears(years) {
 }
 
 /* ==================== TRADE WIZARD MODAL ==================== */
+.wizard-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+.wizard-modal-container {
+  width: 100%;
+  max-width: 900px;
+  max-height: 90vh;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.wizard-modal-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.wizard-btn-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.wizard-btn-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.wizard-modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.wizard-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.wizard-btn-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.wizard-btn-back:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+.wizard-btn-next {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 20px;
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.wizard-btn-next:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.wizard-btn-next:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Modal transition */
+.modal-enter-active {
+  transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.modal-leave-active {
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .wizard-modal-container {
+  animation: wizardScaleIn 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.modal-leave-active .wizard-modal-container {
+  animation: wizardScaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes wizardScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes wizardScaleOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
 .wizard-content {
-  padding: 0.5rem;
+  padding: 0;
 }
 
 /* Wizard Step Indicator */
@@ -3420,16 +3607,6 @@ function formatContractYears(years) {
   border-color: rgba(239, 68, 68, 0.4);
 }
 
-/* Wizard Navigation */
-.wizard-navigation {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-top: 1rem;
-  margin-top: 1rem;
-  border-top: 1px solid var(--color-border);
-}
-
 .wizard-nav-right {
   display: flex;
   gap: 0.75rem;
@@ -3437,6 +3614,16 @@ function formatContractYears(years) {
 
 /* Wizard Responsive */
 @media (max-width: 768px) {
+  .wizard-modal-container {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 0;
+  }
+
+  .wizard-modal-overlay {
+    padding: 0;
+  }
+
   .wizard-step-indicator {
     flex-wrap: wrap;
     gap: 0.35rem;
@@ -3458,5 +3645,388 @@ function formatContractYears(years) {
     flex-wrap: wrap;
     gap: 1rem;
   }
+}
+
+/* Light Mode Overrides */
+[data-theme="light"] .wizard-modal-container {
+  background: var(--color-bg-primary);
+}
+
+[data-theme="light"] .wizard-modal-header {
+  border-bottom-color: var(--glass-border);
+}
+
+[data-theme="light"] .wizard-modal-footer {
+  border-top-color: var(--glass-border);
+}
+
+[data-theme="light"] .wizard-btn-back {
+  border-color: var(--glass-border);
+}
+
+[data-theme="light"] .wizard-btn-back:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .wizard-asset-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .wizard-asset-card.selected {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+[data-theme="light"] .wizard-asset-card.pick.selected {
+  background: rgba(139, 92, 246, 0.1);
+}
+
+[data-theme="light"] .wizard-asset-avatar {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.1));
+  color: rgba(0, 0, 0, 0.7);
+}
+
+[data-theme="light"] .wizard-asset-name {
+  color: #1F2937;
+}
+
+[data-theme="light"] .wizard-asset-age {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .wizard-asset-salary {
+  color: #059669;
+}
+
+[data-theme="light"] .wizard-asset-years {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .wizard-asset-pick-team {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] .wizard-asset-projection {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+/* Team Card Light Mode */
+[data-theme="light"] .wizard-team-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .wizard-team-card:hover {
+  background: rgba(245, 247, 250, 0.95);
+}
+
+[data-theme="light"] .wizard-team-card.selected {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+[data-theme="light"] .wizard-team-abbr {
+  color: #1F2937;
+}
+
+[data-theme="light"] .wizard-team-city {
+  color: #6B7280;
+}
+
+[data-theme="light"] .wizard-team-record {
+  color: #374151;
+}
+
+/* Validation Light Mode */
+[data-theme="light"] .validation-item.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #991B1B;
+}
+
+[data-theme="light"] .validation-item.warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #92400E;
+}
+
+[data-theme="light"] .validation-salary {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Trade Summary/Confirmation Modal Light Mode */
+[data-theme="light"] .trade-summary-prominent {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(245, 247, 250, 0.98));
+  border-color: rgba(99, 102, 241, 0.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .trade-summary-header {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .trade-summary-header h3 {
+  color: #1F2937;
+}
+
+[data-theme="light"] .salary-out {
+  color: #DC2626;
+}
+
+[data-theme="light"] .salary-divider {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .salary-in {
+  color: #059669;
+}
+
+[data-theme="light"] .trade-slot-section {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .slot-label {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] .slot-edit-btn {
+  border-color: rgba(0, 0, 0, 0.15);
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .slot-edit-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #1F2937;
+}
+
+[data-theme="light"] .asset-slot.empty {
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .slot-placeholder {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .asset-slot.filled {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .player-avatar-slot {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] .player-slot-name {
+  color: #1F2937;
+}
+
+[data-theme="light"] .player-slot-contract {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .contract-salary {
+  color: #059669;
+}
+
+[data-theme="light"] .contract-years {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .pick-slot-round {
+  color: #1F2937;
+}
+
+[data-theme="light"] .pick-slot-team {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+/* Modal Elements Light Mode */
+[data-theme="light"] .modal-team-section {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .modal-team-header {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .modal-team-label {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] .modal-team-section.sending .modal-team-label {
+  color: #DC2626;
+}
+
+[data-theme="light"] .modal-team-section.receiving .modal-team-label {
+  color: #059669;
+}
+
+[data-theme="light"] .modal-asset-card {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .modal-player-avatar {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.1));
+  color: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] .modal-player-name {
+  color: #1F2937;
+}
+
+[data-theme="light"] .modal-player-age {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .modal-contract-salary {
+  color: #059669;
+}
+
+[data-theme="light"] .modal-contract-years {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .modal-pick-round {
+  color: #1F2937;
+}
+
+[data-theme="light"] .modal-pick-team {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .modal-arrow-container {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #6366F1;
+}
+
+/* Asset Selection Cards Light Mode */
+[data-theme="light"] .player-asset-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .player-asset-card.selected {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+[data-theme="light"] .player-card-avatar {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.1));
+  color: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] .player-card-name {
+  color: #1F2937;
+}
+
+[data-theme="light"] .player-age {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .player-card-contract {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .player-card-contract svg {
+  color: #059669;
+}
+
+[data-theme="light"] .contract-term {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .value-label {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .pick-asset-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .pick-asset-card.selected {
+  background: rgba(139, 92, 246, 0.1);
+}
+
+[data-theme="light"] .pick-card-round {
+  color: #1F2937;
+}
+
+[data-theme="light"] .pick-card-team {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .pick-projection {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+/* Non-Wizard Team Cards Light Mode */
+[data-theme="light"] .team-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .team-card:hover {
+  background: rgba(245, 247, 250, 0.95);
+}
+
+[data-theme="light"] .team-card.selected {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+[data-theme="light"] .team-abbr {
+  color: #1F2937;
+}
+
+[data-theme="light"] .team-city {
+  color: #6B7280;
+}
+
+[data-theme="light"] .team-record {
+  color: #374151;
+}
+
+/* Asset Modal Cards Light Mode */
+[data-theme="light"] .asset-modal-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .asset-modal-card.selected {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+[data-theme="light"] .asset-modal-card.pick.selected {
+  background: rgba(139, 92, 246, 0.1);
+}
+
+[data-theme="light"] .asset-modal-avatar {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.1));
+  color: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] .asset-modal-name {
+  color: #1F2937;
+}
+
+[data-theme="light"] .asset-modal-age {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .asset-modal-salary {
+  color: #059669;
+}
+
+[data-theme="light"] .asset-modal-years {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .asset-modal-pick-team {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .asset-modal-projection {
+  color: rgba(0, 0, 0, 0.5);
 }
 </style>
