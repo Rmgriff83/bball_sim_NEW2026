@@ -62,6 +62,9 @@ class PlayerEvolutionService
         int $awayScore,
         array $boxScores
     ): array {
+        // Set difficulty for calculations
+        $this->development->setDifficulty($campaign->difficulty ?? 'pro');
+
         $isPlayoff = $campaign->currentSeason?->phase === 'playoffs';
 
         // Process home team
@@ -272,20 +275,23 @@ class PlayerEvolutionService
      */
     public function processWeeklyUpdates(Campaign $campaign): void
     {
-        // Process user's team (database players)
+        // Set difficulty for calculations
+        $this->development->setDifficulty($campaign->difficulty ?? 'pro');
+
+        // Process user's team (database players) - no AI upgrades
         $userPlayers = Player::where('campaign_id', $campaign->id)->get();
         foreach ($userPlayers as $player) {
             $playerArray = $player->toArray();
-            $playerArray = $this->processWeeklyPlayer($campaign, $playerArray);
+            $playerArray = $this->processWeeklyPlayer($campaign, $playerArray, [], false);
             $player->update($this->normalizeForDatabase($playerArray));
         }
 
-        // Process league players (JSON)
+        // Process league players (JSON) - with AI upgrades
         $leaguePlayers = $this->playerService->loadLeaguePlayers($campaign->id);
         $teamRecord = $this->getTeamRecords($campaign);
 
         foreach ($leaguePlayers as &$player) {
-            $player = $this->processWeeklyPlayer($campaign, $player, $teamRecord);
+            $player = $this->processWeeklyPlayer($campaign, $player, $teamRecord, true);
         }
 
         $this->playerService->saveLeaguePlayers($campaign->id, $leaguePlayers);
@@ -294,7 +300,7 @@ class PlayerEvolutionService
     /**
      * Process weekly updates for a single player.
      */
-    private function processWeeklyPlayer(Campaign $campaign, array $player, array $teamRecords = []): array
+    private function processWeeklyPlayer(Campaign $campaign, array $player, array $teamRecords = [], bool $isAI = false): array
     {
         // Process injury recovery
         if ($this->injuries->isInjured($player)) {
@@ -319,6 +325,21 @@ class PlayerEvolutionService
         // Check for hot/cold streaks
         $player = $this->processStreaks($campaign, $player);
 
+        // Award upgrade points based on weekly growth
+        $weekAgo = now()->subDays(7)->format('Y-m-d');
+        $earnedPoints = $this->calculateUpgradePointsFromGrowth($player, $weekAgo);
+        if ($earnedPoints > 0) {
+            $maxPoints = config('player_evolution.upgrade_points.max_stored_points', 99);
+            $currentPoints = $player['upgrade_points'] ?? $player['upgradePoints'] ?? 0;
+            $player['upgrade_points'] = min($maxPoints, $currentPoints + $earnedPoints);
+            $player['upgradePoints'] = $player['upgrade_points'];
+        }
+
+        // AI teams automatically spend upgrade points
+        if ($isAI) {
+            $player = $this->processAIUpgrades($player);
+        }
+
         // Recalculate overall rating
         $player = $this->recalculateOverall($player);
 
@@ -326,10 +347,284 @@ class PlayerEvolutionService
     }
 
     /**
+     * Process AI auto-upgrades for a player.
+     * AI spends all available upgrade points intelligently.
+     */
+    private function processAIUpgrades(array $player): array
+    {
+        $points = $player['upgrade_points'] ?? $player['upgradePoints'] ?? 0;
+        if ($points <= 0) {
+            return $player;
+        }
+
+        $potential = $player['potentialRating'] ?? $player['potential_rating'] ?? 99;
+        $position = $player['position'] ?? 'SF';
+
+        // Spend all available points
+        while ($points > 0) {
+            $upgrade = $this->selectAIUpgrade($player, $position, $potential);
+            if (!$upgrade) {
+                break; // No valid upgrades available (all at cap)
+            }
+
+            // Apply the upgrade
+            $category = $upgrade['category'];
+            $attribute = $upgrade['attribute'];
+            $currentValue = $player['attributes'][$category][$attribute];
+            $newValue = min($potential, $currentValue + 1);
+
+            $player['attributes'][$category][$attribute] = $newValue;
+
+            // Record in development history
+            $history = $player['development_history'] ?? $player['developmentHistory'] ?? [];
+            $history[] = [
+                'date' => now()->format('Y-m-d'),
+                'category' => $category,
+                'attribute' => $attribute,
+                'change' => 1,
+                'old_value' => $currentValue,
+                'new_value' => $newValue,
+                'source' => 'ai_upgrade',
+            ];
+            $player['development_history'] = array_slice($history, -200);
+            $player['developmentHistory'] = $player['development_history'];
+
+            $points--;
+        }
+
+        $player['upgrade_points'] = $points;
+        $player['upgradePoints'] = $points;
+
+        return $player;
+    }
+
+    /**
+     * Select which attribute the AI should upgrade.
+     * Balances between improving weaknesses and enhancing strengths.
+     */
+    private function selectAIUpgrade(array $player, string $position, int $potential): ?array
+    {
+        $attributes = $player['attributes'] ?? [];
+        $upgradeableCategories = ['offense', 'defense', 'physical']; // Mental cannot be upgraded
+
+        // Get position-relevant attribute weights
+        $positionWeights = $this->getPositionAttributeWeights($position);
+
+        // Collect all upgradeable attributes with their scores
+        $candidates = [];
+
+        foreach ($upgradeableCategories as $category) {
+            if (!isset($attributes[$category]) || !is_array($attributes[$category])) {
+                continue;
+            }
+
+            foreach ($attributes[$category] as $attrName => $value) {
+                // Skip if already at potential cap
+                if ($value >= $potential) {
+                    continue;
+                }
+
+                // Calculate priority score
+                $positionRelevance = $positionWeights[$category][$attrName] ?? 0.5;
+
+                // Determine if this is a weakness or strength relative to category average
+                $categoryValues = array_values($attributes[$category]);
+                $categoryAvg = count($categoryValues) > 0 ? array_sum($categoryValues) / count($categoryValues) : 70;
+
+                $isWeakness = $value < $categoryAvg - 3;
+                $isStrength = $value > $categoryAvg + 3;
+
+                // Base score from position relevance (0-1)
+                $score = $positionRelevance;
+
+                // 60% chance to prioritize weaknesses, 40% strengths
+                $prioritizeWeakness = mt_rand(1, 100) <= 60;
+
+                if ($prioritizeWeakness && $isWeakness) {
+                    // Boost score for weaknesses (bigger gap = higher priority)
+                    $gap = $categoryAvg - $value;
+                    $score += 0.3 + ($gap / 30); // Up to +0.6 bonus for big gaps
+                } elseif (!$prioritizeWeakness && $isStrength) {
+                    // Boost score for strengths (already good, make better)
+                    $score += 0.25;
+                } elseif ($isWeakness) {
+                    // Still give some bonus to weaknesses even when not prioritizing
+                    $score += 0.1;
+                }
+
+                // Small random factor for variety
+                $score += mt_rand(0, 20) / 100;
+
+                $candidates[] = [
+                    'category' => $category,
+                    'attribute' => $attrName,
+                    'value' => $value,
+                    'score' => $score,
+                ];
+            }
+        }
+
+        if (empty($candidates)) {
+            return null;
+        }
+
+        // Sort by score descending and pick the best
+        usort($candidates, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        return $candidates[0];
+    }
+
+    /**
+     * Get attribute weights based on position.
+     * Higher weight = more important for that position.
+     */
+    private function getPositionAttributeWeights(string $position): array
+    {
+        $weights = [
+            'PG' => [
+                'offense' => [
+                    'ballHandling' => 1.0, 'passAccuracy' => 1.0, 'passVision' => 0.9, 'passIQ' => 0.9,
+                    'threePoint' => 0.8, 'midRange' => 0.7, 'layup' => 0.7, 'closeShot' => 0.5,
+                    'freeThrow' => 0.6, 'postControl' => 0.2, 'drawFoul' => 0.6,
+                    'standingDunk' => 0.1, 'drivingDunk' => 0.4,
+                ],
+                'defense' => [
+                    'perimeterDefense' => 1.0, 'steal' => 0.9, 'passPerception' => 0.8,
+                    'helpDefenseIQ' => 0.7, 'interiorDefense' => 0.3, 'block' => 0.2,
+                    'offensiveRebound' => 0.2, 'defensiveRebound' => 0.4,
+                ],
+                'physical' => [
+                    'speed' => 1.0, 'acceleration' => 0.9, 'stamina' => 0.8,
+                    'vertical' => 0.5, 'strength' => 0.4,
+                ],
+            ],
+            'SG' => [
+                'offense' => [
+                    'threePoint' => 1.0, 'midRange' => 0.9, 'ballHandling' => 0.7, 'layup' => 0.8,
+                    'closeShot' => 0.6, 'freeThrow' => 0.7, 'passAccuracy' => 0.6, 'passVision' => 0.5,
+                    'passIQ' => 0.5, 'drawFoul' => 0.7, 'drivingDunk' => 0.6,
+                    'standingDunk' => 0.3, 'postControl' => 0.2,
+                ],
+                'defense' => [
+                    'perimeterDefense' => 1.0, 'steal' => 0.8, 'passPerception' => 0.7,
+                    'helpDefenseIQ' => 0.6, 'interiorDefense' => 0.3, 'block' => 0.3,
+                    'offensiveRebound' => 0.3, 'defensiveRebound' => 0.5,
+                ],
+                'physical' => [
+                    'speed' => 0.9, 'acceleration' => 0.8, 'stamina' => 0.8,
+                    'vertical' => 0.7, 'strength' => 0.5,
+                ],
+            ],
+            'SF' => [
+                'offense' => [
+                    'threePoint' => 0.8, 'midRange' => 0.8, 'layup' => 0.8, 'closeShot' => 0.7,
+                    'ballHandling' => 0.6, 'passAccuracy' => 0.5, 'passVision' => 0.4, 'passIQ' => 0.4,
+                    'freeThrow' => 0.6, 'drawFoul' => 0.7, 'drivingDunk' => 0.7,
+                    'standingDunk' => 0.5, 'postControl' => 0.4,
+                ],
+                'defense' => [
+                    'perimeterDefense' => 0.8, 'interiorDefense' => 0.6, 'steal' => 0.7,
+                    'block' => 0.5, 'helpDefenseIQ' => 0.7, 'passPerception' => 0.6,
+                    'offensiveRebound' => 0.5, 'defensiveRebound' => 0.7,
+                ],
+                'physical' => [
+                    'speed' => 0.7, 'acceleration' => 0.7, 'stamina' => 0.8,
+                    'vertical' => 0.7, 'strength' => 0.7,
+                ],
+            ],
+            'PF' => [
+                'offense' => [
+                    'postControl' => 0.8, 'closeShot' => 0.9, 'midRange' => 0.7, 'layup' => 0.8,
+                    'standingDunk' => 0.8, 'drivingDunk' => 0.6, 'threePoint' => 0.5,
+                    'freeThrow' => 0.6, 'drawFoul' => 0.7, 'ballHandling' => 0.3,
+                    'passAccuracy' => 0.4, 'passVision' => 0.3, 'passIQ' => 0.4,
+                ],
+                'defense' => [
+                    'interiorDefense' => 0.9, 'block' => 0.8, 'defensiveRebound' => 0.9,
+                    'offensiveRebound' => 0.8, 'helpDefenseIQ' => 0.7, 'perimeterDefense' => 0.5,
+                    'steal' => 0.4, 'passPerception' => 0.5,
+                ],
+                'physical' => [
+                    'strength' => 0.9, 'vertical' => 0.7, 'stamina' => 0.7,
+                    'speed' => 0.5, 'acceleration' => 0.5,
+                ],
+            ],
+            'C' => [
+                'offense' => [
+                    'postControl' => 1.0, 'closeShot' => 0.9, 'standingDunk' => 0.9, 'layup' => 0.7,
+                    'freeThrow' => 0.5, 'drawFoul' => 0.6, 'midRange' => 0.4, 'drivingDunk' => 0.4,
+                    'threePoint' => 0.2, 'ballHandling' => 0.2, 'passAccuracy' => 0.4,
+                    'passVision' => 0.3, 'passIQ' => 0.4,
+                ],
+                'defense' => [
+                    'interiorDefense' => 1.0, 'block' => 1.0, 'defensiveRebound' => 1.0,
+                    'offensiveRebound' => 0.9, 'helpDefenseIQ' => 0.7, 'perimeterDefense' => 0.3,
+                    'steal' => 0.3, 'passPerception' => 0.4,
+                ],
+                'physical' => [
+                    'strength' => 1.0, 'vertical' => 0.6, 'stamina' => 0.6,
+                    'speed' => 0.3, 'acceleration' => 0.3,
+                ],
+            ],
+        ];
+
+        return $weights[$position] ?? $weights['SF'];
+    }
+
+    /**
+     * Calculate upgrade points earned from recent attribute growth.
+     * Higher potential players have slightly better point generation.
+     */
+    private function calculateUpgradePointsFromGrowth(array $player, string $sinceDate): int
+    {
+        $config = config('player_evolution.upgrade_points');
+        if (!($config['enabled'] ?? false)) {
+            return 0;
+        }
+
+        $history = $player['development_history'] ?? $player['developmentHistory'] ?? [];
+
+        // Sum positive changes from this week
+        $totalGrowth = 0;
+        foreach ($history as $entry) {
+            $entryDate = $entry['date'] ?? null;
+            $change = $entry['change'] ?? 0;
+            if ($entryDate && $entryDate >= $sinceDate && $change > 0) {
+                $totalGrowth += $change;
+            }
+        }
+
+        if ($totalGrowth < $config['min_growth_threshold']) {
+            return 0;
+        }
+
+        // Get player's potential rating for scaling
+        $potential = $player['potentialRating'] ?? $player['potential_rating'] ?? 75;
+
+        // Scale points_per_growth by potential (75 is baseline = 1.0x, 99 = ~1.32x, 60 = ~0.8x)
+        $potentialMultiplier = $potential / 75;
+        $adjustedPointsPerGrowth = $config['points_per_growth'] * $potentialMultiplier;
+
+        // Calculate base points
+        $points = (int) floor($totalGrowth * $adjustedPointsPerGrowth);
+
+        // Determine max weekly points - elite potential (90+) gets +1 bonus cap
+        $maxWeekly = $config['max_weekly_points'];
+        if ($potential >= 90) {
+            $maxWeekly += 1;
+        }
+
+        return min($points, $maxWeekly);
+    }
+
+    /**
      * Process monthly development checkpoint.
      */
     public function processMonthlyDevelopment(Campaign $campaign): void
     {
+        // Set difficulty for calculations
+        $this->development->setDifficulty($campaign->difficulty ?? 'pro');
+
         // Process user's team
         $userPlayers = Player::where('campaign_id', $campaign->id)->get();
         $userRoster = $userPlayers->map(fn($p) => $p->toArray())->toArray();
@@ -423,6 +718,9 @@ class PlayerEvolutionService
      */
     public function processOffseason(Campaign $campaign): array
     {
+        // Set difficulty for calculations
+        $this->development->setDifficulty($campaign->difficulty ?? 'pro');
+
         $results = [
             'developed' => [],
             'regressed' => [],
@@ -505,7 +803,7 @@ class PlayerEvolutionService
         $player['careerSeasons'] = $player['career_seasons'];
 
         // Apply seasonal aging
-        $age = $this->development->calculateAge($player['birthDate'] ?? $player['birth_date'] ?? '1995-01-01');
+        $age = $this->development->getPlayerAge($player);
         $player['attributes'] = $this->aging->applySeasonalAging($player['attributes'], $age);
 
         // Check for retirement
@@ -606,7 +904,7 @@ class PlayerEvolutionService
      */
     private function applyMonthlyAttributeChanges(array $player, float $devPoints, float $regPoints): array
     {
-        $age = $this->development->calculateAge($player['birthDate'] ?? $player['birth_date'] ?? '1995-01-01');
+        $age = $this->development->getPlayerAge($player);
         $potential = $player['potentialRating'] ?? $player['potential_rating'] ?? 75;
 
         foreach ($player['attributes'] as $category => &$attrs) {
@@ -893,6 +1191,7 @@ class PlayerEvolutionService
             'career_seasons' => $player['career_seasons'] ?? $player['careerSeasons'] ?? 0,
             'is_retired' => $player['is_retired'] ?? $player['isRetired'] ?? false,
             'recent_performances' => $player['recent_performances'] ?? $player['recentPerformances'] ?? [],
+            'upgrade_points' => $player['upgrade_points'] ?? $player['upgradePoints'] ?? 0,
         ];
     }
 

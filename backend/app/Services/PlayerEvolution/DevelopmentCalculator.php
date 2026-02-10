@@ -7,10 +7,54 @@ use Carbon\Carbon;
 class DevelopmentCalculator
 {
     private array $config;
+    private string $difficulty = 'pro';
 
     public function __construct()
     {
         $this->config = config('player_evolution');
+    }
+
+    /**
+     * Set the difficulty level for calculations.
+     */
+    public function setDifficulty(string $difficulty): self
+    {
+        $this->difficulty = $difficulty;
+        return $this;
+    }
+
+    /**
+     * Get difficulty-specific settings.
+     */
+    public function getDifficultySettings(): array
+    {
+        // Fallback defaults if config not loaded properly
+        $defaultSettings = [
+            'micro_dev_threshold_high' => 14,
+            'micro_dev_threshold_low' => 6,
+            'micro_dev_gain_min' => 0.1,
+            'micro_dev_gain_max' => 0.3,
+            'micro_dev_loss_min' => 0.08,
+            'micro_dev_loss_max' => 0.15,
+            'stat_thresholds' => [
+                'points' => 15,
+                'assists' => 5,
+                'rebounds' => 6,
+                'steals' => 2,
+                'blocks' => 2,
+                'threes' => 2,
+            ],
+            'development_multiplier' => 1.0,
+            'regression_multiplier' => 1.0,
+        ];
+
+        if (!isset($this->config['difficulty_settings'])) {
+            return $defaultSettings;
+        }
+
+        return $this->config['difficulty_settings'][$this->difficulty]
+            ?? $this->config['difficulty_settings']['pro']
+            ?? $defaultSettings;
     }
 
     /**
@@ -27,29 +71,65 @@ class DevelopmentCalculator
     }
 
     /**
-     * Get development multiplier for an age.
+     * Get development multiplier for an age (adjusted by difficulty).
      */
     public function getDevelopmentMultiplier(int $age): float
     {
         $bracket = $this->getAgeBracket($age);
-        return $this->config['age_brackets'][$bracket]['development'] ?? 0.0;
+        $baseMult = $this->config['age_brackets'][$bracket]['development'] ?? 0.0;
+        $diffSettings = $this->getDifficultySettings();
+        return $baseMult * ($diffSettings['development_multiplier'] ?? 1.0);
     }
 
     /**
-     * Get regression multiplier for an age.
+     * Get regression multiplier for an age (adjusted by difficulty).
      */
     public function getRegressionMultiplier(int $age): float
     {
         $bracket = $this->getAgeBracket($age);
-        return $this->config['age_brackets'][$bracket]['regression'] ?? 0.0;
+        $baseMult = $this->config['age_brackets'][$bracket]['regression'] ?? 0.0;
+        $diffSettings = $this->getDifficultySettings();
+        return $baseMult * ($diffSettings['regression_multiplier'] ?? 1.0);
     }
 
     /**
      * Calculate age from birth date string.
+     * Defaults to 25 if birth date is empty, null, or invalid.
      */
-    public function calculateAge(string $birthDate): int
+    public function calculateAge(?string $birthDate): int
     {
-        return Carbon::parse($birthDate)->age;
+        if (empty($birthDate)) {
+            return 25;
+        }
+
+        try {
+            $age = Carbon::parse($birthDate)->age;
+            // Sanity check - if age is negative or unreasonably high, default to 25
+            if ($age < 0 || $age > 50) {
+                return 25;
+            }
+            return $age;
+        } catch (\Exception $e) {
+            return 25;
+        }
+    }
+
+    /**
+     * Get birth date from player array, handling both camelCase and snake_case.
+     */
+    public function getPlayerBirthDate(array $player): ?string
+    {
+        $birthDate = $player['birthDate'] ?? $player['birth_date'] ?? null;
+        // Return null if empty string so calculateAge defaults to 25
+        return !empty($birthDate) ? $birthDate : null;
+    }
+
+    /**
+     * Get player age with safe default of 25.
+     */
+    public function getPlayerAge(array $player): int
+    {
+        return $this->calculateAge($this->getPlayerBirthDate($player));
     }
 
     /**
@@ -57,7 +137,7 @@ class DevelopmentCalculator
      */
     public function calculateMonthlyDevelopment(array $player, array $context = []): float
     {
-        $age = $this->calculateAge($player['birthDate'] ?? $player['birth_date'] ?? '1995-01-01');
+        $age = $this->getPlayerAge($player);
         $current = $player['overallRating'] ?? $player['overall_rating'] ?? 70;
         $potential = $player['potentialRating'] ?? $player['potential_rating'] ?? 75;
         $workEthic = $player['attributes']['mental']['workEthic'] ?? 70;
@@ -101,7 +181,7 @@ class DevelopmentCalculator
      */
     public function calculateMonthlyRegression(array $player): float
     {
-        $age = $this->calculateAge($player['birthDate'] ?? $player['birth_date'] ?? '1995-01-01');
+        $age = $this->getPlayerAge($player);
         $ageMultiplier = $this->getRegressionMultiplier($age);
 
         if ($ageMultiplier <= 0) {
@@ -116,10 +196,11 @@ class DevelopmentCalculator
 
     /**
      * Calculate per-game micro-development based on performance.
+     * Uses difficulty-specific thresholds and gains.
      */
     public function calculateMicroDevelopment(array $player, array $boxScore): array
     {
-        $devConfig = $this->config['development'];
+        $diffSettings = $this->getDifficultySettings();
         $performance = $this->calculatePerformanceRating($boxScore);
 
         $result = [
@@ -128,22 +209,22 @@ class DevelopmentCalculator
             'type' => 'none',
         ];
 
-        if ($performance >= $devConfig['micro_dev_threshold_high']) {
-            // Good performance - slight development
+        if ($performance >= $diffSettings['micro_dev_threshold_high']) {
+            // Good performance - development
             $result['type'] = 'development';
             $gain = $this->randomFloat(
-                $devConfig['micro_dev_gain_min'],
-                $devConfig['micro_dev_gain_max']
+                $diffSettings['micro_dev_gain_min'],
+                $diffSettings['micro_dev_gain_max']
             );
-            $result['attributeChanges'] = $this->getAttributeChangesFromStats($boxScore, $gain);
-        } elseif ($performance <= $devConfig['micro_dev_threshold_low'] && $boxScore['minutes'] >= 15) {
+            $result['attributeChanges'] = $this->getAttributeChangesFromStats($boxScore, $gain, $diffSettings);
+        } elseif ($performance <= $diffSettings['micro_dev_threshold_low'] && ($boxScore['minutes'] ?? 0) >= 15) {
             // Poor performance with significant minutes - slight regression
             $result['type'] = 'regression';
             $loss = $this->randomFloat(
-                $devConfig['micro_dev_loss_min'],
-                $devConfig['micro_dev_loss_max']
+                $diffSettings['micro_dev_loss_min'],
+                $diffSettings['micro_dev_loss_max']
             );
-            $result['attributeChanges'] = $this->getAttributeChangesFromStats($boxScore, -$loss);
+            $result['attributeChanges'] = $this->getAttributeChangesFromStats($boxScore, -$loss, $diffSettings);
         }
 
         return $result;
@@ -170,10 +251,21 @@ class DevelopmentCalculator
 
     /**
      * Determine which attributes to boost based on stats.
+     * Uses difficulty-specific stat thresholds.
      */
-    private function getAttributeChangesFromStats(array $boxScore, float $change): array
+    private function getAttributeChangesFromStats(array $boxScore, float $change, array $diffSettings = []): array
     {
         $changes = [];
+
+        // Get stat thresholds from difficulty settings, with fallbacks
+        $thresholds = $diffSettings['stat_thresholds'] ?? [
+            'points' => 15,
+            'assists' => 5,
+            'rebounds' => 6,
+            'steals' => 2,
+            'blocks' => 2,
+            'threes' => 2,
+        ];
 
         $points = $boxScore['points'] ?? 0;
         $assists = $boxScore['assists'] ?? 0;
@@ -182,33 +274,45 @@ class DevelopmentCalculator
         $blocks = $boxScore['blocks'] ?? 0;
         $threes = $boxScore['threePointersMade'] ?? 0;
 
-        // Scoring
-        if ($points >= 20) {
-            if ($threes >= 3) {
+        // Scoring - if points threshold met
+        if ($points >= $thresholds['points']) {
+            if ($threes >= $thresholds['threes']) {
                 $changes['offense.threePoint'] = $change;
             } else {
                 $changes['offense.midRange'] = $change * 0.5;
                 $changes['offense.layup'] = $change * 0.5;
             }
+        } elseif ($points >= $thresholds['points'] * 0.6) {
+            // Partial scoring bonus for decent scoring (60% of threshold)
+            $changes['offense.closeShot'] = $change * 0.3;
         }
 
         // Playmaking
-        if ($assists >= 6) {
+        if ($assists >= $thresholds['assists']) {
             $changes['offense.passAccuracy'] = $change;
+            $changes['offense.passVision'] = $change * 0.5;
+        } elseif ($assists >= $thresholds['assists'] * 0.6) {
+            // Partial assist bonus
+            $changes['offense.passAccuracy'] = $change * 0.3;
         }
 
         // Rebounding
-        if ($rebounds >= 8) {
+        if ($rebounds >= $thresholds['rebounds']) {
             $changes['defense.defensiveRebound'] = $change * 0.7;
             $changes['defense.offensiveRebound'] = $change * 0.3;
+        } elseif ($rebounds >= $thresholds['rebounds'] * 0.6) {
+            // Partial rebound bonus
+            $changes['defense.defensiveRebound'] = $change * 0.3;
         }
 
         // Defense
-        if ($steals >= 2) {
+        if ($steals >= $thresholds['steals']) {
             $changes['defense.steal'] = $change;
+            $changes['defense.perimeterDefense'] = $change * 0.3;
         }
-        if ($blocks >= 2) {
+        if ($blocks >= $thresholds['blocks']) {
             $changes['defense.block'] = $change;
+            $changes['defense.interiorDefense'] = $change * 0.3;
         }
 
         return $changes;
@@ -221,7 +325,7 @@ class DevelopmentCalculator
     {
         $current = $player['overallRating'] ?? $player['overall_rating'] ?? 70;
         $potential = $player['potentialRating'] ?? $player['potential_rating'] ?? 75;
-        $age = $this->calculateAge($player['birthDate'] ?? $player['birth_date'] ?? '1995-01-01');
+        $age = $this->getPlayerAge($player);
 
         return $current < $potential && $this->getDevelopmentMultiplier($age) > 0;
     }

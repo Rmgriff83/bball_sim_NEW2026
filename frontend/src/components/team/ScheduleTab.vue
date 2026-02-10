@@ -151,6 +151,11 @@ const calendarDays = computed(() => {
   return days
 })
 
+// Filter to only current month days (no other month padding)
+const currentMonthDays = computed(() => {
+  return calendarDays.value.filter(day => day.isCurrentMonth)
+})
+
 // Check if a day is "today" in campaign time
 function isToday(date) {
   if (!campaignDate.value) return false
@@ -321,7 +326,16 @@ watch(campaignDate, () => {
   <div class="schedule-tab">
     <!-- Tab Title with Record - Cosmic Header -->
     <div class="schedule-header card-cosmic">
-      <h2 class="header-text">SCHEDULE</h2>
+      <div class="header-left">
+        <div
+          v-if="userTeam"
+          class="header-team-logo"
+          :style="{ backgroundColor: userTeam.primary_color || '#666' }"
+        >
+          {{ userTeam.abbreviation }}
+        </div>
+        <h2 class="header-text">SCHEDULE</h2>
+      </div>
       <span class="team-record">{{ teamRecord.wins }}-{{ teamRecord.losses }}</span>
     </div>
 
@@ -338,79 +352,79 @@ watch(campaignDate, () => {
         <!-- Calendar Header with Month -->
         <div class="calendar-header">
           <span class="month-label">{{ monthDisplayName }}</span>
-          <button class="today-btn" @click="goToToday">Today</button>
         </div>
 
         <!-- Calendar Grid -->
-        <div class="calendar-grid">
-          <button
-            v-for="(dayData, index) in calendarDays"
-            :key="index"
-            class="calendar-day"
-            :class="{
-              'other-month': !dayData.isCurrentMonth,
-              'has-game': dayData.games.length > 0,
-              'is-today': isToday(dayData.date),
-              'game-won': dayData.games[0] && getGameResult(dayData.games[0])?.won,
-              'game-lost': dayData.games[0] && getGameResult(dayData.games[0]) && !getGameResult(dayData.games[0])?.won,
-              'game-in-progress': dayData.games[0] && isGameInProgress(dayData.games[0]),
-              'game-upcoming': dayData.games[0] && !dayData.games[0].is_complete && !isGameInProgress(dayData.games[0]),
-              'game-next': dayData.games[0] && isNextGame(dayData.games[0]) && !isGameInProgress(dayData.games[0])
-            }"
-            @click="handleDayClick(dayData)"
-          >
-            <!-- Day number in corner -->
-            <span class="day-number">{{ dayData.day }}</span>
-
-            <!-- W/L badge in upper left for completed games -->
-            <span
-              v-if="dayData.games[0]?.is_complete"
-              class="result-badge"
+        <div class="calendar-grid-wrapper">
+          <div class="calendar-grid">
+            <button
+              v-for="(dayData, index) in currentMonthDays"
+              :key="index"
+              class="calendar-day"
+              :class="{
+                'has-game': dayData.games.length > 0,
+                'is-today': isToday(dayData.date),
+                'game-won': dayData.games[0] && getGameResult(dayData.games[0])?.won,
+                'game-lost': dayData.games[0] && getGameResult(dayData.games[0]) && !getGameResult(dayData.games[0])?.won,
+                'game-in-progress': dayData.games[0] && isGameInProgress(dayData.games[0]),
+                'game-upcoming': dayData.games[0] && !dayData.games[0].is_complete && !isGameInProgress(dayData.games[0]),
+                'game-next': dayData.games[0] && isNextGame(dayData.games[0]) && !isGameInProgress(dayData.games[0])
+              }"
+              @click="handleDayClick(dayData)"
             >
-              {{ getGameResult(dayData.games[0])?.won ? 'W' : 'L' }}
-            </span>
+              <!-- Day number in corner -->
+              <span class="day-number">{{ dayData.day }}</span>
 
-            <!-- Game content -->
-            <div v-if="dayData.games.length" class="game-content">
-              <template v-if="dayData.games[0].is_complete">
-                <!-- Completed: Show team badge with score -->
-                <div class="matchup-row">
+              <!-- W/L badge in upper left for completed games -->
+              <span
+                v-if="dayData.games[0]?.is_complete"
+                class="result-badge"
+              >
+                {{ getGameResult(dayData.games[0])?.won ? 'W' : 'L' }}
+              </span>
+
+              <!-- Game content -->
+              <div v-if="dayData.games.length" class="game-content">
+                <template v-if="dayData.games[0].is_complete">
+                  <!-- Completed: Show team badge stacked on score -->
+                  <div class="matchup-stack">
+                    <div
+                      class="team-logo-badge"
+                      :style="{ backgroundColor: getTeamsInfo(dayData.games[0])?.opponent?.primary_color || '#666' }"
+                    >
+                      {{ getTeamsInfo(dayData.games[0])?.opponent?.abbreviation }}
+                    </div>
+                    <span class="score-text">{{ getTeamsInfo(dayData.games[0])?.userScore }}-{{ getTeamsInfo(dayData.games[0])?.oppScore }}</span>
+                  </div>
+                </template>
+
+                <template v-else-if="isGameInProgress(dayData.games[0])">
+                  <!-- In Progress: Live indicator with score -->
+                  <span class="live-indicator">LIVE</span>
+                  <div class="matchup-stack">
+                    <div
+                      class="team-logo-badge"
+                      :style="{ backgroundColor: getTeamsInfo(dayData.games[0])?.opponent?.primary_color || '#666' }"
+                    >
+                      {{ getTeamsInfo(dayData.games[0])?.opponent?.abbreviation }}
+                    </div>
+                    <span class="score-text">{{ getInProgressScore(dayData.games[0])?.userScore }}-{{ getInProgressScore(dayData.games[0])?.oppScore }}</span>
+                  </div>
+                </template>
+
+                <template v-else>
+                  <!-- Upcoming: Show matchup -->
+                  <span class="location-label">{{ getTeamsInfo(dayData.games[0])?.isHome ? 'vs' : '@' }}</span>
                   <div
-                    class="team-logo-badge"
+                    class="team-logo-badge team-logo-badge-lg"
                     :style="{ backgroundColor: getTeamsInfo(dayData.games[0])?.opponent?.primary_color || '#666' }"
                   >
                     {{ getTeamsInfo(dayData.games[0])?.opponent?.abbreviation }}
                   </div>
-                  <span class="score-text">{{ getTeamsInfo(dayData.games[0])?.userScore }}-{{ getTeamsInfo(dayData.games[0])?.oppScore }}</span>
-                </div>
-              </template>
-
-              <template v-else-if="isGameInProgress(dayData.games[0])">
-                <!-- In Progress: Live indicator with score -->
-                <span class="live-indicator">LIVE</span>
-                <div class="matchup-row">
-                  <div
-                    class="team-logo-badge"
-                    :style="{ backgroundColor: getTeamsInfo(dayData.games[0])?.opponent?.primary_color || '#666' }"
-                  >
-                    {{ getTeamsInfo(dayData.games[0])?.opponent?.abbreviation }}
-                  </div>
-                  <span class="score-text">{{ getInProgressScore(dayData.games[0])?.userScore }}-{{ getInProgressScore(dayData.games[0])?.oppScore }}</span>
-                </div>
-              </template>
-
-              <template v-else>
-                <!-- Upcoming: Show matchup -->
-                <span class="location-label">{{ getTeamsInfo(dayData.games[0])?.isHome ? 'vs' : '@' }}</span>
-                <div
-                  class="team-logo-badge team-logo-badge-lg"
-                  :style="{ backgroundColor: getTeamsInfo(dayData.games[0])?.opponent?.primary_color || '#666' }"
-                >
-                  {{ getTeamsInfo(dayData.games[0])?.opponent?.abbreviation }}
-                </div>
-              </template>
-            </div>
-          </button>
+                </template>
+              </div>
+            </button>
+          </div>
         </div>
 
         <!-- Navigation at Bottom -->
@@ -483,6 +497,28 @@ watch(campaignDate, () => {
   pointer-events: none;
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+.header-team-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: white;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
 .header-text {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
   font-size: 1.5rem;
@@ -490,8 +526,6 @@ watch(campaignDate, () => {
   color: #1a1520;
   margin: 0;
   letter-spacing: 0.05em;
-  position: relative;
-  z-index: 1;
 }
 
 .team-record {
@@ -547,21 +581,23 @@ watch(campaignDate, () => {
   letter-spacing: 0.02em;
 }
 
-.today-btn {
-  background: var(--color-primary);
-  border: none;
-  color: white;
-  font-size: 0.75rem;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 6px 12px;
-  border-radius: var(--radius-md);
-  transition: all 0.2s ease;
+/* Calendar Grid Wrapper - scrollable after 4 rows */
+.calendar-grid-wrapper {
+  max-height: calc(4 * 80px + 3px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-.today-btn:hover {
-  background: var(--color-primary-hover, #d14d42);
-  transform: translateY(-1px);
+@media (min-width: 500px) {
+  .calendar-grid-wrapper {
+    max-height: calc(4 * 85px + 3px);
+  }
+}
+
+@media (min-width: 700px) {
+  .calendar-grid-wrapper {
+    max-height: calc(4 * 90px + 3px);
+  }
 }
 
 /* Calendar Grid - Responsive columns */
@@ -605,10 +641,6 @@ watch(campaignDate, () => {
   background: var(--color-bg-tertiary);
 }
 
-.calendar-day.other-month {
-  opacity: 0.35;
-}
-
 .calendar-day.is-today {
   background: rgba(232, 90, 79, 0.12);
   box-shadow: inset 0 0 0 2px var(--color-primary);
@@ -634,13 +666,20 @@ watch(campaignDate, () => {
 }
 
 .calendar-day.game-in-progress {
-  background: linear-gradient(135deg, rgba(232, 90, 79, 0.15) 0%, rgba(244, 162, 89, 0.15) 100%);
-  animation: pulse-live 2s ease-in-out infinite;
+  background: rgba(34, 197, 94, 0.2);
+  animation: pulse-live 1.5s ease-in-out infinite;
+  box-shadow: inset 0 0 0 3px rgba(34, 197, 94, 0.6);
 }
 
 @keyframes pulse-live {
-  0%, 100% { box-shadow: inset 0 0 0 2px rgba(232, 90, 79, 0.5); }
-  50% { box-shadow: inset 0 0 0 2px rgba(232, 90, 79, 0.8), 0 0 12px rgba(232, 90, 79, 0.3); }
+  0%, 100% {
+    box-shadow: inset 0 0 0 3px rgba(34, 197, 94, 0.6), 0 0 8px rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.2);
+  }
+  50% {
+    box-shadow: inset 0 0 0 3px rgba(34, 197, 94, 0.9), 0 0 20px rgba(34, 197, 94, 0.5);
+    background: rgba(34, 197, 94, 0.3);
+  }
 }
 
 .calendar-day.game-next {
@@ -655,23 +694,23 @@ watch(campaignDate, () => {
 /* Day Number - top right corner */
 .day-number {
   position: absolute;
-  top: 3px;
-  right: 4px;
-  font-size: 0.55rem;
-  font-weight: 700;
+  top: 4px;
+  right: 5px;
+  font-size: 0.8rem;
+  font-weight: 800;
   color: var(--color-text-tertiary);
   line-height: 1;
 }
 
 @media (min-width: 500px) {
   .day-number {
-    font-size: 0.6rem;
+    font-size: 0.85rem;
   }
 }
 
 @media (min-width: 700px) {
   .day-number {
-    font-size: 0.65rem;
+    font-size: 0.95rem;
   }
 }
 
@@ -688,10 +727,10 @@ watch(campaignDate, () => {
 /* Result Badge - Upper left corner */
 .result-badge {
   position: absolute;
-  top: 2px;
-  left: 3px;
+  top: 5px;
+  left: 5px;
   font-family: var(--font-display);
-  font-size: 0.85rem;
+  font-size: 1.5rem;
   font-weight: 800;
   text-transform: uppercase;
   line-height: 1;
@@ -699,13 +738,13 @@ watch(campaignDate, () => {
 
 @media (min-width: 500px) {
   .result-badge {
-    font-size: 1rem;
+    font-size: 1.7rem;
   }
 }
 
 @media (min-width: 700px) {
   .result-badge {
-    font-size: 1.1rem;
+    font-size: 1.9rem;
   }
 }
 
@@ -728,28 +767,35 @@ watch(campaignDate, () => {
   min-height: 0;
 }
 
-/* Matchup Row - horizontal layout */
-.matchup-row {
+/* Matchup Stack - vertical layout */
+.matchup-stack {
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 3px;
 }
 
 @media (min-width: 500px) {
-  .matchup-row {
+  .matchup-stack {
     gap: 4px;
+  }
+}
+
+@media (min-width: 700px) {
+  .matchup-stack {
+    gap: 5px;
   }
 }
 
 /* Team Logo Badge */
 .team-logo-badge {
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.35rem;
+  font-size: 0.45rem;
   font-weight: 700;
   color: white;
   flex-shrink: 0;
@@ -758,45 +804,45 @@ watch(campaignDate, () => {
 
 @media (min-width: 500px) {
   .team-logo-badge {
-    width: 18px;
-    height: 18px;
-    font-size: 0.4rem;
-  }
-}
-
-@media (min-width: 700px) {
-  .team-logo-badge {
-    width: 20px;
-    height: 20px;
-    font-size: 0.45rem;
-  }
-}
-
-.team-logo-badge-lg {
-  width: 22px;
-  height: 22px;
-  font-size: 0.45rem;
-}
-
-@media (min-width: 500px) {
-  .team-logo-badge-lg {
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     font-size: 0.5rem;
   }
 }
 
 @media (min-width: 700px) {
-  .team-logo-badge-lg {
-    width: 30px;
-    height: 30px;
+  .team-logo-badge {
+    width: 32px;
+    height: 32px;
     font-size: 0.55rem;
+  }
+}
+
+.team-logo-badge-lg {
+  width: 30px;
+  height: 30px;
+  font-size: 0.5rem;
+}
+
+@media (min-width: 500px) {
+  .team-logo-badge-lg {
+    width: 36px;
+    height: 36px;
+    font-size: 0.55rem;
+  }
+}
+
+@media (min-width: 700px) {
+  .team-logo-badge-lg {
+    width: 42px;
+    height: 42px;
+    font-size: 0.6rem;
   }
 }
 
 /* Score Text */
 .score-text {
-  font-size: 0.55rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: var(--color-text-primary);
   line-height: 1;
@@ -804,42 +850,54 @@ watch(campaignDate, () => {
 
 @media (min-width: 500px) {
   .score-text {
-    font-size: 0.6rem;
+    font-size: 0.8rem;
   }
 }
 
 @media (min-width: 700px) {
   .score-text {
-    font-size: 0.65rem;
+    font-size: 0.9rem;
   }
 }
 
 /* Live Indicator */
 .live-indicator {
-  font-size: 0.45rem;
+  font-size: 0.7rem;
   font-weight: 800;
-  color: var(--color-primary);
+  color: white;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
-  animation: pulse-text 1.5s ease-in-out infinite;
+  letter-spacing: 0.05em;
   line-height: 1;
+  padding: 3px 6px;
+  background: linear-gradient(135deg, #ef4444 0%, #f97316 100%);
+  border-radius: 4px;
+  animation: pulse-badge 1.2s ease-in-out infinite;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
 }
 
 @media (min-width: 500px) {
   .live-indicator {
-    font-size: 0.5rem;
+    font-size: 0.75rem;
+    padding: 3px 8px;
   }
 }
 
 @media (min-width: 700px) {
   .live-indicator {
-    font-size: 0.55rem;
+    font-size: 0.85rem;
+    padding: 4px 10px;
   }
 }
 
-@keyframes pulse-text {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+@keyframes pulse-badge {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.6);
+  }
 }
 
 /* Upcoming Game Display */

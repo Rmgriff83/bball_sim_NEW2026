@@ -420,6 +420,22 @@ async function clearLocalCache() {
   transform: translateX(22px);
 }
 
+/* Light mode toggle contrast fix */
+[data-theme="light"] .toggle-track {
+  background: #d1d5db;
+  border: 1px solid #9ca3af;
+}
+
+[data-theme="light"] .theme-toggle-btn.active .toggle-track {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+[data-theme="light"] .toggle-thumb {
+  background: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
 /* Rewards */
 .rewards-grid {
   display: grid;

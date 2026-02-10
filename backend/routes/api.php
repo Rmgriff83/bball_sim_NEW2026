@@ -79,6 +79,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/free-agents', [TeamController::class, 'freeAgents']);
         Route::post('/players/{player}/sign', [TeamController::class, 'signPlayer']);
         Route::post('/players/{player}/release', [TeamController::class, 'releasePlayer']);
+        Route::post('/players/{player}/upgrade', [TeamController::class, 'upgradePlayerAttribute']);
 
         // Games (uses JSON storage, gameId is a string like "game_2024_001")
         Route::get('/games', [GameController::class, 'index']);

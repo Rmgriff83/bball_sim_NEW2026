@@ -402,6 +402,7 @@ class TeamController extends Controller
         $data['development_history'] = $player['development_history'] ?? $player['developmentHistory'] ?? [];
         $data['streak_data'] = $player['streak_data'] ?? $player['streakData'] ?? null;
         $data['recent_performances'] = $player['recent_performances'] ?? $player['recentPerformances'] ?? [];
+        $data['upgrade_points'] = $player['upgrade_points'] ?? $player['upgradePoints'] ?? 0;
 
         return $data;
     }
@@ -640,6 +641,7 @@ class TeamController extends Controller
         $data['development_history'] = $player->development_history ?? [];
         $data['streak_data'] = $player->streak_data;
         $data['recent_performances'] = $player->recent_performances ?? [];
+        $data['upgrade_points'] = $player->upgrade_points ?? 0;
 
         return $data;
     }
@@ -682,6 +684,105 @@ class TeamController extends Controller
             'recommended' => $recommended,
             'current' => $currentScheme,
         ]);
+    }
+
+    /**
+     * Upgrade a player attribute using upgrade points.
+     */
+    public function upgradePlayerAttribute(Request $request, Campaign $campaign, Player $player): JsonResponse
+    {
+        // Verify ownership
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+        if ($player->campaign_id !== $campaign->id) {
+            return response()->json(['message' => 'Player not in campaign'], 400);
+        }
+        if ($player->team_id !== $campaign->team_id) {
+            return response()->json(['message' => 'Player not on your team'], 400);
+        }
+
+        $validated = $request->validate([
+            'category' => 'required|in:offense,defense,physical',
+            'attribute' => 'required|string',
+        ]);
+
+        // Check player has points
+        if (($player->upgrade_points ?? 0) < 1) {
+            return response()->json(['message' => 'No upgrade points available'], 400);
+        }
+
+        // Verify attribute exists
+        $attributes = $player->attributes;
+        if (!isset($attributes[$validated['category']][$validated['attribute']])) {
+            return response()->json(['message' => 'Invalid attribute'], 400);
+        }
+
+        $currentValue = $attributes[$validated['category']][$validated['attribute']];
+        $potentialCap = $player->potential_rating ?? 99;
+
+        if ($currentValue >= $potentialCap) {
+            return response()->json(['message' => 'Attribute at potential cap'], 400);
+        }
+
+        // Apply upgrade (capped at potential rating)
+        $attributes[$validated['category']][$validated['attribute']] = min($potentialCap, $currentValue + 1);
+
+        // Record in development history
+        $history = $player->development_history ?? [];
+        $history[] = [
+            'date' => now()->format('Y-m-d'),
+            'category' => $validated['category'],
+            'attribute' => $validated['attribute'],
+            'change' => 1,
+            'old_value' => $currentValue,
+            'new_value' => $currentValue + 1,
+            'source' => 'manual_upgrade',
+        ];
+
+        // Recalculate overall
+        $newOverall = $this->calculateOverallRating($attributes);
+
+        $player->update([
+            'attributes' => $attributes,
+            'upgrade_points' => $player->upgrade_points - 1,
+            'development_history' => array_slice($history, -200),
+            'overall_rating' => $newOverall,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'attribute' => $validated['attribute'],
+            'new_value' => $currentValue + 1,
+            'remaining_points' => $player->upgrade_points - 1,
+            'new_overall' => $newOverall,
+        ]);
+    }
+
+    /**
+     * Calculate overall rating from attributes.
+     */
+    private function calculateOverallRating(array $attributes): int
+    {
+        $weights = config('player_evolution.overall_weights', [
+            'offense' => 0.40,
+            'defense' => 0.25,
+            'physical' => 0.20,
+            'mental' => 0.15,
+        ]);
+
+        $categoryAverages = [];
+        foreach ($attributes as $category => $categoryAttrs) {
+            if (!is_array($categoryAttrs) || empty($categoryAttrs)) continue;
+            $categoryAverages[$category] = array_sum($categoryAttrs) / count($categoryAttrs);
+        }
+
+        $overall = 0;
+        foreach ($weights as $category => $weight) {
+            $overall += ($categoryAverages[$category] ?? 75) * $weight;
+        }
+
+        return (int) round(min(99, max(40, $overall)));
     }
 
     /**

@@ -94,11 +94,6 @@ const routes = [
         component: lazyLoad(() => import('@/views/league/LeagueView.vue'))
       },
       {
-        path: 'calendar',
-        name: 'calendar',
-        component: lazyLoad(() => import('@/views/calendar/CalendarView.vue'))
-      },
-      {
         path: 'game/:gameId',
         name: 'game',
         component: lazyLoad(() => import('@/views/game/GameView.vue'))
@@ -114,7 +109,15 @@ const routes = [
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
+  scrollBehavior(to, from, savedPosition) {
+    // If user used back/forward, restore saved position
+    if (savedPosition) {
+      return savedPosition
+    }
+    // Otherwise scroll to top
+    return { top: 0 }
+  }
 })
 
 // Navigation guards

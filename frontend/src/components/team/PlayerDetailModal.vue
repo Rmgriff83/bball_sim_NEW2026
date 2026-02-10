@@ -39,10 +39,15 @@ const props = defineProps({
   backButton: {
     type: Object,
     default: null // { label: 'Back to Team', handler: Function }
+  },
+  // Whether user can upgrade attributes (only for user's own team players)
+  canUpgrade: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'upgrade-attribute'])
 
 const activeTab = ref('stats')
 
@@ -115,9 +120,30 @@ const normalizedPlayer = computed(() => {
     mvp_awards: p.mvp_awards || p.mvpAwards || 0,
     all_star_selections: p.all_star_selections || p.allStarSelections || 0,
     // Fatigue
-    fatigue: p.fatigue ?? 0
+    fatigue: p.fatigue ?? 0,
+    // Upgrade points
+    upgrade_points: p.upgrade_points ?? p.upgradePoints ?? 0
   }
 })
+
+// Check if player has upgrade points available (for showing upgrade buttons)
+const hasUpgradePoints = computed(() =>
+  props.canUpgrade && (normalizedPlayer.value?.upgrade_points ?? 0) > 0
+)
+
+// Current upgrade points count
+const upgradePoints = computed(() =>
+  normalizedPlayer.value?.upgrade_points ?? 0
+)
+
+// Handle upgrade button click
+function handleUpgrade(category, attrKey) {
+  emit('upgrade-attribute', {
+    playerId: props.player.id,
+    category,
+    attribute: attrKey
+  })
+}
 
 // Fatigue helpers
 const fatiguePercent = computed(() => normalizedPlayer.value?.fatigue ?? 0)
@@ -246,23 +272,27 @@ function formatChange(change) {
         class="modal-overlay"
         @click.self="close"
       >
-        <div class="modal-container">
-          <!-- Close Button -->
-          <button class="modal-close-btn" @click="close" aria-label="Close">
-            <X :size="20" />
-          </button>
-
-          <div v-if="normalizedPlayer" class="player-modal-content">
-            <!-- Back Button (for nested modals) -->
-            <button
-              v-if="backButton"
-              class="back-button"
-              @click="backButton.handler"
-            >
-              &larr; {{ backButton.label }}
+        <div v-if="normalizedPlayer" class="modal-container">
+          <!-- Modal Header -->
+          <header class="modal-header">
+            <div class="modal-header-left">
+              <button
+                v-if="backButton"
+                class="back-button"
+                @click="backButton.handler"
+              >
+                &larr; {{ backButton.label }}
+              </button>
+              <h2 class="modal-title">Player Details</h2>
+            </div>
+            <button class="btn-close" @click="close" aria-label="Close">
+              <X :size="20" />
             </button>
+          </header>
 
-            <!-- Player Header -->
+          <!-- Modal Content (Scrollable) -->
+          <main class="modal-content">
+            <!-- Player Header Card -->
             <div class="player-modal-header" :class="{ 'injured-header': normalizedPlayer.isInjured }">
               <div class="header-top-row">
                 <div class="modal-player-avatar">
@@ -462,11 +492,22 @@ function formatChange(change) {
 
               <!-- Attributes Tab -->
               <div v-if="activeTab === 'attributes'" class="tab-panel">
+                <!-- Upgrade Points Banner - always show when canUpgrade is true -->
+                <div v-if="canUpgrade" class="upgrade-points-banner" :class="{ 'no-points': upgradePoints === 0 }">
+                  <div class="points-badge">
+                    <span class="points-value" :class="{ 'zero': upgradePoints === 0 }">{{ upgradePoints }}</span>
+                    <span class="points-label">Upgrade Points</span>
+                  </div>
+                  <p class="upgrade-hint">
+                    {{ upgradePoints > 0 ? 'Tap + to upgrade an attribute' : 'Earn points through weekly performance' }}
+                  </p>
+                </div>
+
                 <!-- Offensive Attributes -->
                 <div v-if="normalizedPlayer.attributes?.offense" class="attr-section">
                   <h4 class="attr-section-title">Offense</h4>
                   <div class="attributes-grid">
-                    <div v-for="(value, key) in normalizedPlayer.attributes.offense" :key="key" class="attr-row">
+                    <div v-for="(value, key) in normalizedPlayer.attributes.offense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints }">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
                       <div class="attr-bar-container">
                         <div
@@ -475,6 +516,15 @@ function formatChange(change) {
                         />
                       </div>
                       <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ roundAttr(value) }}</span>
+                      <button
+                        v-if="hasUpgradePoints"
+                        class="upgrade-btn"
+                        :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
+                        :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
+                        @click.stop="handleUpgrade('offense', key)"
+                      >
+                        +
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -483,7 +533,7 @@ function formatChange(change) {
                 <div v-if="normalizedPlayer.attributes?.defense" class="attr-section">
                   <h4 class="attr-section-title">Defense</h4>
                   <div class="attributes-grid">
-                    <div v-for="(value, key) in normalizedPlayer.attributes.defense" :key="key" class="attr-row">
+                    <div v-for="(value, key) in normalizedPlayer.attributes.defense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints }">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
                       <div class="attr-bar-container">
                         <div
@@ -492,6 +542,15 @@ function formatChange(change) {
                         />
                       </div>
                       <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ roundAttr(value) }}</span>
+                      <button
+                        v-if="hasUpgradePoints"
+                        class="upgrade-btn"
+                        :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
+                        :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
+                        @click.stop="handleUpgrade('defense', key)"
+                      >
+                        +
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -500,7 +559,7 @@ function formatChange(change) {
                 <div v-if="normalizedPlayer.attributes?.physical" class="attr-section">
                   <h4 class="attr-section-title">Physical</h4>
                   <div class="attributes-grid">
-                    <div v-for="(value, key) in normalizedPlayer.attributes.physical" :key="key" class="attr-row">
+                    <div v-for="(value, key) in normalizedPlayer.attributes.physical" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints }">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
                       <div class="attr-bar-container">
                         <div
@@ -509,13 +568,25 @@ function formatChange(change) {
                         />
                       </div>
                       <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ roundAttr(value) }}</span>
+                      <button
+                        v-if="hasUpgradePoints"
+                        class="upgrade-btn"
+                        :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
+                        :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
+                        @click.stop="handleUpgrade('physical', key)"
+                      >
+                        +
+                      </button>
                     </div>
                   </div>
                 </div>
 
-                <!-- Mental Attributes -->
+                <!-- Mental Attributes (Cannot be upgraded) -->
                 <div v-if="normalizedPlayer.attributes?.mental" class="attr-section">
-                  <h4 class="attr-section-title">Mental</h4>
+                  <h4 class="attr-section-title">
+                    Mental
+                    <span v-if="canUpgrade" class="no-upgrade-hint">(Cannot be upgraded)</span>
+                  </h4>
                   <div class="attributes-grid">
                     <div v-for="(value, key) in normalizedPlayer.attributes.mental" :key="key" class="attr-row">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
@@ -735,9 +806,11 @@ function formatChange(change) {
                 </div>
               </div>
             </div>
+          </main>
 
-            <!-- Contract Footer -->
-            <div v-if="normalizedPlayer.contract" class="contract-footer">
+          <!-- Footer -->
+          <footer class="modal-footer">
+            <div v-if="normalizedPlayer.contract" class="contract-info">
               <div class="contract-item">
                 <span class="contract-label">Salary</span>
                 <span class="contract-value text-success">{{ formatSalary(normalizedPlayer.contract.salary) }}/yr</span>
@@ -747,7 +820,10 @@ function formatChange(change) {
                 <span class="contract-value">{{ normalizedPlayer.contract.years_remaining }}</span>
               </div>
             </div>
-          </div>
+            <button class="btn-close-footer" @click="close">
+              Close
+            </button>
+          </footer>
         </div>
       </div>
     </Transition>
@@ -773,18 +849,14 @@ function formatChange(change) {
   width: 100%;
   max-width: 42rem;
   max-height: 90vh;
-  overflow-y: auto;
   background: var(--glass-bg-elevated, rgba(30, 35, 45, 0.98));
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-lg);
   animation: scaleIn var(--duration-normal) var(--ease-out);
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE and Edge */
-}
-
-.modal-container::-webkit-scrollbar {
-  display: none; /* Chrome, Safari, Opera */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes scaleIn {
@@ -798,7 +870,100 @@ function formatChange(change) {
   }
 }
 
-/* Close Button */
+/* Modal Header */
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
+.modal-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.btn-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+/* Modal Content (Scrollable) */
+.modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.modal-content::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Modal Footer */
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
+.contract-info {
+  display: flex;
+  gap: 2rem;
+}
+
+.btn-close-footer {
+  padding: 10px 24px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  color: var(--color-text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: auto;
+}
+
+.btn-close-footer:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+/* Close Button (legacy, keeping for back-button support) */
 .modal-close-btn {
   position: absolute;
   top: 16px;
@@ -822,21 +987,13 @@ function formatChange(change) {
   color: var(--color-text-primary);
 }
 
-.player-modal-content {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding: 1.5rem;
-}
-
 .back-button {
   background: none;
   border: none;
   color: var(--color-primary);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   cursor: pointer;
   padding: 0;
-  margin-bottom: 0.5rem;
 }
 
 .back-button:hover {
@@ -1064,10 +1221,11 @@ function formatChange(change) {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  padding: 12px 0;
 }
 
 .tab-btn {
-  padding: 0.625rem 1.25rem;
+  padding: 0.5rem 1rem;
   border-radius: var(--radius-lg);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
@@ -1201,6 +1359,91 @@ function formatChange(change) {
   text-align: right;
 }
 
+/* Upgrade attr-row with extra column for upgrade button */
+.attr-row.has-upgrade {
+  grid-template-columns: 120px 1fr 40px 32px;
+}
+
+/* Upgrade Points UI */
+.upgrade-points-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.upgrade-points-banner.no-points {
+  background: rgba(107, 114, 128, 0.1);
+  border-color: rgba(107, 114, 128, 0.3);
+}
+
+.points-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.points-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-success);
+}
+
+.points-value.zero {
+  color: var(--color-text-tertiary);
+}
+
+.points-label {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.upgrade-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
+.upgrade-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-success);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  font-size: 1.25rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.upgrade-btn:hover:not(:disabled) {
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.4);
+}
+
+.upgrade-btn:disabled {
+  background: var(--color-text-tertiary);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.no-upgrade-hint {
+  font-weight: 400;
+  font-size: 0.65rem;
+  color: var(--color-text-tertiary);
+  text-transform: none;
+  margin-left: 6px;
+}
+
 /* Badges Section */
 .badges-tab-content {
   display: flex;
@@ -1316,14 +1559,6 @@ function formatChange(change) {
 }
 
 /* Contract Footer */
-.contract-footer {
-  display: flex;
-  gap: 2rem;
-  padding: 1rem;
-  background: var(--color-bg-tertiary);
-  border-radius: 10px;
-  margin-top: 0.5rem;
-}
 
 .contract-item {
   display: flex;
@@ -1624,8 +1859,12 @@ function formatChange(change) {
   border-color: rgba(128, 128, 128, 0.3);
 }
 
-[data-theme="light"] .contract-footer {
-  background: rgba(0, 0, 0, 0.04);
+[data-theme="light"] .modal-header {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .modal-footer {
+  border-top-color: rgba(0, 0, 0, 0.1);
 }
 
 [data-theme="light"] .evolution-item {
@@ -1655,5 +1894,141 @@ function formatChange(change) {
 
 [data-theme="light"] .news-item {
   background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .upgrade-points-banner {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.25);
+}
+
+[data-theme="light"] .upgrade-points-banner.no-points {
+  background: rgba(107, 114, 128, 0.08);
+  border-color: rgba(107, 114, 128, 0.2);
+}
+
+/* Mobile Responsive Styles */
+@media (max-width: 480px) {
+  .modal-container {
+    max-height: 95vh;
+  }
+
+  .modal-header {
+    padding: 12px 16px;
+  }
+
+  .modal-title {
+    font-size: 1.25rem;
+  }
+
+  .modal-content {
+    padding: 16px;
+  }
+
+  .modal-footer {
+    padding: 12px 16px;
+  }
+
+  .player-modal-header {
+    padding: 0.75rem;
+  }
+
+  .modal-player-avatar {
+    width: 56px;
+    height: 56px;
+  }
+
+  .player-name-title {
+    font-size: 1.1rem;
+  }
+
+  .player-vitals {
+    font-size: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .modal-tabs {
+    padding: 10px 0;
+    gap: 0.375rem;
+  }
+
+  .tab-btn {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.75rem;
+  }
+
+  .stats-grid-modal {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.375rem;
+  }
+
+  .stat-cell .stat-value {
+    font-size: 0.9rem;
+  }
+
+  .attr-row {
+    grid-template-columns: 100px 1fr 36px;
+  }
+
+  .attr-row.has-upgrade {
+    grid-template-columns: 100px 1fr 36px 28px;
+  }
+
+  .attr-name {
+    font-size: 0.7rem;
+  }
+
+  .attr-value {
+    font-size: 0.7rem;
+  }
+
+  .modal-footer {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .contract-info {
+    gap: 1.5rem;
+  }
+
+  .contract-label {
+    font-size: 0.65rem;
+  }
+
+  .contract-value {
+    font-size: 0.9rem;
+  }
+
+  .btn-close-footer {
+    padding: 8px 20px;
+    font-size: 0.8rem;
+  }
+
+  .badges-grid-modal {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+
+  .badge-name-modal {
+    font-size: 0.7rem;
+  }
+
+  .awards-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .award-card {
+    padding: 0.75rem;
+  }
+
+  .upgrade-points-banner {
+    padding: 10px 12px;
+    flex-direction: column;
+    gap: 6px;
+    text-align: center;
+  }
+
+  .points-value {
+    font-size: 1.25rem;
+  }
 }
 </style>

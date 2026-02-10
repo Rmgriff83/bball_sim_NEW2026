@@ -288,6 +288,27 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
+  async function upgradePlayerAttribute(campaignId, playerId, category, attribute) {
+    try {
+      const response = await api.post(
+        `/api/campaigns/${campaignId}/players/${playerId}/upgrade`,
+        { category, attribute }
+      )
+
+      // Update local roster
+      const idx = roster.value.findIndex(p => p.id === playerId)
+      if (idx !== -1) {
+        roster.value[idx].attributes[category][attribute] = response.data.new_value
+        roster.value[idx].upgrade_points = response.data.remaining_points
+        roster.value[idx].overall_rating = response.data.new_overall
+      }
+
+      return response.data
+    } catch (err) {
+      throw err
+    }
+  }
+
   function clearSelectedPlayer() {
     selectedPlayer.value = null
   }
@@ -362,6 +383,7 @@ export const useTeamStore = defineStore('team', () => {
     releasePlayer,
     fetchCoachingSchemes,
     updateCoachingScheme,
+    upgradePlayerAttribute,
     clearSelectedPlayer,
     clearTeam,
     // Utilities

@@ -264,6 +264,7 @@ return [
     |--------------------------------------------------------------------------
     | Development Formula Constants
     |--------------------------------------------------------------------------
+    | Base values (not difficulty-dependent)
     */
     'development' => [
         'base_rate' => 0.10, // Base development rate
@@ -275,16 +276,97 @@ return [
         'max_season_gain' => 5, // Maximum overall rating gain per season
         'max_season_loss' => 4, // Maximum overall rating loss per season
 
-        // Per-game micro-development
-        'micro_dev_threshold_high' => 20, // Performance rating above this = development
-        'micro_dev_threshold_low' => 8, // Performance rating below this = regression
-        'micro_dev_gain_min' => 0.1,
-        'micro_dev_gain_max' => 0.3,
-        'micro_dev_loss_min' => 0.1,
-        'micro_dev_loss_max' => 0.2,
-
         // Opportunity development (backup getting starter minutes)
         'opportunity_multiplier' => 1.5,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Difficulty-Based Development Settings
+    |--------------------------------------------------------------------------
+    | Per-game micro-development thresholds and gains vary by difficulty.
+    | Lower thresholds = easier to trigger growth.
+    | Higher gains = more attribute improvement per good game.
+    */
+    'difficulty_settings' => [
+        'rookie' => [
+            // Very achievable growth - most decent performances trigger development
+            'micro_dev_threshold_high' => 10,   // Performance >= 10 = growth (was 20)
+            'micro_dev_threshold_low' => 5,     // Performance <= 5 = regression (was 8)
+            'micro_dev_gain_min' => 0.15,       // Higher gains
+            'micro_dev_gain_max' => 0.4,
+            'micro_dev_loss_min' => 0.05,       // Lower losses
+            'micro_dev_loss_max' => 0.1,
+            // Stat thresholds for which attributes improve
+            'stat_thresholds' => [
+                'points' => 12,     // Was 20
+                'assists' => 4,     // Was 6
+                'rebounds' => 5,    // Was 8
+                'steals' => 1,      // Was 2
+                'blocks' => 1,      // Was 2
+                'threes' => 2,      // Was 3
+            ],
+            // Age bracket modifiers (multiply base values)
+            'development_multiplier' => 1.3,    // 30% more development
+            'regression_multiplier' => 0.7,     // 30% less regression
+        ],
+        'pro' => [
+            // Balanced - good performances trigger development
+            'micro_dev_threshold_high' => 14,   // Lowered from 20 to be more achievable
+            'micro_dev_threshold_low' => 6,     // Lowered from 8
+            'micro_dev_gain_min' => 0.1,
+            'micro_dev_gain_max' => 0.3,
+            'micro_dev_loss_min' => 0.08,
+            'micro_dev_loss_max' => 0.15,
+            'stat_thresholds' => [
+                'points' => 15,     // Was 20
+                'assists' => 5,     // Was 6
+                'rebounds' => 6,    // Was 8
+                'steals' => 2,
+                'blocks' => 2,
+                'threes' => 2,      // Was 3
+            ],
+            'development_multiplier' => 1.0,
+            'regression_multiplier' => 1.0,
+        ],
+        'all_star' => [
+            // Challenging - need solid performances for growth
+            'micro_dev_threshold_high' => 18,
+            'micro_dev_threshold_low' => 7,
+            'micro_dev_gain_min' => 0.08,
+            'micro_dev_gain_max' => 0.25,
+            'micro_dev_loss_min' => 0.1,
+            'micro_dev_loss_max' => 0.2,
+            'stat_thresholds' => [
+                'points' => 18,
+                'assists' => 6,
+                'rebounds' => 7,
+                'steals' => 2,
+                'blocks' => 2,
+                'threes' => 3,
+            ],
+            'development_multiplier' => 0.85,
+            'regression_multiplier' => 1.15,
+        ],
+        'hall_of_fame' => [
+            // Very challenging - need great performances for growth
+            'micro_dev_threshold_high' => 22,
+            'micro_dev_threshold_low' => 8,
+            'micro_dev_gain_min' => 0.05,
+            'micro_dev_gain_max' => 0.2,
+            'micro_dev_loss_min' => 0.12,
+            'micro_dev_loss_max' => 0.25,
+            'stat_thresholds' => [
+                'points' => 22,
+                'assists' => 7,
+                'rebounds' => 8,
+                'steals' => 2,
+                'blocks' => 2,
+                'threes' => 3,
+            ],
+            'development_multiplier' => 0.7,
+            'regression_multiplier' => 1.3,
+        ],
     ],
 
     /*
@@ -355,5 +437,28 @@ return [
         'defense' => 0.25,
         'physical' => 0.20,
         'mental' => 0.15,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Manual Upgrade Points Configuration
+    |--------------------------------------------------------------------------
+    | Settings for the player upgrade point system where users can manually
+    | improve their players' attributes using earned upgrade points.
+    |
+    | Points per growth is scaled by potential rating (75 = 1.0x baseline):
+    |   - 60 potential = ~0.8x multiplier
+    |   - 75 potential = 1.0x multiplier (baseline)
+    |   - 90 potential = 1.2x multiplier
+    |   - 99 potential = ~1.32x multiplier
+    |
+    | Elite potential (90+) also gets +1 to max_weekly_points cap.
+    */
+    'upgrade_points' => [
+        'enabled' => true,
+        'points_per_growth' => 1.5,       // Base: 1.5 points per 1.0 growth (scaled by potential/75)
+        'min_growth_threshold' => 0.3,    // Need 0.3+ total growth to earn any points
+        'max_weekly_points' => 3,         // Cap at 3 points per week (4 for 90+ potential)
+        'max_stored_points' => 99,        // Cap total stored points
     ],
 ];

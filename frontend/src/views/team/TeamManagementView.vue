@@ -567,6 +567,23 @@ const playerNews = computed(() => {
   if (!selectedPlayer.value) return []
   return []
 })
+
+// Handle attribute upgrade from PlayerDetailModal
+async function handleUpgradeAttribute({ playerId, category, attribute }) {
+  try {
+    const result = await teamStore.upgradePlayerAttribute(
+      campaignId.value,
+      playerId,
+      category,
+      attribute
+    )
+    toastStore.showSuccess(`${formatAttrName(attribute)} upgraded to ${result.new_value}!`)
+    // Refresh selected player with updated data
+    selectedPlayer.value = roster.value.find(p => p.id === playerId)
+  } catch (err) {
+    toastStore.showError(err.response?.data?.message || 'Upgrade failed')
+  }
+}
 </script>
 
 <template>
@@ -1278,7 +1295,9 @@ const playerNews = computed(() => {
       :all-time-evolution="allTimeEvolution"
       :player-news="playerNews"
       :show-history="true"
+      :can-upgrade="true"
       @close="closePlayerModal"
+      @upgrade-attribute="handleUpgradeAttribute"
     />
   </div>
 </template>

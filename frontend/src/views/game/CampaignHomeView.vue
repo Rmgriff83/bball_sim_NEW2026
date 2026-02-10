@@ -523,7 +523,7 @@ function handleCloseSimulateModal() {
             </div>
             <span class="action-label">Standings</span>
           </button>
-          <button class="action-box" @click="router.push(`/campaign/${campaignId}/calendar`)">
+          <button class="action-box" @click="router.push(`/campaign/${campaignId}/team`)">
             <div class="action-icon">
               <Calendar :size="24" />
             </div>
@@ -675,12 +675,18 @@ function handleCloseSimulateModal() {
   align-items: center;
   justify-content: center;
   height: 100vh;
-  opacity: 1;
 }
 
-.loading-container :deep(svg) {
-  width: 15vw;
-  height: 15vh;
+.loading-container :deep(.loading-spinner) {
+  width: 64px;
+  height: 64px;
+}
+
+@media (min-width: 768px) {
+  .loading-container :deep(.loading-spinner) {
+    width: 80px;
+    height: 80px;
+  }
 }
 
 /* Team Header */

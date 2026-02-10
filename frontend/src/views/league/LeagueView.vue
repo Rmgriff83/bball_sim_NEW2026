@@ -421,7 +421,7 @@ function formatSalary(salary) {
 <template>
   <div class="league-view p-6">
     <!-- Loading -->
-    <div v-if="loading" class="flex justify-center items-center py-12 opacity-60">
+    <div v-if="loading" class="page-loading-container">
       <LoadingSpinner size="md" />
     </div>
 
@@ -1157,6 +1157,13 @@ function formatSalary(salary) {
   padding-bottom: 100px;
 }
 
+/* Remove padding-top on mobile when footer nav is showing */
+@media (max-width: 1023px) {
+  .league-view {
+    padding-top: 0 !important;
+  }
+}
+
 @media (min-width: 1024px) {
   .league-view {
     padding-bottom: 24px;
@@ -1878,6 +1885,25 @@ function formatSalary(salary) {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 12px;
+}
+
+.page-loading-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 60vh;
+}
+
+.page-loading-container :deep(.loading-spinner) {
+  width: 64px;
+  height: 64px;
+}
+
+@media (min-width: 768px) {
+  .page-loading-container :deep(.loading-spinner) {
+    width: 80px;
+    height: 80px;
+  }
 }
 
 .loading-state {

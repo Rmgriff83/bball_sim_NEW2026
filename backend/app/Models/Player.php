@@ -48,6 +48,7 @@ class Player extends Model
         'career_seasons',
         'is_retired',
         'recent_performances',
+        'upgrade_points',
         // Career stats
         'career_games_played',
         'career_games_started',
@@ -102,6 +103,7 @@ class Player extends Model
         'career_seasons' => 'integer',
         'is_retired' => 'boolean',
         'recent_performances' => 'array',
+        'upgrade_points' => 'integer',
         // Career stats
         'career_games_played' => 'integer',
         'career_games_started' => 'integer',
