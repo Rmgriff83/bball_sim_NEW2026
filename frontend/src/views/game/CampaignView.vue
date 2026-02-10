@@ -180,6 +180,7 @@ function closeMobileMenu() {
 <style scoped>
 .campaign-layout {
   min-height: 100vh;
+  overflow-x: clip;
 }
 
 .campaign-header {
@@ -279,6 +280,9 @@ function closeMobileMenu() {
 }
 
 .nav-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 16px;
   border-radius: 8px;
   color: var(--color-text-secondary);
@@ -444,15 +448,20 @@ function closeMobileMenu() {
   padding: 8px;
   gap: 2px;
   background: var(--color-bg-secondary);
-  border-bottom: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-border);
+  border-radius: 0 0 0 8px;
   z-index: 50;
-  transform: translateX(100%);
-  transition: transform 0.25s ease;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-8px);
+  transition: opacity 0.2s ease, visibility 0.2s ease, transform 0.2s ease;
   pointer-events: none;
 }
 
 .mobile-nav.open {
-  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
   pointer-events: auto;
 }
 

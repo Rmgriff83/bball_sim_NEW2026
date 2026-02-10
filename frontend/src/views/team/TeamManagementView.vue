@@ -7,9 +7,10 @@ import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
-import { User, ArrowUpDown, AlertTriangle } from 'lucide-vue-next'
+import { User, ArrowUpDown, AlertTriangle, Calendar } from 'lucide-vue-next'
 import TradeCenter from '@/components/trade/TradeCenter.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
+import ScheduleTab from '@/components/team/ScheduleTab.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 
 const route = useRoute()
@@ -20,7 +21,7 @@ const toastStore = useToastStore()
 
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
-const activeTab = ref('team')
+const activeTab = ref('schedule')
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 
@@ -595,6 +596,14 @@ const playerNews = computed(() => {
       <!-- Tab Navigation -->
       <div class="tab-nav">
         <button
+          class="tab-btn tab-btn-icon"
+          :class="{ active: activeTab === 'schedule' }"
+          @click="activeTab = 'schedule'"
+          title="Schedule"
+        >
+          <Calendar :size="18" />
+        </button>
+        <button
           class="tab-btn"
           :class="{ active: activeTab === 'team' }"
           @click="activeTab = 'team'"
@@ -624,8 +633,13 @@ const playerNews = computed(() => {
         </button>
       </div>
 
+      <!-- Schedule View -->
+      <div v-if="activeTab === 'schedule'" class="schedule-content">
+        <ScheduleTab :campaign-id="campaignId" />
+      </div>
+
       <!-- Roster View -->
-      <div v-if="activeTab === 'team'" class="roster-content">
+      <div v-else-if="activeTab === 'team'" class="roster-content">
         <!-- Starters Section -->
         <div class="roster-list-header card-cosmic">
           <h3 class="list-header-text">STARTERS</h3>
@@ -1368,6 +1382,23 @@ const playerNews = computed(() => {
   border-color: rgba(255, 255, 255, 0.2);
   color: #1a1520;
   font-weight: 700;
+}
+
+.tab-btn-icon {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-btn-icon :deep(svg) {
+  stroke-width: 2;
+}
+
+/* Schedule Content */
+.schedule-content {
+  display: flex;
+  flex-direction: column;
 }
 
 /* Roster Sections */

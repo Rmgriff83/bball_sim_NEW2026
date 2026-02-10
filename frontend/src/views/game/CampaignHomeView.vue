@@ -523,7 +523,7 @@ function handleCloseSimulateModal() {
             </div>
             <span class="action-label">Standings</span>
           </button>
-          <button class="action-box" @click="router.push(`/campaign/${campaignId}/league`)">
+          <button class="action-box" @click="router.push(`/campaign/${campaignId}/calendar`)">
             <div class="action-icon">
               <Calendar :size="24" />
             </div>
