@@ -122,6 +122,10 @@ class TeamController extends Controller
                 'coaching_scheme' => $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'],
             ],
             'roster' => $orderedRoster,
+            // Include lineup settings for frontend to track starters explicitly
+            'lineup_settings' => [
+                'starters' => $savedLineup,
+            ],
             'coach' => $team->coach ? [
                 'id' => $team->coach->id,
                 'name' => $team->coach->first_name . ' ' . $team->coach->last_name,

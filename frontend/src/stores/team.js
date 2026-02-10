@@ -16,7 +16,32 @@ export const useTeamStore = defineStore('team', () => {
   const loading = ref(false)
   const error = ref(null)
 
+  // Explicit lineup state - array of 5 player IDs in position order (PG, SG, SF, PF, C)
+  const lineup = ref([null, null, null, null, null])
+
   // Getters
+  // Get full player objects for each lineup slot
+  const starterPlayers = computed(() => {
+    return lineup.value.map(playerId => {
+      if (!playerId) return null
+      return roster.value.find(p => p.id === playerId) || null
+    })
+  })
+
+  // Get bench players (not in lineup)
+  const benchPlayers = computed(() => {
+    const lineupIds = new Set(lineup.value.filter(id => id !== null))
+    return roster.value
+      .filter(p => p && !lineupIds.has(p.id))
+      .sort((a, b) => b.overall_rating - a.overall_rating)
+  })
+
+  // Check if lineup has all 5 positions filled
+  const isLineupComplete = computed(() =>
+    lineup.value.filter(id => id !== null).length === 5
+  )
+
+  // Legacy getters (based on roster order) - kept for backwards compatibility
   const starters = computed(() =>
     roster.value.filter((_, index) => index < 5)
   )
@@ -60,6 +85,17 @@ export const useTeamStore = defineStore('team', () => {
       roster.value = response.data.roster
       coach.value = response.data.coach
 
+      // Populate lineup from saved settings or default to first 5 roster players
+      const savedLineup = response.data.lineup_settings?.starters
+      if (savedLineup && Array.isArray(savedLineup) && savedLineup.length === 5) {
+        lineup.value = [...savedLineup]
+      } else if (response.data.roster && response.data.roster.length >= 5) {
+        // Default: first 5 players in roster order (they are ordered by lineup)
+        lineup.value = response.data.roster.slice(0, 5).map(p => p.id)
+      } else {
+        lineup.value = [null, null, null, null, null]
+      }
+
       // Update cache with team/roster data
       await campaignCacheService.updateCampaign(campaignId, {
         team: response.data.team,
@@ -95,6 +131,11 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
+      // Update local state immediately for responsive UI
+      if (Array.isArray(starters) && starters.length === 5) {
+        lineup.value = [...starters]
+      }
+
       const response = await api.put(`/api/campaigns/${campaignId}/team/lineup`, {
         starters,
         rotation,
@@ -104,6 +145,9 @@ export const useTeamStore = defineStore('team', () => {
       await campaignCacheService.updateCampaign(campaignId, {
         lineup: { starters, rotation }
       })
+
+      // Refresh roster to ensure order matches new lineup
+      await fetchTeam(campaignId)
 
       return response.data
     } catch (err) {
@@ -252,6 +296,7 @@ export const useTeamStore = defineStore('team', () => {
     team.value = null
     roster.value = []
     coach.value = null
+    lineup.value = [null, null, null, null, null]
     coachingSchemes.value = {}
     recommendedScheme.value = null
   }
@@ -288,6 +333,7 @@ export const useTeamStore = defineStore('team', () => {
     team,
     roster,
     coach,
+    lineup,
     selectedPlayer,
     freeAgents,
     allTeams,
@@ -298,6 +344,9 @@ export const useTeamStore = defineStore('team', () => {
     // Getters
     starters,
     bench,
+    starterPlayers,
+    benchPlayers,
+    isLineupComplete,
     rosterByPosition,
     totalSalary,
     capSpace,

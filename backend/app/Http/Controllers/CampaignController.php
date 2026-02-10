@@ -177,6 +177,9 @@ class CampaignController extends Controller
             ->limit(10)
             ->get();
 
+        // Format roster and order by saved lineup
+        $orderedRoster = $this->getOrderedRoster($campaign);
+
         return response()->json([
             'campaign' => [
                 'id' => $campaign->id,
@@ -187,28 +190,7 @@ class CampaignController extends Controller
                 'settings' => $campaign->settings,
             ],
             'team' => $campaign->team,
-            'roster' => $campaign->team?->players->map(function ($player) {
-                return [
-                    'id' => $player->id,
-                    'name' => $player->full_name,
-                    'position' => $player->position,
-                    'secondary_position' => $player->secondary_position,
-                    'jersey_number' => $player->jersey_number,
-                    'overall_rating' => $player->overall_rating,
-                    'potential_rating' => $player->potential_rating,
-                    'height' => $player->height_formatted,
-                    'weight' => $player->weight_lbs,
-                    'age' => $player->age,
-                    'attributes' => $player->attributes,
-                    'badges' => $player->getAllBadges(),
-                    'contract' => [
-                        'years_remaining' => $player->contract_years_remaining,
-                        'salary' => $player->contract_salary,
-                    ],
-                    'is_injured' => $player->is_injured,
-                    'fatigue' => $player->fatigue,
-                ];
-            }),
+            'roster' => $orderedRoster,
             'coach' => $campaign->team?->coach,
             'season' => [
                 'year' => $campaign->currentSeason?->year,
@@ -396,5 +378,183 @@ class CampaignController extends Controller
                 'is_home' => $game['homeTeamId'] === $campaign->team_id,
             ];
         }, $games);
+    }
+
+    /**
+     * Get roster ordered by saved lineup (starters first, then bench by rating).
+     */
+    private function getOrderedRoster(Campaign $campaign): array
+    {
+        $team = $campaign->team;
+        if (!$team || !$team->players) {
+            return [];
+        }
+
+        // Load player stats from JSON file
+        $year = $campaign->currentSeason?->year ?? 2025;
+        $allPlayerStats = $this->seasonService->getAllPlayerStats($campaign->id, $year);
+
+        // Get saved lineup settings, or generate default if none exists
+        $savedLineup = $campaign->settings['lineup']['starters'] ?? null;
+
+        // If no lineup is saved, generate a proper one based on positions
+        if (!$savedLineup || count(array_filter($savedLineup)) < 5) {
+            $savedLineup = $this->lineupService->initializeUserTeamLineup($campaign);
+            $campaign->refresh();
+            $savedLineup = $campaign->settings['lineup']['starters'] ?? [];
+        }
+
+        // Format all players
+        $formattedPlayers = $team->players->map(function ($player) use ($allPlayerStats) {
+            $playerStats = $allPlayerStats[$player->id] ?? null;
+            return $this->formatPlayer($player, false, $playerStats);
+        });
+
+        // Reorder roster based on saved lineup
+        if ($savedLineup && count($savedLineup) === 5) {
+            // Convert to integers but preserve nulls for empty slots
+            $starterIds = array_map(fn($id) => $id !== null ? (int)$id : null, $savedLineup);
+            $starters = [];
+            $bench = [];
+
+            foreach ($formattedPlayers as $player) {
+                $starterIndex = array_search($player['id'], $starterIds, true);
+                if ($starterIndex !== false) {
+                    $starters[$starterIndex] = $player;
+                } else {
+                    $bench[] = $player;
+                }
+            }
+
+            // Fill empty starter slots with null placeholders
+            for ($i = 0; $i < 5; $i++) {
+                if (!isset($starters[$i]) && ($starterIds[$i] ?? null) === null) {
+                    $starters[$i] = null;
+                }
+            }
+
+            // Sort starters by position index, bench by overall rating
+            ksort($starters);
+            usort($bench, fn($a, $b) => $b['overall_rating'] - $a['overall_rating']);
+
+            return array_merge(array_values($starters), $bench);
+        }
+
+        // Default: sort by position then rating
+        return $formattedPlayers->sortBy([
+            fn($a, $b) => $this->getPositionOrder($a['position']) <=> $this->getPositionOrder($b['position']),
+            fn($a, $b) => $b['overall_rating'] <=> $a['overall_rating'],
+        ])->values()->all();
+    }
+
+    /**
+     * Format player data for API response.
+     */
+    private function formatPlayer(Player $player, bool $detailed = false, ?array $seasonStats = null): array
+    {
+        $data = [
+            'id' => $player->id,
+            'name' => $player->full_name,
+            'first_name' => $player->first_name,
+            'last_name' => $player->last_name,
+            'position' => $player->position,
+            'secondary_position' => $player->secondary_position,
+            'jersey_number' => $player->jersey_number,
+            'overall_rating' => $player->overall_rating,
+            'potential_rating' => $player->potential_rating,
+            'height' => $this->formatHeight($player->height_inches),
+            'height_inches' => $player->height_inches,
+            'weight' => $player->weight_lbs,
+            'age' => $player->age,
+            'is_injured' => $player->is_injured,
+            'fatigue' => $player->fatigue,
+            'contract' => [
+                'years_remaining' => $player->contract_years_remaining,
+                'salary' => $player->contract_salary,
+            ],
+        ];
+
+        // Include season stats from JSON file if provided
+        if ($seasonStats && ($seasonStats['gamesPlayed'] ?? 0) > 0) {
+            $gp = $seasonStats['gamesPlayed'];
+            $data['season_stats'] = [
+                'games_played' => $gp,
+                'ppg' => round(($seasonStats['points'] ?? 0) / $gp, 1),
+                'rpg' => round(($seasonStats['rebounds'] ?? 0) / $gp, 1),
+                'apg' => round(($seasonStats['assists'] ?? 0) / $gp, 1),
+                'spg' => round(($seasonStats['steals'] ?? 0) / $gp, 1),
+                'bpg' => round(($seasonStats['blocks'] ?? 0) / $gp, 1),
+                'fg_pct' => ($seasonStats['fieldGoalsAttempted'] ?? 0) > 0
+                    ? round(($seasonStats['fieldGoalsMade'] ?? 0) / $seasonStats['fieldGoalsAttempted'] * 100, 1) : 0,
+                'three_pct' => ($seasonStats['threePointersAttempted'] ?? 0) > 0
+                    ? round(($seasonStats['threePointersMade'] ?? 0) / $seasonStats['threePointersAttempted'] * 100, 1) : 0,
+                'ft_pct' => ($seasonStats['freeThrowsAttempted'] ?? 0) > 0
+                    ? round(($seasonStats['freeThrowsMade'] ?? 0) / $seasonStats['freeThrowsAttempted'] * 100, 1) : 0,
+                'mpg' => round(($seasonStats['minutesPlayed'] ?? 0) / $gp, 1),
+            ];
+        }
+
+        // Use getAllBadges() to properly fetch from bridge table for user players
+        $badges = $player->getAllBadges();
+
+        if ($detailed) {
+            $data['attributes'] = $player->attributes;
+            $data['tendencies'] = $player->tendencies;
+            $data['badges'] = $badges;
+            $data['personality'] = $player->personality;
+            $data['contract_details'] = $player->contract_details;
+            $data['injury_details'] = $player->injury_details;
+        } else {
+            // Include badges in non-detailed view too (for team view)
+            $data['badges'] = $badges;
+            $data['attributes'] = $player->attributes;
+        }
+
+        // Always include evolution tracking data
+        $data['development_history'] = $player->development_history ?? [];
+        $data['streak_data'] = $player->streak_data;
+        $data['recent_performances'] = $player->recent_performances ?? [];
+
+        return $data;
+    }
+
+    /**
+     * Get position sort order.
+     */
+    private function getPositionOrder(string $position): int
+    {
+        return match ($position) {
+            'PG' => 1,
+            'SG' => 2,
+            'SF' => 3,
+            'PF' => 4,
+            'C' => 5,
+            default => 6,
+        };
+    }
+
+    /**
+     * Format height in inches to display format (e.g., 6'10").
+     */
+    private function formatHeight(int $inches): string
+    {
+        $feet = floor($inches / 12);
+        $remainingInches = $inches % 12;
+        return "{$feet}'{$remainingInches}\"";
+    }
+
+    /**
+     * Calculate age from birth date.
+     */
+    private function calculateAge(?string $birthDate): int
+    {
+        if (!$birthDate) {
+            return 25;
+        }
+        try {
+            return (int) now()->diffInYears($birthDate);
+        } catch (\Exception $e) {
+            return 25;
+        }
     }
 }

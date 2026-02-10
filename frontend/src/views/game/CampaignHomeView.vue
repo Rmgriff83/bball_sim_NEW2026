@@ -99,11 +99,8 @@ const conferenceLabel = computed(() => {
   return team.value.conference === 'east' ? 'EAST' : 'WEST'
 })
 
-// Check if lineup is complete (all 5 starters filled)
-const isLineupComplete = computed(() => {
-  const starters = roster.value.slice(0, 5)
-  return starters.length === 5 && starters.every(p => p !== null && p !== undefined)
-})
+// Check if lineup is complete - use teamStore as single source of truth
+const isLineupComplete = computed(() => teamStore.isLineupComplete)
 
 // Current in-game date
 const currentDate = computed(() => campaign.value?.current_date)

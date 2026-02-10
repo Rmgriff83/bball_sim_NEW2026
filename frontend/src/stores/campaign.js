@@ -47,10 +47,13 @@ export const useCampaignStore = defineStore('campaign', () => {
       // Force refresh bypasses cache entirely
       if (forceRefresh) {
         const response = await api.get(`/api/campaigns/${id}`)
+        // Note: roster is included here for backwards compatibility, but
+        // teamStore.roster should be used as the single source of truth.
+        // Access roster and lineup data via teamStore.fetchTeam() instead.
         campaignData = {
           ...response.data.campaign,
           team: response.data.team,
-          roster: response.data.roster,
+          roster: response.data.roster, // @deprecated - use teamStore.roster
           coach: response.data.coach,
           season: response.data.season,
           standings: response.data.standings,

@@ -95,9 +95,14 @@ const simulatingPreGame = ref(false)
 const selectedOffense = ref('balanced')
 const selectedDefense = ref('man')
 
-// Lineup selections for quarter breaks (5 player IDs)
-const selectedLineup = ref([null, null, null, null, null])
+// Local lineup for quarter-break adjustments (synced from teamStore)
+// During pre-game: synced from teamStore.lineup
+// During game: used for quarter-break substitutions
+const localLineup = ref([null, null, null, null, null])
 const positionLabels = ['PG', 'SG', 'SF', 'PF', 'C']
+
+// Alias for backwards compatibility with existing code
+const selectedLineup = localLineup
 
 // Expanded swap dropdown state for quarter break
 const expandedSwapPlayer = ref(null)
@@ -124,8 +129,19 @@ const defensiveStyles = [
 ]
 
 // Team rosters for pre-game starters preview
-const homeRoster = ref([])
-const awayRoster = ref([])
+// User's roster comes from teamStore (single source of truth)
+// Opponent's roster is fetched separately and stored locally
+const opponentRoster = ref([])
+
+// Computed rosters that use teamStore for user team, local ref for opponent
+const userRoster = computed(() => teamStore.roster || [])
+
+const homeRoster = computed(() =>
+  userIsHome.value ? userRoster.value : opponentRoster.value
+)
+const awayRoster = computed(() =>
+  userIsHome.value ? opponentRoster.value : userRoster.value
+)
 
 const campaignId = computed(() => route.params.id)
 const gameId = computed(() => route.params.gameId)
@@ -492,7 +508,7 @@ const userTeamPlayers = computed(() => {
     })
   }
 
-  // Pre-game: use team roster from API (has fatigue, injury status, etc.)
+  // Pre-game: use team roster (has fatigue, injury status, etc.)
   if (teamRoster && teamRoster.length > 0) {
     // Normalize roster data to match boxScore format (ensure player_id exists)
     return teamRoster.map(p => ({
@@ -502,10 +518,10 @@ const userTeamPlayers = computed(() => {
     }))
   }
 
-  // Fallback: use campaign roster (for user's team)
-  const campaignRoster = campaign.value?.roster
-  if (campaignRoster && campaignRoster.length > 0) {
-    return campaignRoster.map(p => ({
+  // Fallback: use teamStore roster directly (single source of truth)
+  const storeRoster = teamStore.roster
+  if (storeRoster && storeRoster.length > 0) {
+    return storeRoster.map(p => ({
       ...p,
       player_id: p.player_id || p.id,
       fatigue: p.fatigue ?? 0
@@ -746,12 +762,12 @@ function selectStartersFromRoster(roster) {
 
 // Pre-game starters for each team
 const homeStarters = computed(() => {
-  // User is home team - use saved lineup from campaign.settings
+  // User is home team - use teamStore lineup (single source of truth)
   if (userIsHome.value) {
-    const savedLineup = campaign.value?.settings?.lineup?.starters
-    const roster = campaign.value?.roster
-    if (savedLineup?.length === 5 && roster?.length > 0) {
-      return buildStartersFromLineup(savedLineup, roster)
+    const lineup = teamStore.lineup
+    const roster = teamStore.roster
+    if (lineup?.length === 5 && roster?.length > 0) {
+      return buildStartersFromLineup(lineup, roster)
     }
     // Fallback to roster if available
     if (roster?.length > 0) {
@@ -763,12 +779,12 @@ const homeStarters = computed(() => {
 })
 
 const awayStarters = computed(() => {
-  // User is away team - use saved lineup from campaign.settings
+  // User is away team - use teamStore lineup (single source of truth)
   if (!userIsHome.value) {
-    const savedLineup = campaign.value?.settings?.lineup?.starters
-    const roster = campaign.value?.roster
-    if (savedLineup?.length === 5 && roster?.length > 0) {
-      return buildStartersFromLineup(savedLineup, roster)
+    const lineup = teamStore.lineup
+    const roster = teamStore.roster
+    if (lineup?.length === 5 && roster?.length > 0) {
+      return buildStartersFromLineup(lineup, roster)
     }
     // Fallback to roster if available
     if (roster?.length > 0) {
@@ -781,7 +797,15 @@ const awayStarters = computed(() => {
 
 onMounted(async () => {
   try {
-    // Refresh campaign data to get latest roster and lineup settings
+    // Fetch team data first (single source of truth for user's roster and lineup)
+    await teamStore.fetchTeam(campaignId.value)
+
+    // Sync local lineup from teamStore
+    if (teamStore.lineup && teamStore.lineup.length === 5) {
+      localLineup.value = [...teamStore.lineup]
+    }
+
+    // Refresh campaign data for settings
     await campaignStore.fetchCampaign(campaignId.value)
 
     // Load saved coaching styles from campaign settings
@@ -813,18 +837,18 @@ onMounted(async () => {
       await gameStore.fetchGame(campaignId.value, gameId.value)
     }
 
-    // Fetch rosters for both teams (for pre-game starters preview)
+    // Fetch opponent roster only (user roster comes from teamStore)
     const currentGame = gameStore.currentGame
     if (currentGame?.home_team?.id && currentGame?.away_team?.id) {
+      const opponentTeamId = userIsHome.value
+        ? currentGame.away_team.id
+        : currentGame.home_team.id
+
       try {
-        const [homeData, awayData] = await Promise.all([
-          teamStore.fetchTeamRoster(campaignId.value, currentGame.home_team.id),
-          teamStore.fetchTeamRoster(campaignId.value, currentGame.away_team.id)
-        ])
-        homeRoster.value = homeData.roster || []
-        awayRoster.value = awayData.roster || []
+        const opponentData = await teamStore.fetchTeamRoster(campaignId.value, opponentTeamId)
+        opponentRoster.value = opponentData.roster || []
       } catch (rosterErr) {
-        console.error('Failed to load team rosters:', rosterErr)
+        console.error('Failed to load opponent roster:', rosterErr)
       }
     }
   } catch (err) {
@@ -1393,13 +1417,13 @@ watch(
   { immediate: true }
 )
 
-// Initialize lineup from campaign settings when entering pre-game view
+// Sync local lineup from teamStore when it changes (single source of truth)
 watch(
-  () => campaign.value?.settings?.lineup?.starters,
-  (savedLineup) => {
-    // Only initialize in pre-game (not in animation mode)
-    if (!showAnimationMode.value && savedLineup?.length === 5) {
-      selectedLineup.value = [...savedLineup]
+  () => teamStore.lineup,
+  (storeLineup) => {
+    // Only sync in pre-game (not during animation/game)
+    if (!showAnimationMode.value && storeLineup?.length === 5) {
+      localLineup.value = [...storeLineup]
     }
   },
   { immediate: true }
@@ -1431,12 +1455,12 @@ watch(
 
 // Also watch roster data to initialize lineup if no saved lineup exists
 watch(
-  [() => homeRoster.value, () => awayRoster.value, () => userIsHome.value],
+  [homeRoster, awayRoster, () => userIsHome.value],
   ([home, away, isHome]) => {
     // Only if not in animation mode and lineup not already set
     if (showAnimationMode.value) return
 
-    const hasValidLineup = selectedLineup.value.filter(id => id !== null).length === 5
+    const hasValidLineup = localLineup.value.filter(id => id !== null).length === 5
     if (hasValidLineup) return
 
     const roster = isHome ? home : away
@@ -1462,7 +1486,7 @@ watch(
     }
 
     if (newLineup.filter(id => id !== null).length === 5) {
-      selectedLineup.value = newLineup
+      localLineup.value = newLineup
     }
   },
   { immediate: true }
@@ -1530,24 +1554,24 @@ function getPreGameSwapCandidates(slotPosition, slotIndex) {
   }).sort((a, b) => (b.overall_rating || 0) - (a.overall_rating || 0))
 }
 
-// Pre-game starters for overlay (uses selectedLineup for user's team)
+// Pre-game starters for overlay (uses localLineup for user's team)
 const preGameHomeStarters = computed(() => {
   if (userIsHome.value) {
-    // Build from selectedLineup using the fetched home roster
-    return buildStartersFromSelectedLineup(selectedLineup.value, homeRoster.value)
+    // Build from localLineup using user's roster from teamStore
+    return buildStartersFromSelectedLineup(localLineup.value, homeRoster.value)
   }
   return selectStartersFromRoster(homeRoster.value)
 })
 
 const preGameAwayStarters = computed(() => {
   if (!userIsHome.value) {
-    // Build from selectedLineup using the fetched away roster
-    return buildStartersFromSelectedLineup(selectedLineup.value, awayRoster.value)
+    // Build from localLineup using user's roster from teamStore
+    return buildStartersFromSelectedLineup(localLineup.value, awayRoster.value)
   }
   return selectStartersFromRoster(awayRoster.value)
 })
 
-// Build starters from selectedLineup refs for pre-game display
+// Build starters from lineup IDs for pre-game display
 function buildStartersFromSelectedLineup(lineupIds, roster) {
   if (!lineupIds || !roster || roster.length === 0) return []
 
