@@ -738,11 +738,19 @@ class PlayerEvolutionService
 
     /**
      * Update player fatigue based on minutes played.
+     * If player plays 0 minutes, they get rest recovery instead.
      */
     private function updateFatigue(array $player, int $minutes): array
     {
         $config = config('player_evolution.fatigue');
         $current = $player['fatigue'] ?? 0;
+
+        // If player didn't play, they get rest recovery
+        if ($minutes === 0) {
+            $player['fatigue'] = max(0, $current - $config['rest_day_recovery']);
+            return $player;
+        }
+
         $gain = $minutes * $config['per_minute_gain'];
 
         // Rookie wall penalty
@@ -770,6 +778,64 @@ class PlayerEvolutionService
         $current = $player['fatigue'] ?? 0;
         $player['fatigue'] = max(0, $current - $config['weekly_recovery']);
         return $player;
+    }
+
+    /**
+     * Process rest day recovery for all teams that didn't play on a given day.
+     * Called after simulating all games for a day to give recovery to teams without games.
+     *
+     * @param Campaign $campaign
+     * @param array $teamsWithGames Array of team IDs that had games on this day
+     */
+    public function processRestDayRecovery(Campaign $campaign, array $teamsWithGames): void
+    {
+        $config = config('player_evolution.fatigue');
+        $restRecovery = $config['rest_day_recovery'];
+
+        // Get all team IDs for this campaign
+        $allTeams = Team::where('campaign_id', $campaign->id)->pluck('id', 'abbreviation')->toArray();
+
+        // Find teams that didn't have games
+        $teamsWithoutGames = array_filter($allTeams, fn($teamId) => !in_array($teamId, $teamsWithGames));
+
+        if (empty($teamsWithoutGames)) {
+            return; // All teams played today
+        }
+
+        // Process user team if they didn't play
+        $userTeamAbbr = $campaign->team?->abbreviation;
+        if ($userTeamAbbr && isset($teamsWithoutGames[$userTeamAbbr])) {
+            $userPlayers = Player::where('campaign_id', $campaign->id)->get();
+            foreach ($userPlayers as $player) {
+                $currentFatigue = $player->fatigue ?? 0;
+                if ($currentFatigue > 0) {
+                    $player->update(['fatigue' => max(0, $currentFatigue - $restRecovery)]);
+                }
+            }
+            unset($teamsWithoutGames[$userTeamAbbr]);
+        }
+
+        // Process league teams that didn't play
+        if (!empty($teamsWithoutGames)) {
+            $leaguePlayers = $this->playerService->loadLeaguePlayers($campaign->id);
+            $teamsWithoutGamesAbbrs = array_keys($teamsWithoutGames);
+            $modified = false;
+
+            foreach ($leaguePlayers as &$player) {
+                $teamAbbr = $player['teamAbbreviation'] ?? '';
+                if (in_array($teamAbbr, $teamsWithoutGamesAbbrs)) {
+                    $currentFatigue = $player['fatigue'] ?? 0;
+                    if ($currentFatigue > 0) {
+                        $player['fatigue'] = max(0, $currentFatigue - $restRecovery);
+                        $modified = true;
+                    }
+                }
+            }
+
+            if ($modified) {
+                $this->playerService->saveLeaguePlayers($campaign->id, $leaguePlayers);
+            }
+        }
     }
 
     /**

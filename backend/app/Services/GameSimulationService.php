@@ -476,6 +476,9 @@ class GameSimulationService
             'name' => $player['first_name'] . ' ' . $player['last_name'],
             'position' => $player['position'],
             'secondary_position' => $player['secondary_position'] ?? null,
+            'overall_rating' => $player['overall_rating'] ?? null,
+            'fatigue' => $player['fatigue'] ?? 0,
+            'is_injured' => $player['is_injured'] ?? false,
             'minutes' => 0,
             'points' => 0,
             'rebounds' => 0,
@@ -1273,7 +1276,7 @@ class GameSimulationService
         // Higher stamina reduces fatigue impact
         $fatigueImpact = ($fatigue / 100) * (1 - $stamina / 200);
 
-        return 1 - $fatigueImpact * 0.15;
+        return 1 - $fatigueImpact * 0.25;
     }
 
     /**
@@ -1462,6 +1465,9 @@ class GameSimulationService
             'name' => $stats['name'],
             'position' => $stats['position'],
             'secondary_position' => $stats['secondary_position'] ?? null,
+            'overall_rating' => $stats['overall_rating'] ?? $stats['overallRating'] ?? null,
+            'fatigue' => $stats['fatigue'] ?? 0,
+            'is_injured' => $stats['is_injured'] ?? $stats['isInjured'] ?? false,
             'minutes' => round($stats['minutes']),
             'points' => $stats['points'],
             'rebounds' => $stats['rebounds'] ?? ($stats['offensiveRebounds'] + $stats['defensiveRebounds']),

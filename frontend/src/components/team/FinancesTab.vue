@@ -707,4 +707,37 @@ onMounted(() => {
 .empty-state p {
   font-size: 0.9rem;
 }
+
+/* Light Mode Overrides */
+[data-theme="light"] .contract-table th {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .contract-table td {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .contract-row:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .contract-row.expiring {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+[data-theme="light"] .pos-badge {
+  background: rgba(59, 130, 246, 0.15);
+}
+
+[data-theme="light"] .year-cell {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .year-cell.active {
+  background: linear-gradient(90deg, var(--color-primary), var(--color-tertiary));
+}
+
+[data-theme="light"] .year-cell.expiring {
+  background: linear-gradient(90deg, #F59E0B, #EF4444);
+}
 </style>

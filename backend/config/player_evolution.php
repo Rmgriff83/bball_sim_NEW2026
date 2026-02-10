@@ -327,9 +327,9 @@ return [
         'per_minute_gain' => 0.5, // Fatigue gained per minute played
         'max_fatigue' => 100,
         'weekly_recovery' => 15, // Fatigue recovered per week
-        'rest_day_recovery' => 25, // Extra recovery on rest days
+        'rest_day_recovery' => 15, // Recovery when player doesn't play (0 mins or no game)
         'performance_penalty_start' => 50, // Fatigue level where penalties begin
-        'max_performance_penalty' => 0.15, // Maximum 15% performance reduction
+        'max_performance_penalty' => 0.25, // Maximum 25% performance reduction
     ],
 
     /*

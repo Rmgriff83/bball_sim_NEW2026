@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle } from 'lucide-vue-next'
 
 const props = defineProps({
   show: {
@@ -113,9 +113,21 @@ const normalizedPlayer = computed(() => {
     finals_mvp_awards: p.finals_mvp_awards || p.finalsMvpAwards || 0,
     conference_finals_mvp_awards: p.conference_finals_mvp_awards || p.conferenceFinalsMvpAwards || 0,
     mvp_awards: p.mvp_awards || p.mvpAwards || 0,
-    all_star_selections: p.all_star_selections || p.allStarSelections || 0
+    all_star_selections: p.all_star_selections || p.allStarSelections || 0,
+    // Fatigue
+    fatigue: p.fatigue ?? 0
   }
 })
+
+// Fatigue helpers
+const fatiguePercent = computed(() => normalizedPlayer.value?.fatigue ?? 0)
+const isOverFatigued = computed(() => fatiguePercent.value >= 70)
+
+function getFatigueColor(fatigue) {
+  if (fatigue >= 70) return 'var(--color-error)'
+  if (fatigue >= 50) return 'var(--color-warning)'
+  return 'var(--color-success)'
+}
 
 const hasAwards = computed(() => {
   if (!normalizedPlayer.value) return false
@@ -292,6 +304,25 @@ function formatChange(change) {
                       <span>{{ normalizedPlayer.age || 25 }} years old</span>
                     </div>
                   </div>
+                </div>
+              </div>
+              <!-- Fatigue Meter -->
+              <div class="fatigue-meter-container">
+                <div class="fatigue-meter-label">
+                  <span>Fatigue</span>
+                  <span class="fatigue-value">{{ fatiguePercent }}%</span>
+                </div>
+                <div class="fatigue-meter-bar">
+                  <div
+                    class="fatigue-meter-fill"
+                    :style="{
+                      width: fatiguePercent + '%',
+                      backgroundColor: getFatigueColor(fatiguePercent)
+                    }"
+                  ></div>
+                </div>
+                <div v-if="isOverFatigued" class="fatigue-warning" title="Attributes affected by fatigue">
+                  <AlertTriangle :size="14" />
                 </div>
               </div>
             </div>
@@ -825,7 +856,7 @@ function formatChange(change) {
 
 .header-top-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 1rem;
 }
 
@@ -933,6 +964,60 @@ function formatChange(change) {
 
 .player-vitals .divider {
   color: rgba(255, 255, 255, 0.2);
+}
+
+/* Fatigue Meter */
+.fatigue-meter-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.fatigue-meter-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  min-width: 80px;
+}
+
+.fatigue-value {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono, monospace);
+}
+
+.fatigue-meter-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.fatigue-meter-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.fatigue-warning {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-error);
+  animation: pulse-warning 2s ease-in-out infinite;
+}
+
+@keyframes pulse-warning {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* Badges Preview */
@@ -1440,5 +1525,135 @@ function formatChange(change) {
 .modal-enter-from,
 .modal-leave-to {
   opacity: 0;
+}
+
+/* Light mode */
+[data-theme="light"] .modal-container {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+[data-theme="light"] .modal-close-btn {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .modal-close-btn:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .player-modal-header {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .player-modal-header.injured-header {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04));
+}
+
+[data-theme="light"] .modal-player-avatar {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .fatigue-meter-container {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .fatigue-meter-bar {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .player-vitals .divider {
+  color: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="light"] .badges-preview {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .badge-chip {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .stat-cell {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .attr-bar-container {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .badge-card-modal {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .badge-card-modal.hof {
+  background: rgba(155, 89, 182, 0.08);
+  border-color: rgba(155, 89, 182, 0.25);
+}
+
+[data-theme="light"] .badge-card-modal.gold {
+  background: rgba(255, 215, 0, 0.08);
+  border-color: rgba(255, 215, 0, 0.25);
+}
+
+[data-theme="light"] .badge-card-modal.silver {
+  background: rgba(192, 192, 192, 0.15);
+  border-color: rgba(128, 128, 128, 0.25);
+}
+
+[data-theme="light"] .badge-card-modal.bronze {
+  background: rgba(205, 127, 50, 0.08);
+  border-color: rgba(205, 127, 50, 0.25);
+}
+
+[data-theme="light"] .badge-icon {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .award-card {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .award-card.gold {
+  background: rgba(255, 215, 0, 0.1);
+  border-color: rgba(255, 215, 0, 0.3);
+}
+
+[data-theme="light"] .award-card.silver {
+  background: rgba(192, 192, 192, 0.15);
+  border-color: rgba(128, 128, 128, 0.3);
+}
+
+[data-theme="light"] .contract-footer {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .evolution-item {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .evolution-toggle {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .evolution-toggle:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .evolution-alltime-header {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .evolution-alltime-header:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .history-section-title {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .news-item {
+  background: rgba(0, 0, 0, 0.03);
 }
 </style>

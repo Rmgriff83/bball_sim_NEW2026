@@ -5,6 +5,7 @@ import { useGameStore } from '@/stores/game'
 import { useCampaignStore } from '@/stores/campaign'
 import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
+import { useToastStore } from '@/stores/toast'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
 import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap } from 'lucide-vue-next'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
@@ -19,6 +20,7 @@ const gameStore = useGameStore()
 const campaignStore = useCampaignStore()
 const leagueStore = useLeagueStore()
 const teamStore = useTeamStore()
+const toastStore = useToastStore()
 
 // Animation composable
 const {
@@ -463,11 +465,54 @@ function isStatAnimating(playerId, statKey) {
 }
 
 // User's team players for lineup selection
+// Uses boxScore during game, falls back to roster data for pre-game preview
 const userTeamPlayers = computed(() => {
-  if (userIsHome.value) {
-    return boxScore.value.home
+  // Get roster data for fatigue/injury fallback
+  const teamRoster = userIsHome.value ? homeRoster.value : awayRoster.value
+  const rosterLookup = {}
+  if (teamRoster && teamRoster.length > 0) {
+    teamRoster.forEach(p => {
+      const id = p.player_id || p.id
+      rosterLookup[id] = p
+    })
   }
-  return boxScore.value.away
+
+  // During game, use box score data but merge roster data for missing fields
+  const bs = userIsHome.value ? boxScore.value.home : boxScore.value.away
+  if (bs && bs.length > 0) {
+    return bs.map(p => {
+      const rosterPlayer = rosterLookup[p.player_id] || {}
+      return {
+        ...p,
+        // Use box score fatigue if present, otherwise fall back to roster
+        fatigue: p.fatigue ?? rosterPlayer.fatigue ?? 0,
+        overall_rating: p.overall_rating ?? rosterPlayer.overall_rating ?? null,
+        is_injured: p.is_injured ?? rosterPlayer.is_injured ?? false
+      }
+    })
+  }
+
+  // Pre-game: use team roster from API (has fatigue, injury status, etc.)
+  if (teamRoster && teamRoster.length > 0) {
+    // Normalize roster data to match boxScore format (ensure player_id exists)
+    return teamRoster.map(p => ({
+      ...p,
+      player_id: p.player_id || p.id,
+      fatigue: p.fatigue ?? 0
+    }))
+  }
+
+  // Fallback: use campaign roster (for user's team)
+  const campaignRoster = campaign.value?.roster
+  if (campaignRoster && campaignRoster.length > 0) {
+    return campaignRoster.map(p => ({
+      ...p,
+      player_id: p.player_id || p.id,
+      fatigue: p.fatigue ?? 0
+    }))
+  }
+
+  return []
 })
 
 // Position validation for lineup selection
@@ -549,6 +594,10 @@ function toggleSwapDropdown(slotIndex) {
 
 // Swap a player into a position slot
 async function swapPlayerIn(slotIndex, playerId) {
+  // Find the player being swapped in for the notification
+  const newPlayer = userTeamPlayers.value.find(p => (p.player_id || p.id) === playerId)
+  const playerName = newPlayer?.name || 'Player'
+
   selectedLineup.value[slotIndex] = playerId
   expandedSwapPlayer.value = null
 
@@ -556,9 +605,14 @@ async function swapPlayerIn(slotIndex, playerId) {
   if (!showAnimationMode.value) {
     try {
       await teamStore.updateLineup(campaignId.value, selectedLineup.value)
+      toastStore.showSuccess(`${playerName} added to lineup`)
     } catch (err) {
       console.error('Failed to save lineup:', err)
+      toastStore.showError('Failed to update lineup')
     }
+  } else {
+    // In quarter break mode, just show success (changes are local until continue)
+    toastStore.showSuccess(`${playerName} added to lineup`)
   }
 }
 
@@ -571,9 +625,13 @@ async function moveStarterToBench(slotIndex) {
   if (!showAnimationMode.value) {
     try {
       await teamStore.updateLineup(campaignId.value, selectedLineup.value)
+      toastStore.showSuccess('Player moved to bench')
     } catch (err) {
       console.error('Failed to save lineup:', err)
+      toastStore.showError('Failed to update lineup')
     }
+  } else {
+    toastStore.showSuccess('Player moved to bench')
   }
 }
 
@@ -587,6 +645,13 @@ function getPositionColor(position) {
     'C': '#EF4444'
   }
   return colors[position] || '#6B7280'
+}
+
+// Get fatigue color based on level
+function getFatigueColor(fatigue) {
+  if (fatigue >= 70) return '#ef4444'  // red
+  if (fatigue >= 50) return '#f59e0b'  // amber/warning
+  return '#22c55e'  // green
 }
 
 // Get rating class for player card styling
@@ -1423,6 +1488,7 @@ const preGameUserRoster = computed(() => {
     secondary_position: p.secondary_position,
     overall_rating: p.overall_rating,
     is_injured: p.is_injured,
+    fatigue: p.fatigue ?? 0,
     points: 0,
     rebounds: 0,
     assists: 0,
@@ -1578,26 +1644,20 @@ onUnmounted(() => {
         <div class="game-header">
           <!-- Away Team -->
           <div class="team-side away" :class="{ winner: winner === 'away' }">
-            <div class="team-badge-wrapper">
-              <div class="team-name-with-logo">
+            <div class="team-side-column">
+              <span class="team-location-label">AWAY</span>
+              <div class="team-badge-wrapper">
                 <div
-                  class="team-logo-mini"
+                  class="team-badge-game"
                   :style="{ backgroundColor: awayTeam?.primary_color || '#6B7280' }"
                 >
-                  {{ awayTeam?.abbreviation?.charAt(0) }}
+                  <span class="badge-abbr">{{ awayTeam?.abbreviation }}</span>
+                  <span class="badge-record">{{ awayTeamRecord }}</span>
                 </div>
-                <span class="team-name-text">{{ awayTeam?.name }}</span>
-              </div>
-              <div
-                class="team-badge-game"
-                :style="{ backgroundColor: awayTeam?.primary_color || '#6B7280' }"
-              >
-                <span class="badge-abbr">{{ awayTeam?.abbreviation }}</span>
-                <span class="badge-record">{{ awayTeamRecord }}</span>
-              </div>
-              <div class="team-info">
-                <span v-if="awayTeam?.overall_rating" class="team-rating">{{ awayTeam.overall_rating }} OVR</span>
-                <span v-if="awayTeamRank" class="team-rank">#{{ awayTeamRank }} {{ getConferenceLabel(awayTeam) }}</span>
+                <div class="team-info">
+                  <span v-if="awayTeam?.overall_rating" class="team-rating">{{ awayTeam.overall_rating }} OVR</span>
+                  <span v-if="awayTeamRank" class="team-rank">#{{ awayTeamRank }} {{ getConferenceLabel(awayTeam) }}</span>
+                </div>
               </div>
             </div>
             <div v-if="isComplete || isInProgress" class="team-score-lg">
@@ -1611,6 +1671,7 @@ onUnmounted(() => {
             <p v-else-if="isInProgress" class="in-progress-text">Q{{ savedQuarter }} Complete</p>
             <p v-else class="vs-text">VS</p>
             <p class="game-date">{{ formatDate(game.game_date) }}</p>
+            <p class="game-type-label">Regular Season</p>
             <p v-if="isUserGame" class="user-game-badge">Your Game</p>
           </div>
 
@@ -1619,26 +1680,20 @@ onUnmounted(() => {
             <div v-if="isComplete || isInProgress" class="team-score-lg">
               {{ game.home_score || 0 }}
             </div>
-            <div class="team-badge-wrapper">
-              <div class="team-name-with-logo">
+            <div class="team-side-column">
+              <span class="team-location-label">HOME</span>
+              <div class="team-badge-wrapper">
                 <div
-                  class="team-logo-mini"
+                  class="team-badge-game"
                   :style="{ backgroundColor: homeTeam?.primary_color || '#6B7280' }"
                 >
-                  {{ homeTeam?.abbreviation?.charAt(0) }}
+                  <span class="badge-abbr">{{ homeTeam?.abbreviation }}</span>
+                  <span class="badge-record">{{ homeTeamRecord }}</span>
                 </div>
-                <span class="team-name-text">{{ homeTeam?.name }}</span>
-              </div>
-              <div
-                class="team-badge-game"
-                :style="{ backgroundColor: homeTeam?.primary_color || '#6B7280' }"
-              >
-                <span class="badge-abbr">{{ homeTeam?.abbreviation }}</span>
-                <span class="badge-record">{{ homeTeamRecord }}</span>
-              </div>
-              <div class="team-info">
-                <span v-if="homeTeam?.overall_rating" class="team-rating">{{ homeTeam.overall_rating }} OVR</span>
-                <span v-if="homeTeamRank" class="team-rank">#{{ homeTeamRank }} {{ getConferenceLabel(homeTeam) }}</span>
+                <div class="team-info">
+                  <span v-if="homeTeam?.overall_rating" class="team-rating">{{ homeTeam.overall_rating }} OVR</span>
+                  <span v-if="homeTeamRank" class="team-rank">#{{ homeTeamRank }} {{ getConferenceLabel(homeTeam) }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1929,7 +1984,10 @@ onUnmounted(() => {
                                       {{ slot.slotPosition }}
                                     </span>
                                     <div class="lineup-player-info">
-                                      <span class="lineup-player-name">{{ slot.player.name }}</span>
+                                      <div class="lineup-player-name-row">
+                                        <span class="lineup-player-name">{{ slot.player.name }}</span>
+                                        <span class="lineup-fatigue" :style="{ color: getFatigueColor(slot.player.fatigue || 0) }">{{ slot.player.fatigue || 0 }}%</span>
+                                      </div>
                                       <span class="lineup-inline-stats">
                                         {{ slot.player.points || 0 }}p {{ slot.player.rebounds || 0 }}r {{ slot.player.assists || 0 }}a
                                       </span>
@@ -1969,7 +2027,10 @@ onUnmounted(() => {
                                         >
                                           {{ candidate.position }}
                                         </span>
-                                        <span class="swap-option-name">{{ candidate.name }}</span>
+                                        <div class="swap-option-name-row">
+                                          <span class="swap-option-name">{{ candidate.name }}</span>
+                                          <span class="swap-option-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ candidate.fatigue || 0 }}%</span>
+                                        </div>
                                         <span class="swap-option-stats">
                                           {{ candidate.points || 0 }}p {{ candidate.rebounds || 0 }}r
                                         </span>
@@ -2246,9 +2307,9 @@ onUnmounted(() => {
 
         <!-- Pre-game Setup View (when not simulating) -->
         <template v-else>
-          <div class="grid lg:grid-cols-2 gap-6">
+          <div class="pregame-layout">
             <!-- Court Preview with Starters Overlay -->
-            <GlassCard padding="lg" :hoverable="false">
+            <GlassCard padding="lg" :hoverable="false" class="pregame-court-card">
               <h3 class="h4 mb-4">Starting Lineups</h3>
               <div class="court-container court-container-with-overlay">
                 <BasketballCourt
@@ -2312,165 +2373,189 @@ onUnmounted(() => {
               </div>
             </GlassCard>
 
-            <!-- Matchup Info & User Team Settings -->
-            <GlassCard padding="lg" :hoverable="false">
-              <h3 class="h4 mb-4">Matchup Preview</h3>
-              <div class="matchup-grid">
-                <div class="matchup-item">
-                  <span class="matchup-label">Home Advantage</span>
-                  <span class="matchup-value">{{ homeTeam?.abbreviation }}</span>
-                </div>
-                <div class="matchup-item">
-                  <span class="matchup-label">Game Type</span>
-                  <span class="matchup-value">Regular Season</span>
-                </div>
-              </div>
-
-              <!-- User Team Strategy Pills (only for user's game) -->
-              <div v-if="isUserGame" class="pregame-strategy-section">
-                <h4 class="strategy-section-title">Game Plan</h4>
-                <div class="strategy-group">
-                  <span class="strategy-label">Offense</span>
-                  <div class="strategy-pills">
-                    <button
-                      v-for="style in offensiveStyles"
-                      :key="style.value"
-                      class="strategy-pill"
-                      :class="{ active: selectedOffense === style.value }"
-                      @click="selectedOffense = style.value"
-                    >
-                      {{ style.label }}
-                    </button>
-                  </div>
-                </div>
-                <div class="strategy-group">
-                  <span class="strategy-label">Defense</span>
-                  <div class="strategy-pills">
-                    <button
-                      v-for="style in defensiveStyles"
-                      :key="style.value"
-                      class="strategy-pill"
-                      :class="{ active: selectedDefense === style.value }"
-                      @click="selectedDefense = style.value"
-                    >
-                      {{ style.label }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Simulate Button -->
-              <div v-if="isUserGame" class="mt-6">
-                <BaseButton
-                  variant="primary"
-                  size="lg"
-                  class="w-full"
-                  :loading="simulating"
-                  @click="handlePlayGame"
-                >
-                  {{ isInProgress ? `Resume Game (Q${savedQuarter + 1})` : 'Play Game' }}
-                </BaseButton>
-              </div>
-              <div v-else class="mt-6">
-                <BaseButton
-                  variant="secondary"
-                  size="lg"
-                  class="w-full"
-                  :loading="simulating"
-                  @click="startGame"
-                >
-                  {{ isInProgress ? 'Resume Simulation' : 'Simulate Game' }}
-                </BaseButton>
-              </div>
-            </GlassCard>
-          </div>
-
-          <!-- User Lineup Management (only for user's game) -->
-          <GlassCard v-if="isUserGame" padding="lg" :hoverable="false" class="mt-6">
-            <div class="pregame-lineup-section">
-              <div class="lineup-cards-header">
-                <span class="lineup-cards-title">Starting Lineup</span>
-                <span class="lineup-cards-hint">Tap swap icon to make changes</span>
-              </div>
-              <div class="lineup-cards-grid pregame-lineup-grid">
-                <div
-                  v-for="slot in preGameStartersWithStats"
-                  :key="slot.slotPosition"
-                  class="lineup-card"
-                  :class="{
-                    empty: !slot.player,
-                    'dropdown-open': expandedSwapPlayer === slot.slotIndex
-                  }"
-                >
-                  <!-- Empty Slot -->
-                  <template v-if="!slot.player">
-                    <div class="lineup-card-empty">
-                      <span class="slot-position-badge">{{ slot.slotPosition }}</span>
-                      <span class="empty-text">Empty</span>
-                      <button class="swap-btn" @click="toggleSwapDropdown(slot.slotIndex)">
-                        <ArrowUpDown :size="14" />
-                      </button>
-                    </div>
-                  </template>
-
-                  <!-- Filled Slot -->
-                  <template v-else>
-                    <div class="lineup-card-header">
-                      <span class="slot-position-badge" :style="{ backgroundColor: getPositionColor(slot.slotPosition) }">
-                        {{ slot.slotPosition }}
-                      </span>
-                      <div class="lineup-player-info">
-                        <span class="lineup-player-name">{{ slot.player.name }}</span>
-                        <span class="lineup-player-pos-secondary">{{ slot.player.position }}{{ slot.player.secondary_position ? ` / ${slot.player.secondary_position}` : '' }}</span>
-                      </div>
-                      <div class="lineup-card-actions">
-                        <button
-                          class="swap-btn"
-                          :class="{ active: expandedSwapPlayer === slot.slotIndex }"
-                          @click="toggleSwapDropdown(slot.slotIndex)"
-                        >
-                          <ArrowUpDown :size="14" />
-                        </button>
-                        <span class="lineup-player-ovr">{{ slot.player.overall_rating }}</span>
-                      </div>
-                    </div>
-                  </template>
-
-                  <!-- Swap Dropdown -->
-                  <Transition name="dropdown-slide">
-                    <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown">
-                      <div class="swap-dropdown-header">
-                        {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
-                      </div>
-                      <div class="swap-dropdown-list">
-                        <!-- Available players who can play this position -->
-                        <button
-                          v-for="candidate in getPreGameSwapCandidates(slot.slotPosition, slot.slotIndex)"
-                          :key="candidate.player_id || candidate.id"
-                          class="swap-option"
-                          :class="{ injured: candidate.is_injured }"
-                          @click="swapPlayerIn(slot.slotIndex, candidate.player_id || candidate.id)"
-                        >
-                          <ArrowUpDown :size="12" class="swap-option-icon" />
-                          <span
-                            class="swap-option-pos"
-                            :style="{ backgroundColor: getPositionColor(candidate.position) }"
+            <!-- Game Settings Card - Styled like Quarter Break Modal -->
+            <GlassCard padding="lg" :hoverable="false" class="pregame-settings-card">
+              <div class="pregame-coaching-section">
+                <!-- Main View -->
+                <template v-if="!showSubstitutionsView">
+                  <!-- Strategy Settings - Full Width (only for user's game) -->
+                  <div v-if="isUserGame" class="qb-strategy-card">
+                    <div class="strategy-row">
+                      <div class="strategy-group">
+                        <span class="strategy-label">Offense</span>
+                        <div class="strategy-pills">
+                          <button
+                            v-for="style in offensiveStyles"
+                            :key="style.value"
+                            class="strategy-pill"
+                            :class="{ active: selectedOffense === style.value }"
+                            @click="selectedOffense = style.value"
                           >
-                            {{ candidate.position }}
-                          </span>
-                          <span class="swap-option-name">{{ candidate.name }}</span>
-                          <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
-                        </button>
-                        <div v-if="getPreGameSwapCandidates(slot.slotPosition, slot.slotIndex).length === 0" class="swap-empty">
-                          No eligible players
+                            {{ style.label }}
+                          </button>
+                        </div>
+                      </div>
+                      <div class="strategy-group">
+                        <span class="strategy-label">Defense</span>
+                        <div class="strategy-pills">
+                          <button
+                            v-for="style in defensiveStyles"
+                            :key="style.value"
+                            class="strategy-pill"
+                            :class="{ active: selectedDefense === style.value }"
+                            @click="selectedDefense = style.value"
+                          >
+                            {{ style.label }}
+                          </button>
                         </div>
                       </div>
                     </div>
-                  </Transition>
-                </div>
+                  </div>
+
+                  <!-- Substitutions Button (only for user's game) -->
+                  <button
+                    v-if="isUserGame"
+                    class="qb-subs-btn"
+                    @click="showSubstitutionsView = true"
+                  >
+                    <Users :size="18" />
+                    <span>Substitutions</span>
+                  </button>
+
+                  <!-- Play Game Button -->
+                  <button
+                    v-if="isUserGame"
+                    class="qb-continue-btn pregame-play-btn"
+                    :disabled="simulating"
+                    @click="handlePlayGame"
+                  >
+                    <span v-if="simulating" class="qb-btn-loading"></span>
+                    <template v-else>
+                      <Play :size="20" />
+                      <span>{{ isInProgress ? `Resume Game (Q${savedQuarter + 1})` : 'Play Game' }}</span>
+                    </template>
+                  </button>
+
+                  <!-- Simulate Button for non-user games -->
+                  <button
+                    v-else
+                    class="qb-continue-btn pregame-play-btn"
+                    :disabled="simulating"
+                    @click="startGame"
+                  >
+                    <span v-if="simulating" class="qb-btn-loading"></span>
+                    <template v-else>
+                      <Play :size="20" />
+                      <span>{{ isInProgress ? 'Resume Simulation' : 'Simulate Game' }}</span>
+                    </template>
+                  </button>
+                </template>
+
+                <!-- Substitutions View -->
+                <template v-else>
+                  <!-- Back Button -->
+                  <button
+                    class="qb-back-btn"
+                    @click="showSubstitutionsView = false; expandedSwapPlayer = null"
+                  >
+                    <ArrowLeft :size="18" />
+                    <span>Back</span>
+                  </button>
+
+                  <!-- Lineup Cards -->
+                  <div class="lineup-cards-section">
+                    <div class="lineup-cards-header">
+                      <span class="lineup-cards-title">Starting Lineup</span>
+                      <span class="lineup-cards-hint">Tap swap icon to make changes</span>
+                    </div>
+                    <div class="lineup-cards-grid">
+                      <div
+                        v-for="slot in preGameStartersWithStats"
+                        :key="slot.slotPosition"
+                        class="lineup-card"
+                        :class="{
+                          empty: !slot.player,
+                          'dropdown-open': expandedSwapPlayer === slot.slotIndex
+                        }"
+                      >
+                        <!-- Empty Slot -->
+                        <template v-if="!slot.player">
+                          <div class="lineup-card-empty">
+                            <span class="slot-position-badge">{{ slot.slotPosition }}</span>
+                            <span class="empty-text">Empty</span>
+                            <button class="swap-btn" @click="toggleSwapDropdown(slot.slotIndex)">
+                              <ArrowUpDown :size="14" />
+                            </button>
+                          </div>
+                        </template>
+
+                        <!-- Filled Slot -->
+                        <template v-else>
+                          <div class="lineup-card-header">
+                            <span class="slot-position-badge" :style="{ backgroundColor: getPositionColor(slot.slotPosition) }">
+                              {{ slot.slotPosition }}
+                            </span>
+                            <div class="lineup-player-info">
+                              <div class="lineup-player-name-row">
+                                <span class="lineup-player-name">{{ slot.player.name }}</span>
+                                <span class="lineup-fatigue" :style="{ color: getFatigueColor(slot.player.fatigue || 0) }">{{ slot.player.fatigue || 0 }}%</span>
+                              </div>
+                              <span class="lineup-player-pos-secondary">{{ slot.player.position }}{{ slot.player.secondary_position ? ` / ${slot.player.secondary_position}` : '' }}</span>
+                            </div>
+                            <div class="lineup-card-actions">
+                              <button
+                                class="swap-btn"
+                                :class="{ active: expandedSwapPlayer === slot.slotIndex }"
+                                @click="toggleSwapDropdown(slot.slotIndex)"
+                              >
+                                <ArrowUpDown :size="14" />
+                              </button>
+                              <span class="lineup-player-ovr">{{ slot.player.overall_rating }}</span>
+                            </div>
+                          </div>
+                        </template>
+
+                        <!-- Swap Dropdown -->
+                        <Transition name="dropdown-slide">
+                          <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown">
+                            <div class="swap-dropdown-header">
+                              {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
+                            </div>
+                            <div class="swap-dropdown-list">
+                              <!-- Available players who can play this position -->
+                              <button
+                                v-for="candidate in getPreGameSwapCandidates(slot.slotPosition, slot.slotIndex)"
+                                :key="candidate.player_id || candidate.id"
+                                class="swap-option"
+                                :class="{ injured: candidate.is_injured }"
+                                @click="swapPlayerIn(slot.slotIndex, candidate.player_id || candidate.id)"
+                              >
+                                <ArrowUpDown :size="12" class="swap-option-icon" />
+                                <span
+                                  class="swap-option-pos"
+                                  :style="{ backgroundColor: getPositionColor(candidate.position) }"
+                                >
+                                  {{ candidate.position }}
+                                </span>
+                                <div class="swap-option-name-row">
+                                  <span class="swap-option-name">{{ candidate.name }}</span>
+                                  <span class="swap-option-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ candidate.fatigue || 0 }}%</span>
+                                </div>
+                                <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
+                              </button>
+                              <div v-if="getPreGameSwapCandidates(slot.slotPosition, slot.slotIndex).length === 0" class="swap-empty">
+                                No eligible players
+                              </div>
+                            </div>
+                          </div>
+                        </Transition>
+                      </div>
+                    </div>
+                  </div>
+                </template>
               </div>
-            </div>
-          </GlassCard>
+            </GlassCard>
+          </div>
         </template>
       </template>
 
@@ -3290,38 +3375,18 @@ onUnmounted(() => {
   color: var(--color-success);
 }
 
-.team-badge-wrapper {
+.team-side-column {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
 }
 
-.team-name-with-logo {
+.team-badge-wrapper {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.team-logo-mini {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  color: white;
-  flex-shrink: 0;
-}
-
-.team-name-text {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  gap: 8px;
 }
 
 .team-badge-game {
@@ -3370,6 +3435,15 @@ onUnmounted(() => {
   text-transform: uppercase;
 }
 
+.team-location-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 2px;
+}
+
 .team-score-lg {
   font-size: 3rem;
   font-weight: 800;
@@ -3412,6 +3486,15 @@ onUnmounted(() => {
   font-size: 0.875rem;
   color: var(--color-secondary);
   text-align: center;
+}
+
+.game-type-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
 }
 
 .user-game-badge {
@@ -3566,33 +3649,32 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-/* Pre-game Strategy Section */
-.pregame-strategy-section {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--color-border);
+/* Pre-game Layout */
+.pregame-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
 }
 
-.strategy-section-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin-bottom: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.pregame-court-card {
+  min-height: 400px;
 }
 
-/* Pre-game Lineup Section */
-.pregame-lineup-section {
+.pregame-settings-card {
   display: flex;
   flex-direction: column;
-  gap: 16px;
 }
 
-.pregame-lineup-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
+.pregame-coaching-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  flex: 1;
+}
+
+.pregame-play-btn {
+  margin-top: auto;
 }
 
 .lineup-player-pos-secondary {
@@ -3838,41 +3920,28 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-/* Substitutions Button - Nebula Style */
+/* Substitutions Button */
 .qb-subs-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
   padding: 14px 24px;
-  background: var(--gradient-nebula, linear-gradient(135deg, #667eea 0%, #764ba2 100%));
-  border: none;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
-  color: white;
+  color: var(--color-text-primary);
   font-size: 0.9rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   cursor: pointer;
   transition: all 0.2s ease;
-  position: relative;
-  overflow: hidden;
-}
-
-.qb-subs-btn::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.4), transparent),
-    radial-gradient(1px 1px at 60% 70%, rgba(255,255,255,0.3), transparent),
-    radial-gradient(1px 1px at 80% 20%, rgba(255,255,255,0.3), transparent);
-  pointer-events: none;
 }
 
 .qb-subs-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border-medium);
 }
 
 /* Back Button */
@@ -4174,11 +4243,21 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+.lineup-player-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .lineup-player-name {
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--color-text-primary);
-  display: block;
+}
+
+.lineup-fatigue {
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 
 .lineup-inline-stats {
@@ -4287,10 +4366,26 @@ onUnmounted(() => {
   color: white;
 }
 
-.swap-option-name {
+.swap-option-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1;
+  min-width: 0;
+}
+
+.swap-option-name {
   font-size: 0.85rem;
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.swap-option-fatigue {
+  font-size: 0.7rem;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
 .swap-option-stats {
@@ -4422,30 +4517,6 @@ onUnmounted(() => {
     opacity: 0;
     transform: scale(0.95);
   }
-}
-
-.matchup-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-}
-
-.matchup-item {
-  display: flex;
-  flex-direction: column;
-  padding: 12px;
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-lg);
-}
-
-.matchup-label {
-  font-size: 0.75rem;
-  color: var(--color-secondary);
-  margin-bottom: 4px;
-}
-
-.matchup-value {
-  font-weight: 600;
 }
 
 .quarter-scores {
@@ -5918,30 +5989,34 @@ onUnmounted(() => {
   border-top-color: rgba(0, 0, 0, 0.1);
 }
 
+/* Pre-game layout responsive adjustments */
+@media (max-width: 1024px) {
+  .pregame-layout {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
 /* Pre-game lineup grid responsive adjustments */
 @media (max-width: 900px) {
-  .pregame-lineup-grid {
+  .pregame-coaching-section .lineup-cards-grid {
     grid-template-columns: repeat(3, 1fr);
   }
 }
 
 @media (max-width: 620px) {
-  .pregame-lineup-grid {
+  .pregame-coaching-section .lineup-cards-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .pregame-strategy-section {
-    margin-top: 16px;
-    padding-top: 12px;
-  }
-
-  .strategy-section-title {
-    font-size: 0.8rem;
+  .pregame-coaching-section .strategy-row {
+    flex-direction: column;
+    gap: 16px;
   }
 }
 
 @media (max-width: 400px) {
-  .pregame-lineup-grid {
+  .pregame-coaching-section .lineup-cards-grid {
     grid-template-columns: 1fr;
   }
 }

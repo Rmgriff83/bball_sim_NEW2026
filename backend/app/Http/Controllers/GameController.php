@@ -46,14 +46,26 @@ class GameController extends Controller
             ->keyBy('id');
 
         $games = array_map(function ($game) use ($campaign, $teams) {
+            $isInProgress = $game['isInProgress'] ?? false;
+
+            // For in-progress games, get current scores from gameState
+            $homeScore = $game['homeScore'];
+            $awayScore = $game['awayScore'];
+            if ($isInProgress && isset($game['gameState'])) {
+                $homeScore = $game['gameState']['homeScore'] ?? 0;
+                $awayScore = $game['gameState']['awayScore'] ?? 0;
+            }
+
             return [
                 'id' => $game['id'],
                 'home_team' => $teams[$game['homeTeamId']] ?? null,
                 'away_team' => $teams[$game['awayTeamId']] ?? null,
                 'game_date' => $game['gameDate'],
-                'home_score' => $game['homeScore'],
-                'away_score' => $game['awayScore'],
+                'home_score' => $homeScore,
+                'away_score' => $awayScore,
                 'is_complete' => $game['isComplete'],
+                'is_in_progress' => $isInProgress,
+                'current_quarter' => $game['currentQuarter'] ?? null,
                 'is_playoff' => $game['isPlayoff'],
                 'is_user_game' => $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id,
             ];
@@ -150,8 +162,9 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        // Initialize AI team lineups if not already set
+        // Initialize AI team lineups if not already set, then refresh based on fatigue
         $this->aiLineupService->initializeAllTeamLineups($campaign);
+        $this->aiLineupService->refreshAllTeamLineups($campaign);
 
         // Get simulation mode (animated or quick)
         $mode = $request->input('mode', 'animated');
@@ -237,6 +250,11 @@ class GameController extends Controller
             $playoffUpdate = $this->processPlayoffGameCompletion($campaign, $game, $result['home_score'], $result['away_score']);
         }
 
+        // Process rest day recovery for teams that didn't play on game date
+        // Note: This method only simulates the user's single game, so we only track those two teams
+        $teamsWithGames = [$game['homeTeamId'], $game['awayTeamId']];
+        $this->evolutionService->processRestDayRecovery($campaign, $teamsWithGames);
+
         // Advance campaign date
         $campaign->update(['current_date' => Carbon::parse($game['gameDate'])->addDay()]);
 
@@ -273,8 +291,9 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        // Initialize AI team lineups if not already set
+        // Initialize AI team lineups if not already set, then refresh based on fatigue
         $this->aiLineupService->initializeAllTeamLineups($campaign);
+        $this->aiLineupService->refreshAllTeamLineups($campaign);
 
         $year = $campaign->currentSeason?->year ?? 2025;
         $currentDate = $campaign->current_date->format('Y-m-d');
@@ -289,10 +308,17 @@ class GameController extends Controller
         // Get user's saved starting lineup
         $userLineup = $campaign->settings['lineup']['starters'] ?? null;
 
+        // Track which teams played today
+        $teamsWithGames = [];
+
         $results = [];
         foreach ($games as $game) {
             $homeTeam = $teams[$game['homeTeamId']];
             $awayTeam = $teams[$game['awayTeamId']];
+
+            // Track teams that played
+            $teamsWithGames[] = $game['homeTeamId'];
+            $teamsWithGames[] = $game['awayTeamId'];
 
             // Determine if this is the user's game and pass their lineup
             $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
@@ -346,6 +372,9 @@ class GameController extends Controller
                 'is_user_game' => $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id,
             ];
         }
+
+        // Process rest day recovery for teams that didn't play
+        $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
 
         // Advance to next day
         $newDate = $campaign->current_date->addDay();
@@ -481,8 +510,9 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        // Initialize AI team lineups if not already set
+        // Initialize AI team lineups if not already set, then refresh based on fatigue
         $this->aiLineupService->initializeAllTeamLineups($campaign);
+        $this->aiLineupService->refreshAllTeamLineups($campaign);
 
         $year = $campaign->currentSeason?->year ?? 2025;
         $game = $this->seasonService->getGame($campaign->id, $year, $gameId);
@@ -760,11 +790,18 @@ class GameController extends Controller
             $gameDate = $game['gameDate'];
             $allGames = $this->seasonService->getGamesByDate($campaign->id, $year, $gameDate);
 
+            // Track teams that played today (starting with user's game teams)
+            $teamsWithGames = [$game['homeTeamId'], $game['awayTeamId']];
+
             foreach ($allGames as $otherGame) {
                 // Skip the game we just completed and any already complete games
                 if ($otherGame['id'] === $gameId || ($otherGame['isComplete'] ?? false)) {
                     continue;
                 }
+
+                // Track teams that played
+                $teamsWithGames[] = $otherGame['homeTeamId'];
+                $teamsWithGames[] = $otherGame['awayTeamId'];
 
                 // Simulate this game
                 $otherHomeTeam = Team::find($otherGame['homeTeamId']);
@@ -819,6 +856,9 @@ class GameController extends Controller
                     $this->processPlayoffGameCompletion($campaign, $otherGame, $simResult['home_score'], $simResult['away_score']);
                 }
             }
+
+            // Process rest day recovery for teams that didn't play
+            $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
 
             // Advance campaign date
             $campaign->update(['current_date' => Carbon::parse($game['gameDate'])->addDay()]);
@@ -1013,6 +1053,9 @@ class GameController extends Controller
         $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
         $results = [];
 
+        // Track which teams played today
+        $teamsWithGames = [];
+
         // Get user's saved starting lineup for their games
         $userLineup = $campaign->settings['lineup']['starters'] ?? null;
 
@@ -1023,6 +1066,10 @@ class GameController extends Controller
             if (!$homeTeam || !$awayTeam) {
                 continue;
             }
+
+            // Track teams that played
+            $teamsWithGames[] = $game['homeTeamId'];
+            $teamsWithGames[] = $game['awayTeamId'];
 
             // Determine if this is the user's game and pass their lineup
             $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
@@ -1079,6 +1126,9 @@ class GameController extends Controller
 
             $results[] = $gameResult;
         }
+
+        // Process rest day recovery for teams that didn't play
+        $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
 
         // Check for weekly/monthly evolution updates
         $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
@@ -1195,8 +1245,9 @@ class GameController extends Controller
 
         $excludeUserGame = $request->boolean('excludeUserGame', false);
 
-        // Initialize AI team lineups if not already set
+        // Initialize AI team lineups if not already set, then refresh based on fatigue
         $this->aiLineupService->initializeAllTeamLineups($campaign);
+        $this->aiLineupService->refreshAllTeamLineups($campaign);
 
         $year = $campaign->currentSeason?->year ?? 2025;
 
@@ -1235,6 +1286,9 @@ class GameController extends Controller
         $userGameResult = null;
         $gameDateResults = [];
 
+        // Track which teams played on game date
+        $teamsWithGamesOnGameDate = [];
+
         // Get user's saved starting lineup
         $userLineup = $campaign->settings['lineup']['starters'] ?? null;
 
@@ -1251,8 +1305,15 @@ class GameController extends Controller
 
             // Skip user's game if excludeUserGame is true (user wants to play it live)
             if ($isUserGame && $excludeUserGame) {
+                // Still track that the user's team has a game (they're about to play)
+                $teamsWithGamesOnGameDate[] = $game['homeTeamId'];
+                $teamsWithGamesOnGameDate[] = $game['awayTeamId'];
                 continue;
             }
+
+            // Track teams that played
+            $teamsWithGamesOnGameDate[] = $game['homeTeamId'];
+            $teamsWithGamesOnGameDate[] = $game['awayTeamId'];
 
             $gameLineup = $isUserGame ? $userLineup : null;
 
@@ -1322,6 +1383,11 @@ class GameController extends Controller
             }
 
             $gameDateResults[] = $gameResult;
+        }
+
+        // Process rest day recovery for teams that didn't play on game date
+        if (!empty($teamsWithGamesOnGameDate)) {
+            $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGamesOnGameDate));
         }
 
         // Add game date results to all simulated games

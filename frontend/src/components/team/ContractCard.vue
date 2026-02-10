@@ -529,4 +529,68 @@ function handleInfo() {
   border-radius: 50%;
   color: white;
 }
+
+/* Light Mode Overrides */
+[data-theme="light"] .contract-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .contract-card.expiring {
+  border-color: rgba(245, 158, 11, 0.5);
+}
+
+[data-theme="light"] .player-avatar {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .contract-bar-container {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .stats-grid,
+[data-theme="light"] .attributes-grid {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .expiring-indicator {
+  border-color: rgba(255, 255, 255, 0.95);
+}
+
+[data-theme="light"] .resign-btn {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+[data-theme="light"] .resign-btn:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+[data-theme="light"] .drop-btn {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+[data-theme="light"] .drop-btn:hover {
+  background: rgba(239, 68, 68, 0.18);
+}
+
+[data-theme="light"] .sign-btn {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.25);
+}
+
+[data-theme="light"] .sign-btn:hover {
+  background: rgba(34, 197, 94, 0.2);
+}
+
+[data-theme="light"] .info-btn {
+  background: rgba(107, 114, 128, 0.1);
+  border-color: rgba(107, 114, 128, 0.2);
+}
+
+[data-theme="light"] .info-btn:hover {
+  background: rgba(107, 114, 128, 0.18);
+}
 </style>

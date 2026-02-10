@@ -9,6 +9,11 @@ class AILineupService
 {
     private const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
+    // Fatigue thresholds for lineup decisions
+    private const FATIGUE_REST_THRESHOLD = 70;      // Rest player if fatigue >= this
+    private const FATIGUE_CAUTION_THRESHOLD = 50;   // Start considering fatigue at this level
+    private const FATIGUE_RATING_PENALTY = 0.5;     // Rating points to subtract per fatigue point over caution threshold
+
     public function __construct(
         private CampaignPlayerService $playerService
     ) {}
@@ -57,15 +62,38 @@ class AILineupService
     /**
      * Select the best starting lineup from a roster.
      * Returns array of 5 player IDs in position order (PG, SG, SF, PF, C).
+     * Factors in fatigue - highly fatigued players are deprioritized or rested.
      */
     private function selectBestLineup(array $roster): array
     {
         $lineup = [];
         $usedPlayerIds = [];
 
-        // First pass: assign players to their natural positions
+        // Calculate effective rating for each player (rating adjusted by fatigue)
+        $rosterWithEffectiveRating = array_map(function ($player) {
+            $rating = $player['overallRating'] ?? $player['overall_rating'] ?? 70;
+            $fatigue = $player['fatigue'] ?? 0;
+
+            // Calculate effective rating based on fatigue
+            $effectiveRating = $this->calculateEffectiveRating($rating, $fatigue);
+
+            return array_merge($player, [
+                'effectiveRating' => $effectiveRating,
+                'shouldRest' => $fatigue >= self::FATIGUE_REST_THRESHOLD,
+            ]);
+        }, $roster);
+
+        // Sort by effective rating (highest first)
+        usort($rosterWithEffectiveRating, fn($a, $b) =>
+            ($b['effectiveRating'] ?? 0) - ($a['effectiveRating'] ?? 0)
+        );
+
+        // First pass: assign players to their natural positions (skip those who should rest if alternatives exist)
         foreach (self::POSITIONS as $pos) {
-            foreach ($roster as $player) {
+            $bestCandidate = null;
+            $bestCandidateNeedsRest = false;
+
+            foreach ($rosterWithEffectiveRating as $player) {
                 $playerId = $player['id'] ?? null;
                 if (!$playerId) continue;
 
@@ -78,17 +106,34 @@ class AILineupService
                 $secondaryPos = $player['secondaryPosition'] ?? $player['secondary_position'] ?? null;
 
                 if ($primaryPos === $pos || $secondaryPos === $pos) {
-                    $lineup[$pos] = $playerId;
-                    $usedPlayerIds[] = $playerId;
-                    break;
+                    $shouldRest = $player['shouldRest'] ?? false;
+
+                    // If this player should rest but we haven't found anyone yet, save as fallback
+                    if ($shouldRest && !$bestCandidate) {
+                        $bestCandidate = $player;
+                        $bestCandidateNeedsRest = true;
+                        continue;
+                    }
+
+                    // Found a player who doesn't need rest - use them
+                    if (!$shouldRest) {
+                        $bestCandidate = $player;
+                        $bestCandidateNeedsRest = false;
+                        break;
+                    }
                 }
+            }
+
+            if ($bestCandidate) {
+                $lineup[$pos] = $bestCandidate['id'];
+                $usedPlayerIds[] = $bestCandidate['id'];
             }
         }
 
         // Second pass: fill any remaining positions with best available
         foreach (self::POSITIONS as $pos) {
             if (!isset($lineup[$pos])) {
-                foreach ($roster as $player) {
+                foreach ($rosterWithEffectiveRating as $player) {
                     $playerId = $player['id'] ?? null;
                     if (!$playerId) continue;
 
@@ -111,6 +156,23 @@ class AILineupService
         }
 
         return $result;
+    }
+
+    /**
+     * Calculate effective rating based on fatigue.
+     * Players above the caution threshold have their rating penalized.
+     */
+    private function calculateEffectiveRating(int $rating, int $fatigue): float
+    {
+        if ($fatigue <= self::FATIGUE_CAUTION_THRESHOLD) {
+            return (float) $rating;
+        }
+
+        // Penalize rating based on fatigue above caution threshold
+        $fatigueOverCaution = $fatigue - self::FATIGUE_CAUTION_THRESHOLD;
+        $penalty = $fatigueOverCaution * self::FATIGUE_RATING_PENALTY;
+
+        return max(0, $rating - $penalty);
     }
 
     /**
@@ -162,10 +224,10 @@ class AILineupService
 
     /**
      * Find a replacement player for a position.
+     * Considers fatigue in addition to rating and position fit.
      */
     private function findReplacement(array $roster, array $currentStarters, string $position): ?string
     {
-        // Sort bench players by rating
         $candidates = [];
 
         foreach ($roster as $player) {
@@ -179,6 +241,10 @@ class AILineupService
             $isInjured = $player['isInjured'] ?? $player['is_injured'] ?? false;
             if ($isInjured) continue;
 
+            $rating = $player['overallRating'] ?? $player['overall_rating'] ?? 0;
+            $fatigue = $player['fatigue'] ?? 0;
+            $effectiveRating = $this->calculateEffectiveRating($rating, $fatigue);
+
             // Check if can play the position
             $primaryPos = $player['position'] ?? null;
             $secondaryPos = $player['secondaryPosition'] ?? $player['secondary_position'] ?? null;
@@ -186,8 +252,11 @@ class AILineupService
             if ($primaryPos === $position || $secondaryPos === $position) {
                 $candidates[] = [
                     'id' => $playerId,
-                    'rating' => $player['overallRating'] ?? $player['overall_rating'] ?? 0,
+                    'rating' => $rating,
+                    'effectiveRating' => $effectiveRating,
+                    'fatigue' => $fatigue,
                     'isPrimary' => $primaryPos === $position,
+                    'shouldRest' => $fatigue >= self::FATIGUE_REST_THRESHOLD,
                 ];
             }
         }
@@ -202,10 +271,17 @@ class AILineupService
                 $isInjured = $player['isInjured'] ?? $player['is_injured'] ?? false;
                 if ($isInjured) continue;
 
+                $rating = $player['overallRating'] ?? $player['overall_rating'] ?? 0;
+                $fatigue = $player['fatigue'] ?? 0;
+                $effectiveRating = $this->calculateEffectiveRating($rating, $fatigue);
+
                 $candidates[] = [
                     'id' => $playerId,
-                    'rating' => $player['overallRating'] ?? $player['overall_rating'] ?? 0,
+                    'rating' => $rating,
+                    'effectiveRating' => $effectiveRating,
+                    'fatigue' => $fatigue,
                     'isPrimary' => false,
+                    'shouldRest' => $fatigue >= self::FATIGUE_REST_THRESHOLD,
                 ];
             }
         }
@@ -214,15 +290,123 @@ class AILineupService
             return null;
         }
 
-        // Sort by: primary position first, then by rating
+        // Sort by: not needing rest first, then primary position, then by effective rating
         usort($candidates, function ($a, $b) {
+            // Prefer players who don't need rest
+            if ($a['shouldRest'] !== $b['shouldRest']) {
+                return $a['shouldRest'] - $b['shouldRest'];
+            }
+            // Then prefer primary position
             if ($a['isPrimary'] !== $b['isPrimary']) {
                 return $b['isPrimary'] - $a['isPrimary'];
             }
-            return $b['rating'] - $a['rating'];
+            // Then by effective rating
+            return $b['effectiveRating'] - $a['effectiveRating'];
         });
 
         return $candidates[0]['id'];
+    }
+
+    /**
+     * Refresh all AI team lineups before a game day.
+     * Swaps out fatigued starters for fresher bench players when available.
+     */
+    public function refreshAllTeamLineups(Campaign $campaign): int
+    {
+        $teams = Team::where('campaign_id', $campaign->id)
+            ->where('id', '!=', $campaign->team_id) // Exclude user's team
+            ->get();
+
+        $refreshedCount = 0;
+
+        foreach ($teams as $team) {
+            if ($this->refreshTeamLineup($campaign, $team)) {
+                $refreshedCount++;
+            }
+        }
+
+        return $refreshedCount;
+    }
+
+    /**
+     * Refresh a single AI team's lineup based on current fatigue levels.
+     * Returns true if lineup was changed.
+     */
+    public function refreshTeamLineup(Campaign $campaign, Team $team): bool
+    {
+        // Don't manage user's team
+        if ($team->id === $campaign->team_id) {
+            return false;
+        }
+
+        $lineupSettings = $team->lineup_settings;
+        $currentStarters = $lineupSettings['starters'] ?? null;
+
+        // If team has no lineup, initialize it
+        if (empty($currentStarters)) {
+            $this->initializeTeamLineup($campaign, $team);
+            return true;
+        }
+
+        $roster = $this->playerService->getTeamRoster($campaign->id, $team->abbreviation, $campaign->team_id);
+
+        if (empty($roster)) {
+            return false;
+        }
+
+        // Build player lookup map
+        $playerMap = [];
+        foreach ($roster as $player) {
+            $playerId = $player['id'] ?? null;
+            if ($playerId) {
+                $playerMap[$playerId] = $player;
+            }
+        }
+
+        $newStarters = $currentStarters;
+        $changed = false;
+
+        // Check each starter position
+        foreach (self::POSITIONS as $index => $pos) {
+            $starterId = $currentStarters[$index] ?? null;
+            if (!$starterId) continue;
+
+            $starter = $playerMap[$starterId] ?? null;
+            if (!$starter) continue;
+
+            $starterFatigue = $starter['fatigue'] ?? 0;
+            $starterInjured = $starter['isInjured'] ?? $starter['is_injured'] ?? false;
+
+            // Check if starter should be rested or is injured
+            if ($starterInjured || $starterFatigue >= self::FATIGUE_REST_THRESHOLD) {
+                // Find a replacement
+                $replacement = $this->findReplacement($roster, $newStarters, $pos);
+
+                if ($replacement && $replacement !== $starterId) {
+                    // Verify replacement is actually better (fresher)
+                    $replacementPlayer = $playerMap[$replacement] ?? null;
+                    if ($replacementPlayer) {
+                        $replacementFatigue = $replacementPlayer['fatigue'] ?? 0;
+
+                        // Only swap if replacement is significantly fresher
+                        if ($replacementFatigue < $starterFatigue - 20 || $starterInjured) {
+                            $newStarters[$index] = $replacement;
+                            $changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($changed) {
+            $team->update([
+                'lineup_settings' => [
+                    'starters' => $newStarters,
+                ],
+            ]);
+        }
+
+        return $changed;
     }
 
     /**
