@@ -317,10 +317,7 @@ async function clearLocalCache() {
   font-size: 2rem;
   font-weight: 400;
   letter-spacing: 0.02em;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-tertiary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--color-text-primary);
 }
 
 /* Section Cards */

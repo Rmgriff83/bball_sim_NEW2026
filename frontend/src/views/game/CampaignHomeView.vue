@@ -1171,7 +1171,7 @@ function handleCloseSimulateModal() {
 .next-game-label {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
   font-size: 1.75rem;
-  font-weight: 600;
+  font-weight: 400;
   text-transform: uppercase;
   letter-spacing: 0.025em;
   color: var(--color-text-primary);

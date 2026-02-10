@@ -375,7 +375,20 @@ const activeLiveBoxStats = computed(() => {
   const col = liveBoxSortColumn.value
   const dir = liveBoxSortDirection.value === 'desc' ? -1 : 1
 
+  // Get on-court player IDs (normalized for comparison)
+  const onCourtIds = new Set(onCourtPlayerIds.value.map(normalizeId))
+
   return [...stats].sort((a, b) => {
+    // Players currently on court come first
+    if (onCourtIds.size > 0) {
+      const aOnCourt = onCourtIds.has(normalizeId(a.player_id))
+      const bOnCourt = onCourtIds.has(normalizeId(b.player_id))
+
+      if (aOnCourt && !bOnCourt) return -1
+      if (!aOnCourt && bOnCourt) return 1
+    }
+
+    // Secondary sort by selected column (default: points descending)
     let aVal = a[col] || 0
     let bVal = b[col] || 0
 
@@ -385,10 +398,10 @@ const activeLiveBoxStats = computed(() => {
       return dir * aVal.localeCompare(bVal)
     }
 
-    // Primary sort
+    // Primary sort by column
     const primaryCompare = dir * (aVal - bVal)
 
-    // Secondary sort by minutes
+    // Tertiary sort by minutes
     if (primaryCompare === 0 && col !== 'minutes') {
       return -1 * ((a.minutes || 0) - (b.minutes || 0))
     }
@@ -411,6 +424,12 @@ const hiddenLiveBoxPlayerCount = computed(() => activeLiveBoxStats.value.length 
 
 const activeLiveBoxTeam = computed(() => {
   return liveBoxScoreTab.value === 'home' ? homeTeam.value : awayTeam.value
+})
+
+// Check if the live box score tab is showing the user's team
+const isUserTeamLiveBoxTab = computed(() => {
+  return (userIsHome.value && liveBoxScoreTab.value === 'home') ||
+         (!userIsHome.value && liveBoxScoreTab.value === 'away')
 })
 
 const activeLiveBoxTotals = computed(() => {
@@ -2231,7 +2250,10 @@ onUnmounted(() => {
                         <td class="player-col">
                           <div class="player-info">
                             <span class="player-name">{{ player.name }}</span>
-                            <span class="player-pos">{{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template></span>
+                            <span class="player-pos">
+                              {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
+                              <span v-if="onCourtPlayerIds.map(id => String(id)).includes(String(player.player_id))" class="on-court-badge">ON</span>
+                            </span>
                           </div>
                         </td>
                         <td class="stat-col">{{ player.minutes || 0 }}</td>
@@ -5879,6 +5901,18 @@ onUnmounted(() => {
   color: var(--color-secondary);
   text-transform: uppercase;
   letter-spacing: 0.02em;
+}
+
+.live-box-table .on-court-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 4px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  background: var(--color-success, #22c55e);
+  color: white;
+  border-radius: 3px;
+  vertical-align: middle;
 }
 
 .live-box-table .stat-col.points {

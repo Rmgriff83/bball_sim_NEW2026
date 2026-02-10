@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useAuthStore } from '@/stores/auth'
 import { BottomNav } from '@/components/ui'
-import { ArrowLeft, Play } from 'lucide-vue-next'
+import { ArrowLeft, Play, User, FolderOpen, LogOut } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -142,16 +142,26 @@ function closeMobileMenu() {
         </div>
       </div>
 
-      <!-- Mobile Navigation Dropdown -->
+      <!-- Mobile Navigation Slide-in -->
       <div v-if="isMobile" class="mobile-nav" :class="{ open: mobileMenuOpen }">
+        <router-link
+          to="/profile"
+          class="mobile-nav-link"
+          @click="closeMobileMenu"
+        >
+          <User :size="14" />
+          Profile
+        </router-link>
         <router-link
           to="/campaigns"
           class="mobile-nav-link"
           @click="closeMobileMenu"
         >
-          All Campaigns
+          <FolderOpen :size="14" />
+          Campaigns
         </router-link>
         <button class="mobile-nav-link logout" @click="handleLogout">
+          <LogOut :size="14" />
           Sign Out
         </button>
       </div>
@@ -176,7 +186,6 @@ function closeMobileMenu() {
   background: var(--color-bg-secondary);
   border-bottom: 1px solid var(--glass-border);
   position: relative;
-  overflow: hidden;
 }
 
 /* Nebula effect for header */
@@ -426,27 +435,45 @@ function closeMobileMenu() {
 }
 
 .mobile-nav {
-  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: max-content;
+  display: flex;
   flex-direction: column;
-  padding: 0 16px 16px;
-  gap: 4px;
-  position: relative;
-  z-index: 1;
+  padding: 8px;
+  gap: 2px;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--glass-border);
+  z-index: 50;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  pointer-events: none;
 }
 
 .mobile-nav.open {
-  display: flex;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+@media (max-width: 400px) {
+  .mobile-nav {
+    width: 33%;
+  }
 }
 
 .mobile-nav-link {
-  display: block;
-  padding: 12px 16px;
-  background: var(--color-bg-tertiary);
-  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  border-radius: 6px;
   color: var(--color-text-secondary);
   text-decoration: none;
+  font-size: 0.8rem;
   font-weight: 500;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
   border: none;
   width: 100%;
   text-align: left;
@@ -454,7 +481,7 @@ function closeMobileMenu() {
 }
 
 .mobile-nav-link:hover {
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
 }
 
