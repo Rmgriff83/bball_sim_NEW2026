@@ -5,12 +5,18 @@ import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
-import { GlassCard, BaseButton, FormInput, Badge } from '@/components/ui'
-import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload } from 'lucide-vue-next'
+import { GlassCard, BaseButton, FormInput, Badge, BaseModal } from '@/components/ui'
+import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, Trash2, AlertTriangle } from 'lucide-vue-next'
+import { useLocalCache } from '@/composables/useLocalCache'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const syncStore = useSyncStore()
+const localCache = useLocalCache()
+
+// Clear cache modal
+const showClearCacheModal = ref(false)
+const clearingCache = ref(false)
 
 // Theme toggle
 const isDarkMode = ref(document.documentElement.getAttribute('data-theme') !== 'light')
@@ -92,6 +98,20 @@ async function handleLogout() {
 async function saveToCloud() {
   await syncStore.syncNow()
 }
+
+async function clearLocalCache() {
+  clearingCache.value = true
+  try {
+    await localCache.clearAll()
+    showClearCacheModal.value = false
+    // Reload the page to reset all stores
+    window.location.reload()
+  } catch (err) {
+    console.error('Failed to clear cache:', err)
+  } finally {
+    clearingCache.value = false
+  }
+}
 </script>
 
 <template>
@@ -172,16 +192,55 @@ async function saveToCloud() {
           </div>
           <span v-if="syncStore.hasPendingChanges" class="pending-badge">Unsaved</span>
         </div>
-        <BaseButton
-          variant="primary"
-          @click="saveToCloud"
-          :loading="syncStore.isSyncing"
-          class="sync-button"
-        >
-          <CloudUpload :size="16" />
-          Save to Cloud
-        </BaseButton>
+        <div class="sync-buttons">
+          <BaseButton
+            variant="primary"
+            @click="saveToCloud"
+            :loading="syncStore.isSyncing"
+            class="sync-button"
+          >
+            <CloudUpload :size="16" />
+            Save to Cloud
+          </BaseButton>
+          <BaseButton
+            variant="ghost"
+            @click="showClearCacheModal = true"
+            class="clear-cache-button"
+          >
+            <Trash2 :size="16" />
+            Clear Local Cache
+          </BaseButton>
+        </div>
       </div>
+
+      <!-- Clear Cache Confirmation Modal -->
+      <BaseModal :show="showClearCacheModal" @close="showClearCacheModal = false" title="Clear Local Cache?">
+        <div class="clear-cache-modal">
+          <div class="warning-icon">
+            <AlertTriangle :size="32" />
+          </div>
+          <p class="warning-text">
+            This will delete all locally stored game data from this browser.
+          </p>
+          <ul class="warning-list">
+            <li>Any unsaved changes will be lost permanently</li>
+            <li>Your data will be restored from the cloud on next load</li>
+            <li>Use this if you're experiencing sync issues or corrupted data</li>
+          </ul>
+          <p class="warning-hint">
+            Make sure to "Save to Cloud" first if you have unsaved changes you want to keep.
+          </p>
+          <div class="modal-actions">
+            <BaseButton variant="ghost" @click="showClearCacheModal = false">
+              Cancel
+            </BaseButton>
+            <BaseButton variant="danger" @click="clearLocalCache" :loading="clearingCache">
+              <Trash2 :size="16" />
+              Clear Cache
+            </BaseButton>
+          </div>
+        </div>
+      </BaseModal>
 
       <!-- Update Profile Card -->
       <div class="profile-section">
@@ -445,10 +504,81 @@ async function saveToCloud() {
   border-radius: var(--radius-lg);
 }
 
-.sync-button {
+.sync-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sync-button,
+.clear-cache-button {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
+}
+
+.clear-cache-button {
+  color: var(--color-text-secondary);
+}
+
+.clear-cache-button:hover {
+  color: var(--color-error);
+}
+
+/* Clear Cache Modal */
+.clear-cache-modal {
+  text-align: center;
+}
+
+.warning-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #EF4444;
+}
+
+.warning-text {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  margin-bottom: 1rem;
+}
+
+.warning-list {
+  text-align: left;
+  padding-left: 1.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.warning-list li {
+  margin-bottom: 0.5rem;
+}
+
+.warning-hint {
+  font-size: 0.75rem;
+  color: var(--color-warning);
+  background: rgba(234, 179, 8, 0.1);
+  padding: 0.75rem;
+  border-radius: var(--radius-lg);
+  margin-bottom: 1.5rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.modal-actions .btn {
+  min-width: 120px;
 }
 
 /* Forms */

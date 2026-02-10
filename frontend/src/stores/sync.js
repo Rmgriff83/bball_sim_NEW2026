@@ -174,37 +174,44 @@ export const useSyncStore = defineStore('sync', () => {
 
   /**
    * Pull latest data from the server
+   * Only updates local cache if local data doesn't exist (remote is fallback only)
    */
   async function pullChanges(campaignId) {
     const response = await api.get(`/api/campaigns/${campaignId}/sync/pull`)
     const { campaign, season, players, metadata } = response.data
 
-    // Compare timestamps and update if remote is newer
+    // Only use remote data if local doesn't exist (local is always preferred)
     if (campaign) {
       const localCampaign = await cache.getCampaign(campaignId)
-      const resolved = resolveConflict(localCampaign, { ...campaign, metadata })
-
-      if (resolved.winner === 'remote') {
-        await cache.setCampaign(campaignId, resolved.data)
+      if (!localCampaign) {
+        // No local data - use remote as initial seed
+        await cache.setCampaign(campaignId, { ...campaign, metadata })
+        console.log('[Sync] No local campaign data, using remote')
+      } else {
+        console.log('[Sync] Local campaign data exists, keeping local')
       }
     }
 
     if (season) {
       const year = season.year
       const localSeason = await cache.getSeason(campaignId, year)
-      const resolved = resolveConflict(localSeason, { ...season, metadata })
-
-      if (resolved.winner === 'remote') {
-        await cache.setSeason(campaignId, year, resolved.data)
+      if (!localSeason) {
+        // No local data - use remote as initial seed
+        await cache.setSeason(campaignId, year, { ...season, metadata })
+        console.log('[Sync] No local season data, using remote')
+      } else {
+        console.log('[Sync] Local season data exists, keeping local')
       }
     }
 
     if (players) {
       const localPlayers = await cache.getPlayers(campaignId)
-      const resolved = resolveConflict(localPlayers, { players, metadata })
-
-      if (resolved.winner === 'remote') {
-        await cache.setPlayers(campaignId, resolved.data)
+      if (!localPlayers) {
+        // No local data - use remote as initial seed
+        await cache.setPlayers(campaignId, { players, metadata })
+        console.log('[Sync] No local players data, using remote')
+      } else {
+        console.log('[Sync] Local players data exists, keeping local')
       }
     }
 
@@ -212,16 +219,16 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Resolve conflict between local and remote data using "newer wins"
+   * Resolve conflict between local and remote data
+   * Strategy: Local always wins if it exists (local is the working copy)
    */
   function resolveConflict(localData, remoteData) {
-    const localTime = new Date(localData?.metadata?.updatedAt || localData?._cachedAt || 0).getTime()
-    const remoteTime = new Date(remoteData?.metadata?.updatedAt || 0).getTime()
-
-    if (remoteTime > localTime) {
-      return { winner: 'remote', data: remoteData }
+    // If local data exists, it always wins (it's the active working copy)
+    if (localData) {
+      return { winner: 'local', data: localData }
     }
-    return { winner: 'local', data: localData }
+    // Only use remote if no local data exists
+    return { winner: 'remote', data: remoteData }
   }
 
   /**
