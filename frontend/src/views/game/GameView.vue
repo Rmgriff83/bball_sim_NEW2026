@@ -4991,7 +4991,7 @@ onUnmounted(() => {
 .broadcast-date {
   text-align: center;
   font-size: 0.7rem;
-  color: rgba(0, 0, 0, 0.5);
+  color: #000;
   font-weight: 500;
   margin-top: 6px;
 }
@@ -5006,7 +5006,7 @@ onUnmounted(() => {
 .broadcast-record {
   font-size: 0.7rem;
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.5);
+  color: #000;
   letter-spacing: 0.12em;
 }
 
@@ -5215,11 +5215,11 @@ onUnmounted(() => {
 
 /* Light mode broadcast adjustments */
 [data-theme="light"] .broadcast-date {
-  color: rgba(255, 255, 255, 0.7);
+  color: #000;
 }
 
 [data-theme="light"] .broadcast-record {
-  color: rgba(255, 255, 255, 0.75);
+  color: #000;
 }
 
 [data-theme="light"] .broadcast-live {

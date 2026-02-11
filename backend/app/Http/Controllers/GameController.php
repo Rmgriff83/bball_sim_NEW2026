@@ -1241,11 +1241,10 @@ class GameController extends Controller
             $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
             $gameLineup = $isUserGame ? $userLineup : null;
 
-            // Simulate the game
-            $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
+            // Simulate the game (skip animation data for AI-only games)
+            $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup, $isUserGame);
 
             // Update game in JSON
-            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
             $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
                 'isComplete' => true,
                 'homeScore' => $result['home_score'],
@@ -1445,13 +1444,19 @@ class GameController extends Controller
         $allTeamsWithGames = [];
         $userGameResult = null;
 
-        // Days before game date
+        // Days before game date — only queue AI games, skip any user games
+        $userTeamId = (int) $campaign->team_id;
         while ($currentDate->lt($gameDate)) {
             $dateStr = $currentDate->format('Y-m-d');
             $dayGames = $this->seasonService->getGamesByDate($campaign->id, $year, $dateStr);
             $dayGames = array_filter($dayGames, fn($g) => !$g['isComplete']);
 
             foreach ($dayGames as $game) {
+                // Skip user games — only the game-day loop handles the user's game
+                if ((int) $game['homeTeamId'] === $userTeamId || (int) $game['awayTeamId'] === $userTeamId) {
+                    continue;
+                }
+
                 $allTeamsWithGames[] = $game['homeTeamId'];
                 $allTeamsWithGames[] = $game['awayTeamId'];
 

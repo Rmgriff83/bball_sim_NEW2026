@@ -328,7 +328,7 @@ class CampaignSeasonService
      *
      * @param bool $isUserGame If false, strips detailed box score to save space
      */
-    public function updateGame(int $campaignId, int $year, string $gameId, array $data, bool $isUserGame = true): bool
+    public function updateGame(int $campaignId, int $year, string $gameId, array $data, bool $isUserGame = true, bool $defer = false): bool
     {
         $season = $this->loadSeason($campaignId, $year);
         if (!$season) return false;
@@ -342,7 +342,14 @@ class CampaignSeasonService
         }
 
         $season['schedule'][$index] = array_merge($season['schedule'][$index], $data);
-        $this->saveSeason($campaignId, $year, $season);
+
+        if ($defer) {
+            // Update in-memory cache only; caller must call flushSeason() later
+            $key = "{$campaignId}_{$year}";
+            $this->loadedSeasons[$key] = $season;
+        } else {
+            $this->saveSeason($campaignId, $year, $season);
+        }
 
         return true;
     }
@@ -392,7 +399,8 @@ class CampaignSeasonService
         int $homeScore,
         int $awayScore,
         string $homeConference,
-        string $awayConference
+        string $awayConference,
+        bool $defer = false
     ): void {
         $season = $this->loadSeason($campaignId, $year);
         if (!$season) return;
@@ -418,7 +426,13 @@ class CampaignSeasonService
         $this->updateTeamStatsAfterGame($season, $homeTeamId, $homeScore, $awayScore, true);
         $this->updateTeamStatsAfterGame($season, $awayTeamId, $awayScore, $homeScore, false);
 
-        $this->saveSeason($campaignId, $year, $season);
+        if ($defer) {
+            // Update in-memory cache only; caller must call flushSeason() later
+            $key = "{$campaignId}_{$year}";
+            $this->loadedSeasons[$key] = $season;
+        } else {
+            $this->saveSeason($campaignId, $year, $season);
+        }
     }
 
     /**
@@ -770,8 +784,8 @@ class CampaignSeasonService
             return false;
         }
 
-        // Season is complete when all teams have played at least 82 games
-        $minGamesRequired = 82;
+        // Season is complete when all teams have played at least 68 games
+        $minGamesRequired = 68;
         foreach ($gamesPerTeam as $teamId => $gamesPlayed) {
             if ($gamesPlayed < $minGamesRequired) {
                 return false;

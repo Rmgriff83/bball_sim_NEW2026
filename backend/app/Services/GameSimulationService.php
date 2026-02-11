@@ -9,6 +9,7 @@ use App\Models\Player;
 use App\Models\BadgeDefinition;
 use App\Models\BadgeSynergy;
 use App\Services\PlayerEvolution\PlayerEvolutionService;
+use Illuminate\Support\Facades\Cache;
 
 class GameSimulationService
 {
@@ -27,6 +28,7 @@ class GameSimulationService
     private GameNewsService $gameNewsService;
 
     // Game state
+    private bool $generateAnimationData = true;
     private array $homeBoxScore = [];
     private array $awayBoxScore = [];
     private array $playByPlay = [];
@@ -81,8 +83,8 @@ class GameSimulationService
      */
     private function loadBadgeData(): void
     {
-        $this->badgeDefinitions = BadgeDefinition::all()->keyBy('id')->toArray();
-        $this->badgeSynergies = BadgeSynergy::all()->toArray();
+        $this->badgeDefinitions = Cache::remember('badge_definitions', 3600, fn() => BadgeDefinition::all()->keyBy('id')->toArray());
+        $this->badgeSynergies = Cache::remember('badge_synergies', 3600, fn() => BadgeSynergy::all()->toArray());
     }
 
     /**
@@ -139,9 +141,11 @@ class GameSimulationService
      * @param Team $homeTeam
      * @param Team $awayTeam
      * @param array|null $userLineup Optional starting lineup for user's team (array of player IDs)
+     * @param bool $generateAnimationData Whether to generate animation/play-by-play data (false for AI-only games)
      */
-    public function simulateFromData(Campaign $campaign, array $gameData, Team $homeTeam, Team $awayTeam, ?array $userLineup = null): array
+    public function simulateFromData(Campaign $campaign, array $gameData, Team $homeTeam, Team $awayTeam, ?array $userLineup = null, bool $generateAnimationData = true): array
     {
+        $this->generateAnimationData = $generateAnimationData;
         $this->initializeGameFromData($campaign, $gameData, $homeTeam, $awayTeam, $userLineup);
 
         // Track scores at start of each quarter
@@ -282,9 +286,9 @@ class GameSimulationService
         // Generate news for game-winner (close game decided by clutch shot)
         $this->generateGameNews($campaign);
 
-        // Process synergy rewards for user's team
+        // Process synergy rewards for user's team (requires animation data)
         $rewardSummary = null;
-        if ($campaign->user && ($this->homeTeam->id === $campaign->team_id || $this->awayTeam->id === $campaign->team_id)) {
+        if ($this->generateAnimationData && $campaign->user && ($this->homeTeam->id === $campaign->team_id || $this->awayTeam->id === $campaign->team_id)) {
             $isHome = $this->homeTeam->id === $campaign->team_id;
             $didWin = ($isHome && $this->homeScore > $this->awayScore) || (!$isHome && $this->awayScore > $this->homeScore);
 
@@ -310,12 +314,12 @@ class GameSimulationService
                 'away' => $awayBoxScoreFormatted,
             ],
             'quarter_scores' => $this->quarterScores,
-            'play_by_play' => $this->playByPlay,
-            'animation_data' => [
+            'play_by_play' => $this->generateAnimationData ? $this->playByPlay : [],
+            'animation_data' => $this->generateAnimationData ? [
                 'possessions' => $this->animationData,
                 'total_possessions' => $this->possessionCount,
                 'quarter_end_indices' => $this->quarterEndPossessions,
-            ],
+            ] : [],
             'rewards' => $rewardSummary,
             'evolution' => $evolutionSummary,
         ];
@@ -624,29 +628,31 @@ class GameSimulationService
         // Process play result and update stats
         $this->processPlayResult($playResult, $offense, $defense, $isHome);
 
-        // Record play-by-play entry
-        $this->recordPlayByPlay($playResult, $team);
+        // Record play-by-play and animation data (skip for AI-only games)
+        if ($this->generateAnimationData) {
+            $this->recordPlayByPlay($playResult, $team);
 
-        // Store animation data with running scores and box score snapshot
-        if (!empty($playResult['keyframes'])) {
-            $this->animationData[] = [
-                'possession_id' => $this->possessionCount,
-                'team' => $team,
-                'quarter' => $this->currentQuarter,
-                'time' => $this->timeRemaining,
-                'play_id' => $playResult['playId'],
-                'play_name' => $playResult['playName'],
-                'duration' => $playResult['duration'],
-                'keyframes' => $playResult['keyframes'],
-                'home_score' => $this->homeScore,
-                'away_score' => $this->awayScore,
-                'box_score' => [
-                    'home' => array_values(array_map(fn($s) => $this->formatBoxScoreStats($s), $this->homeBoxScore)),
-                    'away' => array_values(array_map(fn($s) => $this->formatBoxScoreStats($s), $this->awayBoxScore)),
-                ],
-                'activated_badges' => $playResult['activatedBadges'] ?? [],
-                'activated_synergies' => $playResult['activatedSynergies'] ?? [],
-            ];
+            // Store animation data with running scores and box score snapshot
+            if (!empty($playResult['keyframes'])) {
+                $this->animationData[] = [
+                    'possession_id' => $this->possessionCount,
+                    'team' => $team,
+                    'quarter' => $this->currentQuarter,
+                    'time' => $this->timeRemaining,
+                    'play_id' => $playResult['playId'],
+                    'play_name' => $playResult['playName'],
+                    'duration' => $playResult['duration'],
+                    'keyframes' => $playResult['keyframes'],
+                    'home_score' => $this->homeScore,
+                    'away_score' => $this->awayScore,
+                    'box_score' => [
+                        'home' => array_values(array_map(fn($s) => $this->formatBoxScoreStats($s), $this->homeBoxScore)),
+                        'away' => array_values(array_map(fn($s) => $this->formatBoxScoreStats($s), $this->awayBoxScore)),
+                    ],
+                    'activated_badges' => $playResult['activatedBadges'] ?? [],
+                    'activated_synergies' => $playResult['activatedSynergies'] ?? [],
+                ];
+            }
         }
 
     }

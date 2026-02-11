@@ -60,19 +60,19 @@ class SimulateGameJob implements ShouldQueue
 
         $gameLineup = $this->isUserGame ? $this->userLineup : null;
 
-        // Simulate the game
-        $result = $simulationService->simulateFromData($campaign, $this->gameData, $homeTeam, $awayTeam, $gameLineup);
+        // Simulate the game (skip animation data for AI-only games)
+        $result = $simulationService->simulateFromData($campaign, $this->gameData, $homeTeam, $awayTeam, $gameLineup, $this->isUserGame);
 
-        // Update game in JSON
+        // Update game in JSON (defer write — flushSeason() handles the final save)
         $seasonService->updateGame($this->campaignId, $this->year, $this->gameData['id'], [
             'isComplete' => true,
             'homeScore' => $result['home_score'],
             'awayScore' => $result['away_score'],
             'boxScore' => $result['box_score'],
             'quarterScores' => $result['quarter_scores'] ?? null,
-        ], $this->isUserGame);
+        ], $this->isUserGame, defer: true);
 
-        // Update standings
+        // Update standings (defer write — flushSeason() handles the final save)
         $seasonService->updateStandingsAfterGame(
             $this->campaignId,
             $this->year,
@@ -81,7 +81,8 @@ class SimulateGameJob implements ShouldQueue
             $result['home_score'],
             $result['away_score'],
             $homeTeam->conference,
-            $awayTeam->conference
+            $awayTeam->conference,
+            defer: true
         );
 
         // Update player stats
@@ -103,6 +104,18 @@ class SimulateGameJob implements ShouldQueue
         $homeStarterIds = array_column($homeStarters, 'player_id');
         $awayStarterIds = array_column($awayStarters, 'player_id');
 
+        // Batch load all players in one query instead of individual Player::find() calls
+        $allPlayerIds = [];
+        foreach (['home', 'away'] as $side) {
+            foreach ($boxScore[$side] ?? [] as $playerStats) {
+                $playerId = $playerStats['player_id'] ?? $playerStats['playerId'] ?? null;
+                if ($playerId) {
+                    $allPlayerIds[] = $playerId;
+                }
+            }
+        }
+        $players = Player::whereIn('id', $allPlayerIds)->get()->keyBy('id');
+
         foreach ($boxScore['home'] ?? [] as $playerStats) {
             $playerId = $playerStats['player_id'] ?? $playerStats['playerId'] ?? null;
             $playerName = $playerStats['name'] ?? 'Unknown';
@@ -117,7 +130,7 @@ class SimulateGameJob implements ShouldQueue
                     $playerStats
                 );
 
-                $player = Player::find($playerId);
+                $player = $players[$playerId] ?? null;
                 if ($player) {
                     $started = in_array($playerId, $homeStarterIds);
                     $player->recordGameStats($playerStats, $started);
@@ -139,7 +152,7 @@ class SimulateGameJob implements ShouldQueue
                     $playerStats
                 );
 
-                $player = Player::find($playerId);
+                $player = $players[$playerId] ?? null;
                 if ($player) {
                     $started = in_array($playerId, $awayStarterIds);
                     $player->recordGameStats($playerStats, $started);

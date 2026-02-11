@@ -367,16 +367,16 @@ async function handleConfirmSimulate() {
       playoffStore.handlePlayoffUpdate(response.userGameResult.playoffUpdate)
     }
 
-    // Partial refresh (campaign, team, games) — standings will refresh when AI games complete
+    // Refresh campaign, team, games, and standings immediately
+    // Standings include the user's game result (updated synchronously on backend)
     await Promise.all([
       campaignStore.fetchCampaign(campaignId.value),
       teamStore.fetchTeam(campaignId.value),
-      gameStore.fetchGames(campaignId.value)
+      gameStore.fetchGames(campaignId.value),
+      leagueStore.fetchStandings(campaignId.value)
     ])
 
-    // If no background AI games, also refresh standings now
     if (!gameStore.backgroundSimulating) {
-      await leagueStore.fetchStandings(campaignId.value)
       await checkPlayoffStatus()
     }
   } catch (err) {
@@ -507,7 +507,12 @@ function handleCloseSimulateModal() {
             </div>
           </div>
           <div class="next-game-buttons">
-            <button class="btn-play-game" :class="{ 'continue': isGameInProgress }" @click="navigateToGame(nextGame.id)">
+            <button
+              class="btn-play-game"
+              :class="{ 'continue': isGameInProgress }"
+              @click="navigateToGame(nextGame.id)"
+              :disabled="gameStore.backgroundSimulating"
+            >
               <Play class="btn-icon" :size="16" />
               {{ isGameInProgress ? 'CONTINUE GAME' : 'PLAY GAME' }}
             </button>
@@ -1397,9 +1402,14 @@ function handleCloseSimulateModal() {
   transition: all 0.2s ease;
 }
 
-.btn-play-game:hover {
+.btn-play-game:hover:not(:disabled) {
   background: var(--color-primary-dark);
   transform: translateY(-1px);
+}
+
+.btn-play-game:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn-play-game .btn-icon {

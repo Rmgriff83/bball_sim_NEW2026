@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/composables/useApi'
 import { campaignCacheService } from '@/services/CampaignCacheService'
+import { useToastStore } from '@/stores/toast'
 
 export const useGameStore = defineStore('game', () => {
   // State
@@ -26,6 +27,7 @@ export const useGameStore = defineStore('game', () => {
   const simulationBatchId = ref(null)
   const simulationProgress = ref(null)
   let simulationPollTimer = null
+  let simulationProgressToastId = null
 
   // Getters
   const upcomingGames = computed(() =>
@@ -416,10 +418,21 @@ export const useGameStore = defineStore('game', () => {
     simulationBatchId.value = batchId
     simulationProgress.value = null
 
+    const toastStore = useToastStore()
+    simulationProgressToastId = toastStore.showProgress('League games', 0, 0)
+
     simulationPollTimer = setInterval(async () => {
       try {
         const response = await api.get(`/api/campaigns/${campaignId}/simulation-status/${batchId}`)
         simulationProgress.value = response.data.progress
+
+        if (response.data.progress && simulationProgressToastId !== null) {
+          toastStore.updateProgress(
+            simulationProgressToastId,
+            response.data.progress.completed,
+            response.data.progress.total
+          )
+        }
 
         const status = response.data.status
         if (status === 'completed' || status === 'completed_with_errors' || status === 'cancelled') {
@@ -440,6 +453,11 @@ export const useGameStore = defineStore('game', () => {
     if (simulationPollTimer) {
       clearInterval(simulationPollTimer)
       simulationPollTimer = null
+    }
+    if (simulationProgressToastId !== null) {
+      const toastStore = useToastStore()
+      toastStore.removeMinimalToast(simulationProgressToastId)
+      simulationProgressToastId = null
     }
     backgroundSimulating.value = false
     simulationBatchId.value = null

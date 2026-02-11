@@ -97,6 +97,24 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
+  function showProgress(message, completed = 0, total = 0) {
+    return addMinimalToast({
+      type: 'progress',
+      message,
+      completed,
+      total,
+      duration: 0
+    })
+  }
+
+  function updateProgress(id, completed, total) {
+    const toast = minimalToasts.value.find(t => t.id === id)
+    if (toast) {
+      toast.completed = completed
+      toast.total = total
+    }
+  }
+
   return {
     toasts,
     minimalToasts,
@@ -107,6 +125,8 @@ export const useToastStore = defineStore('toast', () => {
     removeMinimalToast,
     showLoading,
     showSuccess,
-    showError
+    showError,
+    showProgress,
+    updateProgress
   }
 })

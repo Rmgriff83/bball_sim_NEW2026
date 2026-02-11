@@ -16,11 +16,17 @@ const toastStore = useToastStore()
           :class="[`toast-${toast.type}`]"
         >
           <Loader2
-            v-if="toast.type === 'loading'"
+            v-if="toast.type === 'loading' || toast.type === 'progress'"
             :size="12"
             class="toast-spinner"
           />
           <span class="toast-message">{{ toast.message }}</span>
+          <template v-if="toast.type === 'progress' && toast.total > 0">
+            <span class="toast-progress-count">{{ toast.completed }}/{{ toast.total }}</span>
+            <div class="toast-progress-bar">
+              <div class="toast-progress-fill" :style="{ width: `${(toast.completed / toast.total) * 100}%` }"></div>
+            </div>
+          </template>
         </div>
       </TransitionGroup>
     </div>
@@ -85,6 +91,41 @@ const toastStore = useToastStore()
 
 .toast-error .toast-message {
   color: white;
+}
+
+.toast-progress {
+  background: var(--color-surface-elevated, #1a1a2e);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.toast-progress .toast-spinner {
+  color: var(--color-accent, #60a5fa);
+}
+
+.toast-progress .toast-message {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.toast-progress-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.toast-progress-bar {
+  width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.toast-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--color-accent, #60a5fa);
+  transition: width 0.3s ease;
 }
 
 .toast-spinner {
