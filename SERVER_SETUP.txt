@@ -1,0 +1,352 @@
+========================================================================
+  FRESH DROPLET SETUP — DigitalOcean VPS for bball-sim
+========================================================================
+
+Stack: Ubuntu 22.04, PHP 8.2, Laravel 12, MySQL (managed), Nginx, Supervisor
+Domain: api.bball-sim.com
+
+========================================================================
+  STEP 1: CREATE THE DROPLET
+========================================================================
+
+In DigitalOcean dashboard:
+  - Image: Ubuntu 22.04 LTS
+  - Plan: Basic, 1 vCPU / 2 GB RAM (same as current)
+  - Region: SFO3 (same as current)
+  - Authentication: SSH Key (NOT password)
+    - If you don't have an SSH key yet, generate one on your Mac:
+        ssh-keygen -t ed25519 -C "your-email@example.com"
+    - Copy the public key:
+        cat ~/.ssh/id_ed25519.pub
+    - Paste it into DigitalOcean's "Add SSH Key" field
+  - Create Droplet, note the new IP address (**164.92.105.227)
+
+========================================================================
+  STEP 2: INITIAL SERVER SECURITY (as root, one-time only)
+========================================================================
+
+SSH into the new droplet:
+  ssh root@NEW_IP_ADDRESS
+
+--- 2a. Create a deploy user (never run your app as root) ---
+
+  adduser deploy
+  usermod -aG sudo deploy
+
+  # Copy your SSH key to the deploy user
+  mkdir -p /home/deploy/.ssh
+  cp /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+  chown -R deploy:deploy /home/deploy/.ssh
+  chmod 700 /home/deploy/.ssh
+  chmod 600 /home/deploy/.ssh/authorized_keys
+
+--- 2b. Disable root login and password auth ---
+
+  nano /etc/ssh/sshd_config
+
+  Find and change these lines:
+    PermitRootLogin no
+    PasswordAuthentication no
+
+  Save and restart SSH:
+    systemctl restart sshd
+
+  *** IMPORTANT: Before closing this terminal, open a NEW terminal and
+  verify you can SSH in as deploy:
+    ssh deploy@NEW_IP_ADDRESS
+  If that works, you're safe to continue. If not, fix it before closing
+  the root session. ***
+
+--- 2c. Set up firewall ---
+
+  sudo ufw allow OpenSSH
+  sudo ufw allow 'Nginx Full'
+  sudo ufw enable
+  sudo ufw status
+
+  Should show:
+    OpenSSH        ALLOW
+    Nginx Full     ALLOW
+
+========================================================================
+  STEP 3: INSTALL PACKAGES (as deploy user)
+========================================================================
+
+From here on, always SSH in as deploy:
+  ssh deploy@NEW_IP_ADDRESS
+
+--- 3a. System packages ---
+
+  sudo apt update && sudo apt upgrade -y
+  sudo apt install -y nginx supervisor git unzip curl
+
+--- 3b. PHP 8.2 + extensions ---
+
+  sudo add-apt-repository ppa:ondrej/php -y
+  sudo apt update
+  sudo apt install -y php8.2-fpm php8.2-cli php8.2-mysql php8.2-xml \
+    php8.2-curl php8.2-mbstring php8.2-zip php8.2-bcmath php8.2-gd \
+    php8.2-intl php8.2-readline
+
+--- 3c. Composer ---
+
+  cd ~
+  curl -sS https://getcomposer.org/installer | php
+  sudo mv composer.phar /usr/local/bin/composer
+
+--- 3d. Node.js 20 (only if you need to run artisan commands that use it) ---
+
+  # Skip this if you don't need Node on the server.
+  # Your frontend deploys via Firebase from your local machine.
+
+========================================================================
+  STEP 4: SET UP THE APPLICATION
+========================================================================
+
+--- 4a. Create directory structure ---
+
+  sudo mkdir -p /var/www/bball-sim
+  sudo chown deploy:deploy /var/www/bball-sim
+
+--- 4b. Clone the repo ---
+
+  cd /var/www/bball-sim
+  git clone YOUR_REPO_URL backend
+
+  # If private repo, you'll need a deploy key or personal access token.
+  # For GitHub deploy key:
+  #   ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -C "deploy@bball-sim"
+  #   cat ~/.ssh/github_deploy.pub
+  #   Add this as a Deploy Key in your GitHub repo settings
+  #   Then in ~/.ssh/config:
+  #     Host github.com
+  #       IdentityFile ~/.ssh/github_deploy
+
+--- 4c. Install dependencies ---
+
+  cd /var/www/bball-sim/backend
+  composer install --no-dev --optimize-autoloader
+
+--- 4d. Set up .env ---
+
+  cp .env.example .env
+  nano .env
+
+  Set these values (copy your existing production values):
+
+    APP_NAME=BballSim
+    APP_ENV=production
+    APP_KEY=            (generate below)
+    APP_DEBUG=false
+    APP_URL=https://api.bball-sim.com
+
+    DB_CONNECTION=mysql
+    DB_HOST=your-managed-mysql-host.db.ondigitalocean.com
+    DB_PORT=25060
+    DB_DATABASE=your_database_name
+    DB_USERNAME=your_db_user
+    DB_PASSWORD=your_db_password
+    # If your managed DB requires SSL:
+    # MYSQL_ATTR_SSL_CA=/etc/ssl/certs/ca-certificates.crt
+
+    SESSION_DRIVER=database
+    QUEUE_CONNECTION=database
+    CACHE_STORE=database
+    FILESYSTEM_DISK=s3
+
+    AWS_ACCESS_KEY_ID=your_spaces_key
+    AWS_SECRET_ACCESS_KEY=your_spaces_secret
+    AWS_DEFAULT_REGION=sfo3
+    AWS_BUCKET=your_spaces_bucket
+    AWS_ENDPOINT=https://sfo3.digitaloceanspaces.com
+    AWS_USE_PATH_STYLE_ENDPOINT=false
+
+    # Add any other production values (CORS, Sanctum, Socialite, etc.)
+    # Copy these from your old server's .env if you have them saved.
+
+  Generate the app key:
+    php artisan key:generate
+
+--- 4e. Set permissions ---
+
+  sudo chown -R deploy:www-data /var/www/bball-sim/backend
+  chmod -R 775 /var/www/bball-sim/backend/storage
+  chmod -R 775 /var/www/bball-sim/backend/bootstrap/cache
+
+--- 4f. Run migrations and cache config ---
+
+  php artisan migrate --force
+  php artisan config:cache
+  php artisan route:cache
+
+========================================================================
+  STEP 5: CONFIGURE NGINX
+========================================================================
+
+  sudo nano /etc/nginx/sites-available/bball-sim
+
+Paste this:
+
+  server {
+      listen 80;
+      server_name api.bball-sim.com;
+      root /var/www/bball-sim/backend/public;
+
+      add_header X-Frame-Options "SAMEORIGIN";
+      add_header X-Content-Type-Options "nosniff";
+
+      index index.php;
+
+      charset utf-8;
+
+      location / {
+          try_files $uri $uri/ /index.php?$query_string;
+      }
+
+      location = /favicon.ico { access_log off; log_not_found off; }
+      location = /robots.txt  { access_log off; log_not_found off; }
+
+      error_page 404 /index.php;
+
+      location ~ \.php$ {
+          fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+          fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+          include fastcgi_params;
+
+          # Increase timeout for long-running requests
+          fastcgi_read_timeout 300;
+      }
+
+      location ~ /\.(?!well-known).* {
+          deny all;
+      }
+
+      client_max_body_size 20M;
+  }
+
+Enable the site:
+
+  sudo ln -s /etc/nginx/sites-available/bball-sim /etc/nginx/sites-enabled/
+  sudo rm /etc/nginx/sites-enabled/default
+  sudo nginx -t
+  sudo systemctl restart nginx
+
+========================================================================
+  STEP 6: CONFIGURE SUPERVISOR (queue worker)
+========================================================================
+
+  sudo nano /etc/supervisor/conf.d/bball-sim-queue.conf
+
+Paste this:
+
+  [program:bball-sim-queue]
+  process_name=%(program_name)s_%(process_num)02d
+  command=php /var/www/bball-sim/backend/artisan queue:work database --sleep=3 --tries=3 --timeout=120
+  autostart=true
+  autorestart=true
+  numprocs=1
+  user=deploy
+  redirect_stderr=true
+  stdout_logfile=/var/www/bball-sim/backend/storage/logs/queue-worker.log
+  stopwaitsecs=3600
+
+Activate:
+
+  sudo supervisorctl reread
+  sudo supervisorctl update
+  sudo supervisorctl status
+
+Should show:
+  bball-sim-queue:bball-sim-queue_00   RUNNING
+
+========================================================================
+  STEP 7: SSL WITH LET'S ENCRYPT
+========================================================================
+
+*** Do this AFTER you've pointed your DNS to the new IP ***
+
+  sudo apt install -y certbot python3-certbot-nginx
+  sudo certbot --nginx -d api.bball-sim.com
+
+Follow the prompts. Certbot will automatically:
+  - Obtain the certificate
+  - Modify your nginx config to use HTTPS
+  - Set up auto-renewal
+
+Test auto-renewal:
+  sudo certbot renew --dry-run
+
+========================================================================
+  STEP 8: UPDATE DNS
+========================================================================
+
+In your domain registrar / DNS provider:
+  - Change the A record for api.bball-sim.com to the NEW droplet IP
+  - TTL: set to 300 (5 min) before switching so it propagates fast
+  - Wait for propagation (check: dig api.bball-sim.com)
+
+Once DNS points to the new server, run the certbot command from Step 7.
+
+========================================================================
+  STEP 9: VERIFY EVERYTHING WORKS
+========================================================================
+
+  # Check nginx
+  sudo systemctl status nginx
+
+  # Check PHP-FPM
+  sudo systemctl status php8.2-fpm
+
+  # Check supervisor / queue worker
+  sudo supervisorctl status
+
+  # Test the API
+  curl https://api.bball-sim.com/api/health  (or any known endpoint)
+
+  # Check queue worker logs
+  tail -f /var/www/bball-sim/backend/storage/logs/queue-worker.log
+
+  # Test from frontend (Firebase-hosted app should just work once DNS resolves)
+
+========================================================================
+  STEP 10: DESTROY OLD DROPLET
+========================================================================
+
+Once everything is confirmed working on the new server:
+  1. In DigitalOcean dashboard, destroy the old droplet (164.92.97.179)
+  2. It was compromised — don't try to salvage anything from it
+
+========================================================================
+  ONGOING: DEPLOY PROCESS
+========================================================================
+
+SSH in as deploy user:
+  ssh deploy@NEW_IP_ADDRESS
+
+Run these commands:
+  cd /var/www/bball-sim/backend
+  git pull
+  composer install --no-dev --optimize-autoloader
+  php artisan migrate --force
+  php artisan config:cache
+  php artisan route:cache
+  sudo supervisorctl restart bball-sim-queue:*
+
+Frontend (from your local machine):
+  cd frontend
+  npm run build
+  firebase deploy --only hosting
+
+========================================================================
+  NOTES
+========================================================================
+
+- NEVER ssh as root. Always use the deploy user.
+- The queue worker runs as "deploy" user, same as the app.
+- numprocs=1 for the queue worker — your JSON season files can't
+  handle concurrent writes from multiple workers.
+- After ANY backend deploy, restart the queue worker so it picks up
+  new code: sudo supervisorctl restart bball-sim-queue:*
+- Queue worker logs: /var/www/bball-sim/backend/storage/logs/queue-worker.log
+- Nginx logs: /var/log/nginx/access.log and /var/log/nginx/error.log
+- Laravel logs: /var/www/bball-sim/backend/storage/logs/laravel.log

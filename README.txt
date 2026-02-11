@@ -9,6 +9,26 @@
   ├───────────┼─────────────────────────────────┤
   │ Storage   │ DigitalOcean Spaces             │
   └───────────┴─────────────────────────────────┘
+
+ Job queue configuration in supervisor.conf
+  [program:bball-sim-queue]
+  process_name=%(program_name)s_%(process_num)02d
+  command=php /var/www/bball-sim/bball_sim_NEW2026/backend/artisan queue:work database --sleep=3 --tries=3
+  --timeout=120
+  autostart=true
+  autorestart=true
+  numprocs=1
+  user=www-data
+  redirect_stderr=true
+  stdout_logfile=/var/www/bball-sim/bball_sim_NEW2026/backend/storage/logs/queue-worker.log
+  stopwaitsecs=3600
+
+  Then run:
+  sudo supervisorctl reread
+  sudo supervisorctl update
+  sudo supervisorctl status
+
+
   Quick reference for future PRODUCTION deploys
 
   Backend:
