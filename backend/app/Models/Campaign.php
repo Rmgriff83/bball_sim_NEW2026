@@ -18,6 +18,7 @@ class Campaign extends Model
         'difficulty',
         'settings',
         'last_played_at',
+        'simulation_batch_id',
     ];
 
     protected $casts = [

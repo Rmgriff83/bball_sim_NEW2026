@@ -802,11 +802,17 @@ class CampaignSeasonService
         $gamesByDate = [];
 
         foreach ($schedule as $game) {
-            if (!$game['isComplete'] &&
-                $game['gameDate'] >= $currentDateStr &&
-                $game['gameDate'] < $nextGameDate) {
-                $gamesByDate[$game['gameDate']][] = $game;
+            if ($game['isComplete']) continue;
+            if ($game['gameDate'] < $currentDateStr) continue;
+            if ($game['gameDate'] > $nextGameDate) continue;
+
+            // Skip the user's own game on game day
+            if ($game['gameDate'] === $nextGameDate &&
+                ($game['homeTeamId'] === $userTeamId || $game['awayTeamId'] === $userTeamId)) {
+                continue;
             }
+
+            $gamesByDate[$game['gameDate']][] = $game;
         }
         ksort($gamesByDate);
 

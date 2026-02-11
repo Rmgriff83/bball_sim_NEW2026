@@ -21,6 +21,12 @@ export const useGameStore = defineStore('game', () => {
   const simulatePreview = ref(null)
   const loadingPreview = ref(false)
 
+  // Background simulation state
+  const backgroundSimulating = ref(false)
+  const simulationBatchId = ref(null)
+  const simulationProgress = ref(null)
+  let simulationPollTimer = null
+
   // Getters
   const upcomingGames = computed(() =>
     games.value.filter(g => !g.is_complete).slice(0, 10)
@@ -87,9 +93,6 @@ export const useGameStore = defineStore('game', () => {
         }
       }
 
-      console.log('[simulateGame] Evolution data:', response.data.result.evolution)
-      console.log('[simulateGame] Rewards data:', response.data.result.rewards)
-
       currentGame.value = {
         ...currentGame.value,
         is_complete: true,
@@ -111,6 +114,11 @@ export const useGameStore = defineStore('game', () => {
         })
       }
 
+      // Start background polling if batch was dispatched
+      if (response.data.batchId) {
+        startPollingSimulationStatus(campaignId, response.data.batchId)
+      }
+
       return response.data.result
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to simulate game'
@@ -126,8 +134,9 @@ export const useGameStore = defineStore('game', () => {
     try {
       const response = await api.post(`/api/campaigns/${campaignId}/simulate-day`)
 
-      // Update completed games in list
-      for (const result of response.data.results) {
+      // Update user's game result if present
+      if (response.data.userGameResult) {
+        const result = response.data.userGameResult
         const index = games.value.findIndex(g => g.id === result.game_id)
         if (index !== -1) {
           games.value[index] = {
@@ -137,6 +146,11 @@ export const useGameStore = defineStore('game', () => {
             away_score: result.away_score,
           }
         }
+      }
+
+      // Start background polling if batch was dispatched
+      if (response.data.batchId) {
+        startPollingSimulationStatus(campaignId, response.data.batchId)
       }
 
       return response.data
@@ -169,6 +183,7 @@ export const useGameStore = defineStore('game', () => {
 
     try {
       const response = await api.post(`/api/campaigns/${campaignId}/games/${gameId}/start`, settings || {})
+
       currentSimQuarter.value = 1
 
       // Store Q1 animation data
@@ -186,6 +201,11 @@ export const useGameStore = defineStore('game', () => {
         away_score: response.data.scores.away,
         box_score: response.data.box_score,
         quarter_scores: response.data.scores.quarterScores,
+      }
+
+      // Start background polling if pre-game AI games were dispatched
+      if (response.data.batchId) {
+        startPollingSimulationStatus(campaignId, response.data.batchId)
       }
 
       return response.data
@@ -228,9 +248,6 @@ export const useGameStore = defineStore('game', () => {
         // Merge all quarter animation data for replay
         const allPossessions = quarterAnimationData.value.flatMap(q => q.possessions)
         const quarterEndIndices = quarterAnimationData.value.map(q => q.quarterEndIndex)
-
-        console.log('[continueGame] Evolution data:', response.data.result.evolution)
-        console.log('[continueGame] Rewards data:', response.data.result.rewards)
 
         currentGame.value = {
           ...currentGame.value,
@@ -275,6 +292,11 @@ export const useGameStore = defineStore('game', () => {
         // Save updated player stats if returned
         if (response.data.playerStats) {
           await campaignCacheService.updatePlayerStats(campaignId, year, response.data.playerStats)
+        }
+
+        // Start background polling if batch was dispatched for remaining day games
+        if (response.data.batchId) {
+          startPollingSimulationStatus(campaignId, response.data.batchId)
         }
       } else {
         // Game continues
@@ -335,66 +357,46 @@ export const useGameStore = defineStore('game', () => {
         excludeUserGame,
       })
 
-      // Update games list with simulated results
-      if (response.data.simulatedDays) {
-        for (const day of response.data.simulatedDays) {
-          for (const result of day.results || []) {
-            const index = games.value.findIndex(g => g.id === result.game_id)
-            if (index !== -1) {
-              games.value[index] = {
-                ...games.value[index],
-                is_complete: true,
-                home_score: result.home_score,
-                away_score: result.away_score,
-              }
-            }
+      // Update user's game in list if it was simulated
+      if (response.data.userGameResult) {
+        const result = response.data.userGameResult
+        const index = games.value.findIndex(g => g.id === result.game_id)
+        if (index !== -1) {
+          games.value[index] = {
+            ...games.value[index],
+            is_complete: true,
+            home_score: result.home_score,
+            away_score: result.away_score,
+          }
+        }
 
-            // If this is the user's game, update currentGame with full details
-            if (result.is_user_game) {
-              console.log('[simulateToNextGame] User game evolution data:', result.evolution)
-              console.log('[simulateToNextGame] User game rewards data:', result.rewards)
-
-              if (currentGame.value?.id === result.game_id) {
-                currentGame.value = {
-                  ...currentGame.value,
-                  is_complete: true,
-                  home_score: result.home_score,
-                  away_score: result.away_score,
-                  box_score: result.box_score,
-                  evolution: result.evolution,
-                  rewards: result.rewards,
-                }
-              }
-            }
-
-            // Save game result to IndexedDB
-            const year = response.data.year || new Date().getFullYear()
-            await campaignCacheService.updateGameResult(campaignId, year, result.game_id, {
-              home_score: result.home_score,
-              away_score: result.away_score,
-            })
+        // Update currentGame with full details if it matches
+        if (currentGame.value?.id === result.game_id) {
+          currentGame.value = {
+            ...currentGame.value,
+            is_complete: true,
+            home_score: result.home_score,
+            away_score: result.away_score,
+            box_score: result.box_score,
+            evolution: result.evolution,
+            rewards: result.rewards,
           }
         }
       }
 
-      // Save updated standings to IndexedDB if returned
-      if (response.data.standings) {
-        const year = response.data.year || new Date().getFullYear()
-        await campaignCacheService.updateStandings(campaignId, year, response.data.standings)
+      // Start background polling if AI games were dispatched
+      if (response.data.batchId) {
+        startPollingSimulationStatus(campaignId, response.data.batchId)
       }
 
-      // Save updated player stats to IndexedDB if returned
-      if (response.data.playerStats) {
-        const year = response.data.year || new Date().getFullYear()
-        await campaignCacheService.updatePlayerStats(campaignId, year, response.data.playerStats)
-      }
+      // Release user-facing simulating immediately
+      simulating.value = false
 
       return response.data
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to simulate to next game'
-      throw err
-    } finally {
       simulating.value = false
+      throw err
     }
   }
 
@@ -403,6 +405,54 @@ export const useGameStore = defineStore('game', () => {
    */
   function clearSimulatePreview() {
     simulatePreview.value = null
+  }
+
+  /**
+   * Start polling for background simulation status.
+   */
+  function startPollingSimulationStatus(campaignId, batchId) {
+    stopPolling()
+    backgroundSimulating.value = true
+    simulationBatchId.value = batchId
+    simulationProgress.value = null
+
+    simulationPollTimer = setInterval(async () => {
+      try {
+        const response = await api.get(`/api/campaigns/${campaignId}/simulation-status/${batchId}`)
+        simulationProgress.value = response.data.progress
+
+        const status = response.data.status
+        if (status === 'completed' || status === 'completed_with_errors' || status === 'cancelled') {
+          stopPolling()
+        }
+      } catch (err) {
+        console.error('Failed to poll simulation status:', err)
+        // Stop polling on repeated errors
+        stopPolling()
+      }
+    }, 2500)
+  }
+
+  /**
+   * Stop polling and reset background simulation state.
+   */
+  function stopPolling() {
+    if (simulationPollTimer) {
+      clearInterval(simulationPollTimer)
+      simulationPollTimer = null
+    }
+    backgroundSimulating.value = false
+    simulationBatchId.value = null
+    simulationProgress.value = null
+  }
+
+  /**
+   * Resume polling if a batch ID is known (e.g., on page reload).
+   */
+  function resumePollingIfNeeded(campaignId, batchId) {
+    if (batchId && !simulationPollTimer) {
+      startPollingSimulationStatus(campaignId, batchId)
+    }
   }
 
   return {
@@ -418,6 +468,10 @@ export const useGameStore = defineStore('game', () => {
     quarterAnimationData,
     simulatePreview,
     loadingPreview,
+    // Background simulation state
+    backgroundSimulating,
+    simulationBatchId,
+    simulationProgress,
     // Getters
     upcomingGames,
     completedGames,
@@ -436,5 +490,8 @@ export const useGameStore = defineStore('game', () => {
     fetchSimulateToNextGamePreview,
     simulateToNextGame,
     clearSimulatePreview,
+    startPollingSimulationStatus,
+    stopPolling,
+    resumePollingIfNeeded,
   }
 })

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
@@ -212,13 +212,24 @@ onMounted(async () => {
 
   if (hasCachedData) {
     // Refresh in background, don't wait
-    fetchAll.catch(err => console.error('Failed to refresh campaign:', err))
+    fetchAll.then(() => {
+      // After refresh, check if a simulation batch is in progress
+      const batchId = campaignStore.currentCampaign?.simulation_batch_id
+      if (batchId) {
+        gameStore.resumePollingIfNeeded(campaignId.value, batchId)
+      }
+    }).catch(err => console.error('Failed to refresh campaign:', err))
     // Also check playoff status in background
     checkPlayoffStatus()
   } else {
     // No cached data, wait for fetch and show loading
     try {
       await fetchAll
+      // Check if a simulation batch is in progress
+      const batchId = campaignStore.currentCampaign?.simulation_batch_id
+      if (batchId) {
+        gameStore.resumePollingIfNeeded(campaignId.value, batchId)
+      }
       // Check playoff status after initial load
       await checkPlayoffStatus()
     } catch (err) {
@@ -330,7 +341,7 @@ async function handleConfirmSimulate() {
   gameStore.clearSimulatePreview()
 
   // Show loading toast
-  const loadingToastId = toastStore.showLoading('Simulating games...')
+  const loadingToastId = toastStore.showLoading('Simulating your game...')
 
   try {
     const response = await gameStore.simulateToNextGame(campaignId.value)
@@ -340,7 +351,6 @@ async function handleConfirmSimulate() {
 
     // Show toast for user's game result
     if (response.userGameResult) {
-      // Use the authoritative is_user_home from the backend
       toastStore.showGameResult({
         homeTeam: response.userGameResult.home_team?.abbreviation || response.userGameResult.home_team?.name || 'HOME',
         awayTeam: response.userGameResult.away_team?.abbreviation || response.userGameResult.away_team?.name || 'AWAY',
@@ -353,20 +363,22 @@ async function handleConfirmSimulate() {
     }
 
     // Handle playoff update if present
-    if (response.playoffUpdate) {
-      playoffStore.handlePlayoffUpdate(response.playoffUpdate)
+    if (response.userGameResult?.playoffUpdate) {
+      playoffStore.handlePlayoffUpdate(response.userGameResult.playoffUpdate)
     }
 
-    // Refresh campaign data after simulation
+    // Partial refresh (campaign, team, games) — standings will refresh when AI games complete
     await Promise.all([
       campaignStore.fetchCampaign(campaignId.value),
       teamStore.fetchTeam(campaignId.value),
-      leagueStore.fetchStandings(campaignId.value),
       gameStore.fetchGames(campaignId.value)
     ])
 
-    // Check playoff status after simulation
-    await checkPlayoffStatus()
+    // If no background AI games, also refresh standings now
+    if (!gameStore.backgroundSimulating) {
+      await leagueStore.fetchStandings(campaignId.value)
+      await checkPlayoffStatus()
+    }
   } catch (err) {
     // Remove loading toast and show error
     toastStore.removeMinimalToast(loadingToastId)
@@ -374,6 +386,24 @@ async function handleConfirmSimulate() {
     console.error('Failed to simulate to next game:', err)
   }
 }
+
+// Watch for background simulation completion to refresh data
+watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
+  if (oldVal === true && newVal === false) {
+    // Background AI games finished — refresh all data
+    try {
+      await Promise.all([
+        campaignStore.fetchCampaign(campaignId.value),
+        leagueStore.fetchStandings(campaignId.value),
+        gameStore.fetchGames(campaignId.value)
+      ])
+      await checkPlayoffStatus()
+      toastStore.showSuccess('All league games simulated')
+    } catch (err) {
+      console.error('Failed to refresh after background simulation:', err)
+    }
+  }
+})
 
 function handleCloseSimulateModal() {
   showSimulateModal.value = false
@@ -485,12 +515,34 @@ function handleCloseSimulateModal() {
               v-if="!isGameInProgress"
               class="btn-simulate-game"
               @click="handleSimulateToNextGame"
-              :disabled="gameStore.simulating"
+              :disabled="gameStore.simulating || gameStore.backgroundSimulating"
             >
               <FastForward v-if="!gameStore.simulating" class="btn-icon" :size="16" />
               <span v-if="gameStore.simulating" class="btn-loading"></span>
               {{ gameStore.simulating ? 'SIMULATING...' : 'SIMULATE' }}
             </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Background Simulation Progress Bar -->
+      <section v-if="gameStore.backgroundSimulating" class="sim-progress-card glass-card-nebula">
+        <div class="sim-progress-content">
+          <span class="sim-progress-text">
+            Simulating league games...
+            <template v-if="gameStore.simulationProgress">
+              {{ gameStore.simulationProgress.completed }}/{{ gameStore.simulationProgress.total }}
+            </template>
+          </span>
+          <div class="sim-progress-bar">
+            <div
+              class="sim-progress-fill"
+              :style="{
+                width: gameStore.simulationProgress
+                  ? `${(gameStore.simulationProgress.completed / gameStore.simulationProgress.total) * 100}%`
+                  : '0%'
+              }"
+            ></div>
           </div>
         </div>
       </section>
@@ -1516,6 +1568,47 @@ function handleCloseSimulateModal() {
 
 .warning-actions .btn-primary:hover {
   background: var(--color-primary-dark);
+}
+
+/* Background Simulation Progress */
+.sim-progress-card {
+  background: var(--glass-bg);
+  border: 1px solid rgba(232, 90, 79, 0.3);
+  border-radius: var(--radius-2xl);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.sim-progress-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.sim-progress-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sim-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.sim-progress-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+  transition: width 0.5s ease;
+  min-width: 2%;
 }
 
 /* Desktop adjustments */

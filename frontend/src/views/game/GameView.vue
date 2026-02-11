@@ -89,7 +89,6 @@ const animatingStats = ref({})
 
 // Simulate modal state
 const showSimulateModal = ref(false)
-const simulatingPreGame = ref(false)
 
 // Coaching style selections for quarter breaks
 const selectedOffense = ref('balanced')
@@ -910,30 +909,15 @@ async function handleConfirmSimulate() {
   const hasGamesToSimulate = preview?.totalGamesToSimulate > 0
 
   if (hasGamesToSimulate) {
-    // Keep modal open and show loading state
-    simulatingPreGame.value = true
-
-    // Simulate all games up to (but NOT including) the user's game
-    // Pass true for excludeUserGame since user wants to play their game live
-    try {
-      await gameStore.simulateToNextGame(campaignId.value, true)
-      // Refresh standings after simulation
-      await leagueStore.fetchStandings(campaignId.value)
-    } catch (err) {
-      console.error('Failed to simulate games:', err)
-      simulatingPreGame.value = false
-      showSimulateModal.value = false
-      gameStore.clearSimulatePreview()
-      return
-    }
-
-    simulatingPreGame.value = false
+    // Fire off AI games as background batch — don't wait for completion
+    gameStore.simulateToNextGame(campaignId.value, true).catch(err => {
+      console.error('Failed to dispatch AI games:', err)
+    })
   }
 
-  // Close modal after simulation completes
+  // Close modal and start the user's game immediately
   showSimulateModal.value = false
   gameStore.clearSimulatePreview()
-  // Now start the user's game
   await startGame()
 }
 
@@ -974,13 +958,10 @@ async function startGame() {
 
     // Load animation data and auto-play
     if (result.animation_data?.possessions?.length > 0) {
-      // Pass live mode options so composable knows to trigger quarter break at end
-      // For Q1, starting scores are 0-0. For Q2+, sum up previous quarters' scores.
       const quarter = result.quarter || 1
       let startingHomeScore = 0
       let startingAwayScore = 0
       if (quarter > 1 && quarterScores.value) {
-        // Sum scores from quarters before this one
         for (let i = 0; i < quarter - 1; i++) {
           startingHomeScore += quarterScores.value.home?.[i] || 0
           startingAwayScore += quarterScores.value.away?.[i] || 0
@@ -1045,8 +1026,14 @@ async function continueToNextQuarter() {
     if (result.isGameComplete) {
       gameJustCompleted.value = true
       isLiveMode.value = false
-      // Refresh standings after game completes
-      await leagueStore.fetchStandings(campaignId.value)
+      // If remaining day games were batched, start background polling
+      // Standings will refresh when batch completes
+      if (result.batchId) {
+        gameStore.startPollingSimulationStatus(campaignId.value, result.batchId)
+      } else {
+        // No background batch — refresh standings now
+        await leagueStore.fetchStandings(campaignId.value)
+      }
     }
 
     // Load this quarter's animation data and play
@@ -1160,6 +1147,18 @@ const gameClock = computed(() => {
   const seconds = totalSeconds % 60
 
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
+})
+
+// Watch for background simulation completion (remaining day games after live game)
+watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
+  if (oldVal === true && newVal === false) {
+    // Background AI games finished — refresh standings
+    try {
+      await leagueStore.fetchStandings(campaignId.value)
+    } catch (err) {
+      console.error('Failed to refresh standings after background simulation:', err)
+    }
+  }
 })
 
 // Load animation when game data is available
@@ -3303,7 +3302,8 @@ onUnmounted(() => {
       :show="showSimulateModal"
       :preview="gameStore.simulatePreview"
       :loading="gameStore.loadingPreview"
-      :simulating="simulatingPreGame"
+      :simulating="false"
+      :background-progress="null"
       :user-team="userTeam"
       @close="handleCloseSimulateModal"
       @confirm="handleConfirmSimulate"

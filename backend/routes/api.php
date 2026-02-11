@@ -90,6 +90,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/simulate-day', [GameController::class, 'simulateDay']);
         Route::get('/simulate-to-next-game/preview', [GameController::class, 'simulateToNextGamePreview']);
         Route::post('/simulate-to-next-game', [GameController::class, 'simulateToNextGame']);
+        Route::get('/simulation-status/{batchId}', [GameController::class, 'simulationStatus']);
         Route::get('/standings', [GameController::class, 'standings']);
         Route::get('/league-leaders', [GameController::class, 'leagueLeaders']);
 

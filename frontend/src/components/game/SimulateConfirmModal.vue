@@ -23,6 +23,10 @@ const props = defineProps({
   userTeam: {
     type: Object,
     default: null
+  },
+  backgroundProgress: {
+    type: Object,
+    default: null
   }
 })
 
@@ -129,8 +133,25 @@ const opponentTeamData = computed(() => {
             <!-- Simulating Overlay -->
             <div v-if="simulating" class="simulating-overlay">
               <LoadingSpinner size="lg" />
-              <p class="simulating-text">Simulating games...</p>
-              <span class="simulating-sub">Please wait while AI games are processed</span>
+              <p class="simulating-text">
+                {{ backgroundProgress ? 'Simulating league games...' : 'Simulating your game...' }}
+              </p>
+              <span v-if="!backgroundProgress" class="simulating-sub">AI games will process in the background</span>
+              <template v-if="backgroundProgress">
+                <span class="simulating-sub">
+                  {{ backgroundProgress.completed }}/{{ backgroundProgress.total }} games complete
+                </span>
+                <div class="simulating-progress-bar">
+                  <div
+                    class="simulating-progress-fill"
+                    :style="{
+                      width: backgroundProgress.total > 0
+                        ? `${(backgroundProgress.completed / backgroundProgress.total) * 100}%`
+                        : '0%'
+                    }"
+                  ></div>
+                </div>
+              </template>
             </div>
 
             <!-- Loading State -->
@@ -386,6 +407,24 @@ const opponentTeamData = computed(() => {
 .simulating-sub {
   font-size: 0.85rem;
   color: var(--color-text-secondary);
+}
+
+.simulating-progress-bar {
+  width: 80%;
+  max-width: 280px;
+  height: 6px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.simulating-progress-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+  transition: width 0.5s ease;
+  min-width: 2%;
 }
 
 /* Loading & Empty States */

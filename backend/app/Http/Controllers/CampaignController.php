@@ -192,6 +192,7 @@ class CampaignController extends Controller
                 'difficulty' => $campaign->difficulty,
                 'settings' => $campaign->settings,
                 'updated_at' => $campaign->updated_at->toISOString(),
+                'simulation_batch_id' => $campaign->simulation_batch_id,
             ],
             'team' => $campaign->team,
             'roster' => $orderedRoster,

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SimulateGameJob;
 use App\Models\Campaign;
 use App\Models\Coach;
 use App\Models\Player;
@@ -15,6 +16,8 @@ use App\Services\RewardService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Log;
 
 class GameController extends Controller
 {
@@ -162,16 +165,25 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
+        // Guard: reject if a simulation batch is still running
+        if ($campaign->simulation_batch_id) {
+            $existingBatch = Bus::findBatch($campaign->simulation_batch_id);
+            if ($existingBatch && !$existingBatch->finished()) {
+                return response()->json([
+                    'message' => 'A simulation is already in progress',
+                    'batchId' => $campaign->simulation_batch_id,
+                ], 409);
+            }
+            // Batch finished but wasn't cleaned up - clear it
+            $campaign->update(['simulation_batch_id' => null]);
+        }
+
         // Initialize AI team lineups if not already set, then refresh based on fatigue
         $this->aiLineupService->initializeAllTeamLineups($campaign);
         $this->aiLineupService->refreshAllTeamLineups($campaign);
 
         // Get simulation mode (animated or quick)
         $mode = $request->input('mode', 'animated');
-
-        // Future: lineup and playbook params (placeholder for now)
-        $lineup = $request->input('lineup', null);
-        $playbook = $request->input('playbook', null);
 
         $year = $campaign->currentSeason?->year ?? 2025;
         $game = $this->seasonService->getGame($campaign->id, $year, $gameId);
@@ -184,24 +196,6 @@ class GameController extends Controller
             return response()->json(['message' => 'Game has already been played'], 400);
         }
 
-        // Simulate all days between current_date and game_date (exclusive)
-        // This ensures games are always in sync with the actual day
-        $gameDate = Carbon::parse($game['gameDate']);
-        $currentDate = $campaign->current_date;
-        $simulatedDays = [];
-
-        while ($currentDate->lt($gameDate)) {
-            $dateStr = $currentDate->format('Y-m-d');
-            $dayGames = $this->seasonService->getGamesByDate($campaign->id, $year, $dateStr);
-            $dayGames = array_filter($dayGames, fn($g) => !$g['isComplete']);
-
-            if (!empty($dayGames)) {
-                $simulatedDays[] = $this->simulateDayGames($campaign, $year, $dayGames);
-            }
-
-            $currentDate = $currentDate->copy()->addDay();
-        }
-
         // Get teams
         $homeTeam = Team::find($game['homeTeamId']);
         $awayTeam = Team::find($game['awayTeamId']);
@@ -212,10 +206,10 @@ class GameController extends Controller
             $userLineup = $campaign->settings['lineup']['starters'] ?? null;
         }
 
-        // Simulate the game
+        // Simulate the user's game synchronously
         $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $userLineup);
 
-        // Update game in JSON (this is the user's game since they triggered it)
+        // Update game in JSON
         $this->seasonService->updateGame($campaign->id, $year, $gameId, [
             'isComplete' => true,
             'homeScore' => $result['home_score'],
@@ -250,15 +244,87 @@ class GameController extends Controller
             $playoffUpdate = $this->processPlayoffGameCompletion($campaign, $game, $result['home_score'], $result['away_score']);
         }
 
-        // Process rest day recovery for teams that didn't play on game date
-        // Note: This method only simulates the user's single game, so we only track those two teams
-        $teamsWithGames = [$game['homeTeamId'], $game['awayTeamId']];
-        $this->evolutionService->processRestDayRecovery($campaign, $teamsWithGames);
+        // Collect pre-game sync games (days between current_date and game_date)
+        $gameDate = Carbon::parse($game['gameDate']);
+        $currentDate = $campaign->current_date->copy();
+        $preGameJobs = [];
+        $allTeamsWithGames = [$game['homeTeamId'], $game['awayTeamId']];
 
-        // Advance campaign date
-        $campaign->update(['current_date' => Carbon::parse($game['gameDate'])->addDay()]);
+        while ($currentDate->lt($gameDate)) {
+            $dateStr = $currentDate->format('Y-m-d');
+            $dayGames = $this->seasonService->getGamesByDate($campaign->id, $year, $dateStr);
+            $dayGames = array_filter($dayGames, fn($g) => !$g['isComplete']);
 
-        // Strip animation data for quick sim mode to reduce response size
+            foreach ($dayGames as $dayGame) {
+                $allTeamsWithGames[] = $dayGame['homeTeamId'];
+                $allTeamsWithGames[] = $dayGame['awayTeamId'];
+                $preGameJobs[] = new SimulateGameJob(
+                    $campaign->id,
+                    $year,
+                    $dayGame,
+                    $dayGame['homeTeamId'],
+                    $dayGame['awayTeamId'],
+                    false,
+                    null,
+                    $dateStr
+                );
+            }
+
+            $currentDate = $currentDate->copy()->addDay();
+        }
+
+        $batchId = null;
+
+        if (!empty($preGameJobs)) {
+            $campaignId = $campaign->id;
+            $teamsWithGames = array_unique($allTeamsWithGames);
+            $newDate = $gameDate->copy()->addDay();
+
+            $batch = Bus::batch($preGameJobs)
+                ->name("Pre-game sync: Campaign {$campaignId}")
+                ->then(function () use ($campaignId, $teamsWithGames, $newDate, $year) {
+                    $campaign = Campaign::find($campaignId);
+                    if (!$campaign) return;
+
+                    $evolutionService = app(PlayerEvolutionService::class);
+                    $evolutionService->processRestDayRecovery($campaign, $teamsWithGames);
+
+                    $campaign->update([
+                        'current_date' => $newDate,
+                        'simulation_batch_id' => null,
+                    ]);
+
+                    $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                    if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                        $evolutionService->processWeeklyUpdates($campaign);
+                    }
+                    if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                        $evolutionService->processMonthlyDevelopment($campaign);
+                    }
+                })
+                ->catch(function ($batch, $e) use ($campaignId) {
+                    Log::error("Simulation batch failed for campaign {$campaignId}: " . $e->getMessage());
+                    Campaign::where('id', $campaignId)->update(['simulation_batch_id' => null]);
+                })
+                ->dispatch();
+
+            $batchId = $batch->id;
+            $campaign->update(['simulation_batch_id' => $batchId]);
+        } else {
+            // No pre-game games - handle synchronously
+            $this->evolutionService->processRestDayRecovery($campaign, $allTeamsWithGames);
+            $campaign->update(['current_date' => $gameDate->copy()->addDay()]);
+
+            $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
+            if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                $this->evolutionService->processWeeklyUpdates($campaign);
+            }
+            if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                $this->evolutionService->processMonthlyDevelopment($campaign);
+            }
+        }
+
+        // Strip animation data for quick sim mode
         if ($mode === 'quick') {
             unset($result['animation_data']);
             unset($result['play_by_play']);
@@ -269,12 +335,11 @@ class GameController extends Controller
             'result' => $result,
         ];
 
-        // Include info about simulated days if any
-        if (!empty($simulatedDays)) {
-            $response['simulated_days'] = $simulatedDays;
+        if ($batchId) {
+            $response['batchId'] = $batchId;
+            $response['totalAiGames'] = count($preGameJobs);
         }
 
-        // Include playoff update if applicable
         if ($playoffUpdate) {
             $response['playoffUpdate'] = $playoffUpdate;
         }
@@ -291,6 +356,18 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
+        // Guard against existing batch
+        if ($campaign->simulation_batch_id) {
+            $existingBatch = Bus::findBatch($campaign->simulation_batch_id);
+            if ($existingBatch && !$existingBatch->finished()) {
+                return response()->json([
+                    'message' => 'A simulation is already in progress',
+                    'batchId' => $campaign->simulation_batch_id,
+                ], 409);
+            }
+            $campaign->update(['simulation_batch_id' => null]);
+        }
+
         // Initialize AI team lineups if not already set, then refresh based on fatigue
         $this->aiLineupService->initializeAllTeamLineups($campaign);
         $this->aiLineupService->refreshAllTeamLineups($campaign);
@@ -298,104 +375,127 @@ class GameController extends Controller
         $year = $campaign->currentSeason?->year ?? 2025;
         $currentDate = $campaign->current_date->format('Y-m-d');
         $games = $this->seasonService->getGamesByDate($campaign->id, $year, $currentDate);
-
-        // Filter to only incomplete games
         $games = array_filter($games, fn($g) => !$g['isComplete']);
 
-        // Get all teams for this campaign
         $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
-
-        // Get user's saved starting lineup
         $userLineup = $campaign->settings['lineup']['starters'] ?? null;
 
-        // Track which teams played today
         $teamsWithGames = [];
+        $userGameResult = null;
+        $aiJobs = [];
 
-        $results = [];
+        // Separate user's game (simulate sync) from AI games (queue)
         foreach ($games as $game) {
-            $homeTeam = $teams[$game['homeTeamId']];
-            $awayTeam = $teams[$game['awayTeamId']];
+            $homeTeam = $teams[$game['homeTeamId']] ?? null;
+            $awayTeam = $teams[$game['awayTeamId']] ?? null;
+            if (!$homeTeam || !$awayTeam) continue;
 
-            // Track teams that played
             $teamsWithGames[] = $game['homeTeamId'];
             $teamsWithGames[] = $game['awayTeamId'];
 
-            // Determine if this is the user's game and pass their lineup
             $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
-            $gameLineup = $isUserGame ? $userLineup : null;
 
-            // Simulate the game
-            $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
+            if ($isUserGame) {
+                // Simulate user's game synchronously
+                $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $userLineup);
 
-            // Update game in JSON
-            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
-            $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
-                'isComplete' => true,
-                'homeScore' => $result['home_score'],
-                'awayScore' => $result['away_score'],
-                'boxScore' => $result['box_score'],
-                'quarterScores' => $result['quarter_scores'] ?? null,
-            ], $isUserGame);
+                $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
+                    'isComplete' => true,
+                    'homeScore' => $result['home_score'],
+                    'awayScore' => $result['away_score'],
+                    'boxScore' => $result['box_score'],
+                    'quarterScores' => $result['quarter_scores'] ?? null,
+                ], true);
 
-            // Update standings
-            $this->seasonService->updateStandingsAfterGame(
-                $campaign->id,
-                $year,
-                $game['homeTeamId'],
-                $game['awayTeamId'],
-                $result['home_score'],
-                $result['away_score'],
-                $homeTeam->conference,
-                $awayTeam->conference
-            );
+                $this->seasonService->updateStandingsAfterGame(
+                    $campaign->id, $year, $game['homeTeamId'], $game['awayTeamId'],
+                    $result['home_score'], $result['away_score'],
+                    $homeTeam->conference, $awayTeam->conference
+                );
 
-            // Update player stats
-            $this->updatePlayerStats($campaign->id, $year, $result['box_score'], $homeTeam->id, $awayTeam->id);
+                $this->updatePlayerStats($campaign->id, $year, $result['box_score'], $homeTeam->id, $awayTeam->id);
+                $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
 
-            // Update coach stats
-            $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
-
-            $results[] = [
-                'game_id' => $game['id'],
-                'home_team' => [
-                    'id' => $homeTeam->id,
-                    'name' => $homeTeam->name,
-                    'abbreviation' => $homeTeam->abbreviation,
-                ],
-                'away_team' => [
-                    'id' => $awayTeam->id,
-                    'name' => $awayTeam->name,
-                    'abbreviation' => $awayTeam->abbreviation,
-                ],
-                'home_score' => $result['home_score'],
-                'away_score' => $result['away_score'],
-                'is_user_game' => $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id,
-            ];
+                $userGameResult = [
+                    'game_id' => $game['id'],
+                    'home_team' => ['id' => $homeTeam->id, 'name' => $homeTeam->name, 'abbreviation' => $homeTeam->abbreviation],
+                    'away_team' => ['id' => $awayTeam->id, 'name' => $awayTeam->name, 'abbreviation' => $awayTeam->abbreviation],
+                    'home_score' => $result['home_score'],
+                    'away_score' => $result['away_score'],
+                    'is_user_game' => true,
+                ];
+            } else {
+                $aiJobs[] = new SimulateGameJob(
+                    $campaign->id, $year, $game, $game['homeTeamId'], $game['awayTeamId'],
+                    false, null, $currentDate
+                );
+            }
         }
 
-        // Process rest day recovery for teams that didn't play
-        $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
+        $batchId = null;
 
-        // Advance to next day
-        $newDate = $campaign->current_date->addDay();
-        $campaign->update(['current_date' => $newDate]);
+        if (!empty($aiJobs)) {
+            $campaignId = $campaign->id;
+            $uniqueTeams = array_unique($teamsWithGames);
+            $newDate = $campaign->current_date->copy()->addDay();
 
-        // Check for weekly evolution updates (every 7 days)
-        $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
-        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-            $this->evolutionService->processWeeklyUpdates($campaign);
+            $batch = Bus::batch($aiJobs)
+                ->name("Simulate day: Campaign {$campaignId}")
+                ->then(function () use ($campaignId, $uniqueTeams, $newDate, $year) {
+                    $campaign = Campaign::find($campaignId);
+                    if (!$campaign) return;
+
+                    $evolutionService = app(PlayerEvolutionService::class);
+                    $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+
+                    $campaign->update([
+                        'current_date' => $newDate,
+                        'simulation_batch_id' => null,
+                    ]);
+
+                    $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                    if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                        $evolutionService->processWeeklyUpdates($campaign);
+                    }
+                    if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                        $evolutionService->processMonthlyDevelopment($campaign);
+                    }
+                })
+                ->catch(function ($batch, $e) use ($campaignId) {
+                    Log::error("SimulateDay batch failed for campaign {$campaignId}: " . $e->getMessage());
+                    Campaign::where('id', $campaignId)->update(['simulation_batch_id' => null]);
+                })
+                ->dispatch();
+
+            $batchId = $batch->id;
+            $campaign->update(['simulation_batch_id' => $batchId]);
+        } else {
+            // No AI games - handle synchronously
+            $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
+            $newDate = $campaign->current_date->copy()->addDay();
+            $campaign->update(['current_date' => $newDate]);
+
+            $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+            if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                $this->evolutionService->processWeeklyUpdates($campaign);
+            }
+            if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                $this->evolutionService->processMonthlyDevelopment($campaign);
+            }
         }
 
-        // Check for monthly evolution updates (every ~30 days)
-        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
-            $this->evolutionService->processMonthlyDevelopment($campaign);
-        }
-
-        return response()->json([
-            'message' => count($results) . ' games simulated',
-            'results' => $results,
+        $response = [
+            'message' => 'Day simulated',
+            'userGameResult' => $userGameResult,
             'new_date' => $campaign->fresh()->current_date->format('Y-m-d'),
-        ]);
+        ];
+
+        if ($batchId) {
+            $response['batchId'] = $batchId;
+            $response['totalAiGames'] = count($aiJobs);
+        }
+
+        return response()->json($response);
     }
 
     /**
@@ -502,12 +602,56 @@ class GameController extends Controller
     }
 
     /**
+     * Check simulation batch status.
+     */
+    public function simulationStatus(Request $request, Campaign $campaign, string $batchId): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $batch = Bus::findBatch($batchId);
+
+        if (!$batch) {
+            return response()->json([
+                'status' => 'not_found',
+                'message' => 'Batch not found',
+            ], 404);
+        }
+
+        $status = 'processing';
+        if ($batch->cancelled()) {
+            $status = 'cancelled';
+        } elseif ($batch->finished()) {
+            $status = $batch->failedJobs > 0 ? 'completed_with_errors' : 'completed';
+        }
+
+        return response()->json([
+            'status' => $status,
+            'progress' => [
+                'total' => $batch->totalJobs,
+                'completed' => $batch->processedJobs() - $batch->failedJobs,
+                'failed' => $batch->failedJobs,
+                'pending' => $batch->pendingJobs,
+            ],
+        ]);
+    }
+
+    /**
      * Start a quarter-by-quarter game simulation (Q1 only).
      */
     public function startGame(Request $request, Campaign $campaign, string $gameId): JsonResponse
     {
         if ($campaign->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // Clean up stale batch if it already finished
+        if ($campaign->simulation_batch_id) {
+            $existingBatch = Bus::findBatch($campaign->simulation_batch_id);
+            if (!$existingBatch || $existingBatch->finished()) {
+                $campaign->update(['simulation_batch_id' => null]);
+            }
         }
 
         // Initialize AI team lineups if not already set, then refresh based on fatigue
@@ -529,25 +673,59 @@ class GameController extends Controller
             return response()->json(['message' => 'Game is already in progress. Use /continue endpoint.'], 400);
         }
 
-        // Simulate all days between current_date and game_date (exclusive)
-        // This ensures games are always in sync with the actual day
+        // Dispatch pre-game sync games as background batch (if not already handled)
         $gameDate = Carbon::parse($game['gameDate']);
-        $currentDate = $campaign->current_date;
-        $simulatedDays = [];
+        $batchId = $campaign->simulation_batch_id; // may already be set by simulateToNextGame
 
-        while ($currentDate->lt($gameDate)) {
-            $dateStr = $currentDate->format('Y-m-d');
-            $dayGames = $this->seasonService->getGamesByDate($campaign->id, $year, $dateStr);
-            $dayGames = array_filter($dayGames, fn($g) => !$g['isComplete']);
+        if (!$batchId) {
+            $currentDate = $campaign->current_date->copy();
+            $preGameJobs = [];
+            $preGameTeams = [];
 
-            if (!empty($dayGames)) {
-                $simulatedDays[] = $this->simulateDayGames($campaign, $year, $dayGames);
+            while ($currentDate->lt($gameDate)) {
+                $dateStr = $currentDate->format('Y-m-d');
+                $dayGames = $this->seasonService->getGamesByDate($campaign->id, $year, $dateStr);
+                $dayGames = array_filter($dayGames, fn($g) => !$g['isComplete']);
+
+                foreach ($dayGames as $dayGame) {
+                    $preGameTeams[] = $dayGame['homeTeamId'];
+                    $preGameTeams[] = $dayGame['awayTeamId'];
+                    $preGameJobs[] = new SimulateGameJob(
+                        $campaign->id, $year, $dayGame, $dayGame['homeTeamId'], $dayGame['awayTeamId'],
+                        false, null, $dateStr
+                    );
+                }
+
+                $currentDate = $currentDate->copy()->addDay();
             }
 
-            $currentDate = $currentDate->copy()->addDay();
+            if (!empty($preGameJobs)) {
+                $campaignId = $campaign->id;
+                $uniqueTeams = array_unique($preGameTeams);
+
+                $batch = Bus::batch($preGameJobs)
+                    ->name("Pre-game sync: Campaign {$campaignId}")
+                    ->then(function () use ($campaignId, $uniqueTeams) {
+                        $campaign = Campaign::find($campaignId);
+                        if (!$campaign) return;
+
+                        $evolutionService = app(PlayerEvolutionService::class);
+                        $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+
+                        $campaign->update(['simulation_batch_id' => null]);
+                    })
+                    ->catch(function ($batch, $e) use ($campaignId) {
+                        Log::error("Pre-game sync batch failed for campaign {$campaignId}: " . $e->getMessage());
+                        Campaign::where('id', $campaignId)->update(['simulation_batch_id' => null]);
+                    })
+                    ->dispatch();
+
+                $batchId = $batch->id;
+                $campaign->update(['simulation_batch_id' => $batchId]);
+            }
         }
 
-        // Update campaign date to the game date
+        // Always proceed to Q1 — AI games run in background
         if (!$campaign->current_date->eq($gameDate)) {
             $campaign->update(['current_date' => $gameDate]);
         }
@@ -555,14 +733,12 @@ class GameController extends Controller
         $homeTeam = Team::find($game['homeTeamId']);
         $awayTeam = Team::find($game['awayTeamId']);
 
-        // Get user's saved starting lineup if this is their team
-        // Allow override from request for pre-game lineup changes
+        // Get user's saved starting lineup
         $userLineup = null;
         $isUserHome = $game['homeTeamId'] === $campaign->team_id;
         $isUserAway = $game['awayTeamId'] === $campaign->team_id;
 
         if ($isUserHome || $isUserAway) {
-            // Use request lineup if provided, otherwise use saved
             if ($isUserHome && $request->has('home_lineup')) {
                 $userLineup = $request->input('home_lineup');
             } elseif ($isUserAway && $request->has('away_lineup')) {
@@ -572,7 +748,7 @@ class GameController extends Controller
             }
         }
 
-        // Get coaching adjustments from request, falling back to saved campaign settings
+        // Get coaching adjustments
         $coachingAdjustments = [];
         $settingsToSave = [];
 
@@ -590,7 +766,6 @@ class GameController extends Controller
             $coachingAdjustments['defensiveStyle'] = $campaign->settings['defensive_style'];
         }
 
-        // Save updated coaching styles to campaign settings
         if (!empty($settingsToSave)) {
             $campaign->update([
                 'settings' => array_merge($campaign->settings ?? [], $settingsToSave)
@@ -614,9 +789,8 @@ class GameController extends Controller
             ...$result['quarterResult'],
         ];
 
-        // Include info about simulated days if any
-        if (!empty($simulatedDays)) {
-            $response['simulated_days'] = $simulatedDays;
+        if ($batchId) {
+            $response['batchId'] = $batchId;
         }
 
         return response()->json($response);
@@ -786,82 +960,70 @@ class GameController extends Controller
                 $playoffUpdate = $this->processPlayoffGameCompletion($campaign, $game, $finalResult['home_score'], $finalResult['away_score']);
             }
 
-            // Simulate remaining games on this day
+            // Collect remaining AI games on this day for background batch
             $gameDate = $game['gameDate'];
             $allGames = $this->seasonService->getGamesByDate($campaign->id, $year, $gameDate);
 
-            // Track teams that played today (starting with user's game teams)
             $teamsWithGames = [$game['homeTeamId'], $game['awayTeamId']];
+            $remainingJobs = [];
 
             foreach ($allGames as $otherGame) {
-                // Skip the game we just completed and any already complete games
                 if ($otherGame['id'] === $gameId || ($otherGame['isComplete'] ?? false)) {
                     continue;
                 }
 
-                // Track teams that played
                 $teamsWithGames[] = $otherGame['homeTeamId'];
                 $teamsWithGames[] = $otherGame['awayTeamId'];
 
-                // Simulate this game
-                $otherHomeTeam = Team::find($otherGame['homeTeamId']);
-                $otherAwayTeam = Team::find($otherGame['awayTeamId']);
-
-                if (!$otherHomeTeam || !$otherAwayTeam) {
-                    continue;
-                }
-
-                $simResult = $this->simulationService->simulateFromData(
-                    $campaign,
-                    $otherGame,
-                    $otherHomeTeam,
-                    $otherAwayTeam
+                $remainingJobs[] = new SimulateGameJob(
+                    $campaign->id, $year, $otherGame,
+                    $otherGame['homeTeamId'], $otherGame['awayTeamId'],
+                    false, null, $gameDate
                 );
-
-                // Update game in storage (AI vs AI game, use compact box score)
-                $this->seasonService->updateGame($campaign->id, $year, $otherGame['id'], [
-                    'isComplete' => true,
-                    'homeScore' => $simResult['home_score'],
-                    'awayScore' => $simResult['away_score'],
-                    'boxScore' => $simResult['box_score'],
-                    'quarterScores' => $simResult['quarter_scores'] ?? null,
-                ], false);
-
-                // Update standings
-                $this->seasonService->updateStandingsAfterGame(
-                    $campaign->id,
-                    $year,
-                    $otherGame['homeTeamId'],
-                    $otherGame['awayTeamId'],
-                    $simResult['home_score'],
-                    $simResult['away_score'],
-                    $otherHomeTeam->conference,
-                    $otherAwayTeam->conference
-                );
-
-                // Update player stats
-                $this->updatePlayerStats(
-                    $campaign->id,
-                    $year,
-                    $simResult['box_score'],
-                    $otherHomeTeam->id,
-                    $otherAwayTeam->id
-                );
-
-                // Update coach stats
-                $this->updateCoachStats($otherHomeTeam->id, $otherAwayTeam->id, $simResult['home_score'], $simResult['away_score'], $otherGame['isPlayoff'] ?? false);
-
-                // Process playoff game completion for other games if applicable
-                if ($otherGame['isPlayoff'] ?? false) {
-                    $this->processPlayoffGameCompletion($campaign, $otherGame, $simResult['home_score'], $simResult['away_score']);
-                }
             }
 
-            // Process rest day recovery for teams that didn't play
-            $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
+            $batchId = null;
 
-            // Advance campaign date
-            $campaign->update(['current_date' => Carbon::parse($game['gameDate'])->addDay()]);
+            if (!empty($remainingJobs)) {
+                $campaignId = $campaign->id;
+                $uniqueTeams = array_unique($teamsWithGames);
+                $newDate = Carbon::parse($gameDate)->addDay();
+
+                $batch = Bus::batch($remainingJobs)
+                    ->name("Post-game day: Campaign {$campaignId}")
+                    ->then(function () use ($campaignId, $uniqueTeams, $newDate, $year) {
+                        $campaign = Campaign::find($campaignId);
+                        if (!$campaign) return;
+
+                        $evolutionService = app(PlayerEvolutionService::class);
+                        $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+
+                        $campaign->update([
+                            'current_date' => $newDate,
+                            'simulation_batch_id' => null,
+                        ]);
+
+                        $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                            $evolutionService->processWeeklyUpdates($campaign);
+                        }
+                        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                            $evolutionService->processMonthlyDevelopment($campaign);
+                        }
+                    })
+                    ->catch(function ($batch, $e) use ($campaignId) {
+                        Log::error("Post-game batch failed for campaign {$campaignId}: " . $e->getMessage());
+                        Campaign::where('id', $campaignId)->update(['simulation_batch_id' => null]);
+                    })
+                    ->dispatch();
+
+                $batchId = $batch->id;
+                $campaign->update(['simulation_batch_id' => $batchId]);
+            } else {
+                // No remaining games - handle synchronously
+                $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
+                $campaign->update(['current_date' => Carbon::parse($gameDate)->addDay()]);
+            }
 
             $response = [
                 'message' => 'Game complete',
@@ -874,7 +1036,11 @@ class GameController extends Controller
                 ...$result['quarterResult'],
             ];
 
-            // Include playoff update if applicable
+            if ($batchId) {
+                $response['batchId'] = $batchId;
+                $response['totalAiGames'] = count($remainingJobs);
+            }
+
             if ($playoffUpdate) {
                 $response['playoffUpdate'] = $playoffUpdate;
             }
@@ -1243,6 +1409,18 @@ class GameController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
+        // Guard: reject if a simulation batch is still running
+        if ($campaign->simulation_batch_id) {
+            $existingBatch = Bus::findBatch($campaign->simulation_batch_id);
+            if ($existingBatch && !$existingBatch->finished()) {
+                return response()->json([
+                    'message' => 'A simulation is already in progress',
+                    'batchId' => $campaign->simulation_batch_id,
+                ], 409);
+            }
+            $campaign->update(['simulation_batch_id' => null]);
+        }
+
         $excludeUserGame = $request->boolean('excludeUserGame', false);
 
         // Initialize AI team lineups if not already set, then refresh based on fatigue
@@ -1259,172 +1437,183 @@ class GameController extends Controller
 
         $gameDate = Carbon::parse($nextUserGame['gameDate']);
         $currentDate = $campaign->current_date->copy();
-        $allSimulatedGames = [];
+        $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
+        $userLineup = $campaign->settings['lineup']['starters'] ?? null;
 
-        // Simulate all days between current date and game date (exclusive)
+        // Collect all games across all days (pre-game days + game day)
+        $aiJobs = [];
+        $allTeamsWithGames = [];
+        $userGameResult = null;
+
+        // Days before game date
         while ($currentDate->lt($gameDate)) {
             $dateStr = $currentDate->format('Y-m-d');
             $dayGames = $this->seasonService->getGamesByDate($campaign->id, $year, $dateStr);
             $dayGames = array_filter($dayGames, fn($g) => !$g['isComplete']);
 
-            if (!empty($dayGames)) {
-                $dayResult = $this->simulateDayGames($campaign, $year, $dayGames);
-                $allSimulatedGames[] = $dayResult;
+            foreach ($dayGames as $game) {
+                $allTeamsWithGames[] = $game['homeTeamId'];
+                $allTeamsWithGames[] = $game['awayTeamId'];
+
+                $aiJobs[] = new SimulateGameJob(
+                    $campaign->id, $year, $game, $game['homeTeamId'], $game['awayTeamId'],
+                    false, null, $dateStr
+                );
             }
 
             $currentDate = $currentDate->copy()->addDay();
         }
 
-        // Get all teams for the user's game date
-        $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
-
-        // Get all games on the user's game date
+        // Game day games
         $gameDateStr = $gameDate->format('Y-m-d');
         $gameDateGames = $this->seasonService->getGamesByDate($campaign->id, $year, $gameDateStr);
         $gameDateGames = array_filter($gameDateGames, fn($g) => !$g['isComplete']);
 
-        $userGameResult = null;
-        $gameDateResults = [];
-
-        // Track which teams played on game date
-        $teamsWithGamesOnGameDate = [];
-
-        // Get user's saved starting lineup
-        $userLineup = $campaign->settings['lineup']['starters'] ?? null;
-
         foreach ($gameDateGames as $game) {
             $homeTeam = $teams[$game['homeTeamId']] ?? null;
             $awayTeam = $teams[$game['awayTeamId']] ?? null;
+            if (!$homeTeam || !$awayTeam) continue;
 
-            if (!$homeTeam || !$awayTeam) {
-                continue;
-            }
-
-            // Determine if this is the user's game
-            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
-
-            // Skip user's game if excludeUserGame is true (user wants to play it live)
-            if ($isUserGame && $excludeUserGame) {
-                // Still track that the user's team has a game (they're about to play)
-                $teamsWithGamesOnGameDate[] = $game['homeTeamId'];
-                $teamsWithGamesOnGameDate[] = $game['awayTeamId'];
-                continue;
-            }
-
-            // Track teams that played
-            $teamsWithGamesOnGameDate[] = $game['homeTeamId'];
-            $teamsWithGamesOnGameDate[] = $game['awayTeamId'];
-
-            $gameLineup = $isUserGame ? $userLineup : null;
-
-            // Simulate the game
-            $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
-
-            // Update game in JSON (include evolution/rewards only for user's game)
-            $isUserGame = $game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id;
-            $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
-                'isComplete' => true,
-                'homeScore' => $result['home_score'],
-                'awayScore' => $result['away_score'],
-                'boxScore' => $result['box_score'],
-                'quarterScores' => $result['quarter_scores'] ?? null,
-                'evolution' => $isUserGame ? ($result['evolution'] ?? null) : null,
-                'rewards' => $isUserGame ? ($result['rewards'] ?? null) : null,
-            ], $isUserGame);
-
-            // Update standings
-            $this->seasonService->updateStandingsAfterGame(
-                $campaign->id,
-                $year,
-                $game['homeTeamId'],
-                $game['awayTeamId'],
-                $result['home_score'],
-                $result['away_score'],
-                $homeTeam->conference,
-                $awayTeam->conference
-            );
-
-            // Update player stats
-            $this->updatePlayerStats($campaign->id, $year, $result['box_score'], $homeTeam->id, $awayTeam->id);
-
-            // Update coach stats
-            $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
+            $allTeamsWithGames[] = $game['homeTeamId'];
+            $allTeamsWithGames[] = $game['awayTeamId'];
 
             $userTeamId = (int) $campaign->team_id;
             $homeTeamId = (int) $game['homeTeamId'];
             $awayTeamId = (int) $game['awayTeamId'];
             $isUserGame = $homeTeamId === $userTeamId || $awayTeamId === $userTeamId;
-            $isUserHome = $homeTeamId === $userTeamId;
 
-            $gameResult = [
-                'game_id' => $game['id'],
-                'home_team' => [
-                    'id' => $homeTeam->id,
-                    'name' => $homeTeam->name,
-                    'abbreviation' => $homeTeam->abbreviation,
-                ],
-                'away_team' => [
-                    'id' => $awayTeam->id,
-                    'name' => $awayTeam->name,
-                    'abbreviation' => $awayTeam->abbreviation,
-                ],
-                'home_score' => $result['home_score'],
-                'away_score' => $result['away_score'],
-                'is_user_game' => $isUserGame,
-                'is_user_home' => $isUserGame ? $isUserHome : null,
-            ];
+            // Skip user's game if excludeUserGame is true
+            if ($isUserGame && $excludeUserGame) {
+                continue;
+            }
 
-            // Include evolution and rewards for user's game
             if ($isUserGame) {
-                $gameResult['evolution'] = $result['evolution'] ?? null;
-                $gameResult['rewards'] = $result['rewards'] ?? null;
-                $gameResult['box_score'] = $result['box_score'] ?? null;
-                $userGameResult = $gameResult;
+                // Simulate user's game synchronously
+                $gameLineup = $userLineup;
+                $result = $this->simulationService->simulateFromData($campaign, $game, $homeTeam, $awayTeam, $gameLineup);
+
+                $this->seasonService->updateGame($campaign->id, $year, $game['id'], [
+                    'isComplete' => true,
+                    'homeScore' => $result['home_score'],
+                    'awayScore' => $result['away_score'],
+                    'boxScore' => $result['box_score'],
+                    'quarterScores' => $result['quarter_scores'] ?? null,
+                    'evolution' => $result['evolution'] ?? null,
+                    'rewards' => $result['rewards'] ?? null,
+                ], true);
+
+                $this->seasonService->updateStandingsAfterGame(
+                    $campaign->id, $year, $game['homeTeamId'], $game['awayTeamId'],
+                    $result['home_score'], $result['away_score'],
+                    $homeTeam->conference, $awayTeam->conference
+                );
+
+                $this->updatePlayerStats($campaign->id, $year, $result['box_score'], $homeTeam->id, $awayTeam->id);
+                $this->updateCoachStats($homeTeam->id, $awayTeam->id, $result['home_score'], $result['away_score'], $game['isPlayoff'] ?? false);
+
+                // Process playoff completion for user's game
+                $playoffUpdate = null;
+                if ($game['isPlayoff'] ?? false) {
+                    $playoffUpdate = $this->processPlayoffGameCompletion($campaign, $game, $result['home_score'], $result['away_score']);
+                }
+
+                $isUserHome = $homeTeamId === $userTeamId;
+
+                $userGameResult = [
+                    'game_id' => $game['id'],
+                    'home_team' => ['id' => $homeTeam->id, 'name' => $homeTeam->name, 'abbreviation' => $homeTeam->abbreviation],
+                    'away_team' => ['id' => $awayTeam->id, 'name' => $awayTeam->name, 'abbreviation' => $awayTeam->abbreviation],
+                    'home_score' => $result['home_score'],
+                    'away_score' => $result['away_score'],
+                    'is_user_game' => true,
+                    'is_user_home' => $isUserHome,
+                    'evolution' => $result['evolution'] ?? null,
+                    'rewards' => $result['rewards'] ?? null,
+                    'box_score' => $result['box_score'] ?? null,
+                ];
+
+                if ($playoffUpdate) {
+                    $userGameResult['playoffUpdate'] = $playoffUpdate;
+                }
+            } else {
+                // Queue AI game
+                $aiJobs[] = new SimulateGameJob(
+                    $campaign->id, $year, $game, $game['homeTeamId'], $game['awayTeamId'],
+                    false, null, $gameDateStr
+                );
             }
-
-            $gameDateResults[] = $gameResult;
         }
 
-        // Process rest day recovery for teams that didn't play on game date
-        if (!empty($teamsWithGamesOnGameDate)) {
-            $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGamesOnGameDate));
-        }
+        $batchId = null;
 
-        // Add game date results to all simulated games
-        if (!empty($gameDateResults)) {
-            $allSimulatedGames[] = [
-                'date' => $gameDateStr,
-                'games_count' => count($gameDateResults),
-                'results' => $gameDateResults,
-            ];
-        }
+        if (!empty($aiJobs)) {
+            $campaignId = $campaign->id;
+            $uniqueTeams = array_unique($allTeamsWithGames);
+            $newDate = $excludeUserGame ? $gameDate->copy() : $gameDate->copy()->addDay();
 
-        // Advance date: if excluding user game, stay on game date; otherwise advance past it
-        if ($excludeUserGame) {
-            // Move to the game date (user will play their game there)
-            $newDate = $gameDate->copy();
-            $campaign->update(['current_date' => $newDate]);
+            $batch = Bus::batch($aiJobs)
+                ->name("Simulate to next game: Campaign {$campaignId}")
+                ->then(function () use ($campaignId, $uniqueTeams, $newDate, $year, $excludeUserGame) {
+                    $campaign = Campaign::find($campaignId);
+                    if (!$campaign) return;
+
+                    $evolutionService = app(PlayerEvolutionService::class);
+                    $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+
+                    $campaign->update([
+                        'current_date' => $newDate,
+                        'simulation_batch_id' => null,
+                    ]);
+
+                    if (!$excludeUserGame) {
+                        $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                            $evolutionService->processWeeklyUpdates($campaign);
+                        }
+                        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                            $evolutionService->processMonthlyDevelopment($campaign);
+                        }
+                    }
+                })
+                ->catch(function ($batch, $e) use ($campaignId) {
+                    Log::error("SimulateToNextGame batch failed for campaign {$campaignId}: " . $e->getMessage());
+                    Campaign::where('id', $campaignId)->update(['simulation_batch_id' => null]);
+                })
+                ->dispatch();
+
+            $batchId = $batch->id;
+            $campaign->update(['simulation_batch_id' => $batchId]);
         } else {
-            // Advance to next day (all games including user's were simulated)
-            $newDate = $gameDate->copy()->addDay();
+            // No AI games - handle synchronously
+            if (!empty($allTeamsWithGames)) {
+                $this->evolutionService->processRestDayRecovery($campaign, array_unique($allTeamsWithGames));
+            }
+
+            $newDate = $excludeUserGame ? $gameDate->copy() : $gameDate->copy()->addDay();
             $campaign->update(['current_date' => $newDate]);
 
-            // Check for weekly/monthly evolution updates (only when advancing past game date)
-            $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
-            if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-                $this->evolutionService->processWeeklyUpdates($campaign);
-            }
-            if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
-                $this->evolutionService->processMonthlyDevelopment($campaign);
+            if (!$excludeUserGame) {
+                $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                    $this->evolutionService->processWeeklyUpdates($campaign);
+                }
+                if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                    $this->evolutionService->processMonthlyDevelopment($campaign);
+                }
             }
         }
 
-        return response()->json([
+        $response = [
             'message' => 'Simulated to next game successfully',
             'userGameResult' => $userGameResult,
-            'simulatedDays' => $allSimulatedGames,
-            'totalGamesSimulated' => array_sum(array_map(fn($d) => $d['games_count'], $allSimulatedGames)),
             'newDate' => $campaign->fresh()->current_date->format('Y-m-d'),
-        ]);
+        ];
+
+        if ($batchId) {
+            $response['batchId'] = $batchId;
+            $response['totalAiGames'] = count($aiJobs);
+        }
+
+        return response()->json($response);
     }
 }
