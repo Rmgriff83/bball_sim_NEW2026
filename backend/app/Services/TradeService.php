@@ -131,7 +131,7 @@ class TradeService
                 'position' => $dbPlayer->position,
                 'secondaryPosition' => $dbPlayer->secondary_position,
                 'overallRating' => $dbPlayer->overall_rating,
-                'age' => $dbPlayer->birth_date ? now()->diffInYears($dbPlayer->birth_date) : 25,
+                'age' => $dbPlayer->birth_date ? (int) abs(now()->diffInYears($dbPlayer->birth_date)) : 25,
                 'contractSalary' => (float) $dbPlayer->contract_salary,
                 'tradeValue' => $dbPlayer->trade_value,
                 'tradeValueTotal' => $dbPlayer->trade_value_total,
@@ -145,7 +145,7 @@ class TradeService
         foreach ($leaguePlayers as $player) {
             if (($player['id'] ?? '') == $playerId) {
                 $birthDate = $player['birthDate'] ?? null;
-                $age = $birthDate ? now()->diffInYears($birthDate) : 25;
+                $age = $birthDate ? (int) abs(now()->diffInYears($birthDate)) : 25;
 
                 return [
                     'id' => $player['id'],

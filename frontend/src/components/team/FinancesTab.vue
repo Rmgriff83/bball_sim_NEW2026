@@ -146,7 +146,7 @@ async function handleResignConfirm(data) {
   try {
     await financeStore.resignPlayer(props.campaignId, data.playerId, data.years)
     // Refresh roster data
-    await financeStore.fetchRosterContracts(props.campaignId)
+    await financeStore.fetchRosterContracts(props.campaignId, { force: true })
     toastStore.showSuccess('Player re-signed')
   } catch (err) {
     console.error('Failed to re-sign player:', err)
@@ -162,8 +162,8 @@ async function handleSignConfirm(data) {
     await financeStore.signFreeAgent(props.campaignId, data.playerId)
     // Refresh data
     await Promise.all([
-      financeStore.fetchRosterContracts(props.campaignId),
-      financeStore.fetchFreeAgents(props.campaignId)
+      financeStore.fetchRosterContracts(props.campaignId, { force: true }),
+      financeStore.fetchFreeAgents(props.campaignId, { force: true })
     ])
     toastStore.showSuccess('Player signed')
   } catch (err) {
@@ -179,7 +179,7 @@ async function handleDropConfirm(data) {
   try {
     await financeStore.dropPlayer(props.campaignId, data.playerId)
     // Refresh roster data
-    await financeStore.fetchRosterContracts(props.campaignId)
+    await financeStore.fetchRosterContracts(props.campaignId, { force: true })
     toastStore.showSuccess('Player released')
   } catch (err) {
     console.error('Failed to drop player:', err)

@@ -7,7 +7,7 @@ import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
-import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap } from 'lucide-vue-next'
+import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward } from 'lucide-vue-next'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
 import { SimulateConfirmModal, EvolutionSummary } from '@/components/game'
@@ -981,7 +981,7 @@ async function startGame() {
     // Check if game completed
     if (result.isGameComplete) {
       isLiveMode.value = false
-      await leagueStore.fetchStandings(campaignId.value)
+      await leagueStore.fetchStandings(campaignId.value, { force: true })
     }
   } catch (err) {
     console.error('Failed to start/continue game:', err)
@@ -1032,7 +1032,7 @@ async function continueToNextQuarter() {
         gameStore.startPollingSimulationStatus(campaignId.value, result.batchId)
       } else {
         // No background batch — refresh standings now
-        await leagueStore.fetchStandings(campaignId.value)
+        await leagueStore.fetchStandings(campaignId.value, { force: true })
       }
     }
 
@@ -1068,6 +1068,34 @@ function handleQuarterBreakContinue() {
     continueToNextQuarter()
   } else {
     continueAfterQuarterBreak()
+  }
+}
+
+/**
+ * Sim the in-progress game to completion (skip remaining quarters).
+ */
+async function handleSimToEnd() {
+  simulating.value = true
+
+  try {
+    const response = await gameStore.simToEnd(campaignId.value, gameId.value)
+
+    gameJustCompleted.value = true
+    isLiveMode.value = false
+    showAnimationMode.value = true
+    completedQuarter.value = 4
+    isQuarterBreak.value = true
+
+    if (response.batchId) {
+      gameStore.startPollingSimulationStatus(campaignId.value, response.batchId)
+    } else {
+      await leagueStore.fetchStandings(campaignId.value, { force: true })
+    }
+  } catch (err) {
+    console.error('Failed to sim to end:', err)
+    alert('Failed to sim to end')
+  } finally {
+    simulating.value = false
   }
 }
 
@@ -1141,8 +1169,8 @@ const gameClock = computed(() => {
   // Calculate progress through the quarter (0 to 1)
   const quarterProgress = (currentPossessionIndex.value + progress.value) / totalPossessions.value
 
-  // Convert to remaining time (720 seconds = 12 minutes, counting down)
-  const totalSeconds = Math.max(0, Math.floor(720 * (1 - quarterProgress)))
+  // Convert to remaining time (600 seconds = 10 minutes, counting down)
+  const totalSeconds = Math.max(0, Math.floor(600 * (1 - quarterProgress)))
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
 
@@ -1154,7 +1182,7 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
   if (oldVal === true && newVal === false) {
     // Background AI games finished — refresh standings
     try {
-      await leagueStore.fetchStandings(campaignId.value)
+      await leagueStore.fetchStandings(campaignId.value, { force: true })
     } catch (err) {
       console.error('Failed to refresh standings after background simulation:', err)
     }
@@ -1978,6 +2006,17 @@ onUnmounted(() => {
                               <span>Continue</span>
                             </template>
                           </button>
+                          <button
+                            class="qb-sim-to-end-btn"
+                            :disabled="simulating"
+                            @click="handleSimToEnd"
+                          >
+                            <span v-if="simulating" class="qb-btn-loading"></span>
+                            <template v-else>
+                              <FastForward :size="20" />
+                              <span>Sim to End</span>
+                            </template>
+                          </button>
                         </template>
 
                         <!-- Substitutions View -->
@@ -2481,9 +2520,23 @@ onUnmounted(() => {
                     </template>
                   </button>
 
+                  <!-- Sim to End Button (in-progress games only) -->
+                  <button
+                    v-if="isInProgress"
+                    class="qb-sim-to-end-btn"
+                    :disabled="simulating"
+                    @click="handleSimToEnd"
+                  >
+                    <span v-if="simulating" class="qb-btn-loading"></span>
+                    <template v-else>
+                      <FastForward :size="20" />
+                      <span>Sim to End</span>
+                    </template>
+                  </button>
+
                   <!-- Simulate Button for non-user games -->
                   <button
-                    v-else
+                    v-else-if="!isUserGame"
                     class="qb-continue-btn pregame-play-btn"
                     :disabled="simulating"
                     @click="startGame"
@@ -3372,7 +3425,7 @@ onUnmounted(() => {
 [data-theme="light"] .game-header-card .team-rating,
 [data-theme="light"] .game-header-card .team-rank,
 [data-theme="light"] .game-header-card .game-date {
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(0, 0, 0);
 }
 
 [data-theme="light"] .game-header-card .vs-text,
@@ -3387,11 +3440,11 @@ onUnmounted(() => {
 
 [data-theme="light"] .game-header-card .user-game-badge {
   background: rgba(255, 255, 255, 0.25);
-  color: white;
+  color: black;
 }
 
 [data-theme="light"] .game-header-card .team-name-text {
-  color: white;
+  color: black;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
@@ -6436,5 +6489,31 @@ onUnmounted(() => {
 
 [data-theme="light"] .news-icon {
   background: rgba(0, 0, 0, 0.05);
+}
+
+.qb-sim-to-end-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-xl);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.qb-sim-to-end-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.qb-sim-to-end-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

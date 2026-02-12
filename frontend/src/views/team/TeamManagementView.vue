@@ -293,7 +293,7 @@ async function swapPlayers(starterIndex, benchPlayerId) {
     closeMoveDropdown()
 
     await teamStore.updateLineup(campaignId.value, newLineup)
-    await teamStore.fetchTeam(campaignId.value)
+    await teamStore.fetchTeam(campaignId.value, { force: true })
 
     toastStore.showSuccess('Lineup updated')
 
@@ -330,7 +330,7 @@ async function moveToBench(starterIndex) {
     closeMoveDropdown()
 
     await teamStore.updateLineup(campaignId.value, newLineup)
-    await teamStore.fetchTeam(campaignId.value)
+    await teamStore.fetchTeam(campaignId.value, { force: true })
 
     toastStore.showSuccess('Lineup updated')
 
@@ -367,7 +367,7 @@ async function promoteToStarter(benchPlayer, targetPosition) {
     closeMoveDropdown()
 
     await teamStore.updateLineup(campaignId.value, newLineup)
-    await teamStore.fetchTeam(campaignId.value)
+    await teamStore.fetchTeam(campaignId.value, { force: true })
 
     toastStore.showSuccess('Lineup updated')
 

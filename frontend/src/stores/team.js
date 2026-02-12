@@ -19,6 +19,10 @@ export const useTeamStore = defineStore('team', () => {
   // Explicit lineup state - array of 5 player IDs in position order (PG, SG, SF, PF, C)
   const lineup = ref([null, null, null, null, null])
 
+  // Cache tracking
+  const _loadedCampaignId = ref(null)
+  const _schemesCampaignId = ref(null)
+
   // Getters
   // Get full player objects for each lineup slot
   const starterPlayers = computed(() => {
@@ -76,7 +80,12 @@ export const useTeamStore = defineStore('team', () => {
   })
 
   // Actions
-  async function fetchTeam(campaignId) {
+  async function fetchTeam(campaignId, { force = false } = {}) {
+    // Return cached data if already loaded for this campaign
+    if (!force && _loadedCampaignId.value === campaignId && team.value) {
+      return { team: team.value, roster: roster.value, coach: coach.value }
+    }
+
     loading.value = true
     error.value = null
     try {
@@ -95,6 +104,8 @@ export const useTeamStore = defineStore('team', () => {
       } else {
         lineup.value = [null, null, null, null, null]
       }
+
+      _loadedCampaignId.value = campaignId
 
       // Update cache with team/roster data
       await campaignCacheService.updateCampaign(campaignId, {
@@ -248,13 +259,19 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
-  async function fetchCoachingSchemes(campaignId) {
+  async function fetchCoachingSchemes(campaignId, { force = false } = {}) {
+    // Return cached data if already loaded for this campaign
+    if (!force && _schemesCampaignId.value === campaignId && Object.keys(coachingSchemes.value).length > 0) {
+      return { schemes: coachingSchemes.value, recommended: recommendedScheme.value }
+    }
+
     loading.value = true
     error.value = null
     try {
       const response = await api.get(`/api/campaigns/${campaignId}/team/coaching-schemes`)
       coachingSchemes.value = response.data.schemes
       recommendedScheme.value = response.data.recommended
+      _schemesCampaignId.value = campaignId
       return response.data
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to fetch coaching schemes'
@@ -320,6 +337,13 @@ export const useTeamStore = defineStore('team', () => {
     lineup.value = [null, null, null, null, null]
     coachingSchemes.value = {}
     recommendedScheme.value = null
+    _loadedCampaignId.value = null
+    _schemesCampaignId.value = null
+  }
+
+  function invalidate() {
+    _loadedCampaignId.value = null
+    _schemesCampaignId.value = null
   }
 
   // Utility functions
@@ -386,6 +410,7 @@ export const useTeamStore = defineStore('team', () => {
     upgradePlayerAttribute,
     clearSelectedPlayer,
     clearTeam,
+    invalidate,
     // Utilities
     getPositionColor,
     getRatingColor,

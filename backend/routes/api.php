@@ -87,12 +87,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/games/{gameId}/simulate', [GameController::class, 'simulate']);
         Route::post('/games/{gameId}/start', [GameController::class, 'startGame']);
         Route::post('/games/{gameId}/continue', [GameController::class, 'continueGame']);
+        Route::post('/games/{gameId}/sim-to-end', [GameController::class, 'simToEnd']);
         Route::post('/simulate-day', [GameController::class, 'simulateDay']);
         Route::get('/simulate-to-next-game/preview', [GameController::class, 'simulateToNextGamePreview']);
         Route::post('/simulate-to-next-game', [GameController::class, 'simulateToNextGame']);
         Route::get('/simulation-status/{batchId}', [GameController::class, 'simulationStatus']);
         Route::get('/standings', [GameController::class, 'standings']);
         Route::get('/league-leaders', [GameController::class, 'leagueLeaders']);
+        Route::get('/all-star-rosters', [GameController::class, 'allStarRosters']);
+        Route::post('/all-star-viewed', [GameController::class, 'markAllStarViewed']);
 
         // Season management
         Route::get('/season', [SeasonController::class, 'show']);
@@ -107,6 +110,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/trade/propose', [TradeController::class, 'proposeTrade']);
         Route::post('/trade/execute', [TradeController::class, 'executeTrade']);
         Route::get('/trade/history', [TradeController::class, 'getTradeHistory']);
+        Route::get('/trade/proposals', [TradeController::class, 'getProposals']);
+        Route::post('/trade/proposals/{id}/accept', [TradeController::class, 'acceptProposal']);
+        Route::post('/trade/proposals/{id}/reject', [TradeController::class, 'rejectProposal']);
 
         // Playoffs
         Route::get('/playoffs/bracket', [PlayoffController::class, 'getBracket']);

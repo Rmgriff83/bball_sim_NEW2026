@@ -7,6 +7,7 @@ use App\Models\Team;
 use App\Models\Player;
 use App\Models\Coach;
 use App\Models\Season;
+use App\Models\TradeProposal;
 use App\Services\AILineupService;
 use App\Services\CampaignPlayerService;
 use App\Services\CampaignSeasonService;
@@ -204,6 +205,9 @@ class CampaignController extends Controller
             'standings' => $standings,
             'upcoming_games' => $upcomingGames,
             'news' => $recentNews,
+            'pending_trade_proposals' => TradeProposal::where('campaign_id', $campaign->id)
+                ->where('status', 'pending')
+                ->count(),
             'metadata' => [
                 'updatedAt' => $serverUpdatedAt,
             ],
@@ -560,7 +564,7 @@ class CampaignController extends Controller
             return 25;
         }
         try {
-            return (int) now()->diffInYears($birthDate);
+            return (int) abs(now()->diffInYears($birthDate));
         } catch (\Exception $e) {
             return 25;
         }

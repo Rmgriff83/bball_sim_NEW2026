@@ -22,6 +22,9 @@ export const useGameStore = defineStore('game', () => {
   const simulatePreview = ref(null)
   const loadingPreview = ref(false)
 
+  // Cache tracking
+  const _loadedCampaignId = ref(null)
+
   // Background simulation state
   const backgroundSimulating = ref(false)
   const simulationBatchId = ref(null)
@@ -47,12 +50,18 @@ export const useGameStore = defineStore('game', () => {
   )
 
   // Actions
-  async function fetchGames(campaignId) {
+  async function fetchGames(campaignId, { force = false } = {}) {
+    // Return cached data if already loaded for this campaign
+    if (!force && _loadedCampaignId.value === campaignId && games.value.length > 0) {
+      return games.value
+    }
+
     loading.value = true
     error.value = null
     try {
       const response = await api.get(`/api/campaigns/${campaignId}/games`)
       games.value = response.data.games
+      _loadedCampaignId.value = campaignId
       return games.value
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to fetch games'
@@ -205,6 +214,18 @@ export const useGameStore = defineStore('game', () => {
         quarter_scores: response.data.scores.quarterScores,
       }
 
+      // Also update in games list so homepage shows in-progress state
+      const index = games.value.findIndex(g => g.id === gameId)
+      if (index !== -1) {
+        games.value[index] = {
+          ...games.value[index],
+          is_in_progress: true,
+          home_score: response.data.scores.home,
+          away_score: response.data.scores.away,
+          current_quarter: 1,
+        }
+      }
+
       // Start background polling if pre-game AI games were dispatched
       if (response.data.batchId) {
         startPollingSimulationStatus(campaignId, response.data.batchId)
@@ -274,6 +295,7 @@ export const useGameStore = defineStore('game', () => {
           games.value[index] = {
             ...games.value[index],
             is_complete: true,
+            is_in_progress: false,
             home_score: response.data.result.home_score,
             away_score: response.data.result.away_score,
           }
@@ -309,11 +331,73 @@ export const useGameStore = defineStore('game', () => {
           box_score: response.data.box_score,
           quarter_scores: response.data.scores.quarterScores,
         }
+
+        // Keep games list in sync with scores/quarter
+        const idx = games.value.findIndex(g => g.id === gameId)
+        if (idx !== -1) {
+          games.value[idx] = {
+            ...games.value[idx],
+            is_in_progress: true,
+            home_score: response.data.scores.home,
+            away_score: response.data.scores.away,
+            current_quarter: response.data.quarter,
+          }
+        }
       }
 
       return response.data
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to continue game'
+      throw err
+    } finally {
+      simulating.value = false
+    }
+  }
+
+  /**
+   * Sim an in-progress game to completion (skip remaining quarters).
+   */
+  async function simToEnd(campaignId, gameId) {
+    simulating.value = true
+    error.value = null
+
+    try {
+      const response = await api.post(`/api/campaigns/${campaignId}/games/${gameId}/sim-to-end`)
+
+      isLiveSimulation.value = false
+
+      currentGame.value = {
+        ...currentGame.value,
+        is_complete: true,
+        is_in_progress: false,
+        home_score: response.data.result.home_score,
+        away_score: response.data.result.away_score,
+        box_score: response.data.result.box_score,
+        quarter_scores: response.data.result.quarter_scores,
+        evolution: response.data.result.evolution,
+        rewards: response.data.rewards,
+      }
+
+      // Update game in list
+      const index = games.value.findIndex(g => g.id === gameId)
+      if (index !== -1) {
+        games.value[index] = {
+          ...games.value[index],
+          is_complete: true,
+          is_in_progress: false,
+          home_score: response.data.result.home_score,
+          away_score: response.data.result.away_score,
+        }
+      }
+
+      // Start background polling if batch was dispatched
+      if (response.data.batchId) {
+        startPollingSimulationStatus(campaignId, response.data.batchId)
+      }
+
+      return response.data
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to sim to end'
       throw err
     } finally {
       simulating.value = false
@@ -409,6 +493,10 @@ export const useGameStore = defineStore('game', () => {
     simulatePreview.value = null
   }
 
+  function invalidate() {
+    _loadedCampaignId.value = null
+  }
+
   /**
    * Start polling for background simulation status.
    */
@@ -502,12 +590,14 @@ export const useGameStore = defineStore('game', () => {
     simulateDay,
     startLiveGame,
     continueGame,
+    simToEnd,
     clearSimulationResult,
     clearCurrentGame,
     clearLiveSimulation,
     fetchSimulateToNextGamePreview,
     simulateToNextGame,
     clearSimulatePreview,
+    invalidate,
     startPollingSimulationStatus,
     stopPolling,
     resumePollingIfNeeded,

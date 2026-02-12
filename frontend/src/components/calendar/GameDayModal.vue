@@ -196,9 +196,9 @@ async function simulateToGame() {
     // Refresh data
     await Promise.all([
       campaignStore.fetchCampaign(props.campaignId),
-      teamStore.fetchTeam(props.campaignId),
-      leagueStore.fetchStandings(props.campaignId),
-      gameStore.fetchGames(props.campaignId)
+      teamStore.fetchTeam(props.campaignId, { force: true }),
+      leagueStore.fetchStandings(props.campaignId, { force: true }),
+      gameStore.fetchGames(props.campaignId, { force: true })
     ])
 
     // Emit event so parent can update
@@ -210,6 +210,47 @@ async function simulateToGame() {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Simulation failed. Please try again.')
     console.error('Failed to simulate:', err)
+  } finally {
+    simulating.value = false
+  }
+}
+
+async function simToEndOfGame() {
+  if (simulating.value) return
+
+  simulating.value = true
+  const loadingToastId = toastStore.showLoading('Simming to end...')
+
+  try {
+    const response = await gameStore.simToEnd(props.campaignId, props.game.id)
+
+    toastStore.removeMinimalToast(loadingToastId)
+
+    if (response.result) {
+      toastStore.showGameResult({
+        homeTeam: props.game.home_team?.abbreviation || props.game.home_team?.name || 'HOME',
+        awayTeam: props.game.away_team?.abbreviation || props.game.away_team?.name || 'AWAY',
+        homeScore: response.result.home_score,
+        awayScore: response.result.away_score,
+        gameId: props.game.id,
+        campaignId: props.campaignId,
+        isUserHome: props.game.is_user_home
+      })
+    }
+
+    await Promise.all([
+      campaignStore.fetchCampaign(props.campaignId),
+      teamStore.fetchTeam(props.campaignId, { force: true }),
+      leagueStore.fetchStandings(props.campaignId, { force: true }),
+      gameStore.fetchGames(props.campaignId, { force: true })
+    ])
+
+    emit('simulated')
+    close()
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError('Sim to end failed. Please try again.')
+    console.error('Failed to sim to end:', err)
   } finally {
     simulating.value = false
   }
@@ -373,6 +414,11 @@ onUnmounted(() => {
               <button class="btn btn-primary btn-continue" @click="playGame">
                 <Play :size="18" />
                 Continue Game
+              </button>
+              <button class="btn btn-secondary" @click="simToEndOfGame" :disabled="simulating">
+                <LoadingSpinner v-if="simulating" size="sm" />
+                <FastForward v-else :size="18" />
+                {{ simulating ? 'Simming...' : 'Sim to End' }}
               </button>
             </template>
             <template v-else>
@@ -619,7 +665,7 @@ onUnmounted(() => {
 
 .result-badge {
   font-size: 0.875rem;
-  font-weight: 700;
+  font-weight: 400;
   padding: 6px 12px;
   border-radius: var(--radius-md);
   text-transform: uppercase;

@@ -441,7 +441,7 @@ class TeamController extends Controller
             return 25;
         }
         try {
-            return (int) now()->diffInYears($birthDate);
+            return (int) abs(now()->diffInYears($birthDate));
         } catch (\Exception $e) {
             return 25;
         }

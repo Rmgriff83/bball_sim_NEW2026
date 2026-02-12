@@ -11,6 +11,11 @@ export const useFinanceStore = defineStore('finance', () => {
   const loading = ref(false)
   const error = ref(null)
 
+  // Cache tracking
+  const _rosterCampaignId = ref(null)
+  const _freeAgentsCampaignId = ref(null)
+  const _transactionsCampaignId = ref(null)
+
   // Modal state
   const selectedPlayer = ref(null)
   const showResignModal = ref(false)
@@ -35,7 +40,12 @@ export const useFinanceStore = defineStore('finance', () => {
   const canSignPlayers = computed(() => rosterCount.value < 15)
 
   // Actions
-  async function fetchFinanceSummary(campaignId) {
+  async function fetchFinanceSummary(campaignId, { force = false } = {}) {
+    // Summary is always loaded alongside roster contracts
+    if (!force && _rosterCampaignId.value === campaignId && financeSummary.value) {
+      return financeSummary.value
+    }
+
     loading.value = true
     error.value = null
     try {
@@ -50,13 +60,18 @@ export const useFinanceStore = defineStore('finance', () => {
     }
   }
 
-  async function fetchRosterContracts(campaignId) {
+  async function fetchRosterContracts(campaignId, { force = false } = {}) {
+    if (!force && _rosterCampaignId.value === campaignId && rosterWithContracts.value.length > 0) {
+      return { roster: rosterWithContracts.value, summary: financeSummary.value }
+    }
+
     loading.value = true
     error.value = null
     try {
       const response = await api.get(`/api/campaigns/${campaignId}/finances/roster`)
       rosterWithContracts.value = response.data.roster
       financeSummary.value = response.data.summary
+      _rosterCampaignId.value = campaignId
       return response.data
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to fetch roster contracts'
@@ -66,12 +81,17 @@ export const useFinanceStore = defineStore('finance', () => {
     }
   }
 
-  async function fetchFreeAgents(campaignId) {
+  async function fetchFreeAgents(campaignId, { force = false } = {}) {
+    if (!force && _freeAgentsCampaignId.value === campaignId && freeAgents.value.length > 0) {
+      return { free_agents: freeAgents.value }
+    }
+
     loading.value = true
     error.value = null
     try {
       const response = await api.get(`/api/campaigns/${campaignId}/finances/free-agents`)
       freeAgents.value = response.data.free_agents
+      _freeAgentsCampaignId.value = campaignId
       return response.data
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to fetch free agents'
@@ -81,12 +101,17 @@ export const useFinanceStore = defineStore('finance', () => {
     }
   }
 
-  async function fetchTransactions(campaignId) {
+  async function fetchTransactions(campaignId, { force = false } = {}) {
+    if (!force && _transactionsCampaignId.value === campaignId && transactions.value.length > 0) {
+      return { transactions: transactions.value }
+    }
+
     loading.value = true
     error.value = null
     try {
       const response = await api.get(`/api/campaigns/${campaignId}/finances/transactions`)
       transactions.value = response.data.transactions
+      _transactionsCampaignId.value = campaignId
       return response.data
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to fetch transactions'
@@ -216,6 +241,15 @@ export const useFinanceStore = defineStore('finance', () => {
     showResignModal.value = false
     showSignModal.value = false
     showDropModal.value = false
+    _rosterCampaignId.value = null
+    _freeAgentsCampaignId.value = null
+    _transactionsCampaignId.value = null
+  }
+
+  function invalidate() {
+    _rosterCampaignId.value = null
+    _freeAgentsCampaignId.value = null
+    _transactionsCampaignId.value = null
   }
 
   // Utility functions
@@ -271,6 +305,7 @@ export const useFinanceStore = defineStore('finance', () => {
     openDropModal,
     closeDropModal,
     clearFinanceState,
+    invalidate,
     // Utilities
     formatSalary,
     formatContractYears,

@@ -201,14 +201,36 @@ class CampaignSeasonService
             }
         }
 
-        // Shuffle and distribute across season
+        // Distribute games across season ensuring no team plays twice on the same day
         shuffle($matchups);
         $gamesPerDay = 8;
         $currentDate = $startDate->copy();
         $schedule = [];
         $gameNumber = 1;
+        $remaining = $matchups;
 
-        foreach (array_chunk($matchups, $gamesPerDay) as $dayGames) {
+        while (!empty($remaining)) {
+            $dayGames = [];
+            $teamsPlayingToday = [];
+            $unscheduled = [];
+
+            foreach ($remaining as $matchup) {
+                $home = $matchup['homeTeamId'];
+                $away = $matchup['awayTeamId'];
+
+                if (count($dayGames) >= $gamesPerDay
+                    || in_array($home, $teamsPlayingToday)
+                    || in_array($away, $teamsPlayingToday)
+                ) {
+                    $unscheduled[] = $matchup;
+                    continue;
+                }
+
+                $dayGames[] = $matchup;
+                $teamsPlayingToday[] = $home;
+                $teamsPlayingToday[] = $away;
+            }
+
             foreach ($dayGames as $matchup) {
                 $gameId = sprintf('game_%d_%04d', $year, $gameNumber);
 
@@ -230,6 +252,10 @@ class CampaignSeasonService
 
                 $gameNumber++;
             }
+
+            // Re-shuffle remaining to avoid ordering bias
+            shuffle($unscheduled);
+            $remaining = $unscheduled;
 
             $currentDate->addDay();
 

@@ -10,6 +10,8 @@ use App\Models\Team;
 use App\Services\CampaignSeasonService;
 use App\Services\GameSimulationService;
 use App\Services\AILineupService;
+use App\Services\AITradeProposalService;
+use App\Services\AllStarService;
 use App\Services\PlayoffService;
 use App\Services\PlayerEvolution\PlayerEvolutionService;
 use App\Services\RewardService;
@@ -297,10 +299,14 @@ class GameController extends Controller
                     $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
                     if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
                         $evolutionService->processWeeklyUpdates($campaign);
+                        $proposalService = app(AITradeProposalService::class);
+                        $proposalService->generateWeeklyProposals($campaign);
                     }
                     if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
                         $evolutionService->processMonthlyDevelopment($campaign);
                     }
+                    app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                    app(AllStarService::class)->processAllStarSelections($campaign);
                 })
                 ->catch(function ($batch, $e) use ($campaignId) {
                     Log::error("Simulation batch failed for campaign {$campaignId}: " . $e->getMessage());
@@ -318,10 +324,13 @@ class GameController extends Controller
             $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
             if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
                 $this->evolutionService->processWeeklyUpdates($campaign);
+                app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
             }
             if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
                 $this->evolutionService->processMonthlyDevelopment($campaign);
             }
+            app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+            app(AllStarService::class)->processAllStarSelections($campaign);
         }
 
         // Strip animation data for quick sim mode
@@ -456,10 +465,14 @@ class GameController extends Controller
                     $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
                     if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
                         $evolutionService->processWeeklyUpdates($campaign);
+                        $proposalService = app(AITradeProposalService::class);
+                        $proposalService->generateWeeklyProposals($campaign);
                     }
                     if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
                         $evolutionService->processMonthlyDevelopment($campaign);
                     }
+                    app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                    app(AllStarService::class)->processAllStarSelections($campaign);
                 })
                 ->catch(function ($batch, $e) use ($campaignId) {
                     Log::error("SimulateDay batch failed for campaign {$campaignId}: " . $e->getMessage());
@@ -478,10 +491,13 @@ class GameController extends Controller
             $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
             if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
                 $this->evolutionService->processWeeklyUpdates($campaign);
+                app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
             }
             if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
                 $this->evolutionService->processMonthlyDevelopment($campaign);
             }
+            app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+            app(AllStarService::class)->processAllStarSelections($campaign);
         }
 
         $response = [
@@ -599,6 +615,43 @@ class GameController extends Controller
         usort($leaders, fn($a, $b) => $b['ppg'] <=> $a['ppg']);
 
         return response()->json(['leaders' => $leaders]);
+    }
+
+    /**
+     * Get All-Star and Rising Stars rosters for the current season.
+     */
+    public function allStarRosters(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $year = $campaign->currentSeason?->year ?? $campaign->game_year ?? 2025;
+        $settings = $campaign->settings ?? [];
+        $rosters = $settings["all_star_rosters_{$year}"] ?? null;
+
+        if (!$rosters) {
+            return response()->json(['rosters' => null]);
+        }
+
+        return response()->json(['rosters' => $rosters]);
+    }
+
+    /**
+     * Mark All-Star rosters as viewed.
+     */
+    public function markAllStarViewed(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $year = $campaign->currentSeason?->year ?? $campaign->game_year ?? 2025;
+        $settings = $campaign->settings ?? [];
+        $settings["all_star_viewed_{$year}"] = true;
+        $campaign->update(['settings' => $settings]);
+
+        return response()->json(['success' => true]);
     }
 
     /**
@@ -1006,10 +1059,13 @@ class GameController extends Controller
                         $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
                         if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
                             $evolutionService->processWeeklyUpdates($campaign);
+                            app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
                         }
                         if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
                             $evolutionService->processMonthlyDevelopment($campaign);
                         }
+                        app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                        app(AllStarService::class)->processAllStarSelections($campaign);
                     })
                     ->catch(function ($batch, $e) use ($campaignId) {
                         Log::error("Post-game batch failed for campaign {$campaignId}: " . $e->getMessage());
@@ -1060,6 +1116,218 @@ class GameController extends Controller
             'isGameComplete' => false,
             ...$result['quarterResult'],
         ]);
+    }
+
+    /**
+     * Sim an in-progress game to completion (skip remaining quarters).
+     */
+    public function simToEnd(Request $request, Campaign $campaign, string $gameId): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $year = $campaign->currentSeason?->year ?? 2025;
+        $game = $this->seasonService->getGame($campaign->id, $year, $gameId);
+
+        if (!$game) {
+            return response()->json(['message' => 'Game not found'], 404);
+        }
+
+        if ($game['isComplete']) {
+            return response()->json(['message' => 'Game has already been played'], 400);
+        }
+
+        if (!($game['isInProgress'] ?? false) || !isset($game['gameState'])) {
+            return response()->json(['message' => 'Game not in progress'], 400);
+        }
+
+        $result = $this->simulationService->simToEnd($game['gameState']);
+
+        $homeTeam = Team::find($game['homeTeamId']);
+        $awayTeam = Team::find($game['awayTeamId']);
+        $finalResult = $result['finalResult'];
+
+        // Update game in JSON (remove gameState, mark complete)
+        $this->seasonService->updateGame($campaign->id, $year, $gameId, [
+            'isComplete' => true,
+            'isInProgress' => false,
+            'gameState' => null,
+            'homeScore' => $finalResult['home_score'],
+            'awayScore' => $finalResult['away_score'],
+            'boxScore' => $finalResult['box_score'],
+            'quarterScores' => $finalResult['quarter_scores'] ?? null,
+        ], true);
+
+        // Update standings
+        $this->seasonService->updateStandingsAfterGame(
+            $campaign->id,
+            $year,
+            $game['homeTeamId'],
+            $game['awayTeamId'],
+            $finalResult['home_score'],
+            $finalResult['away_score'],
+            $homeTeam->conference,
+            $awayTeam->conference
+        );
+
+        // Update player stats
+        $this->updatePlayerStats(
+            $campaign->id,
+            $year,
+            $finalResult['box_score'],
+            $homeTeam->id,
+            $awayTeam->id
+        );
+
+        // Update coach stats
+        $this->updateCoachStats($homeTeam->id, $awayTeam->id, $finalResult['home_score'], $finalResult['away_score'], $game['isPlayoff'] ?? false);
+
+        // Process evolution
+        $evolutionSummary = null;
+        try {
+            $evolutionSummary = $this->evolutionService->processPostGameFromData(
+                $campaign,
+                $game,
+                $finalResult['home_score'],
+                $finalResult['away_score'],
+                [
+                    'home' => $finalResult['box_score']['home'],
+                    'away' => $finalResult['box_score']['away'],
+                ]
+            );
+        } catch (\Exception $e) {
+            \Log::error('Evolution processing failed (simToEnd): ' . $e->getMessage(), [
+                'game_id' => $gameId,
+                'trace' => $e->getTraceAsString(),
+            ]);
+        }
+
+        // Process synergy rewards
+        $rewardSummary = null;
+        if ($game['homeTeamId'] === $campaign->team_id || $game['awayTeamId'] === $campaign->team_id) {
+            $isHome = $game['homeTeamId'] === $campaign->team_id;
+            $didWin = ($isHome && $finalResult['home_score'] > $finalResult['away_score'])
+                || (!$isHome && $finalResult['away_score'] > $finalResult['home_score']);
+
+            $synergiesActivated = $finalResult['synergies_activated'] ?? [];
+            $userSynergies = $isHome
+                ? ($synergiesActivated['home'] ?? 0)
+                : ($synergiesActivated['away'] ?? 0);
+
+            if ($userSynergies > 0) {
+                $campaign->loadMissing('user.profile');
+                if ($campaign->user && $campaign->user->profile) {
+                    $tokensPerSynergy = $didWin ? 2 : 1;
+                    $tokensAwarded = $campaign->user->profile->awardSynergyTokens($userSynergies, $tokensPerSynergy);
+                    $rewardSummary = [
+                        'synergies_activated' => $userSynergies,
+                        'tokens_awarded' => $tokensAwarded,
+                        'win_bonus_applied' => $didWin,
+                    ];
+                }
+            }
+        }
+
+        // Update game with evolution and rewards data
+        $this->seasonService->updateGame($campaign->id, $year, $gameId, [
+            'evolution' => $evolutionSummary,
+            'rewards' => $rewardSummary,
+        ], true);
+
+        // Process playoff game completion if applicable
+        $playoffUpdate = null;
+        if ($game['isPlayoff'] ?? false) {
+            $playoffUpdate = $this->processPlayoffGameCompletion($campaign, $game, $finalResult['home_score'], $finalResult['away_score']);
+        }
+
+        // Collect remaining AI games on this day for background batch
+        $gameDate = $game['gameDate'];
+        $allGames = $this->seasonService->getGamesByDate($campaign->id, $year, $gameDate);
+
+        $teamsWithGames = [$game['homeTeamId'], $game['awayTeamId']];
+        $remainingJobs = [];
+
+        foreach ($allGames as $otherGame) {
+            if ($otherGame['id'] === $gameId || ($otherGame['isComplete'] ?? false)) {
+                continue;
+            }
+
+            $teamsWithGames[] = $otherGame['homeTeamId'];
+            $teamsWithGames[] = $otherGame['awayTeamId'];
+
+            $remainingJobs[] = new SimulateGameJob(
+                $campaign->id, $year, $otherGame,
+                $otherGame['homeTeamId'], $otherGame['awayTeamId'],
+                false, null, $gameDate
+            );
+        }
+
+        $batchId = null;
+
+        if (!empty($remainingJobs)) {
+            $campaignId = $campaign->id;
+            $uniqueTeams = array_unique($teamsWithGames);
+            $newDate = Carbon::parse($gameDate)->addDay();
+
+            $batch = Bus::batch($remainingJobs)
+                ->name("Post-game day: Campaign {$campaignId}")
+                ->then(function () use ($campaignId, $uniqueTeams, $newDate, $year) {
+                    $campaign = Campaign::find($campaignId);
+                    if (!$campaign) return;
+
+                    $evolutionService = app(PlayerEvolutionService::class);
+                    $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+
+                    $campaign->update([
+                        'current_date' => $newDate,
+                        'simulation_batch_id' => null,
+                    ]);
+
+                    $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                    if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                        $evolutionService->processWeeklyUpdates($campaign);
+                        $proposalService = app(AITradeProposalService::class);
+                        $proposalService->generateWeeklyProposals($campaign);
+                    }
+                    if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                        $evolutionService->processMonthlyDevelopment($campaign);
+                    }
+                    app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                    app(AllStarService::class)->processAllStarSelections($campaign);
+                })
+                ->catch(function ($batch, $e) use ($campaignId) {
+                    Log::error("Post-game batch failed for campaign {$campaignId}: " . $e->getMessage());
+                    Campaign::where('id', $campaignId)->update(['simulation_batch_id' => null]);
+                })
+                ->dispatch();
+
+            $batchId = $batch->id;
+            $campaign->update(['simulation_batch_id' => $batchId]);
+        } else {
+            $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
+            $campaign->update(['current_date' => Carbon::parse($gameDate)->addDay()]);
+        }
+
+        $response = [
+            'message' => 'Game complete',
+            'isGameComplete' => true,
+            'result' => array_merge($finalResult, [
+                'evolution' => $evolutionSummary,
+            ]),
+            'rewards' => $rewardSummary,
+        ];
+
+        if ($batchId) {
+            $response['batchId'] = $batchId;
+            $response['totalAiGames'] = count($remainingJobs);
+        }
+
+        if ($playoffUpdate) {
+            $response['playoffUpdate'] = $playoffUpdate;
+        }
+
+        return response()->json($response);
     }
 
     /**
@@ -1299,10 +1567,13 @@ class GameController extends Controller
         $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
         if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
             $this->evolutionService->processWeeklyUpdates($campaign);
+            app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
         }
         if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
             $this->evolutionService->processMonthlyDevelopment($campaign);
         }
+        app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+        app(AllStarService::class)->processAllStarSelections($campaign);
 
         return [
             'date' => $games[0]['gameDate'] ?? null,
@@ -1574,10 +1845,13 @@ class GameController extends Controller
                         $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
                         if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
                             $evolutionService->processWeeklyUpdates($campaign);
+                            app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
                         }
                         if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
                             $evolutionService->processMonthlyDevelopment($campaign);
                         }
+                        app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                        app(AllStarService::class)->processAllStarSelections($campaign);
                     }
                 })
                 ->catch(function ($batch, $e) use ($campaignId) {
@@ -1601,10 +1875,13 @@ class GameController extends Controller
                 $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
                 if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
                     $this->evolutionService->processWeeklyUpdates($campaign);
+                    app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
                 }
                 if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
                     $this->evolutionService->processMonthlyDevelopment($campaign);
                 }
+                app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                app(AllStarService::class)->processAllStarSelections($campaign);
             }
         }
 

@@ -15,6 +15,9 @@ export const useTradeStore = defineStore('trade', () => {
   const userOffering = ref([]) // Assets user is giving
   const userRequesting = ref([]) // Assets user wants
 
+  // AI-initiated trade proposals
+  const pendingProposals = ref([])
+
   const loading = ref(false)
   const proposing = ref(false)
   const error = ref(null)
@@ -155,6 +158,46 @@ export const useTradeStore = defineStore('trade', () => {
     }
   }
 
+  // AI-initiated trade proposal actions
+  async function fetchPendingProposals(campaignId) {
+    try {
+      const response = await api.get(`/api/campaigns/${campaignId}/trade/proposals`)
+      pendingProposals.value = response.data.proposals
+      return pendingProposals.value
+    } catch (err) {
+      console.error('Failed to fetch trade proposals:', err)
+      pendingProposals.value = []
+      return []
+    }
+  }
+
+  async function acceptProposal(campaignId, proposalId) {
+    proposing.value = true
+    error.value = null
+    try {
+      const response = await api.post(`/api/campaigns/${campaignId}/trade/proposals/${proposalId}/accept`)
+      // Remove from pending list
+      pendingProposals.value = pendingProposals.value.filter(p => p.id !== proposalId)
+      return response.data
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to accept trade proposal'
+      throw err
+    } finally {
+      proposing.value = false
+    }
+  }
+
+  async function rejectProposal(campaignId, proposalId) {
+    try {
+      await api.post(`/api/campaigns/${campaignId}/trade/proposals/${proposalId}/reject`)
+      // Remove from pending list
+      pendingProposals.value = pendingProposals.value.filter(p => p.id !== proposalId)
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to reject trade proposal'
+      throw err
+    }
+  }
+
   // Trade management
   function addToUserOffering(asset) {
     // Prevent duplicates
@@ -241,8 +284,12 @@ export const useTradeStore = defineStore('trade', () => {
 
   function getDirectionLabel(direction) {
     const labels = {
-      contending: 'Contending',
+      title_contender: 'Title Contender',
+      win_now: 'Win Now',
+      ascending: 'Ascending',
       rebuilding: 'Rebuilding',
+      // Legacy fallbacks
+      contending: 'Contending',
       middling: 'Neutral',
     }
     return labels[direction] || direction
@@ -250,9 +297,13 @@ export const useTradeStore = defineStore('trade', () => {
 
   function getDirectionColor(direction) {
     const colors = {
-      contending: '#10B981', // Green
-      rebuilding: '#F59E0B', // Amber
-      middling: '#6B7280',   // Gray
+      title_contender: '#10B981', // Green
+      win_now: '#3B82F6',         // Blue
+      ascending: '#8B5CF6',       // Purple
+      rebuilding: '#F59E0B',      // Amber
+      // Legacy fallbacks
+      contending: '#10B981',
+      middling: '#6B7280',
     }
     return colors[direction] || '#6B7280'
   }
@@ -267,6 +318,7 @@ export const useTradeStore = defineStore('trade', () => {
     tradeHistory,
     userOffering,
     userRequesting,
+    pendingProposals,
     loading,
     proposing,
     error,
@@ -286,6 +338,9 @@ export const useTradeStore = defineStore('trade', () => {
     proposeTrade,
     executeTrade,
     fetchTradeHistory,
+    fetchPendingProposals,
+    acceptProposal,
+    rejectProposal,
     addToUserOffering,
     removeFromUserOffering,
     addToUserRequesting,

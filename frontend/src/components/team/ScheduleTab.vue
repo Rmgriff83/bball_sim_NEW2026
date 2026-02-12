@@ -5,7 +5,7 @@ import { useGameStore } from '@/stores/game'
 import { useCampaignStore } from '@/stores/campaign'
 import { LoadingSpinner } from '@/components/ui'
 import GameDayModal from '@/components/calendar/GameDayModal.vue'
-import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-vue-next'
 
 const props = defineProps({
   campaignId: {
@@ -21,6 +21,7 @@ const campaignStore = useCampaignStore()
 const campaign = computed(() => campaignStore.currentCampaign)
 const userTeam = computed(() => campaign.value?.team)
 const loading = ref(true)
+const isExpanded = ref(false)
 
 // Current viewing month (Date object set to first of month)
 const currentMonth = ref(new Date())
@@ -156,6 +157,35 @@ const currentMonthDays = computed(() => {
   return calendarDays.value.filter(day => day.isCurrentMonth)
 })
 
+// Whether the user is viewing the month that contains the campaign date
+const isViewingCurrentMonth = computed(() => {
+  if (!campaignDate.value) return false
+  return currentMonth.value.getFullYear() === campaignDate.value.getFullYear() &&
+    currentMonth.value.getMonth() === campaignDate.value.getMonth()
+})
+
+// The 7 days (Sun-Sat) of the week containing the campaign date
+const currentWeekDays = computed(() => {
+  const date = campaignDate.value || new Date()
+  const dayOfWeek = date.getDay() // 0=Sun
+  const sunday = new Date(date)
+  sunday.setDate(date.getDate() - dayOfWeek)
+  const saturday = new Date(sunday)
+  saturday.setDate(sunday.getDate() + 6)
+
+  const sunKey = formatDateKey(sunday)
+  const satKey = formatDateKey(saturday)
+
+  return calendarDays.value.filter(d => d.dateKey >= sunKey && d.dateKey <= satKey)
+})
+
+// What days to actually render in the grid
+const displayDays = computed(() => {
+  if (!isViewingCurrentMonth.value) return currentMonthDays.value
+  if (isExpanded.value) return currentMonthDays.value
+  return currentWeekDays.value
+})
+
 // Check if a day is "today" in campaign time
 function isToday(date) {
   if (!campaignDate.value) return false
@@ -188,6 +218,7 @@ function prevMonth() {
   )
   if (prevIndex > 0) {
     currentMonth.value = seasonMonths.value[prevIndex - 1]
+    isExpanded.value = false
   }
 }
 
@@ -198,7 +229,12 @@ function nextMonth() {
   )
   if (currentIndex < seasonMonths.value.length - 1) {
     currentMonth.value = seasonMonths.value[currentIndex + 1]
+    isExpanded.value = false
   }
+}
+
+function toggleExpand() {
+  isExpanded.value = !isExpanded.value
 }
 
 function goToToday() {
@@ -293,6 +329,19 @@ function getInProgressScore(game) {
   }
 }
 
+// Navigate to the month containing a specific game date
+function goToGameDate(gameDateStr) {
+  if (!gameDateStr || !seasonMonths.value.length) return
+  const date = new Date(gameDateStr + 'T00:00:00')
+  const target = seasonMonths.value.find(m =>
+    m.getFullYear() === date.getFullYear() &&
+    m.getMonth() === date.getMonth()
+  )
+  if (target) {
+    currentMonth.value = target
+  }
+}
+
 // Load data
 onMounted(async () => {
   try {
@@ -301,8 +350,11 @@ onMounted(async () => {
       await gameStore.fetchGames(props.campaignId)
     }
 
-    // Set initial month to campaign date or first month of season
-    if (campaignDate.value && seasonMonths.value.length) {
+    // Navigate to next/current user game, falling back to campaign date
+    const targetGame = gameStore.nextUserGame
+    if (targetGame?.game_date) {
+      goToGameDate(targetGame.game_date)
+    } else if (campaignDate.value && seasonMonths.value.length) {
       goToToday()
     } else if (seasonMonths.value.length) {
       currentMonth.value = seasonMonths.value[0]
@@ -354,12 +406,21 @@ watch(campaignDate, () => {
           <span class="month-label">{{ monthDisplayName }}</span>
         </div>
 
+        <!-- Expand/Collapse Toggle -->
+        <div v-if="isViewingCurrentMonth" class="expand-toggle-row">
+          <button class="expand-toggle-btn" @click="toggleExpand">
+            <span>{{ isExpanded ? 'Show This Week' : 'See Full Month' }}</span>
+            <component :is="isExpanded ? ChevronUp : ChevronDown" :size="16" />
+          </button>
+        </div>
+
         <!-- Calendar Grid -->
         <div class="calendar-grid-wrapper">
           <div class="calendar-grid">
             <button
-              v-for="(dayData, index) in currentMonthDays"
+              v-for="(dayData, index) in displayDays"
               :key="index"
+              :data-date="dayData.dateKey"
               class="calendar-day"
               :class="{
                 'has-game': dayData.games.length > 0,
@@ -581,25 +642,6 @@ watch(campaignDate, () => {
   letter-spacing: 0.02em;
 }
 
-/* Calendar Grid Wrapper - scrollable after 4 rows */
-.calendar-grid-wrapper {
-  max-height: calc(4 * 80px + 3px);
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-@media (min-width: 500px) {
-  .calendar-grid-wrapper {
-    max-height: calc(4 * 85px + 3px);
-  }
-}
-
-@media (min-width: 700px) {
-  .calendar-grid-wrapper {
-    max-height: calc(4 * 90px + 3px);
-  }
-}
-
 /* Calendar Grid - Responsive columns */
 .calendar-grid {
   display: grid;
@@ -731,7 +773,7 @@ watch(campaignDate, () => {
   left: 5px;
   font-family: var(--font-display);
   font-size: 1.5rem;
-  font-weight: 800;
+  font-weight: 400;
   text-transform: uppercase;
   line-height: 1;
 }
@@ -957,5 +999,32 @@ watch(campaignDate, () => {
 .nav-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* Expand/Collapse Toggle */
+.expand-toggle-row {
+  display: flex;
+  justify-content: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.expand-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: color 0.2s ease;
+}
+
+.expand-toggle-btn:hover {
+  color: var(--color-text-primary);
 }
 </style>

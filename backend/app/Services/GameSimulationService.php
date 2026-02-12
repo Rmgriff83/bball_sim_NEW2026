@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Cache;
 class GameSimulationService
 {
     private const QUARTERS = 4;
-    private const QUARTER_LENGTH_MINUTES = 12;
+    private const QUARTER_LENGTH_MINUTES = 10;
     private const POSSESSIONS_PER_MINUTE = 2.2; // ~100 possessions per game
     private const SHOT_CLOCK_SECONDS = 24;
 
@@ -1637,6 +1637,22 @@ class GameSimulationService
             'isComplete' => $isComplete,
             'finalResult' => $isComplete ? $this->buildFinalResult() : null,
         ];
+    }
+
+    /**
+     * Simulate the remainder of an in-progress game to completion.
+     * Loops continueGame() until the game is complete.
+     */
+    public function simToEnd(array $gameState): array
+    {
+        $result = null;
+        while (true) {
+            $result = $this->continueGame($gameState);
+            if ($result['isComplete']) {
+                return $result;
+            }
+            $gameState = $result['gameState'];
+        }
     }
 
     /**

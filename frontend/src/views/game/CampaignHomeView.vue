@@ -1,19 +1,23 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import api from '@/composables/useApi'
 import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
 import { useGameStore } from '@/stores/game'
 import { useLeagueStore } from '@/stores/league'
 import { useToastStore } from '@/stores/toast'
 import { usePlayoffStore } from '@/stores/playoff'
+import { useTradeStore } from '@/stores/trade'
 import { LoadingSpinner, BaseModal } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
 import SeasonEndModal from '@/components/playoffs/SeasonEndModal.vue'
 import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import PlayoffBracket from '@/components/playoffs/PlayoffBracket.vue'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy } from 'lucide-vue-next'
+import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
+import AllStarModal from '@/components/game/AllStarModal.vue'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,9 +27,14 @@ const gameStore = useGameStore()
 const leagueStore = useLeagueStore()
 const toastStore = useToastStore()
 const playoffStore = usePlayoffStore()
+const tradeStore = useTradeStore()
 
 const showSimulateModal = ref(false)
+const showTradeProposalModal = ref(false)
+const currentProposal = ref(null)
 const showPlayoffBracket = ref(false)
+const showAllStarModal = ref(false)
+const allStarRosters = ref(null)
 const showLineupWarningModal = ref(false)
 const pendingGameAction = ref(null) // 'simulate' or gameId for play
 
@@ -218,6 +227,10 @@ onMounted(async () => {
       if (batchId) {
         gameStore.resumePollingIfNeeded(campaignId.value, batchId)
       }
+      // Check for pending trade proposals
+      checkPendingTradeProposals()
+      // Check for All-Star selections
+      checkAllStarSelections()
     }).catch(err => console.error('Failed to refresh campaign:', err))
     // Also check playoff status in background
     checkPlayoffStatus()
@@ -232,6 +245,10 @@ onMounted(async () => {
       }
       // Check playoff status after initial load
       await checkPlayoffStatus()
+      // Check for pending trade proposals
+      await checkPendingTradeProposals()
+      // Check for All-Star selections
+      await checkAllStarSelections()
     } catch (err) {
       console.error('Failed to load campaign:', err)
     } finally {
@@ -371,9 +388,9 @@ async function handleConfirmSimulate() {
     // Standings include the user's game result (updated synchronously on backend)
     await Promise.all([
       campaignStore.fetchCampaign(campaignId.value),
-      teamStore.fetchTeam(campaignId.value),
-      gameStore.fetchGames(campaignId.value),
-      leagueStore.fetchStandings(campaignId.value)
+      teamStore.fetchTeam(campaignId.value, { force: true }),
+      gameStore.fetchGames(campaignId.value, { force: true }),
+      leagueStore.fetchStandings(campaignId.value, { force: true })
     ])
 
     if (!gameStore.backgroundSimulating) {
@@ -387,6 +404,47 @@ async function handleConfirmSimulate() {
   }
 }
 
+async function handleSimToEnd() {
+  const loadingToastId = toastStore.showLoading('Simming to end...')
+
+  try {
+    const response = await gameStore.simToEnd(campaignId.value, nextGame.value.id)
+
+    toastStore.removeMinimalToast(loadingToastId)
+
+    if (response.result) {
+      toastStore.showGameResult({
+        homeTeam: nextGame.value.home_team?.abbreviation || 'HOME',
+        awayTeam: nextGame.value.away_team?.abbreviation || 'AWAY',
+        homeScore: response.result.home_score,
+        awayScore: response.result.away_score,
+        gameId: nextGame.value.id,
+        campaignId: campaignId.value,
+        isUserHome: nextGame.value.home_team_id === teamStore.team?.id
+      })
+    }
+
+    if (response.playoffUpdate) {
+      playoffStore.handlePlayoffUpdate(response.playoffUpdate)
+    }
+
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value),
+      teamStore.fetchTeam(campaignId.value, { force: true }),
+      gameStore.fetchGames(campaignId.value, { force: true }),
+      leagueStore.fetchStandings(campaignId.value, { force: true })
+    ])
+
+    if (!gameStore.backgroundSimulating) {
+      await checkPlayoffStatus()
+    }
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError('Sim to end failed. Please try again.')
+    console.error('Failed to sim to end:', err)
+  }
+}
+
 // Watch for background simulation completion to refresh data
 watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
   if (oldVal === true && newVal === false) {
@@ -394,16 +452,122 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
     try {
       await Promise.all([
         campaignStore.fetchCampaign(campaignId.value),
-        leagueStore.fetchStandings(campaignId.value),
-        gameStore.fetchGames(campaignId.value)
+        leagueStore.fetchStandings(campaignId.value, { force: true }),
+        gameStore.fetchGames(campaignId.value, { force: true })
       ])
       await checkPlayoffStatus()
       toastStore.showSuccess('All league games simulated')
+      // Check for new trade proposals generated during simulation
+      await checkPendingTradeProposals()
+      // Check for All-Star selections
+      await checkAllStarSelections()
     } catch (err) {
       console.error('Failed to refresh after background simulation:', err)
     }
   }
 })
+
+// Trade proposal handling
+async function checkPendingTradeProposals() {
+  const count = campaignStore.currentCampaign?.pending_trade_proposals
+  if (count && count > 0) {
+    const proposals = await tradeStore.fetchPendingProposals(campaignId.value)
+    if (proposals.length > 0) {
+      currentProposal.value = proposals[0]
+      showTradeProposalModal.value = true
+    }
+  }
+}
+
+async function handleAcceptProposal(proposal) {
+  const loadingToastId = toastStore.showLoading('Processing trade...')
+  try {
+    await tradeStore.acceptProposal(campaignId.value, proposal.id)
+    showTradeProposalModal.value = false
+    currentProposal.value = null
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showSuccess('Trade completed!')
+    // Refresh team and campaign data
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value),
+      teamStore.fetchTeam(campaignId.value, { force: true }),
+    ])
+    // Show next proposal if any
+    if (tradeStore.pendingProposals.length > 0) {
+      currentProposal.value = tradeStore.pendingProposals[0]
+      showTradeProposalModal.value = true
+    }
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError(tradeStore.error || 'Failed to accept trade')
+  }
+}
+
+async function handleRejectProposal(proposal) {
+  try {
+    await tradeStore.rejectProposal(campaignId.value, proposal.id)
+    showTradeProposalModal.value = false
+    currentProposal.value = null
+    // Show next proposal if any
+    if (tradeStore.pendingProposals.length > 0) {
+      currentProposal.value = tradeStore.pendingProposals[0]
+      showTradeProposalModal.value = true
+    }
+  } catch (err) {
+    toastStore.showError('Failed to reject proposal')
+  }
+}
+
+function handleCloseProposalModal() {
+  showTradeProposalModal.value = false
+  currentProposal.value = null
+}
+
+// All-Star selection handling
+async function checkAllStarSelections() {
+  const settings = campaignStore.currentCampaign?.settings || {}
+  const year = campaignStore.currentCampaign?.season?.year || campaignStore.currentCampaign?.game_year || 2025
+  const selectedKey = `all_star_selected_${year}`
+  const viewedKey = `all_star_viewed_${year}`
+
+  if (settings[selectedKey] && !settings[viewedKey]) {
+    try {
+      const response = await api.get(`/api/campaigns/${campaignId.value}/all-star-rosters`)
+      if (response.data.rosters) {
+        allStarRosters.value = response.data.rosters
+        showAllStarModal.value = true
+      }
+    } catch (err) {
+      console.error('Failed to fetch All-Star rosters:', err)
+    }
+  }
+}
+
+async function handleCloseAllStarModal() {
+  showAllStarModal.value = false
+  try {
+    await api.post(`/api/campaigns/${campaignId.value}/all-star-viewed`)
+    await campaignStore.fetchCampaign(campaignId.value)
+  } catch (err) {
+    console.error('Failed to mark All-Star as viewed:', err)
+  }
+}
+
+async function openAllStarModal() {
+  if (allStarRosters.value) {
+    showAllStarModal.value = true
+    return
+  }
+  try {
+    const response = await api.get(`/api/campaigns/${campaignId.value}/all-star-rosters`)
+    if (response.data.rosters) {
+      allStarRosters.value = response.data.rosters
+      showAllStarModal.value = true
+    }
+  } catch (err) {
+    console.error('Failed to fetch All-Star rosters:', err)
+  }
+}
 
 function handleCloseSimulateModal() {
   showSimulateModal.value = false
@@ -526,6 +690,16 @@ function handleCloseSimulateModal() {
               <span v-if="gameStore.simulating" class="btn-loading"></span>
               {{ gameStore.simulating ? 'SIMULATING...' : 'SIMULATE' }}
             </button>
+            <button
+              v-if="isGameInProgress"
+              class="btn-simulate-game"
+              @click="handleSimToEnd"
+              :disabled="gameStore.simulating || gameStore.backgroundSimulating"
+            >
+              <FastForward v-if="!gameStore.simulating" class="btn-icon" :size="16" />
+              <span v-if="gameStore.simulating" class="btn-loading"></span>
+              {{ gameStore.simulating ? 'SIMULATING...' : 'SIM TO END' }}
+            </button>
           </div>
         </div>
       </section>
@@ -624,9 +798,16 @@ function handleCloseSimulateModal() {
       <section class="news-card">
         <h3 class="section-header">LATEST NEWS</h3>
         <div v-if="news.length" class="news-list">
-          <div v-for="item in news.slice(0, 5)" :key="item.id" class="news-item">
-            <div class="news-icon">
-              <Newspaper :size="18" />
+          <div
+            v-for="item in news.slice(0, 5)"
+            :key="item.id"
+            class="news-item"
+            :class="{ 'news-highlight': item.event_type === 'award' && item.headline?.includes('All-Star') }"
+            @click="item.event_type === 'award' && item.headline?.includes('All-Star') ? openAllStarModal() : null"
+          >
+            <div class="news-icon" :class="{ 'news-icon-star': item.event_type === 'award' }">
+              <Star v-if="item.event_type === 'award'" :size="18" />
+              <Newspaper v-else :size="18" />
             </div>
             <div class="news-content">
               <p class="news-headline">{{ item.headline }}</p>
@@ -715,6 +896,23 @@ function handleCloseSimulateModal() {
       :year="campaign?.current_season?.year"
       :user-team-id="team?.id"
       @close="handleChampionshipClose"
+    />
+
+    <!-- Trade Proposal Modal -->
+    <TradeProposalModal
+      :show="showTradeProposalModal"
+      :proposal="currentProposal"
+      @close="handleCloseProposalModal"
+      @accept="handleAcceptProposal"
+      @reject="handleRejectProposal"
+    />
+
+    <!-- All-Star Modal -->
+    <AllStarModal
+      :show="showAllStarModal"
+      :rosters="allStarRosters"
+      :user-team-id="team?.id"
+      @close="handleCloseAllStarModal"
     />
   </div>
 </template>
@@ -1173,6 +1371,20 @@ function handleCloseSimulateModal() {
   font-size: 0.875rem;
   color: var(--color-text-tertiary);
   margin: 0;
+}
+
+.news-highlight {
+  border-left: 3px solid #f59e0b;
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.08), transparent) !important;
+  cursor: pointer;
+}
+
+.news-highlight:hover {
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.15), transparent) !important;
+}
+
+.news-icon-star {
+  background: linear-gradient(135deg, #f59e0b, #d97706) !important;
 }
 
 /* Glass Card with Nebula Effect */

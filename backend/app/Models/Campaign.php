@@ -87,4 +87,9 @@ class Campaign extends Model
     {
         return $this->hasMany(Trade::class);
     }
+
+    public function tradeProposals(): HasMany
+    {
+        return $this->hasMany(TradeProposal::class);
+    }
 }

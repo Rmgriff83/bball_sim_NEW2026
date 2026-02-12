@@ -420,6 +420,8 @@ class CampaignPlayerService
             'streakData' => $player->streak_data,
             'recent_performances' => $player->recent_performances ?? [],
             'recentPerformances' => $player->recent_performances ?? [],
+            'allStarSelections' => $player->all_star_selections ?? 0,
+            'all_star_selections' => $player->all_star_selections ?? 0,
         ];
     }
 

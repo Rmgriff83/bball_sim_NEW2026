@@ -32,11 +32,11 @@
   Quick reference for future PRODUCTION deploys
 
   Backend:
-  ssh root@164.92.97.179
+  ssh deploy@164.92.105.227
   cd /var/www/bball-sim/bball_sim_NEW2026/backend
   git pull
   composer install --no-dev --optimize-autoloader
-  php artisan migrate --force
+  php artisan migrate (if migrations)
   php artisan config:cache
   php artisan route:cache
 

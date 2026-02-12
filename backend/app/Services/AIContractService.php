@@ -405,7 +405,7 @@ class AIContractService
     {
         $birthDate = $player['birthDate'] ?? $player['birth_date'] ?? null;
         if ($birthDate) {
-            return now()->diffInYears($birthDate);
+            return (int) abs(now()->diffInYears($birthDate));
         }
         return $player['age'] ?? 25;
     }

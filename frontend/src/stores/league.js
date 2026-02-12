@@ -12,6 +12,10 @@ export const useLeagueStore = defineStore('league', () => {
   const loadingLeaders = ref(false)
   const error = ref(null)
 
+  // Cache tracking
+  const _standingsCampaignId = ref(null)
+  const _leadersCampaignId = ref(null)
+
   // Getters
   const eastStandings = computed(() => standings.value.east || [])
   const westStandings = computed(() => standings.value.west || [])
@@ -31,15 +35,21 @@ export const useLeagueStore = defineStore('league', () => {
   })
 
   // Actions
-  async function fetchStandings(campaignId, year = null) {
+  async function fetchStandings(campaignId, { force = false } = {}) {
+    // Return cached data if already loaded for this campaign
+    if (!force && _standingsCampaignId.value === campaignId && (standings.value.east?.length > 0 || standings.value.west?.length > 0)) {
+      return standings.value
+    }
+
     loading.value = true
     error.value = null
     try {
       const response = await api.get(`/api/campaigns/${campaignId}/standings`)
       standings.value = response.data.standings
+      _standingsCampaignId.value = campaignId
 
       // Get year from response or use current year
-      const seasonYear = year || response.data.year || new Date().getFullYear()
+      const seasonYear = response.data.year || new Date().getFullYear()
 
       // Always update standings in cache
       await campaignCacheService.updateStandings(campaignId, seasonYear, standings.value)
@@ -78,14 +88,21 @@ export const useLeagueStore = defineStore('league', () => {
 
   function clearStandings() {
     standings.value = { east: [], west: [] }
+    _standingsCampaignId.value = null
   }
 
-  async function fetchPlayerLeaders(campaignId) {
+  async function fetchPlayerLeaders(campaignId, { force = false } = {}) {
+    // Return cached data if already loaded for this campaign
+    if (!force && _leadersCampaignId.value === campaignId && playerLeaders.value.length > 0) {
+      return playerLeaders.value
+    }
+
     loadingLeaders.value = true
     error.value = null
     try {
       const response = await api.get(`/api/campaigns/${campaignId}/league-leaders`)
       playerLeaders.value = response.data.leaders || []
+      _leadersCampaignId.value = campaignId
       return playerLeaders.value
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to fetch league leaders'
@@ -97,6 +114,12 @@ export const useLeagueStore = defineStore('league', () => {
 
   function clearPlayerLeaders() {
     playerLeaders.value = []
+    _leadersCampaignId.value = null
+  }
+
+  function invalidate() {
+    _standingsCampaignId.value = null
+    _leadersCampaignId.value = null
   }
 
   return {
@@ -123,5 +146,6 @@ export const useLeagueStore = defineStore('league', () => {
     getGamesBehind,
     clearStandings,
     clearPlayerLeaders,
+    invalidate,
   }
 })

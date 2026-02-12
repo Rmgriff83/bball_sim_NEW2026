@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTradeStore } from '@/stores/trade'
 import { useTeamStore } from '@/stores/team'
-import { GlassCard, BaseButton, BaseModal, LoadingSpinner, StatBadge } from '@/components/ui'
+import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowRight, ArrowLeft, X, Check, AlertCircle, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus, Package, Users, Repeat, AlertTriangle, CheckCircle, Info, Star, Calendar, DollarSign } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -25,8 +25,7 @@ const showTradeWizard = ref(false)
 const wizardStep = ref(1) // 1: Your assets, 2: Team selection, 3: Their assets
 const assetTab = ref('players') // 'players' or 'picks'
 
-// Confirmation modal state
-const showConfirmModal = ref(false)
+// Confirmation state (step 4 of wizard)
 const confirmModalState = ref('confirm') // 'confirm', 'loading', 'result'
 
 // Step definitions for the wizard
@@ -65,6 +64,18 @@ const canWizardBack = computed(() => wizardStep.value > 1)
 
 const canSubmitTrade = computed(() => {
   return userRequesting.value.length > 0 && userOffering.value.length > 0 && tradeValidation.value.isValid
+})
+
+const wizardTitle = computed(() => {
+  if (wizardStep.value <= 3) {
+    return wizardSteps[wizardStep.value - 1]?.title || 'Trade Wizard'
+  }
+  if (confirmModalState.value === 'loading') return 'Processing Trade...'
+  if (confirmModalState.value === 'result') {
+    if (lastProposalResult.value?.decision === 'accept') return 'Trade Accepted!'
+    return 'Trade Response'
+  }
+  return 'Confirm Trade'
 })
 
 // Trade validation logic
@@ -159,11 +170,11 @@ function startTradeWizard() {
 
 function closeTradeWizard() {
   showTradeWizard.value = false
-  // Clear trade state when closing the wizard
   tradeStore.clearTrade()
   tradeStore.clearSelectedTeam()
   wizardStep.value = 1
   assetTab.value = 'players'
+  confirmModalState.value = 'confirm'
 }
 
 function wizardNext() {
@@ -171,14 +182,17 @@ function wizardNext() {
     wizardStep.value++
     assetTab.value = 'players' // Reset tab when changing steps
   } else if (wizardStep.value === 3 && canSubmitTrade.value) {
-    // Move to confirmation
-    showTradeWizard.value = false
-    openConfirmModal()
+    // Move to confirmation step
+    wizardStep.value = 4
+    confirmModalState.value = 'confirm'
   }
 }
 
 function wizardBack() {
-  if (wizardStep.value > 1) {
+  if (wizardStep.value === 4) {
+    wizardStep.value = 3
+    confirmModalState.value = 'confirm'
+  } else if (wizardStep.value > 1) {
     wizardStep.value--
     assetTab.value = 'players'
   }
@@ -315,11 +329,6 @@ function isPickSelected(pickId) {
   return tradeStore.isInRequesting('pick', pickId)
 }
 
-function openConfirmModal() {
-  confirmModalState.value = 'confirm'
-  showConfirmModal.value = true
-}
-
 async function confirmAndProposeTrade() {
   try {
     confirmModalState.value = 'loading'
@@ -339,15 +348,16 @@ async function executeTrade() {
     // Refresh user assets and team roster
     await Promise.all([
       tradeStore.fetchUserAssets(props.campaignId),
-      teamStore.fetchTeam(props.campaignId)
+      teamStore.fetchTeam(props.campaignId, { force: true })
     ])
 
-    showConfirmModal.value = false
+    showTradeWizard.value = false
 
     // Reset trade state and emit event to switch to team tab
     tradeStore.clearTrade()
     tradeStore.clearSelectedTeam()
     wizardStep.value = 1
+    confirmModalState.value = 'confirm'
     emit('trade-completed')
   } catch (err) {
     console.error('Trade execution failed:', err)
@@ -359,19 +369,8 @@ function resetTrade() {
   tradeStore.clearTrade()
   tradeStore.clearSelectedTeam()
   wizardStep.value = 1
-  showConfirmModal.value = false
-  showTradeWizard.value = false
-}
-
-function closeConfirmModal() {
-  showConfirmModal.value = false
   confirmModalState.value = 'confirm'
-
-  // If rejected or invalid, go back to wizard to try again
-  if (lastProposalResult.value?.decision === 'reject' || lastProposalResult.value?.decision === 'invalid') {
-    showTradeWizard.value = true
-    wizardStep.value = 3
-  }
+  showTradeWizard.value = false
 }
 
 function formatSalary(salary) {
@@ -390,7 +389,8 @@ function getPositionColor(position) {
 }
 
 function getDirectionIcon(direction) {
-  if (direction === 'contending') return TrendingUp
+  if (direction === 'title_contender' || direction === 'win_now' || direction === 'contending') return TrendingUp
+  if (direction === 'ascending') return TrendingUp
   if (direction === 'rebuilding') return TrendingDown
   return Minus
 }
@@ -420,6 +420,11 @@ function formatContractYears(years) {
   if (!years || years <= 0) return 'Expiring'
   if (years === 1) return '1 yr'
   return `${years} yrs`
+}
+
+function formatAge(age) {
+  if (age === null || age === undefined) return '?'
+  return Math.abs(Math.round(age))
 }
 </script>
 
@@ -487,10 +492,11 @@ function formatContractYears(years) {
           <div class="wizard-modal-container">
             <!-- Header -->
             <header class="wizard-modal-header">
-              <h2 class="wizard-modal-title">{{ wizardSteps[wizardStep - 1]?.title || 'Trade Wizard' }}</h2>
+              <h2 class="wizard-modal-title">{{ wizardTitle }}</h2>
               <button
                 class="wizard-btn-close"
                 @click="closeTradeWizard"
+                :disabled="wizardStep === 4 && confirmModalState === 'loading'"
                 aria-label="Close"
               >
                 <X :size="20" />
@@ -500,26 +506,59 @@ function formatContractYears(years) {
             <!-- Content -->
             <main class="wizard-modal-content">
               <div class="wizard-content">
-        <!-- Wizard Step Indicator -->
-        <div class="wizard-step-indicator">
-          <template v-for="(step, index) in wizardSteps" :key="step.number">
-            <div
-              class="wizard-step"
-              :class="{
-                active: wizardStep === step.number,
-                completed: wizardStep > step.number
-              }"
-            >
-              <div class="wizard-step-number">
-                <Check v-if="wizardStep > step.number" :size="14" />
-                <span v-else>{{ step.number }}</span>
+        <!-- Trade Slots Summary (replaces step indicator) -->
+        <div v-if="wizardStep < 4 && (userOffering.length > 0 || userRequesting.length > 0)" class="wizard-trade-summary">
+          <div class="wizard-trade-slots">
+            <!-- YOUR SIDE -->
+            <div class="wizard-slot-section sending" :class="{ active: wizardStep === 1 }">
+              <div class="wizard-slot-header">
+                <span class="wizard-slot-label">You Send</span>
               </div>
-              <span class="wizard-step-title">{{ step.title }}</span>
+              <div v-if="userOffering.length > 0" class="wizard-slot-assets">
+                <div v-for="asset in userOffering" :key="`ws-${asset.type}-${asset.id}`" class="wizard-slot-item">
+                  <template v-if="asset.type === 'player'">
+                    <span class="wizard-slot-rating">{{ asset.overallRating }}</span>
+                    <span class="wizard-slot-name">{{ asset.firstName }} {{ asset.lastName }}</span>
+                  </template>
+                  <template v-else>
+                    <span class="wizard-slot-pick-badge">{{ asset.year }}</span>
+                    <span class="wizard-slot-name">R{{ asset.round }}</span>
+                  </template>
+                </div>
+              </div>
+              <div v-else class="wizard-slot-empty">
+                <span>Select assets</span>
+              </div>
             </div>
-            <div v-if="index < wizardSteps.length - 1" class="wizard-step-connector" :class="{ completed: wizardStep > step.number }">
-              <ChevronRight :size="14" />
+
+            <!-- SWAP -->
+            <div class="wizard-slot-swap">
+              <Repeat :size="18" />
             </div>
-          </template>
+
+            <!-- THEIR SIDE -->
+            <div class="wizard-slot-section receiving" :class="{ active: wizardStep === 3 }">
+              <div class="wizard-slot-header">
+                <span v-if="selectedTeam" class="wizard-slot-badge">{{ selectedTeam.abbreviation }}</span>
+                <span class="wizard-slot-label">{{ selectedTeam ? selectedTeam.name + ' Send' : 'They Send' }}</span>
+              </div>
+              <div v-if="userRequesting.length > 0" class="wizard-slot-assets">
+                <div v-for="asset in userRequesting" :key="`wr-${asset.type}-${asset.id}`" class="wizard-slot-item">
+                  <template v-if="asset.type === 'player'">
+                    <span class="wizard-slot-rating">{{ asset.overallRating }}</span>
+                    <span class="wizard-slot-name">{{ asset.firstName }} {{ asset.lastName }}</span>
+                  </template>
+                  <template v-else>
+                    <span class="wizard-slot-pick-badge">{{ asset.year }}</span>
+                    <span class="wizard-slot-name">R{{ asset.round }}</span>
+                  </template>
+                </div>
+              </div>
+              <div v-else class="wizard-slot-empty">
+                <span>{{ wizardStep < 3 ? 'Pick a team first' : 'Select assets' }}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Step 1: Your Assets -->
@@ -580,7 +619,7 @@ function formatContractYears(years) {
                       {{ player.position }}
                     </span>
                     <StatBadge :value="player.overallRating" size="xs" />
-                    <span class="wizard-asset-age">{{ player.age }} yrs</span>
+                    <span class="wizard-asset-age">{{ formatAge(player.age) }} yrs</span>
                   </div>
                   <div class="wizard-asset-contract">
                     <span class="wizard-asset-salary">{{ formatSalary(player.contractSalary) }}</span>
@@ -733,7 +772,7 @@ function formatContractYears(years) {
                       {{ player.position }}
                     </span>
                     <StatBadge :value="player.overallRating" size="xs" />
-                    <span class="wizard-asset-age">{{ player.age }} yrs</span>
+                    <span class="wizard-asset-age">{{ formatAge(player.age) }} yrs</span>
                   </div>
                   <div class="wizard-asset-contract">
                     <span class="wizard-asset-salary">{{ formatSalary(player.contractSalary) }}</span>
@@ -806,307 +845,325 @@ function formatContractYears(years) {
           </div>
         </div>
 
+        <!-- Step 4: Confirm / Loading / Result -->
+        <div v-if="wizardStep === 4" class="wizard-step-content">
+          <!-- Loading State -->
+          <div v-if="confirmModalState === 'loading'" class="modal-loading">
+            <LoadingSpinner size="lg" />
+            <p>{{ lastProposalResult?.decision === 'accept' ? 'Completing trade...' : 'Evaluating trade proposal...' }}</p>
+          </div>
+
+          <!-- Confirm State -->
+          <template v-else-if="confirmModalState === 'confirm'">
+            <p class="wizard-step-description">Review the trade details before proposing to {{ selectedTeam?.city }} {{ selectedTeam?.name }}.</p>
+
+            <div class="modal-trade-slots">
+              <!-- YOUR TEAM SIDE -->
+              <div class="modal-team-section sending">
+                <div class="modal-team-header">
+                  <span class="modal-team-label">Your Team Sends</span>
+                </div>
+                <div class="modal-assets-grid">
+                  <div
+                    v-for="asset in userOffering"
+                    :key="`modal-send-${asset.type}-${asset.id}`"
+                    class="modal-asset-card"
+                    :class="asset.type"
+                  >
+                    <template v-if="asset.type === 'player'">
+                      <div class="modal-player-card">
+                        <div class="modal-player-avatar">
+                          <User :size="24" />
+                        </div>
+                        <div class="modal-player-info">
+                          <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>
+                          <div class="modal-player-meta">
+                            <span class="modal-position-badge" :style="{ backgroundColor: getPositionColor(asset.position) }">
+                              {{ asset.position }}
+                            </span>
+                            <span class="modal-player-age">{{ formatAge(asset.age) }} yrs</span>
+                          </div>
+                          <div class="modal-player-contract">
+                            <span class="modal-contract-salary">{{ formatSalary(asset.contractSalary) }}</span>
+                            <span class="modal-contract-years">{{ formatContractYears(asset.contractYearsRemaining) }}</span>
+                          </div>
+                          <div class="modal-star-rating">
+                            <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
+                            <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="modal-pick-card">
+                        <div class="modal-pick-year">{{ asset.year }}</div>
+                        <div class="modal-pick-info">
+                          <span class="modal-pick-round">Round {{ asset.round }}</span>
+                          <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
+                          <div class="modal-star-rating">
+                            <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
+                            <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+
+              <!-- TRADE DIRECTION INDICATOR -->
+              <div class="modal-trade-direction">
+                <div class="modal-arrow-container">
+                  <Repeat :size="28" />
+                </div>
+              </div>
+
+              <!-- PARTNER TEAM SIDE -->
+              <div class="modal-team-section receiving">
+                <div class="modal-team-header">
+                  <span class="modal-team-badge">{{ selectedTeam?.abbreviation }}</span>
+                  <span class="modal-team-label">{{ selectedTeam?.name }} Send</span>
+                </div>
+                <div class="modal-assets-grid">
+                  <div
+                    v-for="asset in userRequesting"
+                    :key="`modal-recv-${asset.type}-${asset.id}`"
+                    class="modal-asset-card"
+                    :class="asset.type"
+                  >
+                    <template v-if="asset.type === 'player'">
+                      <div class="modal-player-card">
+                        <div class="modal-player-avatar">
+                          <User :size="24" />
+                        </div>
+                        <div class="modal-player-info">
+                          <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>
+                          <div class="modal-player-meta">
+                            <span class="modal-position-badge" :style="{ backgroundColor: getPositionColor(asset.position) }">
+                              {{ asset.position }}
+                            </span>
+                            <span class="modal-player-age">{{ formatAge(asset.age) }} yrs</span>
+                          </div>
+                          <div class="modal-player-contract">
+                            <span class="modal-contract-salary">{{ formatSalary(asset.contractSalary) }}</span>
+                            <span class="modal-contract-years">{{ formatContractYears(asset.contractYearsRemaining) }}</span>
+                          </div>
+                          <div class="modal-star-rating">
+                            <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
+                            <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="modal-pick-card">
+                        <div class="modal-pick-year">{{ asset.year }}</div>
+                        <div class="modal-pick-info">
+                          <span class="modal-pick-round">Round {{ asset.round }}</span>
+                          <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
+                          <div class="modal-star-rating">
+                            <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
+                            <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Salary Summary -->
+            <div v-if="tradeValidation.salaryOut > 0 || tradeValidation.salaryIn > 0" class="modal-salary-summary">
+              <div class="modal-salary-row">
+                <span class="modal-salary-label">Outgoing Salary:</span>
+                <span class="modal-salary-value out">{{ formatSalary(tradeValidation.salaryOut) }}</span>
+              </div>
+              <div class="modal-salary-row">
+                <span class="modal-salary-label">Incoming Salary:</span>
+                <span class="modal-salary-value in">{{ formatSalary(tradeValidation.salaryIn) }}</span>
+              </div>
+              <div class="modal-salary-row net">
+                <span class="modal-salary-label">Net Change:</span>
+                <span class="modal-salary-value" :class="{ positive: tradeValidation.salaryDiff > 0, negative: tradeValidation.salaryDiff < 0 }">
+                  {{ tradeValidation.salaryDiff >= 0 ? '+' : '' }}{{ formatSalary(tradeValidation.salaryDiff) }}
+                </span>
+              </div>
+            </div>
+          </template>
+
+          <!-- Result State -->
+          <template v-else-if="confirmModalState === 'result'">
+            <!-- Trade Summary in Result -->
+            <div class="modal-trade-slots compact">
+              <div class="modal-team-section sending compact">
+                <div class="modal-team-header">
+                  <span class="modal-team-label">You Sent</span>
+                </div>
+                <div class="modal-assets-list">
+                  <div v-for="asset in userOffering" :key="`result-send-${asset.type}-${asset.id}`" class="modal-asset-item">
+                    <template v-if="asset.type === 'player'">
+                      <StatBadge :value="asset.overallRating" size="xs" />
+                      <span>{{ asset.firstName }} {{ asset.lastName }}</span>
+                    </template>
+                    <template v-else>
+                      <span class="pick-badge">{{ asset.year }}</span>
+                      <span>Round {{ asset.round }} Pick</span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+
+              <div class="modal-trade-direction compact">
+                <Repeat :size="20" />
+              </div>
+
+              <div class="modal-team-section receiving compact">
+                <div class="modal-team-header">
+                  <span class="modal-team-badge sm">{{ selectedTeam?.abbreviation }}</span>
+                  <span class="modal-team-label">Sent</span>
+                </div>
+                <div class="modal-assets-list">
+                  <div v-for="asset in userRequesting" :key="`result-recv-${asset.type}-${asset.id}`" class="modal-asset-item">
+                    <template v-if="asset.type === 'player'">
+                      <StatBadge :value="asset.overallRating" size="xs" />
+                      <span>{{ asset.firstName }} {{ asset.lastName }}</span>
+                    </template>
+                    <template v-else>
+                      <span class="pick-badge">{{ asset.year }}</span>
+                      <span>Round {{ asset.round }} Pick</span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Accept Result -->
+            <div v-if="lastProposalResult?.decision === 'accept'" class="result-success">
+              <CheckCircle :size="56" class="success-icon" />
+              <h3>The {{ selectedTeam?.name }} have accepted your trade!</h3>
+              <p class="text-secondary">Would you like to complete this trade?</p>
+            </div>
+
+            <!-- Reject Result -->
+            <div v-else-if="lastProposalResult?.decision === 'reject'" class="result-reject">
+              <AlertCircle :size="56" class="reject-icon" />
+              <h3>Trade Rejected</h3>
+              <p class="reject-reason">"{{ lastProposalResult.reason }}"</p>
+              <p class="team-info text-secondary">
+                The {{ selectedTeam?.name }} are currently
+                <strong :style="{ color: tradeStore.getDirectionColor(lastProposalResult.team_direction) }">
+                  {{ tradeStore.getDirectionLabel(lastProposalResult.team_direction) }}
+                </strong>
+              </p>
+            </div>
+
+            <!-- Invalid Result -->
+            <div v-else-if="lastProposalResult?.decision === 'invalid'" class="result-invalid">
+              <AlertTriangle :size="56" class="invalid-icon" />
+              <h3>Invalid Trade</h3>
+              <p class="invalid-reason">{{ lastProposalResult.reason }}</p>
+            </div>
+          </template>
+        </div>
+
               </div>
             </main>
 
             <!-- Footer -->
             <footer class="wizard-modal-footer">
-              <button
-                v-if="canWizardBack"
-                class="wizard-btn-back"
-                @click="wizardBack"
-              >
-                <ChevronLeft :size="18" />
-                Back
-              </button>
-              <div v-else></div>
+              <!-- Steps 1-3 -->
+              <template v-if="wizardStep < 4">
+                <button
+                  v-if="canWizardBack"
+                  class="wizard-btn-back"
+                  @click="wizardBack"
+                >
+                  <ChevronLeft :size="18" />
+                  Back
+                </button>
+                <div v-else></div>
 
-              <div class="wizard-nav-right">
-                <button
-                  v-if="wizardStep < 3"
-                  class="wizard-btn-next"
-                  @click="wizardNext"
-                  :disabled="!canWizardNext"
-                >
-                  Next
-                  <ChevronRight :size="18" />
+                <div class="wizard-nav-right">
+                  <button
+                    v-if="wizardStep < 3"
+                    class="wizard-btn-next"
+                    @click="wizardNext"
+                    :disabled="!canWizardNext"
+                  >
+                    Next
+                    <ChevronRight :size="18" />
+                  </button>
+                  <button
+                    v-else
+                    class="wizard-btn-next"
+                    @click="wizardNext"
+                    :disabled="!canSubmitTrade"
+                  >
+                    Review Trade
+                    <ArrowRight :size="18" />
+                  </button>
+                </div>
+              </template>
+
+              <!-- Step 4: Confirm -->
+              <template v-else-if="confirmModalState === 'confirm'">
+                <button class="wizard-btn-back" @click="wizardBack">
+                  <ChevronLeft :size="18" />
+                  Back
                 </button>
-                <button
-                  v-else
-                  class="wizard-btn-next"
-                  @click="wizardNext"
-                  :disabled="!canSubmitTrade"
-                >
-                  Review Trade
-                  <ArrowRight :size="18" />
+                <div class="wizard-nav-right">
+                  <button class="wizard-btn-next" @click="confirmAndProposeTrade">
+                    <Check :size="18" />
+                    Propose Trade
+                  </button>
+                </div>
+              </template>
+
+              <!-- Step 4: Loading -->
+              <template v-else-if="confirmModalState === 'loading'">
+                <div></div>
+                <div></div>
+              </template>
+
+              <!-- Step 4: Result - Accepted -->
+              <template v-else-if="confirmModalState === 'result' && lastProposalResult?.decision === 'accept'">
+                <button class="wizard-btn-back" @click="closeTradeWizard">
+                  Cancel
                 </button>
-              </div>
+                <div class="wizard-nav-right">
+                  <button class="wizard-btn-next" @click="executeTrade">
+                    <Check :size="18" />
+                    Complete Trade
+                  </button>
+                </div>
+              </template>
+
+              <!-- Step 4: Result - Rejected -->
+              <template v-else-if="confirmModalState === 'result' && lastProposalResult?.decision === 'reject'">
+                <div></div>
+                <div class="wizard-nav-right">
+                  <button class="wizard-btn-next" @click="wizardBack">
+                    Try Another Trade
+                  </button>
+                </div>
+              </template>
+
+              <!-- Step 4: Result - Invalid -->
+              <template v-else>
+                <div></div>
+                <div class="wizard-nav-right">
+                  <button class="wizard-btn-next" @click="closeTradeWizard">
+                    Start Over
+                  </button>
+                </div>
+              </template>
             </footer>
           </div>
         </div>
       </Transition>
     </Teleport>
 
-    <!-- Trade Confirmation Modal -->
-    <BaseModal
-      :show="showConfirmModal"
-      @close="closeConfirmModal"
-      :title="confirmModalState === 'confirm' ? 'Confirm Trade' : confirmModalState === 'loading' ? 'Processing Trade...' : lastProposalResult?.decision === 'accept' ? 'Trade Accepted!' : 'Trade Response'"
-      size="lg"
-      :closable="confirmModalState !== 'loading'"
-    >
-      <div class="trade-modal-content">
-        <!-- Loading State -->
-        <div v-if="confirmModalState === 'loading'" class="modal-loading">
-          <LoadingSpinner size="lg" />
-          <p>{{ lastProposalResult?.decision === 'accept' ? 'Completing trade...' : 'Evaluating trade proposal...' }}</p>
-        </div>
-
-        <!-- Confirm State - Show trade details with slot cards -->
-        <template v-else-if="confirmModalState === 'confirm'">
-          <p class="modal-subtitle">Review the trade details before proposing to {{ selectedTeam?.city }} {{ selectedTeam?.name }}.</p>
-
-          <div class="modal-trade-slots">
-            <!-- YOUR TEAM SIDE -->
-            <div class="modal-team-section sending">
-              <div class="modal-team-header">
-                <span class="modal-team-label">Your Team Sends</span>
-              </div>
-              <div class="modal-assets-grid">
-                <div
-                  v-for="asset in userOffering"
-                  :key="`modal-send-${asset.type}-${asset.id}`"
-                  class="modal-asset-card"
-                  :class="asset.type"
-                >
-                  <!-- Player Card -->
-                  <template v-if="asset.type === 'player'">
-                    <div class="modal-player-card">
-                      <div class="modal-player-avatar">
-                        <User :size="24" />
-                      </div>
-                      <div class="modal-player-info">
-                        <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>
-                        <div class="modal-player-meta">
-                          <span class="modal-position-badge" :style="{ backgroundColor: getPositionColor(asset.position) }">
-                            {{ asset.position }}
-                          </span>
-                          <span class="modal-player-age">{{ asset.age }} yrs</span>
-                        </div>
-                        <div class="modal-player-contract">
-                          <span class="modal-contract-salary">{{ formatSalary(asset.contractSalary) }}</span>
-                          <span class="modal-contract-years">{{ formatContractYears(asset.contractYearsRemaining) }}</span>
-                        </div>
-                        <div class="modal-star-rating">
-                          <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
-                          <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
-                        </div>
-                      </div>
-                    </div>
-                  </template>
-                  <!-- Pick Card -->
-                  <template v-else>
-                    <div class="modal-pick-card">
-                      <div class="modal-pick-year">{{ asset.year }}</div>
-                      <div class="modal-pick-info">
-                        <span class="modal-pick-round">Round {{ asset.round }}</span>
-                        <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
-                        <div class="modal-star-rating">
-                          <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
-                          <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
-                        </div>
-                      </div>
-                    </div>
-                  </template>
-                </div>
-              </div>
-            </div>
-
-            <!-- TRADE DIRECTION INDICATOR -->
-            <div class="modal-trade-direction">
-              <div class="modal-arrow-container">
-                <Repeat :size="28" />
-              </div>
-            </div>
-
-            <!-- PARTNER TEAM SIDE -->
-            <div class="modal-team-section receiving">
-              <div class="modal-team-header">
-                <span class="modal-team-badge">{{ selectedTeam?.abbreviation }}</span>
-                <span class="modal-team-label">{{ selectedTeam?.name }} Send</span>
-              </div>
-              <div class="modal-assets-grid">
-                <div
-                  v-for="asset in userRequesting"
-                  :key="`modal-recv-${asset.type}-${asset.id}`"
-                  class="modal-asset-card"
-                  :class="asset.type"
-                >
-                  <!-- Player Card -->
-                  <template v-if="asset.type === 'player'">
-                    <div class="modal-player-card">
-                      <div class="modal-player-avatar">
-                        <User :size="24" />
-                      </div>
-                      <div class="modal-player-info">
-                        <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>
-                        <div class="modal-player-meta">
-                          <span class="modal-position-badge" :style="{ backgroundColor: getPositionColor(asset.position) }">
-                            {{ asset.position }}
-                          </span>
-                          <span class="modal-player-age">{{ asset.age }} yrs</span>
-                        </div>
-                        <div class="modal-player-contract">
-                          <span class="modal-contract-salary">{{ formatSalary(asset.contractSalary) }}</span>
-                          <span class="modal-contract-years">{{ formatContractYears(asset.contractYearsRemaining) }}</span>
-                        </div>
-                        <div class="modal-star-rating">
-                          <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
-                          <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
-                        </div>
-                      </div>
-                    </div>
-                  </template>
-                  <!-- Pick Card -->
-                  <template v-else>
-                    <div class="modal-pick-card">
-                      <div class="modal-pick-year">{{ asset.year }}</div>
-                      <div class="modal-pick-info">
-                        <span class="modal-pick-round">Round {{ asset.round }}</span>
-                        <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
-                        <div class="modal-star-rating">
-                          <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
-                          <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
-                        </div>
-                      </div>
-                    </div>
-                  </template>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Salary Summary -->
-          <div v-if="tradeValidation.salaryOut > 0 || tradeValidation.salaryIn > 0" class="modal-salary-summary">
-            <div class="modal-salary-row">
-              <span class="modal-salary-label">Outgoing Salary:</span>
-              <span class="modal-salary-value out">{{ formatSalary(tradeValidation.salaryOut) }}</span>
-            </div>
-            <div class="modal-salary-row">
-              <span class="modal-salary-label">Incoming Salary:</span>
-              <span class="modal-salary-value in">{{ formatSalary(tradeValidation.salaryIn) }}</span>
-            </div>
-            <div class="modal-salary-row net">
-              <span class="modal-salary-label">Net Change:</span>
-              <span class="modal-salary-value" :class="{ positive: tradeValidation.salaryDiff > 0, negative: tradeValidation.salaryDiff < 0 }">
-                {{ tradeValidation.salaryDiff >= 0 ? '+' : '' }}{{ formatSalary(tradeValidation.salaryDiff) }}
-              </span>
-            </div>
-          </div>
-
-          <div class="modal-actions">
-            <BaseButton variant="ghost" @click="closeConfirmModal">Cancel</BaseButton>
-            <BaseButton variant="primary" @click="confirmAndProposeTrade">
-              <Check :size="18" />
-              Propose Trade
-            </BaseButton>
-          </div>
-        </template>
-
-        <!-- Result State -->
-        <template v-else-if="confirmModalState === 'result'">
-          <!-- Trade Summary in Result -->
-          <div class="modal-trade-slots compact">
-            <!-- YOUR TEAM SIDE -->
-            <div class="modal-team-section sending compact">
-              <div class="modal-team-header">
-                <span class="modal-team-label">You Sent</span>
-              </div>
-              <div class="modal-assets-list">
-                <div v-for="asset in userOffering" :key="`result-send-${asset.type}-${asset.id}`" class="modal-asset-item">
-                  <template v-if="asset.type === 'player'">
-                    <StatBadge :value="asset.overallRating" size="xs" />
-                    <span>{{ asset.firstName }} {{ asset.lastName }}</span>
-                  </template>
-                  <template v-else>
-                    <span class="pick-badge">{{ asset.year }}</span>
-                    <span>Round {{ asset.round }} Pick</span>
-                  </template>
-                </div>
-              </div>
-            </div>
-
-            <div class="modal-trade-direction compact">
-              <Repeat :size="20" />
-            </div>
-
-            <!-- PARTNER TEAM SIDE -->
-            <div class="modal-team-section receiving compact">
-              <div class="modal-team-header">
-                <span class="modal-team-badge sm">{{ selectedTeam?.abbreviation }}</span>
-                <span class="modal-team-label">Sent</span>
-              </div>
-              <div class="modal-assets-list">
-                <div v-for="asset in userRequesting" :key="`result-recv-${asset.type}-${asset.id}`" class="modal-asset-item">
-                  <template v-if="asset.type === 'player'">
-                    <StatBadge :value="asset.overallRating" size="xs" />
-                    <span>{{ asset.firstName }} {{ asset.lastName }}</span>
-                  </template>
-                  <template v-else>
-                    <span class="pick-badge">{{ asset.year }}</span>
-                    <span>Round {{ asset.round }} Pick</span>
-                  </template>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Accept Result -->
-          <div v-if="lastProposalResult?.decision === 'accept'" class="result-success">
-            <CheckCircle :size="56" class="success-icon" />
-            <h3>The {{ selectedTeam?.name }} have accepted your trade!</h3>
-            <p class="text-secondary">Would you like to complete this trade?</p>
-            <div class="modal-actions">
-              <BaseButton variant="ghost" @click="closeConfirmModal">Cancel</BaseButton>
-              <BaseButton variant="primary" @click="executeTrade">
-                <Check :size="18" />
-                Complete Trade
-              </BaseButton>
-            </div>
-          </div>
-
-          <!-- Reject Result -->
-          <div v-else-if="lastProposalResult?.decision === 'reject'" class="result-reject">
-            <AlertCircle :size="56" class="reject-icon" />
-            <h3>Trade Rejected</h3>
-            <p class="reject-reason">"{{ lastProposalResult.reason }}"</p>
-            <p class="team-info text-secondary">
-              The {{ selectedTeam?.name }} are currently
-              <strong :style="{ color: tradeStore.getDirectionColor(lastProposalResult.team_direction) }">
-                {{ tradeStore.getDirectionLabel(lastProposalResult.team_direction) }}
-              </strong>
-            </p>
-            <div class="modal-actions centered">
-              <BaseButton variant="primary" @click="closeConfirmModal">
-                Try Another Trade
-              </BaseButton>
-            </div>
-          </div>
-
-          <!-- Invalid Result -->
-          <div v-else-if="lastProposalResult?.decision === 'invalid'" class="result-invalid">
-            <AlertTriangle :size="56" class="invalid-icon" />
-            <h3>Invalid Trade</h3>
-            <p class="invalid-reason">{{ lastProposalResult.reason }}</p>
-            <div class="modal-actions centered">
-              <BaseButton variant="primary" @click="closeConfirmModal">
-                Start Over
-              </BaseButton>
-            </div>
-          </div>
-        </template>
-      </div>
-    </BaseModal>
   </div>
 </template>
 
@@ -3145,78 +3202,131 @@ function formatContractYears(years) {
   padding: 0;
 }
 
-/* Wizard Step Indicator */
-.wizard-step-indicator {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
+/* Wizard Trade Summary (replaces step indicator) */
+.wizard-trade-summary {
+  margin-bottom: 1rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--glass-border);
 }
 
-.wizard-step {
+.wizard-trade-slots {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-  opacity: 0.5;
+}
+
+.wizard-slot-section {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 0.5rem 0.6rem;
   transition: all 0.2s ease;
 }
 
-.wizard-step.active {
-  opacity: 1;
-  background: rgba(var(--color-primary-rgb), 0.1);
+.wizard-slot-section.active {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 12px rgba(232, 90, 79, 0.15);
 }
 
-.wizard-step.completed {
-  opacity: 1;
+.wizard-slot-section.sending {
+  background: rgba(239, 68, 68, 0.05);
 }
 
-.wizard-step-number {
-  width: 24px;
-  height: 24px;
+.wizard-slot-section.receiving {
+  background: rgba(34, 197, 94, 0.05);
+}
+
+.wizard-slot-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.wizard-slot-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+}
+
+.wizard-slot-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+}
+
+.wizard-slot-assets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.wizard-slot-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--color-text-primary);
+}
+
+.wizard-slot-rating {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  background: rgba(232, 90, 79, 0.15);
+  border-radius: 3px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.wizard-slot-pick-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 3px;
+  background: rgba(139, 92, 246, 0.15);
+  border-radius: 3px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #8B5CF6;
+  flex-shrink: 0;
+}
+
+.wizard-slot-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.wizard-slot-empty {
+  font-size: 0.65rem;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  padding: 0.25rem 0;
+}
+
+.wizard-slot-swap {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-surface-elevated);
-  border-radius: 50%;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-}
-
-.wizard-step.active .wizard-step-number {
-  background: var(--color-primary);
-  color: white;
-}
-
-.wizard-step.completed .wizard-step-number {
-  background: var(--color-success);
-  color: white;
-}
-
-.wizard-step-title {
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-}
-
-.wizard-step.active .wizard-step-title {
-  color: var(--color-text-primary);
-  font-weight: 600;
-}
-
-.wizard-step-connector {
   color: var(--color-text-tertiary);
-  display: flex;
-  align-items: center;
-}
-
-.wizard-step-connector.completed {
-  color: var(--color-success);
+  flex-shrink: 0;
+  padding: 0 0.15rem;
 }
 
 /* Wizard Step Content */
@@ -3624,13 +3734,8 @@ function formatContractYears(years) {
     padding: 0;
   }
 
-  .wizard-step-indicator {
-    flex-wrap: wrap;
-    gap: 0.35rem;
-  }
-
-  .wizard-step-title {
-    display: none;
+  .wizard-slot-name {
+    max-width: 60px;
   }
 
   .wizard-asset-grid {
@@ -4028,5 +4133,116 @@ function formatContractYears(years) {
 
 [data-theme="light"] .asset-modal-projection {
   color: rgba(0, 0, 0, 0.5);
+}
+
+/* Star Rating Light Mode */
+[data-theme="light"] .star.empty {
+  color: rgba(0, 0, 0, 0.15);
+}
+
+/* Trade Direction Light Mode */
+[data-theme="light"] .trade-arrow-container {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #6366F1;
+}
+
+[data-theme="light"] .partner-badge {
+  background: rgba(0, 0, 0, 0.08);
+  color: #374151;
+}
+
+/* Step Prompt Light Mode */
+[data-theme="light"] .step-prompt {
+  background: linear-gradient(135deg, rgba(245, 247, 250, 0.95), rgba(255, 255, 255, 0.98));
+  border-color: rgba(99, 102, 241, 0.25);
+}
+
+[data-theme="light"] .step-prompt:hover {
+  background: linear-gradient(135deg, rgba(238, 240, 245, 0.98), rgba(245, 247, 250, 1));
+}
+
+[data-theme="light"] .step-prompt-icon {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(139, 92, 246, 0.08));
+}
+
+[data-theme="light"] .step-prompt-icon.receiving {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(16, 185, 129, 0.08));
+  color: #059669;
+}
+
+/* Salary Values Light Mode */
+[data-theme="light"] .salary-row.diff {
+  border-top-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .salary-value.out {
+  color: #DC2626;
+}
+
+[data-theme="light"] .salary-value.in {
+  color: #059669;
+}
+
+[data-theme="light"] .salary-value.positive {
+  color: #DC2626;
+}
+
+[data-theme="light"] .salary-value.negative {
+  color: #059669;
+}
+
+/* Modal Salary Values Light Mode */
+[data-theme="light"] .modal-salary-value.out {
+  color: #DC2626;
+}
+
+[data-theme="light"] .modal-salary-value.in {
+  color: #059669;
+}
+
+[data-theme="light"] .modal-salary-value.positive {
+  color: #DC2626;
+}
+
+[data-theme="light"] .modal-salary-value.negative {
+  color: #059669;
+}
+
+/* Clickable Slot Section Light Mode */
+[data-theme="light"] .trade-slot-section.clickable .slot-placeholder {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="light"] .trade-slot-section.clickable:hover .slot-placeholder {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+/* Wizard Trade Summary Light Mode */
+[data-theme="light"] .wizard-slot-section.sending {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+[data-theme="light"] .wizard-slot-section.receiving {
+  background: rgba(34, 197, 94, 0.06);
+}
+
+[data-theme="light"] .wizard-slot-rating {
+  background: rgba(232, 90, 79, 0.1);
+}
+
+[data-theme="light"] .wizard-slot-pick-badge {
+  background: rgba(139, 92, 246, 0.1);
+}
+
+/* Wizard Selected Summary Light Mode */
+[data-theme="light"] .wizard-selected-summary {
+  background: rgba(232, 90, 79, 0.08);
+  border-color: rgba(232, 90, 79, 0.15);
+}
+
+[data-theme="light"] .wizard-selected-summary.receiving {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.15);
 }
 </style>
