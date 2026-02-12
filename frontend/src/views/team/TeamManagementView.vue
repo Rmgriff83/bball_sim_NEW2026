@@ -273,6 +273,11 @@ function initPlayerMinutes() {
   }
 
   playerMinutes.value = newMinutes
+
+  // Persist generated defaults to store and backend
+  if (campaignId.value) {
+    teamStore.updateTargetMinutes(campaignId.value, newMinutes).catch(() => {})
+  }
 }
 
 // Watch roster changes to reinitialize minutes

@@ -10,6 +10,7 @@ use App\Services\CampaignSeasonService;
 use App\Services\CampaignPlayerService;
 use App\Services\CoachingService;
 use App\Services\FinanceService;
+use App\Services\SubstitutionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -20,19 +21,22 @@ class TeamController extends Controller
     private CoachingService $coachingService;
     private AILineupService $lineupService;
     private FinanceService $financeService;
+    private SubstitutionService $substitutionService;
 
     public function __construct(
         CampaignSeasonService $seasonService,
         CampaignPlayerService $playerService,
         CoachingService $coachingService,
         AILineupService $lineupService,
-        FinanceService $financeService
+        FinanceService $financeService,
+        SubstitutionService $substitutionService
     ) {
         $this->seasonService = $seasonService;
         $this->playerService = $playerService;
         $this->coachingService = $coachingService;
         $this->lineupService = $lineupService;
         $this->financeService = $financeService;
+        $this->substitutionService = $substitutionService;
     }
     /**
      * Get the user's team with full roster.
@@ -125,7 +129,7 @@ class TeamController extends Controller
             // Include lineup settings for frontend to track starters explicitly
             'lineup_settings' => [
                 'starters' => $savedLineup,
-                'target_minutes' => $campaign->settings['lineup']['target_minutes'] ?? [],
+                'target_minutes' => $this->ensureTargetMinutes($campaign, $orderedRoster, $savedLineup),
             ],
             'coach' => $team->coach ? [
                 'id' => $team->coach->id,
@@ -455,6 +459,30 @@ class TeamController extends Controller
         $data['upgrade_points'] = $player['upgrade_points'] ?? $player['upgradePoints'] ?? 0;
 
         return $data;
+    }
+
+    /**
+     * Ensure target minutes exist, generating and persisting defaults if needed.
+     */
+    private function ensureTargetMinutes(Campaign $campaign, array $roster, ?array $starterIds): array
+    {
+        $savedMinutes = $campaign->settings['lineup']['target_minutes'] ?? [];
+
+        if (!empty($savedMinutes) && array_sum($savedMinutes) >= 190) {
+            return $savedMinutes;
+        }
+
+        // Generate defaults using SubstitutionService
+        $starterIds = array_filter($starterIds ?? [], fn($id) => $id !== null);
+        $defaults = $this->substitutionService->getDefaultTargetMinutes($roster, $starterIds);
+
+        // Persist to campaign settings
+        $settings = $campaign->settings ?? [];
+        $settings['lineup']['target_minutes'] = $defaults;
+        $campaign->settings = $settings;
+        $campaign->save();
+
+        return $defaults;
     }
 
     /**
