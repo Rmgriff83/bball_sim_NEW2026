@@ -26,6 +26,17 @@ class GameSimulationService
     private PlayExecutionEngine $playEngine;
     private CoachingService $coachingService;
     private GameNewsService $gameNewsService;
+    private SubstitutionService $substitutionService;
+
+    // Substitution state
+    private array $homeTargetMinutes = [];
+    private array $awayTargetMinutes = [];
+    private string $homeSubStrategy = 'staggered';
+    private string $awaySubStrategy = 'staggered';
+    private array $homeStarterIds = [];
+    private array $awayStarterIds = [];
+    private bool $isLiveGame = false;
+    private ?int $userTeamId = null;
 
     // Game state
     private bool $generateAnimationData = true;
@@ -67,7 +78,8 @@ class GameSimulationService
         PlayService $playService,
         PlayExecutionEngine $playEngine,
         CoachingService $coachingService,
-        GameNewsService $gameNewsService
+        GameNewsService $gameNewsService,
+        SubstitutionService $substitutionService
     ) {
         $this->playerService = $playerService;
         $this->evolutionService = $evolutionService;
@@ -75,6 +87,7 @@ class GameSimulationService
         $this->playEngine = $playEngine;
         $this->coachingService = $coachingService;
         $this->gameNewsService = $gameNewsService;
+        $this->substitutionService = $substitutionService;
         $this->loadBadgeData();
     }
 
@@ -147,6 +160,9 @@ class GameSimulationService
     {
         $this->generateAnimationData = $generateAnimationData;
         $this->initializeGameFromData($campaign, $gameData, $homeTeam, $awayTeam, $userLineup);
+
+        // Simulated game: AI handles all substitutions
+        $this->isLiveGame = false;
 
         // Track scores at start of each quarter
         $homeScoreAtQuarterStart = 0;
@@ -258,6 +274,48 @@ class GameSimulationService
         $this->homeDefensiveScheme = $homeScheme['defensive'] ?? 'man';
         $this->awayOffensiveScheme = $awayScheme['offensive'] ?? 'balanced';
         $this->awayDefensiveScheme = $awayScheme['defensive'] ?? 'man';
+
+        // Record starter IDs
+        $this->homeStarterIds = array_map(fn($p) => $p['id'], $this->homeLineup);
+        $this->awayStarterIds = array_map(fn($p) => $p['id'], $this->awayLineup);
+
+        // Set user team ID
+        $this->userTeamId = $campaign->team_id;
+
+        // Load target minutes
+        $this->homeTargetMinutes = $this->loadTargetMinutes(
+            $homeTeam, $campaign, $isUserHomeTeam, $this->homePlayers, $this->homeStarterIds
+        );
+        $this->awayTargetMinutes = $this->loadTargetMinutes(
+            $awayTeam, $campaign, $isUserAwayTeam, $this->awayPlayers, $this->awayStarterIds
+        );
+
+        // Load substitution strategies
+        $this->homeSubStrategy = $homeScheme['substitution'] ?? 'staggered';
+        $this->awaySubStrategy = $awayScheme['substitution'] ?? 'staggered';
+
+        // Apply variance so minutes differ game-to-game
+        $this->homeTargetMinutes = $this->substitutionService->applyVariance($this->homeTargetMinutes);
+        $this->awayTargetMinutes = $this->substitutionService->applyVariance($this->awayTargetMinutes);
+    }
+
+    /**
+     * Load target minutes for a team from the appropriate source.
+     */
+    private function loadTargetMinutes(Team $team, Campaign $campaign, bool $isUserTeam, array $players, array $starterIds): array
+    {
+        if ($isUserTeam) {
+            $targetMinutes = $campaign->settings['lineup']['target_minutes'] ?? [];
+        } else {
+            $targetMinutes = $team->lineup_settings['target_minutes'] ?? [];
+        }
+
+        // Fallback to defaults if empty
+        if (empty($targetMinutes)) {
+            $targetMinutes = $this->substitutionService->getDefaultTargetMinutes($players, $starterIds);
+        }
+
+        return $targetMinutes;
     }
 
     /**
@@ -528,8 +586,8 @@ class GameSimulationService
             // Switch possession
             $possessionTeam = $possessionTeam === 'home' ? 'away' : 'home';
 
-            // Rotate players every ~4 minutes of game time
-            if ($minutesSinceLastRotation >= 4) {
+            // Rotate players every ~2 minutes of game time
+            if ($minutesSinceLastRotation >= 2) {
                 $this->rotatePlayers();
                 $minutesSinceLastRotation = 0;
             }
@@ -1402,12 +1460,33 @@ class GameSimulationService
     }
 
     /**
-     * Rotate players to manage fatigue.
+     * Rotate players using the substitution engine.
      */
     private function rotatePlayers(): void
     {
-        // Simple rotation - swap starter with first bench player of same position
-        // In a full implementation, this would be more sophisticated
+        // Home team
+        $isUserHomeLive = $this->isLiveGame && $this->homeTeam->id === $this->userTeamId;
+        $homeResult = $this->substitutionService->evaluateSubstitutions(
+            $this->homeLineup, $this->homePlayers, $this->homeBoxScore,
+            $this->homeTargetMinutes, $this->homeSubStrategy,
+            $this->currentQuarter, $this->timeRemaining,
+            $this->homeScore - $this->awayScore, $isUserHomeLive
+        );
+        if ($homeResult) {
+            $this->homeLineup = $this->rebuildLineupFromIds($homeResult, $this->homePlayers);
+        }
+
+        // Away team
+        $isUserAwayLive = $this->isLiveGame && $this->awayTeam->id === $this->userTeamId;
+        $awayResult = $this->substitutionService->evaluateSubstitutions(
+            $this->awayLineup, $this->awayPlayers, $this->awayBoxScore,
+            $this->awayTargetMinutes, $this->awaySubStrategy,
+            $this->currentQuarter, $this->timeRemaining,
+            $this->awayScore - $this->homeScore, $isUserAwayLive
+        );
+        if ($awayResult) {
+            $this->awayLineup = $this->rebuildLineupFromIds($awayResult, $this->awayPlayers);
+        }
     }
 
     /**
@@ -1558,6 +1637,9 @@ class GameSimulationService
         // Initialize the game (loads players, creates lineups, resets state)
         $this->initializeGameFromData($campaign, $gameData, $homeTeam, $awayTeam, $userLineup);
 
+        // Live game: user controls their own substitutions
+        $this->isLiveGame = true;
+
         // Apply initial coaching adjustments if provided
         if (!empty($coachingAdjustments)) {
             $this->applyAdjustments($coachingAdjustments);
@@ -1679,8 +1761,8 @@ class GameSimulationService
             // Switch possession
             $possessionTeam = $possessionTeam === 'home' ? 'away' : 'home';
 
-            // Rotate players every ~4 minutes of game time
-            if ($minutesSinceLastRotation >= 4) {
+            // Rotate players every ~2 minutes of game time
+            if ($minutesSinceLastRotation >= 2) {
                 $this->rotatePlayers();
                 $minutesSinceLastRotation = 0;
             }
@@ -1694,7 +1776,7 @@ class GameSimulationService
     public function serializeState(): array
     {
         return [
-            'version' => 3, // Bumped for coaching scheme structure change
+            'version' => 4, // Bumped for substitution system
             'status' => 'in_progress',
             'currentQuarter' => $this->currentQuarter,
             'completedQuarters' => range(1, $this->currentQuarter),
@@ -1717,6 +1799,15 @@ class GameSimulationService
             'awayTeamId' => $this->awayTeam->id,
             'homeSynergiesActivated' => $this->homeSynergiesActivated,
             'awaySynergiesActivated' => $this->awaySynergiesActivated,
+            // Substitution state
+            'homeTargetMinutes' => $this->homeTargetMinutes,
+            'awayTargetMinutes' => $this->awayTargetMinutes,
+            'homeSubStrategy' => $this->homeSubStrategy,
+            'awaySubStrategy' => $this->awaySubStrategy,
+            'homeStarterIds' => $this->homeStarterIds,
+            'awayStarterIds' => $this->awayStarterIds,
+            'isLiveGame' => $this->isLiveGame,
+            'userTeamId' => $this->userTeamId,
             'lastUpdatedAt' => now()->toIso8601String(),
         ];
     }
@@ -1783,6 +1874,16 @@ class GameSimulationService
         // Restore synergy counters
         $this->homeSynergiesActivated = $state['homeSynergiesActivated'] ?? 0;
         $this->awaySynergiesActivated = $state['awaySynergiesActivated'] ?? 0;
+
+        // Restore substitution state
+        $this->homeTargetMinutes = $state['homeTargetMinutes'] ?? [];
+        $this->awayTargetMinutes = $state['awayTargetMinutes'] ?? [];
+        $this->homeSubStrategy = $state['homeSubStrategy'] ?? 'staggered';
+        $this->awaySubStrategy = $state['awaySubStrategy'] ?? 'staggered';
+        $this->homeStarterIds = $state['homeStarterIds'] ?? [];
+        $this->awayStarterIds = $state['awayStarterIds'] ?? [];
+        $this->isLiveGame = $state['isLiveGame'] ?? false;
+        $this->userTeamId = $state['userTeamId'] ?? null;
 
         // Reset per-quarter data
         $this->animationData = [];

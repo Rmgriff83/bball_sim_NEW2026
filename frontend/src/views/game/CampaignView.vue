@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, onUnmounted } from 'vue'
+import { computed, onMounted, ref, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useAuthStore } from '@/stores/auth'
@@ -29,10 +29,37 @@ const formattedCurrentDate = computed(() => {
 
 const mobileMenuOpen = ref(false)
 const isMobile = ref(window.innerWidth < 1024)
+const mobileMenuRef = ref(null)
+const mobileMenuBtnRef = ref(null)
 
 function handleResize() {
   isMobile.value = window.innerWidth < 1024
 }
+
+function handleClickOutside(e) {
+  if (
+    mobileMenuRef.value && !mobileMenuRef.value.contains(e.target) &&
+    mobileMenuBtnRef.value && !mobileMenuBtnRef.value.contains(e.target)
+  ) {
+    closeMobileMenu()
+  }
+}
+
+function handleScroll() {
+  if (mobileMenuOpen.value) {
+    closeMobileMenu()
+  }
+}
+
+watch(mobileMenuOpen, (open) => {
+  if (open) {
+    document.addEventListener('click', handleClickOutside)
+    window.addEventListener('scroll', handleScroll, true)
+  } else {
+    document.removeEventListener('click', handleClickOutside)
+    window.removeEventListener('scroll', handleScroll, true)
+  }
+})
 
 onMounted(async () => {
   window.addEventListener('resize', handleResize)
@@ -43,6 +70,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('scroll', handleScroll, true)
 })
 
 async function handleLogout() {
@@ -132,7 +161,7 @@ function closeMobileMenu() {
               <span class="date-weekday">{{ formattedCurrentDate.weekday }}</span>
             </div>
           </div>
-          <button class="mobile-menu-btn" @click="toggleMobileMenu">
+          <button ref="mobileMenuBtnRef" class="mobile-menu-btn" @click="toggleMobileMenu">
             <span class="menu-icon" :class="{ open: mobileMenuOpen }">
               <span></span>
               <span></span>
@@ -143,7 +172,7 @@ function closeMobileMenu() {
       </div>
 
       <!-- Mobile Navigation Slide-in -->
-      <div v-if="isMobile" class="mobile-nav" :class="{ open: mobileMenuOpen }">
+      <div v-if="isMobile" ref="mobileMenuRef" class="mobile-nav" :class="{ open: mobileMenuOpen }">
         <router-link
           to="/profile"
           class="mobile-nav-link"

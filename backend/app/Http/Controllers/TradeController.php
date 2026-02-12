@@ -9,6 +9,7 @@ use App\Models\TradeProposal;
 use App\Services\AITradeEvaluationService;
 use App\Services\AITradeProposalService;
 use App\Services\CampaignPlayerService;
+use App\Services\CampaignSeasonService;
 use App\Services\DraftPickService;
 use App\Services\TradeService;
 use Illuminate\Http\JsonResponse;
@@ -21,7 +22,8 @@ class TradeController extends Controller
         private DraftPickService $draftPickService,
         private AITradeEvaluationService $aiEvaluationService,
         private CampaignPlayerService $playerService,
-        private AITradeProposalService $proposalService
+        private AITradeProposalService $proposalService,
+        private CampaignSeasonService $seasonService
     ) {}
 
     /**
@@ -498,7 +500,7 @@ class TradeController extends Controller
 
         NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'event_type' => 'trade_completed',
+            'event_type' => 'trade',
             'headline' => "{$playerName} traded in deal between {$teamList}",
             'body' => "A trade has been completed between {$teamList} involving {$playerName}.",
             'game_date' => $campaign->current_date,
@@ -511,7 +513,8 @@ class TradeController extends Controller
     private function buildTeamContext(Campaign $campaign, Team $team): array
     {
         $season = $campaign->currentSeason;
-        $standings = $season?->standings ?? ['east' => [], 'west' => []];
+        $year = $season?->year ?? $campaign->game_year ?? 2025;
+        $standings = $this->seasonService->getStandings($campaign->id, $year);
 
         $gamesPlayed = 0;
         foreach (['east', 'west'] as $conf) {
@@ -520,18 +523,17 @@ class TradeController extends Controller
             }
         }
 
+        $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
         $flat = [];
         foreach (['east', 'west'] as $conf) {
             foreach ($standings[$conf] ?? [] as $standing) {
                 $teamId = $standing['teamId'] ?? null;
-                if ($teamId) {
-                    $t = Team::find($teamId);
-                    if ($t) {
-                        $flat[$t->abbreviation] = [
-                            'wins' => $standing['wins'] ?? 0,
-                            'losses' => $standing['losses'] ?? 0,
-                        ];
-                    }
+                $t = $teamId ? ($teams[$teamId] ?? null) : null;
+                if ($t) {
+                    $flat[$t->abbreviation] = [
+                        'wins' => $standing['wins'] ?? 0,
+                        'losses' => $standing['losses'] ?? 0,
+                    ];
                 }
             }
         }

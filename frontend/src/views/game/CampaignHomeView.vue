@@ -17,7 +17,7 @@ import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import PlayoffBracket from '@/components/playoffs/PlayoffBracket.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star } from 'lucide-vue-next'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,6 +37,9 @@ const showAllStarModal = ref(false)
 const allStarRosters = ref(null)
 const showLineupWarningModal = ref(false)
 const pendingGameAction = ref(null) // 'simulate' or gameId for play
+const showRosterWarningModal = ref(false)
+const rosterWarningMessage = ref('')
+const rosterWarningHint = ref('')
 
 // Only show loading if we don't have cached campaign data
 const loading = ref(!campaignStore.currentCampaign)
@@ -110,6 +113,34 @@ const conferenceLabel = computed(() => {
 
 // Check if lineup is complete - use teamStore as single source of truth
 const isLineupComplete = computed(() => teamStore.isLineupComplete)
+
+// Validate roster before game: check injured starters and minutes total
+function validateRosterForGame() {
+  const starters = teamStore.starterPlayers || []
+  const injuredStarters = starters.filter(p => p && (p.is_injured || p.isInjured))
+  if (injuredStarters.length > 0) {
+    const names = injuredStarters.map(p => p.name || `${p.first_name} ${p.last_name}`).join(', ')
+    rosterWarningMessage.value = `You have injured ${injuredStarters.length === 1 ? 'starter' : 'starters'} in your lineup: ${names}`
+    rosterWarningHint.value = 'Go to the Team tab to adjust your lineup before playing.'
+    showRosterWarningModal.value = true
+    return false
+  }
+
+  const totalMins = teamStore.totalTargetMinutes
+  if (totalMins !== 200) {
+    rosterWarningMessage.value = `Your rotation minutes total ${totalMins} — they must equal exactly 200.`
+    rosterWarningHint.value = 'Go to the Team tab to adjust your player minutes before playing.'
+    showRosterWarningModal.value = true
+    return false
+  }
+
+  return true
+}
+
+function goToTeamTabFromWarning() {
+  showRosterWarningModal.value = false
+  router.push(`/campaign/${campaignId.value}/team?tab=team`)
+}
 
 // Current in-game date
 const currentDate = computed(() => campaign.value?.current_date)
@@ -328,6 +359,7 @@ function navigateToGame(gameId) {
     showLineupWarningModal.value = true
     return
   }
+  if (!validateRosterForGame()) return
   router.push(`/campaign/${campaignId.value}/game/${gameId}`)
 }
 
@@ -337,6 +369,7 @@ async function handleSimulateToNextGame() {
     showLineupWarningModal.value = true
     return
   }
+  if (!validateRosterForGame()) return
   showSimulateModal.value = true
   await gameStore.fetchSimulateToNextGamePreview(campaignId.value)
 }
@@ -404,7 +437,13 @@ async function handleConfirmSimulate() {
   }
 }
 
+async function handleSimToEndFromModal() {
+  showSimulateModal.value = false
+  await handleSimToEnd()
+}
+
 async function handleSimToEnd() {
+  if (!validateRosterForGame()) return
   const loadingToastId = toastStore.showLoading('Simming to end...')
 
   try {
@@ -754,7 +793,7 @@ function handleCloseSimulateModal() {
             </div>
             <span class="action-label">Standings</span>
           </button>
-          <button class="action-box" @click="router.push(`/campaign/${campaignId}/team`)">
+          <button class="action-box" @click="router.push(`/campaign/${campaignId}/team#schedule`)">
             <div class="action-icon">
               <Calendar :size="24" />
             </div>
@@ -828,8 +867,10 @@ function handleCloseSimulateModal() {
       :loading="gameStore.loadingPreview"
       :simulating="gameStore.simulating"
       :user-team="team"
+      :game-in-progress="isGameInProgress"
       @close="handleCloseSimulateModal"
       @confirm="handleConfirmSimulate"
+      @sim-to-end="handleSimToEndFromModal"
     />
 
     <!-- Lineup Warning Modal -->
@@ -853,6 +894,28 @@ function handleCloseSimulateModal() {
           <button class="btn-primary" @click="goToRosterFromWarning">
             <Users :size="16" />
             Go to GM View
+          </button>
+        </div>
+      </div>
+    </BaseModal>
+
+    <!-- Roster Warning Modal (minutes / injured starters) -->
+    <BaseModal
+      :show="showRosterWarningModal"
+      title="Roster Issue"
+      @close="showRosterWarningModal = false"
+    >
+      <div class="lineup-warning-content">
+        <div class="warning-icon">
+          <AlertTriangle :size="48" />
+        </div>
+        <p class="warning-message">{{ rosterWarningMessage }}</p>
+        <p class="warning-hint">{{ rosterWarningHint }}</p>
+        <div class="warning-actions">
+          <button class="btn-secondary" @click="showRosterWarningModal = false">Cancel</button>
+          <button class="btn-primary" @click="goToTeamTabFromWarning">
+            <Users :size="16" />
+            Go to Team Tab
           </button>
         </div>
       </div>

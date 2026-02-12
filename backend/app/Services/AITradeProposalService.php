@@ -382,7 +382,7 @@ class AITradeProposalService
         NewsEvent::create([
             'campaign_id' => $campaign->id,
             'team_id' => $aiTeam->id,
-            'event_type' => 'trade_proposal',
+            'event_type' => 'trade',
             'headline' => "The {$aiTeam->city} {$aiTeam->name} have proposed a trade",
             'body' => "The {$aiTeam->name} are interested in acquiring {$targetName} and have sent a formal trade proposal.",
             'game_date' => $campaign->current_date,
@@ -441,7 +441,7 @@ class AITradeProposalService
 
             NewsEvent::create([
                 'campaign_id' => $campaign->id,
-                'event_type' => 'trade_deadline',
+                'event_type' => 'trade',
                 'headline' => 'Trade deadline approaching',
                 'body' => "The February 5th trade deadline is {$daysUntil} days away. Teams are expected to increase activity.",
                 'game_date' => $currentDate,
@@ -455,7 +455,7 @@ class AITradeProposalService
         if ($currentDate->gt($deadline) && !($settings['trade_deadline_passed'] ?? false)) {
             NewsEvent::create([
                 'campaign_id' => $campaign->id,
-                'event_type' => 'trade_deadline',
+                'event_type' => 'trade',
                 'headline' => 'Trade deadline has passed',
                 'body' => 'The trade deadline has officially passed. No more trades can be made this season.',
                 'game_date' => $currentDate,

@@ -1036,6 +1036,7 @@ class PlayerEvolutionService
 
     /**
      * Update player fatigue based on minutes played.
+     * Stamina and durability reduce fatigue accumulation.
      * If player plays 0 minutes, they get rest recovery instead.
      */
     private function updateFatigue(array $player, int $minutes): array
@@ -1043,13 +1044,21 @@ class PlayerEvolutionService
         $config = config('player_evolution.fatigue');
         $current = $player['fatigue'] ?? 0;
 
-        // If player didn't play, they get rest recovery
+        // If player didn't play, they get rest recovery (attribute-weighted)
         if ($minutes === 0) {
-            $player['fatigue'] = max(0, $current - $config['rest_day_recovery']);
+            $recovery = $this->getAttributeWeightedRecovery($player, $config['rest_day_recovery']);
+            $player['fatigue'] = max(0, $current - $recovery);
             return $player;
         }
 
         $gain = $minutes * $config['per_minute_gain'];
+
+        // Stamina and durability reduce fatigue gain (high attributes = less fatigue)
+        $stamina = $player['attributes']['physical']['stamina'] ?? 70;
+        $durability = $player['attributes']['physical']['durability'] ?? 70;
+        $athleticAvg = ($stamina * 0.6 + $durability * 0.4) / 100; // 0.0 - 1.0
+        // A 100-rated player gains ~20% less fatigue, a 50-rated player gains ~10% more
+        $gain *= (1.2 - $athleticAvg * 0.4);
 
         // Rookie wall penalty
         $gamesPlayed = $player['games_played_this_season'] ?? $player['gamesPlayedThisSeason'] ?? 0;
@@ -1069,13 +1078,34 @@ class PlayerEvolutionService
 
     /**
      * Recover fatigue during rest.
+     * Recovery rate varies by ~15% and is weighted by stamina/durability.
      */
     private function recoverFatigue(array $player): array
     {
         $config = config('player_evolution.fatigue');
         $current = $player['fatigue'] ?? 0;
-        $player['fatigue'] = max(0, $current - $config['weekly_recovery']);
+        $recovery = $this->getAttributeWeightedRecovery($player, $config['weekly_recovery']);
+        $player['fatigue'] = max(0, $current - $recovery);
         return $player;
+    }
+
+    /**
+     * Calculate attribute-weighted recovery with ~15% natural variance.
+     * Higher stamina/durability = faster recovery.
+     */
+    private function getAttributeWeightedRecovery(array $player, float $baseRecovery): float
+    {
+        $stamina = $player['attributes']['physical']['stamina'] ?? 70;
+        $durability = $player['attributes']['physical']['durability'] ?? 70;
+        $athleticAvg = ($stamina * 0.6 + $durability * 0.4) / 100; // 0.0 - 1.0
+
+        // High attributes recover faster: 100-rated player gets ~20% more recovery, 50-rated gets ~10% less
+        $attrModifier = 0.8 + $athleticAvg * 0.4;
+
+        // Add ~15% random variance (0.85 to 1.15)
+        $variance = 0.85 + (mt_rand(0, 30) / 100);
+
+        return $baseRecovery * $attrModifier * $variance;
     }
 
     /**
@@ -1107,7 +1137,9 @@ class PlayerEvolutionService
             foreach ($userPlayers as $player) {
                 $currentFatigue = $player->fatigue ?? 0;
                 if ($currentFatigue > 0) {
-                    $player->update(['fatigue' => max(0, $currentFatigue - $restRecovery)]);
+                    $playerArr = $player->toArray();
+                    $recovery = $this->getAttributeWeightedRecovery($playerArr, $restRecovery);
+                    $player->update(['fatigue' => max(0, $currentFatigue - $recovery)]);
                 }
             }
             unset($teamsWithoutGames[$userTeamAbbr]);
@@ -1124,7 +1156,8 @@ class PlayerEvolutionService
                 if (in_array($teamAbbr, $teamsWithoutGamesAbbrs)) {
                     $currentFatigue = $player['fatigue'] ?? 0;
                     if ($currentFatigue > 0) {
-                        $player['fatigue'] = max(0, $currentFatigue - $restRecovery);
+                        $recovery = $this->getAttributeWeightedRecovery($player, $restRecovery);
+                        $player['fatigue'] = max(0, $currentFatigue - $recovery);
                         $modified = true;
                     }
                 }

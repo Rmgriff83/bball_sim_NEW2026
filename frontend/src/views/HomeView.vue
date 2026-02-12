@@ -270,12 +270,11 @@ const isAuthenticated = computed(() => authStore.isAuthenticated)
   font-weight: 400;
   letter-spacing: 0.05em;
   line-height: 1;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-tertiary));
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
   margin-bottom: 1rem;
-  text-shadow: 0 0 40px rgba(232, 90, 79, 0.5);
   animation: textGlow 3s ease-in-out infinite;
 }
 
@@ -415,7 +414,7 @@ const isAuthenticated = computed(() => authStore.isAuthenticated)
 
 .feature-heading {
   font-size: 1.1rem;
-  font-weight: 600;
+  font-weight: 400;
   color: var(--color-text-primary);
   margin-bottom: 0.75rem;
 }

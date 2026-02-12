@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { X, ChevronDown, ChevronUp, Play, Calendar } from 'lucide-vue-next'
+import { X, ChevronDown, ChevronUp, Play, FastForward, Calendar } from 'lucide-vue-next'
 import { LoadingSpinner } from '@/components/ui'
 
 const props = defineProps({
@@ -27,10 +27,14 @@ const props = defineProps({
   backgroundProgress: {
     type: Object,
     default: null
+  },
+  gameInProgress: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['close', 'confirm'])
+const emit = defineEmits(['close', 'confirm', 'simToEnd'])
 
 // Track which date sections are expanded
 const expandedDates = ref({})
@@ -61,6 +65,10 @@ function close() {
 
 function confirm() {
   emit('confirm')
+}
+
+function simToEnd() {
+  emit('simToEnd')
 }
 
 function handleKeydown(e) {
@@ -289,6 +297,16 @@ const opponentTeamData = computed(() => {
                 @click="close"
               >
                 Cancel
+              </button>
+              <button
+                v-if="gameInProgress"
+                class="btn-sim-to-end"
+                :disabled="simulating"
+                @click="simToEnd"
+              >
+                <span v-if="simulating" class="btn-loading"></span>
+                <FastForward v-else :size="16" class="btn-icon" />
+                {{ simulating ? 'Simulating...' : 'Sim to End' }}
               </button>
               <button
                 class="btn-confirm"
@@ -734,7 +752,8 @@ const opponentTeamData = computed(() => {
 }
 
 .btn-cancel,
-.btn-confirm {
+.btn-confirm,
+.btn-sim-to-end {
   flex: 1;
   display: flex;
   align-items: center;
@@ -772,8 +791,19 @@ const opponentTeamData = computed(() => {
   transform: translateY(-1px);
 }
 
+.btn-sim-to-end {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn-sim-to-end:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
 .btn-cancel:disabled,
-.btn-confirm:disabled {
+.btn-confirm:disabled,
+.btn-sim-to-end:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

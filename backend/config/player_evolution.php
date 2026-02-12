@@ -291,20 +291,20 @@ return [
     'difficulty_settings' => [
         'rookie' => [
             // Very achievable growth - most decent performances trigger development
-            'micro_dev_threshold_high' => 10,   // Performance >= 10 = growth (was 20)
-            'micro_dev_threshold_low' => 5,     // Performance <= 5 = regression (was 8)
+            'micro_dev_threshold_high' => 9,    // Reduced ~15% for shorter quarters
+            'micro_dev_threshold_low' => 4,
             'micro_dev_gain_min' => 0.15,       // Higher gains
             'micro_dev_gain_max' => 0.4,
             'micro_dev_loss_min' => 0.05,       // Lower losses
             'micro_dev_loss_max' => 0.1,
             // Stat thresholds for which attributes improve
             'stat_thresholds' => [
-                'points' => 12,     // Was 20
-                'assists' => 4,     // Was 6
-                'rebounds' => 5,    // Was 8
-                'steals' => 1,      // Was 2
-                'blocks' => 1,      // Was 2
-                'threes' => 2,      // Was 3
+                'points' => 10,
+                'assists' => 3,
+                'rebounds' => 4,
+                'steals' => 1,
+                'blocks' => 1,
+                'threes' => 2,
             ],
             // Age bracket modifiers (multiply base values)
             'development_multiplier' => 1.3,    // 30% more development
@@ -312,35 +312,35 @@ return [
         ],
         'pro' => [
             // Balanced - good performances trigger development
-            'micro_dev_threshold_high' => 14,   // Lowered from 20 to be more achievable
-            'micro_dev_threshold_low' => 6,     // Lowered from 8
+            'micro_dev_threshold_high' => 12,   // Reduced ~15% for shorter quarters
+            'micro_dev_threshold_low' => 5,
             'micro_dev_gain_min' => 0.1,
             'micro_dev_gain_max' => 0.3,
             'micro_dev_loss_min' => 0.08,
             'micro_dev_loss_max' => 0.15,
             'stat_thresholds' => [
-                'points' => 15,     // Was 20
-                'assists' => 5,     // Was 6
-                'rebounds' => 6,    // Was 8
+                'points' => 13,
+                'assists' => 4,
+                'rebounds' => 5,
                 'steals' => 2,
                 'blocks' => 2,
-                'threes' => 2,      // Was 3
+                'threes' => 2,
             ],
             'development_multiplier' => 1.0,
             'regression_multiplier' => 1.0,
         ],
         'all_star' => [
             // Challenging - need solid performances for growth
-            'micro_dev_threshold_high' => 18,
-            'micro_dev_threshold_low' => 7,
+            'micro_dev_threshold_high' => 15,   // Reduced ~15% for shorter quarters
+            'micro_dev_threshold_low' => 6,
             'micro_dev_gain_min' => 0.08,
             'micro_dev_gain_max' => 0.25,
             'micro_dev_loss_min' => 0.1,
             'micro_dev_loss_max' => 0.2,
             'stat_thresholds' => [
-                'points' => 18,
-                'assists' => 6,
-                'rebounds' => 7,
+                'points' => 15,
+                'assists' => 5,
+                'rebounds' => 6,
                 'steals' => 2,
                 'blocks' => 2,
                 'threes' => 3,
@@ -350,16 +350,16 @@ return [
         ],
         'hall_of_fame' => [
             // Very challenging - need great performances for growth
-            'micro_dev_threshold_high' => 22,
-            'micro_dev_threshold_low' => 8,
+            'micro_dev_threshold_high' => 19,   // Reduced ~15% for shorter quarters
+            'micro_dev_threshold_low' => 7,
             'micro_dev_gain_min' => 0.05,
             'micro_dev_gain_max' => 0.2,
             'micro_dev_loss_min' => 0.12,
             'micro_dev_loss_max' => 0.25,
             'stat_thresholds' => [
-                'points' => 22,
-                'assists' => 7,
-                'rebounds' => 8,
+                'points' => 19,
+                'assists' => 6,
+                'rebounds' => 7,
                 'steals' => 2,
                 'blocks' => 2,
                 'threes' => 3,
@@ -376,11 +376,11 @@ return [
     */
     'streaks' => [
         'hot_streak_games' => 3, // Games needed to trigger hot streak
-        'hot_streak_threshold' => 25, // Performance rating threshold
+        'hot_streak_threshold' => 21, // Performance rating threshold (reduced ~15% for shorter quarters)
         'hot_streak_bonus' => 2, // Attribute bonus during streak
 
         'cold_streak_games' => 3,
-        'cold_streak_threshold' => 10,
+        'cold_streak_threshold' => 9,
         'cold_streak_penalty' => -2,
 
         'max_streak_length' => 10, // Streaks cap at 10 games
@@ -406,7 +406,7 @@ return [
     |--------------------------------------------------------------------------
     */
     'fatigue' => [
-        'per_minute_gain' => 0.5, // Fatigue gained per minute played
+        'per_minute_gain' => 0.4, // Fatigue gained per minute played (reduced 20% for shorter quarters)
         'max_fatigue' => 100,
         'weekly_recovery' => 15, // Fatigue recovered per week
         'rest_day_recovery' => 15, // Recovery when player doesn't play (0 mins or no game)

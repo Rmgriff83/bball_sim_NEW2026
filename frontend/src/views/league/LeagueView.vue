@@ -934,13 +934,27 @@ function formatSalary(salary) {
                 <!-- Stats Tab -->
                 <div v-if="playerModalTab === 'stats'" class="player-tab-panel">
                   <template v-if="selectedPlayer.season_stats">
-                    <!-- Scoring Stats -->
                     <div class="player-stats-card">
-                      <h4 class="player-stats-title">Scoring</h4>
                       <div class="player-stats-grid">
                         <div class="player-stat-cell">
                           <span class="player-stat-value highlight">{{ selectedPlayer.season_stats.ppg }}</span>
                           <span class="player-stat-label">PPG</span>
+                        </div>
+                        <div class="player-stat-cell">
+                          <span class="player-stat-value">{{ selectedPlayer.season_stats.rpg }}</span>
+                          <span class="player-stat-label">RPG</span>
+                        </div>
+                        <div class="player-stat-cell">
+                          <span class="player-stat-value">{{ selectedPlayer.season_stats.apg }}</span>
+                          <span class="player-stat-label">APG</span>
+                        </div>
+                        <div class="player-stat-cell">
+                          <span class="player-stat-value">{{ selectedPlayer.season_stats.spg }}</span>
+                          <span class="player-stat-label">SPG</span>
+                        </div>
+                        <div class="player-stat-cell">
+                          <span class="player-stat-value">{{ selectedPlayer.season_stats.bpg }}</span>
+                          <span class="player-stat-label">BPG</span>
                         </div>
                         <div class="player-stat-cell">
                           <span class="player-stat-value">{{ selectedPlayer.season_stats.fg_pct }}%</span>
@@ -954,21 +968,6 @@ function formatSalary(salary) {
                           <span class="player-stat-value">{{ selectedPlayer.season_stats.ft_pct }}%</span>
                           <span class="player-stat-label">FT%</span>
                         </div>
-                      </div>
-                    </div>
-
-                    <!-- Playmaking Stats -->
-                    <div class="player-stats-card">
-                      <h4 class="player-stats-title">Playmaking</h4>
-                      <div class="player-stats-grid">
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value highlight">{{ selectedPlayer.season_stats.apg }}</span>
-                          <span class="player-stat-label">APG</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.rpg }}</span>
-                          <span class="player-stat-label">RPG</span>
-                        </div>
                         <div class="player-stat-cell">
                           <span class="player-stat-value">{{ selectedPlayer.season_stats.mpg }}</span>
                           <span class="player-stat-label">MPG</span>
@@ -976,21 +975,6 @@ function formatSalary(salary) {
                         <div class="player-stat-cell">
                           <span class="player-stat-value">{{ selectedPlayer.season_stats.games_played }}</span>
                           <span class="player-stat-label">GP</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Defense Stats -->
-                    <div class="player-stats-card">
-                      <h4 class="player-stats-title">Defense</h4>
-                      <div class="player-stats-grid cols-2">
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.spg }}</span>
-                          <span class="player-stat-label">SPG</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.bpg }}</span>
-                          <span class="player-stat-label">BPG</span>
                         </div>
                       </div>
                     </div>
@@ -3185,23 +3169,10 @@ function formatSalary(salary) {
   padding: 12px;
 }
 
-.player-stats-title {
-  font-size: 0.65rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-secondary);
-  margin: 0 0 10px 0;
-}
-
 .player-stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
-}
-
-.player-stats-grid.cols-2 {
-  grid-template-columns: repeat(2, 1fr);
 }
 
 .player-stat-cell {

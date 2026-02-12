@@ -8,7 +8,7 @@ import { useLeagueStore } from '@/stores/league'
 import { useToastStore } from '@/stores/toast'
 import { LoadingSpinner } from '@/components/ui'
 import BoxScore from '@/components/game/BoxScore.vue'
-import { X, Play, FastForward, Eye, Lock } from 'lucide-vue-next'
+import { X, Play, FastForward, Eye, Lock, AlertTriangle } from 'lucide-vue-next'
 
 const props = defineProps({
   show: {
@@ -45,6 +45,40 @@ const loadingBoxScore = ref(false)
 const fullGameData = ref(null)
 const activeBoxScoreTab = ref('home')
 const simulating = ref(false)
+const showWarning = ref(false)
+const warningMessage = ref('')
+const warningHint = ref('')
+
+// Validation: check minutes total and injured starters before game actions
+function validateRoster() {
+  // Check for injured starters
+  const starters = teamStore.starterPlayers || []
+  const injuredStarters = starters.filter(p => p && (p.is_injured || p.isInjured))
+  if (injuredStarters.length > 0) {
+    const names = injuredStarters.map(p => p.name || `${p.first_name} ${p.last_name}`).join(', ')
+    warningMessage.value = `You have injured ${injuredStarters.length === 1 ? 'starter' : 'starters'} in your lineup: ${names}`
+    warningHint.value = 'Go to the Team tab to adjust your lineup before playing.'
+    showWarning.value = true
+    return false
+  }
+
+  // Check minutes total
+  const totalMins = teamStore.totalTargetMinutes
+  if (totalMins !== 200) {
+    warningMessage.value = `Your rotation minutes total ${totalMins} — they must equal exactly 200.`
+    warningHint.value = 'Go to the Team tab to adjust your player minutes before playing.'
+    showWarning.value = true
+    return false
+  }
+
+  return true
+}
+
+function goToTeamTab() {
+  showWarning.value = false
+  router.push(`/campaign/${props.campaignId}/team?tab=team`)
+  close()
+}
 
 // Determine if user is home or away
 const isUserHome = computed(() => {
@@ -157,6 +191,7 @@ async function loadBoxScore() {
 // Navigation actions
 function playGame() {
   if (!props.isNextGame && !isGameInProgress.value) return
+  if (!isGameInProgress.value && !validateRoster()) return
   router.push(`/campaign/${props.campaignId}/game/${props.game.id}`)
   close()
 }
@@ -170,6 +205,7 @@ function viewFullGame() {
 // Simulate through this game
 async function simulateToGame() {
   if (!props.isNextGame || simulating.value) return
+  if (!validateRoster()) return
 
   simulating.value = true
   const loadingToastId = toastStore.showLoading('Simulating games...')
@@ -217,6 +253,7 @@ async function simulateToGame() {
 
 async function simToEndOfGame() {
   if (simulating.value) return
+  if (!validateRoster()) return
 
   simulating.value = true
   const loadingToastId = toastStore.showLoading('Simming to end...')
@@ -443,6 +480,25 @@ onUnmounted(() => {
               </button>
             </template>
           </footer>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- Roster Warning Modal -->
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="showWarning" class="warning-overlay" @click.self="showWarning = false">
+        <div class="warning-modal">
+          <div class="warning-icon-wrap">
+            <AlertTriangle :size="40" class="warning-icon-svg" />
+          </div>
+          <p class="warning-msg">{{ warningMessage }}</p>
+          <p class="warning-hint">{{ warningHint }}</p>
+          <div class="warning-btns">
+            <button class="btn btn-secondary" @click="showWarning = false">Cancel</button>
+            <button class="btn btn-primary" @click="goToTeamTab">Go to Team Tab</button>
+          </div>
         </div>
       </div>
     </Transition>
@@ -827,5 +883,60 @@ onUnmounted(() => {
   .modal-footer .btn {
     width: 100%;
   }
+}
+
+/* Roster Warning Modal */
+.warning-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+}
+
+.warning-modal {
+  width: 100%;
+  max-width: 400px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  padding: 32px 24px 24px;
+  text-align: center;
+  animation: scaleIn 0.2s ease-out;
+}
+
+.warning-icon-wrap {
+  margin-bottom: 16px;
+}
+
+.warning-icon-svg {
+  color: var(--color-warning);
+}
+
+.warning-msg {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
+.warning-hint {
+  font-size: 0.825rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 24px;
+}
+
+.warning-btns {
+  display: flex;
+  gap: 12px;
+}
+
+.warning-btns .btn {
+  flex: 1;
 }
 </style>

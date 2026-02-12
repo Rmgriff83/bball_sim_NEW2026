@@ -125,6 +125,7 @@ class TeamController extends Controller
             // Include lineup settings for frontend to track starters explicitly
             'lineup_settings' => [
                 'starters' => $savedLineup,
+                'target_minutes' => $campaign->settings['lineup']['target_minutes'] ?? [],
             ],
             'coach' => $team->coach ? [
                 'id' => $team->coach->id,
@@ -239,17 +240,66 @@ class TeamController extends Controller
             ], 422);
         }
 
-        // Store lineup in team settings or campaign settings
+        // Store lineup in team settings or campaign settings (preserve existing keys like target_minutes)
         $settings = $campaign->settings ?? [];
-        $settings['lineup'] = [
+        $existingLineup = $settings['lineup'] ?? [];
+        $settings['lineup'] = array_merge($existingLineup, [
             'starters' => $validated['starters'],
             'rotation' => $validated['rotation'] ?? [],
-        ];
+        ]);
         $campaign->update(['settings' => $settings]);
 
         return response()->json([
             'message' => 'Lineup updated successfully',
             'lineup' => $settings['lineup'],
+        ]);
+    }
+
+    /**
+     * Update target minutes for players.
+     */
+    public function updateTargetMinutes(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $validated = $request->validate([
+            'target_minutes' => 'required|array',
+            'target_minutes.*' => 'integer|min:0|max:40',
+        ]);
+
+        $team = $campaign->team;
+        $teamPlayerIds = $team->players->pluck('id')->toArray();
+
+        // Verify all player IDs belong to user's team
+        foreach ($validated['target_minutes'] as $playerId => $minutes) {
+            if (!in_array((int) $playerId, $teamPlayerIds)) {
+                return response()->json(['message' => 'Invalid player in target minutes'], 400);
+            }
+        }
+
+        // Validate starters have minimum 8 minutes
+        $starters = $campaign->settings['lineup']['starters'] ?? [];
+        foreach ($starters as $starterId) {
+            if ($starterId && isset($validated['target_minutes'][$starterId])) {
+                if ($validated['target_minutes'][$starterId] < 8) {
+                    return response()->json(['message' => 'Starters must have at least 8 minutes'], 422);
+                }
+            }
+        }
+
+        // Save to campaign settings
+        $settings = $campaign->settings ?? [];
+        $settings['lineup']['target_minutes'] = $validated['target_minutes'];
+        $campaign->update(['settings' => $settings]);
+
+        $total = array_sum($validated['target_minutes']);
+
+        return response()->json([
+            'message' => 'Target minutes updated',
+            'target_minutes' => $validated['target_minutes'],
+            'total' => $total,
         ]);
     }
 
@@ -679,10 +729,14 @@ class TeamController extends Controller
 
         $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'];
 
+        // Get substitution strategies
+        $substitutionStrategies = $this->coachingService->getSubstitutionStrategies();
+
         return response()->json([
             'schemes' => $schemesWithEffectiveness,
             'recommended' => $recommended,
             'current' => $currentScheme,
+            'substitution_strategies' => $substitutionStrategies,
         ]);
     }
 
@@ -798,10 +852,12 @@ class TeamController extends Controller
         // Support both new format and legacy format
         $offensiveStyles = ['balanced', 'motion', 'iso_heavy', 'post_centric', 'three_point', 'run_and_gun'];
         $defensiveStyles = ['man', 'zone_2_3', 'zone_3_2', 'zone_1_3_1', 'press', 'trap'];
+        $subStrategies = ['staggered', 'platoon', 'tight_rotation', 'deep_bench'];
 
         $validated = $request->validate([
             'offensive' => 'sometimes|string|in:' . implode(',', $offensiveStyles),
             'defensive' => 'sometimes|string|in:' . implode(',', $defensiveStyles),
+            'substitution' => 'sometimes|string|in:' . implode(',', $subStrategies),
             'scheme' => 'sometimes|string|in:' . implode(',', $offensiveStyles), // Legacy support
         ]);
 
@@ -817,6 +873,7 @@ class TeamController extends Controller
         $newScheme = [
             'offensive' => $validated['offensive'] ?? $currentScheme['offensive'] ?? 'balanced',
             'defensive' => $validated['defensive'] ?? $currentScheme['defensive'] ?? 'man',
+            'substitution' => $validated['substitution'] ?? $currentScheme['substitution'] ?? 'staggered',
         ];
 
         $team->update(['coaching_scheme' => $newScheme]);

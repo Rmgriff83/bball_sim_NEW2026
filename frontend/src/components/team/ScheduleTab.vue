@@ -82,6 +82,18 @@ const campaignDate = computed(() => {
   return new Date(campaign.value.current_date)
 })
 
+// Focus date: the date of the current/next user game, falling back to campaign date
+const focusDate = computed(() => {
+  // Check for in-progress game first
+  const inProgress = (gameStore.userGames || []).find(g => g.is_in_progress)
+  if (inProgress?.game_date) return new Date(inProgress.game_date + 'T00:00:00')
+  // Then next upcoming game
+  const next = gameStore.nextUserGame
+  if (next?.game_date) return new Date(next.game_date + 'T00:00:00')
+  // Fall back to campaign date
+  return campaignDate.value
+})
+
 // Group games by date string
 const gamesGroupedByDate = computed(() => {
   const grouped = {}
@@ -157,16 +169,16 @@ const currentMonthDays = computed(() => {
   return calendarDays.value.filter(day => day.isCurrentMonth)
 })
 
-// Whether the user is viewing the month that contains the campaign date
-const isViewingCurrentMonth = computed(() => {
-  if (!campaignDate.value) return false
-  return currentMonth.value.getFullYear() === campaignDate.value.getFullYear() &&
-    currentMonth.value.getMonth() === campaignDate.value.getMonth()
+// Whether the user is viewing the month that contains the focus date (next/current game)
+const isViewingFocusMonth = computed(() => {
+  if (!focusDate.value) return false
+  return currentMonth.value.getFullYear() === focusDate.value.getFullYear() &&
+    currentMonth.value.getMonth() === focusDate.value.getMonth()
 })
 
-// The 7 days (Sun-Sat) of the week containing the campaign date
-const currentWeekDays = computed(() => {
-  const date = campaignDate.value || new Date()
+// The 7 days (Sun-Sat) of the week containing the focus date (next/current game)
+const focusWeekDays = computed(() => {
+  const date = focusDate.value || campaignDate.value || new Date()
   const dayOfWeek = date.getDay() // 0=Sun
   const sunday = new Date(date)
   sunday.setDate(date.getDate() - dayOfWeek)
@@ -181,9 +193,9 @@ const currentWeekDays = computed(() => {
 
 // What days to actually render in the grid
 const displayDays = computed(() => {
-  if (!isViewingCurrentMonth.value) return currentMonthDays.value
+  if (!isViewingFocusMonth.value) return currentMonthDays.value
   if (isExpanded.value) return currentMonthDays.value
-  return currentWeekDays.value
+  return focusWeekDays.value
 })
 
 // Check if a day is "today" in campaign time
@@ -366,10 +378,10 @@ onMounted(async () => {
   }
 })
 
-// Update current month when campaign date changes
-watch(campaignDate, () => {
-  if (campaignDate.value) {
-    goToToday()
+// Update current month when focus date changes (e.g. game completed, next game updated)
+watch(focusDate, () => {
+  if (focusDate.value) {
+    goToGameDate(formatDateKey(focusDate.value))
   }
 })
 </script>
@@ -407,7 +419,7 @@ watch(campaignDate, () => {
         </div>
 
         <!-- Expand/Collapse Toggle -->
-        <div v-if="isViewingCurrentMonth" class="expand-toggle-row">
+        <div v-if="isViewingFocusMonth" class="expand-toggle-row">
           <button class="expand-toggle-btn" @click="toggleExpand">
             <span>{{ isExpanded ? 'Show This Week' : 'See Full Month' }}</span>
             <component :is="isExpanded ? ChevronUp : ChevronDown" :size="16" />

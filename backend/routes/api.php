@@ -69,6 +69,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/team', [TeamController::class, 'show']);
         Route::get('/team/lineup', [TeamController::class, 'show']);
         Route::put('/team/lineup', [TeamController::class, 'updateLineup']);
+        Route::put('/team/target-minutes', [TeamController::class, 'updateTargetMinutes']);
         Route::get('/team/coaching-schemes', [TeamController::class, 'getCoachingSchemes']);
         Route::put('/team/coaching-scheme', [TeamController::class, 'updateCoachingScheme']);
         Route::get('/teams', [TeamController::class, 'allTeams']);

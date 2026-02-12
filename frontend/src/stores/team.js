@@ -13,6 +13,8 @@ export const useTeamStore = defineStore('team', () => {
   const allTeams = ref([])
   const coachingSchemes = ref({})
   const recommendedScheme = ref(null)
+  const substitutionStrategies = ref({})
+  const targetMinutes = ref({})
   const loading = ref(false)
   const error = ref(null)
 
@@ -79,6 +81,10 @@ export const useTeamStore = defineStore('team', () => {
     )
   })
 
+  const totalTargetMinutes = computed(() =>
+    Object.values(targetMinutes.value).reduce((sum, m) => sum + m, 0)
+  )
+
   // Actions
   async function fetchTeam(campaignId, { force = false } = {}) {
     // Return cached data if already loaded for this campaign
@@ -103,6 +109,14 @@ export const useTeamStore = defineStore('team', () => {
         lineup.value = response.data.roster.slice(0, 5).map(p => p.id)
       } else {
         lineup.value = [null, null, null, null, null]
+      }
+
+      // Populate target minutes
+      const savedMinutes = response.data.lineup_settings?.target_minutes
+      if (savedMinutes && typeof savedMinutes === 'object') {
+        targetMinutes.value = { ...savedMinutes }
+      } else {
+        targetMinutes.value = {}
       }
 
       _loadedCampaignId.value = campaignId
@@ -271,6 +285,7 @@ export const useTeamStore = defineStore('team', () => {
       const response = await api.get(`/api/campaigns/${campaignId}/team/coaching-schemes`)
       coachingSchemes.value = response.data.schemes
       recommendedScheme.value = response.data.recommended
+      substitutionStrategies.value = response.data.substitution_strategies || {}
       _schemesCampaignId.value = campaignId
       return response.data
     } catch (err) {
@@ -281,15 +296,17 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
-  async function updateCoachingScheme(campaignId, offensiveScheme, defensiveScheme = null) {
+  async function updateCoachingScheme(campaignId, offensiveScheme, defensiveScheme = null, substitutionStrategy = null) {
     loading.value = true
     error.value = null
     try {
-      // Get current defensive scheme if not provided
+      // Get current schemes if not provided
       const currentDefensive = team.value?.coaching_scheme?.defensive || 'man'
+      const currentSubstitution = team.value?.coaching_scheme?.substitution || 'staggered'
       const payload = {
         offensive: offensiveScheme,
-        defensive: defensiveScheme || currentDefensive
+        defensive: defensiveScheme || currentDefensive,
+        substitution: substitutionStrategy || currentSubstitution,
       }
       const response = await api.put(`/api/campaigns/${campaignId}/team/coaching-scheme`, payload)
       // Update local team state with new format
@@ -303,6 +320,28 @@ export const useTeamStore = defineStore('team', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  async function updateTargetMinutes(campaignId, minutes) {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await api.put(`/api/campaigns/${campaignId}/team/target-minutes`, {
+        target_minutes: minutes,
+      })
+      targetMinutes.value = response.data.target_minutes || minutes
+      return response.data
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to update target minutes'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function getDefaultMinutes(player, isStarter) {
+    if (isStarter) return 32
+    return 0
   }
 
   async function upgradePlayerAttribute(campaignId, playerId, category, attribute) {
@@ -337,6 +376,8 @@ export const useTeamStore = defineStore('team', () => {
     lineup.value = [null, null, null, null, null]
     coachingSchemes.value = {}
     recommendedScheme.value = null
+    substitutionStrategies.value = {}
+    targetMinutes.value = {}
     _loadedCampaignId.value = null
     _schemesCampaignId.value = null
   }
@@ -384,6 +425,8 @@ export const useTeamStore = defineStore('team', () => {
     allTeams,
     coachingSchemes,
     recommendedScheme,
+    substitutionStrategies,
+    targetMinutes,
     loading,
     error,
     // Getters
@@ -396,10 +439,12 @@ export const useTeamStore = defineStore('team', () => {
     totalSalary,
     capSpace,
     averageOverall,
+    totalTargetMinutes,
     // Actions
     fetchTeam,
     fetchPlayer,
     updateLineup,
+    updateTargetMinutes,
     fetchAllTeams,
     fetchTeamRoster,
     fetchFreeAgents,
@@ -415,5 +460,6 @@ export const useTeamStore = defineStore('team', () => {
     getPositionColor,
     getRatingColor,
     formatSalary,
+    getDefaultMinutes,
   }
 })

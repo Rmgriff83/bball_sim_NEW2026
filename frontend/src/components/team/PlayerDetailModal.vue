@@ -423,64 +423,46 @@ function formatChange(change) {
               <!-- Stats Tab -->
               <div v-if="activeTab === 'stats'" class="tab-panel">
                 <template v-if="normalizedPlayer.seasonStats">
-                  <!-- Scoring Stats -->
-                  <div class="stats-section-modal">
-                    <h4 class="stats-section-title">Scoring</h4>
-                    <div class="stats-grid-modal">
-                      <div class="stat-cell">
-                        <span class="stat-label">PPG</span>
-                        <span class="stat-value highlight">{{ formatStat(getStat('ppg')) }}</span>
-                      </div>
-                      <div class="stat-cell">
-                        <span class="stat-label">FG%</span>
-                        <span class="stat-value">{{ formatStat(getStat('fg_pct') || getStat('fgPct'), 0) }}%</span>
-                      </div>
-                      <div class="stat-cell">
-                        <span class="stat-label">3P%</span>
-                        <span class="stat-value">{{ formatStat(getStat('three_pct') || getStat('threePct'), 0) }}%</span>
-                      </div>
-                      <div class="stat-cell">
-                        <span class="stat-label">FT%</span>
-                        <span class="stat-value">{{ formatStat(getStat('ft_pct') || getStat('ftPct'), 0) }}%</span>
-                      </div>
+                  <div class="stats-grid-modal">
+                    <div class="stat-cell">
+                      <span class="stat-label">PPG</span>
+                      <span class="stat-value highlight">{{ formatStat(getStat('ppg')) }}</span>
                     </div>
-                  </div>
-
-                  <!-- Playmaking Stats -->
-                  <div class="stats-section-modal">
-                    <h4 class="stats-section-title">Playmaking</h4>
-                    <div class="stats-grid-modal">
-                      <div class="stat-cell">
-                        <span class="stat-label">APG</span>
-                        <span class="stat-value highlight">{{ formatStat(getStat('apg')) }}</span>
-                      </div>
-                      <div class="stat-cell">
-                        <span class="stat-label">RPG</span>
-                        <span class="stat-value">{{ formatStat(getStat('rpg')) }}</span>
-                      </div>
-                      <div class="stat-cell">
-                        <span class="stat-label">MPG</span>
-                        <span class="stat-value">{{ formatStat(getStat('mpg'), 0) }}</span>
-                      </div>
-                      <div class="stat-cell">
-                        <span class="stat-label">GP</span>
-                        <span class="stat-value">{{ getStat('games_played') || getStat('gamesPlayed') || 0 }}</span>
-                      </div>
+                    <div class="stat-cell">
+                      <span class="stat-label">RPG</span>
+                      <span class="stat-value">{{ formatStat(getStat('rpg')) }}</span>
                     </div>
-                  </div>
-
-                  <!-- Defense Stats -->
-                  <div class="stats-section-modal">
-                    <h4 class="stats-section-title">Defense</h4>
-                    <div class="stats-grid-modal">
-                      <div class="stat-cell">
-                        <span class="stat-label">SPG</span>
-                        <span class="stat-value">{{ formatStat(getStat('spg')) }}</span>
-                      </div>
-                      <div class="stat-cell">
-                        <span class="stat-label">BPG</span>
-                        <span class="stat-value">{{ formatStat(getStat('bpg')) }}</span>
-                      </div>
+                    <div class="stat-cell">
+                      <span class="stat-label">APG</span>
+                      <span class="stat-value">{{ formatStat(getStat('apg')) }}</span>
+                    </div>
+                    <div class="stat-cell">
+                      <span class="stat-label">SPG</span>
+                      <span class="stat-value">{{ formatStat(getStat('spg')) }}</span>
+                    </div>
+                    <div class="stat-cell">
+                      <span class="stat-label">BPG</span>
+                      <span class="stat-value">{{ formatStat(getStat('bpg')) }}</span>
+                    </div>
+                    <div class="stat-cell">
+                      <span class="stat-label">FG%</span>
+                      <span class="stat-value">{{ formatStat(getStat('fg_pct') || getStat('fgPct'), 0) }}%</span>
+                    </div>
+                    <div class="stat-cell">
+                      <span class="stat-label">3P%</span>
+                      <span class="stat-value">{{ formatStat(getStat('three_pct') || getStat('threePct'), 0) }}%</span>
+                    </div>
+                    <div class="stat-cell">
+                      <span class="stat-label">FT%</span>
+                      <span class="stat-value">{{ formatStat(getStat('ft_pct') || getStat('ftPct'), 0) }}%</span>
+                    </div>
+                    <div class="stat-cell">
+                      <span class="stat-label">MPG</span>
+                      <span class="stat-value">{{ formatStat(getStat('mpg'), 0) }}</span>
+                    </div>
+                    <div class="stat-cell">
+                      <span class="stat-label">GP</span>
+                      <span class="stat-value">{{ getStat('games_played') || getStat('gamesPlayed') || 0 }}</span>
                     </div>
                   </div>
                 </template>
@@ -1261,23 +1243,10 @@ function formatChange(change) {
   gap: 1rem;
 }
 
-/* Stats Section */
-.stats-section-modal {
-  padding: 0.75rem 0;
-}
-
-.stats-section-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--color-text-secondary);
-  margin-bottom: 0.5rem;
-}
-
+/* Stats Grid */
 .stats-grid-modal {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 0.5rem;
 }
 

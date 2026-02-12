@@ -414,6 +414,14 @@ class CoachingService
     }
 
     /**
+     * Get all available substitution strategies (display info only).
+     */
+    public function getSubstitutionStrategies(): array
+    {
+        return SubstitutionService::getStrategyDisplayInfo();
+    }
+
+    /**
      * Calculate defensive modifiers based on scheme and play category.
      * Returns an array of modifiers to apply to play outcomes.
      *

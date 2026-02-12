@@ -506,56 +506,81 @@ function formatAge(age) {
             <!-- Content -->
             <main class="wizard-modal-content">
               <div class="wizard-content">
-        <!-- Trade Slots Summary (replaces step indicator) -->
+        <!-- Trade Slots Summary + Validation -->
         <div v-if="wizardStep < 4 && (userOffering.length > 0 || userRequesting.length > 0)" class="wizard-trade-summary">
-          <div class="wizard-trade-slots">
-            <!-- YOUR SIDE -->
-            <div class="wizard-slot-section sending" :class="{ active: wizardStep === 1 }">
-              <div class="wizard-slot-header">
-                <span class="wizard-slot-label">You Send</span>
-              </div>
-              <div v-if="userOffering.length > 0" class="wizard-slot-assets">
-                <div v-for="asset in userOffering" :key="`ws-${asset.type}-${asset.id}`" class="wizard-slot-item">
-                  <template v-if="asset.type === 'player'">
-                    <span class="wizard-slot-rating">{{ asset.overallRating }}</span>
-                    <span class="wizard-slot-name">{{ asset.firstName }} {{ asset.lastName }}</span>
-                  </template>
-                  <template v-else>
-                    <span class="wizard-slot-pick-badge">{{ asset.year }}</span>
-                    <span class="wizard-slot-name">R{{ asset.round }}</span>
-                  </template>
+          <div class="wizard-trade-summary-row">
+            <div class="wizard-trade-slots">
+              <!-- YOUR SIDE -->
+              <div class="wizard-slot-section sending" :class="{ active: wizardStep === 1 }">
+                <div class="wizard-slot-header">
+                  <span class="wizard-slot-label">You Send</span>
+                </div>
+                <div v-if="userOffering.length > 0" class="wizard-slot-assets">
+                  <div v-for="asset in userOffering" :key="`ws-${asset.type}-${asset.id}`" class="wizard-slot-item">
+                    <template v-if="asset.type === 'player'">
+                      <span class="wizard-slot-rating">{{ asset.overallRating }}</span>
+                      <span class="wizard-slot-name">{{ asset.firstName }} {{ asset.lastName }}</span>
+                    </template>
+                    <template v-else>
+                      <span class="wizard-slot-pick-badge">{{ asset.year }}</span>
+                      <span class="wizard-slot-name">R{{ asset.round }}</span>
+                    </template>
+                  </div>
+                </div>
+                <div v-else class="wizard-slot-empty">
+                  <span>Select assets</span>
                 </div>
               </div>
-              <div v-else class="wizard-slot-empty">
-                <span>Select assets</span>
+
+              <!-- SWAP -->
+              <div class="wizard-slot-swap">
+                <Repeat :size="18" />
+              </div>
+
+              <!-- THEIR SIDE -->
+              <div class="wizard-slot-section receiving" :class="{ active: wizardStep === 3 }">
+                <div class="wizard-slot-header">
+                  <span v-if="selectedTeam" class="wizard-slot-badge">{{ selectedTeam.abbreviation }}</span>
+                  <span class="wizard-slot-label">{{ selectedTeam ? selectedTeam.name + ' Send' : 'They Send' }}</span>
+                </div>
+                <div v-if="userRequesting.length > 0" class="wizard-slot-assets">
+                  <div v-for="asset in userRequesting" :key="`wr-${asset.type}-${asset.id}`" class="wizard-slot-item">
+                    <template v-if="asset.type === 'player'">
+                      <span class="wizard-slot-rating">{{ asset.overallRating }}</span>
+                      <span class="wizard-slot-name">{{ asset.firstName }} {{ asset.lastName }}</span>
+                    </template>
+                    <template v-else>
+                      <span class="wizard-slot-pick-badge">{{ asset.year }}</span>
+                      <span class="wizard-slot-name">R{{ asset.round }}</span>
+                    </template>
+                  </div>
+                </div>
+                <div v-else class="wizard-slot-empty">
+                  <span>{{ wizardStep < 3 ? 'Pick a team first' : 'Select assets' }}</span>
+                </div>
               </div>
             </div>
 
-            <!-- SWAP -->
-            <div class="wizard-slot-swap">
-              <Repeat :size="18" />
-            </div>
-
-            <!-- THEIR SIDE -->
-            <div class="wizard-slot-section receiving" :class="{ active: wizardStep === 3 }">
-              <div class="wizard-slot-header">
-                <span v-if="selectedTeam" class="wizard-slot-badge">{{ selectedTeam.abbreviation }}</span>
-                <span class="wizard-slot-label">{{ selectedTeam ? selectedTeam.name + ' Send' : 'They Send' }}</span>
+            <!-- Trade Validation (beside slots) -->
+            <div v-if="userRequesting.length > 0 && userOffering.length > 0" class="wizard-trade-validation" :class="{ valid: tradeValidation.isValid, invalid: !tradeValidation.isValid }">
+              <div class="validation-header">
+                <CheckCircle v-if="tradeValidation.isValid" :size="18" class="validation-icon valid" />
+                <AlertTriangle v-else :size="18" class="validation-icon invalid" />
+                <span class="validation-title">
+                  {{ tradeValidation.isValid ? 'Trade is Valid' : 'Trade Invalid' }}
+                </span>
               </div>
-              <div v-if="userRequesting.length > 0" class="wizard-slot-assets">
-                <div v-for="asset in userRequesting" :key="`wr-${asset.type}-${asset.id}`" class="wizard-slot-item">
-                  <template v-if="asset.type === 'player'">
-                    <span class="wizard-slot-rating">{{ asset.overallRating }}</span>
-                    <span class="wizard-slot-name">{{ asset.firstName }} {{ asset.lastName }}</span>
-                  </template>
-                  <template v-else>
-                    <span class="wizard-slot-pick-badge">{{ asset.year }}</span>
-                    <span class="wizard-slot-name">R{{ asset.round }}</span>
-                  </template>
+              <div v-if="tradeValidation.issues.length > 0" class="validation-issues">
+                <div v-for="(issue, idx) in tradeValidation.issues" :key="`issue-${idx}`" class="validation-item error">
+                  <AlertCircle :size="14" />
+                  <span>{{ issue }}</span>
                 </div>
               </div>
-              <div v-else class="wizard-slot-empty">
-                <span>{{ wizardStep < 3 ? 'Pick a team first' : 'Select assets' }}</span>
+              <div v-if="tradeValidation.warnings.length > 0" class="validation-warnings">
+                <div v-for="(warning, idx) in tradeValidation.warnings" :key="`warn-${idx}`" class="validation-item warning">
+                  <Info :size="14" />
+                  <span>{{ warning }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -817,32 +842,6 @@ function formatAge(age) {
             </div>
           </div>
 
-          <!-- Trade Validation Status -->
-          <div v-if="userRequesting.length > 0 && userOffering.length > 0" class="wizard-trade-validation" :class="{ valid: tradeValidation.isValid, invalid: !tradeValidation.isValid }">
-            <div class="validation-header">
-              <CheckCircle v-if="tradeValidation.isValid" :size="18" class="validation-icon valid" />
-              <AlertTriangle v-else :size="18" class="validation-icon invalid" />
-              <span class="validation-title">
-                {{ tradeValidation.isValid ? 'Trade is Valid' : 'Trade Invalid' }}
-              </span>
-            </div>
-
-            <!-- Issues -->
-            <div v-if="tradeValidation.issues.length > 0" class="validation-issues">
-              <div v-for="(issue, idx) in tradeValidation.issues" :key="`issue-${idx}`" class="validation-item error">
-                <AlertCircle :size="14" />
-                <span>{{ issue }}</span>
-              </div>
-            </div>
-
-            <!-- Warnings -->
-            <div v-if="tradeValidation.warnings.length > 0" class="validation-warnings">
-              <div v-for="(warning, idx) in tradeValidation.warnings" :key="`warn-${idx}`" class="validation-item warning">
-                <Info :size="14" />
-                <span>{{ warning }}</span>
-              </div>
-            </div>
-          </div>
         </div>
 
         <!-- Step 4: Confirm / Loading / Result -->
@@ -3209,10 +3208,18 @@ function formatAge(age) {
   border-bottom: 1px solid var(--glass-border);
 }
 
+.wizard-trade-summary-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
 .wizard-trade-slots {
   display: flex;
   align-items: stretch;
   gap: 0.5rem;
+  flex: 0 0 60%;
+  min-width: 0;
 }
 
 .wizard-slot-section {
@@ -3701,7 +3708,9 @@ function formatAge(age) {
 
 /* Wizard Trade Validation */
 .wizard-trade-validation {
-  margin-top: 1rem;
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
   padding: 0.75rem 1rem;
   border-radius: 8px;
   border: 2px solid;
@@ -3749,6 +3758,14 @@ function formatAge(age) {
   .wizard-team-stats {
     flex-wrap: wrap;
     gap: 1rem;
+  }
+
+  .wizard-trade-summary-row {
+    flex-direction: column;
+  }
+
+  .wizard-trade-slots {
+    flex: 1 1 auto;
   }
 }
 

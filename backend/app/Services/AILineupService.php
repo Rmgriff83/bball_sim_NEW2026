@@ -15,7 +15,8 @@ class AILineupService
     private const FATIGUE_RATING_PENALTY = 0.5;     // Rating points to subtract per fatigue point over caution threshold
 
     public function __construct(
-        private CampaignPlayerService $playerService
+        private CampaignPlayerService $playerService,
+        private SubstitutionService $substitutionService
     ) {}
 
     /**
@@ -52,11 +53,23 @@ class AILineupService
         // Select best lineup by position
         $starters = $this->selectBestLineup($roster);
 
+        // Auto-select substitution strategy
+        $subStrategy = $this->selectSubstitutionStrategy($roster, $starters);
+
+        // Generate target minutes
+        $targetMinutes = $this->substitutionService->generateAITargetMinutes($roster, $starters, $subStrategy);
+
         $team->update([
             'lineup_settings' => [
                 'starters' => $starters,
+                'target_minutes' => $targetMinutes,
             ],
         ]);
+
+        // Store substitution strategy in coaching_scheme
+        $coachingScheme = $team->coaching_scheme ?? [];
+        $coachingScheme['substitution'] = $subStrategy;
+        $team->update(['coaching_scheme' => $coachingScheme]);
     }
 
     /**
@@ -399,14 +412,69 @@ class AILineupService
         }
 
         if ($changed) {
+            // Regenerate target minutes for new lineup
+            $subStrategy = $team->coaching_scheme['substitution'] ?? 'staggered';
+            $targetMinutes = $this->substitutionService->generateAITargetMinutes($roster, $newStarters, $subStrategy);
+
             $team->update([
                 'lineup_settings' => [
                     'starters' => $newStarters,
+                    'target_minutes' => $targetMinutes,
                 ],
             ]);
         }
 
         return $changed;
+    }
+
+    /**
+     * Auto-select substitution strategy for AI teams based on roster composition.
+     */
+    public function selectSubstitutionStrategy(array $roster, array $starterIds): string
+    {
+        $playersRated65Plus = 0;
+        $topTwoRatings = [];
+        $benchRatings = [];
+
+        foreach ($roster as $player) {
+            $rating = $player['overallRating'] ?? $player['overall_rating'] ?? 0;
+            $playerId = $player['id'] ?? null;
+            $isStarter = in_array($playerId, $starterIds);
+
+            if ($rating >= 65) {
+                $playersRated65Plus++;
+            }
+
+            if ($isStarter) {
+                $topTwoRatings[] = $rating;
+            } else {
+                $benchRatings[] = $rating;
+            }
+        }
+
+        // Sort descending
+        rsort($topTwoRatings);
+        rsort($benchRatings);
+
+        // If 10+ players rated >= 65 → deep_bench
+        if ($playersRated65Plus >= 10) {
+            return 'deep_bench';
+        }
+
+        // If top 2 players rated >= 85 and gap to bench > 15 → tight_rotation
+        if (count($topTwoRatings) >= 2 && $topTwoRatings[0] >= 85 && $topTwoRatings[1] >= 85) {
+            $topBench = $benchRatings[0] ?? 0;
+            if (($topTwoRatings[1] - $topBench) > 15) {
+                return 'tight_rotation';
+            }
+        }
+
+        // Random 30% chance of platoon
+        if (mt_rand(1, 100) <= 30) {
+            return 'platoon';
+        }
+
+        return 'staggered';
     }
 
     /**

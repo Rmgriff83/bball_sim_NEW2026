@@ -21,7 +21,11 @@ const toastStore = useToastStore()
 
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
-const activeTab = ref('schedule')
+const validTabs = ['team', 'coach', 'finances', 'trades', 'schedule']
+const queryTab = route.query?.tab
+const hashTab = route.hash?.slice(1)
+const initialTab = queryTab || hashTab
+const activeTab = ref(validTabs.includes(initialTab) ? initialTab : 'team')
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 
@@ -42,6 +46,11 @@ const schemesFetched = ref(false)
 const updatingScheme = ref(false)
 const selectedScheme = ref(null)
 const selectedDefensiveScheme = ref(null)
+const selectedSubStrategy = ref('staggered')
+
+// Player minutes state
+const playerMinutes = ref({})
+let minutesSaveTimeout = null
 
 // Defensive schemes data
 const defensiveSchemes = {
@@ -109,19 +118,33 @@ const starterSlots = computed(() => {
   }))
 })
 
-// Bench players sorted by overall rating (highest to lowest), injured players at end
+// Drag state (declared early so bench watch can reference it)
+const draggingPlayerId = ref(null)
+
+// Bench players sorted by target minutes (highest to lowest), injured players at end
 const benchPlayers = computed(() => {
   return [...roster.value.slice(5)]
-    .filter(p => p !== null) // Filter out any nulls
+    .filter(p => p !== null)
     .sort((a, b) => {
       const aInjured = a.is_injured || a.isInjured ? 1 : 0
       const bInjured = b.is_injured || b.isInjured ? 1 : 0
-      // Injured players go to the end
       if (aInjured !== bInjured) return aInjured - bInjured
-      // Within same injury status, sort by rating
+      const aMins = playerMinutes.value[a.id] ?? 0
+      const bMins = playerMinutes.value[b.id] ?? 0
+      if (bMins !== aMins) return bMins - aMins
       return b.overall_rating - a.overall_rating
     })
 })
+
+// Display list for bench — defers re-sort by 500ms after drag ends for smooth animation
+const displayBenchPlayers = ref([])
+let benchSortTimer = null
+
+watch(benchPlayers, (newVal) => {
+  if (!draggingPlayerId.value && !benchSortTimer) {
+    displayBenchPlayers.value = [...newVal]
+  }
+}, { immediate: true })
 
 // Available roster slots (max 15 players) - exclude nulls from count
 const availableRosterSlots = computed(() => {
@@ -176,6 +199,194 @@ onMounted(async () => {
   }
 })
 
+// Initialize player minutes — defaults sum to exactly 200
+function initPlayerMinutes() {
+  const stored = teamStore.targetMinutes || {}
+  const lineupIds = new Set(teamStore.lineup?.filter(id => id !== null) || [])
+  const hasStored = Object.keys(stored).length > 0
+
+  // If we have stored values and they're reasonable (within 190-210), use them
+  if (hasStored) {
+    const storedTotal = Object.values(stored).reduce((s, m) => s + (m || 0), 0)
+    if (storedTotal >= 190 && storedTotal <= 210) {
+      const newMinutes = {}
+      for (const player of roster.value) {
+        if (!player) continue
+        const isInjured = player.is_injured || player.isInjured
+        newMinutes[player.id] = isInjured ? 0 : (stored[player.id] ?? 0)
+      }
+      playerMinutes.value = newMinutes
+      return
+    }
+  }
+
+  // Build fresh defaults that sum to 200
+  const starters = []
+  const bench = []
+  for (const player of roster.value) {
+    if (!player) continue
+    if (lineupIds.has(player.id)) {
+      starters.push(player)
+    } else {
+      bench.push(player)
+    }
+  }
+
+  // Sort bench by rating descending
+  bench.sort((a, b) => (b.overall_rating || 0) - (a.overall_rating || 0))
+
+  const newMinutes = {}
+
+  // Injured starters get 0
+  let healthyStarterCount = 0
+  for (const p of starters) {
+    const isInjured = p.is_injured || p.isInjured
+    if (isInjured) {
+      newMinutes[p.id] = 0
+    } else {
+      healthyStarterCount++
+    }
+  }
+
+  // Distribute 200 mins: healthy starters get equal share of 160, bench gets rest
+  const starterMins = healthyStarterCount > 0 ? Math.floor(160 / healthyStarterCount) : 0
+  let starterTotal = 0
+  for (const p of starters) {
+    if (newMinutes[p.id] === 0) continue // already set injured to 0
+    newMinutes[p.id] = Math.min(starterMins, 40)
+    starterTotal += newMinutes[p.id]
+  }
+
+  // Bench: top 3 healthy bench players split remaining minutes
+  let benchBudget = 200 - starterTotal
+  const benchSlots = [16, 12, 8, 4]
+  for (let i = 0; i < bench.length; i++) {
+    const p = bench[i]
+    const isInjured = p.is_injured || p.isInjured
+    if (isInjured || benchBudget <= 0 || i >= benchSlots.length) {
+      newMinutes[p.id] = 0
+    } else {
+      const mins = Math.min(benchSlots[i], benchBudget)
+      newMinutes[p.id] = mins
+      benchBudget -= mins
+    }
+  }
+
+  playerMinutes.value = newMinutes
+}
+
+// Watch roster changes to reinitialize minutes
+watch(roster, () => {
+  initPlayerMinutes()
+}, { immediate: true })
+
+// Total minutes computed
+const totalMinutes = computed(() =>
+  Object.values(playerMinutes.value).reduce((sum, m) => sum + (m || 0), 0)
+)
+
+const totalMinutesColor = computed(() => {
+  const t = totalMinutes.value
+  if (t >= 195 && t <= 205) return '#22c55e'
+  if ((t >= 185 && t < 195) || (t > 205 && t <= 215)) return '#f59e0b'
+  return '#ef4444'
+})
+
+function getPlayerMinutes(playerId, fallback = 0) {
+  return playerMinutes.value[playerId] ?? fallback
+}
+
+function setPlayerMinutes(playerId, desired) {
+  const current = playerMinutes.value[playerId] || 0
+  const othersTotal = totalMinutes.value - current
+  const available = 200 - othersTotal
+  playerMinutes.value[playerId] = Math.max(0, Math.min(desired, available))
+  debouncedSaveMinutes()
+}
+
+function getMinutesMeterColor(mins) {
+  if (mins <= 0) return '#6b7280'
+  if (mins <= 20) return '#22c55e'
+  if (mins <= 32) return '#3b82f6'
+  if (mins <= 36) return '#f59e0b'
+  return '#ef4444'
+}
+
+const draggingMinFloor = ref(0)
+
+function calcMinutesFromEvent(e, bar) {
+  const rect = bar.getBoundingClientRect()
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+  return Math.round(ratio * 40)
+}
+
+function startMinutesDrag(e, playerId, minFloor) {
+  e.preventDefault()
+  draggingPlayerId.value = playerId
+  draggingMinFloor.value = minFloor
+  const bar = e.currentTarget.closest('.minutes-meter-bar') || e.currentTarget
+  bar.classList.add('dragging')
+  const mins = Math.max(minFloor, Math.min(40, calcMinutesFromEvent(e, bar)))
+  setPlayerMinutes(playerId, mins)
+
+  const onMove = (moveEvent) => {
+    moveEvent.preventDefault()
+    const m = Math.max(minFloor, Math.min(40, calcMinutesFromEvent(moveEvent, bar)))
+    setPlayerMinutes(playerId, m)
+  }
+  const onUp = () => {
+    bar.classList.remove('dragging')
+    // Schedule bench re-sort after 500ms delay, set timer before clearing drag flag
+    if (benchSortTimer) clearTimeout(benchSortTimer)
+    benchSortTimer = setTimeout(() => {
+      displayBenchPlayers.value = [...benchPlayers.value]
+      benchSortTimer = null
+    }, 500)
+    draggingPlayerId.value = null
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    document.removeEventListener('touchmove', onMove)
+    document.removeEventListener('touchend', onUp)
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+  document.addEventListener('touchmove', onMove, { passive: false })
+  document.addEventListener('touchend', onUp)
+}
+
+function debouncedSaveMinutes() {
+  if (minutesSaveTimeout) clearTimeout(minutesSaveTimeout)
+  minutesSaveTimeout = setTimeout(async () => {
+    try {
+      await teamStore.updateTargetMinutes(campaignId.value, playerMinutes.value)
+    } catch (err) {
+      console.error('Failed to save target minutes:', err)
+      toastStore.showError('Failed to save minutes')
+    }
+  }, 500)
+}
+
+async function updateSubstitutionStrategy(strategy) {
+  if (updatingScheme.value) return
+  updatingScheme.value = true
+  try {
+    await teamStore.updateCoachingScheme(
+      campaignId.value,
+      selectedScheme.value || team.value?.coaching_scheme?.offensive || 'balanced',
+      selectedDefensiveScheme.value || team.value?.coaching_scheme?.defensive || 'man',
+      strategy
+    )
+    selectedSubStrategy.value = strategy
+    toastStore.showSuccess('Substitution strategy updated')
+  } catch (err) {
+    console.error('Failed to update substitution strategy:', err)
+    toastStore.showError('Failed to update strategy')
+  } finally {
+    updatingScheme.value = false
+  }
+}
+
 // Watch for tab change to fetch coaching schemes and clear trade state
 watch(activeTab, async (newTab, oldTab) => {
   // Clear trade state when leaving the trades tab
@@ -191,6 +402,7 @@ watch(activeTab, async (newTab, oldTab) => {
       const scheme = team.value?.coaching_scheme
       selectedScheme.value = scheme?.offensive || scheme || 'balanced'
       selectedDefensiveScheme.value = scheme?.defensive || 'man'
+      selectedSubStrategy.value = scheme?.substitution || 'staggered'
       schemesFetched.value = true
     } catch (err) {
       console.error('Failed to fetch coaching schemes:', err)
@@ -613,14 +825,6 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
       <!-- Tab Navigation -->
       <div class="tab-nav">
         <button
-          class="tab-btn tab-btn-icon"
-          :class="{ active: activeTab === 'schedule' }"
-          @click="activeTab = 'schedule'"
-          title="Schedule"
-        >
-          <Calendar :size="18" />
-        </button>
-        <button
           class="tab-btn"
           :class="{ active: activeTab === 'team' }"
           @click="activeTab = 'team'"
@@ -648,18 +852,22 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
         >
           Trades
         </button>
-      </div>
-
-      <!-- Schedule View -->
-      <div v-if="activeTab === 'schedule'" class="schedule-content">
-        <ScheduleTab :campaign-id="campaignId" />
+        <button
+          class="tab-btn tab-btn-icon"
+          :class="{ active: activeTab === 'schedule' }"
+          @click="activeTab = 'schedule'"
+          title="Schedule"
+        >
+          <Calendar :size="18" />
+        </button>
       </div>
 
       <!-- Roster View -->
-      <div v-else-if="activeTab === 'team'" class="roster-content">
+      <div v-if="activeTab === 'team'" class="roster-content">
         <!-- Starters Section -->
         <div class="roster-list-header card-cosmic">
           <h3 class="list-header-text">STARTERS</h3>
+          <span class="total-minutes-value">{{ totalMinutes }} / 200 MIN</span>
         </div>
         <div class="players-grid">
           <template v-for="(slot, index) in starterSlots" :key="slot.position">
@@ -759,8 +967,28 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                     </span>
                   </div>
                   <div class="vitals-row">{{ slot.player.height || "6'6\"" }} · {{ formatWeight(slot.player.weight) }} lbs · {{ slot.player.age || 25 }} yrs</div>
+                  <!-- Minutes Meter -->
+                  <div class="minutes-meter-row" @click.stop>
+                    <label class="meter-label">MIN</label>
+                    <div class="minutes-meter-bar"
+                      @mousedown="(e) => startMinutesDrag(e, slot.player.id, 8)"
+                      @touchstart="(e) => startMinutesDrag(e, slot.player.id, 8)"
+                    >
+                      <div
+                        class="minutes-meter-fill"
+                        :style="{
+                          width: (getPlayerMinutes(slot.player.id, 30) / 40 * 100) + '%',
+                          backgroundColor: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30))
+                        }"
+                      >
+                        <span class="minutes-thumb" :style="{ backgroundColor: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30)) }"></span>
+                      </div>
+                    </div>
+                    <span class="minutes-pct-value" :style="{ color: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30)) }">{{ getPlayerMinutes(slot.player.id, 30) }}</span>
+                  </div>
                   <!-- Fatigue Meter -->
                   <div class="fatigue-meter-row">
+                    <label class="meter-label fatigue-label">FATIGUE</label>
                     <div class="fatigue-meter-bar">
                       <div
                         class="fatigue-meter-fill"
@@ -824,43 +1052,15 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 
               <!-- Card body only shows when dropdown is closed -->
               <div v-if="expandedMovePlayer !== `starter-${slot.player.id}`" class="card-body">
-                <!-- Season Stats -->
-                <div v-if="slot.player.season_stats" class="stats-grid">
-                  <div class="stat-item">
-                    <span class="stat-label">PPG</span>
-                    <span class="stat-value">{{ slot.player.season_stats.ppg }}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">RPG</span>
-                    <span class="stat-value">{{ slot.player.season_stats.rpg }}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">APG</span>
-                    <span class="stat-value">{{ slot.player.season_stats.apg }}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">SPG</span>
-                    <span class="stat-value">{{ slot.player.season_stats.spg }}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">BPG</span>
-                    <span class="stat-value">{{ slot.player.season_stats.bpg }}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">FG%</span>
-                    <span class="stat-value">{{ slot.player.season_stats.fg_pct }}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">3PT%</span>
-                    <span class="stat-value">{{ slot.player.season_stats.three_pct }}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">GP</span>
-                    <span class="stat-value">{{ slot.player.season_stats.games_played }}</span>
-                  </div>
-                </div>
-                <div v-else class="no-stats">
-                  <span class="text-secondary text-sm">No stats yet</span>
+                <!-- Season Stats (compact) -->
+                <div v-if="slot.player.season_stats" class="stats-inline">
+                  <span class="stat-inline"><span class="stat-label">PPG</span><span class="stat-val">{{ slot.player.season_stats.ppg }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">RPG</span><span class="stat-val">{{ slot.player.season_stats.rpg }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">APG</span><span class="stat-val">{{ slot.player.season_stats.apg }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">SPG</span><span class="stat-val">{{ slot.player.season_stats.spg }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">BPG</span><span class="stat-val">{{ slot.player.season_stats.bpg }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">FG%</span><span class="stat-val">{{ slot.player.season_stats.fg_pct }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">3P%</span><span class="stat-val">{{ slot.player.season_stats.three_pct }}</span></span>
                 </div>
 
                 <!-- Badges -->
@@ -887,10 +1087,10 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
         <div class="roster-list-header card-cosmic">
           <h3 class="list-header-text">BENCH</h3>
         </div>
-        <div class="players-grid">
+        <TransitionGroup name="bench-reorder" tag="div" class="players-grid">
           <!-- Bench Players -->
           <div
-            v-for="player in benchPlayers"
+            v-for="player in displayBenchPlayers"
             :key="player.id"
             class="player-card"
             :class="{
@@ -925,8 +1125,28 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                   </span>
                 </div>
                 <div class="vitals-row">{{ player.height || "6'6\"" }} · {{ formatWeight(player.weight) }} lbs · {{ player.age || 25 }} yrs</div>
+                <!-- Minutes Meter -->
+                <div class="minutes-meter-row" @click.stop>
+                  <label class="meter-label">MIN</label>
+                  <div class="minutes-meter-bar"
+                    @mousedown="(e) => startMinutesDrag(e, player.id, 0)"
+                    @touchstart="(e) => startMinutesDrag(e, player.id, 0)"
+                  >
+                    <div
+                      class="minutes-meter-fill"
+                      :style="{
+                        width: (getPlayerMinutes(player.id, 0) / 40 * 100) + '%',
+                        backgroundColor: getMinutesMeterColor(getPlayerMinutes(player.id, 0))
+                      }"
+                    >
+                      <span class="minutes-thumb" :style="{ backgroundColor: getMinutesMeterColor(getPlayerMinutes(player.id, 0)) }"></span>
+                    </div>
+                  </div>
+                  <span class="minutes-pct-value" :style="{ color: getMinutesMeterColor(getPlayerMinutes(player.id, 0)) }">{{ getPlayerMinutes(player.id, 0) === 0 ? 'DNP' : getPlayerMinutes(player.id, 0) }}</span>
+                </div>
                 <!-- Fatigue Meter -->
                 <div class="fatigue-meter-row">
+                  <label class="meter-label fatigue-label">FATIGUE</label>
                   <div class="fatigue-meter-bar">
                     <div
                       class="fatigue-meter-fill"
@@ -1000,43 +1220,15 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 
             <!-- Card body only shows when dropdown is closed -->
             <div v-if="expandedMovePlayer !== `bench-${player.id}`" class="card-body">
-              <!-- Season Stats -->
-              <div v-if="player.season_stats" class="stats-grid">
-                <div class="stat-item">
-                  <span class="stat-label">PPG</span>
-                  <span class="stat-value">{{ player.season_stats.ppg }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">RPG</span>
-                  <span class="stat-value">{{ player.season_stats.rpg }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">APG</span>
-                  <span class="stat-value">{{ player.season_stats.apg }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">SPG</span>
-                  <span class="stat-value">{{ player.season_stats.spg }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">BPG</span>
-                  <span class="stat-value">{{ player.season_stats.bpg }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">FG%</span>
-                  <span class="stat-value">{{ player.season_stats.fg_pct }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">3PT%</span>
-                  <span class="stat-value">{{ player.season_stats.three_pct }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">GP</span>
-                  <span class="stat-value">{{ player.season_stats.games_played }}</span>
-                </div>
-              </div>
-              <div v-else class="no-stats">
-                <span class="text-secondary text-sm">No stats yet</span>
+              <!-- Season Stats (compact) -->
+              <div v-if="player.season_stats" class="stats-inline">
+                <span class="stat-inline"><span class="stat-label">PPG</span><span class="stat-val">{{ player.season_stats.ppg }}</span></span>
+                <span class="stat-inline"><span class="stat-label">RPG</span><span class="stat-val">{{ player.season_stats.rpg }}</span></span>
+                <span class="stat-inline"><span class="stat-label">APG</span><span class="stat-val">{{ player.season_stats.apg }}</span></span>
+                <span class="stat-inline"><span class="stat-label">SPG</span><span class="stat-val">{{ player.season_stats.spg }}</span></span>
+                <span class="stat-inline"><span class="stat-label">BPG</span><span class="stat-val">{{ player.season_stats.bpg }}</span></span>
+                <span class="stat-inline"><span class="stat-label">FG%</span><span class="stat-val">{{ player.season_stats.fg_pct }}</span></span>
+                <span class="stat-inline"><span class="stat-label">3P%</span><span class="stat-val">{{ player.season_stats.three_pct }}</span></span>
               </div>
 
               <!-- Badges -->
@@ -1074,7 +1266,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
               </div>
             </div>
           </div>
-        </div>
+        </TransitionGroup>
       </div>
 
       <!-- Coach Settings View -->
@@ -1273,6 +1465,69 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
             </div>
           </div>
         </GlassCard>
+
+        <!-- Substitution Strategy Selection -->
+        <GlassCard padding="lg" :hoverable="false" class="mt-6">
+          <div class="scheme-section-header">
+            <div class="section-label substitution">ROTATION</div>
+          </div>
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="h4">Substitution Strategy</h3>
+          </div>
+
+          <p class="text-secondary text-sm mb-6">
+            Control how your team rotates players during simulated games. This affects how minutes are distributed and when substitutions happen.
+          </p>
+
+          <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
+            <LoadingSpinner size="md" />
+          </div>
+
+          <div v-else class="schemes-grid">
+            <div
+              v-for="(strategy, strategyId) in teamStore.substitutionStrategies"
+              :key="strategyId"
+              class="scheme-card substitution"
+              :class="{
+                active: selectedSubStrategy === strategyId
+              }"
+              @click="updateSubstitutionStrategy(strategyId)"
+            >
+              <div class="scheme-header">
+                <span class="scheme-name">{{ strategy.name }}</span>
+                <span class="scheme-type-tag" :class="strategy.type">{{ strategy.type }}</span>
+              </div>
+
+              <p class="scheme-desc">{{ strategy.description }}</p>
+
+              <div class="scheme-details">
+                <div class="scheme-pace">
+                  <span class="detail-label">Depth</span>
+                  <span class="detail-value">{{ strategy.rotation_depth }}</span>
+                </div>
+              </div>
+
+              <div class="scheme-traits">
+                <div class="trait-section">
+                  <span class="trait-label">Strengths</span>
+                  <div class="trait-tags">
+                    <span v-for="str in strategy.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                  </div>
+                </div>
+                <div class="trait-section">
+                  <span class="trait-label">Weaknesses</span>
+                  <div class="trait-tags">
+                    <span v-for="weak in strategy.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="updatingScheme && selectedSubStrategy === strategyId" class="scheme-loading">
+                <LoadingSpinner size="sm" />
+              </div>
+            </div>
+          </div>
+        </GlassCard>
       </div>
 
       <!-- Finances View -->
@@ -1283,6 +1538,11 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
       <!-- Trades View -->
       <div v-else-if="activeTab === 'trades'" class="trades-content">
         <TradeCenter :campaign-id="campaignId" @trade-completed="activeTab = 'team'" />
+      </div>
+
+      <!-- Schedule View -->
+      <div v-else-if="activeTab === 'schedule'" class="schedule-content">
+        <ScheduleTab :campaign-id="campaignId" />
       </div>
     </template>
 
@@ -1429,6 +1689,9 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 
 /* List Header - Cosmic gradient */
 .roster-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 8px 12px;
   border-radius: var(--radius-md);
   margin-bottom: 4px;
@@ -1814,6 +2077,11 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   }
 }
 
+/* Bench reorder animation (TransitionGroup) */
+.bench-reorder-move {
+  transition: transform 0.4s ease;
+}
+
 .move-btn.active {
   background: var(--color-primary);
   border-color: var(--color-primary);
@@ -1923,26 +2191,54 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   margin-top: 6px;
 }
 
+/* Shared meter label (MIN / FATIGUE) */
+.meter-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
 /* Fatigue Meter in Player Cards */
 .fatigue-meter-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .fatigue-meter-bar {
   flex: 1;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
   overflow: hidden;
+  position: relative;
+}
+
+.fatigue-meter-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 1px,
+    rgba(255, 255, 255, 0.1) 1px,
+    rgba(255, 255, 255, 0.1) 2px
+  );
+  border-radius: 3px;
+  z-index: 1;
+  pointer-events: none;
 }
 
 .fatigue-meter-fill {
   height: 100%;
-  border-radius: 2px;
+  border-radius: 3px;
   transition: width 0.3s ease, background-color 0.3s ease;
+  opacity: 0.85;
 }
 
 .fatigue-meter-row .fatigue-value {
@@ -2058,6 +2354,49 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   background: rgba(0, 0, 0, 0.15);
   border-radius: var(--radius-md);
   margin-bottom: 10px;
+}
+
+/* Compact inline stats for player cards */
+.stats-inline {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 4px 0;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
+  margin-bottom: 0;
+}
+
+.stat-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  padding: 2px 0;
+  gap: 1px;
+}
+
+.stat-inline .stat-label {
+  display: block;
+  font-size: 0.5rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0;
+  line-height: 1;
+}
+
+.stat-inline .stat-val {
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--color-text-primary);
+  line-height: 1;
+}
+
+.stat-sep {
+  display: none;
 }
 
 /* Badges */
@@ -3250,8 +3589,17 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   border-color: rgba(0, 0, 0, 0.15);
 }
 
-[data-theme="light"] .fatigue-meter-bar {
+[data-theme="light"] .fatigue-meter-bar,
+[data-theme="light"] .minutes-meter-bar {
   background: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .minutes-thumb {
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="light"] .stats-inline {
+  background: rgba(0, 0, 0, 0.06);
 }
 
 [data-theme="light"] .role-badge.bench {
@@ -3291,5 +3639,95 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 
 [data-theme="light"] .badges-tab-content {
   color: var(--color-text-primary);
+}
+
+/* Total Minutes Value (in header) */
+.total-minutes-value {
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  color: var(--color-primary);
+  position: relative;
+  z-index: 1;
+}
+
+/* Player Minutes Meter */
+.minutes-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.minutes-meter-bar {
+  flex: 1;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  overflow: visible;
+  cursor: pointer;
+  position: relative;
+}
+
+.minutes-meter-fill {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.2s ease, background-color 0.2s ease;
+  position: relative;
+}
+
+.minutes-meter-bar.dragging .minutes-meter-fill {
+  transition: none;
+}
+
+.minutes-thumb {
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+}
+
+.minutes-thumb:active {
+  cursor: grabbing;
+  transform: translateY(-50%) scale(1.15);
+}
+
+.minutes-pct-value {
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  min-width: 30px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Substitution Strategy Scheme Card */
+.scheme-card.substitution {
+  border-color: rgba(139, 92, 246, 0.2);
+}
+
+.scheme-card.substitution.active {
+  border-color: rgba(139, 92, 246, 0.6);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.scheme-card.substitution.active::before {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(139, 92, 246, 0.05));
+}
+
+.section-label.substitution {
+  background: linear-gradient(135deg, #8B5CF6, #7C3AED);
+  color: white;
+  padding: 4px 12px;
+  border-radius: var(--radius-md);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
 }
 </style>
