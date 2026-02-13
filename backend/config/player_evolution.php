@@ -204,11 +204,17 @@ return [
     |--------------------------------------------------------------------------
     */
     'badge_synergies' => [
-        'development_boost_base' => 0.05, // +5% development per synergy
-        'development_boost_hof' => 0.08, // +8% for HOF level badges
+        'development_boost_by_level' => [
+            'bronze' => 0.03,
+            'silver' => 0.05,
+            'gold'   => 0.06,
+            'hof'    => 0.08,
+        ],
         'development_boost_max' => 0.15, // Maximum +15% from all synergies
         'in_game_boost' => 0.03, // +3% in-game performance
         'chemistry_contribution' => 2, // +2 team chemistry per synergy
+        'dynamic_duo_boost' => 0.02, // +2% all attributes
+        'dynamic_duo_min_synergies' => 2, // 2+ gold+ synergies required
     ],
 
     /*
@@ -406,12 +412,21 @@ return [
     |--------------------------------------------------------------------------
     */
     'fatigue' => [
-        'per_minute_gain' => 0.4, // Fatigue gained per minute played (reduced 20% for shorter quarters)
+        'minute_thresholds' => [
+            // 0-8 mins: light duty — player stays loose, net fatigue RECOVERY
+            ['min' => 0, 'max' => 8, 'type' => 'recovery', 'base' => 4],
+            // 9-20 mins: rotation role — marginal fatigue gain
+            ['min' => 9, 'max' => 20, 'type' => 'gain', 'base' => 2],
+            // 21-30 mins: significant role — moderate fatigue gain
+            ['min' => 21, 'max' => 30, 'type' => 'gain', 'base' => 6],
+            // 31+ mins: heavy minutes — significant fatigue gain
+            ['min' => 31, 'max' => 48, 'type' => 'gain', 'base' => 12],
+        ],
         'max_fatigue' => 100,
-        'weekly_recovery' => 15, // Fatigue recovered per week
-        'rest_day_recovery' => 15, // Recovery when player doesn't play (0 mins or no game)
-        'performance_penalty_start' => 50, // Fatigue level where penalties begin
-        'max_performance_penalty' => 0.25, // Maximum 25% performance reduction
+        'weekly_recovery' => 15,
+        'rest_day_recovery' => 15,
+        'performance_penalty_start' => 50,
+        'max_performance_penalty' => 0.25,
     ],
 
     /*

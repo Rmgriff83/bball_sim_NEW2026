@@ -4,7 +4,7 @@ import { StatBadge } from '@/components/ui'
 import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap } from 'lucide-vue-next'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 
-const { getActivatedBadges } = useBadgeSynergies()
+const { getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
 
 const props = defineProps({
   show: {
@@ -181,6 +181,12 @@ function getFatigueColor(fatigue) {
   if (fatigue >= 50) return 'var(--color-warning)'
   return 'var(--color-success)'
 }
+
+// Dynamic Duo detection
+const duoPartnerName = computed(() => {
+  if (!normalizedPlayer.value || !props.lineupPlayers?.length) return null
+  return isPlayerInDynamicDuo(normalizedPlayer.value, props.lineupPlayers)
+})
 
 const hasAwards = computed(() => {
   if (!normalizedPlayer.value) return false
@@ -382,6 +388,11 @@ function formatChange(change) {
                   <AlertTriangle :size="14" />
                 </div>
               </div>
+            </div>
+
+            <div v-if="duoPartnerName" class="dynamic-duo-badge">
+              <Users :size="14" />
+              <span>Dynamic Duo w/ {{ duoPartnerName }}</span>
             </div>
 
             <!-- Badges Preview -->
@@ -1199,6 +1210,20 @@ function formatChange(change) {
 @keyframes pulse-warning {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+.dynamic-duo-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.15), rgba(255, 140, 0, 0.15));
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  border-radius: 0.35rem;
+  font-size: 0.7rem;
+  color: #FFD700;
+  font-weight: 600;
+  margin-top: 0.25rem;
 }
 
 /* Badges Preview */

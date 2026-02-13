@@ -211,19 +211,17 @@ class DraftPickService
             }
         }
 
-        // Sort by wins ascending (worst teams first for draft)
+        // Sort by win percentage ascending (worst teams first for draft)
         usort($allTeams, function ($a, $b) {
-            $aWins = $a['wins'] ?? 0;
-            $bWins = $b['wins'] ?? 0;
-
-            if ($aWins === $bWins) {
-                // Tiebreaker: more losses = worse = earlier pick
-                $aLosses = $a['losses'] ?? 0;
-                $bLosses = $b['losses'] ?? 0;
-                return $bLosses <=> $aLosses;
-            }
-
-            return $aWins <=> $bWins;
+            $totalA = ($a['wins'] ?? 0) + ($a['losses'] ?? 0);
+            $totalB = ($b['wins'] ?? 0) + ($b['losses'] ?? 0);
+            $pctA = $totalA > 0 ? ($a['wins'] ?? 0) / $totalA : 0;
+            $pctB = $totalB > 0 ? ($b['wins'] ?? 0) / $totalB : 0;
+            if ($pctA !== $pctB) return $pctA <=> $pctB;
+            // Tiebreaker: worse point differential = earlier pick
+            $diffA = ($a['pointsFor'] ?? 0) - ($a['pointsAgainst'] ?? 0);
+            $diffB = ($b['pointsFor'] ?? 0) - ($b['pointsAgainst'] ?? 0);
+            return $diffA <=> $diffB;
         });
 
         return $allTeams;

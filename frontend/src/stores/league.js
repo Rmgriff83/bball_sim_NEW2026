@@ -29,9 +29,18 @@ export const useLeagueStore = defineStore('league', () => {
   ])
 
   const leagueLeaders = computed(() => {
-    // Combine standings and sort by wins
+    // Combine standings and sort by win percentage
     const all = [...eastStandings.value, ...westStandings.value]
-    return all.sort((a, b) => b.wins - a.wins)
+    return all.sort((a, b) => {
+      const totalA = a.wins + a.losses
+      const totalB = b.wins + b.losses
+      const pctA = totalA > 0 ? a.wins / totalA : 0
+      const pctB = totalB > 0 ? b.wins / totalB : 0
+      if (pctA !== pctB) return pctB - pctA
+      const diffA = (a.pointsFor || 0) - (a.pointsAgainst || 0)
+      const diffB = (b.pointsFor || 0) - (b.pointsAgainst || 0)
+      return diffB - diffA
+    })
   })
 
   // Actions

@@ -67,8 +67,17 @@ class PlayoffService
      */
     private function getPlayoffTeams(int $campaignId, array $conferenceStandings): array
     {
-        // Sort by wins descending
-        usort($conferenceStandings, fn($a, $b) => $b['wins'] - $a['wins']);
+        // Sort by win percentage descending, then point differential as tiebreaker
+        usort($conferenceStandings, function ($a, $b) {
+            $totalA = $a['wins'] + $a['losses'];
+            $totalB = $b['wins'] + $b['losses'];
+            $pctA = $totalA > 0 ? $a['wins'] / $totalA : 0;
+            $pctB = $totalB > 0 ? $b['wins'] / $totalB : 0;
+            if ($pctA !== $pctB) return $pctB <=> $pctA;
+            $diffA = ($a['pointsFor'] ?? 0) - ($a['pointsAgainst'] ?? 0);
+            $diffB = ($b['pointsFor'] ?? 0) - ($b['pointsAgainst'] ?? 0);
+            return $diffB <=> $diffA;
+        });
 
         // Take top 8
         $top8 = array_slice($conferenceStandings, 0, 8);
@@ -715,7 +724,7 @@ class PlayoffService
 
     /**
      * Check if regular season is complete.
-     * Season is complete when every team has played at least 82 games.
+     * Season is complete when every team has played at least 68 games.
      */
     public function isRegularSeasonComplete(Campaign $campaign): bool
     {
@@ -745,8 +754,8 @@ class PlayoffService
             return false;
         }
 
-        // Season is complete when all teams have played at least 82 games
-        $minGamesRequired = 82;
+        // Season is complete when all teams have played at least 68 games
+        $minGamesRequired = 68;
         foreach ($gamesPerTeam as $teamId => $gamesPlayed) {
             if ($gamesPlayed < $minGamesRequired) {
                 return false;
@@ -773,7 +782,16 @@ class PlayoffService
 
         foreach (['east', 'west'] as $conf) {
             $sorted = $standings[$conf];
-            usort($sorted, fn($a, $b) => $b['wins'] - $a['wins']);
+            usort($sorted, function ($a, $b) {
+                $totalA = $a['wins'] + $a['losses'];
+                $totalB = $b['wins'] + $b['losses'];
+                $pctA = $totalA > 0 ? $a['wins'] / $totalA : 0;
+                $pctB = $totalB > 0 ? $b['wins'] / $totalB : 0;
+                if ($pctA !== $pctB) return $pctB <=> $pctA;
+                $diffA = ($a['pointsFor'] ?? 0) - ($a['pointsAgainst'] ?? 0);
+                $diffB = ($b['pointsFor'] ?? 0) - ($b['pointsAgainst'] ?? 0);
+                return $diffB <=> $diffA;
+            });
 
             foreach ($sorted as $index => $standing) {
                 if ($standing['teamId'] == $userTeamId) {
@@ -805,7 +823,16 @@ class PlayoffService
             $opponentSeed = $opponents[$seed];
 
             $confStandings = $standings[$userConference];
-            usort($confStandings, fn($a, $b) => $b['wins'] - $a['wins']);
+            usort($confStandings, function ($a, $b) {
+                $totalA = $a['wins'] + $a['losses'];
+                $totalB = $b['wins'] + $b['losses'];
+                $pctA = $totalA > 0 ? $a['wins'] / $totalA : 0;
+                $pctB = $totalB > 0 ? $b['wins'] / $totalB : 0;
+                if ($pctA !== $pctB) return $pctB <=> $pctA;
+                $diffA = ($a['pointsFor'] ?? 0) - ($a['pointsAgainst'] ?? 0);
+                $diffB = ($b['pointsFor'] ?? 0) - ($b['pointsAgainst'] ?? 0);
+                return $diffB <=> $diffA;
+            });
 
             if (isset($confStandings[$opponentSeed - 1])) {
                 $opponentStanding = $confStandings[$opponentSeed - 1];

@@ -229,6 +229,18 @@ async function simulateToGame() {
       })
     }
 
+    // Show upgrade points toasts
+    if (response.upgrade_points_awarded?.length) {
+      response.upgrade_points_awarded.forEach((award, i) => {
+        setTimeout(() => {
+          toastStore.showSuccess(
+            `${award.name} earned ${award.points_earned} upgrade point${award.points_earned > 1 ? 's' : ''}! (${award.total_points} total)`,
+            5000
+          )
+        }, i * 600)
+      })
+    }
+
     // Refresh data
     await Promise.all([
       campaignStore.fetchCampaign(props.campaignId),

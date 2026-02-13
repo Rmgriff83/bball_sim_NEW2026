@@ -160,7 +160,7 @@ class AchievementSeeder extends Seeder
             [
                 'id' => 'perfect_season',
                 'name' => 'Perfect Season',
-                'description' => 'Go undefeated in the regular season (82-0).',
+                'description' => 'Go undefeated in the regular season (68-0).',
                 'category' => 'mastery',
                 'points' => 500,
                 'criteria' => ['type' => 'perfect_regular_season', 'value' => 1],

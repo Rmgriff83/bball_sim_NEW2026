@@ -119,6 +119,9 @@ export const useTeamStore = defineStore('team', () => {
         targetMinutes.value = {}
       }
 
+      // Attach target_minutes to each player object
+      applyMinutesToRoster()
+
       _loadedCampaignId.value = campaignId
 
       // Update cache with team/roster data
@@ -322,6 +325,15 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
+  // Apply current targetMinutes to each player object in roster
+  function applyMinutesToRoster() {
+    if (!roster.value?.length) return
+    for (const player of roster.value) {
+      if (!player) continue
+      player.target_minutes = targetMinutes.value[player.id] ?? 0
+    }
+  }
+
   async function updateTargetMinutes(campaignId, minutes) {
     loading.value = true
     error.value = null
@@ -330,6 +342,7 @@ export const useTeamStore = defineStore('team', () => {
         target_minutes: minutes,
       })
       targetMinutes.value = response.data.target_minutes || minutes
+      applyMinutesToRoster()
       return response.data
     } catch (err) {
       error.value = err.response?.data?.message || 'Failed to update target minutes'

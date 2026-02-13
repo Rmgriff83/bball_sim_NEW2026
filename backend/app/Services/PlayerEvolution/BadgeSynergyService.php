@@ -6,6 +6,9 @@ use App\Models\BadgeSynergy;
 
 class BadgeSynergyService
 {
+    private const LEVEL_VALUES = ['bronze' => 1, 'silver' => 2, 'gold' => 3, 'hof' => 4];
+    private const SYNERGY_BOOST_BY_MIN_LEVEL = [1 => 0.03, 2 => 0.05, 3 => 0.06, 4 => 0.08];
+
     private array $config;
     private array $synergies = [];
 
@@ -114,20 +117,15 @@ class BadgeSynergyService
 
     /**
      * Calculate boost from a single synergy.
+     * Uses the lower of the two badge levels to determine the tier.
      */
     private function calculateSingleSynergyBoost(array $synergyData): float
     {
-        $level1 = $synergyData['badge1_level'] ?? 'bronze';
-        $level2 = $synergyData['badge2_level'] ?? 'bronze';
+        $level1 = self::LEVEL_VALUES[$synergyData['badge1_level'] ?? 'bronze'] ?? 1;
+        $level2 = self::LEVEL_VALUES[$synergyData['badge2_level'] ?? 'bronze'] ?? 1;
+        $minLevel = min($level1, $level2);
 
-        // HOF synergies get bigger boost
-        $isHof = $level1 === 'hof' || $level2 === 'hof';
-
-        if ($isHof) {
-            return $this->config['development_boost_hof'] ?? 0.08;
-        }
-
-        return $this->config['development_boost_base'] ?? 0.05;
+        return self::SYNERGY_BOOST_BY_MIN_LEVEL[$minLevel] ?? 0.03;
     }
 
     /**
@@ -235,5 +233,73 @@ class BadgeSynergyService
         }
 
         return $allSynergies;
+    }
+
+    /**
+     * Find Dynamic Duo pairs on a roster.
+     * Two players form a Dynamic Duo when they share 2+ synergies
+     * and both badges in each synergy are gold or higher.
+     */
+    public function findDynamicDuos(array $roster): array
+    {
+        $duos = [];
+        $minSynergies = $this->config['dynamic_duo_min_synergies'] ?? 2;
+
+        for ($i = 0; $i < count($roster); $i++) {
+            for ($j = $i + 1; $j < count($roster); $j++) {
+                $playerA = $roster[$i];
+                $playerB = $roster[$j];
+
+                $synergies = $this->findBadgeSynergies(
+                    $playerA['badges'] ?? [],
+                    $playerB['badges'] ?? []
+                );
+
+                $goldPlusCount = 0;
+                foreach ($synergies as $synergyData) {
+                    $level1 = self::LEVEL_VALUES[$synergyData['badge1_level'] ?? 'bronze'] ?? 1;
+                    $level2 = self::LEVEL_VALUES[$synergyData['badge2_level'] ?? 'bronze'] ?? 1;
+                    if (min($level1, $level2) >= 3) { // gold = 3
+                        $goldPlusCount++;
+                    }
+                }
+
+                if ($goldPlusCount >= $minSynergies) {
+                    $duos[] = [
+                        'playerA' => [
+                            'id' => $playerA['id'] ?? '',
+                            'name' => ($playerA['firstName'] ?? $playerA['first_name'] ?? '') . ' ' .
+                                     ($playerA['lastName'] ?? $playerA['last_name'] ?? ''),
+                        ],
+                        'playerB' => [
+                            'id' => $playerB['id'] ?? '',
+                            'name' => ($playerB['firstName'] ?? $playerB['first_name'] ?? '') . ' ' .
+                                     ($playerB['lastName'] ?? $playerB['last_name'] ?? ''),
+                        ],
+                        'synergies' => $synergies,
+                    ];
+                }
+            }
+        }
+
+        return $duos;
+    }
+
+    /**
+     * Get Dynamic Duo attribute boost for a player.
+     * Returns 0.02 if the player is part of any Dynamic Duo, else 0.0.
+     */
+    public function getDynamicDuoBoost(array $player, array $roster): float
+    {
+        $playerId = $player['id'] ?? '';
+        $duos = $this->findDynamicDuos($roster);
+
+        foreach ($duos as $duo) {
+            if (($duo['playerA']['id'] ?? '') === $playerId || ($duo['playerB']['id'] ?? '') === $playerId) {
+                return $this->config['dynamic_duo_boost'] ?? 0.02;
+            }
+        }
+
+        return 0.0;
     }
 }

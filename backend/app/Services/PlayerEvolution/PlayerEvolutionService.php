@@ -272,18 +272,33 @@ class PlayerEvolutionService
 
     /**
      * Process weekly updates for all players in a campaign.
+     * Returns array of upgrade point awards for user's team players.
      */
-    public function processWeeklyUpdates(Campaign $campaign): void
+    public function processWeeklyUpdates(Campaign $campaign): array
     {
         // Set difficulty for calculations
         $this->development->setDifficulty($campaign->difficulty ?? 'pro');
+
+        $upgradePointsAwarded = [];
 
         // Process user's team (database players) - no AI upgrades
         $userPlayers = Player::where('campaign_id', $campaign->id)->get();
         foreach ($userPlayers as $player) {
             $playerArray = $player->toArray();
+            $pointsBefore = $playerArray['upgrade_points'] ?? $playerArray['upgradePoints'] ?? 0;
             $playerArray = $this->processWeeklyPlayer($campaign, $playerArray, [], false);
+            $pointsAfter = $playerArray['upgrade_points'] ?? $playerArray['upgradePoints'] ?? 0;
             $player->update($this->normalizeForDatabase($playerArray));
+
+            $earned = $pointsAfter - $pointsBefore;
+            if ($earned > 0) {
+                $upgradePointsAwarded[] = [
+                    'player_id' => $player->id,
+                    'name' => $playerArray['name'] ?? ($playerArray['firstName'] ?? '') . ' ' . ($playerArray['lastName'] ?? ''),
+                    'points_earned' => $earned,
+                    'total_points' => $pointsAfter,
+                ];
+            }
         }
 
         // Process league players (JSON) - with AI upgrades
@@ -295,6 +310,8 @@ class PlayerEvolutionService
         }
 
         $this->playerService->saveLeaguePlayers($campaign->id, $leaguePlayers);
+
+        return $upgradePointsAwarded;
     }
 
     /**
@@ -678,10 +695,14 @@ class PlayerEvolutionService
         // Calculate badge synergy boost
         $synergyBoost = $this->badgeSynergy->calculateDevelopmentBoost($player, $roster);
 
+        // Calculate Dynamic Duo boost
+        $duoBoost = $this->badgeSynergy->getDynamicDuoBoost($player, $roster);
+
         $context = [
             'avgMinutesPerGame' => $avgMinutes,
             'hasMentor' => $hasMentor,
             'badgeSynergyBoost' => $synergyBoost,
+            'dynamicDuoBoost' => $duoBoost,
         ];
 
         // Calculate development
@@ -1044,34 +1065,54 @@ class PlayerEvolutionService
         $config = config('player_evolution.fatigue');
         $current = $player['fatigue'] ?? 0;
 
-        // If player didn't play, they get rest recovery (attribute-weighted)
+        // If player didn't play at all, they get full rest day recovery
         if ($minutes === 0) {
             $recovery = $this->getAttributeWeightedRecovery($player, $config['rest_day_recovery']);
             $player['fatigue'] = max(0, $current - $recovery);
             return $player;
         }
 
-        $gain = $minutes * $config['per_minute_gain'];
-
-        // Stamina and durability reduce fatigue gain (high attributes = less fatigue)
-        $stamina = $player['attributes']['physical']['stamina'] ?? 70;
-        $durability = $player['attributes']['physical']['durability'] ?? 70;
-        $athleticAvg = ($stamina * 0.6 + $durability * 0.4) / 100; // 0.0 - 1.0
-        // A 100-rated player gains ~20% less fatigue, a 50-rated player gains ~10% more
-        $gain *= (1.2 - $athleticAvg * 0.4);
-
-        // Rookie wall penalty
-        $gamesPlayed = $player['games_played_this_season'] ?? $player['gamesPlayedThisSeason'] ?? 0;
-        $careerSeasons = $player['career_seasons'] ?? $player['careerSeasons'] ?? 0;
-        $rookieConfig = config('player_evolution.rookie_wall');
-
-        if ($careerSeasons === 0 && $gamesPlayed >= $rookieConfig['game_threshold']) {
-            if ($gamesPlayed < $rookieConfig['game_threshold'] + $rookieConfig['duration_games']) {
-                $gain *= $rookieConfig['fatigue_multiplier'];
+        // Find the matching minute threshold bracket
+        $thresholds = $config['minute_thresholds'];
+        $bracket = null;
+        foreach ($thresholds as $t) {
+            if ($minutes >= $t['min'] && $minutes <= $t['max']) {
+                $bracket = $t;
+                break;
             }
         }
 
-        $player['fatigue'] = min($config['max_fatigue'], $current + $gain);
+        // Fallback to last bracket if minutes exceed all ranges
+        if (!$bracket) {
+            $bracket = end($thresholds);
+        }
+
+        // Calculate stamina/durability modifier
+        $stamina = $player['attributes']['physical']['stamina'] ?? 70;
+        $durability = $player['attributes']['physical']['durability'] ?? 70;
+        $athleticAvg = ($stamina * 0.6 + $durability * 0.4) / 100;
+
+        if ($bracket['type'] === 'recovery') {
+            // Light minutes: player RECOVERS fatigue (attribute-weighted like rest recovery)
+            $recovery = $this->getAttributeWeightedRecovery($player, $bracket['base']);
+            $player['fatigue'] = max(0, $current - $recovery);
+        } else {
+            // Moderate/heavy minutes: player GAINS fatigue (high attributes reduce gain)
+            $gain = $bracket['base'] * (1.2 - $athleticAvg * 0.4);
+
+            // Rookie wall penalty
+            $gamesPlayed = $player['games_played_this_season'] ?? $player['gamesPlayedThisSeason'] ?? 0;
+            $careerSeasons = $player['career_seasons'] ?? $player['careerSeasons'] ?? 0;
+            $rookieConfig = config('player_evolution.rookie_wall');
+
+            if ($careerSeasons === 0 && $gamesPlayed >= $rookieConfig['game_threshold']) {
+                if ($gamesPlayed < $rookieConfig['game_threshold'] + $rookieConfig['duration_games']) {
+                    $gain *= $rookieConfig['fatigue_multiplier'];
+                }
+            }
+
+            $player['fatigue'] = min($config['max_fatigue'], $current + $gain);
+        }
 
         return $player;
     }

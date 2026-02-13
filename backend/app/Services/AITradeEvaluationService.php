@@ -234,7 +234,7 @@ class AITradeEvaluationService
     {
         $standings = $context['standings'];
         $gamesPlayed = $context['gamesPlayed'];
-        $totalGames = 82;
+        $totalGames = 68;
 
         $teamRecord = $standings[$team->abbreviation] ?? ['wins' => 0, 'losses' => 0];
         $wins = $teamRecord['wins'] ?? 0;

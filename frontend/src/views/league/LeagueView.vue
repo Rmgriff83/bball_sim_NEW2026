@@ -133,17 +133,23 @@ const userTeam = computed(() => campaign.value?.team)
 const eastStandings = computed(() => leagueStore.eastStandings)
 const westStandings = computed(() => leagueStore.westStandings)
 
+const sortByWinPct = (arr) => [...arr].sort((a, b) => {
+  const totalA = a.wins + a.losses
+  const totalB = b.wins + b.losses
+  const pctA = totalA > 0 ? a.wins / totalA : 0
+  const pctB = totalB > 0 ? b.wins / totalB : 0
+  if (pctA !== pctB) return pctB - pctA
+  const diffA = (a.pointsFor || 0) - (a.pointsAgainst || 0)
+  const diffB = (b.pointsFor || 0) - (b.pointsAgainst || 0)
+  return diffB - diffA
+})
+
 const activeStandings = computed(() => {
   if (activeConference.value === null) {
-    // Combine both conferences and sort by win percentage
-    const all = [...eastStandings.value, ...westStandings.value]
-    return all.sort((a, b) => {
-      const pctA = a.wins / (a.wins + a.losses) || 0
-      const pctB = b.wins / (b.wins + b.losses) || 0
-      return pctB - pctA
-    })
+    return sortByWinPct([...eastStandings.value, ...westStandings.value])
   }
-  return activeConference.value === 'east' ? eastStandings.value : westStandings.value
+  const conf = activeConference.value === 'east' ? eastStandings.value : westStandings.value
+  return sortByWinPct(conf)
 })
 
 // Recent games across the league

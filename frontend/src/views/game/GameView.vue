@@ -92,6 +92,10 @@ const animatingStats = ref({})
 // Simulate modal state
 const showSimulateModal = ref(false)
 
+// Injury notification modal state
+const showInjuryModal = ref(false)
+const injuredPlayers = ref([])
+
 // Coaching style selections for quarter breaks
 const selectedOffense = ref('balanced')
 const selectedDefense = ref('man')
@@ -932,6 +936,21 @@ function handleCloseSimulateModal() {
   gameStore.clearSimulatePreview()
 }
 
+function getInjurySeverityColor(severity) {
+  switch (severity) {
+    case 'minor': return '#fbbf24'
+    case 'moderate': return '#fb923c'
+    case 'severe': return '#ef4444'
+    case 'season_ending': return '#ef4444'
+    default: return '#fbbf24'
+  }
+}
+
+function goToLineup() {
+  showInjuryModal.value = false
+  router.push(`/campaign/${campaignId.value}/team`)
+}
+
 /**
  * Handle confirm from simulate modal - simulate games then start user's game.
  * From the game preview page, we exclude the user's game so they can play it live.
@@ -1014,6 +1033,7 @@ async function startGame() {
     if (result.isGameComplete) {
       isLiveMode.value = false
       await leagueStore.fetchStandings(campaignId.value, { force: true })
+      showUpgradePointToasts()
     }
   } catch (err) {
     console.error('Failed to start/continue game:', err)
@@ -1066,6 +1086,16 @@ async function continueToNextQuarter() {
         // No background batch — refresh standings now
         await leagueStore.fetchStandings(campaignId.value, { force: true })
       }
+
+      // Check for user team injuries
+      const teamKey = userIsHome.value ? 'home' : 'away'
+      const evoData = game.value?.evolution?.[teamKey]
+      if (evoData?.injuries?.length > 0) {
+        injuredPlayers.value = evoData.injuries
+        showInjuryModal.value = true
+      }
+
+      showUpgradePointToasts()
     }
 
     // Load this quarter's animation data and play
@@ -1123,6 +1153,8 @@ async function handleSimToEnd() {
     } else {
       await leagueStore.fetchStandings(campaignId.value, { force: true })
     }
+
+    showUpgradePointToasts()
   } catch (err) {
     console.error('Failed to sim to end:', err)
     alert('Failed to sim to end')
@@ -1142,6 +1174,24 @@ function viewBoxScore() {
   document.body.style.overflow = ''
   // Refresh the game data to get final stats
   gameStore.fetchGame(campaignId.value, gameId.value)
+}
+
+/**
+ * Show toast notifications for players who earned upgrade points.
+ */
+function showUpgradePointToasts() {
+  const points = game.value?.upgrade_points_awarded
+  if (!points?.length) return
+
+  // Stagger toasts slightly so they appear one after another
+  points.forEach((award, i) => {
+    setTimeout(() => {
+      toastStore.showSuccess(
+        `${award.name} earned ${award.points_earned} upgrade point${award.points_earned > 1 ? 's' : ''}! (${award.total_points} total)`,
+        5000
+      )
+    }, i * 600)
+  })
 }
 
 function goBack() {
@@ -2053,14 +2103,27 @@ onUnmounted(() => {
 
                         <!-- Substitutions View -->
                         <template v-else>
-                          <!-- Back Button -->
-                          <button
-                            class="qb-back-btn"
-                            @click="showSubstitutionsView = false; expandedSwapPlayer = null"
-                          >
-                            <ArrowLeft :size="18" />
-                            <span>Back</span>
-                          </button>
+                          <!-- Header Row: Back + Continue -->
+                          <div class="subs-header-row">
+                            <button
+                              class="qb-back-btn"
+                              @click="showSubstitutionsView = false; expandedSwapPlayer = null"
+                            >
+                              <ArrowLeft :size="18" />
+                              <span>Back</span>
+                            </button>
+                            <button
+                              class="qb-continue-btn subs-continue-btn"
+                              :disabled="simulating"
+                              @click="handleQuarterBreakContinue"
+                            >
+                              <span v-if="simulating" class="qb-btn-loading"></span>
+                              <template v-else>
+                                <ChevronRight :size="18" />
+                                <span>Continue</span>
+                              </template>
+                            </button>
+                          </div>
 
                           <!-- Lineup Cards -->
                           <div class="lineup-cards-section">
@@ -2597,14 +2660,28 @@ onUnmounted(() => {
 
                 <!-- Substitutions View -->
                 <template v-else>
-                  <!-- Back Button -->
-                  <button
-                    class="qb-back-btn"
-                    @click="showSubstitutionsView = false; expandedSwapPlayer = null"
-                  >
-                    <ArrowLeft :size="18" />
-                    <span>Back</span>
-                  </button>
+                  <!-- Header Row: Back + Play Game -->
+                  <div class="subs-header-row">
+                    <button
+                      class="qb-back-btn"
+                      @click="showSubstitutionsView = false; expandedSwapPlayer = null"
+                    >
+                      <ArrowLeft :size="18" />
+                      <span>Back</span>
+                    </button>
+                    <button
+                      v-if="isUserGame"
+                      class="qb-continue-btn subs-continue-btn"
+                      :disabled="simulating"
+                      @click="handlePlayGame"
+                    >
+                      <span v-if="simulating" class="qb-btn-loading"></span>
+                      <template v-else>
+                        <Play :size="18" />
+                        <span>{{ isInProgress ? 'Resume' : 'Play Game' }}</span>
+                      </template>
+                    </button>
+                  </div>
 
                   <!-- Lineup Cards -->
                   <div class="lineup-cards-section">
@@ -3407,6 +3484,31 @@ onUnmounted(() => {
       @close="handleCloseSimulateModal"
       @confirm="handleConfirmSimulate"
     />
+
+    <!-- Injury Notification Modal -->
+    <BaseModal
+      :show="showInjuryModal"
+      title="Injury Report"
+      size="sm"
+      @close="showInjuryModal = false"
+    >
+      <div class="injury-modal-content">
+        <div v-for="injury in injuredPlayers" :key="injury.player_id" class="injury-modal-item">
+          <AlertTriangle :size="18" :style="{ color: getInjurySeverityColor(injury.severity) }" />
+          <div class="injury-modal-details">
+            <span class="injury-modal-name">{{ injury.name }}</span>
+            <span class="injury-modal-type">{{ injury.injury_type }}</span>
+            <span class="injury-modal-duration">Out {{ injury.games_out }} games</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="injury-modal-actions">
+          <button class="btn-ghost" @click="showInjuryModal = false">Dismiss</button>
+          <button class="btn-primary" @click="goToLineup">Update Lineup</button>
+        </div>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -4090,6 +4192,25 @@ onUnmounted(() => {
 }
 
 /* Back Button */
+.subs-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.subs-header-row .qb-back-btn {
+  margin-bottom: 0;
+}
+
+.subs-continue-btn {
+  padding: 10px 18px !important;
+  font-size: 0.8rem !important;
+  border-radius: var(--radius-lg) !important;
+  text-transform: none !important;
+}
+
 .qb-back-btn {
   display: flex;
   align-items: center;
@@ -6605,5 +6726,51 @@ onUnmounted(() => {
 .qb-sim-to-end-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Injury Modal */
+.injury-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.injury-modal-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 0.5rem;
+  border-left: 3px solid var(--color-warning);
+}
+
+.injury-modal-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.injury-modal-name {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.injury-modal-type {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+}
+
+.injury-modal-duration {
+  font-size: 0.8rem;
+  color: var(--color-error);
+  font-weight: 500;
+}
+
+.injury-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 </style>

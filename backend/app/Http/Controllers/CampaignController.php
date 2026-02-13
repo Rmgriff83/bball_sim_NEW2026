@@ -240,11 +240,12 @@ class CampaignController extends Controller
             if (isset($newSettings['offensive_style']) || isset($newSettings['defensive_style'])) {
                 $team = $campaign->team;
                 if ($team) {
-                    $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'];
+                    $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man', 'substitution' => 'staggered'];
                     $team->update([
                         'coaching_scheme' => [
                             'offensive' => $newSettings['offensive_style'] ?? $currentScheme['offensive'],
                             'defensive' => $newSettings['defensive_style'] ?? $currentScheme['defensive'],
+                            'substitution' => $currentScheme['substitution'] ?? 'staggered',
                         ]
                     ]);
                 }

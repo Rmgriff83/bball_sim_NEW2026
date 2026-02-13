@@ -183,20 +183,62 @@ class CampaignSeasonService
         $teamConferences = $teams->pluck('conference', 'id')->toArray();
         $teamAbbreviations = $teams->pluck('abbreviation', 'id')->toArray();
 
-        // Build matchups
+        // Build matchups targeting 68 games per team
+        // Base: every team plays every other team twice (1 home, 1 away) = 58 games
+        $targetGamesPerTeam = 68;
         $matchups = [];
         foreach ($teamIds as $homeTeamId) {
             foreach ($teamIds as $awayTeamId) {
                 if ($homeTeamId === $awayTeamId) continue;
+                $matchups[] = [
+                    'homeTeamId' => $homeTeamId,
+                    'awayTeamId' => $awayTeamId,
+                ];
+            }
+        }
 
-                $sameConference = $teamConferences[$homeTeamId] === $teamConferences[$awayTeamId];
-                $numGames = $sameConference ? 2 : 1;
+        // Add extra same-conference games to reach 68 per team (10 more each)
+        $teamGameCounts = array_fill_keys($teamIds, (count($teamIds) - 1) * 2);
+        $extraNeeded = $targetGamesPerTeam - $teamGameCounts[$teamIds[0]];
 
-                for ($k = 0; $k < $numGames; $k++) {
-                    $matchups[] = [
-                        'homeTeamId' => $homeTeamId,
-                        'awayTeamId' => $awayTeamId,
-                    ];
+        if ($extraNeeded > 0) {
+            // Group teams by conference
+            $conferenceGroups = [];
+            foreach ($teamIds as $id) {
+                $conferenceGroups[$teamConferences[$id]][] = $id;
+            }
+
+            foreach ($conferenceGroups as $confTeams) {
+                // Build all same-conference pairs
+                $pairs = [];
+                for ($i = 0; $i < count($confTeams); $i++) {
+                    for ($j = $i + 1; $j < count($confTeams); $j++) {
+                        $pairs[] = [$confTeams[$i], $confTeams[$j]];
+                    }
+                }
+
+                // Add extra games until all conference teams reach target
+                $maxPasses = 100;
+                for ($pass = 0; $pass < $maxPasses; $pass++) {
+                    shuffle($pairs);
+                    $addedAny = false;
+                    foreach ($pairs as $pair) {
+                        if ($teamGameCounts[$pair[0]] < $targetGamesPerTeam
+                            && $teamGameCounts[$pair[1]] < $targetGamesPerTeam) {
+                            // Alternate home/away
+                            if (rand(0, 1)) {
+                                $matchups[] = ['homeTeamId' => $pair[0], 'awayTeamId' => $pair[1]];
+                            } else {
+                                $matchups[] = ['homeTeamId' => $pair[1], 'awayTeamId' => $pair[0]];
+                            }
+                            $teamGameCounts[$pair[0]]++;
+                            $teamGameCounts[$pair[1]]++;
+                            $addedAny = true;
+                        }
+                    }
+                    if (!$addedAny) break;
+                    $confCounts = array_intersect_key($teamGameCounts, array_flip($confTeams));
+                    if (min($confCounts) >= $targetGamesPerTeam) break;
                 }
             }
         }
@@ -444,8 +486,17 @@ class CampaignSeasonService
                 }
             }
 
-            // Sort by wins descending
-            usort($season['standings'][$conf], fn($a, $b) => $b['wins'] - $a['wins']);
+            // Sort by win percentage descending, then point differential as tiebreaker
+            usort($season['standings'][$conf], function ($a, $b) {
+                $totalA = $a['wins'] + $a['losses'];
+                $totalB = $b['wins'] + $b['losses'];
+                $pctA = $totalA > 0 ? $a['wins'] / $totalA : 0;
+                $pctB = $totalB > 0 ? $b['wins'] / $totalB : 0;
+                if ($pctA !== $pctB) return $pctB <=> $pctA;
+                $diffA = ($a['pointsFor'] ?? 0) - ($a['pointsAgainst'] ?? 0);
+                $diffB = ($b['pointsFor'] ?? 0) - ($b['pointsAgainst'] ?? 0);
+                return $diffB <=> $diffA;
+            });
         }
 
         // Update team stats
@@ -781,7 +832,7 @@ class CampaignSeasonService
 
     /**
      * Check if regular season is complete.
-     * Season is complete when every team has played at least 82 games.
+     * Season is complete when every team has played at least 68 games.
      */
     public function isRegularSeasonComplete(int $campaignId, int $year): bool
     {

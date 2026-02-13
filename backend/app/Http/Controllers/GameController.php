@@ -328,7 +328,7 @@ class GameController extends Controller
 
             $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
             if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-                $this->evolutionService->processWeeklyUpdates($campaign);
+                $upgradePointsAwarded = $this->evolutionService->processWeeklyUpdates($campaign);
                 app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
             }
             if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
@@ -348,6 +348,10 @@ class GameController extends Controller
             'message' => 'Game simulated successfully',
             'result' => $result,
         ];
+
+        if (!empty($upgradePointsAwarded ?? [])) {
+            $response['upgrade_points_awarded'] = $upgradePointsAwarded;
+        }
 
         if ($batchId) {
             $response['batchId'] = $batchId;
@@ -495,7 +499,7 @@ class GameController extends Controller
 
             $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
             if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-                $this->evolutionService->processWeeklyUpdates($campaign);
+                $upgradePointsAwarded = $this->evolutionService->processWeeklyUpdates($campaign);
                 app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
             }
             if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
@@ -510,6 +514,10 @@ class GameController extends Controller
             'userGameResult' => $userGameResult,
             'new_date' => $campaign->fresh()->current_date->format('Y-m-d'),
         ];
+
+        if (!empty($upgradePointsAwarded ?? [])) {
+            $response['upgrade_points_awarded'] = $upgradePointsAwarded;
+        }
 
         if ($batchId) {
             $response['batchId'] = $batchId;
@@ -1083,7 +1091,19 @@ class GameController extends Controller
             } else {
                 // No remaining games - handle synchronously
                 $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
-                $campaign->update(['current_date' => Carbon::parse($gameDate)->addDay()]);
+                $newDate = Carbon::parse($gameDate)->addDay();
+                $campaign->update(['current_date' => $newDate]);
+
+                $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                    $upgradePointsAwarded = $this->evolutionService->processWeeklyUpdates($campaign);
+                    app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
+                }
+                if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                    $this->evolutionService->processMonthlyDevelopment($campaign);
+                }
+                app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                app(AllStarService::class)->processAllStarSelections($campaign);
             }
 
             $response = [
@@ -1096,6 +1116,10 @@ class GameController extends Controller
                 'rewards' => $rewardSummary,
                 ...$result['quarterResult'],
             ];
+
+            if (!empty($upgradePointsAwarded ?? [])) {
+                $response['upgrade_points_awarded'] = $upgradePointsAwarded;
+            }
 
             if ($batchId) {
                 $response['batchId'] = $batchId;
@@ -1311,7 +1335,19 @@ class GameController extends Controller
             $campaign->update(['simulation_batch_id' => $batchId]);
         } else {
             $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
-            $campaign->update(['current_date' => Carbon::parse($gameDate)->addDay()]);
+            $newDate = Carbon::parse($gameDate)->addDay();
+            $campaign->update(['current_date' => $newDate]);
+
+            $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+            if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                $upgradePointsAwarded = $this->evolutionService->processWeeklyUpdates($campaign);
+                app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
+            }
+            if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                $this->evolutionService->processMonthlyDevelopment($campaign);
+            }
+            app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+            app(AllStarService::class)->processAllStarSelections($campaign);
         }
 
         $response = [
@@ -1322,6 +1358,10 @@ class GameController extends Controller
             ]),
             'rewards' => $rewardSummary,
         ];
+
+        if (!empty($upgradePointsAwarded ?? [])) {
+            $response['upgrade_points_awarded'] = $upgradePointsAwarded;
+        }
 
         if ($batchId) {
             $response['batchId'] = $batchId;
@@ -1569,9 +1609,10 @@ class GameController extends Controller
         $this->evolutionService->processRestDayRecovery($campaign, array_unique($teamsWithGames));
 
         // Check for weekly/monthly evolution updates
+        $upgradePointsAwarded = [];
         $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
         if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-            $this->evolutionService->processWeeklyUpdates($campaign);
+            $upgradePointsAwarded = $this->evolutionService->processWeeklyUpdates($campaign);
             app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
         }
         if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
@@ -1580,11 +1621,17 @@ class GameController extends Controller
         app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
         app(AllStarService::class)->processAllStarSelections($campaign);
 
-        return [
+        $result = [
             'date' => $games[0]['gameDate'] ?? null,
             'games_count' => count($results),
             'results' => $results,
         ];
+
+        if (!empty($upgradePointsAwarded)) {
+            $result['upgrade_points_awarded'] = $upgradePointsAwarded;
+        }
+
+        return $result;
     }
 
     /**
@@ -1883,7 +1930,7 @@ class GameController extends Controller
             if (!$excludeUserGame) {
                 $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
                 if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-                    $this->evolutionService->processWeeklyUpdates($campaign);
+                    $upgradePointsAwarded = $this->evolutionService->processWeeklyUpdates($campaign);
                     app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
                 }
                 if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
@@ -1899,6 +1946,10 @@ class GameController extends Controller
             'userGameResult' => $userGameResult,
             'newDate' => $campaign->fresh()->current_date->format('Y-m-d'),
         ];
+
+        if (!empty($upgradePointsAwarded ?? [])) {
+            $response['upgrade_points_awarded'] = $upgradePointsAwarded;
+        }
 
         if ($batchId) {
             $response['batchId'] = $batchId;

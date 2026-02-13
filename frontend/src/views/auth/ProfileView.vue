@@ -6,7 +6,7 @@ import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { GlassCard, BaseButton, FormInput, Badge, BaseModal } from '@/components/ui'
-import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, Trash2, AlertTriangle, Zap } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, Trash2, AlertTriangle, Zap, Users } from 'lucide-vue-next'
 import { useLocalCache } from '@/composables/useLocalCache'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 
@@ -384,7 +384,7 @@ async function clearLocalCache() {
       <div v-show="activeTab === 'database'">
         <div class="profile-section">
           <h3 class="section-title">Badge Synergies</h3>
-          <p class="db-description">When two players in your lineup each have the right badges at the required level, a synergy activates and provides bonus effects during games.</p>
+          <p class="db-description">When two players in your lineup each have matching synergy badges, a synergy activates and provides bonus effects during games. The boost scales with badge level — higher levels mean stronger synergies.</p>
         </div>
 
         <div v-for="group in groupedSynergies" :key="group.category" class="synergy-category-section">
@@ -399,16 +399,10 @@ async function clearLocalCache() {
               <div class="synergy-badges-row">
                 <div class="synergy-badge-req">
                   <span class="synergy-badge-name">{{ formatBadgeName(syn.badge1_id) }}</span>
-                  <span class="synergy-badge-level" :style="{ color: getLevelColor(syn.min_level1) }">
-                    {{ formatLevelLabel(syn.min_level1) }}+
-                  </span>
                 </div>
                 <span class="synergy-plus">+</span>
                 <div class="synergy-badge-req">
                   <span class="synergy-badge-name">{{ formatBadgeName(syn.badge2_id) }}</span>
-                  <span class="synergy-badge-level" :style="{ color: getLevelColor(syn.min_level2) }">
-                    {{ formatLevelLabel(syn.min_level2) }}+
-                  </span>
                 </div>
               </div>
               <div class="synergy-effects">
@@ -416,6 +410,20 @@ async function clearLocalCache() {
                   {{ boost }}
                 </span>
               </div>
+            </div>
+          </div>
+        </div>
+        <!-- Dynamic Duo Explanation -->
+        <div class="profile-section" style="margin-top: 1.5rem;">
+          <h3 class="section-title">
+            <Users :size="18" style="color: #FFD700;" />
+            Dynamic Duo
+          </h3>
+          <p class="db-description">When two players in your lineup share 2 or more synergies and both players have the involved badges at Gold level or higher, they form a <strong style="color: #FFD700;">Dynamic Duo</strong>. Each player in the duo receives a +2% boost to all attributes.</p>
+          <div class="dynamic-duo-info-card">
+            <div class="duo-requirements">
+              <span class="duo-req-item">2+ matching synergies at Gold or higher</span>
+              <span class="duo-req-item">+2% boost to all attributes for both players</span>
             </div>
           </div>
         </div>
@@ -906,6 +914,34 @@ async function clearLocalCache() {
   background: rgba(0, 229, 255, 0.1);
   color: #00E5FF;
   border-radius: 4px;
+}
+
+.dynamic-duo-info-card {
+  padding: 1rem;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 140, 0, 0.1));
+  border: 1px solid rgba(255, 215, 0, 0.25);
+  border-radius: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.duo-requirements {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.duo-req-item {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  padding-left: 1rem;
+  position: relative;
+}
+
+.duo-req-item::before {
+  content: '\2605';
+  position: absolute;
+  left: 0;
+  color: #FFD700;
 }
 
 /* Responsive */

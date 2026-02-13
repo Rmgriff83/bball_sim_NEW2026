@@ -30,11 +30,14 @@ const playoffStore = usePlayoffStore()
 const tradeStore = useTradeStore()
 
 const showSimulateModal = ref(false)
+const lastSimResult = ref(null) // Last simulated user game result shown during background sim
 const showTradeProposalModal = ref(false)
 const currentProposal = ref(null)
 const showPlayoffBracket = ref(false)
 const showAllStarModal = ref(false)
 const allStarRosters = ref(null)
+const showInjuryModal = ref(false)
+const injuredPlayers = ref([])
 const showLineupWarningModal = ref(false)
 const pendingGameAction = ref(null) // 'simulate' or gameId for play
 const showRosterWarningModal = ref(false)
@@ -225,6 +228,14 @@ const userTeamRating = computed(() => {
   return team.value?.overall_rating || team.value?.rating || null
 })
 
+const lastSimResultOutcome = computed(() => {
+  if (!lastSimResult.value) return null
+  const { homeScore, awayScore, isUserHome } = lastSimResult.value
+  const userScore = isUserHome ? homeScore : awayScore
+  const oppScore = isUserHome ? awayScore : homeScore
+  return userScore > oppScore ? 'win' : 'loss'
+})
+
 // Format game date
 function formatGameDate(dateStr) {
   if (!dateStr) return ''
@@ -390,6 +401,10 @@ async function handleConfirmSimulate() {
   showSimulateModal.value = false
   gameStore.clearSimulatePreview()
 
+  // Capture team colors from current nextGame before the async call replaces it
+  const preSimHomeColor = nextGame.value?.home_team?.primary_color || '#666'
+  const preSimAwayColor = nextGame.value?.away_team?.primary_color || '#666'
+
   // Show loading toast
   const loadingToastId = toastStore.showLoading('Simulating your game...')
 
@@ -399,16 +414,47 @@ async function handleConfirmSimulate() {
     // Remove loading toast
     toastStore.removeMinimalToast(loadingToastId)
 
-    // Show toast for user's game result
+    // Store last result for display during background sim
     if (response.userGameResult) {
-      toastStore.showGameResult({
-        homeTeam: response.userGameResult.home_team?.abbreviation || response.userGameResult.home_team?.name || 'HOME',
-        awayTeam: response.userGameResult.away_team?.abbreviation || response.userGameResult.away_team?.name || 'AWAY',
+      lastSimResult.value = {
+        homeTeam: response.userGameResult.home_team?.abbreviation || 'HOME',
+        awayTeam: response.userGameResult.away_team?.abbreviation || 'AWAY',
+        homeTeamColor: preSimHomeColor,
+        awayTeamColor: preSimAwayColor,
         homeScore: response.userGameResult.home_score,
         awayScore: response.userGameResult.away_score,
         gameId: response.userGameResult.game_id,
+        isUserHome: response.userGameResult.is_user_home,
+      }
+
+      toastStore.showGameResult({
+        homeTeam: lastSimResult.value.homeTeam,
+        awayTeam: lastSimResult.value.awayTeam,
+        homeScore: lastSimResult.value.homeScore,
+        awayScore: lastSimResult.value.awayScore,
+        gameId: lastSimResult.value.gameId,
         campaignId: campaignId.value,
-        isUserHome: response.userGameResult.is_user_home
+        isUserHome: lastSimResult.value.isUserHome
+      })
+
+      // Check for user team injuries
+      const evo = response.userGameResult.evolution
+      const teamKey = response.userGameResult.is_user_home ? 'home' : 'away'
+      if (evo?.[teamKey]?.injuries?.length > 0) {
+        injuredPlayers.value = evo[teamKey].injuries
+        showInjuryModal.value = true
+      }
+    }
+
+    // Show upgrade points toasts
+    if (response.upgrade_points_awarded?.length) {
+      response.upgrade_points_awarded.forEach((award, i) => {
+        setTimeout(() => {
+          toastStore.showSuccess(
+            `${award.name} earned ${award.points_earned} upgrade point${award.points_earned > 1 ? 's' : ''}! (${award.total_points} total)`,
+            5000
+          )
+        }, i * 600)
       })
     }
 
@@ -427,6 +473,7 @@ async function handleConfirmSimulate() {
     ])
 
     if (!gameStore.backgroundSimulating) {
+      lastSimResult.value = null
       await checkPlayoffStatus()
     }
   } catch (err) {
@@ -444,22 +491,63 @@ async function handleSimToEndFromModal() {
 
 async function handleSimToEnd() {
   if (!validateRosterForGame()) return
+
+  // Capture game info before async call (nextGame may change after simToEnd completes)
+  const gameToSim = nextGame.value
+  const simGameId = gameToSim.id
+  const simHomeAbbr = gameToSim.home_team?.abbreviation || 'HOME'
+  const simAwayAbbr = gameToSim.away_team?.abbreviation || 'AWAY'
+  const simHomeColor = gameToSim.home_team?.primary_color || '#666'
+  const simAwayColor = gameToSim.away_team?.primary_color || '#666'
+  const simIsUserHome = gameToSim.home_team_id === teamStore.team?.id
+
   const loadingToastId = toastStore.showLoading('Simming to end...')
 
   try {
-    const response = await gameStore.simToEnd(campaignId.value, nextGame.value.id)
+    const response = await gameStore.simToEnd(campaignId.value, simGameId)
 
     toastStore.removeMinimalToast(loadingToastId)
 
     if (response.result) {
-      toastStore.showGameResult({
-        homeTeam: nextGame.value.home_team?.abbreviation || 'HOME',
-        awayTeam: nextGame.value.away_team?.abbreviation || 'AWAY',
+      lastSimResult.value = {
+        homeTeam: simHomeAbbr,
+        awayTeam: simAwayAbbr,
+        homeTeamColor: simHomeColor,
+        awayTeamColor: simAwayColor,
         homeScore: response.result.home_score,
         awayScore: response.result.away_score,
-        gameId: nextGame.value.id,
+        gameId: simGameId,
+        isUserHome: simIsUserHome,
+      }
+
+      toastStore.showGameResult({
+        homeTeam: lastSimResult.value.homeTeam,
+        awayTeam: lastSimResult.value.awayTeam,
+        homeScore: lastSimResult.value.homeScore,
+        awayScore: lastSimResult.value.awayScore,
+        gameId: lastSimResult.value.gameId,
         campaignId: campaignId.value,
-        isUserHome: nextGame.value.home_team_id === teamStore.team?.id
+        isUserHome: simIsUserHome,
+      })
+
+      // Check for user team injuries
+      const evo = response.result.evolution
+      const teamKey = simIsUserHome ? 'home' : 'away'
+      if (evo?.[teamKey]?.injuries?.length > 0) {
+        injuredPlayers.value = evo[teamKey].injuries
+        showInjuryModal.value = true
+      }
+    }
+
+    // Show upgrade points toasts
+    if (response.upgrade_points_awarded?.length) {
+      response.upgrade_points_awarded.forEach((award, i) => {
+        setTimeout(() => {
+          toastStore.showSuccess(
+            `${award.name} earned ${award.points_earned} upgrade point${award.points_earned > 1 ? 's' : ''}! (${award.total_points} total)`,
+            5000
+          )
+        }, i * 600)
       })
     }
 
@@ -475,6 +563,7 @@ async function handleSimToEnd() {
     ])
 
     if (!gameStore.backgroundSimulating) {
+      lastSimResult.value = null
       await checkPlayoffStatus()
     }
   } catch (err) {
@@ -487,6 +576,9 @@ async function handleSimToEnd() {
 // Watch for background simulation completion to refresh data
 watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
   if (oldVal === true && newVal === false) {
+    // Clear last sim result so the next game card shows the upcoming game
+    lastSimResult.value = null
+
     // Background AI games finished — refresh all data
     try {
       await Promise.all([
@@ -582,6 +674,21 @@ async function checkAllStarSelections() {
   }
 }
 
+function getInjurySeverityColor(severity) {
+  switch (severity) {
+    case 'minor': return '#fbbf24'
+    case 'moderate': return '#fb923c'
+    case 'severe': return '#ef4444'
+    case 'season_ending': return '#ef4444'
+    default: return '#fbbf24'
+  }
+}
+
+function goToLineup() {
+  showInjuryModal.value = false
+  router.push(`/campaign/${campaignId.value}/team`)
+}
+
 async function handleCloseAllStarModal() {
   showAllStarModal.value = false
   try {
@@ -659,8 +766,53 @@ function handleCloseSimulateModal() {
         </div>
       </section>
 
+      <!-- Last Sim Result Card (shown while background sim is running) -->
+      <section v-if="lastSimResult && gameStore.backgroundSimulating" class="next-game-card glass-card-nebula">
+        <div class="next-game-header">
+          <div class="next-game-label-row">
+            <h3 class="next-game-label">LAST GAME</h3>
+            <span class="last-result-tag" :class="lastSimResultOutcome">{{ lastSimResultOutcome === 'win' ? 'W' : 'L' }}</span>
+          </div>
+          <span class="next-game-location">FINAL</span>
+        </div>
+        <div class="next-game-content">
+          <div class="next-game-matchup">
+            <div class="matchup-team" :class="{ 'user-team': !lastSimResult.isUserHome }">
+              <div
+                class="team-badge-game"
+                :style="{ backgroundColor: lastSimResult.awayTeamColor }"
+              >
+                <span class="badge-abbr">{{ lastSimResult.awayTeam }}</span>
+                <span class="badge-score">{{ lastSimResult.awayScore }}</span>
+              </div>
+            </div>
+            <div class="matchup-vs">
+              <span class="vs-text">-</span>
+            </div>
+            <div class="matchup-team" :class="{ 'user-team': lastSimResult.isUserHome }">
+              <div
+                class="team-badge-game"
+                :style="{ backgroundColor: lastSimResult.homeTeamColor }"
+              >
+                <span class="badge-abbr">{{ lastSimResult.homeTeam }}</span>
+                <span class="badge-score">{{ lastSimResult.homeScore }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="next-game-buttons">
+            <button
+              class="btn-box-score"
+              @click="router.push(`/campaign/${campaignId}/game/${lastSimResult.gameId}`)"
+            >
+              <Search class="btn-icon" :size="16" />
+              VIEW BOX SCORE
+            </button>
+          </div>
+        </div>
+      </section>
+
       <!-- Next Game Card -->
-      <section v-if="nextGame" class="next-game-card glass-card-nebula" :class="{ 'in-progress': isGameInProgress }">
+      <section v-else-if="nextGame" class="next-game-card glass-card-nebula" :class="{ 'in-progress': isGameInProgress }">
         <div class="next-game-header">
           <div class="next-game-label-group">
             <h3 class="next-game-label" :class="{ 'live': isGameInProgress }">
@@ -672,74 +824,78 @@ function handleCloseSimulateModal() {
           <span class="next-game-location">{{ nextGameOpponent?.isHome ? 'HOME' : 'AWAY' }}</span>
         </div>
         <div class="next-game-content">
-          <div class="next-game-matchup">
-            <div class="matchup-team user-team">
-              <div
-                class="team-badge-game"
-                :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
-              >
-                <span class="badge-abbr">{{ team?.abbreviation }}</span>
-                <span v-if="isGameInProgress && inProgressScores" class="badge-score">
-                  {{ nextGameOpponent?.isHome ? inProgressScores.awayScore : inProgressScores.homeScore }}
-                </span>
-                <span v-else class="badge-record">{{ wins }}-{{ losses }}</span>
-              </div>
-              <div class="team-info">
-                <span v-if="userTeamRating" class="team-rating">{{ userTeamRating }} OVR</span>
-                <span class="team-rank">#{{ teamRank }} {{ conferenceLabel }}</span>
-              </div>
-            </div>
-            <div class="matchup-vs">
-              <span class="vs-text">{{ isGameInProgress ? '-' : 'VS' }}</span>
-            </div>
-            <div class="matchup-team opponent-team">
-              <div
-                class="team-badge-game"
-                :style="{ backgroundColor: nextGameOpponent?.color || '#666' }"
-              >
-                <span class="badge-abbr">{{ nextGameOpponent?.abbreviation }}</span>
-                <span v-if="isGameInProgress && inProgressScores" class="badge-score">
-                  {{ nextGameOpponent?.isHome ? inProgressScores.homeScore : inProgressScores.awayScore }}
-                </span>
-                <span v-else class="badge-record">{{ nextGameOpponent?.wins }}-{{ nextGameOpponent?.losses }}</span>
-              </div>
-              <div class="team-info">
-                <span v-if="nextGameOpponent?.rating" class="team-rating">{{ nextGameOpponent.rating }} OVR</span>
-                <span v-if="nextGameOpponent?.rank" class="team-rank">#{{ nextGameOpponent.rank }} {{ nextGameOpponent.conference }}</span>
-              </div>
-            </div>
+          <!-- Loading state while simulating -->
+          <div v-if="gameStore.simulating" class="next-game-loading">
+            <LoadingSpinner size="md" />
+            <span class="next-game-loading-text">Simulating...</span>
           </div>
-          <div class="next-game-buttons">
-            <button
-              class="btn-play-game"
-              :class="{ 'continue': isGameInProgress }"
-              @click="navigateToGame(nextGame.id)"
-              :disabled="gameStore.backgroundSimulating"
-            >
-              <Play class="btn-icon" :size="16" />
-              {{ isGameInProgress ? 'CONTINUE GAME' : 'PLAY GAME' }}
-            </button>
-            <button
-              v-if="!isGameInProgress"
-              class="btn-simulate-game"
-              @click="handleSimulateToNextGame"
-              :disabled="gameStore.simulating || gameStore.backgroundSimulating"
-            >
-              <FastForward v-if="!gameStore.simulating" class="btn-icon" :size="16" />
-              <span v-if="gameStore.simulating" class="btn-loading"></span>
-              {{ gameStore.simulating ? 'SIMULATING...' : 'SIMULATE' }}
-            </button>
-            <button
-              v-if="isGameInProgress"
-              class="btn-simulate-game"
-              @click="handleSimToEnd"
-              :disabled="gameStore.simulating || gameStore.backgroundSimulating"
-            >
-              <FastForward v-if="!gameStore.simulating" class="btn-icon" :size="16" />
-              <span v-if="gameStore.simulating" class="btn-loading"></span>
-              {{ gameStore.simulating ? 'SIMULATING...' : 'SIM TO END' }}
-            </button>
-          </div>
+
+          <!-- Normal content -->
+          <template v-else>
+            <div class="next-game-matchup">
+              <div class="matchup-team user-team">
+                <div
+                  class="team-badge-game"
+                  :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
+                >
+                  <span class="badge-abbr">{{ team?.abbreviation }}</span>
+                  <span v-if="isGameInProgress && inProgressScores" class="badge-score">
+                    {{ nextGameOpponent?.isHome ? inProgressScores.awayScore : inProgressScores.homeScore }}
+                  </span>
+                  <span v-else class="badge-record">{{ wins }}-{{ losses }}</span>
+                </div>
+                <div class="team-info">
+                  <span v-if="userTeamRating" class="team-rating">{{ userTeamRating }} OVR</span>
+                  <span class="team-rank">#{{ teamRank }} {{ conferenceLabel }}</span>
+                </div>
+              </div>
+              <div class="matchup-vs">
+                <span class="vs-text">{{ isGameInProgress ? '-' : 'VS' }}</span>
+              </div>
+              <div class="matchup-team opponent-team">
+                <div
+                  class="team-badge-game"
+                  :style="{ backgroundColor: nextGameOpponent?.color || '#666' }"
+                >
+                  <span class="badge-abbr">{{ nextGameOpponent?.abbreviation }}</span>
+                  <span v-if="isGameInProgress && inProgressScores" class="badge-score">
+                    {{ nextGameOpponent?.isHome ? inProgressScores.homeScore : inProgressScores.awayScore }}
+                  </span>
+                  <span v-else class="badge-record">{{ nextGameOpponent?.wins }}-{{ nextGameOpponent?.losses }}</span>
+                </div>
+                <div class="team-info">
+                  <span v-if="nextGameOpponent?.rating" class="team-rating">{{ nextGameOpponent.rating }} OVR</span>
+                  <span v-if="nextGameOpponent?.rank" class="team-rank">#{{ nextGameOpponent.rank }} {{ nextGameOpponent.conference }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="next-game-buttons">
+              <button
+                class="btn-play-game"
+                :class="{ 'continue': isGameInProgress }"
+                @click="navigateToGame(nextGame.id)"
+              >
+                <Play class="btn-icon" :size="16" />
+                {{ isGameInProgress ? 'CONTINUE GAME' : 'PLAY GAME' }}
+              </button>
+              <button
+                v-if="!isGameInProgress"
+                class="btn-simulate-game"
+                @click="handleSimulateToNextGame"
+              >
+                <FastForward class="btn-icon" :size="16" />
+                SIMULATE
+              </button>
+              <button
+                v-if="isGameInProgress"
+                class="btn-simulate-game"
+                @click="handleSimToEnd"
+              >
+                <FastForward class="btn-icon" :size="16" />
+                SIM TO END
+              </button>
+            </div>
+          </template>
         </div>
       </section>
 
@@ -977,6 +1133,31 @@ function handleCloseSimulateModal() {
       :user-team-id="team?.id"
       @close="handleCloseAllStarModal"
     />
+
+    <!-- Injury Notification Modal -->
+    <BaseModal
+      :show="showInjuryModal"
+      title="Injury Report"
+      size="sm"
+      @close="showInjuryModal = false"
+    >
+      <div class="injury-modal-content">
+        <div v-for="injury in injuredPlayers" :key="injury.player_id" class="injury-modal-item">
+          <AlertTriangle :size="18" :style="{ color: getInjurySeverityColor(injury.severity) }" />
+          <div class="injury-modal-details">
+            <span class="injury-modal-name">{{ injury.name }}</span>
+            <span class="injury-modal-type">{{ injury.injury_type }}</span>
+            <span class="injury-modal-duration">Out {{ injury.games_out }} games</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="injury-modal-actions">
+          <button class="btn-ghost" @click="showInjuryModal = false">Dismiss</button>
+          <button class="btn-primary" @click="goToLineup">Update Lineup</button>
+        </div>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -1547,6 +1728,32 @@ function handleCloseSimulateModal() {
   color: var(--color-text-primary);
 }
 
+.next-game-label-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.last-result-tag {
+  padding: 4px 14px;
+  border-radius: var(--radius-md);
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  letter-spacing: 0.025em;
+  line-height: 1;
+}
+
+.last-result-tag.win {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.last-result-tag.loss {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
 .next-game-location {
   font-size: 0.7rem;
   font-weight: 600;
@@ -1562,6 +1769,23 @@ function handleCloseSimulateModal() {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.next-game-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 0;
+}
+
+.next-game-loading-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
 }
 
 .next-game-matchup {
@@ -1746,6 +1970,36 @@ function handleCloseSimulateModal() {
   background: rgba(0, 0, 0, 0.03);
 }
 
+.btn-box-score {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  color: var(--color-text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-box-score:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--color-text-secondary);
+  transform: translateY(-1px);
+}
+
+.btn-box-score .btn-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+}
+
 /* Cosmic card styles */
 .card-cosmic {
   background: var(--gradient-cosmic);
@@ -1908,7 +2162,8 @@ function handleCloseSimulateModal() {
   }
 
   .btn-play-game,
-  .btn-simulate-game {
+  .btn-simulate-game,
+  .btn-box-score {
     flex: 1;
   }
 
@@ -1974,5 +2229,51 @@ function handleCloseSimulateModal() {
   .team-rating {
     font-size: 0.8rem;
   }
+}
+
+/* Injury Modal */
+.injury-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.injury-modal-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 0.5rem;
+  border-left: 3px solid var(--color-warning);
+}
+
+.injury-modal-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.injury-modal-name {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.injury-modal-type {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+}
+
+.injury-modal-duration {
+  font-size: 0.8rem;
+  color: var(--color-error);
+  font-weight: 500;
+}
+
+.injury-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 </style>

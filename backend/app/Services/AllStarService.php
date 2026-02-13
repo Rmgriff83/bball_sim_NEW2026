@@ -35,13 +35,13 @@ class AllStarService
             return null;
         }
 
-        // Check if current date >= Feb 12 of season+1 year
+        // Check if current date >= Jan 20 of season+1 year
         $triggerDate = Carbon::create($year + 1, self::ALL_STAR_MONTH, self::ALL_STAR_DAY);
         if ($campaign->current_date->lt($triggerDate)) {
             return null;
         }
 
-        Log::info("Processing All-Star selections for campaign {$campaign->id}, season {$year}");
+        Log::info("Processing All-Star selections for campaign {$campaign->id}, season {$year}, date {$campaign->current_date->format('Y-m-d')}, trigger {$triggerDate->format('Y-m-d')}");
 
         // Gather data
         $allStats = $this->seasonService->getAllPlayerStats($campaign->id, $year);

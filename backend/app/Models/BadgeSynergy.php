@@ -35,33 +35,12 @@ class BadgeSynergy extends Model
 
     /**
      * Check if two players can trigger this synergy.
+     * Synergies activate at ANY badge level — boost magnitude scales with level elsewhere.
      */
     public function canTrigger(array $player1Badges, array $player2Badges): bool
     {
-        $levelOrder = ['bronze' => 1, 'silver' => 2, 'gold' => 3, 'hof' => 4];
-        $minLevel1 = $levelOrder[$this->min_level1] ?? 1;
-        $minLevel2 = $levelOrder[$this->min_level2] ?? 1;
-
-        $hasBadge1 = false;
-        $hasBadge2 = false;
-
-        foreach ($player1Badges as $badge) {
-            if ($badge['id'] === $this->badge1_id) {
-                $badgeLevel = $levelOrder[$badge['level']] ?? 0;
-                if ($badgeLevel >= $minLevel1) {
-                    $hasBadge1 = true;
-                }
-            }
-        }
-
-        foreach ($player2Badges as $badge) {
-            if ($badge['id'] === $this->badge2_id) {
-                $badgeLevel = $levelOrder[$badge['level']] ?? 0;
-                if ($badgeLevel >= $minLevel2) {
-                    $hasBadge2 = true;
-                }
-            }
-        }
+        $hasBadge1 = collect($player1Badges)->contains('id', $this->badge1_id);
+        $hasBadge2 = collect($player2Badges)->contains('id', $this->badge2_id);
 
         return $hasBadge1 && $hasBadge2;
     }

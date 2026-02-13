@@ -115,6 +115,7 @@ export const useGameStore = defineStore('game', () => {
         animation_data: response.data.result.animation_data,
         evolution: response.data.result.evolution,
         rewards: response.data.result.rewards,
+        upgrade_points_awarded: response.data.upgrade_points_awarded || null,
       }
 
       // Update cache with game result
@@ -282,6 +283,7 @@ export const useGameStore = defineStore('game', () => {
           quarter_scores: response.data.result.quarter_scores,
           evolution: response.data.result.evolution,
           rewards: response.data.result.rewards,
+          upgrade_points_awarded: response.data.upgrade_points_awarded || null,
           animation_data: {
             possessions: allPossessions,
             quarter_end_indices: quarterEndIndices,
@@ -376,6 +378,7 @@ export const useGameStore = defineStore('game', () => {
         quarter_scores: response.data.result.quarter_scores,
         evolution: response.data.result.evolution,
         rewards: response.data.rewards,
+        upgrade_points_awarded: response.data.upgrade_points_awarded || null,
       }
 
       // Update game in list

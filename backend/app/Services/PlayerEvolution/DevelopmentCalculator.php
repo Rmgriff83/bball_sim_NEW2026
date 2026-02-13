@@ -166,11 +166,14 @@ class DevelopmentCalculator
         // Badge synergy bonus
         $synergyBonus = ($context['badgeSynergyBoost'] ?? 0) * $base;
 
+        // Dynamic Duo bonus
+        $duoBonus = ($context['dynamicDuoBoost'] ?? 0) * $base;
+
         // Morale modifier
         $morale = $player['personality']['morale'] ?? 80;
         $moraleModifier = $this->getMoraleModifier($morale);
 
-        $total = ($base + $workEthicBonus + $playingTimeBonus + $mentorBonus + $synergyBonus);
+        $total = ($base + $workEthicBonus + $playingTimeBonus + $mentorBonus + $synergyBonus + $duoBonus);
         $total *= (1 + $moraleModifier);
 
         return max(0, $total);

@@ -123,7 +123,7 @@ class TeamController extends Controller
                 'total_payroll' => $team->total_payroll,
                 'cap_space' => $team->cap_space,
                 'facilities' => $team->facilities,
-                'coaching_scheme' => $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'],
+                'coaching_scheme' => $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man', 'substitution' => 'staggered'],
             ],
             'roster' => $orderedRoster,
             // Include lineup settings for frontend to track starters explicitly
@@ -468,7 +468,7 @@ class TeamController extends Controller
     {
         $savedMinutes = $campaign->settings['lineup']['target_minutes'] ?? [];
 
-        if (!empty($savedMinutes) && array_sum($savedMinutes) >= 190) {
+        if (!empty($savedMinutes)) {
             return $savedMinutes;
         }
 
@@ -755,7 +755,7 @@ class TeamController extends Controller
         // Get recommended scheme
         $recommended = $this->coachingService->recommendScheme($roster);
 
-        $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'];
+        $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man', 'substitution' => 'staggered'];
 
         // Get substitution strategies
         $substitutionStrategies = $this->coachingService->getSubstitutionStrategies();
@@ -890,7 +890,7 @@ class TeamController extends Controller
         ]);
 
         $team = $campaign->team;
-        $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man'];
+        $currentScheme = $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man', 'substitution' => 'staggered'];
 
         // Handle legacy format (just 'scheme' for offensive)
         if (isset($validated['scheme']) && !isset($validated['offensive'])) {

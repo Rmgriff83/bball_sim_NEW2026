@@ -8,7 +8,7 @@ import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
-import { User, ArrowUpDown, AlertTriangle, Calendar } from 'lucide-vue-next'
+import { User, Users, ArrowUpDown, AlertTriangle, Calendar } from 'lucide-vue-next'
 import TradeCenter from '@/components/trade/TradeCenter.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
 import ScheduleTab from '@/components/team/ScheduleTab.vue'
@@ -19,7 +19,7 @@ const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
 const tradeStore = useTradeStore()
 const toastStore = useToastStore()
-const { loadSynergies, getActivatedBadges } = useBadgeSynergies()
+const { loadSynergies, getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
 
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
@@ -44,6 +44,7 @@ const swappingLineup = ref(false)
 const animatingPlayers = ref({}) // { [playerId]: 'up' | 'down' }
 
 // Coach settings state
+const activeCoachTab = ref('offensive')
 const schemesFetched = ref(false)
 const updatingScheme = ref(false)
 const selectedScheme = ref(null)
@@ -205,32 +206,32 @@ onMounted(async () => {
 
 // Initialize player minutes — defaults sum to exactly 200
 function initPlayerMinutes() {
+  // Don't run if roster hasn't loaded yet
+  if (!roster.value || roster.value.length === 0) return
+
   const stored = teamStore.targetMinutes || {}
   const lineupIds = new Set(teamStore.lineup?.filter(id => id !== null) || [])
   const hasStored = Object.keys(stored).length > 0
 
-  // If we have stored values and they're reasonable (within 190-210), use them
+  // If we have stored values, use them (preserve user customizations)
   if (hasStored) {
-    const storedTotal = Object.values(stored).reduce((s, m) => s + (m || 0), 0)
-    if (storedTotal >= 190 && storedTotal <= 210) {
-      const newMinutes = {}
-      for (const player of roster.value) {
-        if (!player) continue
-        const isInjured = player.is_injured || player.isInjured
-        newMinutes[player.id] = isInjured ? 0 : (stored[player.id] ?? 0)
-      }
-      playerMinutes.value = newMinutes
-      return
+    const newMinutes = {}
+    for (const player of roster.value) {
+      if (!player) continue
+      const isInjured = player.is_injured || player.isInjured
+      newMinutes[player.id] = isInjured ? 0 : (stored[player.id] ?? 0)
     }
+    playerMinutes.value = newMinutes
+    return
   }
 
   // Build fresh defaults that sum to 200
-  const starters = []
+  const startersList = []
   const bench = []
   for (const player of roster.value) {
     if (!player) continue
     if (lineupIds.has(player.id)) {
-      starters.push(player)
+      startersList.push(player)
     } else {
       bench.push(player)
     }
@@ -243,7 +244,7 @@ function initPlayerMinutes() {
 
   // Injured starters get 0
   let healthyStarterCount = 0
-  for (const p of starters) {
+  for (const p of startersList) {
     const isInjured = p.is_injured || p.isInjured
     if (isInjured) {
       newMinutes[p.id] = 0
@@ -255,13 +256,13 @@ function initPlayerMinutes() {
   // Distribute 200 mins: healthy starters get equal share of 160, bench gets rest
   const starterMins = healthyStarterCount > 0 ? Math.floor(160 / healthyStarterCount) : 0
   let starterTotal = 0
-  for (const p of starters) {
+  for (const p of startersList) {
     if (newMinutes[p.id] === 0) continue // already set injured to 0
     newMinutes[p.id] = Math.min(starterMins, 40)
     starterTotal += newMinutes[p.id]
   }
 
-  // Bench: top 3 healthy bench players split remaining minutes
+  // Bench: top 4 healthy bench players split remaining minutes
   let benchBudget = 200 - starterTotal
   const benchSlots = [16, 12, 8, 4]
   for (let i = 0; i < bench.length; i++) {
@@ -367,6 +368,8 @@ function startMinutesDrag(e, playerId, minFloor) {
 function debouncedSaveMinutes() {
   if (minutesSaveTimeout) clearTimeout(minutesSaveTimeout)
   minutesSaveTimeout = setTimeout(async () => {
+    // Don't save if minutes data is empty
+    if (!playerMinutes.value || Object.keys(playerMinutes.value).length === 0) return
     try {
       await teamStore.updateTargetMinutes(campaignId.value, playerMinutes.value)
     } catch (err) {
@@ -502,6 +505,7 @@ function getEmptySlotCandidates(benchPlayer) {
 async function swapPlayers(starterIndex, benchPlayerId) {
   if (swappingLineup.value) return
   swappingLineup.value = true
+  if (minutesSaveTimeout) { clearTimeout(minutesSaveTimeout); minutesSaveTimeout = null }
 
   // Get the starter being replaced (will move down)
   const starterBeingReplaced = starters.value[starterIndex]
@@ -518,13 +522,11 @@ async function swapPlayers(starterIndex, benchPlayerId) {
 
     toastStore.showSuccess('Lineup updated')
 
-    // Trigger animations for both players
     animatingPlayers.value = {
       [benchPlayerId]: 'up',
       ...(starterBeingReplaced ? { [starterBeingReplaced.id]: 'down' } : {})
     }
 
-    // Clear animations after they complete
     setTimeout(() => {
       animatingPlayers.value = {}
     }, 400)
@@ -541,6 +543,7 @@ async function swapPlayers(starterIndex, benchPlayerId) {
 async function moveToBench(starterIndex) {
   if (swappingLineup.value) return
   swappingLineup.value = true
+  if (minutesSaveTimeout) { clearTimeout(minutesSaveTimeout); minutesSaveTimeout = null }
 
   const playerToMove = starters.value[starterIndex]
 
@@ -555,10 +558,8 @@ async function moveToBench(starterIndex) {
 
     toastStore.showSuccess('Lineup updated')
 
-    // Trigger slide down animation
     animatingPlayers.value = { [playerToMove.id]: 'down' }
 
-    // Clear animation after it completes
     setTimeout(() => {
       animatingPlayers.value = {}
     }, 400)
@@ -575,6 +576,7 @@ async function moveToBench(starterIndex) {
 async function promoteToStarter(benchPlayer, targetPosition) {
   if (swappingLineup.value) return
   swappingLineup.value = true
+  if (minutesSaveTimeout) { clearTimeout(minutesSaveTimeout); minutesSaveTimeout = null }
 
   // Get the starter being replaced (if any)
   const posIndex = POSITIONS.indexOf(targetPosition)
@@ -592,13 +594,11 @@ async function promoteToStarter(benchPlayer, targetPosition) {
 
     toastStore.showSuccess('Lineup updated')
 
-    // Trigger animations for both players
     animatingPlayers.value = {
       [benchPlayer.id]: 'up',
       ...(starterBeingReplaced ? { [starterBeingReplaced.id]: 'down' } : {})
     }
 
-    // Clear animations after they complete
     setTimeout(() => {
       animatingPlayers.value = {}
     }, 400)
@@ -706,12 +706,21 @@ function getRatingClass(rating) {
   return 'bench'
 }
 
-// Get top 3 badges sorted by level
-function getTopBadges(badges) {
+// Get top 3 badges sorted by synergy activation then level
+function getTopBadges(badges, player) {
   if (!badges) return []
+  const starters = teamStore.starterPlayers?.filter(p => p != null) || []
+  const { activatedIds } = getActivatedBadges(player, starters)
   const levelOrder = { hof: 0, gold: 1, silver: 2, bronze: 3 }
   return [...badges]
-    .sort((a, b) => (levelOrder[a.level] || 4) - (levelOrder[b.level] || 4))
+    .sort((a, b) => {
+      // Synergy-active badges first
+      const aActive = activatedIds.has(a.id) ? 0 : 1
+      const bActive = activatedIds.has(b.id) ? 0 : 1
+      if (aActive !== bActive) return aActive - bActive
+      // Then by level
+      return (levelOrder[a.level] || 4) - (levelOrder[b.level] || 4)
+    })
     .slice(0, 3)
 }
 
@@ -724,6 +733,11 @@ function getStarterActivatedData(player) {
 function isStarterBadgeActivated(player, badgeId) {
   const { activatedIds } = getStarterActivatedData(player)
   return activatedIds.has(badgeId)
+}
+
+function getPlayerDuoPartner(player) {
+  const starters = teamStore.starterPlayers?.filter(p => p != null) || []
+  return isPlayerInDynamicDuo(player, starters)
 }
 
 function getStarterBadgeSynergyTooltip(player, badge) {
@@ -1094,7 +1108,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                 <!-- Badges -->
                 <div v-if="slot.player.badges?.length > 0" class="badges-row">
                   <div
-                    v-for="badge in getTopBadges(slot.player.badges)"
+                    v-for="badge in getTopBadges(slot.player.badges, slot.player)"
                     :key="badge.id"
                     class="badge-item"
                     :title="getStarterBadgeSynergyTooltip(slot.player, badge)"
@@ -1106,6 +1120,10 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                     />
                     <span class="badge-name" :class="{ 'synergy-active-text': isStarterBadgeActivated(slot.player, badge.id) }">{{ formatBadgeName(badge) }}</span>
                   </div>
+                </div>
+                <div v-if="getPlayerDuoPartner(slot.player)" class="dynamic-duo-badge">
+                  <Users :size="12" />
+                  <span>Dynamic Duo w/ {{ getPlayerDuoPartner(slot.player) }}</span>
                 </div>
               </div>
             </div>
@@ -1366,193 +1384,205 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
           </div>
         </GlassCard>
 
-        <!-- Offensive Scheme Selection -->
+        <!-- Strategy Settings (Tabbed) -->
         <GlassCard padding="lg" :hoverable="false" class="mt-6">
-          <div class="scheme-section-header">
-            <div class="section-label">OFFENSE</div>
+          <div class="coach-tabs">
+            <button
+              class="coach-tab-btn"
+              :class="{ active: activeCoachTab === 'offensive' }"
+              @click="activeCoachTab = 'offensive'"
+            >Offensive</button>
+            <button
+              class="coach-tab-btn"
+              :class="{ active: activeCoachTab === 'defensive' }"
+              @click="activeCoachTab = 'defensive'"
+            >Defensive</button>
+            <button
+              class="coach-tab-btn"
+              :class="{ active: activeCoachTab === 'substitution' }"
+              @click="activeCoachTab = 'substitution'"
+            >Substitution</button>
           </div>
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="h4">Offensive Scheme</h3>
-            <div v-if="teamStore.recommendedScheme" class="recommended-badge">
-              Recommended: {{ teamStore.coachingSchemes[teamStore.recommendedScheme]?.name }}
+
+          <!-- Offensive Scheme Tab -->
+          <div v-if="activeCoachTab === 'offensive'">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="h4">Offensive Scheme</h3>
+              <div v-if="teamStore.recommendedScheme" class="recommended-badge">
+                Recommended: {{ teamStore.coachingSchemes[teamStore.recommendedScheme]?.name }}
+              </div>
+            </div>
+
+            <p class="text-secondary text-sm mb-6">
+              Choose an offensive scheme that fits your roster's strengths. This affects play selection and tempo during games.
+            </p>
+
+            <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
+              <LoadingSpinner size="md" />
+            </div>
+
+            <div v-else class="schemes-grid">
+              <div
+                v-for="(scheme, schemeId) in teamStore.coachingSchemes"
+                :key="schemeId"
+                class="scheme-card"
+                :class="{
+                  active: (selectedScheme || team?.coaching_scheme?.offensive || team?.coaching_scheme) === schemeId,
+                  recommended: teamStore.recommendedScheme === schemeId
+                }"
+                @click="updateOffensiveScheme(schemeId)"
+              >
+                <div class="scheme-header">
+                  <span class="scheme-name">{{ scheme.name }}</span>
+                  <span v-if="teamStore.recommendedScheme === schemeId" class="rec-tag">Best Fit</span>
+                </div>
+
+                <p class="scheme-desc">{{ scheme.description }}</p>
+
+                <div class="scheme-details">
+                  <div class="scheme-pace">
+                    <span class="detail-label">Pace</span>
+                    <span class="detail-value" :class="scheme.pace">{{ scheme.pace?.replace('_', ' ') }}</span>
+                  </div>
+                  <div class="scheme-effectiveness">
+                    <span class="detail-label">Fit</span>
+                    <span class="detail-value" :class="getEffectivenessClass(scheme.effectiveness)">
+                      {{ scheme.effectiveness }}%
+                    </span>
+                  </div>
+                </div>
+
+                <div class="scheme-traits">
+                  <div class="trait-section">
+                    <span class="trait-label">Strengths</span>
+                    <div class="trait-tags">
+                      <span v-for="str in scheme.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                    </div>
+                  </div>
+                  <div class="trait-section">
+                    <span class="trait-label">Weaknesses</span>
+                    <div class="trait-tags">
+                      <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="updatingScheme && (selectedScheme || team?.coaching_scheme?.offensive || team?.coaching_scheme) === schemeId" class="scheme-loading">
+                  <LoadingSpinner size="sm" />
+                </div>
+              </div>
             </div>
           </div>
 
-          <p class="text-secondary text-sm mb-6">
-            Choose an offensive scheme that fits your roster's strengths. This affects play selection and tempo during games.
-          </p>
+          <!-- Defensive Scheme Tab -->
+          <div v-else-if="activeCoachTab === 'defensive'">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="h4">Defensive Scheme</h3>
+            </div>
 
-          <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
-            <LoadingSpinner size="md" />
-          </div>
+            <p class="text-secondary text-sm mb-6">
+              Select your team's defensive strategy. This determines how your players guard opponents and react to plays.
+            </p>
 
-          <div v-else class="schemes-grid">
-            <div
-              v-for="(scheme, schemeId) in teamStore.coachingSchemes"
-              :key="schemeId"
-              class="scheme-card"
-              :class="{
-                active: (selectedScheme || team?.coaching_scheme?.offensive || team?.coaching_scheme) === schemeId,
-                recommended: teamStore.recommendedScheme === schemeId
-              }"
-              @click="updateOffensiveScheme(schemeId)"
-            >
-              <div class="scheme-header">
-                <span class="scheme-name">{{ scheme.name }}</span>
-                <span v-if="teamStore.recommendedScheme === schemeId" class="rec-tag">Best Fit</span>
-              </div>
+            <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
+              <LoadingSpinner size="md" />
+            </div>
 
-              <p class="scheme-desc">{{ scheme.description }}</p>
-
-              <div class="scheme-details">
-                <div class="scheme-pace">
-                  <span class="detail-label">Pace</span>
-                  <span class="detail-value" :class="scheme.pace">{{ scheme.pace?.replace('_', ' ') }}</span>
+            <div v-else class="schemes-grid">
+              <div
+                v-for="(scheme, schemeId) in defensiveSchemes"
+                :key="schemeId"
+                class="scheme-card defensive"
+                :class="{
+                  active: (selectedDefensiveScheme || team?.coaching_scheme?.defensive || 'man') === schemeId
+                }"
+                @click="updateDefensiveScheme(schemeId)"
+              >
+                <div class="scheme-header">
+                  <span class="scheme-name">{{ scheme.name }}</span>
+                  <span class="scheme-type-tag" :class="scheme.type">{{ scheme.type }}</span>
                 </div>
-                <div class="scheme-effectiveness">
-                  <span class="detail-label">Fit</span>
-                  <span class="detail-value" :class="getEffectivenessClass(scheme.effectiveness)">
-                    {{ scheme.effectiveness }}%
-                  </span>
-                </div>
-              </div>
 
-              <div class="scheme-traits">
-                <div class="trait-section">
-                  <span class="trait-label">Strengths</span>
-                  <div class="trait-tags">
-                    <span v-for="str in scheme.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                <p class="scheme-desc">{{ scheme.description }}</p>
+
+                <div class="scheme-traits">
+                  <div class="trait-section">
+                    <span class="trait-label">Strengths</span>
+                    <div class="trait-tags">
+                      <span v-for="str in scheme.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                    </div>
+                  </div>
+                  <div class="trait-section">
+                    <span class="trait-label">Weaknesses</span>
+                    <div class="trait-tags">
+                      <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
+                    </div>
                   </div>
                 </div>
-                <div class="trait-section">
-                  <span class="trait-label">Weaknesses</span>
-                  <div class="trait-tags">
-                    <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
-                  </div>
-                </div>
-              </div>
 
-              <div v-if="updatingScheme && (selectedScheme || team?.coaching_scheme?.offensive || team?.coaching_scheme) === schemeId" class="scheme-loading">
-                <LoadingSpinner size="sm" />
+                <div v-if="updatingScheme && (selectedDefensiveScheme || team?.coaching_scheme?.defensive || 'man') === schemeId" class="scheme-loading">
+                  <LoadingSpinner size="sm" />
+                </div>
               </div>
             </div>
           </div>
-        </GlassCard>
 
-        <!-- Defensive Scheme Selection -->
-        <GlassCard padding="lg" :hoverable="false" class="mt-6">
-          <div class="scheme-section-header">
-            <div class="section-label defense">DEFENSE</div>
-          </div>
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="h4">Defensive Scheme</h3>
-          </div>
-
-          <p class="text-secondary text-sm mb-6">
-            Select your team's defensive strategy. This determines how your players guard opponents and react to plays.
-          </p>
-
-          <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
-            <LoadingSpinner size="md" />
-          </div>
-
-          <div v-else class="schemes-grid">
-            <div
-              v-for="(scheme, schemeId) in defensiveSchemes"
-              :key="schemeId"
-              class="scheme-card defensive"
-              :class="{
-                active: (selectedDefensiveScheme || team?.coaching_scheme?.defensive || 'man') === schemeId
-              }"
-              @click="updateDefensiveScheme(schemeId)"
-            >
-              <div class="scheme-header">
-                <span class="scheme-name">{{ scheme.name }}</span>
-                <span class="scheme-type-tag" :class="scheme.type">{{ scheme.type }}</span>
-              </div>
-
-              <p class="scheme-desc">{{ scheme.description }}</p>
-
-              <div class="scheme-traits">
-                <div class="trait-section">
-                  <span class="trait-label">Strengths</span>
-                  <div class="trait-tags">
-                    <span v-for="str in scheme.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
-                  </div>
-                </div>
-                <div class="trait-section">
-                  <span class="trait-label">Weaknesses</span>
-                  <div class="trait-tags">
-                    <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div v-if="updatingScheme && (selectedDefensiveScheme || team?.coaching_scheme?.defensive || 'man') === schemeId" class="scheme-loading">
-                <LoadingSpinner size="sm" />
-              </div>
+          <!-- Substitution Strategy Tab -->
+          <div v-else-if="activeCoachTab === 'substitution'">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="h4">Substitution Strategy</h3>
             </div>
-          </div>
-        </GlassCard>
 
-        <!-- Substitution Strategy Selection -->
-        <GlassCard padding="lg" :hoverable="false" class="mt-6">
-          <div class="scheme-section-header">
-            <div class="section-label substitution">ROTATION</div>
-          </div>
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="h4">Substitution Strategy</h3>
-          </div>
+            <p class="text-secondary text-sm mb-6">
+              Control how your team rotates players during simulated games. This affects how minutes are distributed and when substitutions happen.
+            </p>
 
-          <p class="text-secondary text-sm mb-6">
-            Control how your team rotates players during simulated games. This affects how minutes are distributed and when substitutions happen.
-          </p>
+            <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
+              <LoadingSpinner size="md" />
+            </div>
 
-          <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
-            <LoadingSpinner size="md" />
-          </div>
-
-          <div v-else class="schemes-grid">
-            <div
-              v-for="(strategy, strategyId) in teamStore.substitutionStrategies"
-              :key="strategyId"
-              class="scheme-card substitution"
-              :class="{
-                active: selectedSubStrategy === strategyId
-              }"
-              @click="updateSubstitutionStrategy(strategyId)"
-            >
-              <div class="scheme-header">
-                <span class="scheme-name">{{ strategy.name }}</span>
-                <span class="scheme-type-tag" :class="strategy.type">{{ strategy.type }}</span>
-              </div>
-
-              <p class="scheme-desc">{{ strategy.description }}</p>
-
-              <div class="scheme-details">
-                <div class="scheme-pace">
-                  <span class="detail-label">Depth</span>
-                  <span class="detail-value">{{ strategy.rotation_depth }}</span>
+            <div v-else class="schemes-grid">
+              <div
+                v-for="(strategy, strategyId) in teamStore.substitutionStrategies"
+                :key="strategyId"
+                class="scheme-card substitution"
+                :class="{
+                  active: selectedSubStrategy === strategyId
+                }"
+                @click="updateSubstitutionStrategy(strategyId)"
+              >
+                <div class="scheme-header">
+                  <span class="scheme-name">{{ strategy.name }}</span>
+                  <span class="scheme-type-tag" :class="strategy.type">{{ strategy.type }}</span>
                 </div>
-              </div>
 
-              <div class="scheme-traits">
-                <div class="trait-section">
-                  <span class="trait-label">Strengths</span>
-                  <div class="trait-tags">
-                    <span v-for="str in strategy.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                <p class="scheme-desc">{{ strategy.description }}</p>
+
+                <div class="scheme-details">
+                  <div class="scheme-pace">
+                    <span class="detail-label">Depth</span>
+                    <span class="detail-value">{{ strategy.rotation_depth }}</span>
                   </div>
                 </div>
-                <div class="trait-section">
-                  <span class="trait-label">Weaknesses</span>
-                  <div class="trait-tags">
-                    <span v-for="weak in strategy.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
+
+                <div class="scheme-traits">
+                  <div class="trait-section">
+                    <span class="trait-label">Strengths</span>
+                    <div class="trait-tags">
+                      <span v-for="str in strategy.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                    </div>
+                  </div>
+                  <div class="trait-section">
+                    <span class="trait-label">Weaknesses</span>
+                    <div class="trait-tags">
+                      <span v-for="weak in strategy.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div v-if="updatingScheme && selectedSubStrategy === strategyId" class="scheme-loading">
-                <LoadingSpinner size="sm" />
+                <div v-if="updatingScheme && selectedSubStrategy === strategyId" class="scheme-loading">
+                  <LoadingSpinner size="sm" />
+                </div>
               </div>
             </div>
           </div>
@@ -2469,6 +2499,20 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   50% { box-shadow: 0 0 8px 3px rgba(0, 229, 255, 0.3); }
 }
 
+.dynamic-duo-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.15), rgba(255, 140, 0, 0.15));
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  border-radius: 0.35rem;
+  font-size: 0.7rem;
+  color: #FFD700;
+  font-weight: 600;
+  margin-top: 0.25rem;
+}
+
 /* Injury styles */
 .injury-tag {
   padding: 2px 6px;
@@ -2491,6 +2535,38 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.coach-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--glass-border);
+  padding-bottom: 0;
+}
+
+.coach-tab-btn {
+  padding: 10px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.coach-tab-btn:hover {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.coach-tab-btn.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
 }
 
 .coach-header {
@@ -2821,27 +2897,6 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   border-radius: 12px;
 }
 
-.scheme-section-header {
-  margin-bottom: 12px;
-}
-
-.section-label {
-  display: inline-block;
-  padding: 4px 12px;
-  background: rgba(232, 90, 79, 0.15);
-  border: 1px solid rgba(232, 90, 79, 0.3);
-  border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--color-primary);
-}
-
-.section-label.defense {
-  background: rgba(59, 130, 246, 0.15);
-  border-color: rgba(59, 130, 246, 0.3);
-  color: #3B82F6;
-}
 
 .scheme-card.defensive.active {
   background: rgba(59, 130, 246, 0.1);
@@ -3765,13 +3820,4 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(139, 92, 246, 0.05));
 }
 
-.section-label.substitution {
-  background: linear-gradient(135deg, #8B5CF6, #7C3AED);
-  color: white;
-  padding: 4px 12px;
-  border-radius: var(--radius-md);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
 </style>
