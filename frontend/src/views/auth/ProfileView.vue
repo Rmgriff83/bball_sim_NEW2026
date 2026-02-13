@@ -6,13 +6,18 @@ import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { GlassCard, BaseButton, FormInput, Badge, BaseModal } from '@/components/ui'
-import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, Trash2, AlertTriangle } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, Trash2, AlertTriangle, Zap } from 'lucide-vue-next'
 import { useLocalCache } from '@/composables/useLocalCache'
+import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const syncStore = useSyncStore()
 const localCache = useLocalCache()
+const { synergies, loadSynergies } = useBadgeSynergies()
+
+// Tab navigation
+const activeTab = ref('settings')
 
 // Clear cache modal
 const showClearCacheModal = ref(false)
@@ -31,7 +36,88 @@ function toggleTheme() {
 // Fetch fresh user data on mount to get latest rewards
 onMounted(async () => {
   await authStore.fetchUser()
+  loadSynergies()
 })
+
+// Badge synergy database helpers
+const SYNERGY_CATEGORIES = {
+  pick_and_roll: 'Pick & Roll',
+  shooting: 'Shooting',
+  defense: 'Defense',
+  rebounding: 'Rebounding',
+  playmaking: 'Playmaking',
+  finishing: 'Finishing',
+  leadership: 'Leadership',
+  screen: 'Screen',
+}
+
+const BADGE_CATEGORIES = {
+  pick_and_roll_maestro: 'pick_and_roll', brick_wall: 'screen',
+  lob_city_finisher: 'finishing', lob_city_passer: 'playmaking',
+  dimer: 'shooting', catch_and_shoot: 'shooting',
+  floor_general: 'leadership', corner_specialist: 'shooting',
+  defensive_leader: 'defense', rim_protector: 'defense',
+  clamps: 'defense', interceptor: 'defense', break_starter: 'defense',
+  rebound_chaser: 'rebounding', box: 'rebounding',
+  putback_boss: 'rebounding', worm: 'rebounding',
+  ankle_breaker: 'playmaking', space_creator: 'playmaking',
+  needle_threader: 'playmaking', slithery_finisher: 'finishing',
+  contact_finisher: 'finishing', posterizer: 'finishing',
+  giant_slayer: 'finishing', floater_specialist: 'finishing',
+  pick_dodger: 'screen',
+}
+
+function getSynergyCategory(syn) {
+  // Try to derive from badge IDs
+  const cat1 = BADGE_CATEGORIES[syn.badge1_id]
+  const cat2 = BADGE_CATEGORIES[syn.badge2_id]
+  // Prefer synergy-specific mapping based on name patterns
+  const name = (syn.synergy_name || '').toLowerCase()
+  if (name.includes('pick') && name.includes('roll')) return 'pick_and_roll'
+  if (name.includes('alley') || name.includes('lob')) return 'pick_and_roll'
+  if (name.includes('screen')) return 'screen'
+  if (name.includes('leader')) return 'leadership'
+  return cat1 || cat2 || 'shooting'
+}
+
+const groupedSynergies = computed(() => {
+  const groups = {}
+  for (const syn of synergies.value) {
+    const cat = getSynergyCategory(syn)
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(syn)
+  }
+  // Return as sorted array of { category, label, synergies }
+  return Object.entries(SYNERGY_CATEGORIES)
+    .filter(([key]) => groups[key]?.length > 0)
+    .map(([key, label]) => ({ category: key, label, synergies: groups[key] }))
+})
+
+function formatBadgeName(badgeId) {
+  if (!badgeId) return ''
+  return badgeId.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+function getLevelColor(level) {
+  const colors = { bronze: '#CD7F32', silver: '#C0C0C0', gold: '#FFD700', hof: '#9B59B6' }
+  return colors[level] || '#888'
+}
+
+function formatLevelLabel(level) {
+  if (level === 'hof') return 'HOF'
+  return level ? level.charAt(0).toUpperCase() + level.slice(1) : ''
+}
+
+function formatEffectBoosts(effect) {
+  if (!effect?.boost) return []
+  return Object.entries(effect.boost).map(([key, value]) => {
+    const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())
+    const formatted = typeof value === 'number' && value < 1
+      ? `+${Math.round(value * 100)}%`
+      : `+${value}`
+    return `${formatted} ${label}`
+  })
+}
 const user = computed(() => authStore.user)
 const profile = computed(() => authStore.profile)
 
@@ -122,8 +208,21 @@ async function clearLocalCache() {
           <ArrowLeft :size="18" />
           <span>Back to Dashboard</span>
         </router-link>
-        <h1 class="profile-title">Profile Settings</h1>
+        <h1 class="profile-title">Profile</h1>
       </div>
+
+      <!-- Tab Navigation -->
+      <div class="tab-nav">
+        <button class="tab-btn" :class="{ active: activeTab === 'settings' }" @click="activeTab = 'settings'">
+          Settings
+        </button>
+        <button class="tab-btn" :class="{ active: activeTab === 'database' }" @click="activeTab = 'database'">
+          Database
+        </button>
+      </div>
+
+      <!-- Settings Tab -->
+      <div v-show="activeTab === 'settings'">
 
       <!-- User Info Card -->
       <div class="profile-section">
@@ -278,6 +377,50 @@ async function clearLocalCache() {
         <h3 class="section-title">Session</h3>
         <BaseButton variant="danger" @click="handleLogout">Sign Out</BaseButton>
       </div>
+
+      </div><!-- end Settings Tab -->
+
+      <!-- Database Tab -->
+      <div v-show="activeTab === 'database'">
+        <div class="profile-section">
+          <h3 class="section-title">Badge Synergies</h3>
+          <p class="db-description">When two players in your lineup each have the right badges at the required level, a synergy activates and provides bonus effects during games.</p>
+        </div>
+
+        <div v-for="group in groupedSynergies" :key="group.category" class="synergy-category-section">
+          <h4 class="synergy-category-title">{{ group.label }}</h4>
+          <div class="synergy-database-grid">
+            <div v-for="syn in group.synergies" :key="syn.id" class="synergy-card">
+              <div class="synergy-card-header">
+                <Zap :size="16" class="synergy-zap-icon" />
+                <span class="synergy-card-name">{{ syn.synergy_name }}</span>
+              </div>
+              <p class="synergy-card-desc">{{ syn.description }}</p>
+              <div class="synergy-badges-row">
+                <div class="synergy-badge-req">
+                  <span class="synergy-badge-name">{{ formatBadgeName(syn.badge1_id) }}</span>
+                  <span class="synergy-badge-level" :style="{ color: getLevelColor(syn.min_level1) }">
+                    {{ formatLevelLabel(syn.min_level1) }}+
+                  </span>
+                </div>
+                <span class="synergy-plus">+</span>
+                <div class="synergy-badge-req">
+                  <span class="synergy-badge-name">{{ formatBadgeName(syn.badge2_id) }}</span>
+                  <span class="synergy-badge-level" :style="{ color: getLevelColor(syn.min_level2) }">
+                    {{ formatLevelLabel(syn.min_level2) }}+
+                  </span>
+                </div>
+              </div>
+              <div class="synergy-effects">
+                <span v-for="(boost, idx) in formatEffectBoosts(syn.effect)" :key="idx" class="synergy-effect-tag">
+                  {{ boost }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- end Database Tab -->
+
     </div>
   </div>
 </template>
@@ -620,10 +763,164 @@ async function clearLocalCache() {
   color: #EF4444;
 }
 
+/* Tab Navigation */
+.tab-nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--glass-border);
+  padding-bottom: 0;
+}
+
+.tab-btn {
+  padding: 0.625rem 1.25rem;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s ease, border-color 0.2s ease;
+  margin-bottom: -1px;
+}
+
+.tab-btn:hover {
+  color: var(--color-text-primary);
+}
+
+.tab-btn.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+/* Database Tab */
+.db-description {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.synergy-category-section {
+  margin-bottom: 1.5rem;
+}
+
+.synergy-category-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  margin-bottom: 0.75rem;
+  padding-left: 0.25rem;
+}
+
+.synergy-database-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.synergy-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+}
+
+.synergy-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.synergy-zap-icon {
+  color: #00E5FF;
+  flex-shrink: 0;
+}
+
+.synergy-card-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.synergy-card-desc {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.75rem;
+  line-height: 1.4;
+}
+
+.synergy-badges-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.synergy-badge-req {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+[data-theme="light"] .synergy-badge-req {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.synergy-badge-name {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.synergy-badge-level {
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.synergy-plus {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+}
+
+.synergy-effects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.synergy-effect-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  background: rgba(0, 229, 255, 0.1);
+  color: #00E5FF;
+  border-radius: 4px;
+}
+
 /* Responsive */
 @media (max-width: 480px) {
   .rewards-grid {
     grid-template-columns: 1fr;
+  }
+
+  .synergy-badges-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .synergy-plus {
+    align-self: center;
   }
 }
 </style>

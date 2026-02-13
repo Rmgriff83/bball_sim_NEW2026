@@ -250,16 +250,17 @@ class GameController extends Controller
         $gameDate = Carbon::parse($game['gameDate']);
         $currentDate = $campaign->current_date->copy();
         $preGameJobs = [];
-        $allTeamsWithGames = [$game['homeTeamId'], $game['awayTeamId']];
+        $teamsPerDay = [];
 
         while ($currentDate->lt($gameDate)) {
             $dateStr = $currentDate->format('Y-m-d');
             $dayGames = $this->seasonService->getGamesByDate($campaign->id, $year, $dateStr);
             $dayGames = array_filter($dayGames, fn($g) => !$g['isComplete']);
 
+            $dayTeamIds = [];
             foreach ($dayGames as $dayGame) {
-                $allTeamsWithGames[] = $dayGame['homeTeamId'];
-                $allTeamsWithGames[] = $dayGame['awayTeamId'];
+                $dayTeamIds[] = $dayGame['homeTeamId'];
+                $dayTeamIds[] = $dayGame['awayTeamId'];
                 $preGameJobs[] = new SimulateGameJob(
                     $campaign->id,
                     $year,
@@ -272,24 +273,28 @@ class GameController extends Controller
                 );
             }
 
+            $teamsPerDay[] = $dayTeamIds;
             $currentDate = $currentDate->copy()->addDay();
         }
+
+        // Game day: the user's game teams played
+        $teamsPerDay[] = [$game['homeTeamId'], $game['awayTeamId']];
 
         $batchId = null;
 
         if (!empty($preGameJobs)) {
             $campaignId = $campaign->id;
-            $teamsWithGames = array_unique($allTeamsWithGames);
+            $perDayTeams = $teamsPerDay;
             $newDate = $gameDate->copy()->addDay();
 
             $batch = Bus::batch($preGameJobs)
                 ->name("Pre-game sync: Campaign {$campaignId}")
-                ->then(function () use ($campaignId, $teamsWithGames, $newDate, $year) {
+                ->then(function () use ($campaignId, $perDayTeams, $newDate, $year) {
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
                     $evolutionService = app(PlayerEvolutionService::class);
-                    $evolutionService->processRestDayRecovery($campaign, $teamsWithGames);
+                    $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
 
                     $campaign->update([
                         'current_date' => $newDate,
@@ -317,8 +322,8 @@ class GameController extends Controller
             $batchId = $batch->id;
             $campaign->update(['simulation_batch_id' => $batchId]);
         } else {
-            // No pre-game games - handle synchronously
-            $this->evolutionService->processRestDayRecovery($campaign, $allTeamsWithGames);
+            // No pre-game games - handle synchronously (teamsPerDay has just game day)
+            $this->evolutionService->processMultiDayRestRecovery($campaign, $teamsPerDay);
             $campaign->update(['current_date' => $gameDate->copy()->addDay()]);
 
             $dayOfSeason = $campaign->current_date->diffInDays(Carbon::parse('2025-10-21'));
@@ -1712,7 +1717,7 @@ class GameController extends Controller
 
         // Collect all games across all days (pre-game days + game day)
         $aiJobs = [];
-        $allTeamsWithGames = [];
+        $teamsPerDay = [];
         $userGameResult = null;
 
         // Days before game date — only queue AI games, skip any user games
@@ -1722,14 +1727,15 @@ class GameController extends Controller
             $dayGames = $this->seasonService->getGamesByDate($campaign->id, $year, $dateStr);
             $dayGames = array_filter($dayGames, fn($g) => !$g['isComplete']);
 
+            $dayTeamIds = [];
             foreach ($dayGames as $game) {
                 // Skip user games — only the game-day loop handles the user's game
                 if ((int) $game['homeTeamId'] === $userTeamId || (int) $game['awayTeamId'] === $userTeamId) {
                     continue;
                 }
 
-                $allTeamsWithGames[] = $game['homeTeamId'];
-                $allTeamsWithGames[] = $game['awayTeamId'];
+                $dayTeamIds[] = $game['homeTeamId'];
+                $dayTeamIds[] = $game['awayTeamId'];
 
                 $aiJobs[] = new SimulateGameJob(
                     $campaign->id, $year, $game, $game['homeTeamId'], $game['awayTeamId'],
@@ -1737,6 +1743,7 @@ class GameController extends Controller
                 );
             }
 
+            $teamsPerDay[] = $dayTeamIds;
             $currentDate = $currentDate->copy()->addDay();
         }
 
@@ -1745,13 +1752,14 @@ class GameController extends Controller
         $gameDateGames = $this->seasonService->getGamesByDate($campaign->id, $year, $gameDateStr);
         $gameDateGames = array_filter($gameDateGames, fn($g) => !$g['isComplete']);
 
+        $gameDayTeamIds = [];
         foreach ($gameDateGames as $game) {
             $homeTeam = $teams[$game['homeTeamId']] ?? null;
             $awayTeam = $teams[$game['awayTeamId']] ?? null;
             if (!$homeTeam || !$awayTeam) continue;
 
-            $allTeamsWithGames[] = $game['homeTeamId'];
-            $allTeamsWithGames[] = $game['awayTeamId'];
+            $gameDayTeamIds[] = $game['homeTeamId'];
+            $gameDayTeamIds[] = $game['awayTeamId'];
 
             $userTeamId = (int) $campaign->team_id;
             $homeTeamId = (int) $game['homeTeamId'];
@@ -1820,21 +1828,24 @@ class GameController extends Controller
             }
         }
 
+        // Add game day teams to per-day tracking
+        $teamsPerDay[] = $gameDayTeamIds;
+
         $batchId = null;
 
         if (!empty($aiJobs)) {
             $campaignId = $campaign->id;
-            $uniqueTeams = array_unique($allTeamsWithGames);
+            $perDayTeams = $teamsPerDay;
             $newDate = $excludeUserGame ? $gameDate->copy() : $gameDate->copy()->addDay();
 
             $batch = Bus::batch($aiJobs)
                 ->name("Simulate to next game: Campaign {$campaignId}")
-                ->then(function () use ($campaignId, $uniqueTeams, $newDate, $year, $excludeUserGame) {
+                ->then(function () use ($campaignId, $perDayTeams, $newDate, $year, $excludeUserGame) {
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
                     $evolutionService = app(PlayerEvolutionService::class);
-                    $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+                    $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
 
                     $campaign->update([
                         'current_date' => $newDate,
@@ -1864,9 +1875,7 @@ class GameController extends Controller
             $campaign->update(['simulation_batch_id' => $batchId]);
         } else {
             // No AI games - handle synchronously
-            if (!empty($allTeamsWithGames)) {
-                $this->evolutionService->processRestDayRecovery($campaign, array_unique($allTeamsWithGames));
-            }
+            $this->evolutionService->processMultiDayRestRecovery($campaign, $teamsPerDay);
 
             $newDate = $excludeUserGame ? $gameDate->copy() : $gameDate->copy()->addDay();
             $campaign->update(['current_date' => $newDate]);

@@ -11,8 +11,8 @@ use Illuminate\Support\Facades\Log;
 
 class AllStarService
 {
-    private const ALL_STAR_MONTH = 2;
-    private const ALL_STAR_DAY = 12;
+    private const ALL_STAR_MONTH = 1;
+    private const ALL_STAR_DAY = 20;
     private const ALL_STAR_MIN_GAMES_PCT = 0.60;
     private const RISING_STARS_MIN_GAMES_PCT = 0.40;
 

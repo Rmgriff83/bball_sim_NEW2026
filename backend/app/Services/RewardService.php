@@ -111,12 +111,6 @@ class RewardService
             }
 
             // Count activated synergies in this possession
-            $activatedBadges = $possession['activated_badges'] ?? [];
-            if (is_array($activatedBadges) && isset($activatedBadges['synergies'])) {
-                $count += count($activatedBadges['synergies']);
-            }
-
-            // Also check for activated_synergies at possession level
             $activatedSynergies = $possession['activated_synergies'] ?? [];
             if (is_array($activatedSynergies)) {
                 $count += count($activatedSynergies);

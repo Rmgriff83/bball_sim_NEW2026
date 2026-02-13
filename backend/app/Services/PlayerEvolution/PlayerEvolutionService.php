@@ -1109,6 +1109,91 @@ class PlayerEvolutionService
     }
 
     /**
+     * Process rest day recovery across multiple days.
+     * For each team, calculates how many days they had no game and applies
+     * that many days of rest recovery (same as playing 0 minutes).
+     *
+     * @param Campaign $campaign
+     * @param array $teamsPerDay Array of arrays, each containing team IDs that played on that day
+     */
+    public function processMultiDayRestRecovery(Campaign $campaign, array $teamsPerDay): void
+    {
+        $totalDays = count($teamsPerDay);
+        if ($totalDays === 0) return;
+
+        // Count games per team ID
+        $gamesPerTeam = [];
+        foreach ($teamsPerDay as $dayTeams) {
+            foreach ($dayTeams as $teamId) {
+                $gamesPerTeam[$teamId] = ($gamesPerTeam[$teamId] ?? 0) + 1;
+            }
+        }
+
+        // Get all teams
+        $allTeams = Team::where('campaign_id', $campaign->id)->pluck('id', 'abbreviation')->toArray();
+
+        // Calculate rest days per team
+        $restDaysPerTeam = [];
+        foreach ($allTeams as $abbr => $teamId) {
+            $games = $gamesPerTeam[$teamId] ?? 0;
+            $restDays = $totalDays - $games;
+            if ($restDays > 0) {
+                $restDaysPerTeam[$abbr] = $restDays;
+            }
+        }
+
+        if (empty($restDaysPerTeam)) return;
+
+        $config = config('player_evolution.fatigue');
+        $restRecovery = $config['rest_day_recovery'];
+
+        // Process user team
+        $userTeamAbbr = $campaign->team?->abbreviation;
+        if ($userTeamAbbr && isset($restDaysPerTeam[$userTeamAbbr])) {
+            $userPlayers = Player::where('campaign_id', $campaign->id)->get();
+            $days = $restDaysPerTeam[$userTeamAbbr];
+            foreach ($userPlayers as $player) {
+                $currentFatigue = $player->fatigue ?? 0;
+                if ($currentFatigue > 0) {
+                    $playerArr = $player->toArray();
+                    $totalRecovery = 0;
+                    for ($i = 0; $i < $days; $i++) {
+                        $totalRecovery += $this->getAttributeWeightedRecovery($playerArr, $restRecovery);
+                    }
+                    $player->update(['fatigue' => max(0, $currentFatigue - $totalRecovery)]);
+                }
+            }
+            unset($restDaysPerTeam[$userTeamAbbr]);
+        }
+
+        // Process league teams
+        if (!empty($restDaysPerTeam)) {
+            $leaguePlayers = $this->playerService->loadLeaguePlayers($campaign->id);
+            $modified = false;
+
+            foreach ($leaguePlayers as &$player) {
+                $teamAbbr = $player['teamAbbreviation'] ?? '';
+                if (isset($restDaysPerTeam[$teamAbbr])) {
+                    $currentFatigue = $player['fatigue'] ?? 0;
+                    if ($currentFatigue > 0) {
+                        $days = $restDaysPerTeam[$teamAbbr];
+                        $totalRecovery = 0;
+                        for ($i = 0; $i < $days; $i++) {
+                            $totalRecovery += $this->getAttributeWeightedRecovery($player, $restRecovery);
+                        }
+                        $player['fatigue'] = max(0, $currentFatigue - $totalRecovery);
+                        $modified = true;
+                    }
+                }
+            }
+
+            if ($modified) {
+                $this->playerService->saveLeaguePlayers($campaign->id, $leaguePlayers);
+            }
+        }
+    }
+
+    /**
      * Process rest day recovery for all teams that didn't play on a given day.
      * Called after simulating all games for a day to give recovery to teams without games.
      *

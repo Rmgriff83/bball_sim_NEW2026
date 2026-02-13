@@ -1,7 +1,10 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap } from 'lucide-vue-next'
+import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
+
+const { getActivatedBadges } = useBadgeSynergies()
 
 const props = defineProps({
   show: {
@@ -44,6 +47,11 @@ const props = defineProps({
   canUpgrade: {
     type: Boolean,
     default: false
+  },
+  // Lineup players for badge synergy highlighting
+  lineupPlayers: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -96,6 +104,7 @@ const normalizedPlayer = computed(() => {
   if (!props.player) return null
   const p = props.player
   return {
+    id: p.id || p.player_id,
     name: p.name || `${p.firstName || p.first_name} ${p.lastName || p.last_name}`,
     position: p.position,
     secondaryPosition: p.secondaryPosition || p.secondary_position,
@@ -125,6 +134,24 @@ const normalizedPlayer = computed(() => {
     upgrade_points: p.upgrade_points ?? p.upgradePoints ?? 0
   }
 })
+
+// Badge synergy activation data
+const activatedBadgeData = computed(() => {
+  if (!normalizedPlayer.value || !props.lineupPlayers.length) {
+    return { activatedIds: new Set(), synergyDetails: new Map() }
+  }
+  return getActivatedBadges(normalizedPlayer.value, props.lineupPlayers)
+})
+
+function isBadgeActivated(badgeId) {
+  return activatedBadgeData.value.activatedIds.has(badgeId)
+}
+
+function getBadgeSynergyTooltip(badge) {
+  const details = activatedBadgeData.value.synergyDetails.get(badge.id)
+  if (!details?.length) return ''
+  return details.map(d => `⚡ ${d.synergyName} (w/ ${d.partnerName})`).join('\n')
+}
 
 // Check if player has upgrade points available (for showing upgrade buttons)
 const hasUpgradePoints = computed(() =>
@@ -364,8 +391,11 @@ function formatChange(change) {
                   v-for="badge in normalizedPlayer.badges.slice(0, 6)"
                   :key="badge.id"
                   class="badge-chip"
-                  :style="{ borderColor: getBadgeLevelColor(badge.level) }"
+                  :class="{ 'synergy-active': isBadgeActivated(badge.id) }"
+                  :style="{ borderColor: isBadgeActivated(badge.id) ? '#00E5FF' : getBadgeLevelColor(badge.level) }"
+                  :title="getBadgeSynergyTooltip(badge)"
                 >
+                  <Zap v-if="isBadgeActivated(badge.id)" :size="10" class="synergy-icon" />
                   <span class="badge-level-icon" :style="{ color: getBadgeLevelColor(badge.level) }">
                     {{ badge.level === 'hof' ? 'HOF' : badge.level.charAt(0).toUpperCase() }}
                   </span>
@@ -599,7 +629,10 @@ function formatChange(change) {
                         v-for="badge in normalizedPlayer.badges.filter(b => b.level === 'hof')"
                         :key="badge.id"
                         class="badge-card-modal hof"
+                        :class="{ 'synergy-active': isBadgeActivated(badge.id) }"
+                        :title="getBadgeSynergyTooltip(badge)"
                       >
+                        <Zap v-if="isBadgeActivated(badge.id)" :size="12" class="synergy-icon" />
                         <span class="badge-icon">HOF</span>
                         <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
                       </div>
@@ -614,7 +647,10 @@ function formatChange(change) {
                         v-for="badge in normalizedPlayer.badges.filter(b => b.level === 'gold')"
                         :key="badge.id"
                         class="badge-card-modal gold"
+                        :class="{ 'synergy-active': isBadgeActivated(badge.id) }"
+                        :title="getBadgeSynergyTooltip(badge)"
                       >
+                        <Zap v-if="isBadgeActivated(badge.id)" :size="12" class="synergy-icon" />
                         <span class="badge-icon">G</span>
                         <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
                       </div>
@@ -629,7 +665,10 @@ function formatChange(change) {
                         v-for="badge in normalizedPlayer.badges.filter(b => b.level === 'silver')"
                         :key="badge.id"
                         class="badge-card-modal silver"
+                        :class="{ 'synergy-active': isBadgeActivated(badge.id) }"
+                        :title="getBadgeSynergyTooltip(badge)"
                       >
+                        <Zap v-if="isBadgeActivated(badge.id)" :size="12" class="synergy-icon" />
                         <span class="badge-icon">S</span>
                         <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
                       </div>
@@ -644,7 +683,10 @@ function formatChange(change) {
                         v-for="badge in normalizedPlayer.badges.filter(b => b.level === 'bronze')"
                         :key="badge.id"
                         class="badge-card-modal bronze"
+                        :class="{ 'synergy-active': isBadgeActivated(badge.id) }"
+                        :title="getBadgeSynergyTooltip(badge)"
                       >
+                        <Zap v-if="isBadgeActivated(badge.id)" :size="12" class="synergy-icon" />
                         <span class="badge-icon">B</span>
                         <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
                       </div>
@@ -1484,6 +1526,22 @@ function formatChange(change) {
 .badge-name-modal {
   font-size: 0.8rem;
   color: var(--color-text-primary);
+}
+
+/* Badge synergy activation */
+.badge-chip.synergy-active {
+  background: rgba(0, 229, 255, 0.1);
+  box-shadow: 0 0 6px rgba(0, 229, 255, 0.3);
+}
+
+.badge-card-modal.synergy-active {
+  border-color: rgba(0, 229, 255, 0.5) !important;
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.2);
+}
+
+.synergy-icon {
+  color: #00E5FF;
+  flex-shrink: 0;
 }
 
 /* Awards Section */

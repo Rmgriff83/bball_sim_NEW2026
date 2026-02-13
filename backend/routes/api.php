@@ -15,6 +15,7 @@ use App\Http\Controllers\TradeController;
 use App\Http\Controllers\PlayoffController;
 use App\Http\Controllers\FinanceController;
 use App\Http\Controllers\SyncController;
+use App\Http\Controllers\BadgeSynergyController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -58,6 +59,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // User stats and achievements
     Route::get('/user/stats', [UserController::class, 'stats']);
     Route::get('/user/achievements', [UserController::class, 'achievements']);
+
+    // Badge synergies (static game data)
+    Route::get('/badge-synergies', [BadgeSynergyController::class, 'index']);
 
     // Campaigns
     Route::get('/teams', [CampaignController::class, 'getTeams']);

@@ -1298,26 +1298,27 @@ class GameSimulationService
                     $effect = $synergy['effect'] ?? [];
                     $boostValues = $effect['boost'] ?? [];
 
+                    // Sum shot-related boosts for the return value
                     $synergyBoost = 0;
                     $synergyBoost += $boostValues['shotPercentage'] ?? 0;
                     $synergyBoost += $boostValues['rollerFinishing'] ?? 0;
+                    $boost += $synergyBoost;
 
-                    if ($synergyBoost > 0) {
-                        $boost += $synergyBoost;
-                        $activatedSynergies[] = [
-                            'badge1' => $shooterBadge,
-                            'badge2' => $requiredBadge,
-                            'effect' => $synergy['effect_type'] ?? $synergy['name'] ?? 'synergy',
-                            'player1' => [
-                                'id' => $shooter['id'],
-                                'name' => ($shooter['firstName'] ?? $shooter['first_name'] ?? '') . ' ' . ($shooter['lastName'] ?? $shooter['last_name'] ?? ''),
-                            ],
-                            'player2' => [
-                                'id' => $teammate['id'],
-                                'name' => ($teammate['firstName'] ?? $teammate['first_name'] ?? '') . ' ' . ($teammate['lastName'] ?? $teammate['last_name'] ?? ''),
-                            ],
-                        ];
-                    }
+                    // Always record the synergy activation (badges matched)
+                    $activatedSynergies[] = [
+                        'synergy_name' => $synergy['synergy_name'] ?? 'synergy',
+                        'badge1' => $shooterBadge,
+                        'badge2' => $requiredBadge,
+                        'effect' => $synergy['effect_type'] ?? $synergy['synergy_name'] ?? 'synergy',
+                        'player1' => [
+                            'id' => $shooter['id'],
+                            'name' => ($shooter['firstName'] ?? $shooter['first_name'] ?? '') . ' ' . ($shooter['lastName'] ?? $shooter['last_name'] ?? ''),
+                        ],
+                        'player2' => [
+                            'id' => $teammate['id'],
+                            'name' => ($teammate['firstName'] ?? $teammate['first_name'] ?? '') . ' ' . ($teammate['lastName'] ?? $teammate['last_name'] ?? ''),
+                        ],
+                    ];
                     break;
                 }
             }

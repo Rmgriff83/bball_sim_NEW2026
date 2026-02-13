@@ -555,9 +555,20 @@ export const useGameStore = defineStore('game', () => {
   /**
    * Resume polling if a batch ID is known (e.g., on page reload).
    */
-  function resumePollingIfNeeded(campaignId, batchId) {
-    if (batchId && !simulationPollTimer) {
+  async function resumePollingIfNeeded(campaignId, batchId) {
+    if (!batchId || simulationPollTimer) return
+
+    // Check status first to avoid flashing the indicator for already-completed batches
+    try {
+      const response = await api.get(`/api/campaigns/${campaignId}/simulation-status/${batchId}`)
+      const status = response.data.status
+      if (status === 'completed' || status === 'completed_with_errors' || status === 'cancelled') {
+        // Already done — don't start polling
+        return
+      }
       startPollingSimulationStatus(campaignId, batchId)
+    } catch (err) {
+      // Status check failed (e.g. batch not found) — don't start polling
     }
   }
 

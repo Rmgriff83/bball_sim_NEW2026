@@ -6,6 +6,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
+import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowUpDown, AlertTriangle, Calendar } from 'lucide-vue-next'
 import TradeCenter from '@/components/trade/TradeCenter.vue'
@@ -18,6 +19,7 @@ const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
 const tradeStore = useTradeStore()
 const toastStore = useToastStore()
+const { loadSynergies, getActivatedBadges } = useBadgeSynergies()
 
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
@@ -176,6 +178,8 @@ const conferenceLabel = computed(() => {
 })
 
 onMounted(async () => {
+  loadSynergies()
+
   // If we already have team data, refresh in background without blocking
   const hasCachedData = teamStore.team
 
@@ -711,6 +715,25 @@ function getTopBadges(badges) {
     .slice(0, 3)
 }
 
+// Badge synergy helpers
+function getStarterActivatedData(player) {
+  const starters = teamStore.starterPlayers?.filter(p => p != null) || []
+  return getActivatedBadges(player, starters)
+}
+
+function isStarterBadgeActivated(player, badgeId) {
+  const { activatedIds } = getStarterActivatedData(player)
+  return activatedIds.has(badgeId)
+}
+
+function getStarterBadgeSynergyTooltip(player, badge) {
+  const { synergyDetails } = getStarterActivatedData(player)
+  const details = synergyDetails.get(badge.id)
+  if (!details?.length) return `${formatBadgeName(badge)} (${badge.level})`
+  const synergyText = details.map(d => `⚡ ${d.synergyName} (w/ ${d.partnerName})`).join('\n')
+  return `${formatBadgeName(badge)} (${badge.level})\n${synergyText}`
+}
+
 // Evolution history processing
 const evolutionHistory = computed(() => {
   if (!selectedPlayer.value?.development_history) return []
@@ -1074,13 +1097,14 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                     v-for="badge in getTopBadges(slot.player.badges)"
                     :key="badge.id"
                     class="badge-item"
-                    :title="`${formatBadgeName(badge)} (${badge.level})`"
+                    :title="getStarterBadgeSynergyTooltip(slot.player, badge)"
                   >
                     <span
                       class="badge-dot"
+                      :class="{ 'synergy-active': isStarterBadgeActivated(slot.player, badge.id) }"
                       :style="{ backgroundColor: getBadgeLevelColor(badge.level) }"
                     />
-                    <span class="badge-name">{{ formatBadgeName(badge) }}</span>
+                    <span class="badge-name" :class="{ 'synergy-active-text': isStarterBadgeActivated(slot.player, badge.id) }">{{ formatBadgeName(badge) }}</span>
                   </div>
                 </div>
               </div>
@@ -1561,6 +1585,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
       :player-news="playerNews"
       :show-history="true"
       :can-upgrade="true"
+      :lineup-players="teamStore.starterPlayers?.filter(p => p != null) || []"
       @close="closePlayerModal"
       @upgrade-attribute="handleUpgradeAttribute"
     />
@@ -2428,6 +2453,20 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 
 .badge-name {
   color: var(--color-text-tertiary);
+}
+
+.badge-dot.synergy-active {
+  box-shadow: 0 0 4px 2px rgba(0, 229, 255, 0.6);
+  animation: synergy-pulse 2s ease-in-out infinite;
+}
+
+.synergy-active-text {
+  color: #00E5FF !important;
+}
+
+@keyframes synergy-pulse {
+  0%, 100% { box-shadow: 0 0 4px 2px rgba(0, 229, 255, 0.6); }
+  50% { box-shadow: 0 0 8px 3px rgba(0, 229, 255, 0.3); }
 }
 
 /* Injury styles */

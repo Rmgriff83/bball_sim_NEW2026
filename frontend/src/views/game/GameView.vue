@@ -13,6 +13,7 @@ import BoxScore from '@/components/game/BoxScore.vue'
 import { SimulateConfirmModal, EvolutionSummary } from '@/components/game'
 import { usePlayAnimation } from '@/composables/usePlayAnimation'
 import { usePositionValidation } from '@/composables/usePositionValidation'
+import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,6 +22,7 @@ const campaignStore = useCampaignStore()
 const leagueStore = useLeagueStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
+const { loadSynergies, getActivatedBadges, getHypotheticalActivations, getLineupSynergyCount } = useBadgeSynergies()
 
 // Animation composable
 const {
@@ -521,7 +523,8 @@ const userTeamPlayers = computed(() => {
         // Use box score fatigue if present, otherwise fall back to roster
         fatigue: p.fatigue ?? rosterPlayer.fatigue ?? 0,
         overall_rating: p.overall_rating ?? rosterPlayer.overall_rating ?? null,
-        is_injured: p.is_injured ?? rosterPlayer.is_injured ?? false
+        is_injured: p.is_injured ?? rosterPlayer.is_injured ?? false,
+        badges: p.badges ?? rosterPlayer.badges ?? []
       }
     })
   }
@@ -551,6 +554,33 @@ const userTeamPlayers = computed(() => {
 
 // Position validation for lineup selection
 const { canPlayPosition } = usePositionValidation()
+
+// Current lineup as full player objects (for synergy calculations)
+const currentLineupPlayerObjects = computed(() => {
+  if (!selectedLineup.value) return []
+  const players = userTeamPlayers.value
+  return selectedLineup.value.map(id => {
+    if (!id) return null
+    return players.find(p => (p.player_id || p.id) == id) || null
+  })
+})
+
+function getPlayerSynergyCount(player) {
+  if (!player) return 0
+  const lineup = currentLineupPlayerObjects.value.filter(p => p != null)
+  const { activatedIds } = getActivatedBadges(player, lineup)
+  return activatedIds.size
+}
+
+function getCandidateSynergyCount(candidate, slotIndex) {
+  const lineup = currentLineupPlayerObjects.value
+  const { count } = getHypotheticalActivations(candidate, lineup, slotIndex)
+  return count
+}
+
+const totalLineupSynergyCount = computed(() => {
+  return getLineupSynergyCount(currentLineupPlayerObjects.value)
+})
 
 // Eligible players per position slot (filtered by position and injury status)
 const eligiblePlayersForSlot = computed(() => {
@@ -814,6 +844,8 @@ const awayStarters = computed(() => {
 })
 
 onMounted(async () => {
+  loadSynergies()
+
   try {
     // Fetch team data first (single source of truth for user's roster and lineup)
     await teamStore.fetchTeam(campaignId.value)
@@ -2033,7 +2065,12 @@ onUnmounted(() => {
                           <!-- Lineup Cards -->
                           <div class="lineup-cards-section">
                             <div class="lineup-cards-header">
-                              <span class="lineup-cards-title">Current Lineup</span>
+                              <span class="lineup-cards-title">
+                                Current Lineup
+                                <span v-if="totalLineupSynergyCount > 0" class="synergy-count-badge">
+                                  <Zap :size="11" />{{ totalLineupSynergyCount }}
+                                </span>
+                              </span>
                               <span class="lineup-cards-hint">Tap swap icon to make changes</span>
                             </div>
                             <div class="lineup-cards-grid">
@@ -2074,6 +2111,9 @@ onUnmounted(() => {
                                       </span>
                                     </div>
                                     <div class="lineup-card-actions">
+                                      <span v-if="getPlayerSynergyCount(slot.player) > 0" class="lineup-synergy-indicator">
+                                        <Zap :size="11" />{{ getPlayerSynergyCount(slot.player) }}
+                                      </span>
                                       <button
                                         class="swap-btn"
                                         :class="{ active: expandedSwapPlayer === slot.slotIndex }"
@@ -2098,7 +2138,10 @@ onUnmounted(() => {
                                         v-for="candidate in getSwapCandidates(slot.slotPosition, slot.slotIndex)"
                                         :key="candidate.player_id"
                                         class="swap-option"
-                                        :class="{ injured: candidate.is_injured || candidate.isInjured }"
+                                        :class="{
+                                          injured: candidate.is_injured || candidate.isInjured,
+                                          'has-synergy': getCandidateSynergyCount(candidate, slot.slotIndex) > 0
+                                        }"
                                         @click="swapPlayerIn(slot.slotIndex, candidate.player_id)"
                                       >
                                         <ArrowUpDown :size="12" class="swap-option-icon" />
@@ -2114,6 +2157,9 @@ onUnmounted(() => {
                                         </div>
                                         <span class="swap-option-stats">
                                           {{ candidate.points || 0 }}p {{ candidate.rebounds || 0 }}r
+                                        </span>
+                                        <span v-if="getCandidateSynergyCount(candidate, slot.slotIndex) > 0" class="swap-synergy-badge">
+                                          <Zap :size="10" />{{ getCandidateSynergyCount(candidate, slot.slotIndex) }}
                                         </span>
                                         <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
                                       </button>
@@ -4505,6 +4551,50 @@ onUnmounted(() => {
   text-align: center;
   color: var(--color-secondary);
   font-size: 0.8rem;
+}
+
+/* Synergy indicators */
+.synergy-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  background: rgba(0, 229, 255, 0.15);
+  color: #00E5FF;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.lineup-synergy-indicator {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 5px;
+  background: rgba(0, 229, 255, 0.15);
+  color: #00E5FF;
+  border-radius: 8px;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.swap-synergy-badge {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 4px;
+  background: rgba(0, 229, 255, 0.15);
+  color: #00E5FF;
+  border-radius: 6px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.swap-option.has-synergy {
+  border-left: 2px solid rgba(0, 229, 255, 0.5);
 }
 
 /* Dropdown slide animation */
