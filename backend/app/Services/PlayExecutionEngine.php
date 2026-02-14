@@ -880,7 +880,6 @@ class PlayExecutionEngine
      */
     private function handleReboundBattle(array $offensiveLineup, array $defensiveLineup): void
     {
-        // Simplified rebound calculation
         $offRebRating = 0;
         $defRebRating = 0;
 
@@ -892,16 +891,15 @@ class PlayExecutionEngine
             $defRebRating += $player['attributes']['defense']['defensiveRebound'] ?? 50;
         }
 
-        // Safety check: ensure we don't divide by zero
-        $totalRebRating = $offRebRating + $defRebRating;
-        if ($totalRebRating <= 0) {
-            $totalRebRating = 1; // Fallback to prevent division by zero
-        }
+        // Defense has inherent positioning advantage (box out)
+        $defAdvantage = 2.5;
+        $totalWeighted = $offRebRating + $defRebRating * $defAdvantage;
+        if ($totalWeighted <= 0) $totalWeighted = 1;
 
-        // Defensive rebounds are more common (70% base)
-        $offRebChance = 0.25 * ($offRebRating / $totalRebRating);
+        $offRebChance = $offRebRating / $totalWeighted;
+        $offRebChance = max(0.15, min(0.40, $offRebChance));
 
-        if (mt_rand() / mt_getrandmax() < $offRebChance) {
+        if (mt_rand(1, 1000) <= (int)($offRebChance * 1000)) {
             $this->playResult['outcome'] = 'offensive_rebound';
             $this->playResult['points'] = 0;
         } else {

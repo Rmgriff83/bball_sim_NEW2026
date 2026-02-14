@@ -143,7 +143,7 @@ function getDifficultyLabel(value) {
             <h1 class="page-title">Your Campaigns</h1>
             <p class="page-subtitle">Manage your basketball franchises</p>
           </div>
-          <BaseButton variant="primary" @click="openCreateModal">
+          <BaseButton variant="primary" class="btn-cosmic" @click="openCreateModal">
             <Plus :size="18" />
             New Campaign
           </BaseButton>
@@ -991,5 +991,12 @@ function getDifficultyLabel(value) {
 /* Light Mode */
 [data-theme="light"] .modal-error {
   background: rgba(239, 68, 68, 0.08);
+}
+
+.btn-cosmic {
+  background: var(--gradient-cosmic) !important;
+  border: none !important;
+  color: #000 !important;
+  font-weight: 600;
 }
 </style>

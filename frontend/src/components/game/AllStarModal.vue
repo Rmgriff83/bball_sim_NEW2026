@@ -212,6 +212,13 @@ onUnmounted(() => {
           <div v-else class="empty-state">
             <p>No selections available yet.</p>
           </div>
+
+          <!-- Footer -->
+          <footer class="modal-footer">
+            <button class="btn-close-footer" @click="close">
+              Close
+            </button>
+          </footer>
         </div>
       </div>
     </Transition>
@@ -235,12 +242,14 @@ onUnmounted(() => {
   width: 100%;
   max-width: 900px;
   max-height: 90vh;
-  overflow-y: auto;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-2xl);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
   animation: scaleIn 0.2s ease-out;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 @keyframes scaleIn {
@@ -331,6 +340,8 @@ onUnmounted(() => {
 /* Content */
 .rosters-content {
   padding: 16px 24px 24px;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .conferences-grid {
@@ -468,6 +479,38 @@ onUnmounted(() => {
   padding: 48px 24px;
   text-align: center;
   color: var(--color-text-tertiary);
+}
+
+/* Footer */
+.modal-footer {
+  display: flex;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.btn-close-footer {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.btn-close-footer:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
 }
 
 /* Transitions */

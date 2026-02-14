@@ -270,15 +270,13 @@ onMounted(() => {
           :class="{ active: activeSubTab === 'team' }"
           @click="activeSubTab = 'team'"
         >
-          <Users :size="16" />
-          Team Contracts
+          Contracts
         </button>
         <button
           class="sub-tab-btn"
           :class="{ active: activeSubTab === 'free-agents' }"
           @click="activeSubTab = 'free-agents'"
         >
-          <FileText :size="16" />
           Free Agents
         </button>
       </div>
@@ -526,38 +524,34 @@ onMounted(() => {
 /* Sub-Tab Navigation */
 .sub-tab-nav {
   display: flex;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 0.5rem;
 }
 
 .sub-tab-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.625rem 1.25rem;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  padding: 6px 14px;
   border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--color-text-secondary);
   font-weight: 600;
-  font-size: 0.875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
   cursor: pointer;
   transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 0.8rem;
 }
 
 .sub-tab-btn:hover {
-  background: var(--color-bg-tertiary);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--color-text-primary);
 }
 
 .sub-tab-btn.active {
-  background: var(--color-primary);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: white;
-  font-weight: 700;
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
 }
 
 /* Contracts Section */

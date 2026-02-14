@@ -510,6 +510,10 @@ async function swapPlayers(starterIndex, benchPlayerId) {
   // Get the starter being replaced (will move down)
   const starterBeingReplaced = starters.value[starterIndex]
 
+  // Capture minutes before the swap so we can apply after fetchTeam
+  const starterMins = starterBeingReplaced ? (playerMinutes.value[starterBeingReplaced.id] ?? 0) : 0
+  const benchMins = playerMinutes.value[benchPlayerId] ?? 0
+
   try {
     // Build new lineup array (handle null values for empty slots)
     const newLineup = starters.value.map(p => p ? p.id : null)
@@ -519,6 +523,13 @@ async function swapPlayers(starterIndex, benchPlayerId) {
 
     await teamStore.updateLineup(campaignId.value, newLineup)
     await teamStore.fetchTeam(campaignId.value, { force: true })
+
+    // Swap minutes after fetchTeam (which re-inits from stored values)
+    if (starterBeingReplaced) {
+      playerMinutes.value[benchPlayerId] = starterMins
+      playerMinutes.value[starterBeingReplaced.id] = benchMins
+      debouncedSaveMinutes()
+    }
 
     toastStore.showSuccess('Lineup updated')
 
@@ -582,6 +593,10 @@ async function promoteToStarter(benchPlayer, targetPosition) {
   const posIndex = POSITIONS.indexOf(targetPosition)
   const starterBeingReplaced = starters.value[posIndex]
 
+  // Capture minutes before the swap so we can apply after fetchTeam
+  const starterMins = starterBeingReplaced ? (playerMinutes.value[starterBeingReplaced.id] ?? 0) : 0
+  const benchMins = playerMinutes.value[benchPlayer.id] ?? 0
+
   try {
     // Build new lineup (handle null values for empty slots)
     const newLineup = starters.value.map(p => p ? p.id : null)
@@ -591,6 +606,13 @@ async function promoteToStarter(benchPlayer, targetPosition) {
 
     await teamStore.updateLineup(campaignId.value, newLineup)
     await teamStore.fetchTeam(campaignId.value, { force: true })
+
+    // Swap minutes after fetchTeam (which re-inits from stored values)
+    if (starterBeingReplaced) {
+      playerMinutes.value[benchPlayer.id] = starterMins
+      playerMinutes.value[starterBeingReplaced.id] = benchMins
+      debouncedSaveMinutes()
+    }
 
     toastStore.showSuccess('Lineup updated')
 
@@ -2494,6 +2516,10 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   color: #00E5FF !important;
 }
 
+[data-theme="light"] .synergy-active-text {
+  color: rgb(139, 92, 246) !important;
+}
+
 @keyframes synergy-pulse {
   0%, 100% { box-shadow: 0 0 4px 2px rgba(0, 229, 255, 0.6); }
   50% { box-shadow: 0 0 8px 3px rgba(0, 229, 255, 0.3); }
@@ -2539,34 +2565,35 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 
 .coach-tabs {
   display: flex;
-  gap: 4px;
+  gap: 8px;
   margin-bottom: 20px;
-  border-bottom: 1px solid var(--glass-border);
-  padding-bottom: 0;
+  flex-wrap: wrap;
 }
 
 .coach-tab-btn {
-  padding: 10px 20px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
+  padding: 6px 14px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--color-text-secondary);
   font-weight: 600;
-  font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.2s ease;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+  font-size: 0.8rem;
 }
 
 .coach-tab-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
   color: var(--color-text-primary);
-  background: rgba(255, 255, 255, 0.03);
 }
 
 .coach-tab-btn.active {
-  color: var(--color-primary);
-  border-bottom-color: var(--color-primary);
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
 }
 
 .coach-header {

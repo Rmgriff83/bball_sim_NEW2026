@@ -2964,7 +2964,7 @@ function formatAge(age) {
 
 .intro-content h2 {
   font-size: 1.75rem;
-  font-weight: 700;
+  font-weight: 400;
   color: var(--color-text-primary);
   margin-bottom: 0.75rem;
 }

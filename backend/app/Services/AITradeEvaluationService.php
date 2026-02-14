@@ -192,7 +192,7 @@ class AITradeEvaluationService
         $coreAges = [];
         foreach ($core as $player) {
             $birthDate = $player['birthDate'] ?? $player['birth_date'] ?? null;
-            $age = $birthDate ? (int) abs(now()->diffInYears($birthDate)) : 25;
+            $age = $birthDate ? (int) abs($campaign->current_date->diffInYears($birthDate)) : 25;
             $coreAges[] = $age;
         }
 
@@ -409,7 +409,7 @@ class AITradeEvaluationService
                 'position' => $dbPlayer->position,
                 'secondaryPosition' => $dbPlayer->secondary_position,
                 'overallRating' => $dbPlayer->overall_rating,
-                'age' => $dbPlayer->birth_date ? (int) abs(now()->diffInYears($dbPlayer->birth_date)) : 25,
+                'age' => $dbPlayer->birth_date ? (int) abs($campaign->current_date->diffInYears($dbPlayer->birth_date)) : 25,
                 'contractSalary' => (float) $dbPlayer->contract_salary,
                 'contractYearsRemaining' => $dbPlayer->contract_years_remaining ?? 1,
                 'tradeValue' => $dbPlayer->trade_value,
@@ -422,7 +422,7 @@ class AITradeEvaluationService
         foreach ($leaguePlayers as $player) {
             if (($player['id'] ?? '') == $playerId) {
                 $birthDate = $player['birthDate'] ?? null;
-                $age = $birthDate ? (int) abs(now()->diffInYears($birthDate)) : 25;
+                $age = $birthDate ? (int) abs($campaign->current_date->diffInYears($birthDate)) : 25;
 
                 return [
                     'id' => $player['id'],

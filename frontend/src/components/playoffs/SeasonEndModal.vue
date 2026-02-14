@@ -49,7 +49,7 @@ function handleContinue() {
 </script>
 
 <template>
-  <BaseModal :show="show" :closable="false" size="md">
+  <BaseModal :show="show" :title="qualified ? 'Playoff Bound!' : 'Season Complete'" :closable="false" size="md">
     <div class="season-end-content">
       <!-- Animation Area -->
       <div class="animation-area">
@@ -63,11 +63,6 @@ function handleContinue() {
           <CloudRain :size="64" class="rain-icon" />
         </div>
       </div>
-
-      <!-- Title -->
-      <h2 class="modal-title" :class="{ 'text-gradient': qualified }">
-        {{ qualified ? 'PLAYOFF BOUND!' : 'SEASON COMPLETE' }}
-      </h2>
 
       <!-- Team Info -->
       <div v-if="userTeam" class="team-info">
@@ -107,15 +102,16 @@ function handleContinue() {
         <p>Your team finished outside the top 8 in the conference.</p>
         <p>Better luck next season!</p>
       </div>
+    </div>
 
-      <!-- Action Button -->
-      <div class="action-buttons">
-        <button class="btn-primary btn-lg" @click="handleContinue">
-          <Trophy v-if="qualified" :size="20" />
+    <template #footer>
+      <div class="modal-footer-buttons">
+        <button class="btn-confirm" @click="handleContinue">
+          <Trophy v-if="qualified" :size="16" />
           {{ qualified ? 'Continue to Playoffs' : 'Continue to Offseason' }}
         </button>
       </div>
-    </div>
+    </template>
   </BaseModal>
 </template>
 
@@ -203,10 +199,34 @@ function handleContinue() {
   }
 }
 
-.modal-title {
-  font-size: 2rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
+/* Footer Buttons */
+.modal-footer-buttons {
+  display: flex;
+  gap: 12px;
+}
+
+.btn-confirm {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.btn-confirm:hover {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
 }
 
 .team-info {
@@ -319,15 +339,4 @@ function handleContinue() {
   margin: 0;
 }
 
-.action-buttons {
-  margin-top: 0.5rem;
-}
-
-.btn-lg {
-  padding: 0.875rem 2rem;
-  font-size: 1rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
 </style>

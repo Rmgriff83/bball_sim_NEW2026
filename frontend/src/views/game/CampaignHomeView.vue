@@ -17,7 +17,7 @@ import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import PlayoffBracket from '@/components/playoffs/PlayoffBracket.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, X } from 'lucide-vue-next'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,6 +38,8 @@ const showAllStarModal = ref(false)
 const allStarRosters = ref(null)
 const showInjuryModal = ref(false)
 const injuredPlayers = ref([])
+const showRecoveryModal = ref(false)
+const recoveredPlayers = ref([])
 const showLineupWarningModal = ref(false)
 const pendingGameAction = ref(null) // 'simulate' or gameId for play
 const showRosterWarningModal = ref(false)
@@ -443,12 +445,20 @@ async function handleConfirmSimulate() {
         isUserHome: lastSimResult.value.isUserHome
       })
 
-      // Check for user team injuries
+      // Check for user team injuries and recoveries
       const evo = response.userGameResult.evolution
       const teamKey = response.userGameResult.is_user_home ? 'home' : 'away'
       if (evo?.[teamKey]?.injuries?.length > 0) {
         injuredPlayers.value = evo[teamKey].injuries
         showInjuryModal.value = true
+      }
+      if (evo?.[teamKey]?.recoveries?.length > 0) {
+        recoveredPlayers.value = evo[teamKey].recoveries
+        if (showInjuryModal.value) {
+          setTimeout(() => { showRecoveryModal.value = true }, 500)
+        } else {
+          showRecoveryModal.value = true
+        }
       }
     }
 
@@ -505,8 +515,6 @@ async function handleSimToEnd() {
   const simAwayAbbr = gameToSim.away_team?.abbreviation || 'AWAY'
   const simHomeColor = gameToSim.home_team?.primary_color || '#666'
   const simAwayColor = gameToSim.away_team?.primary_color || '#666'
-  const simIsUserHome = gameToSim.home_team_id === teamStore.team?.id
-
   const loadingToastId = toastStore.showLoading('Simming to end...')
 
   try {
@@ -515,6 +523,8 @@ async function handleSimToEnd() {
     toastStore.removeMinimalToast(loadingToastId)
 
     if (response.result) {
+      const simIsUserHome = response.is_user_home
+
       lastSimResult.value = {
         homeTeam: simHomeAbbr,
         awayTeam: simAwayAbbr,
@@ -536,12 +546,20 @@ async function handleSimToEnd() {
         isUserHome: simIsUserHome,
       })
 
-      // Check for user team injuries
+      // Check for user team injuries and recoveries
       const evo = response.result.evolution
       const teamKey = simIsUserHome ? 'home' : 'away'
       if (evo?.[teamKey]?.injuries?.length > 0) {
         injuredPlayers.value = evo[teamKey].injuries
         showInjuryModal.value = true
+      }
+      if (evo?.[teamKey]?.recoveries?.length > 0) {
+        recoveredPlayers.value = evo[teamKey].recoveries
+        if (showInjuryModal.value) {
+          setTimeout(() => { showRecoveryModal.value = true }, 500)
+        } else {
+          showRecoveryModal.value = true
+        }
       }
     }
 
@@ -692,6 +710,11 @@ function getInjurySeverityColor(severity) {
 
 function goToLineup() {
   showInjuryModal.value = false
+  router.push(`/campaign/${campaignId.value}/team`)
+}
+
+function goToLineupFromRecovery() {
+  showRecoveryModal.value = false
   router.push(`/campaign/${campaignId.value}/team`)
 }
 
@@ -1194,6 +1217,66 @@ function handleCloseSimulateModal() {
                 Dismiss
               </button>
               <button class="inj-btn-lineup" @click="goToLineup">
+                <Users :size="16" />
+                Update Lineup
+              </button>
+            </footer>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- Recovery Notification Modal -->
+    <Teleport to="body">
+      <Transition name="inj-modal">
+        <div
+          v-if="showRecoveryModal"
+          class="inj-overlay"
+          @click.self="showRecoveryModal = false"
+        >
+          <div class="inj-container">
+            <header class="inj-header">
+              <div class="inj-header-left">
+                <div class="rec-header-icon">
+                  <Heart :size="18" />
+                </div>
+                <h2 class="inj-title">Recovery Report</h2>
+              </div>
+              <button class="inj-close" @click="showRecoveryModal = false" aria-label="Close">
+                <X :size="20" />
+              </button>
+            </header>
+
+            <main class="inj-content">
+              <div class="inj-list">
+                <div
+                  v-for="recovery in recoveredPlayers"
+                  :key="recovery.player_id"
+                  class="inj-card"
+                  :style="{ '--severity-color': '#22c55e' }"
+                >
+                  <div class="inj-severity-bar"></div>
+                  <div class="inj-card-body">
+                    <div class="inj-player-row">
+                      <span class="inj-player-name">{{ recovery.name }}</span>
+                      <span class="inj-severity-tag">Cleared</span>
+                    </div>
+                    <div class="inj-detail-row">
+                      <span class="inj-type">{{ recovery.injury_type }}</span>
+                      <span class="rec-status">Ready to play</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <p class="inj-hint">These players are healthy and available for your lineup.</p>
+            </main>
+
+            <footer class="inj-footer">
+              <button class="inj-btn-dismiss" @click="showRecoveryModal = false">
+                Dismiss
+              </button>
+              <button class="inj-btn-lineup" @click="goToLineupFromRecovery">
                 <Users :size="16" />
                 Update Lineup
               </button>
@@ -2516,5 +2599,23 @@ function handleCloseSimulateModal() {
 @keyframes injScaleOut {
   from { opacity: 1; transform: scale(1); }
   to { opacity: 0; transform: scale(0.95); }
+}
+
+.rec-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.rec-status {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #22c55e;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
 </style>

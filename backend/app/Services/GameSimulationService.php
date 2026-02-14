@@ -579,12 +579,14 @@ class GameSimulationService
                 $possessionTime = $this->timeRemaining;
             }
 
-            $this->simulatePossession($possessionTeam, $possessionTime);
+            $gotOreb = $this->simulatePossession($possessionTeam, $possessionTime);
             $this->timeRemaining -= $possessionTime;
             $minutesSinceLastRotation += $possessionTime;
 
-            // Switch possession
-            $possessionTeam = $possessionTeam === 'home' ? 'away' : 'home';
+            // Switch possession (unless offensive rebound — team keeps ball)
+            if (!$gotOreb) {
+                $possessionTeam = $possessionTeam === 'home' ? 'away' : 'home';
+            }
 
             // Rotate players every ~2 minutes of game time
             if ($minutesSinceLastRotation >= 2) {
@@ -596,8 +598,9 @@ class GameSimulationService
 
     /**
      * Simulate a single possession using play-based system.
+     * Returns true if offensive rebound occurred (team keeps possession).
      */
-    private function simulatePossession(string $team, float $duration): void
+    private function simulatePossession(string $team, float $duration): bool
     {
         $isHome = $team === 'home';
         $offense = $isHome ? $this->homeLineup : $this->awayLineup;
@@ -684,7 +687,7 @@ class GameSimulationService
         $playResult['activatedSynergies'] = $activatedSynergies;
 
         // Process play result and update stats
-        $this->processPlayResult($playResult, $offense, $defense, $isHome);
+        $gotOffensiveRebound = $this->processPlayResult($playResult, $offense, $defense, $isHome);
 
         // Record play-by-play and animation data (skip for AI-only games)
         if ($this->generateAnimationData) {
@@ -713,12 +716,14 @@ class GameSimulationService
             }
         }
 
+        return $gotOffensiveRebound;
     }
 
     /**
      * Process play result and update box scores.
+     * Returns true if an offensive rebound occurred (offense keeps possession).
      */
-    private function processPlayResult(array $playResult, array $offense, array $defense, bool $isHome): void
+    private function processPlayResult(array $playResult, array $offense, array $defense, bool $isHome): bool
     {
         $outcome = $playResult['outcome'];
         $points = $playResult['points'] ?? 0;
@@ -873,8 +878,9 @@ class GameSimulationService
         }
 
         // Handle rebound on miss
+        $gotOffensiveRebound = false;
         if ($outcome === 'missed' || $outcome === 'offensive_rebound') {
-            $this->handleRebound($offense, $defense, $isHome);
+            $gotOffensiveRebound = $this->handleRebound($offense, $defense, $isHome);
         }
 
         // Handle block
@@ -889,6 +895,8 @@ class GameSimulationService
                 }
             }
         }
+
+        return $gotOffensiveRebound;
     }
 
     /**
@@ -1346,8 +1354,9 @@ class GameSimulationService
 
     /**
      * Handle rebound after a missed shot.
+     * Returns true if offensive rebound (offense keeps possession).
      */
-    private function handleRebound(array $offense, array $defense, bool $isHome): void
+    private function handleRebound(array $offense, array $defense, bool $isHome): bool
     {
         if ($isHome) {
             $offBoxScore = &$this->homeBoxScore;
@@ -1357,27 +1366,53 @@ class GameSimulationService
             $defBoxScore = &$this->homeBoxScore;
         }
 
-        // 70% defensive rebound, 30% offensive
-        $isOffensiveRebound = mt_rand(1, 100) <= 30;
+        // Position multipliers for rebounding opportunity
+        $posMult = ['C' => 1.8, 'PF' => 1.5, 'SF' => 1.1, 'SG' => 0.8, 'PG' => 0.6];
 
+        // Calculate team offensive rebounding strength from actual attributes
+        $offRebTotal = 0;
+        foreach ($offense as $player) {
+            $orebAttr = $player['attributes']['defense']['offensiveRebound'] ?? 40;
+            $mult = $posMult[$player['position']] ?? 1.0;
+            $offRebTotal += $orebAttr * $mult;
+        }
+
+        // Calculate team defensive rebounding strength from actual attributes
+        $defRebTotal = 0;
+        foreach ($defense as $player) {
+            $drebAttr = $player['attributes']['defense']['defensiveRebound'] ?? 50;
+            $mult = $posMult[$player['position']] ?? 1.0;
+            $defRebTotal += $drebAttr * $mult;
+        }
+
+        // Defense has inherent positioning advantage (box out)
+        // Factor of 2.5 produces ~27% OREB rate for average matchups (NBA average)
+        $defAdvantage = 2.5;
+        $totalWeighted = $offRebTotal + $defRebTotal * $defAdvantage;
+        if ($totalWeighted <= 0) $totalWeighted = 1;
+
+        $offRebChance = $offRebTotal / $totalWeighted;
+        $offRebChance = max(0.15, min(0.40, $offRebChance));
+
+        $isOffensiveRebound = mt_rand(1, 1000) <= (int)($offRebChance * 1000);
+
+        // Select the specific rebounder using their rebound attributes
         $rebounders = $isOffensiveRebound ? $offense : $defense;
         $boxScore = $isOffensiveRebound ? $offBoxScore : $defBoxScore;
 
-        // Weight towards big men
         $weights = [];
         foreach ($rebounders as $index => $player) {
-            $weight = $player['overall_rating'];
-            if (in_array($player['position'], ['C', 'PF'])) {
-                $weight *= 1.8;
-            } elseif ($player['position'] === 'SF') {
-                $weight *= 1.2;
+            if ($isOffensiveRebound) {
+                $rebAttr = $player['attributes']['defense']['offensiveRebound'] ?? 40;
+            } else {
+                $rebAttr = $player['attributes']['defense']['defensiveRebound'] ?? 50;
             }
-            $weights[$index] = $weight;
+            $mult = $posMult[$player['position']] ?? 1.0;
+            $weights[$index] = $rebAttr * $mult;
         }
 
         $total = array_sum($weights);
 
-        // Safety check: if total is 0 or negative, fallback to first rebounder
         if ($total <= 0) {
             $rebounder = reset($rebounders);
             if ($rebounder) {
@@ -1418,6 +1453,27 @@ class GameSimulationService
         } else {
             $defBoxScore = $boxScore;
         }
+
+        // Record offensive rebound in play-by-play
+        if ($isOffensiveRebound && $this->generateAnimationData) {
+            $rebName = isset($rebounder) ? ($rebounder['first_name'] ?? '') . ' ' . ($rebounder['last_name'] ?? '') : 'Unknown';
+            $team = $isHome ? 'home' : 'away';
+            $this->playByPlay[] = [
+                'possession' => $this->possessionCount,
+                'quarter' => $this->currentQuarter,
+                'time' => sprintf('%d:%02d', (int)$this->timeRemaining, (int)(($this->timeRemaining - (int)$this->timeRemaining) * 60)),
+                'team' => $team,
+                'play_name' => 'Offensive Rebound',
+                'play_id' => null,
+                'outcome' => 'offensive_rebound',
+                'points' => 0,
+                'description' => "{$rebName} grabs the offensive rebound",
+                'home_score' => $this->homeScore,
+                'away_score' => $this->awayScore,
+            ];
+        }
+
+        return $isOffensiveRebound;
     }
 
     /**
@@ -1755,12 +1811,14 @@ class GameSimulationService
                 $possessionTime = $this->timeRemaining;
             }
 
-            $this->simulatePossession($possessionTeam, $possessionTime);
+            $gotOreb = $this->simulatePossession($possessionTeam, $possessionTime);
             $this->timeRemaining -= $possessionTime;
             $minutesSinceLastRotation += $possessionTime;
 
-            // Switch possession
-            $possessionTeam = $possessionTeam === 'home' ? 'away' : 'home';
+            // Switch possession (unless offensive rebound — team keeps ball)
+            if (!$gotOreb) {
+                $possessionTeam = $possessionTeam === 'home' ? 'away' : 'home';
+            }
 
             // Rotate players every ~2 minutes of game time
             if ($minutesSinceLastRotation >= 2) {

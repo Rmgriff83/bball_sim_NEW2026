@@ -46,7 +46,7 @@ class AITradeProposalService
         $userTeam = $campaign->team;
         if (!$userTeam) return;
 
-        $userRoster = $userTeam->players()->get()->map(function ($p) {
+        $userRoster = $userTeam->players()->get()->map(function ($p) use ($campaign) {
             return [
                 'id' => $p->id,
                 'firstName' => $p->first_name,
@@ -54,7 +54,7 @@ class AITradeProposalService
                 'position' => $p->position,
                 'secondaryPosition' => $p->secondary_position,
                 'overallRating' => $p->overall_rating,
-                'age' => $p->birth_date ? (int) abs(now()->diffInYears($p->birth_date)) : 25,
+                'age' => $p->birth_date ? (int) abs($campaign->current_date->diffInYears($p->birth_date)) : 25,
                 'contractSalary' => (float) $p->contract_salary,
                 'contractYearsRemaining' => $p->contract_years_remaining ?? 1,
                 'tradeValue' => $p->trade_value,
@@ -237,9 +237,12 @@ class AITradeProposalService
             $age = $player['age'] ?? 25;
             $position = $player['position'] ?? '';
 
+            $secondaryPosition = $player['secondaryPosition'] ?? '';
+
             switch ($need['type']) {
                 case 'position':
-                    if ($position === ($need['position'] ?? '') && $rating >= ($need['minRating'] ?? 70)) {
+                    $neededPos = $need['position'] ?? '';
+                    if (($position === $neededPos || $secondaryPosition === $neededPos) && $rating >= ($need['minRating'] ?? 70)) {
                         $targets[] = $player;
                     }
                     break;
@@ -293,8 +296,8 @@ class AITradeProposalService
 
         // For rebuilders, offer veterans first
         if ($direction === 'rebuilding') {
-            $vets = array_filter($aiRoster, function ($p) {
-                $age = $p['age'] ?? (isset($p['birthDate']) ? (int) abs(now()->diffInYears($p['birthDate'])) : 25);
+            $vets = array_filter($aiRoster, function ($p) use ($campaign) {
+                $age = $p['age'] ?? (isset($p['birthDate']) ? (int) abs($campaign->current_date->diffInYears($p['birthDate'])) : 25);
                 return $age >= 28;
             });
             $candidates = !empty($vets) ? array_values($vets) : $aiRoster;
@@ -412,7 +415,7 @@ class AITradeProposalService
     public function getTradeDeadline(Campaign $campaign): Carbon
     {
         $seasonYear = $campaign->currentSeason?->year ?? 2025;
-        // Season 2025 starts Oct 2025, deadline is Feb 5, 2026
+        // Season 2025 starts Oct 2025, deadline is Jan 13, 2026
         return Carbon::create($seasonYear + 1, self::TRADE_DEADLINE_MONTH, self::TRADE_DEADLINE_DAY);
     }
 

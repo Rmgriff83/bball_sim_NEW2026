@@ -14,7 +14,8 @@ class TradeService
     public function __construct(
         private CampaignPlayerService $playerService,
         private DraftPickService $draftPickService,
-        private CampaignSeasonService $seasonService
+        private CampaignSeasonService $seasonService,
+        private AILineupService $lineupService
     ) {}
 
     /**
@@ -193,6 +194,12 @@ class TradeService
             // Recalculate team payrolls
             $teamIds = array_unique($tradeDetails['teams']);
             $this->recalculatePayrolls($campaign, $teamIds);
+
+            // If user's team was involved, rebuild the lineup to fix any stale player IDs
+            if (in_array($campaign->team_id, $teamIds)) {
+                $campaign->refresh();
+                $this->lineupService->initializeUserTeamLineup($campaign);
+            }
 
             return $trade;
         });

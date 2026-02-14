@@ -268,7 +268,7 @@ async function handleLogout() {
 
 .action-title {
   font-size: 1rem;
-  font-weight: 600;
+  font-weight: 400;
   color: var(--color-text-primary);
   margin-bottom: 0.25rem;
 }

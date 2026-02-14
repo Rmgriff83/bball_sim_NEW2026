@@ -306,6 +306,7 @@ class GameController extends Controller
                         app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
 
                         $evolutionService = app(PlayerEvolutionService::class);
+
                         $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
 
                         $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
@@ -483,6 +484,7 @@ class GameController extends Controller
                         app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
 
                         $evolutionService = app(PlayerEvolutionService::class);
+
                         $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
 
                         $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
@@ -833,6 +835,7 @@ class GameController extends Controller
                             app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
 
                             $evolutionService = app(PlayerEvolutionService::class);
+
                             $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
                         } catch (\Exception $e) {
                             Log::error("Post-batch processing failed for campaign {$campaignId}: " . $e->getMessage());
@@ -1380,6 +1383,7 @@ class GameController extends Controller
                         app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
 
                         $evolutionService = app(PlayerEvolutionService::class);
+
                         $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
 
                         $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
@@ -1422,9 +1426,12 @@ class GameController extends Controller
             app(AllStarService::class)->processAllStarSelections($campaign);
         }
 
+        $isUserHome = $game['homeTeamId'] === $campaign->team_id;
+
         $response = [
             'message' => 'Game complete',
             'isGameComplete' => true,
+            'is_user_home' => $isUserHome,
             'result' => array_merge($finalResult, [
                 'evolution' => $evolutionSummary,
             ]),
@@ -1973,6 +1980,7 @@ class GameController extends Controller
                         app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
 
                         $evolutionService = app(PlayerEvolutionService::class);
+
                         $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
 
                         if (!$excludeUserGame) {

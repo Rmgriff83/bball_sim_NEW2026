@@ -90,8 +90,9 @@ class TeamController extends Controller
             }
 
             // Fill empty starter slots with null placeholders
+            // (handles both intentionally empty slots and stale player IDs from trades)
             for ($i = 0; $i < 5; $i++) {
-                if (!isset($starters[$i]) && $starterIds[$i] === null) {
+                if (!isset($starters[$i])) {
                     $starters[$i] = null;
                 }
             }

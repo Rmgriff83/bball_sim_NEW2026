@@ -66,6 +66,7 @@ class PlayerEvolutionService
         $this->development->setDifficulty($campaign->difficulty ?? 'pro');
 
         $isPlayoff = $campaign->currentSeason?->phase === 'playoffs';
+        $gameDate = $gameData['gameDate'] ?? $campaign->current_date->format('Y-m-d');
 
         // Process home team
         $homeSummary = $this->processTeamPostGame(
@@ -73,7 +74,11 @@ class PlayerEvolutionService
             $gameData['homeTeamAbbreviation'],
             $boxScores['home'] ?? [],
             $homeScore > $awayScore,
-            $isPlayoff
+            $isPlayoff,
+            $gameDate,
+            $gameData['awayTeamAbbreviation'],
+            $homeScore,
+            $awayScore
         );
 
         // Process away team
@@ -82,7 +87,11 @@ class PlayerEvolutionService
             $gameData['awayTeamAbbreviation'],
             $boxScores['away'] ?? [],
             $awayScore > $homeScore,
-            $isPlayoff
+            $isPlayoff,
+            $gameDate,
+            $gameData['homeTeamAbbreviation'],
+            $awayScore,
+            $homeScore
         );
 
         return [
@@ -100,7 +109,11 @@ class PlayerEvolutionService
         string $teamAbbr,
         array $boxScores,
         bool $won,
-        bool $isPlayoff
+        bool $isPlayoff,
+        string $gameDate = null,
+        string $opponentAbbr = '',
+        int $teamScore = 0,
+        int $opponentScore = 0
     ): array {
         $roster = $this->playerService->getTeamRoster($campaign->id, $teamAbbr);
         $isUserTeam = $this->isUserTeam($campaign, $teamAbbr);
@@ -114,6 +127,7 @@ class PlayerEvolutionService
         // Evolution summary for response
         $evolutionSummary = [
             'injuries' => [],
+            'recoveries' => [],
             'development' => [],
             'regression' => [],
             'fatigue_warnings' => [],
@@ -140,6 +154,12 @@ class PlayerEvolutionService
                 // Check if just recovered
                 if ($existingInjury && !$this->injuries->isInjured($player)) {
                     $this->news->createRecoveryNews($campaign, $player, $existingInjury);
+
+                    $evolutionSummary['recoveries'][] = [
+                        'player_id' => $playerId,
+                        'name' => $playerName,
+                        'injury_type' => $existingInjury['name'] ?? $existingInjury['injury_type'] ?? 'Injury',
+                    ];
                 }
             }
 
@@ -212,7 +232,7 @@ class PlayerEvolutionService
             if (!$this->injuries->isInjured($player)) {
                 $microDev = $this->development->calculateMicroDevelopment($player, $stats);
                 if (!empty($microDev['attributeChanges'])) {
-                    $player = $this->applyAttributeChanges($player, $microDev['attributeChanges']);
+                    $player = $this->applyAttributeChanges($player, $microDev['attributeChanges'], $gameDate);
 
                     // Add to development or regression summary
                     if ($microDev['type'] === 'development') {
@@ -234,7 +254,14 @@ class PlayerEvolutionService
 
                 // Track performance for streaks
                 $oldStreakData = $player['streak_data'] ?? $player['streakData'] ?? null;
-                $player = $this->trackPerformance($player, $microDev['performanceRating']);
+                $player = $this->trackPerformance(
+                    $player,
+                    $microDev['performanceRating'],
+                    $stats,
+                    $gameDate ?? date('Y-m-d'),
+                    $opponentAbbr,
+                    $won
+                );
 
                 // Check for new streak
                 $newStreakData = $player['streak_data'] ?? $player['streakData'] ?? null;
@@ -357,8 +384,8 @@ class PlayerEvolutionService
         // Check for hot/cold streaks
         $player = $this->processStreaks($campaign, $player);
 
-        // Award upgrade points based on weekly growth
-        $weekAgo = now()->subDays(7)->format('Y-m-d');
+        // Award upgrade points based on weekly growth (use campaign date, not real-world date)
+        $weekAgo = $campaign->current_date->copy()->subDays(7)->format('Y-m-d');
         $earnedPoints = $this->calculateUpgradePointsFromGrowth($player, $weekAgo);
         if ($earnedPoints > 0) {
             $maxPoints = config('player_evolution.upgrade_points.max_stored_points', 99);
@@ -369,7 +396,7 @@ class PlayerEvolutionService
 
         // AI teams automatically spend upgrade points
         if ($isAI) {
-            $player = $this->processAIUpgrades($player);
+            $player = $this->processAIUpgrades($player, $campaign);
         }
 
         // Recalculate overall rating
@@ -382,7 +409,7 @@ class PlayerEvolutionService
      * Process AI auto-upgrades for a player.
      * AI spends all available upgrade points intelligently.
      */
-    private function processAIUpgrades(array $player): array
+    private function processAIUpgrades(array $player, Campaign $campaign = null): array
     {
         $points = $player['upgrade_points'] ?? $player['upgradePoints'] ?? 0;
         if ($points <= 0) {
@@ -391,6 +418,7 @@ class PlayerEvolutionService
 
         $potential = $player['potentialRating'] ?? $player['potential_rating'] ?? 99;
         $position = $player['position'] ?? 'SF';
+        $upgradeDate = $campaign?->current_date?->format('Y-m-d') ?? now()->format('Y-m-d');
 
         // Spend all available points
         while ($points > 0) {
@@ -410,7 +438,7 @@ class PlayerEvolutionService
             // Record in development history
             $history = $player['development_history'] ?? $player['developmentHistory'] ?? [];
             $history[] = [
-                'date' => now()->format('Y-m-d'),
+                'date' => $upgradeDate,
                 'category' => $category,
                 'attribute' => $attribute,
                 'change' => 1,
@@ -895,14 +923,14 @@ class PlayerEvolutionService
     /**
      * Apply attribute changes from micro-development and record to history.
      */
-    private function applyAttributeChanges(array $player, array $changes): array
+    private function applyAttributeChanges(array $player, array $changes, string $gameDate = null): array
     {
         // Initialize development_history if not exists
         if (!isset($player['development_history'])) {
             $player['development_history'] = [];
         }
 
-        $today = date('Y-m-d');
+        $today = $gameDate ?? date('Y-m-d');
 
         foreach ($changes as $path => $change) {
             $parts = explode('.', $path);
@@ -960,11 +988,42 @@ class PlayerEvolutionService
 
     /**
      * Track performance for streak detection.
+     * Stores full game log entry with box score stats.
      */
-    private function trackPerformance(array $player, float $rating): array
+    private function trackPerformance(array $player, float $rating, array $stats = [], string $date = '', string $opponent = '', bool $won = false): array
     {
         $performances = $player['recent_performances'] ?? $player['recentPerformances'] ?? [];
-        $performances[] = $rating;
+
+        // Dedup: skip if this game was already tracked (same date + opponent)
+        if ($date && $opponent) {
+            foreach ($performances as $existing) {
+                if (is_array($existing) && ($existing['date'] ?? '') === $date && ($existing['opponent'] ?? '') === $opponent) {
+                    return $player;
+                }
+            }
+        }
+
+        $entry = [
+            'rating' => round($rating, 1),
+            'date' => $date,
+            'opponent' => $opponent,
+            'won' => $won,
+            'min' => (int) ($stats['minutes'] ?? 0),
+            'pts' => (int) ($stats['points'] ?? 0),
+            'reb' => (int) (($stats['offensiveRebounds'] ?? $stats['offensive_rebounds'] ?? 0) + ($stats['defensiveRebounds'] ?? $stats['defensive_rebounds'] ?? 0)),
+            'ast' => (int) ($stats['assists'] ?? 0),
+            'stl' => (int) ($stats['steals'] ?? 0),
+            'blk' => (int) ($stats['blocks'] ?? 0),
+            'to' => (int) ($stats['turnovers'] ?? 0),
+            'fgm' => (int) ($stats['fieldGoalsMade'] ?? $stats['fgm'] ?? 0),
+            'fga' => (int) ($stats['fieldGoalsAttempted'] ?? $stats['fga'] ?? 0),
+            'tpm' => (int) ($stats['threePointersMade'] ?? $stats['tpm'] ?? $stats['fg3m'] ?? 0),
+            'tpa' => (int) ($stats['threePointersAttempted'] ?? $stats['tpa'] ?? $stats['fg3a'] ?? 0),
+            'ftm' => (int) ($stats['freeThrowsMade'] ?? $stats['ftm'] ?? 0),
+            'fta' => (int) ($stats['freeThrowsAttempted'] ?? $stats['fta'] ?? 0),
+        ];
+
+        $performances[] = $entry;
 
         // Keep last 10 performances
         if (count($performances) > 10) {
@@ -989,7 +1048,10 @@ class PlayerEvolutionService
             return $player;
         }
 
-        $recent = array_slice($performances, -$streakConfig['hot_streak_games']);
+        // Extract ratings from objects (with backwards compat for old float entries)
+        $ratings = array_map(fn($p) => is_array($p) ? ($p['rating'] ?? 0) : $p, $performances);
+
+        $recent = array_slice($ratings, -$streakConfig['hot_streak_games']);
 
         // Check for hot streak
         $allHot = array_reduce($recent, fn($carry, $p) => $carry && $p >= $streakConfig['hot_streak_threshold'], true);
@@ -1028,12 +1090,14 @@ class PlayerEvolutionService
 
     /**
      * Count consecutive games meeting streak threshold.
+     * Handles both old float entries and new object entries.
      */
     private function countStreak(array $performances, float $threshold, bool $above): int
     {
         $count = 0;
         for ($i = count($performances) - 1; $i >= 0; $i--) {
-            $meetsThreshold = $above ? $performances[$i] >= $threshold : $performances[$i] <= $threshold;
+            $val = is_array($performances[$i]) ? ($performances[$i]['rating'] ?? 0) : $performances[$i];
+            $meetsThreshold = $above ? $val >= $threshold : $val <= $threshold;
             if ($meetsThreshold) {
                 $count++;
             } else {

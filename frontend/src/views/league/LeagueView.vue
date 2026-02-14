@@ -117,6 +117,8 @@ const loadingTeamRoster = ref(false)
 const showPlayerModal = ref(false)
 const selectedPlayer = ref(null)
 const playerModalTab = ref('stats')
+const playerModalOrigin = ref('team') // 'team' or 'leaders'
+const loadingPlayerFromLeaders = ref(false)
 
 // Evolution history display state
 const showAllRecentEvolution = ref(false)
@@ -269,12 +271,56 @@ function openPlayerFromTeam(player) {
   selectedPlayer.value = player
   playerModalTab.value = 'stats'
   showAllBadges.value = false
+  playerModalOrigin.value = 'team'
   showPlayerModal.value = true
+}
+
+async function openPlayerFromLeaders(leaderPlayer) {
+  playerModalTab.value = 'stats'
+  showAllBadges.value = false
+  playerModalOrigin.value = 'leaders'
+  loadingPlayerFromLeaders.value = true
+  showPlayerModal.value = true
+
+  try {
+    const data = await teamStore.fetchTeamRoster(campaignId.value, leaderPlayer.teamId)
+    const roster = data.roster || []
+    const fullPlayer = roster.find(p => String(p.id) === String(leaderPlayer.playerId))
+    if (fullPlayer) {
+      selectedPlayer.value = fullPlayer
+    } else {
+      // Fallback: show basic info from leader data
+      selectedPlayer.value = {
+        id: leaderPlayer.playerId,
+        name: leaderPlayer.name,
+        position: '',
+        overall_rating: 0,
+        season_stats: {
+          games_played: leaderPlayer.gamesPlayed,
+          ppg: leaderPlayer.ppg,
+          rpg: leaderPlayer.rpg,
+          apg: leaderPlayer.apg,
+          spg: leaderPlayer.spg,
+          bpg: leaderPlayer.bpg,
+          fg_pct: leaderPlayer.fgPct,
+          three_pct: leaderPlayer.threePct,
+          ft_pct: leaderPlayer.ftPct,
+          mpg: leaderPlayer.mpg,
+        },
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load player details:', err)
+    showPlayerModal.value = false
+  } finally {
+    loadingPlayerFromLeaders.value = false
+  }
 }
 
 function backToTeamModal() {
   showPlayerModal.value = false
   selectedPlayer.value = null
+  playerModalOrigin.value = 'team'
 }
 
 function closeAllModals() {
@@ -282,6 +328,7 @@ function closeAllModals() {
   showTeamModal.value = false
   selectedPlayer.value = null
   selectedTeam.value = null
+  playerModalOrigin.value = 'team'
 }
 
 // Keyboard handler for modals
@@ -328,6 +375,12 @@ function getAttrColor(value) {
   if (value >= 70) return 'var(--color-primary)'
   if (value >= 60) return 'var(--color-warning)'
   return 'var(--color-error)'
+}
+
+function formatGameDate(dateStr) {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr + 'T00:00:00')
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 function formatBadgeName(badgeId) {
@@ -395,6 +448,13 @@ const recentEvolution = computed(() => {
 // All-time evolution
 const allTimeEvolution = computed(() => {
   return aggregateEvolution(evolutionHistory.value)
+})
+
+// Recent performances for player modal (reversed so most recent first)
+const playerRecentPerformances = computed(() => {
+  if (!selectedPlayer.value) return []
+  const perfs = selectedPlayer.value.recent_performances || selectedPlayer.value.recentPerformances || []
+  return [...perfs].reverse()
 })
 
 // Format category name for display
@@ -552,8 +612,8 @@ function formatSalary(salary) {
                   <td class="stat-col losses">{{ standing.losses }}</td>
                   <td class="stat-col">{{ getWinPercentage(standing.wins, standing.losses) }}</td>
                   <td class="stat-col gb">{{ getGamesBehind(standing, activeStandings) }}</td>
-                  <td class="stat-col">{{ standing.homeWins || 0 }}-{{ standing.homeLosses || 0 }}</td>
-                  <td class="stat-col">{{ standing.awayWins || 0 }}-{{ standing.awayLosses || 0 }}</td>
+                  <td class="stat-col">{{ standing.homeRecord || '0-0' }}</td>
+                  <td class="stat-col">{{ standing.awayRecord || '0-0' }}</td>
                   <td class="stat-col" :class="getStreakClass(standing.streak)">
                     {{ standing.streak || '-' }}
                   </td>
@@ -565,8 +625,8 @@ function formatSalary(salary) {
         </GlassCard>
 
         <!-- Playoff Picture -->
-        <div class="grid md:grid-cols-2 gap-6 mt-6">
-          <GlassCard padding="lg" :hoverable="false">
+        <div class="grid gap-6 mt-6" :class="activeConference ? '' : 'md:grid-cols-2'">
+          <GlassCard v-if="activeConference !== 'west'" padding="lg" :hoverable="false">
             <h3 class="h4 mb-4">Eastern Conference Playoff Picture</h3>
             <div class="playoff-bracket">
               <div
@@ -582,7 +642,7 @@ function formatSalary(salary) {
             </div>
           </GlassCard>
 
-          <GlassCard padding="lg" :hoverable="false">
+          <GlassCard v-if="activeConference !== 'east'" padding="lg" :hoverable="false">
             <h3 class="h4 mb-4">Western Conference Playoff Picture</h3>
             <div class="playoff-bracket">
               <div
@@ -697,8 +757,9 @@ function formatSalary(salary) {
                 <tr
                   v-for="(player, index) in sortedLeaders"
                   :key="player.playerId"
-                  class="leader-row-table"
+                  class="leader-row-table clickable"
                   :class="{ 'user-team': isUserTeam(player.teamId) }"
+                  @click="openPlayerFromLeaders(player)"
                 >
                   <td class="rank-col">{{ index + 1 }}</td>
                   <td class="player-col">
@@ -773,12 +834,12 @@ function formatSalary(salary) {
               <!-- Quick Stats -->
               <div class="team-quick-stats">
                 <div class="quick-stat-item">
-                  <span class="quick-stat-value">{{ selectedTeam.homeWins || 0 }}-{{ selectedTeam.homeLosses || 0 }}</span>
+                  <span class="quick-stat-value">{{ selectedTeam.homeRecord || '0-0' }}</span>
                   <span class="quick-stat-label">Home</span>
                 </div>
                 <div class="quick-stat-divider"></div>
                 <div class="quick-stat-item">
-                  <span class="quick-stat-value">{{ selectedTeam.awayWins || 0 }}-{{ selectedTeam.awayLosses || 0 }}</span>
+                  <span class="quick-stat-value">{{ selectedTeam.awayRecord || '0-0' }}</span>
                   <span class="quick-stat-label">Away</span>
                 </div>
                 <div class="quick-stat-divider"></div>
@@ -859,15 +920,20 @@ function formatSalary(salary) {
             <header class="player-modal-header-bar">
               <button class="modal-back-btn" @click="backToTeamModal">
                 <ChevronLeft :size="20" />
-                <span>{{ selectedTeam?.team?.name }}</span>
+                <span>{{ playerModalOrigin === 'leaders' ? 'League Leaders' : selectedTeam?.team?.name }}</span>
               </button>
               <button class="modal-btn-close" @click="closeAllModals" aria-label="Close">
                 <X :size="20" />
               </button>
             </header>
 
+            <!-- Loading state for leaders -->
+            <main v-if="loadingPlayerFromLeaders" class="player-modal-body" style="display: flex; align-items: center; justify-content: center; min-height: 200px;">
+              <LoadingSpinner size="md" />
+            </main>
+
             <!-- Content -->
-            <main v-if="selectedPlayer" class="player-modal-body">
+            <main v-else-if="selectedPlayer" class="player-modal-body">
               <!-- Player Card - Cosmic Style -->
               <div class="player-card-cosmic" :class="{ injured: selectedPlayer.is_injured || selectedPlayer.isInjured }">
                 <div class="player-card-rating">
@@ -984,6 +1050,41 @@ function formatSalary(salary) {
                         </div>
                       </div>
                     </div>
+                    <!-- Recent Games (Game Log) -->
+                    <div v-if="playerRecentPerformances?.length > 0" class="recent-performances-section">
+                      <h4 class="recent-performances-title">Recent Games</h4>
+                      <div class="game-log-table-wrap">
+                        <table class="game-log-table">
+                          <thead>
+                            <tr>
+                              <th>Date</th><th>OPP</th><th>Result</th>
+                              <th>MIN</th><th>PTS</th><th>REB</th><th>AST</th>
+                              <th>STL</th><th>BLK</th><th>TO</th>
+                              <th>FG</th><th>3P</th><th>FT</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="(game, i) in playerRecentPerformances" :key="i">
+                              <td class="game-log-date">{{ typeof game === 'object' ? formatGameDate(game.date) : '—' }}</td>
+                              <td class="game-log-opp">{{ typeof game === 'object' ? game.opponent : '—' }}</td>
+                              <td :class="typeof game === 'object' && game.won ? 'game-log-win' : 'game-log-loss'">
+                                {{ typeof game === 'object' ? (game.won ? 'W' : 'L') : '—' }}
+                              </td>
+                              <td>{{ typeof game === 'object' ? game.min : '—' }}</td>
+                              <td class="game-log-pts">{{ typeof game === 'object' ? game.pts : Math.round(game) }}</td>
+                              <td>{{ typeof game === 'object' ? game.reb : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? game.ast : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? game.stl : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? game.blk : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? game.to : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? `${game.fgm}-${game.fga}` : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? `${game.tpm}-${game.tpa}` : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? `${game.ftm}-${game.fta}` : '—' }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </template>
                   <div v-else class="player-empty-state">
                     <p>No stats available yet</p>
@@ -1000,9 +1101,9 @@ function formatSalary(salary) {
                       <div v-for="(value, key) in selectedPlayer.attributes.offense" :key="key" class="player-attr-row">
                         <span class="player-attr-name">{{ formatAttrName(key) }}</span>
                         <div class="player-attr-bar-wrap">
-                          <div class="player-attr-bar" :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"></div>
+                          <div class="player-attr-bar" :style="{ width: `${Math.round(value)}%`, backgroundColor: getAttrColor(value) }"></div>
                         </div>
-                        <span class="player-attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
+                        <span class="player-attr-value" :style="{ color: getAttrColor(value) }">{{ Math.round(value) }}</span>
                       </div>
                     </div>
                   </div>
@@ -1014,9 +1115,9 @@ function formatSalary(salary) {
                       <div v-for="(value, key) in selectedPlayer.attributes.defense" :key="key" class="player-attr-row">
                         <span class="player-attr-name">{{ formatAttrName(key) }}</span>
                         <div class="player-attr-bar-wrap">
-                          <div class="player-attr-bar" :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"></div>
+                          <div class="player-attr-bar" :style="{ width: `${Math.round(value)}%`, backgroundColor: getAttrColor(value) }"></div>
                         </div>
-                        <span class="player-attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
+                        <span class="player-attr-value" :style="{ color: getAttrColor(value) }">{{ Math.round(value) }}</span>
                       </div>
                     </div>
                   </div>
@@ -1028,9 +1129,9 @@ function formatSalary(salary) {
                       <div v-for="(value, key) in selectedPlayer.attributes.physical" :key="key" class="player-attr-row">
                         <span class="player-attr-name">{{ formatAttrName(key) }}</span>
                         <div class="player-attr-bar-wrap">
-                          <div class="player-attr-bar" :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"></div>
+                          <div class="player-attr-bar" :style="{ width: `${Math.round(value)}%`, backgroundColor: getAttrColor(value) }"></div>
                         </div>
-                        <span class="player-attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
+                        <span class="player-attr-value" :style="{ color: getAttrColor(value) }">{{ Math.round(value) }}</span>
                       </div>
                     </div>
                   </div>
@@ -1042,9 +1143,9 @@ function formatSalary(salary) {
                       <div v-for="(value, key) in selectedPlayer.attributes.mental" :key="key" class="player-attr-row">
                         <span class="player-attr-name">{{ formatAttrName(key) }}</span>
                         <div class="player-attr-bar-wrap">
-                          <div class="player-attr-bar" :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"></div>
+                          <div class="player-attr-bar" :style="{ width: `${Math.round(value)}%`, backgroundColor: getAttrColor(value) }"></div>
                         </div>
-                        <span class="player-attr-value" :style="{ color: getAttrColor(value) }">{{ value }}</span>
+                        <span class="player-attr-value" :style="{ color: getAttrColor(value) }">{{ Math.round(value) }}</span>
                       </div>
                     </div>
                   </div>
@@ -1712,6 +1813,10 @@ function formatSalary(salary) {
 .leader-row-table {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   transition: background 0.15s ease;
+}
+
+.leader-row-table.clickable {
+  cursor: pointer;
 }
 
 .leader-row-table:nth-child(even) {
@@ -3579,4 +3684,84 @@ function formatSalary(salary) {
   background: var(--gradient-cosmic);
   color: #1a1520;
 }
+
+/* Recent Games (Game Log Table) */
+.recent-performances-section {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.recent-performances-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
+}
+
+.game-log-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.game-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  min-width: 520px;
+}
+
+.game-log-table th {
+  padding: 4px 6px;
+  text-align: center;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.6rem;
+}
+
+.game-log-table td {
+  padding: 5px 6px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.game-log-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.game-log-date {
+  text-align: left !important;
+  color: var(--color-text-tertiary) !important;
+}
+
+.game-log-opp {
+  font-weight: 600;
+  color: var(--color-text-primary) !important;
+}
+
+.game-log-pts {
+  font-weight: 700;
+  color: var(--color-text-primary) !important;
+}
+
+.game-log-win {
+  color: var(--color-success) !important;
+  font-weight: 700;
+}
+
+.game-log-loss {
+  color: var(--color-error) !important;
+  font-weight: 700;
+}
+
 </style>

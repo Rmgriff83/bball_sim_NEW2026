@@ -209,23 +209,19 @@ function handleConfirm() {
         <AlertTriangle :size="18" />
         <span>Your roster is full. Release a player to make room.</span>
       </div>
-
-      <!-- Actions -->
-      <div class="modal-actions">
-        <BaseButton variant="ghost" @click="handleClose">
-          <X :size="18" />
-          Cancel
-        </BaseButton>
-        <BaseButton
-          variant="primary"
-          @click="handleConfirm"
-          :disabled="!canSign"
-        >
-          <Check :size="18" />
-          Sign Player
-        </BaseButton>
-      </div>
     </div>
+
+    <template #footer>
+      <div class="modal-footer-buttons">
+        <button class="btn-cancel" :disabled="loading" @click="handleClose">
+          Cancel
+        </button>
+        <button class="btn-confirm" :disabled="loading || !canSign" @click="handleConfirm">
+          <Check :size="16" />
+          Sign Player
+        </button>
+      </div>
+    </template>
   </BaseModal>
 </template>
 
@@ -477,13 +473,54 @@ function handleConfirm() {
   font-weight: 500;
 }
 
-/* Modal Actions */
-.modal-actions {
+/* Footer Buttons */
+.modal-footer-buttons {
   display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding-top: 1rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin-top: 0.5rem;
+  gap: 12px;
+}
+
+.btn-cancel,
+.btn-confirm {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-cancel {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.btn-cancel:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+.btn-confirm {
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.btn-confirm:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.btn-cancel:disabled,
+.btn-confirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

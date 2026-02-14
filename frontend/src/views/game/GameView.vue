@@ -95,6 +95,8 @@ const showSimulateModal = ref(false)
 // Injury notification modal state
 const showInjuryModal = ref(false)
 const injuredPlayers = ref([])
+const showRecoveryModal = ref(false)
+const recoveredPlayers = ref([])
 
 // Coaching style selections for quarter breaks
 const selectedOffense = ref('balanced')
@@ -960,6 +962,11 @@ function goToLineup() {
   router.push(`/campaign/${campaignId.value}/team`)
 }
 
+function goToLineupFromRecovery() {
+  showRecoveryModal.value = false
+  router.push(`/campaign/${campaignId.value}/team`)
+}
+
 /**
  * Handle confirm from simulate modal - simulate games then start user's game.
  * From the game preview page, we exclude the user's game so they can play it live.
@@ -1096,12 +1103,21 @@ async function continueToNextQuarter() {
         await leagueStore.fetchStandings(campaignId.value, { force: true })
       }
 
-      // Check for user team injuries
+      // Check for user team injuries and recoveries
       const teamKey = userIsHome.value ? 'home' : 'away'
       const evoData = game.value?.evolution?.[teamKey]
       if (evoData?.injuries?.length > 0) {
         injuredPlayers.value = evoData.injuries
         showInjuryModal.value = true
+      }
+      if (evoData?.recoveries?.length > 0) {
+        recoveredPlayers.value = evoData.recoveries
+        // Delay if injury modal is also showing so they don't overlap
+        if (showInjuryModal.value) {
+          setTimeout(() => { showRecoveryModal.value = true }, 500)
+        } else {
+          showRecoveryModal.value = true
+        }
       }
 
       showUpgradePointToasts()
@@ -2501,9 +2517,9 @@ onUnmounted(() => {
             </template>
 
             <!-- Loading indicator while waiting for animation data -->
-            <div v-else-if="!hasAnimationData" class="flex items-center justify-center py-8">
-              <LoadingSpinner size="md" />
-              <span class="ml-4 text-secondary">Preparing game simulation...</span>
+            <div v-else-if="!hasAnimationData" class="game-loading-placeholder">
+              <LoadingSpinner size="lg" />
+              <span class="text-secondary">Preparing game simulation...</span>
             </div>
           </GlassCard>
         </template>
@@ -3554,12 +3570,82 @@ onUnmounted(() => {
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Recovery Notification Modal -->
+    <Teleport to="body">
+      <Transition name="inj-modal">
+        <div
+          v-if="showRecoveryModal"
+          class="inj-overlay"
+          @click.self="showRecoveryModal = false"
+        >
+          <div class="inj-container">
+            <header class="inj-header">
+              <div class="inj-header-left">
+                <div class="rec-header-icon">
+                  <Heart :size="18" />
+                </div>
+                <h2 class="inj-title">Recovery Report</h2>
+              </div>
+              <button class="inj-close" @click="showRecoveryModal = false" aria-label="Close">
+                <X :size="20" />
+              </button>
+            </header>
+
+            <main class="inj-content">
+              <div class="inj-list">
+                <div
+                  v-for="recovery in recoveredPlayers"
+                  :key="recovery.player_id"
+                  class="inj-card"
+                  :style="{ '--severity-color': '#22c55e' }"
+                >
+                  <div class="inj-severity-bar"></div>
+                  <div class="inj-card-body">
+                    <div class="inj-player-row">
+                      <span class="inj-player-name">{{ recovery.name }}</span>
+                      <span class="inj-severity-tag">Cleared</span>
+                    </div>
+                    <div class="inj-detail-row">
+                      <span class="inj-type">{{ recovery.injury_type }}</span>
+                      <span class="rec-status">Ready to play</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <p class="inj-hint">These players are healthy and available for your lineup.</p>
+            </main>
+
+            <footer class="inj-footer">
+              <button class="inj-btn-dismiss" @click="showRecoveryModal = false">
+                Dismiss
+              </button>
+              <button class="inj-btn-lineup" @click="goToLineupFromRecovery">
+                <Users :size="16" />
+                Update Lineup
+              </button>
+            </footer>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .game-view {
   padding-bottom: 100px;
+}
+
+.game-loading-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 400px;
+  font-size: 0.85rem;
 }
 
 @media (min-width: 1024px) {
@@ -7013,5 +7099,23 @@ onUnmounted(() => {
 @keyframes injScaleOut {
   from { opacity: 1; transform: scale(1); }
   to { opacity: 0; transform: scale(0.95); }
+}
+
+.rec-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.rec-status {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #22c55e;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
 </style>

@@ -131,7 +131,9 @@ const normalizedPlayer = computed(() => {
     // Fatigue
     fatigue: p.fatigue ?? 0,
     // Upgrade points
-    upgrade_points: p.upgrade_points ?? p.upgradePoints ?? 0
+    upgrade_points: p.upgrade_points ?? p.upgradePoints ?? 0,
+    // Recent performances
+    recentPerformances: p.recent_performances || p.recentPerformances || []
   }
 })
 
@@ -216,6 +218,18 @@ function getAttrColor(value) {
   if (value >= 70) return 'var(--color-primary)'
   if (value >= 60) return 'var(--color-warning)'
   return 'var(--color-error)'
+}
+
+// Game log helpers
+const reversedPerformances = computed(() => {
+  const perfs = normalizedPlayer.value?.recentPerformances || []
+  return [...perfs].reverse()
+})
+
+function formatGameDate(dateStr) {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr + 'T00:00:00')
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 function formatBadgeName(badge) {
@@ -504,6 +518,41 @@ function formatChange(change) {
                     <div class="stat-cell">
                       <span class="stat-label">GP</span>
                       <span class="stat-value">{{ getStat('games_played') || getStat('gamesPlayed') || 0 }}</span>
+                    </div>
+                  </div>
+                  <!-- Recent Games (Game Log) -->
+                  <div v-if="reversedPerformances.length > 0" class="recent-performances-section">
+                    <h4 class="recent-performances-title">Recent Games</h4>
+                    <div class="game-log-table-wrap">
+                      <table class="game-log-table">
+                        <thead>
+                          <tr>
+                            <th>Date</th><th>OPP</th><th>Result</th>
+                            <th>MIN</th><th>PTS</th><th>REB</th><th>AST</th>
+                            <th>STL</th><th>BLK</th><th>TO</th>
+                            <th>FG</th><th>3P</th><th>FT</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(game, i) in reversedPerformances" :key="i">
+                            <td class="game-log-date">{{ typeof game === 'object' ? formatGameDate(game.date) : '—' }}</td>
+                            <td class="game-log-opp">{{ typeof game === 'object' ? game.opponent : '—' }}</td>
+                            <td :class="typeof game === 'object' && game.won ? 'game-log-win' : 'game-log-loss'">
+                              {{ typeof game === 'object' ? (game.won ? 'W' : 'L') : '—' }}
+                            </td>
+                            <td>{{ typeof game === 'object' ? game.min : '—' }}</td>
+                            <td class="game-log-pts">{{ typeof game === 'object' ? game.pts : Math.round(game) }}</td>
+                            <td>{{ typeof game === 'object' ? game.reb : '—' }}</td>
+                            <td>{{ typeof game === 'object' ? game.ast : '—' }}</td>
+                            <td>{{ typeof game === 'object' ? game.stl : '—' }}</td>
+                            <td>{{ typeof game === 'object' ? game.blk : '—' }}</td>
+                            <td>{{ typeof game === 'object' ? game.to : '—' }}</td>
+                            <td>{{ typeof game === 'object' ? `${game.fgm}-${game.fga}` : '—' }}</td>
+                            <td>{{ typeof game === 'object' ? `${game.tpm}-${game.tpa}` : '—' }}</td>
+                            <td>{{ typeof game === 'object' ? `${game.ftm}-${game.fta}` : '—' }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </template>
@@ -2082,5 +2131,84 @@ function formatChange(change) {
   .points-value {
     font-size: 1.25rem;
   }
+}
+
+/* Recent Games (Game Log Table) */
+.recent-performances-section {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.recent-performances-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
+}
+
+.game-log-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.game-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  min-width: 520px;
+}
+
+.game-log-table th {
+  padding: 4px 6px;
+  text-align: center;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.6rem;
+}
+
+.game-log-table td {
+  padding: 5px 6px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.game-log-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.game-log-date {
+  text-align: left !important;
+  color: var(--color-text-tertiary) !important;
+}
+
+.game-log-opp {
+  font-weight: 600;
+  color: var(--color-text-primary) !important;
+}
+
+.game-log-pts {
+  font-weight: 700;
+  color: var(--color-text-primary) !important;
+}
+
+.game-log-win {
+  color: var(--color-success) !important;
+  font-weight: 700;
+}
+
+.game-log-loss {
+  color: var(--color-error) !important;
+  font-weight: 700;
 }
 </style>
