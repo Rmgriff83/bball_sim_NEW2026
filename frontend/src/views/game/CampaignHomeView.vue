@@ -17,7 +17,7 @@ import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import PlayoffBracket from '@/components/playoffs/PlayoffBracket.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle } from 'lucide-vue-next'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, X } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -825,7 +825,7 @@ function handleCloseSimulateModal() {
               {{ isGameInProgress ? 'GAME IN PROGRESS' : 'NEXT GAME' }}
             </h3>
             <span v-if="isGameInProgress && inProgressScores" class="live-quarter">Q{{ inProgressScores.quarter }}</span>
-            <span v-else class="next-game-date">{{ formatGameDate(nextGame.game_date) }}</span>
+            <span v-else class="next-game-date">{{ nextGame?.game_date ? formatGameDate(nextGame.game_date) : '' }}</span>
           </div>
           <span class="next-game-location">{{ nextGameOpponent?.isHome ? 'HOME' : 'AWAY' }}</span>
         </div>
@@ -1141,29 +1141,67 @@ function handleCloseSimulateModal() {
     />
 
     <!-- Injury Notification Modal -->
-    <BaseModal
-      :show="showInjuryModal"
-      title="Injury Report"
-      size="sm"
-      @close="showInjuryModal = false"
-    >
-      <div class="injury-modal-content">
-        <div v-for="injury in injuredPlayers" :key="injury.player_id" class="injury-modal-item">
-          <AlertTriangle :size="18" :style="{ color: getInjurySeverityColor(injury.severity) }" />
-          <div class="injury-modal-details">
-            <span class="injury-modal-name">{{ injury.name }}</span>
-            <span class="injury-modal-type">{{ injury.injury_type }}</span>
-            <span class="injury-modal-duration">Out {{ injury.games_out }} games</span>
+    <Teleport to="body">
+      <Transition name="inj-modal">
+        <div
+          v-if="showInjuryModal"
+          class="inj-overlay"
+          @click.self="showInjuryModal = false"
+        >
+          <div class="inj-container">
+            <!-- Header -->
+            <header class="inj-header">
+              <div class="inj-header-left">
+                <div class="inj-header-icon">
+                  <AlertTriangle :size="18" />
+                </div>
+                <h2 class="inj-title">Injury Report</h2>
+              </div>
+              <button class="inj-close" @click="showInjuryModal = false" aria-label="Close">
+                <X :size="20" />
+              </button>
+            </header>
+
+            <!-- Content -->
+            <main class="inj-content">
+              <div class="inj-list">
+                <div
+                  v-for="injury in injuredPlayers"
+                  :key="injury.player_id"
+                  class="inj-card"
+                  :style="{ '--severity-color': getInjurySeverityColor(injury.severity) }"
+                >
+                  <div class="inj-severity-bar"></div>
+                  <div class="inj-card-body">
+                    <div class="inj-player-row">
+                      <span class="inj-player-name">{{ injury.name }}</span>
+                      <span class="inj-severity-tag">{{ injury.severity }}</span>
+                    </div>
+                    <div class="inj-detail-row">
+                      <span class="inj-type">{{ injury.injury_type }}</span>
+                      <span class="inj-duration">{{ injury.games_out }} {{ injury.games_out === 1 ? 'game' : 'games' }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <p class="inj-hint">Injured starters will be automatically benched. Update your lineup to set replacements.</p>
+            </main>
+
+            <!-- Footer -->
+            <footer class="inj-footer">
+              <button class="inj-btn-dismiss" @click="showInjuryModal = false">
+                Dismiss
+              </button>
+              <button class="inj-btn-lineup" @click="goToLineup">
+                <Users :size="16" />
+                Update Lineup
+              </button>
+            </footer>
           </div>
         </div>
-      </div>
-      <template #footer>
-        <div class="injury-modal-actions">
-          <button class="btn-ghost" @click="showInjuryModal = false">Dismiss</button>
-          <button class="btn-primary" @click="goToLineup">Update Lineup</button>
-        </div>
-      </template>
-    </BaseModal>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -2238,48 +2276,245 @@ function handleCloseSimulateModal() {
 }
 
 /* Injury Modal */
-.injury-modal-content {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.injury-modal-item {
+.inj-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 0.5rem;
-  border-left: 3px solid var(--color-warning);
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
 }
 
-.injury-modal-details {
+.inj-container {
+  width: 100%;
+  max-width: 420px;
+  max-height: 90vh;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
 }
 
-.injury-modal-name {
+.inj-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.inj-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.inj-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.inj-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.inj-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.inj-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.inj-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.inj-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.inj-card {
+  display: flex;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.inj-severity-bar {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--severity-color, #fbbf24);
+}
+
+.inj-card-body {
+  flex: 1;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inj-player-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inj-player-name {
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
-.injury-modal-type {
-  font-size: 0.85rem;
+.inj-severity-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--severity-color, #fbbf24) 15%, transparent);
+  color: var(--severity-color, #fbbf24);
+}
+
+.inj-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inj-type {
+  font-size: 0.8rem;
   color: var(--color-text-secondary);
   text-transform: capitalize;
 }
 
-.injury-modal-duration {
+.inj-duration {
   font-size: 0.8rem;
-  color: var(--color-error);
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--severity-color, #fbbf24);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
 
-.injury-modal-actions {
+.inj-hint {
+  font-size: 0.8rem;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  margin: 16px 0 0;
+  line-height: 1.4;
+}
+
+.inj-footer {
   display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.inj-btn-dismiss,
+.inj-btn-lineup {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.inj-btn-dismiss {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.inj-btn-dismiss:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+.inj-btn-lineup {
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.inj-btn-lineup:hover {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+/* Injury modal transition */
+.inj-modal-enter-active {
+  transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.inj-modal-leave-active {
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.inj-modal-enter-from,
+.inj-modal-leave-to {
+  opacity: 0;
+}
+
+.inj-modal-enter-active .inj-container {
+  animation: injScaleIn 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.inj-modal-leave-active .inj-container {
+  animation: injScaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes injScaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes injScaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.95); }
 }
 </style>

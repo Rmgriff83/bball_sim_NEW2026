@@ -29,6 +29,7 @@ export const useGameStore = defineStore('game', () => {
   const backgroundSimulating = ref(false)
   const simulationBatchId = ref(null)
   const simulationProgress = ref(null)
+  const completedAiGameResults = ref([])
   let simulationPollTimer = null
   let simulationProgressToastId = null
 
@@ -508,14 +509,21 @@ export const useGameStore = defineStore('game', () => {
     backgroundSimulating.value = true
     simulationBatchId.value = batchId
     simulationProgress.value = null
+    completedAiGameResults.value = []
 
     const toastStore = useToastStore()
     simulationProgressToastId = toastStore.showProgress('League games', 0, 0)
 
     simulationPollTimer = setInterval(async () => {
       try {
-        const response = await api.get(`/api/campaigns/${campaignId}/simulation-status/${batchId}`)
+        const seen = completedAiGameResults.value.length
+        const response = await api.get(`/api/campaigns/${campaignId}/simulation-status/${batchId}?seen=${seen}`)
         simulationProgress.value = response.data.progress
+
+        // Append new game results
+        if (response.data.gameResults && response.data.gameResults.length > 0) {
+          completedAiGameResults.value.push(...response.data.gameResults)
+        }
 
         if (response.data.progress && simulationProgressToastId !== null) {
           toastStore.updateProgress(
@@ -592,6 +600,7 @@ export const useGameStore = defineStore('game', () => {
     backgroundSimulating,
     simulationBatchId,
     simulationProgress,
+    completedAiGameResults,
     // Getters
     upcomingGames,
     completedGames,

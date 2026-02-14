@@ -6,6 +6,7 @@ use App\Jobs\SimulateGameJob;
 use App\Models\Campaign;
 use App\Models\Coach;
 use App\Models\Player;
+use App\Models\SimulationResult;
 use App\Models\Team;
 use App\Services\CampaignSeasonService;
 use App\Services\GameSimulationService;
@@ -285,21 +286,25 @@ class GameController extends Controller
         if (!empty($preGameJobs)) {
             $campaignId = $campaign->id;
             $perDayTeams = $teamsPerDay;
-            $newDate = $gameDate->copy()->addDay();
+            // Set to game date (not +1) — user hasn't played their game yet
+            $newDate = $gameDate->copy();
 
             $batch = Bus::batch($preGameJobs)
                 ->name("Pre-game sync: Campaign {$campaignId}")
-                ->then(function () use ($campaignId, $perDayTeams, $newDate, $year) {
+                ->then(function ($batch) use ($campaignId, $perDayTeams, $newDate, $year) {
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
-                    // Update date first so it's never stuck if later processing fails
+                    // Update date + clear batch FIRST so campaign is never stuck
                     $campaign->update([
                         'current_date' => $newDate,
                         'simulation_batch_id' => null,
                     ]);
 
                     try {
+                        // Bulk merge all simulation results into season JSON
+                        app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
+
                         $evolutionService = app(PlayerEvolutionService::class);
                         $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
 
@@ -464,16 +469,19 @@ class GameController extends Controller
 
             $batch = Bus::batch($aiJobs)
                 ->name("Simulate day: Campaign {$campaignId}")
-                ->then(function () use ($campaignId, $uniqueTeams, $newDate, $year) {
+                ->then(function ($batch) use ($campaignId, $uniqueTeams, $newDate, $year) {
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
+                    // Update date + clear batch FIRST so campaign is never stuck
                     $campaign->update([
                         'current_date' => $newDate,
                         'simulation_batch_id' => null,
                     ]);
 
                     try {
+                        app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
+
                         $evolutionService = app(PlayerEvolutionService::class);
                         $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
 
@@ -701,6 +709,38 @@ class GameController extends Controller
             $status = $batch->failedJobs > 0 ? 'completed_with_errors' : 'completed';
         }
 
+        // Progressive game results — frontend sends ?seen=N to skip already-received rows
+        $seen = (int) $request->input('seen', 0);
+        $gameResults = SimulationResult::where('batch_id', $batchId)
+            ->orderBy('id')
+            ->skip($seen)
+            ->take(50)
+            ->get()
+            ->map(fn ($r) => [
+                'game_id' => $r->game_id,
+                'home_team_id' => $r->home_team_id,
+                'away_team_id' => $r->away_team_id,
+                'home_score' => $r->home_score,
+                'away_score' => $r->away_score,
+                'game_date' => $r->game_date,
+            ]);
+
+        // Get team abbreviations for display
+        $teamIds = $gameResults->pluck('home_team_id')
+            ->merge($gameResults->pluck('away_team_id'))
+            ->unique()
+            ->values();
+        $teamAbbreviations = Team::whereIn('id', $teamIds)
+            ->pluck('abbreviation', 'id');
+
+        $gameResults = $gameResults->map(function ($r) use ($teamAbbreviations) {
+            $r['home_abbreviation'] = $teamAbbreviations[$r['home_team_id']] ?? '???';
+            $r['away_abbreviation'] = $teamAbbreviations[$r['away_team_id']] ?? '???';
+            return $r;
+        });
+
+        $totalResults = SimulationResult::where('batch_id', $batchId)->count();
+
         return response()->json([
             'status' => $status,
             'progress' => [
@@ -709,6 +749,8 @@ class GameController extends Controller
                 'failed' => $batch->failedJobs,
                 'pending' => $batch->pendingJobs,
             ],
+            'gameResults' => $gameResults,
+            'totalResults' => $totalResults,
         ]);
     }
 
@@ -780,13 +822,16 @@ class GameController extends Controller
 
                 $batch = Bus::batch($preGameJobs)
                     ->name("Pre-game sync: Campaign {$campaignId}")
-                    ->then(function () use ($campaignId, $uniqueTeams) {
+                    ->then(function ($batch) use ($campaignId, $uniqueTeams, $year) {
                         $campaign = Campaign::find($campaignId);
                         if (!$campaign) return;
 
+                        // Clear batch FIRST so campaign is never stuck
                         $campaign->update(['simulation_batch_id' => null]);
 
                         try {
+                            app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
+
                             $evolutionService = app(PlayerEvolutionService::class);
                             $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
                         } catch (\Exception $e) {
@@ -1070,16 +1115,19 @@ class GameController extends Controller
 
                 $batch = Bus::batch($remainingJobs)
                     ->name("Post-game day: Campaign {$campaignId}")
-                    ->then(function () use ($campaignId, $uniqueTeams, $newDate, $year) {
+                    ->then(function ($batch) use ($campaignId, $uniqueTeams, $newDate, $year) {
                         $campaign = Campaign::find($campaignId);
                         if (!$campaign) return;
 
+                        // Update date + clear batch FIRST so campaign is never stuck
                         $campaign->update([
                             'current_date' => $newDate,
                             'simulation_batch_id' => null,
                         ]);
 
                         try {
+                            app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
+
                             $evolutionService = app(PlayerEvolutionService::class);
                             $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
 
@@ -1318,16 +1366,19 @@ class GameController extends Controller
 
             $batch = Bus::batch($remainingJobs)
                 ->name("Post-game day: Campaign {$campaignId}")
-                ->then(function () use ($campaignId, $uniqueTeams, $newDate, $year) {
+                ->then(function ($batch) use ($campaignId, $uniqueTeams, $newDate, $year) {
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
+                    // Update date + clear batch FIRST so campaign is never stuck
                     $campaign->update([
                         'current_date' => $newDate,
                         'simulation_batch_id' => null,
                     ]);
 
                     try {
+                        app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
+
                         $evolutionService = app(PlayerEvolutionService::class);
                         $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
 
@@ -1772,14 +1823,14 @@ class GameController extends Controller
 
         $year = $campaign->currentSeason?->year ?? 2025;
 
-        // Get user's next game
-        $nextUserGame = $this->seasonService->getNextTeamGame($campaign->id, $year, $campaign->team_id);
+        // Get user's next game (only games on or after current date)
+        $currentDate = $campaign->current_date->copy();
+        $nextUserGame = $this->seasonService->getNextTeamGame($campaign->id, $year, $campaign->team_id, $currentDate->format('Y-m-d'));
         if (!$nextUserGame) {
             return response()->json(['message' => 'No upcoming games found'], 400);
         }
 
         $gameDate = Carbon::parse($nextUserGame['gameDate']);
-        $currentDate = $campaign->current_date->copy();
         $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
         $userLineup = $campaign->settings['lineup']['starters'] ?? null;
 
@@ -1908,16 +1959,19 @@ class GameController extends Controller
 
             $batch = Bus::batch($aiJobs)
                 ->name("Simulate to next game: Campaign {$campaignId}")
-                ->then(function () use ($campaignId, $perDayTeams, $newDate, $year, $excludeUserGame) {
+                ->then(function ($batch) use ($campaignId, $perDayTeams, $newDate, $year, $excludeUserGame) {
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
+                    // Update date + clear batch FIRST so campaign is never stuck
                     $campaign->update([
                         'current_date' => $newDate,
                         'simulation_batch_id' => null,
                     ]);
 
                     try {
+                        app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
+
                         $evolutionService = app(PlayerEvolutionService::class);
                         $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
 

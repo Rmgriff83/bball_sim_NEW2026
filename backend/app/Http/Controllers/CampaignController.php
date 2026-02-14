@@ -169,7 +169,7 @@ class CampaignController extends Controller
         $standings = $this->seasonService->getStandings($campaign->id, $year);
 
         // Get upcoming games from JSON file
-        $upcomingGames = $this->seasonService->getUpcomingGames($campaign->id, $year, $campaign->team_id, 5);
+        $upcomingGames = $this->seasonService->getUpcomingGames($campaign->id, $year, $campaign->team_id, 5, $campaign->current_date?->format('Y-m-d'));
         $upcomingGames = $this->formatUpcomingGames($upcomingGames, $campaign);
 
         // Get recent news

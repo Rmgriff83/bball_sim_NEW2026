@@ -39,17 +39,23 @@ const emit = defineEmits(['close', 'confirm', 'simToEnd'])
 // Track which date sections are expanded
 const expandedDates = ref({})
 
+// Parse a YYYY-MM-DD string as local date (avoids UTC shift)
+function parseLocalDate(dateStr) {
+  const [y, m, d] = dateStr.split('T')[0].split(' ')[0].split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
 // Format date for display
 function formatDate(dateStr) {
   if (!dateStr) return ''
-  const date = new Date(dateStr)
+  const date = parseLocalDate(dateStr)
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 }
 
 // Short format for date headers in game list
 function formatShortDate(dateStr) {
   if (!dateStr) return ''
-  const date = new Date(dateStr)
+  const date = parseLocalDate(dateStr)
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 

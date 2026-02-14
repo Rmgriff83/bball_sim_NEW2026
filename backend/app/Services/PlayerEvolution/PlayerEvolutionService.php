@@ -131,6 +131,18 @@ class PlayerEvolutionService
             if (!$player) continue;
 
             $playerName = $this->getPlayerName($player);
+
+            // Process injury recovery for already-injured players FIRST
+            if ($this->injuries->isInjured($player)) {
+                $existingInjury = $player['injury_details'] ?? $player['injuryDetails'] ?? null;
+                $player = $this->injuries->processRecovery($player);
+
+                // Check if just recovered
+                if ($existingInjury && !$this->injuries->isInjured($player)) {
+                    $this->news->createRecoveryNews($campaign, $player, $existingInjury);
+                }
+            }
+
             $oldMorale = $player['personality']['morale'] ?? 80;
 
             // Update fatigue
@@ -147,8 +159,11 @@ class PlayerEvolutionService
                 ];
             }
 
-            // Check for injury
-            $injury = $this->injuries->checkForInjury($player, $stats['minutes'] ?? 0, $isPlayoff);
+            // Check for NEW injury (only for players who actually played minutes)
+            $minutesPlayed = $stats['minutes'] ?? 0;
+            $injury = ($minutesPlayed > 0 && !$this->injuries->isInjured($player))
+                ? $this->injuries->checkForInjury($player, $minutesPlayed, $isPlayoff)
+                : null;
             if ($injury) {
                 $player['is_injured'] = true;
                 $player['isInjured'] = true;

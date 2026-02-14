@@ -23,11 +23,11 @@ function parseLocalDate(dateStr) {
   return new Date(y, m - 1, d)
 }
 
-// Current in-game date for mobile header — uses next game date as single source of truth
+// Current in-game date for mobile header — uses campaign current_date
 const formattedCurrentDate = computed(() => {
-  const gameDate = gameStore.nextUserGame?.game_date
-  if (!gameDate) return null
-  const date = parseLocalDate(gameDate)
+  const dateStr = campaign.value?.current_date
+  if (!dateStr) return null
+  const date = parseLocalDate(dateStr)
   return {
     weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
     month: date.toLocaleDateString('en-US', { month: 'short' }),
