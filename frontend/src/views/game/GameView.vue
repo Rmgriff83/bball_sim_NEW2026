@@ -7,7 +7,7 @@ import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
-import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward } from 'lucide-vue-next'
+import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X } from 'lucide-vue-next'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
 import { SimulateConfirmModal, EvolutionSummary } from '@/components/game'
@@ -163,6 +163,15 @@ const isUserGame = computed(() => game.value?.is_user_game)
 const evolutionData = computed(() => game.value?.evolution)
 const gameNews = computed(() => game.value?.news || [])
 const rewardsData = computed(() => game.value?.rewards)
+
+// Scores: use game store values when game is complete (simToEnd skips animation),
+// otherwise use the animation composable's running scores
+const displayHomeScore = computed(() =>
+  game.value?.is_complete ? (game.value.home_score ?? currentHomeScore.value) : currentHomeScore.value
+)
+const displayAwayScore = computed(() =>
+  game.value?.is_complete ? (game.value.away_score ?? currentAwayScore.value) : currentAwayScore.value
+)
 
 // Determine if user is home or away
 const userIsHome = computed(() =>
@@ -1202,7 +1211,8 @@ function goBack() {
 
 function formatDate(dateString) {
   if (!dateString) return ''
-  const date = new Date(dateString)
+  const [y, m, d] = dateString.split('T')[0].split(' ')[0].split('-').map(Number)
+  const date = new Date(y, m - 1, d)
   return date.toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
@@ -2009,9 +2019,9 @@ onUnmounted(() => {
                           <!-- Score -->
                           <div class="qb-score-center">
                             <div class="qb-scores">
-                              <span class="qb-score away">{{ currentAwayScore }}</span>
+                              <span class="qb-score away">{{ displayAwayScore }}</span>
                               <span class="qb-score-divider">-</span>
-                              <span class="qb-score home">{{ currentHomeScore }}</span>
+                              <span class="qb-score home">{{ displayHomeScore }}</span>
                             </div>
                           </div>
 
@@ -2910,14 +2920,14 @@ onUnmounted(() => {
                     <div class="break-team">
                       <span class="break-team-name">{{ awayTeam?.name }}</span>
                       <span class="break-team-score" :style="{ color: awayTeam?.primary_color }">
-                        {{ currentAwayScore }}
+                        {{ displayAwayScore }}
                       </span>
                     </div>
                     <div class="break-divider">-</div>
                     <div class="break-team">
                       <span class="break-team-name">{{ homeTeam?.name }}</span>
                       <span class="break-team-score" :style="{ color: homeTeam?.primary_color }">
-                        {{ currentHomeScore }}
+                        {{ displayHomeScore }}
                       </span>
                     </div>
                   </div>
@@ -3486,29 +3496,64 @@ onUnmounted(() => {
     />
 
     <!-- Injury Notification Modal -->
-    <BaseModal
-      :show="showInjuryModal"
-      title="Injury Report"
-      size="sm"
-      @close="showInjuryModal = false"
-    >
-      <div class="injury-modal-content">
-        <div v-for="injury in injuredPlayers" :key="injury.player_id" class="injury-modal-item">
-          <AlertTriangle :size="18" :style="{ color: getInjurySeverityColor(injury.severity) }" />
-          <div class="injury-modal-details">
-            <span class="injury-modal-name">{{ injury.name }}</span>
-            <span class="injury-modal-type">{{ injury.injury_type }}</span>
-            <span class="injury-modal-duration">Out {{ injury.games_out }} games</span>
+    <Teleport to="body">
+      <Transition name="inj-modal">
+        <div
+          v-if="showInjuryModal"
+          class="inj-overlay"
+          @click.self="showInjuryModal = false"
+        >
+          <div class="inj-container">
+            <header class="inj-header">
+              <div class="inj-header-left">
+                <div class="inj-header-icon">
+                  <AlertTriangle :size="18" />
+                </div>
+                <h2 class="inj-title">Injury Report</h2>
+              </div>
+              <button class="inj-close" @click="showInjuryModal = false" aria-label="Close">
+                <X :size="20" />
+              </button>
+            </header>
+
+            <main class="inj-content">
+              <div class="inj-list">
+                <div
+                  v-for="injury in injuredPlayers"
+                  :key="injury.player_id"
+                  class="inj-card"
+                  :style="{ '--severity-color': getInjurySeverityColor(injury.severity) }"
+                >
+                  <div class="inj-severity-bar"></div>
+                  <div class="inj-card-body">
+                    <div class="inj-player-row">
+                      <span class="inj-player-name">{{ injury.name }}</span>
+                      <span class="inj-severity-tag">{{ injury.severity }}</span>
+                    </div>
+                    <div class="inj-detail-row">
+                      <span class="inj-type">{{ injury.injury_type }}</span>
+                      <span class="inj-duration">{{ injury.games_out }} {{ injury.games_out === 1 ? 'game' : 'games' }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <p class="inj-hint">Injured starters will be automatically benched. Update your lineup to set replacements.</p>
+            </main>
+
+            <footer class="inj-footer">
+              <button class="inj-btn-dismiss" @click="showInjuryModal = false">
+                Dismiss
+              </button>
+              <button class="inj-btn-lineup" @click="goToLineup">
+                <Users :size="16" />
+                Update Lineup
+              </button>
+            </footer>
           </div>
         </div>
-      </div>
-      <template #footer>
-        <div class="injury-modal-actions">
-          <button class="btn-ghost" @click="showInjuryModal = false">Dismiss</button>
-          <button class="btn-primary" @click="goToLineup">Update Lineup</button>
-        </div>
-      </template>
-    </BaseModal>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -6729,48 +6774,244 @@ onUnmounted(() => {
 }
 
 /* Injury Modal */
-.injury-modal-content {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.injury-modal-item {
+.inj-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 0.5rem;
-  border-left: 3px solid var(--color-warning);
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
 }
 
-.injury-modal-details {
+.inj-container {
+  width: 100%;
+  max-width: 420px;
+  max-height: 90vh;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
 }
 
-.injury-modal-name {
+.inj-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.inj-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.inj-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.inj-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.inj-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.inj-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.inj-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.inj-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.inj-card {
+  display: flex;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.inj-severity-bar {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--severity-color, #fbbf24);
+}
+
+.inj-card-body {
+  flex: 1;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inj-player-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inj-player-name {
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
-.injury-modal-type {
-  font-size: 0.85rem;
+.inj-severity-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--severity-color, #fbbf24) 15%, transparent);
+  color: var(--severity-color, #fbbf24);
+}
+
+.inj-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inj-type {
+  font-size: 0.8rem;
   color: var(--color-text-secondary);
   text-transform: capitalize;
 }
 
-.injury-modal-duration {
+.inj-duration {
   font-size: 0.8rem;
-  color: var(--color-error);
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--severity-color, #fbbf24);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
 
-.injury-modal-actions {
+.inj-hint {
+  font-size: 0.8rem;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  margin: 16px 0 0;
+  line-height: 1.4;
+}
+
+.inj-footer {
   display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.inj-btn-dismiss,
+.inj-btn-lineup {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.inj-btn-dismiss {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.inj-btn-dismiss:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+.inj-btn-lineup {
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.inj-btn-lineup:hover {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.inj-modal-enter-active {
+  transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.inj-modal-leave-active {
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.inj-modal-enter-from,
+.inj-modal-leave-to {
+  opacity: 0;
+}
+
+.inj-modal-enter-active .inj-container {
+  animation: injScaleIn 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.inj-modal-leave-active .inj-container {
+  animation: injScaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes injScaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes injScaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.95); }
 }
 </style>

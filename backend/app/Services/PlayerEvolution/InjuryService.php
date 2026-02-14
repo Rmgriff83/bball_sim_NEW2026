@@ -122,7 +122,7 @@ class InjuryService
      */
     public function processRecovery(array $player): array
     {
-        if (!$player['is_injured'] && empty($player['injury_details'])) {
+        if (!$this->isInjured($player)) {
             return $player;
         }
 

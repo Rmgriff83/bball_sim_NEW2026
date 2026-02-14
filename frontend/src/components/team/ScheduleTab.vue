@@ -50,10 +50,16 @@ const teamRecord = computed(() => {
   return { wins, losses }
 })
 
+// Parse a date string into local time (avoids UTC shift from new Date('YYYY-MM-DD'))
+function parseLocalDate(dateStr) {
+  const [y, m, d] = dateStr.split('T')[0].split(' ')[0].split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
 // Season spans Oct-Apr (2 years)
 const seasonYear = computed(() => {
   if (!campaign.value?.current_date) return new Date().getFullYear()
-  const date = new Date(campaign.value.current_date)
+  const date = parseLocalDate(campaign.value.current_date)
   // If we're in Jan-Apr, season started previous year
   if (date.getMonth() < 9) { // 0-indexed, 9 = October
     return date.getFullYear() - 1
@@ -79,17 +85,17 @@ const seasonMonths = computed(() => {
 // Current campaign date (for "today" highlighting)
 const campaignDate = computed(() => {
   if (!campaign.value?.current_date) return null
-  return new Date(campaign.value.current_date)
+  return parseLocalDate(campaign.value.current_date)
 })
 
 // Focus date: the date of the current/next user game, falling back to campaign date
 const focusDate = computed(() => {
   // Check for in-progress game first
   const inProgress = (gameStore.userGames || []).find(g => g.is_in_progress)
-  if (inProgress?.game_date) return new Date(inProgress.game_date + 'T00:00:00')
+  if (inProgress?.game_date) return parseLocalDate(inProgress.game_date)
   // Then next upcoming game
   const next = gameStore.nextUserGame
-  if (next?.game_date) return new Date(next.game_date + 'T00:00:00')
+  if (next?.game_date) return parseLocalDate(next.game_date)
   // Fall back to campaign date
   return campaignDate.value
 })

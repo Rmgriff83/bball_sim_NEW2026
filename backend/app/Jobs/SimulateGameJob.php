@@ -5,8 +5,8 @@ namespace App\Jobs;
 use App\Models\Campaign;
 use App\Models\Coach;
 use App\Models\Player;
+use App\Models\SimulationResult;
 use App\Models\Team;
-use App\Services\CampaignSeasonService;
 use App\Services\GameSimulationService;
 use App\Services\PlayoffService;
 use Illuminate\Bus\Batchable;
@@ -35,7 +35,7 @@ class SimulateGameJob implements ShouldQueue
         public string $gameDate
     ) {}
 
-    public function handle(CampaignSeasonService $seasonService, GameSimulationService $simulationService, PlayoffService $playoffService): void
+    public function handle(GameSimulationService $simulationService, PlayoffService $playoffService): void
     {
         if ($this->batch()?->cancelled()) {
             return;
@@ -63,48 +63,48 @@ class SimulateGameJob implements ShouldQueue
         // Simulate the game (skip animation data for AI-only games)
         $result = $simulationService->simulateFromData($campaign, $this->gameData, $homeTeam, $awayTeam, $gameLineup, $this->isUserGame);
 
-        // Update game in JSON (defer write — flushSeason() handles the final save)
-        $seasonService->updateGame($this->campaignId, $this->year, $this->gameData['id'], [
-            'isComplete' => true,
-            'homeScore' => $result['home_score'],
-            'awayScore' => $result['away_score'],
-            'boxScore' => $result['box_score'],
-            'quarterScores' => $result['quarter_scores'] ?? null,
-        ], $this->isUserGame, defer: true);
-
-        // Update standings (defer write — flushSeason() handles the final save)
-        $seasonService->updateStandingsAfterGame(
-            $this->campaignId,
-            $this->year,
-            $this->homeTeamId,
-            $this->awayTeamId,
-            $result['home_score'],
-            $result['away_score'],
-            $homeTeam->conference,
-            $awayTeam->conference,
-            defer: true
+        // Write result to DB instead of JSON — bulk merge happens in then() callback
+        SimulationResult::updateOrCreate(
+            [
+                'batch_id' => $this->batch()->id,
+                'game_id' => $this->gameData['id'],
+            ],
+            [
+                'campaign_id' => $this->campaignId,
+                'game_date' => $this->gameDate,
+                'home_team_id' => $this->homeTeamId,
+                'away_team_id' => $this->awayTeamId,
+                'home_score' => $result['home_score'],
+                'away_score' => $result['away_score'],
+                'home_conference' => $homeTeam->conference,
+                'away_conference' => $awayTeam->conference,
+                'box_score' => $result['box_score'],
+                'quarter_scores' => $result['quarter_scores'] ?? null,
+                'is_user_game' => $this->isUserGame,
+                'is_playoff' => $this->gameData['isPlayoff'] ?? false,
+            ]
         );
 
-        // Update player stats
-        $this->updatePlayerStats($seasonService, $result['box_score']);
+        // Per-player career stats (small DB updates, must remain per-job)
+        $this->recordCareerStats($result['box_score']);
 
-        // Update coach stats
+        // Update coach stats (2 small DB updates)
         $this->updateCoachStats($result['home_score'], $result['away_score'], $this->gameData['isPlayoff'] ?? false);
 
-        // Process playoff game completion if applicable
+        // Process playoff game completion if applicable (series advancement must be per-job)
         if ($this->gameData['isPlayoff'] ?? false) {
             $this->processPlayoffGameCompletion($campaign, $playoffService, $result['home_score'], $result['away_score']);
         }
     }
 
-    private function updatePlayerStats(CampaignSeasonService $seasonService, array $boxScore): void
+    private function recordCareerStats(array $boxScore): void
     {
         $homeStarters = array_slice($boxScore['home'] ?? [], 0, 5);
         $awayStarters = array_slice($boxScore['away'] ?? [], 0, 5);
         $homeStarterIds = array_column($homeStarters, 'player_id');
         $awayStarterIds = array_column($awayStarters, 'player_id');
 
-        // Batch load all players in one query instead of individual Player::find() calls
+        // Batch load all players in one query
         $allPlayerIds = [];
         foreach (['home', 'away'] as $side) {
             foreach ($boxScore[$side] ?? [] as $playerStats) {
@@ -118,18 +118,7 @@ class SimulateGameJob implements ShouldQueue
 
         foreach ($boxScore['home'] ?? [] as $playerStats) {
             $playerId = $playerStats['player_id'] ?? $playerStats['playerId'] ?? null;
-            $playerName = $playerStats['name'] ?? 'Unknown';
-
             if ($playerId) {
-                $seasonService->updatePlayerStats(
-                    $this->campaignId,
-                    $this->year,
-                    $playerId,
-                    $playerName,
-                    $this->homeTeamId,
-                    $playerStats
-                );
-
                 $player = $players[$playerId] ?? null;
                 if ($player) {
                     $started = in_array($playerId, $homeStarterIds);
@@ -140,18 +129,7 @@ class SimulateGameJob implements ShouldQueue
 
         foreach ($boxScore['away'] ?? [] as $playerStats) {
             $playerId = $playerStats['player_id'] ?? $playerStats['playerId'] ?? null;
-            $playerName = $playerStats['name'] ?? 'Unknown';
-
             if ($playerId) {
-                $seasonService->updatePlayerStats(
-                    $this->campaignId,
-                    $this->year,
-                    $playerId,
-                    $playerName,
-                    $this->awayTeamId,
-                    $playerStats
-                );
-
                 $player = $players[$playerId] ?? null;
                 if ($player) {
                     $started = in_array($playerId, $awayStarterIds);
@@ -159,8 +137,6 @@ class SimulateGameJob implements ShouldQueue
                 }
             }
         }
-
-        $seasonService->flushSeason($this->campaignId, $this->year);
     }
 
     private function updateCoachStats(int $homeScore, int $awayScore, bool $isPlayoff): void

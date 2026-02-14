@@ -4,8 +4,10 @@ namespace App\Services;
 
 use App\Models\Campaign;
 use App\Models\Season;
+use App\Models\SimulationResult;
 use App\Models\Team;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class CampaignSeasonService
@@ -337,14 +339,17 @@ class CampaignSeasonService
     /**
      * Get upcoming games for a team.
      */
-    public function getUpcomingGames(int $campaignId, int $year, int $teamId, int $limit = 5): array
+    public function getUpcomingGames(int $campaignId, int $year, int $teamId, int $limit = 5, ?string $fromDate = null): array
     {
         $schedule = $this->getSchedule($campaignId, $year);
 
-        $teamGames = array_filter($schedule, fn($game) =>
-            !$game['isComplete'] &&
-            ($game['homeTeamId'] === $teamId || $game['awayTeamId'] === $teamId)
-        );
+        $teamGames = array_filter($schedule, function ($game) use ($teamId, $fromDate) {
+            if ($game['isComplete']) return false;
+            if ($game['homeTeamId'] !== $teamId && $game['awayTeamId'] !== $teamId) return false;
+            // Filter out games before the given date
+            if ($fromDate && $game['gameDate'] < $fromDate) return false;
+            return true;
+        });
 
         // Sort by date
         usort($teamGames, fn($a, $b) => strcmp($a['gameDate'], $b['gameDate']));
@@ -676,6 +681,156 @@ class CampaignSeasonService
     }
 
     /**
+     * Bulk merge all simulation results from a batch into the season JSON.
+     * Replaces 15+ individual read-modify-write cycles with a single one.
+     */
+    public function bulkMergeResults(int $campaignId, int $year, string $batchId): void
+    {
+        $results = SimulationResult::where('batch_id', $batchId)
+            ->orderBy('id')
+            ->get();
+
+        if ($results->isEmpty()) {
+            return;
+        }
+
+        $season = $this->loadSeason($campaignId, $year);
+        if (!$season) {
+            Log::error("bulkMergeResults: Season not found for campaign {$campaignId}, year {$year}");
+            return;
+        }
+
+        // Build a game_id -> schedule index lookup for fast access
+        $scheduleIndex = [];
+        foreach ($season['schedule'] as $idx => $game) {
+            $scheduleIndex[$game['id']] = $idx;
+        }
+
+        foreach ($results as $result) {
+            $gameId = $result->game_id;
+            $idx = $scheduleIndex[$gameId] ?? null;
+
+            if ($idx === null) {
+                Log::warning("bulkMergeResults: Game {$gameId} not found in schedule");
+                continue;
+            }
+
+            // Idempotency: skip games already marked complete
+            if ($season['schedule'][$idx]['isComplete'] ?? false) {
+                continue;
+            }
+
+            // Update schedule entry
+            $boxScore = $result->box_score;
+            if (!$result->is_user_game) {
+                $boxScore = $this->compactBoxScore($boxScore);
+            }
+
+            $season['schedule'][$idx] = array_merge($season['schedule'][$idx], [
+                'isComplete' => true,
+                'homeScore' => $result->home_score,
+                'awayScore' => $result->away_score,
+                'boxScore' => $boxScore,
+                'quarterScores' => $result->quarter_scores,
+            ]);
+
+            // Update standings
+            $homeWon = $result->home_score > $result->away_score;
+            foreach (['east', 'west'] as $conf) {
+                foreach ($season['standings'][$conf] as &$standing) {
+                    if ($standing['teamId'] === $result->home_team_id) {
+                        $standing = $this->updateTeamStanding($standing, $homeWon, $result->home_score, $result->away_score, true);
+                    }
+                    if ($standing['teamId'] === $result->away_team_id) {
+                        $standing = $this->updateTeamStanding($standing, !$homeWon, $result->away_score, $result->home_score, false);
+                    }
+                }
+                unset($standing);
+            }
+
+            // Update team stats
+            $this->updateTeamStatsAfterGame($season, $result->home_team_id, $result->home_score, $result->away_score, true);
+            $this->updateTeamStatsAfterGame($season, $result->away_team_id, $result->away_score, $result->home_score, false);
+
+            // Update player stats
+            $fullBoxScore = $result->box_score; // Use the full (non-compacted) box score for stats
+            foreach (['home' => $result->home_team_id, 'away' => $result->away_team_id] as $side => $teamId) {
+                foreach ($fullBoxScore[$side] ?? [] as $playerStats) {
+                    $playerId = $playerStats['player_id'] ?? $playerStats['playerId'] ?? null;
+                    $playerName = $playerStats['name'] ?? 'Unknown';
+                    if (!$playerId) continue;
+
+                    if (!isset($season['playerStats'][$playerId])) {
+                        $season['playerStats'][$playerId] = [
+                            'playerId' => $playerId,
+                            'playerName' => $playerName,
+                            'teamId' => $teamId,
+                            'gamesPlayed' => 0,
+                            'gamesStarted' => 0,
+                            'minutesPlayed' => 0,
+                            'points' => 0,
+                            'rebounds' => 0,
+                            'offensiveRebounds' => 0,
+                            'defensiveRebounds' => 0,
+                            'assists' => 0,
+                            'steals' => 0,
+                            'blocks' => 0,
+                            'turnovers' => 0,
+                            'personalFouls' => 0,
+                            'fieldGoalsMade' => 0,
+                            'fieldGoalsAttempted' => 0,
+                            'threePointersMade' => 0,
+                            'threePointersAttempted' => 0,
+                            'freeThrowsMade' => 0,
+                            'freeThrowsAttempted' => 0,
+                        ];
+                    }
+
+                    $stats = &$season['playerStats'][$playerId];
+                    $stats['gamesPlayed']++;
+                    $stats['minutesPlayed'] += $playerStats['minutes'] ?? 0;
+                    $stats['points'] += $playerStats['points'] ?? 0;
+                    $stats['rebounds'] += $playerStats['rebounds'] ?? 0;
+                    $stats['offensiveRebounds'] += $playerStats['offensiveRebounds'] ?? $playerStats['offensive_rebounds'] ?? 0;
+                    $stats['defensiveRebounds'] += $playerStats['defensiveRebounds'] ?? $playerStats['defensive_rebounds'] ?? 0;
+                    $stats['assists'] += $playerStats['assists'] ?? 0;
+                    $stats['steals'] += $playerStats['steals'] ?? 0;
+                    $stats['blocks'] += $playerStats['blocks'] ?? 0;
+                    $stats['turnovers'] += $playerStats['turnovers'] ?? 0;
+                    $stats['personalFouls'] += $playerStats['fouls'] ?? $playerStats['personalFouls'] ?? 0;
+                    $stats['fieldGoalsMade'] += $playerStats['fieldGoalsMade'] ?? $playerStats['fgm'] ?? 0;
+                    $stats['fieldGoalsAttempted'] += $playerStats['fieldGoalsAttempted'] ?? $playerStats['fga'] ?? 0;
+                    $stats['threePointersMade'] += $playerStats['threePointersMade'] ?? $playerStats['fg3m'] ?? 0;
+                    $stats['threePointersAttempted'] += $playerStats['threePointersAttempted'] ?? $playerStats['fg3a'] ?? 0;
+                    $stats['freeThrowsMade'] += $playerStats['freeThrowsMade'] ?? $playerStats['ftm'] ?? 0;
+                    $stats['freeThrowsAttempted'] += $playerStats['freeThrowsAttempted'] ?? $playerStats['fta'] ?? 0;
+                    unset($stats);
+                }
+            }
+        }
+
+        // Sort standings once at the end
+        foreach (['east', 'west'] as $conf) {
+            usort($season['standings'][$conf], function ($a, $b) {
+                $totalA = $a['wins'] + $a['losses'];
+                $totalB = $b['wins'] + $b['losses'];
+                $pctA = $totalA > 0 ? $a['wins'] / $totalA : 0;
+                $pctB = $totalB > 0 ? $b['wins'] / $totalB : 0;
+                if ($pctA !== $pctB) return $pctB <=> $pctA;
+                $diffA = ($a['pointsFor'] ?? 0) - ($a['pointsAgainst'] ?? 0);
+                $diffB = ($b['pointsFor'] ?? 0) - ($b['pointsAgainst'] ?? 0);
+                return $diffB <=> $diffA;
+            });
+        }
+
+        // Save season JSON once
+        $this->saveSeason($campaignId, $year, $season);
+
+        // Clean up processed rows
+        SimulationResult::where('batch_id', $batchId)->delete();
+    }
+
+    /**
      * Get player stats.
      */
     public function getPlayerStats(int $campaignId, int $year, string $playerId): ?array
@@ -795,9 +950,9 @@ class CampaignSeasonService
     /**
      * Get the next game for a specific team that hasn't been played.
      */
-    public function getNextTeamGame(int $campaignId, int $year, int $teamId): ?array
+    public function getNextTeamGame(int $campaignId, int $year, int $teamId, ?string $fromDate = null): ?array
     {
-        $games = $this->getUpcomingGames($campaignId, $year, $teamId, 1);
+        $games = $this->getUpcomingGames($campaignId, $year, $teamId, 1, $fromDate);
         return $games[0] ?? null;
     }
 
@@ -879,8 +1034,8 @@ class CampaignSeasonService
      */
     public function getSimulateToNextGamePreview(int $campaignId, int $year, int $userTeamId, Carbon $currentDate): ?array
     {
-        // Get user's next incomplete game
-        $nextUserGame = $this->getNextTeamGame($campaignId, $year, $userTeamId);
+        // Get user's next incomplete game (on or after current date)
+        $nextUserGame = $this->getNextTeamGame($campaignId, $year, $userTeamId, $currentDate->format('Y-m-d'));
         if (!$nextUserGame) {
             return null;
         }
