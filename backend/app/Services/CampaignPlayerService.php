@@ -7,6 +7,7 @@ use App\Models\Campaign;
 use App\Models\Player;
 use App\Models\PlayerBadge;
 use App\Models\Team;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
@@ -39,6 +40,8 @@ class CampaignPlayerService
         $leaguePlayers = [];
 
         foreach ($masterPlayers as $playerData) {
+            $playerData = $this->randomizePlayerData($playerData);
+
             if ($playerData['teamAbbreviation'] === $userTeamAbbreviation) {
                 // User's team → Create in database
                 $this->createPlayerInDatabase($playerData, $campaign->id, $userTeam->id);
@@ -530,6 +533,356 @@ class CampaignPlayerService
         }
 
         return $updated;
+    }
+
+    // =========================================================================
+    // Player Data Randomization (called during campaign creation)
+    // =========================================================================
+
+    /**
+     * Randomize player data fields that are identical/null in the master file.
+     * Called once per player during campaign initialization.
+     */
+    private function randomizePlayerData(array $data): array
+    {
+        $data = $this->randomizeBirthDate($data);
+        $data = $this->randomizeDraftInfo($data);
+        $data = $this->randomizeTradeValue($data);
+        $data = $this->randomizePersonalityTraits($data);
+        $data = $this->randomizePhysicalAttributes($data);
+        $data = $this->randomizeBioData($data);
+
+        // Randomize jersey number
+        $data['jerseyNumber'] = rand(0, 99);
+
+        // Clean up temp field
+        unset($data['_age']);
+
+        return $data;
+    }
+
+    /**
+     * Infer age from ratings gap and generate a realistic birth date.
+     */
+    private function randomizeBirthDate(array $data): array
+    {
+        $ovr = $data['overallRating'] ?? 70;
+        $potential = $data['potentialRating'] ?? $ovr;
+        $potentialGap = $potential - $ovr;
+
+        if ($potentialGap >= 10) {
+            $age = rand(19, 23);
+        } elseif ($potentialGap >= 5 && $ovr < 80) {
+            $age = rand(20, 25);
+        } elseif ($ovr >= 88 && $potentialGap >= 3) {
+            $age = rand(22, 27);
+        } elseif ($ovr >= 88 && $potentialGap < 3) {
+            $age = rand(26, 32);
+        } elseif ($ovr >= 78) {
+            $age = rand(24, 32);
+        } elseif ($ovr >= 68) {
+            $age = rand(22, 34);
+        } elseif ($potentialGap <= 0 && $ovr < 65) {
+            $age = rand(28, 36);
+        } else {
+            $age = rand(19, 24);
+        }
+
+        $birthYear = 2025 - $age;
+        $month = rand(1, 12);
+        $maxDay = cal_days_in_month(CAL_GREGORIAN, $month, $birthYear);
+        $day = rand(1, $maxDay);
+
+        $data['birthDate'] = Carbon::create($birthYear, $month, $day)->format('Y-m-d');
+        $data['_age'] = $age; // Temp field used by other randomizers
+
+        return $data;
+    }
+
+    /**
+     * Generate draft year, round, and pick based on age and ratings.
+     */
+    private function randomizeDraftInfo(array $data): array
+    {
+        $age = $data['_age'] ?? 25;
+        $ovr = $data['overallRating'] ?? 70;
+        $potential = $data['potentialRating'] ?? $ovr;
+        $combinedScore = $ovr + ($potential - $ovr) * 0.5;
+
+        // Entry age: weighted random 19-22
+        $entryRoll = rand(1, 100);
+        if ($entryRoll <= 40) {
+            $entryAge = 19;
+        } elseif ($entryRoll <= 70) {
+            $entryAge = 20;
+        } elseif ($entryRoll <= 90) {
+            $entryAge = 21;
+        } else {
+            $entryAge = 22;
+        }
+
+        // Can't be drafted before they were born
+        $entryAge = min($entryAge, $age);
+
+        $draftYear = 2025 - ($age - $entryAge);
+
+        // Draft round and pick based on combined score
+        if ($combinedScore >= 88) {
+            $draftRound = 1;
+            $draftPick = rand(1, 5);
+        } elseif ($combinedScore >= 82) {
+            $draftRound = 1;
+            $draftPick = rand(3, 14);
+        } elseif ($combinedScore >= 76) {
+            $draftRound = 1;
+            $draftPick = rand(10, 30);
+        } elseif ($combinedScore >= 70) {
+            $draftRound = rand(1, 2);
+            $draftPick = $draftRound === 1 ? rand(15, 30) : rand(31, 60);
+        } elseif ($combinedScore >= 60) {
+            $draftRound = 2;
+            $draftPick = rand(31, 60);
+        } else {
+            // 50% undrafted, 50% late 2nd round
+            if (rand(0, 1) === 0) {
+                $data['draftYear'] = null;
+                $data['draftRound'] = null;
+                $data['draftPick'] = null;
+                return $data;
+            }
+            $draftRound = 2;
+            $draftPick = rand(45, 60);
+        }
+
+        $data['draftYear'] = $draftYear;
+        $data['draftRound'] = $draftRound;
+        $data['draftPick'] = $draftPick;
+
+        return $data;
+    }
+
+    /**
+     * Generate trade value based on OVR with age modifier.
+     */
+    private function randomizeTradeValue(array $data): array
+    {
+        if (($data['tradeValue'] ?? null) !== null) {
+            return $data;
+        }
+
+        $ovr = $data['overallRating'] ?? 70;
+        $age = $data['_age'] ?? 25;
+
+        if ($ovr >= 92) {
+            $value = $this->randFloat(25, 40);
+        } elseif ($ovr >= 88) {
+            $value = $this->randFloat(18, 28);
+        } elseif ($ovr >= 84) {
+            $value = $this->randFloat(12, 20);
+        } elseif ($ovr >= 80) {
+            $value = $this->randFloat(8, 14);
+        } elseif ($ovr >= 76) {
+            $value = $this->randFloat(5, 10);
+        } elseif ($ovr >= 72) {
+            $value = $this->randFloat(3, 7);
+        } elseif ($ovr >= 68) {
+            $value = $this->randFloat(1.5, 4);
+        } else {
+            $value = $this->randFloat(0.5, 2);
+        }
+
+        // Age modifiers
+        if ($age <= 24) {
+            $value *= 1.15;
+        } elseif ($age >= 32) {
+            $value *= 0.80;
+        }
+
+        $data['tradeValue'] = round($value, 2);
+        $data['tradeValueTotal'] = round($value * $this->randFloat(0.6, 0.9), 2);
+
+        return $data;
+    }
+
+    /**
+     * Assign personality traits based on attributes and random selection.
+     */
+    private function randomizePersonalityTraits(array $data): array
+    {
+        $traits = $data['personality']['traits'] ?? [];
+        if (!empty($traits)) {
+            return $data;
+        }
+
+        $allTraits = ['competitor', 'leader', 'mentor', 'hot_head', 'ball_hog', 'team_player', 'joker', 'quiet', 'media_darling'];
+
+        // Determine number of traits
+        $countRoll = rand(1, 100);
+        if ($countRoll <= 20) {
+            $numTraits = 0;
+        } elseif ($countRoll <= 60) {
+            $numTraits = 1;
+        } elseif ($countRoll <= 90) {
+            $numTraits = 2;
+        } else {
+            $numTraits = 3;
+        }
+
+        if ($numTraits === 0) {
+            return $data;
+        }
+
+        $assignedTraits = [];
+        $ovr = $data['overallRating'] ?? 70;
+        $age = $data['_age'] ?? 25;
+        $workEthic = $data['attributes']['mental']['workEthic'] ?? 50;
+        $basketballIQ = $data['attributes']['mental']['basketballIQ'] ?? 50;
+
+        // Attribute-inferred traits (checked first)
+        if ($workEthic >= 85 && rand(1, 100) <= 40) {
+            $assignedTraits[] = 'competitor';
+        }
+        if ($basketballIQ >= 85 && $age >= 28 && rand(1, 100) <= 30 && count($assignedTraits) < $numTraits) {
+            $assignedTraits[] = 'mentor';
+        }
+        if ($basketballIQ >= 80 && $ovr >= 82 && rand(1, 100) <= 25 && count($assignedTraits) < $numTraits) {
+            $assignedTraits[] = 'leader';
+        }
+
+        // Fill remaining slots randomly
+        $remainingPool = array_diff($allTraits, $assignedTraits);
+        $remainingPool = array_values($remainingPool);
+        shuffle($remainingPool);
+
+        while (count($assignedTraits) < $numTraits && !empty($remainingPool)) {
+            $assignedTraits[] = array_shift($remainingPool);
+        }
+
+        // Conflict resolution
+        $hasBallHog = in_array('ball_hog', $assignedTraits);
+        $hasTeamPlayer = in_array('team_player', $assignedTraits);
+        $hasHotHead = in_array('hot_head', $assignedTraits);
+        $hasQuiet = in_array('quiet', $assignedTraits);
+
+        if ($hasBallHog && $hasTeamPlayer) {
+            $assignedTraits = array_values(array_diff($assignedTraits, [rand(0, 1) ? 'ball_hog' : 'team_player']));
+        }
+        if ($hasHotHead && $hasQuiet) {
+            $assignedTraits = array_values(array_diff($assignedTraits, [rand(0, 1) ? 'hot_head' : 'quiet']));
+        }
+
+        $data['personality']['traits'] = $assignedTraits;
+
+        return $data;
+    }
+
+    /**
+     * Generate realistic physical attributes from position-appropriate distributions.
+     * Master data has nearly everyone at 78" regardless of position, so we generate
+     * from scratch using a bell curve centered on realistic NBA averages.
+     */
+    private function randomizePhysicalAttributes(array $data): array
+    {
+        $position = $data['position'] ?? 'SF';
+
+        // [mean height, stddev, min, max, mean weight, weight stddev, weight min, weight max]
+        $positionProfiles = [
+            'PG' => ['hMean' => 74, 'hStd' => 2.0, 'hMin' => 70, 'hMax' => 78, 'wMean' => 190, 'wStd' => 12, 'wMin' => 165, 'wMax' => 215],
+            'SG' => ['hMean' => 76, 'hStd' => 1.8, 'hMin' => 72, 'hMax' => 80, 'wMean' => 200, 'wStd' => 12, 'wMin' => 175, 'wMax' => 225],
+            'SF' => ['hMean' => 79, 'hStd' => 1.8, 'hMin' => 75, 'hMax' => 83, 'wMean' => 220, 'wStd' => 12, 'wMin' => 200, 'wMax' => 250],
+            'PF' => ['hMean' => 81, 'hStd' => 1.8, 'hMin' => 77, 'hMax' => 85, 'wMean' => 240, 'wStd' => 12, 'wMin' => 215, 'wMax' => 265],
+            'C'  => ['hMean' => 83, 'hStd' => 2.0, 'hMin' => 79, 'hMax' => 88, 'wMean' => 255, 'wStd' => 15, 'wMin' => 225, 'wMax' => 285],
+        ];
+
+        $profile = $positionProfiles[$position] ?? $positionProfiles['SF'];
+
+        // Generate height from normal distribution, clamped to position range
+        $height = (int) round($this->normalRandom($profile['hMean'], $profile['hStd']));
+        $height = max($profile['hMin'], min($profile['hMax'], $height));
+        $data['heightInches'] = $height;
+
+        // Weight scales with height — taller players within a position tend to be heavier
+        $heightOffset = $height - $profile['hMean'];
+        $weightMean = $profile['wMean'] + ($heightOffset * 5); // ~5 lbs per inch above/below avg
+        $weight = (int) round($this->normalRandom($weightMean, $profile['wStd']));
+        $weight = max($profile['wMin'], min($profile['wMax'], $weight));
+        $data['weightLbs'] = $weight;
+
+        // Wingspan: typically height + 0 to 5 inches, with taller players trending longer
+        $wingspanBase = $height + rand(0, 5);
+        // Add a slight bonus for bigs
+        if ($position === 'C' || $position === 'PF') {
+            $wingspanBase += rand(0, 2);
+        }
+        $data['wingspanInches'] = $wingspanBase;
+
+        return $data;
+    }
+
+    /**
+     * Assign college and hometown if missing.
+     */
+    private function randomizeBioData(array $data): array
+    {
+        $country = $data['country'] ?? 'United States';
+        $isInternational = $country !== 'United States';
+
+        // College
+        if (empty($data['college'])) {
+            if ($isInternational) {
+                $data['college'] = rand(0, 1) ? 'International' : 'Overseas Academy';
+            } else {
+                $colleges = [
+                    'Duke', 'Kentucky', 'North Carolina', 'Kansas', 'UCLA',
+                    'Michigan State', 'Gonzaga', 'Villanova', 'Louisville', 'Syracuse',
+                    'Indiana', 'Connecticut', 'Arizona', 'Florida', 'Ohio State',
+                    'Michigan', 'Texas', 'Georgetown', 'Wake Forest', 'Memphis',
+                    'LSU', 'Auburn', 'Baylor', 'Tennessee', 'Virginia',
+                    'Wisconsin', 'Purdue', 'Iowa State', 'Oregon', 'Maryland',
+                    'Georgia Tech', 'Creighton', 'Marquette', 'San Diego State', 'Houston',
+                    'USC', 'Stanford', 'Notre Dame', 'Oklahoma', 'Arkansas',
+                    'Alabama', 'Dayton', 'Xavier', 'Butler', 'Providence',
+                ];
+                $data['college'] = $colleges[array_rand($colleges)];
+            }
+        }
+
+        // Hometown
+        if (empty($data['hometown']) && !$isInternational) {
+            $hometowns = [
+                'Los Angeles, CA', 'Chicago, IL', 'Houston, TX', 'New York, NY',
+                'Philadelphia, PA', 'Atlanta, GA', 'Detroit, MI', 'Memphis, TN',
+                'Miami, FL', 'Dallas, TX', 'Oakland, CA', 'Indianapolis, IN',
+                'Baltimore, MD', 'Charlotte, NC', 'Milwaukee, WI', 'St. Louis, MO',
+                'Cleveland, OH', 'New Orleans, LA', 'Minneapolis, MN', 'Phoenix, AZ',
+                'San Antonio, TX', 'Washington, DC', 'Denver, CO', 'Seattle, WA',
+                'Boston, MA', 'Raleigh, NC', 'Nashville, TN', 'Jacksonville, FL',
+                'Columbus, OH', 'Sacramento, CA', 'Las Vegas, NV', 'Louisville, KY',
+                'Compton, CA', 'Brooklyn, NY', 'Akron, OH',
+            ];
+            $data['hometown'] = $hometowns[array_rand($hometowns)];
+        }
+
+        return $data;
+    }
+
+    /**
+     * Generate a random float between min and max.
+     */
+    private function randFloat(float $min, float $max): float
+    {
+        return $min + mt_rand() / mt_getrandmax() * ($max - $min);
+    }
+
+    /**
+     * Generate a normally-distributed random number (Box-Muller transform).
+     */
+    private function normalRandom(float $mean, float $stddev): float
+    {
+        $u1 = max(0.0001, mt_rand() / mt_getrandmax()); // avoid log(0)
+        $u2 = mt_rand() / mt_getrandmax();
+        $z = sqrt(-2 * log($u1)) * cos(2 * M_PI * $u2);
+        return $mean + $z * $stddev;
     }
 
     /**
