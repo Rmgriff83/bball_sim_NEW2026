@@ -243,7 +243,7 @@ async function simulateToGame() {
 
     // Refresh data
     await Promise.all([
-      campaignStore.fetchCampaign(props.campaignId),
+      campaignStore.fetchCampaign(props.campaignId, true),
       teamStore.fetchTeam(props.campaignId, { force: true }),
       leagueStore.fetchStandings(props.campaignId, { force: true }),
       gameStore.fetchGames(props.campaignId, { force: true })
@@ -288,7 +288,7 @@ async function simToEndOfGame() {
     }
 
     await Promise.all([
-      campaignStore.fetchCampaign(props.campaignId),
+      campaignStore.fetchCampaign(props.campaignId, true),
       teamStore.fetchTeam(props.campaignId, { force: true }),
       leagueStore.fetchStandings(props.campaignId, { force: true }),
       gameStore.fetchGames(props.campaignId, { force: true })

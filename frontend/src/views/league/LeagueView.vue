@@ -97,9 +97,9 @@ function getLeadersSortIcon(column) {
 
 // Watch for tab change to fetch leaders
 watch(activeTab, async (newTab) => {
-  if (newTab === 'leaders' && !leadersFetched.value) {
+  if (newTab === 'leaders') {
     try {
-      await leagueStore.fetchPlayerLeaders(campaignId.value)
+      await leagueStore.fetchPlayerLeaders(campaignId.value, { force: true })
       leadersFetched.value = true
     } catch (err) {
       console.error('Failed to fetch league leaders:', err)

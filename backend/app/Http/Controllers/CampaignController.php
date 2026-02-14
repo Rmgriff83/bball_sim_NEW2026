@@ -157,7 +157,7 @@ class CampaignController extends Controller
                     'secondary_position', 'jersey_number', 'overall_rating',
                     'potential_rating', 'height_inches', 'weight_lbs', 'birth_date',
                     'attributes', 'badges', 'contract_years_remaining', 'contract_salary',
-                    'is_injured', 'fatigue'
+                    'is_injured', 'injury_details', 'fatigue'
                 ])->orderBy('overall_rating', 'desc');
             },
             'team.coach',

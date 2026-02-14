@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
+import { useGameStore } from '@/stores/game'
 import { useAuthStore } from '@/stores/auth'
 import { BottomNav } from '@/components/ui'
 import { ArrowLeft, Play, User, FolderOpen, LogOut } from 'lucide-vue-next'
@@ -9,16 +10,24 @@ import { ArrowLeft, Play, User, FolderOpen, LogOut } from 'lucide-vue-next'
 const route = useRoute()
 const router = useRouter()
 const campaignStore = useCampaignStore()
+const gameStore = useGameStore()
 const authStore = useAuthStore()
 
 const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => campaign.value?.team)
 
-// Current in-game date for mobile header
+// Parse a date string (YYYY-MM-DD or datetime) into a local Date, avoiding UTC shift
+function parseLocalDate(dateStr) {
+  const [y, m, d] = dateStr.split('T')[0].split(' ')[0].split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+// Current in-game date for mobile header — uses next game date as single source of truth
 const formattedCurrentDate = computed(() => {
-  if (!campaign.value?.current_date) return null
-  const date = new Date(campaign.value.current_date)
+  const gameDate = gameStore.nextUserGame?.game_date
+  if (!gameDate) return null
+  const date = parseLocalDate(gameDate)
   return {
     weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
     month: date.toLocaleDateString('en-US', { month: 'short' }),

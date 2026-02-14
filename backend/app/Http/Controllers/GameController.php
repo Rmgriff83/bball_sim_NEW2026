@@ -293,25 +293,30 @@ class GameController extends Controller
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
-                    $evolutionService = app(PlayerEvolutionService::class);
-                    $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
-
+                    // Update date first so it's never stuck if later processing fails
                     $campaign->update([
                         'current_date' => $newDate,
                         'simulation_batch_id' => null,
                     ]);
 
-                    $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
-                    if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-                        $evolutionService->processWeeklyUpdates($campaign);
-                        $proposalService = app(AITradeProposalService::class);
-                        $proposalService->generateWeeklyProposals($campaign);
+                    try {
+                        $evolutionService = app(PlayerEvolutionService::class);
+                        $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
+
+                        $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                            $evolutionService->processWeeklyUpdates($campaign);
+                            $proposalService = app(AITradeProposalService::class);
+                            $proposalService->generateWeeklyProposals($campaign);
+                        }
+                        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                            $evolutionService->processMonthlyDevelopment($campaign);
+                        }
+                        app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                        app(AllStarService::class)->processAllStarSelections($campaign);
+                    } catch (\Exception $e) {
+                        Log::error("Post-batch processing failed for campaign {$campaignId}: " . $e->getMessage());
                     }
-                    if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
-                        $evolutionService->processMonthlyDevelopment($campaign);
-                    }
-                    app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
-                    app(AllStarService::class)->processAllStarSelections($campaign);
                 })
                 ->catch(function ($batch, $e) use ($campaignId) {
                     Log::error("Simulation batch failed for campaign {$campaignId}: " . $e->getMessage());
@@ -463,25 +468,29 @@ class GameController extends Controller
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
-                    $evolutionService = app(PlayerEvolutionService::class);
-                    $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
-
                     $campaign->update([
                         'current_date' => $newDate,
                         'simulation_batch_id' => null,
                     ]);
 
-                    $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
-                    if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-                        $evolutionService->processWeeklyUpdates($campaign);
-                        $proposalService = app(AITradeProposalService::class);
-                        $proposalService->generateWeeklyProposals($campaign);
+                    try {
+                        $evolutionService = app(PlayerEvolutionService::class);
+                        $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+
+                        $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                            $evolutionService->processWeeklyUpdates($campaign);
+                            $proposalService = app(AITradeProposalService::class);
+                            $proposalService->generateWeeklyProposals($campaign);
+                        }
+                        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                            $evolutionService->processMonthlyDevelopment($campaign);
+                        }
+                        app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                        app(AllStarService::class)->processAllStarSelections($campaign);
+                    } catch (\Exception $e) {
+                        Log::error("Post-batch processing failed for campaign {$campaignId}: " . $e->getMessage());
                     }
-                    if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
-                        $evolutionService->processMonthlyDevelopment($campaign);
-                    }
-                    app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
-                    app(AllStarService::class)->processAllStarSelections($campaign);
                 })
                 ->catch(function ($batch, $e) use ($campaignId) {
                     Log::error("SimulateDay batch failed for campaign {$campaignId}: " . $e->getMessage());
@@ -775,10 +784,14 @@ class GameController extends Controller
                         $campaign = Campaign::find($campaignId);
                         if (!$campaign) return;
 
-                        $evolutionService = app(PlayerEvolutionService::class);
-                        $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
-
                         $campaign->update(['simulation_batch_id' => null]);
+
+                        try {
+                            $evolutionService = app(PlayerEvolutionService::class);
+                            $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+                        } catch (\Exception $e) {
+                            Log::error("Post-batch processing failed for campaign {$campaignId}: " . $e->getMessage());
+                        }
                     })
                     ->catch(function ($batch, $e) use ($campaignId) {
                         Log::error("Pre-game sync batch failed for campaign {$campaignId}: " . $e->getMessage());
@@ -1061,24 +1074,28 @@ class GameController extends Controller
                         $campaign = Campaign::find($campaignId);
                         if (!$campaign) return;
 
-                        $evolutionService = app(PlayerEvolutionService::class);
-                        $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
-
                         $campaign->update([
                             'current_date' => $newDate,
                             'simulation_batch_id' => null,
                         ]);
 
-                        $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
-                        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-                            $evolutionService->processWeeklyUpdates($campaign);
-                            app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
+                        try {
+                            $evolutionService = app(PlayerEvolutionService::class);
+                            $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+
+                            $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                            if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                                $evolutionService->processWeeklyUpdates($campaign);
+                                app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
+                            }
+                            if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                                $evolutionService->processMonthlyDevelopment($campaign);
+                            }
+                            app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                            app(AllStarService::class)->processAllStarSelections($campaign);
+                        } catch (\Exception $e) {
+                            Log::error("Post-batch processing failed for campaign {$campaignId}: " . $e->getMessage());
                         }
-                        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
-                            $evolutionService->processMonthlyDevelopment($campaign);
-                        }
-                        app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
-                        app(AllStarService::class)->processAllStarSelections($campaign);
                     })
                     ->catch(function ($batch, $e) use ($campaignId) {
                         Log::error("Post-game batch failed for campaign {$campaignId}: " . $e->getMessage());
@@ -1305,25 +1322,29 @@ class GameController extends Controller
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
-                    $evolutionService = app(PlayerEvolutionService::class);
-                    $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
-
                     $campaign->update([
                         'current_date' => $newDate,
                         'simulation_batch_id' => null,
                     ]);
 
-                    $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
-                    if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-                        $evolutionService->processWeeklyUpdates($campaign);
-                        $proposalService = app(AITradeProposalService::class);
-                        $proposalService->generateWeeklyProposals($campaign);
+                    try {
+                        $evolutionService = app(PlayerEvolutionService::class);
+                        $evolutionService->processRestDayRecovery($campaign, $uniqueTeams);
+
+                        $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                            $evolutionService->processWeeklyUpdates($campaign);
+                            $proposalService = app(AITradeProposalService::class);
+                            $proposalService->generateWeeklyProposals($campaign);
+                        }
+                        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                            $evolutionService->processMonthlyDevelopment($campaign);
+                        }
+                        app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                        app(AllStarService::class)->processAllStarSelections($campaign);
+                    } catch (\Exception $e) {
+                        Log::error("Post-batch processing failed for campaign {$campaignId}: " . $e->getMessage());
                     }
-                    if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
-                        $evolutionService->processMonthlyDevelopment($campaign);
-                    }
-                    app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
-                    app(AllStarService::class)->processAllStarSelections($campaign);
                 })
                 ->catch(function ($batch, $e) use ($campaignId) {
                     Log::error("Post-game batch failed for campaign {$campaignId}: " . $e->getMessage());
@@ -1891,25 +1912,29 @@ class GameController extends Controller
                     $campaign = Campaign::find($campaignId);
                     if (!$campaign) return;
 
-                    $evolutionService = app(PlayerEvolutionService::class);
-                    $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
-
                     $campaign->update([
                         'current_date' => $newDate,
                         'simulation_batch_id' => null,
                     ]);
 
-                    if (!$excludeUserGame) {
-                        $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
-                        if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
-                            $evolutionService->processWeeklyUpdates($campaign);
-                            app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
+                    try {
+                        $evolutionService = app(PlayerEvolutionService::class);
+                        $evolutionService->processMultiDayRestRecovery($campaign, $perDayTeams);
+
+                        if (!$excludeUserGame) {
+                            $dayOfSeason = $newDate->diffInDays(Carbon::parse('2025-10-21'));
+                            if ($dayOfSeason > 0 && $dayOfSeason % 7 === 0) {
+                                $evolutionService->processWeeklyUpdates($campaign);
+                                app(AITradeProposalService::class)->generateWeeklyProposals($campaign);
+                            }
+                            if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
+                                $evolutionService->processMonthlyDevelopment($campaign);
+                            }
+                            app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
+                            app(AllStarService::class)->processAllStarSelections($campaign);
                         }
-                        if ($dayOfSeason > 0 && $dayOfSeason % 30 === 0) {
-                            $evolutionService->processMonthlyDevelopment($campaign);
-                        }
-                        app(AITradeProposalService::class)->processTradeDeadlineEvents($campaign);
-                        app(AllStarService::class)->processAllStarSelections($campaign);
+                    } catch (\Exception $e) {
+                        Log::error("Post-batch processing failed for campaign {$campaignId}: " . $e->getMessage());
                     }
                 })
                 ->catch(function ($batch, $e) use ($campaignId) {

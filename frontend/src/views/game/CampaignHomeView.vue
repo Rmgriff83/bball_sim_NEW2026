@@ -145,12 +145,18 @@ function goToTeamTabFromWarning() {
   router.push(`/campaign/${campaignId.value}/team?tab=team`)
 }
 
+// Parse a date string (YYYY-MM-DD or datetime) into a local Date, avoiding UTC shift
+function parseLocalDate(dateStr) {
+  const [y, m, d] = dateStr.split('T')[0].split(' ')[0].split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
 // Current in-game date
 const currentDate = computed(() => campaign.value?.current_date)
 
 const formattedCurrentDate = computed(() => {
   if (!currentDate.value) return ''
-  const date = new Date(currentDate.value)
+  const date = parseLocalDate(currentDate.value)
   return {
     weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
     month: date.toLocaleDateString('en-US', { month: 'short' }),
@@ -239,7 +245,7 @@ const lastSimResultOutcome = computed(() => {
 // Format game date
 function formatGameDate(dateStr) {
   if (!dateStr) return ''
-  const date = new Date(dateStr)
+  const date = parseLocalDate(dateStr)
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
@@ -466,7 +472,7 @@ async function handleConfirmSimulate() {
     // Refresh campaign, team, games, and standings immediately
     // Standings include the user's game result (updated synchronously on backend)
     await Promise.all([
-      campaignStore.fetchCampaign(campaignId.value),
+      campaignStore.fetchCampaign(campaignId.value, true),
       teamStore.fetchTeam(campaignId.value, { force: true }),
       gameStore.fetchGames(campaignId.value, { force: true }),
       leagueStore.fetchStandings(campaignId.value, { force: true })
@@ -556,7 +562,7 @@ async function handleSimToEnd() {
     }
 
     await Promise.all([
-      campaignStore.fetchCampaign(campaignId.value),
+      campaignStore.fetchCampaign(campaignId.value, true),
       teamStore.fetchTeam(campaignId.value, { force: true }),
       gameStore.fetchGames(campaignId.value, { force: true }),
       leagueStore.fetchStandings(campaignId.value, { force: true })
@@ -582,7 +588,7 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
     // Background AI games finished — refresh all data
     try {
       await Promise.all([
-        campaignStore.fetchCampaign(campaignId.value),
+        campaignStore.fetchCampaign(campaignId.value, true),
         leagueStore.fetchStandings(campaignId.value, { force: true }),
         gameStore.fetchGames(campaignId.value, { force: true })
       ])
@@ -620,7 +626,7 @@ async function handleAcceptProposal(proposal) {
     toastStore.showSuccess('Trade completed!')
     // Refresh team and campaign data
     await Promise.all([
-      campaignStore.fetchCampaign(campaignId.value),
+      campaignStore.fetchCampaign(campaignId.value, true),
       teamStore.fetchTeam(campaignId.value, { force: true }),
     ])
     // Show next proposal if any

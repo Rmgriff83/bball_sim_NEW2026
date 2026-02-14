@@ -672,6 +672,7 @@ class TeamController extends Controller
             'weight' => $player->weight_lbs,
             'age' => $player->age,
             'is_injured' => $player->is_injured,
+            'injury_details' => $player->injury_details,
             'fatigue' => $player->fatigue,
             'contract' => [
                 'years_remaining' => $player->contract_years_remaining,
