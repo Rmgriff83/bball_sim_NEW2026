@@ -16,6 +16,8 @@ class Campaign extends Model
         'current_date',
         'game_year',
         'difficulty',
+        'draft_mode',
+        'draft_completed',
         'settings',
         'last_played_at',
         'simulation_batch_id',
@@ -26,6 +28,7 @@ class Campaign extends Model
         'settings' => 'array',
         'last_played_at' => 'datetime',
         'game_year' => 'integer',
+        'draft_completed' => 'boolean',
     ];
 
     public function user(): BelongsTo

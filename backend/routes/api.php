@@ -69,6 +69,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Campaign-specific routes
     Route::prefix('campaigns/{campaign}')->group(function () {
+        // Fantasy draft
+        Route::get('/draft-pool', [CampaignController::class, 'getDraftPool']);
+        Route::post('/finalize-draft', [CampaignController::class, 'finalizeDraft']);
+
         // Team management
         Route::get('/team', [TeamController::class, 'show']);
         Route::get('/team/lineup', [TeamController::class, 'show']);

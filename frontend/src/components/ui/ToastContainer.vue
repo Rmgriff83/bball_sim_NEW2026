@@ -31,7 +31,14 @@ function isWin(toast) {
           v-for="toast in toastStore.toasts"
           :key="toast.id"
           class="toast"
-          :class="[`toast-${toast.type}`, { 'toast-win': isWin(toast), 'toast-loss': !isWin(toast) }]"
+          :class="[
+            `toast-${toast.type}`,
+            {
+              'toast-win': toast.type === 'game-result' && isWin(toast),
+              'toast-loss': toast.type === 'game-result' && !isWin(toast),
+              'toast-user-pick': toast.type === 'draft-pick' && toast.isUserTeam,
+            }
+          ]"
         >
           <!-- Game Result Toast -->
           <template v-if="toast.type === 'game-result'">
@@ -63,6 +70,27 @@ function isWin(toast) {
                   <XCircle v-else :size="14" class="result-icon" />
                   <span class="result-letter">{{ isWin(toast) ? 'W' : 'L' }}</span>
                 </div>
+              </div>
+            </div>
+            <button class="toast-close" @click="toastStore.removeToast(toast.id)">
+              <X :size="16" />
+            </button>
+          </template>
+
+          <!-- Draft Pick Toast -->
+          <template v-if="toast.type === 'draft-pick'">
+            <div
+              class="draft-pick-badge"
+              :style="{ backgroundColor: toast.teamColor || '#666' }"
+            >
+              {{ toast.teamAbbr }}
+            </div>
+            <div class="toast-content">
+              <div class="game-result-header">PICK #{{ toast.pickNumber }}</div>
+              <div class="draft-pick-player">{{ toast.playerName }}</div>
+              <div class="draft-pick-meta">
+                <span class="draft-pick-pos">{{ toast.position }}</span>
+                <span class="draft-pick-ovr">{{ toast.overallRating }} OVR</span>
               </div>
             </div>
             <button class="toast-close" @click="toastStore.removeToast(toast.id)">
@@ -238,6 +266,46 @@ function isWin(toast) {
 .toast-close:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
+}
+
+/* Draft Pick Toast */
+.toast-draft-pick {
+  border-left: 3px solid var(--color-primary);
+}
+
+.toast-user-pick {
+  border-left: 3px solid var(--color-success);
+}
+
+.draft-pick-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+}
+
+.draft-pick-player {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 2px;
+}
+
+.draft-pick-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.draft-pick-pos {
+  font-weight: 600;
 }
 
 /* Animations */

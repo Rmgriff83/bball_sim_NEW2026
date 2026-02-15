@@ -46,6 +46,20 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
+  function showDraftPick({ pickNumber, teamAbbr, teamColor, playerName, position, overallRating, isUserTeam }) {
+    return addToast({
+      type: 'draft-pick',
+      pickNumber,
+      teamAbbr,
+      teamColor,
+      playerName,
+      position,
+      overallRating,
+      isUserTeam,
+      duration: 4000
+    })
+  }
+
   // Minimal toast functions
   function addMinimalToast(toast) {
     const id = nextId++
@@ -121,6 +135,7 @@ export const useToastStore = defineStore('toast', () => {
     addToast,
     removeToast,
     showGameResult,
+    showDraftPick,
     addMinimalToast,
     removeMinimalToast,
     showLoading,

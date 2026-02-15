@@ -14,8 +14,14 @@ const showCreateModal = ref(false)
 const newCampaignName = ref('')
 const selectedTeam = ref(null)
 const selectedDifficulty = ref('pro')
+const selectedDraftMode = ref('standard')
 const creating = ref(false)
 const createError = ref(null)
+
+const draftModes = [
+  { value: 'standard', label: 'Standard', description: 'Teams come with pre-built rosters' },
+  { value: 'fantasy', label: 'Fantasy Draft', description: 'Draft all players from scratch' },
+]
 
 const difficulties = [
   { value: 'rookie', label: 'Rookie', description: 'Easier gameplay, higher success rates' },
@@ -39,6 +45,7 @@ function openCreateModal() {
   newCampaignName.value = ''
   selectedTeam.value = null
   selectedDifficulty.value = 'pro'
+  selectedDraftMode.value = 'standard'
   createError.value = null
   document.body.style.overflow = 'hidden'
 }
@@ -77,14 +84,23 @@ async function createCampaign() {
   createError.value = null
 
   try {
-    const campaign = await campaignStore.createCampaign({
+    const payload = {
       name: newCampaignName.value.trim(),
       team_abbreviation: selectedTeam.value.abbreviation,
       difficulty: selectedDifficulty.value,
-    })
+    }
+    if (selectedDraftMode.value === 'fantasy') {
+      payload.draft_mode = 'fantasy'
+    }
+
+    const campaign = await campaignStore.createCampaign(payload)
 
     closeCreateModal()
-    router.push(`/campaign/${campaign.id}`)
+    if (selectedDraftMode.value === 'fantasy') {
+      router.push(`/campaign/${campaign.id}/draft`)
+    } else {
+      router.push(`/campaign/${campaign.id}`)
+    }
   } catch (err) {
     createError.value = err.response?.data?.message || 'Failed to create campaign'
   } finally {
@@ -266,6 +282,24 @@ function getDifficultyLabel(value) {
                   >
                     <span class="difficulty-name">{{ diff.label }}</span>
                     <span class="difficulty-desc">{{ diff.description }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Draft Mode Selection -->
+              <div class="form-group">
+                <label class="form-label">Draft Mode</label>
+                <div class="difficulty-grid">
+                  <button
+                    v-for="mode in draftModes"
+                    :key="mode.value"
+                    type="button"
+                    class="difficulty-option"
+                    :class="{ selected: selectedDraftMode === mode.value }"
+                    @click="selectedDraftMode = mode.value"
+                  >
+                    <span class="difficulty-name">{{ mode.label }}</span>
+                    <span class="difficulty-desc">{{ mode.description }}</span>
                   </button>
                 </div>
               </div>

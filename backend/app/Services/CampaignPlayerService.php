@@ -429,6 +429,87 @@ class CampaignPlayerService
     }
 
     /**
+     * Initialize all players as free agents for fantasy draft mode.
+     * No players go to MySQL — all go to league_players.json with teamAbbreviation = 'FA'.
+     */
+    public function initializeFantasyDraftPlayers(Campaign $campaign): array
+    {
+        $masterPlayers = $this->loadPlayersMaster();
+        $leaguePlayers = [];
+
+        foreach ($masterPlayers as $playerData) {
+            $playerData = $this->randomizePlayerData($playerData);
+            $playerData['teamAbbreviation'] = 'FA';
+            $leaguePlayers[] = $playerData;
+        }
+
+        $this->saveLeaguePlayers($campaign->id, $leaguePlayers);
+
+        return [
+            'database_players' => 0,
+            'json_players' => count($leaguePlayers),
+            'total_players' => count($leaguePlayers),
+        ];
+    }
+
+    /**
+     * Assign drafted players to their teams after fantasy draft completes.
+     * Players assigned to user's team go to MySQL, all others stay in JSON.
+     */
+    public function assignDraftedPlayers(Campaign $campaign, string $userTeamAbbr, int $userTeamId, array $draftResults): array
+    {
+        $leaguePlayers = $this->loadLeaguePlayers($campaign->id);
+
+        // Build a map of playerId → teamAbbreviation from draft results
+        $assignments = [];
+        foreach ($draftResults as $pick) {
+            $assignments[$pick['playerId']] = $pick['teamAbbreviation'];
+        }
+
+        $userPlayers = [];
+        $remainingPlayers = [];
+        $dbCount = 0;
+        $jsonCount = 0;
+
+        foreach ($leaguePlayers as $player) {
+            $playerId = $player['id'] ?? null;
+            $assignedTeam = $assignments[$playerId] ?? null;
+
+            if ($assignedTeam) {
+                $player['teamAbbreviation'] = $assignedTeam;
+
+                if ($assignedTeam === $userTeamAbbr) {
+                    // User's team → create in database
+                    $userPlayers[] = $player;
+                } else {
+                    // AI team → stays in JSON
+                    $remainingPlayers[] = $player;
+                    $jsonCount++;
+                }
+            } else {
+                // Undrafted → stays as FA in JSON
+                $remainingPlayers[] = $player;
+                $jsonCount++;
+            }
+        }
+
+        // Create user's players in database
+        foreach ($userPlayers as $playerData) {
+            $this->createPlayerInDatabase($playerData, $campaign->id, $userTeamId);
+            $dbCount++;
+        }
+
+        // Save remaining players to JSON
+        $this->saveLeaguePlayers($campaign->id, $remainingPlayers);
+
+        return [
+            'database_players' => $dbCount,
+            'json_players' => $jsonCount,
+            'total_players' => $dbCount + $jsonCount,
+        ];
+    }
+
+    /**
      * Delete all campaign player data (both DB and JSON).
      */
     public function deleteCampaignPlayers(int $campaignId): void

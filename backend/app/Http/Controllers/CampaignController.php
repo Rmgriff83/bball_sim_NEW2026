@@ -44,6 +44,8 @@ class CampaignController extends Controller
                     'current_date' => $campaign->current_date->format('Y-m-d'),
                     'game_year' => $campaign->game_year,
                     'difficulty' => $campaign->difficulty,
+                    'draft_mode' => $campaign->draft_mode ?? 'standard',
+                    'draft_completed' => $campaign->draft_completed ?? true,
                     'last_played_at' => $campaign->last_played_at?->toISOString(),
                 ];
             }),
@@ -59,7 +61,11 @@ class CampaignController extends Controller
             'name' => 'required|string|max:100',
             'team_abbreviation' => 'required|string|max:5',
             'difficulty' => 'required|in:rookie,pro,all_star,hall_of_fame',
+            'draft_mode' => 'sometimes|in:standard,fantasy',
         ]);
+
+        $draftMode = $validated['draft_mode'] ?? 'standard';
+        $isFantasy = $draftMode === 'fantasy';
 
         try {
             DB::beginTransaction();
@@ -71,6 +77,8 @@ class CampaignController extends Controller
                 'current_date' => '2025-10-21', // NBA season start
                 'game_year' => 1,
                 'difficulty' => $validated['difficulty'],
+                'draft_mode' => $draftMode,
+                'draft_completed' => !$isFantasy,
                 'settings' => [
                     'autoSave' => true,
                     'injuryFrequency' => 'normal',
@@ -79,9 +87,13 @@ class CampaignController extends Controller
                 'last_played_at' => now(),
             ]);
 
-            // Generate teams, coaches, and players for this campaign
-            // Players for user's team go to database, others to JSON file
-            $playerStats = $this->generateCampaignData($campaign->id, $validated['team_abbreviation']);
+            if ($isFantasy) {
+                // Fantasy draft: generate teams/coaches, but ALL players are free agents
+                $this->generateCampaignDataFantasy($campaign->id);
+            } else {
+                // Standard: generate teams, coaches, and players with existing rosters
+                $this->generateCampaignData($campaign->id, $validated['team_abbreviation']);
+            }
 
             // Find and set the user's selected team
             $userTeam = Team::where('campaign_id', $campaign->id)
@@ -109,12 +121,12 @@ class CampaignController extends Controller
             $this->seasonService->initializeSeason($campaign, 2025);
             $gamesCreated = $this->seasonService->generateSchedule($campaign, 2025);
 
-            // Generate draft picks (5 years of picks for all teams)
-            $campaign->refresh(); // Reload to get relationships
-            $this->draftPickService->generateInitialPicks($campaign);
-
-            // Initialize user's team default lineup based on best players per position
-            $this->lineupService->initializeUserTeamLineup($campaign);
+            if (!$isFantasy) {
+                // Standard mode: generate draft picks and initialize lineups now
+                $campaign->refresh();
+                $this->draftPickService->generateInitialPicks($campaign);
+                $this->lineupService->initializeUserTeamLineup($campaign);
+            }
 
             DB::commit();
 
@@ -125,6 +137,8 @@ class CampaignController extends Controller
                     'name' => $campaign->name,
                     'team' => $userTeam,
                     'games_created' => $gamesCreated,
+                    'draft_mode' => $draftMode,
+                    'draft_completed' => !$isFantasy,
                 ],
             ], 201);
         } catch (\Exception $e) {
@@ -191,6 +205,8 @@ class CampaignController extends Controller
                 'current_date' => $campaign->current_date->format('Y-m-d'),
                 'game_year' => $campaign->game_year,
                 'difficulty' => $campaign->difficulty,
+                'draft_mode' => $campaign->draft_mode ?? 'standard',
+                'draft_completed' => $campaign->draft_completed ?? true,
                 'settings' => $campaign->settings,
                 'updated_at' => $campaign->updated_at->toISOString(),
                 'simulation_batch_id' => $campaign->simulation_batch_id,
@@ -333,6 +349,123 @@ class CampaignController extends Controller
     }
 
     /**
+     * Finalize a fantasy draft — assign players to teams, initialize lineups, generate picks.
+     */
+    public function finalizeDraft(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        if ($campaign->draft_completed) {
+            return response()->json(['message' => 'Draft already completed'], 400);
+        }
+
+        $validated = $request->validate([
+            'draftResults' => 'required|array|min:1',
+            'draftResults.*.playerId' => 'required',
+            'draftResults.*.teamAbbreviation' => 'required|string',
+            'draftResults.*.round' => 'required|integer',
+            'draftResults.*.pick' => 'required|integer',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $playerService = app(CampaignPlayerService::class);
+            $userTeam = $campaign->team;
+
+            // Assign drafted players to teams
+            $playerService->assignDraftedPlayers(
+                $campaign,
+                $userTeam->abbreviation,
+                $userTeam->id,
+                $validated['draftResults']
+            );
+
+            // Initialize lineups for all AI teams
+            $aiTeams = Team::where('campaign_id', $campaign->id)
+                ->where('id', '!=', $userTeam->id)
+                ->get();
+
+            foreach ($aiTeams as $team) {
+                $this->lineupService->initializeTeamLineup($campaign, $team);
+            }
+
+            // Initialize user's team lineup
+            $this->lineupService->initializeUserTeamLineup($campaign);
+
+            // Generate draft picks (5 years)
+            $campaign->refresh();
+            $this->draftPickService->generateInitialPicks($campaign);
+
+            // Mark draft as completed
+            $campaign->update(['draft_completed' => true]);
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Draft finalized successfully',
+                'campaign' => [
+                    'id' => $campaign->id,
+                    'draft_completed' => true,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Failed to finalize draft',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get the draft player pool for a fantasy draft campaign.
+     */
+    public function getDraftPool(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        if (($campaign->draft_mode ?? 'standard') !== 'fantasy') {
+            return response()->json(['message' => 'Not a fantasy draft campaign'], 400);
+        }
+
+        if ($campaign->draft_completed) {
+            return response()->json(['message' => 'Draft already completed'], 400);
+        }
+
+        $playerService = app(CampaignPlayerService::class);
+        $leaguePlayers = $playerService->loadLeaguePlayers($campaign->id);
+
+        // Format each player using the same format as TeamController
+        $formatted = array_map(function ($player) {
+            return [
+                'id' => $player['id'] ?? null,
+                'firstName' => $player['firstName'] ?? $player['first_name'] ?? '',
+                'lastName' => $player['lastName'] ?? $player['last_name'] ?? '',
+                'position' => $player['position'] ?? 'SF',
+                'secondaryPosition' => $player['secondaryPosition'] ?? $player['secondary_position'] ?? null,
+                'overallRating' => $player['overallRating'] ?? $player['overall_rating'] ?? 75,
+                'potentialRating' => $player['potentialRating'] ?? $player['potential_rating'] ?? 75,
+                'heightInches' => $player['heightInches'] ?? $player['height_inches'] ?? 78,
+                'weightLbs' => $player['weightLbs'] ?? $player['weight_lbs'] ?? 220,
+                'birthDate' => $player['birthDate'] ?? $player['birth_date'] ?? null,
+                'badges' => $player['badges'] ?? [],
+                'attributes' => $player['attributes'] ?? [],
+                'country' => $player['country'] ?? null,
+                'college' => $player['college'] ?? null,
+            ];
+        }, $leaguePlayers);
+
+        return response()->json([
+            'players' => $formatted,
+        ]);
+    }
+
+    /**
      * Generate teams, coaches, and players for a new campaign.
      */
     private function generateCampaignData(int $campaignId, string $userTeamAbbreviation): array
@@ -352,6 +485,25 @@ class CampaignController extends Controller
         $campaign = Campaign::find($campaignId);
 
         return $playerService->initializeCampaignPlayers($campaign, $userTeamAbbreviation);
+    }
+
+    /**
+     * Generate teams and coaches for a fantasy draft campaign (no player assignments).
+     */
+    private function generateCampaignDataFantasy(int $campaignId): void
+    {
+        $teamSeeder = new TeamSeeder();
+        $teamSeeder->campaignId = $campaignId;
+        $teamSeeder->run();
+
+        $coachSeeder = new CoachSeeder();
+        $coachSeeder->campaignId = $campaignId;
+        $coachSeeder->run();
+
+        // All players are free agents — no team assignments
+        $playerService = app(CampaignPlayerService::class);
+        $campaign = Campaign::find($campaignId);
+        $playerService->initializeFantasyDraftPlayers($campaign);
     }
 
     /**

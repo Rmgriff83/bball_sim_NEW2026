@@ -75,6 +75,12 @@ onMounted(async () => {
   if (!campaign.value || campaign.value.id !== campaignId.value) {
     await campaignStore.fetchCampaign(campaignId.value)
   }
+
+  // Redirect to draft room if fantasy draft is incomplete
+  if (campaign.value?.draft_mode === 'fantasy' && !campaign.value?.draft_completed) {
+    router.replace(`/campaign/${campaignId.value}/draft`)
+    return
+  }
 })
 
 onUnmounted(() => {
