@@ -133,7 +133,11 @@ const normalizedPlayer = computed(() => {
     // Upgrade points
     upgrade_points: p.upgrade_points ?? p.upgradePoints ?? 0,
     // Recent performances
-    recentPerformances: p.recent_performances || p.recentPerformances || []
+    recentPerformances: p.recent_performances || p.recentPerformances || [],
+    // Morale & personality
+    morale: p.morale ?? p.personality?.morale ?? 80,
+    personality: p.personality || null,
+    personalityTraits: p.personality?.traits || [],
   }
 })
 
@@ -182,6 +186,44 @@ function getFatigueColor(fatigue) {
   if (fatigue >= 70) return 'var(--color-error)'
   if (fatigue >= 50) return 'var(--color-warning)'
   return 'var(--color-success)'
+}
+
+// Morale helpers
+const moraleValue = computed(() => normalizedPlayer.value?.morale ?? 80)
+
+function getMoraleLabel(morale) {
+  if (morale >= 80) return 'Excellent'
+  if (morale >= 50) return 'Good'
+  if (morale >= 25) return 'Low'
+  return 'Critical'
+}
+
+function getMoraleColor(morale) {
+  if (morale >= 80) return '#22c55e'
+  if (morale >= 50) return '#f59e0b'
+  if (morale >= 25) return '#f97316'
+  return '#ef4444'
+}
+
+function formatTraitName(trait) {
+  if (!trait) return ''
+  return trait.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+}
+
+function getTraitDescription(trait) {
+  const descriptions = {
+    hot_head: 'Morale swings are amplified — reacts strongly to wins and losses',
+    team_player: 'Morale stays more stable — a positive locker room presence',
+    quiet: 'Morale stays more stable — keeps to himself',
+    leader: 'Boosts team chemistry — positive influence on teammates',
+    ball_hog: 'Hurts team chemistry — wants the ball too much',
+    clutch: 'Performs better in high-pressure situations',
+    lazy: 'May not develop as quickly — inconsistent work ethic',
+    hard_worker: 'Develops faster — always in the gym',
+    emotional: 'Morale can swing unpredictably',
+    confident: 'Bounces back from bad games quickly',
+  }
+  return descriptions[trait] || 'Affects how the player behaves and responds'
 }
 
 // Dynamic Duo detection
@@ -470,6 +512,14 @@ function formatChange(change) {
                 @click="activeTab = 'history'"
               >
                 History
+              </button>
+              <button
+                v-if="showGrowth"
+                class="tab-btn"
+                :class="{ active: activeTab === 'morale' }"
+                @click="activeTab = 'morale'"
+              >
+                Morale
               </button>
             </div>
 
@@ -824,6 +874,68 @@ function formatChange(change) {
                       <div v-else class="evolution-empty">
                         No development history available
                       </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Morale Tab -->
+              <div v-if="activeTab === 'morale' && showGrowth" class="tab-panel">
+                <!-- Current Morale -->
+                <div class="morale-current-section">
+                  <div class="morale-header-row">
+                    <div class="morale-big-number" :style="{ color: getMoraleColor(moraleValue) }">
+                      {{ moraleValue }}
+                    </div>
+                    <div class="morale-label-section">
+                      <span class="morale-status-label" :style="{ color: getMoraleColor(moraleValue) }">
+                        {{ getMoraleLabel(moraleValue) }}
+                      </span>
+                      <span class="morale-subtitle">Current Morale</span>
+                    </div>
+                  </div>
+                  <div class="morale-bar-container">
+                    <div
+                      class="morale-bar-fill"
+                      :style="{
+                        width: moraleValue + '%',
+                        backgroundColor: getMoraleColor(moraleValue)
+                      }"
+                    ></div>
+                  </div>
+                </div>
+
+                <!-- Personality Traits -->
+                <div class="morale-traits-section">
+                  <h4 class="morale-section-title">Personality Traits</h4>
+                  <div v-if="normalizedPlayer.personalityTraits.length > 0" class="traits-list">
+                    <div
+                      v-for="trait in normalizedPlayer.personalityTraits"
+                      :key="trait"
+                      class="trait-item"
+                    >
+                      <span class="trait-name">{{ formatTraitName(trait) }}</span>
+                      <span class="trait-description">{{ getTraitDescription(trait) }}</span>
+                    </div>
+                  </div>
+                  <div v-else class="morale-empty">
+                    No notable personality traits
+                  </div>
+                </div>
+
+                <!-- Context -->
+                <div class="morale-context-section">
+                  <h4 class="morale-section-title">Context</h4>
+                  <div class="context-items">
+                    <div v-if="normalizedPlayer.seasonStats" class="context-item">
+                      <span class="context-label">Avg Minutes</span>
+                      <span class="context-value">{{ formatStat(getStat('mpg'), 1) }} MPG</span>
+                    </div>
+                    <div class="context-item">
+                      <span class="context-label">Contract</span>
+                      <span class="context-value" :class="{ 'contract-year': normalizedPlayer.contract?.years_remaining <= 1 }">
+                        {{ normalizedPlayer.contract?.years_remaining <= 1 ? 'Contract Year' : normalizedPlayer.contract?.years_remaining + ' yrs left' }}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1850,6 +1962,153 @@ function formatChange(change) {
   margin: 0;
   color: var(--color-text-tertiary);
   font-size: 0.75rem;
+}
+
+/* Morale Tab */
+.morale-current-section {
+  padding: 1rem;
+  background: var(--color-bg-tertiary);
+  border-radius: 12px;
+}
+
+.morale-header-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.morale-big-number {
+  font-size: 2.5rem;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  line-height: 1;
+}
+
+.morale-label-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.morale-status-label {
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.morale-subtitle {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+}
+
+.morale-bar-container {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.morale-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.morale-traits-section,
+.morale-context-section {
+  margin-top: 0.5rem;
+}
+
+.morale-section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.traits-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.trait-item {
+  padding: 0.625rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border-left: 3px solid var(--color-primary);
+}
+
+.trait-name {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 2px;
+}
+
+.trait-description {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+}
+
+.morale-empty {
+  padding: 0.75rem;
+  color: var(--color-text-tertiary);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.context-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.context-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+}
+
+.context-label {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.context-value {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.context-value.contract-year {
+  color: var(--color-warning);
+}
+
+/* Light mode morale */
+[data-theme="light"] .morale-current-section {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .morale-bar-container {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .trait-item {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .context-item {
+  background: rgba(0, 0, 0, 0.03);
 }
 
 /* Modal Transition */

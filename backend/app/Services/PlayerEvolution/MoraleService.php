@@ -14,7 +14,7 @@ class MoraleService
     /**
      * Update player morale after a game.
      */
-    public function updateAfterGame(array $player, array $gameResult, array $boxScore): array
+    public function updateAfterGame(array $player, array $gameResult, array $boxScore, string $difficulty = 'pro'): array
     {
         $morale = $player['personality']['morale'] ?? $this->config['starting'];
         $factors = $this->config['factors'];
@@ -31,7 +31,7 @@ class MoraleService
 
         // Playing time expectations
         $minutes = $boxScore['minutes'] ?? 0;
-        $expectedMinutes = $this->getExpectedMinutes($player);
+        $expectedMinutes = $this->getExpectedMinutes($player, $difficulty);
 
         if ($minutes >= $expectedMinutes * 1.2) {
             $morale += $factors['playing_time_exceeded'];
@@ -155,13 +155,21 @@ class MoraleService
     }
 
     /**
-     * Get expected minutes based on overall rating.
+     * Get expected minutes based on overall rating and difficulty.
      */
-    private function getExpectedMinutes(array $player): int
+    private function getExpectedMinutes(array $player, string $difficulty = 'pro'): int
     {
         $overall = $player['overallRating'] ?? $player['overall_rating'] ?? 70;
 
-        if ($overall >= 85) return 32;
+        if ($overall >= 85) {
+            return match ($difficulty) {
+                'rookie' => 27,
+                'pro' => 28,
+                'all_star', 'all-star' => 29,
+                'hall_of_fame', 'hall-of-fame' => 31,
+                default => 28,
+            };
+        }
         if ($overall >= 80) return 28;
         if ($overall >= 75) return 24;
         if ($overall >= 70) return 18;

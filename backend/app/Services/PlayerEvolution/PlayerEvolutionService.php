@@ -214,7 +214,7 @@ class PlayerEvolutionService
 
             // Update morale
             $gameResult = ['won' => $won, 'streak' => $streak];
-            $player = $this->morale->updateAfterGame($player, $gameResult, $stats);
+            $player = $this->morale->updateAfterGame($player, $gameResult, $stats, $campaign->difficulty ?? 'pro');
             $newMorale = $player['personality']['morale'] ?? 80;
 
             // Track significant morale changes
@@ -352,6 +352,12 @@ class PlayerEvolutionService
         }
 
         $this->playerService->saveLeaguePlayers($campaign->id, $leaguePlayers);
+
+        \Log::debug("processWeeklyUpdates campaign {$campaign->id}", [
+            'user_players_processed' => $userPlayers->count(),
+            'league_players_processed' => count($leaguePlayers),
+            'upgrade_points_awarded' => $upgradePointsAwarded,
+        ]);
 
         return $upgradePointsAwarded;
     }

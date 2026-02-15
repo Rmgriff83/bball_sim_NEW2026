@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Log;
 class AllStarService
 {
     private const ALL_STAR_MONTH = 1;
-    private const ALL_STAR_DAY = 20;
+    private const ALL_STAR_DAY = 13;
     private const ALL_STAR_MIN_GAMES_PCT = 0.60;
     private const RISING_STARS_MIN_GAMES_PCT = 0.40;
 
@@ -222,11 +222,18 @@ class AllStarService
                 'secondaryPosition' => $playerInfo['secondaryPosition'],
                 'conference' => $playerInfo['conference'],
                 'stats' => [
+                    'gp' => $gp,
                     'ppg' => round(($stats['points'] ?? 0) / $gp, 1),
                     'rpg' => round(($stats['rebounds'] ?? 0) / $gp, 1),
                     'apg' => round(($stats['assists'] ?? 0) / $gp, 1),
                     'spg' => round(($stats['steals'] ?? 0) / $gp, 1),
                     'bpg' => round(($stats['blocks'] ?? 0) / $gp, 1),
+                    'fgPct' => ($stats['fieldGoalsAttempted'] ?? 0) > 0
+                        ? round(($stats['fieldGoalsMade'] ?? 0) / $stats['fieldGoalsAttempted'] * 100, 1)
+                        : 0,
+                    'threePct' => ($stats['threePointersAttempted'] ?? 0) > 0
+                        ? round(($stats['threePointersMade'] ?? 0) / $stats['threePointersAttempted'] * 100, 1)
+                        : 0,
                 ],
                 'score' => round($score, 1),
             ];

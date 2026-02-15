@@ -724,7 +724,8 @@ class PlayoffService
 
     /**
      * Check if regular season is complete.
-     * Season is complete when every team has played at least 68 games.
+     * Season is complete when every scheduled regular-season game is done.
+     * Works for both old (68-game) and new (54-game) campaigns.
      */
     public function isRegularSeasonComplete(Campaign $campaign): bool
     {
@@ -738,32 +739,14 @@ class PlayoffService
             return false;
         }
 
-        // Count completed games per team
-        $gamesPerTeam = [];
+        // Season is complete when every regular season game is done
         foreach ($regularSeasonGames as $game) {
-            if ($game['isComplete'] ?? false) {
-                $homeId = $game['homeTeamId'];
-                $awayId = $game['awayTeamId'];
-                $gamesPerTeam[$homeId] = ($gamesPerTeam[$homeId] ?? 0) + 1;
-                $gamesPerTeam[$awayId] = ($gamesPerTeam[$awayId] ?? 0) + 1;
-            }
-        }
-
-        // Need at least some teams in the count
-        if (empty($gamesPerTeam)) {
-            return false;
-        }
-
-        // Season is complete when all teams have played at least 68 games
-        $minGamesRequired = 68;
-        foreach ($gamesPerTeam as $teamId => $gamesPlayed) {
-            if ($gamesPlayed < $minGamesRequired) {
+            if (!($game['isComplete'] ?? false)) {
                 return false;
             }
         }
 
-        // Also verify we have all 30 teams
-        return count($gamesPerTeam) >= 30;
+        return true;
     }
 
     /**

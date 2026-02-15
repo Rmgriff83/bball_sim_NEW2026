@@ -175,7 +175,7 @@ const userGamesPlayed = computed(() => {
   return gameStore.completedGames?.filter(g => g.is_user_game)?.length || 0
 })
 
-const totalSeasonGames = 68 // Regular season
+const totalSeasonGames = 54 // Regular season
 
 // Format season year as '25/'26 (2025-2026 season)
 const formattedSeasonYear = computed(() => {

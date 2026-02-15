@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
 class AITradeProposalService
 {
     private const TRADE_DEADLINE_MONTH = 1;
-    private const TRADE_DEADLINE_DAY = 13;
+    private const TRADE_DEADLINE_DAY = 6;
 
     public function __construct(
         private AITradeEvaluationService $evaluationService,
@@ -446,7 +446,7 @@ class AITradeProposalService
                 'campaign_id' => $campaign->id,
                 'event_type' => 'trade',
                 'headline' => 'Trade deadline approaching',
-                'body' => "The January 13th trade deadline is {$daysUntil} days away. Teams are expected to increase activity.",
+                'body' => "The January 6th trade deadline is {$daysUntil} days away. Teams are expected to increase activity.",
                 'game_date' => $currentDate,
             ]);
 

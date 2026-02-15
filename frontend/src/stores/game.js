@@ -491,6 +491,26 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * Simulate all remaining regular season games after the user has finished their schedule.
+   */
+  async function simulateRemainingSeason(campaignId) {
+    simulating.value = true
+    error.value = null
+    try {
+      const response = await api.post(`/api/campaigns/${campaignId}/simulate-remaining-season`)
+      if (response.data.batchId) {
+        startPollingSimulationStatus(campaignId, response.data.batchId)
+      }
+      simulating.value = false
+      return response.data
+    } catch (err) {
+      error.value = err.response?.data?.message || 'Failed to simulate remaining season'
+      simulating.value = false
+      throw err
+    }
+  }
+
+  /**
    * Clear the simulate preview state.
    */
   function clearSimulatePreview() {
@@ -619,6 +639,7 @@ export const useGameStore = defineStore('game', () => {
     clearLiveSimulation,
     fetchSimulateToNextGamePreview,
     simulateToNextGame,
+    simulateRemainingSeason,
     clearSimulatePreview,
     invalidate,
     startPollingSimulationStatus,

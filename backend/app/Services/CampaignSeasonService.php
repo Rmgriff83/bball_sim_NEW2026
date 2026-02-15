@@ -184,80 +184,120 @@ class CampaignSeasonService
         $teamIds = $teams->pluck('id')->toArray();
         $teamConferences = $teams->pluck('conference', 'id')->toArray();
         $teamAbbreviations = $teams->pluck('abbreviation', 'id')->toArray();
+        $userTeamId = $campaign->team_id;
 
-        // Build matchups targeting 68 games per team
-        // Base: every team plays every other team twice (1 home, 1 away) = 58 games
-        $targetGamesPerTeam = 68;
+        // Build matchups targeting 54 games per team
+        // Base: every team plays every other team once (29 games), random home/away
+        $targetGamesPerTeam = 54;
         $matchups = [];
-        foreach ($teamIds as $homeTeamId) {
-            foreach ($teamIds as $awayTeamId) {
-                if ($homeTeamId === $awayTeamId) continue;
-                $matchups[] = [
-                    'homeTeamId' => $homeTeamId,
-                    'awayTeamId' => $awayTeamId,
-                ];
+
+        // Generate one game per unique pair with random home/away
+        for ($i = 0; $i < count($teamIds); $i++) {
+            for ($j = $i + 1; $j < count($teamIds); $j++) {
+                if (rand(0, 1)) {
+                    $matchups[] = ['homeTeamId' => $teamIds[$i], 'awayTeamId' => $teamIds[$j]];
+                } else {
+                    $matchups[] = ['homeTeamId' => $teamIds[$j], 'awayTeamId' => $teamIds[$i]];
+                }
             }
         }
 
-        // Add extra same-conference games to reach 68 per team (10 more each)
-        $teamGameCounts = array_fill_keys($teamIds, (count($teamIds) - 1) * 2);
-        $extraNeeded = $targetGamesPerTeam - $teamGameCounts[$teamIds[0]];
+        // Add extra same-conference games to reach 54 per team (25 more each)
+        $teamGameCounts = array_fill_keys($teamIds, count($teamIds) - 1);
 
-        if ($extraNeeded > 0) {
-            // Group teams by conference
-            $conferenceGroups = [];
-            foreach ($teamIds as $id) {
-                $conferenceGroups[$teamConferences[$id]][] = $id;
+        // Group teams by conference
+        $conferenceGroups = [];
+        foreach ($teamIds as $id) {
+            $conferenceGroups[$teamConferences[$id]][] = $id;
+        }
+
+        foreach ($conferenceGroups as $confTeams) {
+            // Build all same-conference pairs
+            $pairs = [];
+            for ($i = 0; $i < count($confTeams); $i++) {
+                for ($j = $i + 1; $j < count($confTeams); $j++) {
+                    $pairs[] = [$confTeams[$i], $confTeams[$j]];
+                }
             }
 
-            foreach ($conferenceGroups as $confTeams) {
-                // Build all same-conference pairs
-                $pairs = [];
-                for ($i = 0; $i < count($confTeams); $i++) {
-                    for ($j = $i + 1; $j < count($confTeams); $j++) {
-                        $pairs[] = [$confTeams[$i], $confTeams[$j]];
-                    }
-                }
-
-                // Add extra games until all conference teams reach target
-                $maxPasses = 100;
-                for ($pass = 0; $pass < $maxPasses; $pass++) {
-                    shuffle($pairs);
-                    $addedAny = false;
-                    foreach ($pairs as $pair) {
-                        if ($teamGameCounts[$pair[0]] < $targetGamesPerTeam
-                            && $teamGameCounts[$pair[1]] < $targetGamesPerTeam) {
-                            // Alternate home/away
-                            if (rand(0, 1)) {
-                                $matchups[] = ['homeTeamId' => $pair[0], 'awayTeamId' => $pair[1]];
-                            } else {
-                                $matchups[] = ['homeTeamId' => $pair[1], 'awayTeamId' => $pair[0]];
-                            }
-                            $teamGameCounts[$pair[0]]++;
-                            $teamGameCounts[$pair[1]]++;
-                            $addedAny = true;
+            // Add extra games until all conference teams reach target
+            $maxPasses = 100;
+            for ($pass = 0; $pass < $maxPasses; $pass++) {
+                shuffle($pairs);
+                $addedAny = false;
+                foreach ($pairs as $pair) {
+                    if ($teamGameCounts[$pair[0]] < $targetGamesPerTeam
+                        && $teamGameCounts[$pair[1]] < $targetGamesPerTeam) {
+                        // Alternate home/away
+                        if (rand(0, 1)) {
+                            $matchups[] = ['homeTeamId' => $pair[0], 'awayTeamId' => $pair[1]];
+                        } else {
+                            $matchups[] = ['homeTeamId' => $pair[1], 'awayTeamId' => $pair[0]];
                         }
+                        $teamGameCounts[$pair[0]]++;
+                        $teamGameCounts[$pair[1]]++;
+                        $addedAny = true;
                     }
-                    if (!$addedAny) break;
-                    $confCounts = array_intersect_key($teamGameCounts, array_flip($confTeams));
-                    if (min($confCounts) >= $targetGamesPerTeam) break;
                 }
+                if (!$addedAny) break;
+                $confCounts = array_intersect_key($teamGameCounts, array_flip($confTeams));
+                if (min($confCounts) >= $targetGamesPerTeam) break;
             }
         }
 
         // Distribute games across season ensuring no team plays twice on the same day
+        // User team is prioritized: never more than 2 off-days between games
         shuffle($matchups);
-        $gamesPerDay = 8;
+        $gamesPerDay = 10;
         $currentDate = $startDate->copy();
         $schedule = [];
         $gameNumber = 1;
         $remaining = $matchups;
+        $userLastGameDate = null;
 
         while (!empty($remaining)) {
             $dayGames = [];
             $teamsPlayingToday = [];
             $unscheduled = [];
+            $dateStr = $currentDate->format('Y-m-d');
 
+            // Check if user team needs a game today (gap would exceed 2 days)
+            $userNeedsGame = false;
+            if ($userLastGameDate !== null) {
+                $daysSinceUserGame = $userLastGameDate->diffInDays($currentDate);
+                if ($daysSinceUserGame >= 2) {
+                    $userNeedsGame = true;
+                }
+            } else {
+                // User hasn't played yet — schedule ASAP
+                $userNeedsGame = true;
+            }
+
+            // If user needs a game, try to schedule one first
+            if ($userNeedsGame) {
+                $userScheduled = false;
+                $stillRemaining = [];
+                foreach ($remaining as $matchup) {
+                    if ($userScheduled) {
+                        $stillRemaining[] = $matchup;
+                        continue;
+                    }
+                    $home = $matchup['homeTeamId'];
+                    $away = $matchup['awayTeamId'];
+                    if ($home === $userTeamId || $away === $userTeamId) {
+                        $dayGames[] = $matchup;
+                        $teamsPlayingToday[] = $home;
+                        $teamsPlayingToday[] = $away;
+                        $userScheduled = true;
+                        $userLastGameDate = $currentDate->copy();
+                    } else {
+                        $stillRemaining[] = $matchup;
+                    }
+                }
+                $remaining = $stillRemaining;
+            }
+
+            // Fill remaining slots for the day
             foreach ($remaining as $matchup) {
                 $home = $matchup['homeTeamId'];
                 $away = $matchup['awayTeamId'];
@@ -278,13 +318,18 @@ class CampaignSeasonService
             foreach ($dayGames as $matchup) {
                 $gameId = sprintf('game_%d_%04d', $year, $gameNumber);
 
+                // Track user team's last game date
+                if ($matchup['homeTeamId'] === $userTeamId || $matchup['awayTeamId'] === $userTeamId) {
+                    $userLastGameDate = $currentDate->copy();
+                }
+
                 $schedule[] = [
                     'id' => $gameId,
                     'homeTeamId' => $matchup['homeTeamId'],
                     'homeTeamAbbreviation' => $teamAbbreviations[$matchup['homeTeamId']],
                     'awayTeamId' => $matchup['awayTeamId'],
                     'awayTeamAbbreviation' => $teamAbbreviations[$matchup['awayTeamId']],
-                    'gameDate' => $currentDate->format('Y-m-d'),
+                    'gameDate' => $dateStr,
                     'isPlayoff' => false,
                     'playoffRound' => null,
                     'playoffGameNumber' => null,
@@ -302,11 +347,6 @@ class CampaignSeasonService
             $remaining = $unscheduled;
 
             $currentDate->addDay();
-
-            // Skip some Sundays
-            if ($currentDate->dayOfWeek === 0 && rand(0, 1) === 0) {
-                $currentDate->addDay();
-            }
         }
 
         $season['schedule'] = $schedule;
@@ -987,7 +1027,8 @@ class CampaignSeasonService
 
     /**
      * Check if regular season is complete.
-     * Season is complete when every team has played at least 68 games.
+     * Season is complete when every scheduled regular-season game is done.
+     * Works for both old (68-game) and new (54-game) campaigns.
      */
     public function isRegularSeasonComplete(int $campaignId, int $year): bool
     {
@@ -1000,32 +1041,14 @@ class CampaignSeasonService
             return false;
         }
 
-        // Count completed games per team
-        $gamesPerTeam = [];
+        // Season is complete when every regular season game is done
         foreach ($regularSeasonGames as $game) {
-            if ($game['isComplete'] ?? false) {
-                $homeId = $game['homeTeamId'];
-                $awayId = $game['awayTeamId'];
-                $gamesPerTeam[$homeId] = ($gamesPerTeam[$homeId] ?? 0) + 1;
-                $gamesPerTeam[$awayId] = ($gamesPerTeam[$awayId] ?? 0) + 1;
-            }
-        }
-
-        // Need at least some teams in the count
-        if (empty($gamesPerTeam)) {
-            return false;
-        }
-
-        // Season is complete when all teams have played at least 68 games
-        $minGamesRequired = 68;
-        foreach ($gamesPerTeam as $teamId => $gamesPlayed) {
-            if ($gamesPlayed < $minGamesRequired) {
+            if (!($game['isComplete'] ?? false)) {
                 return false;
             }
         }
 
-        // Also verify we have all 30 teams
-        return count($gamesPerTeam) >= 30;
+        return true;
     }
 
     /**

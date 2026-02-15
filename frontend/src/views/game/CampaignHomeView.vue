@@ -744,6 +744,14 @@ async function openAllStarModal() {
   }
 }
 
+async function handleFinishSeason() {
+  try {
+    await gameStore.simulateRemainingSeason(campaignId.value)
+  } catch (err) {
+    toastStore.showError('Failed to simulate remaining games')
+  }
+}
+
 function handleCloseSimulateModal() {
   showSimulateModal.value = false
   gameStore.clearSimulatePreview()
@@ -922,6 +930,30 @@ function handleCloseSimulateModal() {
               >
                 <FastForward class="btn-icon" :size="16" />
                 SIM TO END
+              </button>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <!-- Season Wrap-Up Card (user has no more games, league still playing) -->
+      <section v-else class="next-game-card glass-card-nebula">
+        <div class="next-game-header">
+          <h3 class="next-game-label">REGULAR SEASON COMPLETE</h3>
+        </div>
+        <div class="next-game-content">
+          <div v-if="gameStore.simulating" class="next-game-loading">
+            <LoadingSpinner size="md" />
+            <span class="next-game-loading-text">Simulating...</span>
+          </div>
+          <template v-else>
+            <p class="season-wrap-text">
+              You've played all your regular season games. Finish the remaining league games to see final standings and enter the playoffs.
+            </p>
+            <div class="next-game-buttons">
+              <button class="btn-play-game" @click="handleFinishSeason">
+                <FastForward class="btn-icon" :size="16" />
+                FINISH REGULAR SEASON
               </button>
             </div>
           </template>
@@ -1905,6 +1937,13 @@ function handleCloseSimulateModal() {
   justify-content: center;
   gap: 12px;
   padding: 24px 0;
+}
+
+.season-wrap-text {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 16px;
 }
 
 .next-game-loading-text {

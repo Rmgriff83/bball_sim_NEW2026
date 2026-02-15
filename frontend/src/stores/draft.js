@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, toRaw } from 'vue'
 import api from '@/composables/useApi'
 import { set, get, del } from 'idb-keyval'
 import { selectAIPick } from '@/services/AIDraftService'
@@ -373,15 +373,15 @@ export const useDraftStore = defineStore('draft', () => {
 
   async function saveDraftToCache(campaignId) {
     try {
-      await set(`draft_${campaignId}`, {
-        draftResults: draftResults.value,
+      await set(`draft_${campaignId}`, JSON.parse(JSON.stringify({
+        draftResults: toRaw(draftResults.value),
         currentPickIndex: currentPickIndex.value,
-        draftOrder: draftOrder.value,
+        draftOrder: toRaw(draftOrder.value),
         isDraftComplete: isDraftComplete.value,
         userTeamId: userTeamId.value,
         userTeamAbbr: userTeamAbbr.value,
         _savedAt: new Date().toISOString(),
-      })
+      })))
     } catch (e) {
       console.warn('Failed to save draft to cache:', e)
     }

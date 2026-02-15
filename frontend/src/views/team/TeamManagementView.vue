@@ -109,6 +109,8 @@ const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => teamStore.team)
 const roster = computed(() => teamStore.roster)
 const coach = computed(() => teamStore.coach)
+const teamChemistry = computed(() => teamStore.teamChemistry)
+const chemistryColor = computed(() => teamChemistry.value >= 70 ? '#22c55e' : '#ef4444')
 
 // Starters in position order (PG, SG, SF, PF, C) - may contain nulls for empty slots
 const starters = computed(() => roster.value.slice(0, 5))
@@ -931,7 +933,11 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
         <!-- Starters Section -->
         <div class="roster-list-header card-cosmic">
           <h3 class="list-header-text">STARTERS</h3>
-          <span class="total-minutes-value">{{ totalMinutes }} / 200 MIN</span>
+          <div class="header-metrics">
+            <span class="team-chemistry-value" :style="{ color: chemistryColor }">{{ teamChemistry }}%</span>
+            <span class="header-metrics-divider">&middot;</span>
+            <span class="total-minutes-value">{{ totalMinutes }} / 200 MIN</span>
+          </div>
         </div>
         <div class="players-grid">
           <template v-for="(slot, index) in starterSlots" :key="slot.position">
@@ -1002,8 +1008,11 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
               @click="expandedMovePlayer !== `starter-${slot.player.id}` && openPlayerModal(slot.player)"
             >
               <div class="card-header">
-                <div class="player-avatar">
-                  <User class="avatar-icon" :size="32" />
+                <div class="avatar-column">
+                  <div class="player-avatar">
+                    <User class="avatar-icon" :size="32" />
+                  </div>
+                  <span class="slot-position-label card-cosmic">{{ slot.position }}</span>
                 </div>
                 <div class="player-main-info">
                   <h4 class="player-name" :class="{ 'text-injured': slot.player.is_injured || slot.player.isInjured }">
@@ -1025,7 +1034,6 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                         {{ slot.player.secondary_position }}
                       </span>
                     </div>
-                    <span v-if="!(slot.player.is_injured || slot.player.isInjured)" class="role-badge starter">STARTER</span>
                     <span v-if="slot.player.is_injured || slot.player.isInjured" class="injury-tag">
                       Injured - {{ (slot.player.injury_details?.games_remaining || slot.player.injuryDetails?.games_remaining || 0) }} {{ (slot.player.injury_details?.games_remaining || slot.player.injuryDetails?.games_remaining || 0) === 1 ? 'game' : 'games' }}
                     </span>
@@ -1172,8 +1180,11 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
             @click="expandedMovePlayer !== `bench-${player.id}` && openPlayerModal(player)"
           >
             <div class="card-header">
-              <div class="player-avatar">
-                <User class="avatar-icon" :size="32" />
+              <div class="avatar-column">
+                <div class="player-avatar">
+                  <User class="avatar-icon" :size="32" />
+                </div>
+                <span class="slot-position-label bench-label">BENCH</span>
               </div>
               <div class="player-main-info">
                 <h4 class="player-name" :class="{ 'text-injured': player.is_injured || player.isInjured }">
@@ -1188,7 +1199,6 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                       {{ player.secondary_position }}
                     </span>
                   </div>
-                  <span v-if="!(player.is_injured || player.isInjured)" class="role-badge bench">BENCH</span>
                   <span v-if="player.is_injured || player.isInjured" class="injury-tag">
                     Injured - {{ (player.injury_details?.games_remaining || player.injuryDetails?.games_remaining || 0) }} {{ (player.injury_details?.games_remaining || player.injuryDetails?.games_remaining || 0) === 1 ? 'game' : 'games' }}
                   </span>
@@ -2178,6 +2188,35 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   background: rgba(0, 0, 0, 0.1);
 }
 
+.avatar-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.slot-position-label {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.2rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: #1a1520;
+  padding: 2px 12px;
+  border-radius: var(--radius-md);
+  line-height: 1.3;
+  text-align: center;
+}
+
+.slot-position-label.bench-label {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+}
+
 .player-avatar {
   width: 54px;
   height: 54px;
@@ -2523,6 +2562,16 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 @keyframes synergy-pulse {
   0%, 100% { box-shadow: 0 0 4px 2px rgba(0, 229, 255, 0.6); }
   50% { box-shadow: 0 0 8px 3px rgba(0, 229, 255, 0.3); }
+}
+
+[data-theme="light"] .badge-dot.synergy-active {
+  box-shadow: 0 0 4px 2px rgba(139, 92, 246, 0.6);
+  animation: synergy-pulse-light 2s ease-in-out infinite;
+}
+
+@keyframes synergy-pulse-light {
+  0%, 100% { box-shadow: 0 0 4px 2px rgba(139, 92, 246, 0.6); }
+  50% { box-shadow: 0 0 8px 3px rgba(139, 92, 246, 0.3); }
 }
 
 .dynamic-duo-badge {
@@ -3734,6 +3783,12 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   color: var(--color-text-secondary);
 }
 
+[data-theme="light"] .slot-position-label.bench-label {
+  background: rgba(0, 0, 0, 0.12);
+  border-color: rgba(0, 0, 0, 0.15);
+  color: var(--color-text-secondary);
+}
+
 [data-theme="light"] .stats-section-modal {
   background: rgba(0, 0, 0, 0.03);
   border-color: rgba(0, 0, 0, 0.08);
@@ -3765,6 +3820,26 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 
 [data-theme="light"] .badges-tab-content {
   color: var(--color-text-primary);
+}
+
+/* Header Metrics (chemistry + minutes) */
+.header-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.team-chemistry-value {
+  font-size: 0.85rem;
+  font-weight: 800;
+  font-family: var(--font-mono, monospace);
+}
+
+.header-metrics-divider {
+  color: rgba(0, 0, 0, 0.3);
+  font-weight: 700;
 }
 
 /* Total Minutes Value (in header) */

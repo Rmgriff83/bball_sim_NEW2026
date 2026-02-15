@@ -85,6 +85,24 @@ export const useTeamStore = defineStore('team', () => {
     Object.values(targetMinutes.value).reduce((sum, m) => sum + m, 0)
   )
 
+  // Team chemistry — from API team_chemistry or computed from roster morale
+  const teamChemistry = computed(() => {
+    if (team.value?.team_chemistry) return team.value.team_chemistry
+    if (roster.value.length === 0) return 80
+    const players = roster.value.filter(p => p !== null)
+    if (players.length === 0) return 80
+    const total = players.reduce((sum, p) => sum + (p.morale ?? 80), 0)
+    return Math.round(total / players.length)
+  })
+
+  // Chemistry modifier display string (e.g. "+1.2%" or "-0.5%")
+  const chemistryModifier = computed(() => {
+    const mod = (teamChemistry.value - 80) / 80 * 3
+    const clamped = Math.max(-3, Math.min(3, mod))
+    const sign = clamped >= 0 ? '+' : ''
+    return `${sign}${clamped.toFixed(1)}%`
+  })
+
   // Actions
   async function fetchTeam(campaignId, { force = false } = {}) {
     // Return cached data if already loaded for this campaign
@@ -453,6 +471,8 @@ export const useTeamStore = defineStore('team', () => {
     capSpace,
     averageOverall,
     totalTargetMinutes,
+    teamChemistry,
+    chemistryModifier,
     // Actions
     fetchTeam,
     fetchPlayer,

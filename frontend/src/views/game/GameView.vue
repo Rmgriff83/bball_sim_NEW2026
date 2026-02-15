@@ -2855,16 +2855,6 @@ onUnmounted(() => {
           </div>
         </GlassCard>
 
-        <!-- Animation Mode -->
-        <div v-if="hasAnimationData" class="mb-6">
-          <BaseButton
-            :variant="showAnimationMode ? 'primary' : 'secondary'"
-            @click="toggleAnimationMode"
-          >
-            {{ showAnimationMode ? 'Hide' : 'Watch' }} Game Animation
-          </BaseButton>
-        </div>
-
         <!-- Animated Court Viewer -->
         <GlassCard v-if="showAnimationMode && hasAnimationData" padding="none" :hoverable="false" class="mb-6">
           <!-- Court with animation and overlays -->

@@ -102,24 +102,32 @@ onUnmounted(() => {
                     :class="{ 'user-highlight': currentRosters.east?.starters?.[pos] && isUserPlayer(currentRosters.east.starters[pos]) }"
                   >
                     <template v-if="currentRosters.east?.starters?.[pos]">
-                      <span class="position-badge" :style="{ backgroundColor: currentRosters.east.starters[pos].teamColor || '#6B7280' }">
-                        {{ pos }}
-                      </span>
-                      <div class="player-info">
-                        <span class="player-name">{{ currentRosters.east.starters[pos].playerName }}</span>
-                        <span class="player-team" :style="{ color: currentRosters.east.starters[pos].teamColor }">
-                          {{ currentRosters.east.starters[pos].teamAbbr }}
+                      <div class="player-header">
+                        <span class="position-badge" :style="{ backgroundColor: currentRosters.east.starters[pos].teamColor || '#6B7280' }">
+                          {{ pos }}
                         </span>
+                        <div class="player-info">
+                          <span class="player-name">{{ currentRosters.east.starters[pos].playerName }}</span>
+                          <span class="player-team" :style="{ color: currentRosters.east.starters[pos].teamColor }">
+                            {{ currentRosters.east.starters[pos].teamAbbr }}
+                          </span>
+                        </div>
                       </div>
                       <div class="player-stats">
-                        <span>{{ currentRosters.east.starters[pos].stats?.ppg }} PPG</span>
-                        <span>{{ currentRosters.east.starters[pos].stats?.rpg }} RPG</span>
-                        <span>{{ currentRosters.east.starters[pos].stats?.apg }} APG</span>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.ppg }}</span><span class="stat-label">PPG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.rpg }}</span><span class="stat-label">RPG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.apg }}</span><span class="stat-label">APG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.spg }}</span><span class="stat-label">SPG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.bpg }}</span><span class="stat-label">BPG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.fgPct }}%</span><span class="stat-label">FG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.threePct }}%</span><span class="stat-label">3PT</span></div>
                       </div>
                     </template>
                     <template v-else>
-                      <span class="position-badge empty">{{ pos }}</span>
-                      <span class="player-name empty-slot">--</span>
+                      <div class="player-header">
+                        <span class="position-badge empty">{{ pos }}</span>
+                        <span class="player-name empty-slot">--</span>
+                      </div>
                     </template>
                   </div>
                 </div>
@@ -132,17 +140,23 @@ onUnmounted(() => {
                     class="player-card reserve"
                     :class="{ 'user-highlight': isUserPlayer(player) }"
                   >
-                    <span class="position-badge small" :style="{ backgroundColor: player.teamColor || '#6B7280' }">
-                      {{ player.position }}
-                    </span>
-                    <div class="player-info">
-                      <span class="player-name">{{ player.playerName }}</span>
-                      <span class="player-team" :style="{ color: player.teamColor }">{{ player.teamAbbr }}</span>
+                    <div class="player-header">
+                      <span class="position-badge small" :style="{ backgroundColor: player.teamColor || '#6B7280' }">
+                        {{ player.position }}
+                      </span>
+                      <div class="player-info">
+                        <span class="player-name">{{ player.playerName }}</span>
+                        <span class="player-team" :style="{ color: player.teamColor }">{{ player.teamAbbr }}</span>
+                      </div>
                     </div>
                     <div class="player-stats">
-                      <span>{{ player.stats?.ppg }} PPG</span>
-                      <span>{{ player.stats?.rpg }} RPG</span>
-                      <span>{{ player.stats?.apg }} APG</span>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.ppg }}</span><span class="stat-label">PPG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.rpg }}</span><span class="stat-label">RPG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.apg }}</span><span class="stat-label">APG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.spg }}</span><span class="stat-label">SPG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.bpg }}</span><span class="stat-label">BPG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.fgPct }}%</span><span class="stat-label">FG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.threePct }}%</span><span class="stat-label">3PT</span></div>
                     </div>
                   </div>
                 </div>
@@ -161,24 +175,32 @@ onUnmounted(() => {
                     :class="{ 'user-highlight': currentRosters.west?.starters?.[pos] && isUserPlayer(currentRosters.west.starters[pos]) }"
                   >
                     <template v-if="currentRosters.west?.starters?.[pos]">
-                      <span class="position-badge" :style="{ backgroundColor: currentRosters.west.starters[pos].teamColor || '#6B7280' }">
-                        {{ pos }}
-                      </span>
-                      <div class="player-info">
-                        <span class="player-name">{{ currentRosters.west.starters[pos].playerName }}</span>
-                        <span class="player-team" :style="{ color: currentRosters.west.starters[pos].teamColor }">
-                          {{ currentRosters.west.starters[pos].teamAbbr }}
+                      <div class="player-header">
+                        <span class="position-badge" :style="{ backgroundColor: currentRosters.west.starters[pos].teamColor || '#6B7280' }">
+                          {{ pos }}
                         </span>
+                        <div class="player-info">
+                          <span class="player-name">{{ currentRosters.west.starters[pos].playerName }}</span>
+                          <span class="player-team" :style="{ color: currentRosters.west.starters[pos].teamColor }">
+                            {{ currentRosters.west.starters[pos].teamAbbr }}
+                          </span>
+                        </div>
                       </div>
                       <div class="player-stats">
-                        <span>{{ currentRosters.west.starters[pos].stats?.ppg }} PPG</span>
-                        <span>{{ currentRosters.west.starters[pos].stats?.rpg }} RPG</span>
-                        <span>{{ currentRosters.west.starters[pos].stats?.apg }} APG</span>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.ppg }}</span><span class="stat-label">PPG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.rpg }}</span><span class="stat-label">RPG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.apg }}</span><span class="stat-label">APG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.spg }}</span><span class="stat-label">SPG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.bpg }}</span><span class="stat-label">BPG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.fgPct }}%</span><span class="stat-label">FG</span></div>
+                        <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.threePct }}%</span><span class="stat-label">3PT</span></div>
                       </div>
                     </template>
                     <template v-else>
-                      <span class="position-badge empty">{{ pos }}</span>
-                      <span class="player-name empty-slot">--</span>
+                      <div class="player-header">
+                        <span class="position-badge empty">{{ pos }}</span>
+                        <span class="player-name empty-slot">--</span>
+                      </div>
                     </template>
                   </div>
                 </div>
@@ -191,17 +213,23 @@ onUnmounted(() => {
                     class="player-card reserve"
                     :class="{ 'user-highlight': isUserPlayer(player) }"
                   >
-                    <span class="position-badge small" :style="{ backgroundColor: player.teamColor || '#6B7280' }">
-                      {{ player.position }}
-                    </span>
-                    <div class="player-info">
-                      <span class="player-name">{{ player.playerName }}</span>
-                      <span class="player-team" :style="{ color: player.teamColor }">{{ player.teamAbbr }}</span>
+                    <div class="player-header">
+                      <span class="position-badge small" :style="{ backgroundColor: player.teamColor || '#6B7280' }">
+                        {{ player.position }}
+                      </span>
+                      <div class="player-info">
+                        <span class="player-name">{{ player.playerName }}</span>
+                        <span class="player-team" :style="{ color: player.teamColor }">{{ player.teamAbbr }}</span>
+                      </div>
                     </div>
                     <div class="player-stats">
-                      <span>{{ player.stats?.ppg }} PPG</span>
-                      <span>{{ player.stats?.rpg }} RPG</span>
-                      <span>{{ player.stats?.apg }} APG</span>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.ppg }}</span><span class="stat-label">PPG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.rpg }}</span><span class="stat-label">RPG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.apg }}</span><span class="stat-label">APG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.spg }}</span><span class="stat-label">SPG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.bpg }}</span><span class="stat-label">BPG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.fgPct }}%</span><span class="stat-label">FG</span></div>
+                      <div class="stat-cell"><span class="stat-value">{{ player.stats?.threePct }}%</span><span class="stat-label">3PT</span></div>
                     </div>
                   </div>
                 </div>
@@ -388,8 +416,8 @@ onUnmounted(() => {
 /* Player Card */
 .player-card {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px 10px;
   background: var(--color-bg-tertiary);
   border-radius: var(--radius-md);
@@ -408,6 +436,12 @@ onUnmounted(() => {
   background: rgba(99, 102, 241, 0.1);
   border: 1px solid rgba(99, 102, 241, 0.25);
   box-shadow: 0 0 8px rgba(99, 102, 241, 0.1);
+}
+
+.player-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .position-badge {
@@ -464,15 +498,31 @@ onUnmounted(() => {
 
 .player-stats {
   display: flex;
-  gap: 8px;
-  flex-shrink: 0;
+  gap: 2px;
+  padding-left: 40px;
 }
 
-.player-stats span {
-  font-size: 0.65rem;
-  font-weight: 500;
-  color: var(--color-text-tertiary);
+.stat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-value {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
   white-space: nowrap;
+}
+
+.stat-label {
+  font-size: 0.55rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .empty-state {
@@ -553,6 +603,7 @@ onUnmounted(() => {
 
   .player-card {
     padding: 6px 8px;
+    gap: 2px;
   }
 }
 </style>

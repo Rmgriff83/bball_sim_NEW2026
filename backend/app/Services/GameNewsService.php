@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\NewsEvent;
+use App\Models\Player;
 use App\Models\Campaign;
 
 class GameNewsService
@@ -34,7 +35,7 @@ class GameNewsService
 
         return NewsEvent::create([
             'campaign_id' => $campaign->id,
-            'player_id' => is_numeric($player['id'] ?? null) ? (int)$player['id'] : null,
+            'player_id' => $this->resolvePlayerId($player),
             'team_id' => $isHomeTeam ? ($homeTeam['id'] ?? null) : ($awayTeam['id'] ?? null),
             'event_type' => 'game_winner',
             'headline' => $headlines[array_rand($headlines)],
@@ -66,5 +67,22 @@ class GameNewsService
             'body' => "In an instant classic, the {$winner} defeated the {$loser} {$homeScore}-{$awayScore} after {$overtimePeriods} overtime period(s).",
             'game_date' => $campaign->current_date,
         ]);
+    }
+
+    /**
+     * Resolve a player ID, returning null if the player doesn't exist in the DB (e.g. traded to AI team).
+     */
+    private function resolvePlayerId(array $player): ?int
+    {
+        $id = $player['id'] ?? null;
+        if (!is_numeric($id)) {
+            return null;
+        }
+
+        if (Player::where('id', $id)->exists()) {
+            return (int) $id;
+        }
+
+        return null;
     }
 }

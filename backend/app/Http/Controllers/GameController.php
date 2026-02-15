@@ -2045,4 +2045,106 @@ class GameController extends Controller
 
         return response()->json($response);
     }
+
+    /**
+     * Simulate all remaining regular season games (AI-only) after the user has finished their schedule.
+     */
+    public function simulateRemainingSeason(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // Guard: reject if a simulation batch is still running
+        if ($campaign->simulation_batch_id) {
+            $existingBatch = Bus::findBatch($campaign->simulation_batch_id);
+            if ($existingBatch && !$existingBatch->finished()) {
+                return response()->json([
+                    'message' => 'A simulation is already in progress',
+                    'batchId' => $campaign->simulation_batch_id,
+                ], 409);
+            }
+            $campaign->update(['simulation_batch_id' => null]);
+        }
+
+        $year = $campaign->currentSeason?->year ?? 2025;
+        $schedule = $this->seasonService->getSchedule($campaign->id, $year);
+
+        // Filter to incomplete non-playoff games
+        $remainingGames = array_filter($schedule, function ($game) {
+            return !($game['isComplete'] ?? false) && !($game['isPlayoff'] ?? false);
+        });
+
+        if (empty($remainingGames)) {
+            return response()->json([
+                'message' => 'All regular season games complete',
+                'gamesRemaining' => 0,
+            ]);
+        }
+
+        // Initialize/refresh AI lineups
+        $this->aiLineupService->initializeAllTeamLineups($campaign);
+        $this->aiLineupService->refreshAllTeamLineups($campaign);
+
+        $teams = Team::where('campaign_id', $campaign->id)->get()->keyBy('id');
+        $aiJobs = [];
+        $latestGameDate = null;
+
+        foreach ($remainingGames as $game) {
+            $homeTeam = $teams[$game['homeTeamId']] ?? null;
+            $awayTeam = $teams[$game['awayTeamId']] ?? null;
+            if (!$homeTeam || !$awayTeam) continue;
+
+            $gameDate = $game['gameDate'] ?? null;
+
+            $aiJobs[] = new SimulateGameJob(
+                $campaign->id, $year, $game, $game['homeTeamId'], $game['awayTeamId'],
+                false, null, $gameDate
+            );
+
+            // Track the latest game date
+            if ($gameDate && (!$latestGameDate || $gameDate > $latestGameDate)) {
+                $latestGameDate = $gameDate;
+            }
+        }
+
+        $campaignId = $campaign->id;
+        $newDate = $latestGameDate ? Carbon::parse($latestGameDate)->addDay() : $campaign->current_date->copy()->addDay();
+
+        $batch = Bus::batch($aiJobs)
+            ->name("Simulate remaining season: Campaign {$campaignId}")
+            ->then(function ($batch) use ($campaignId, $newDate, $year) {
+                $campaign = Campaign::find($campaignId);
+                if (!$campaign) return;
+
+                $campaign->update([
+                    'current_date' => $newDate,
+                    'simulation_batch_id' => null,
+                ]);
+
+                try {
+                    app(CampaignSeasonService::class)->bulkMergeResults($campaignId, $year, $batch->id);
+
+                    $evolutionService = app(PlayerEvolutionService::class);
+                    $evolutionService->processWeeklyUpdates($campaign);
+                    $evolutionService->processMonthlyDevelopment($campaign);
+                } catch (\Exception $e) {
+                    Log::error("Post-batch processing failed for remaining season campaign {$campaignId}: " . $e->getMessage());
+                }
+            })
+            ->catch(function ($batch, $e) use ($campaignId) {
+                Log::error("SimulateRemainingSeason batch failed for campaign {$campaignId}: " . $e->getMessage());
+                Campaign::where('id', $campaignId)->update(['simulation_batch_id' => null]);
+            })
+            ->dispatch();
+
+        $batchId = $batch->id;
+        $campaign->update(['simulation_batch_id' => $batchId]);
+
+        return response()->json([
+            'message' => 'Simulating remaining season games',
+            'batchId' => $batchId,
+            'totalGames' => count($aiJobs),
+        ]);
+    }
 }

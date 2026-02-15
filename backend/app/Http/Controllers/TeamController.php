@@ -125,6 +125,7 @@ class TeamController extends Controller
                 'cap_space' => $team->cap_space,
                 'facilities' => $team->facilities,
                 'coaching_scheme' => $team->coaching_scheme ?? ['offensive' => 'balanced', 'defensive' => 'man', 'substitution' => 'staggered'],
+                'team_chemistry' => round($team->players->avg(fn($p) => $p->personality['morale'] ?? 80)),
             ],
             'roster' => $orderedRoster,
             // Include lineup settings for frontend to track starters explicitly
@@ -459,6 +460,13 @@ class TeamController extends Controller
         $data['recent_performances'] = $player['recent_performances'] ?? $player['recentPerformances'] ?? [];
         $data['upgrade_points'] = $player['upgrade_points'] ?? $player['upgradePoints'] ?? 0;
 
+        // Awards
+        $data['championships'] = $player['championships'] ?? 0;
+        $data['all_star_selections'] = $player['all_star_selections'] ?? $player['allStarSelections'] ?? 0;
+        $data['mvp_awards'] = $player['mvp_awards'] ?? $player['mvpAwards'] ?? 0;
+        $data['finals_mvp_awards'] = $player['finals_mvp_awards'] ?? $player['finalsMvpAwards'] ?? 0;
+        $data['conference_finals_mvp_awards'] = $player['conference_finals_mvp_awards'] ?? $player['conferenceFinalsMvpAwards'] ?? 0;
+
         return $data;
     }
 
@@ -675,6 +683,7 @@ class TeamController extends Controller
             'is_injured' => $player->is_injured,
             'injury_details' => $player->injury_details,
             'fatigue' => $player->fatigue,
+            'morale' => $player->personality['morale'] ?? 80,
             'contract' => [
                 'years_remaining' => $player->contract_years_remaining,
                 'salary' => $player->contract_salary,
@@ -722,6 +731,13 @@ class TeamController extends Controller
         $data['streak_data'] = $player->streak_data;
         $data['recent_performances'] = $player->recent_performances ?? [];
         $data['upgrade_points'] = $player->upgrade_points ?? 0;
+
+        // Awards
+        $data['championships'] = $player->championships ?? 0;
+        $data['all_star_selections'] = $player->all_star_selections ?? 0;
+        $data['mvp_awards'] = $player->mvp_awards ?? 0;
+        $data['finals_mvp_awards'] = $player->finals_mvp_awards ?? 0;
+        $data['conference_finals_mvp_awards'] = $player->conference_finals_mvp_awards ?? 0;
 
         return $data;
     }

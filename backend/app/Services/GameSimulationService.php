@@ -72,6 +72,10 @@ class GameSimulationService
     private int $homeSynergiesActivated = 0;
     private int $awaySynergiesActivated = 0;
 
+    // Team chemistry modifiers (from roster morale average)
+    private float $homeChemistryModifier = 0.0;
+    private float $awayChemistryModifier = 0.0;
+
     public function __construct(
         CampaignPlayerService $playerService,
         PlayerEvolutionService $evolutionService,
@@ -297,6 +301,14 @@ class GameSimulationService
         // Apply variance so minutes differ game-to-game
         $this->homeTargetMinutes = $this->substitutionService->applyVariance($this->homeTargetMinutes);
         $this->awayTargetMinutes = $this->substitutionService->applyVariance($this->awayTargetMinutes);
+
+        // Calculate team chemistry modifiers from roster morale
+        $this->homeChemistryModifier = $this->calculateChemistryModifier(
+            collect($this->homePlayers)->avg(fn($p) => $p['personality']['morale'] ?? 80)
+        );
+        $this->awayChemistryModifier = $this->calculateChemistryModifier(
+            collect($this->awayPlayers)->avg(fn($p) => $p['personality']['morale'] ?? 80)
+        );
     }
 
     /**
@@ -801,8 +813,10 @@ class GameSimulationService
                     }
                 }
 
-                // Assign assist (to a random teammate for now)
-                if ($shotAttempt['made'] && mt_rand(1, 100) <= 65) {
+                // Assign assist — chemistry boosts ball movement
+                $chemMod = $isHome ? $this->homeChemistryModifier : $this->awayChemistryModifier;
+                $assistPct = 65 * (1 + $chemMod);
+                if ($shotAttempt['made'] && mt_rand(1, 100) <= $assistPct) {
                     foreach ($offense as $player) {
                         $playerId = $player['id'] ?? null;
                         if ($playerId && $playerId !== $shooterId && isset($boxScore[$playerId])) {
@@ -863,8 +877,9 @@ class GameSimulationService
                 }
             }
 
-            // Chance of steal
-            if (mt_rand(1, 100) <= 60 && !empty($defense)) {
+            // Chance of steal — opposing chemistry boosts steal rate
+            $defChem = $isHome ? $this->awayChemistryModifier : $this->homeChemistryModifier;
+            if (mt_rand(1, 100) <= (60 * (1 + $defChem)) && !empty($defense)) {
                 $stealer = $defense[array_rand($defense)];
                 $stealerId = $stealer['id'] ?? null;
                 if ($stealerId) {
@@ -1035,8 +1050,10 @@ class GameSimulationService
         if ($playType === 'turnover') {
             $boxScore[$shooter['id']]['turnovers']++;
 
-            // Chance of steal
-            if (mt_rand(1, 100) <= 60) {
+            // Chance of steal — opposing team chemistry boosts steal rate
+            $defChemistry = $isHome ? $this->awayChemistryModifier : $this->homeChemistryModifier;
+            $stealChance = 60 * (1 + $defChemistry);
+            if (mt_rand(1, 100) <= $stealChance) {
                 $stealer = $defense[array_rand($defense)];
                 $defBoxScore[$stealer['id']]['steals']++;
             }
@@ -1057,14 +1074,16 @@ class GameSimulationService
         $activatedSynergies = $badgeResult['activatedSynergies'];
         $fatigueModifier = $this->calculateFatigueModifier($shooter);
 
-        $finalPercentage = $basePercentage * (1 - $contestLevel * 0.3) * (1 + $badgeBoost) * $fatigueModifier;
+        $chemistryMod = $isHome ? $this->homeChemistryModifier : $this->awayChemistryModifier;
+        $finalPercentage = $basePercentage * (1 - $contestLevel * 0.3) * (1 + $badgeBoost) * $fatigueModifier * (1 + $chemistryMod);
         $finalPercentage = max(0.15, min(0.85, $finalPercentage)); // Clamp between 15% and 85%
 
         $made = mt_rand(1, 100) <= ($finalPercentage * 100);
 
-        // Determine if there was an assist
+        // Determine if there was an assist — chemistry boosts ball movement
         $assister = null;
-        if ($made && mt_rand(1, 100) <= 60) {
+        $assistChance = 60 * (1 + $chemistryMod);
+        if ($made && mt_rand(1, 100) <= $assistChance) {
             foreach ($offense as $player) {
                 if ($player['id'] !== $shooter['id']) {
                     $assister = $player;
@@ -1350,6 +1369,16 @@ class GameSimulationService
         $fatigueImpact = ($fatigue / 100) * (1 - $stamina / 200);
 
         return 1 - $fatigueImpact * 0.25;
+    }
+
+    /**
+     * Calculate chemistry modifier from average team morale.
+     * Baseline morale = 80. Below 80 = penalty, above 80 = bonus.
+     * Range: -3% at morale 0 to +3% at morale 100.
+     */
+    private function calculateChemistryModifier(float $avgMorale): float
+    {
+        return max(-0.03, min(0.03, ($avgMorale - 80) / 80 * 0.03));
     }
 
     /**

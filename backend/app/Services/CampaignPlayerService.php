@@ -139,7 +139,6 @@ class CampaignPlayerService
 
         if ($dbPlayers->count() > 0) {
             // User's team - return from database
-            \Log::info("getTeamRoster: Found {$dbPlayers->count()} DB players for {$teamAbbreviation} in campaign {$campaignId}");
             return $dbPlayers->map(fn($p) => $this->playerModelToArray($p))->toArray();
         }
 
@@ -149,8 +148,6 @@ class CampaignPlayerService
         $filtered = array_values(array_filter($leaguePlayers, fn($p) =>
             ($p['teamAbbreviation'] ?? '') === $teamAbbreviation
         ));
-
-        \Log::info("getTeamRoster: Found " . count($filtered) . " JSON players for {$teamAbbreviation} in campaign {$campaignId} (total league players: " . count($leaguePlayers) . ")");
 
         return $filtered;
     }
