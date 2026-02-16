@@ -417,8 +417,12 @@ class GameSimulator {
     const usedPlayerIds = []
     const positions = ['PG', 'SG', 'SF', 'PF', 'C']
 
+    // Filter to healthy players first, fall back to all if not enough healthy
+    const healthy = players.filter(p => !this._isInjured(p))
+    const pool = healthy.length >= 5 ? healthy : players
+
     for (const pos of positions) {
-      for (const player of players) {
+      for (const player of pool) {
         const playerId = player.id || null
         if (
           !lineup[pos] &&
@@ -435,7 +439,7 @@ class GameSimulator {
     // Fill remaining positions with best available
     for (const pos of positions) {
       if (!lineup[pos]) {
-        for (const player of players) {
+        for (const player of pool) {
           const playerId = player.id || null
           if (!usedPlayerIds.includes(playerId)) {
             lineup[pos] = player
@@ -461,6 +465,8 @@ class GameSimulator {
     }
 
     const lineup = []
+    const usedIds = new Set()
+
     for (let index = 0; index < playerIds.length; index++) {
       const id = playerIds[index]
       if (!playerMap[id]) {
@@ -476,13 +482,24 @@ class GameSimulator {
         const secondaryPos = player.secondary_position || null
 
         if (primaryPos !== requiredPosition && secondaryPos !== requiredPosition) {
-          // Position mismatch - fall back to auto-selection
           console.warn(`Lineup validation failed: ${player.first_name} cannot play ${requiredPosition}`)
           return this.selectLineup(allPlayers)
         }
       }
 
+      // If starter is injured, find a healthy replacement who can play the position
+      if (this._isInjured(player)) {
+        const replacement = this._findHealthyReplacement(allPlayers, usedIds, playerIds, requiredPosition)
+        if (replacement) {
+          lineup.push(replacement)
+          usedIds.add(replacement.id)
+          continue
+        }
+        // No healthy replacement available — use injured player as last resort
+      }
+
       lineup.push(player)
+      usedIds.add(player.id)
     }
 
     if (lineup.length < 5) {
@@ -490,6 +507,38 @@ class GameSimulator {
     }
 
     return lineup
+  }
+
+  _isInjured(player) {
+    return player.is_injured ?? player.isInjured ?? false
+  }
+
+  _findHealthyReplacement(allPlayers, usedIds, starterIds, requiredPosition) {
+    // Build set of starter IDs to exclude
+    const starterSet = new Set(starterIds)
+
+    // Look for bench players who can play the position, sorted by rating (allPlayers is pre-sorted)
+    for (const player of allPlayers) {
+      if (usedIds.has(player.id) || starterSet.has(player.id)) continue
+      if (this._isInjured(player)) continue
+
+      if (!requiredPosition) return player
+
+      const primary = player.position || null
+      const secondary = player.secondary_position || null
+      if (primary === requiredPosition || secondary === requiredPosition) {
+        return player
+      }
+    }
+
+    // No position match found — return best available healthy bench player
+    for (const player of allPlayers) {
+      if (usedIds.has(player.id) || starterSet.has(player.id)) continue
+      if (this._isInjured(player)) continue
+      return player
+    }
+
+    return null
   }
 
   /**
