@@ -171,10 +171,14 @@ async function handleFinalize() {
   try {
     await draftStore.finalizeDraft(campaignId.value)
     showCompleteModal.value = false
-    await campaignStore.fetchCampaign(campaignId.value, true)
+    await campaignStore.fetchCampaign(campaignId.value)
     router.push(`/campaign/${campaignId.value}`)
   } catch (e) {
     console.error('Finalize error:', e)
+    toastStore.addToast({
+      type: 'error',
+      message: `Failed to finalize draft: ${e.message || 'Unknown error'}`,
+    })
   }
 }
 
@@ -194,10 +198,16 @@ onMounted(async () => {
     }
 
     // Load draft data from IndexedDB
-    const [allPlayers, teamsList] = await Promise.all([
+    const [allPlayersRaw, teamsListRaw] = await Promise.all([
       PlayerRepository.getAllForCampaign(campaignId.value),
       TeamRepository.getAllForCampaign(campaignId.value),
     ])
+    const allPlayers = allPlayersRaw || []
+    const teamsList = teamsListRaw || []
+
+    if (!teamsList.length) {
+      throw new Error('No teams found for this campaign. Try recreating the campaign.')
+    }
 
     const restored = await draftStore.loadDraftFromCache(campaignId.value)
 

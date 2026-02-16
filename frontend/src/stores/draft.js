@@ -121,6 +121,10 @@ export const useDraftStore = defineStore('draft', () => {
   }
 
   function generateDraftOrder(teamsList) {
+    if (!teamsList?.length) {
+      console.error('generateDraftOrder: teamsList is empty or invalid', teamsList)
+      return
+    }
     const shuffled = [...teamsList].sort(() => Math.random() - 0.5)
     const order = []
     const totalRounds = 15
@@ -475,11 +479,26 @@ export const useDraftStore = defineStore('draft', () => {
         }
       }
 
-      // Mark draft as completed in campaign
+      // Save user's lineup to campaign.settings (canonical source for user lineup)
       const campaign = await CampaignRepository.get(campaignId)
       if (campaign) {
-        const updatedSettings = { ...campaign.settings, draftCompleted: true }
-        await CampaignRepository.updateSettings(campaignId, updatedSettings)
+        const userTeam = allTeams.find(t => t.id === campaign.teamId)
+        if (userTeam) {
+          const userLineupData = lineupResults[userTeam.id ?? userTeam.abbreviation]
+          if (userLineupData) {
+            campaign.settings = campaign.settings ?? {}
+            campaign.settings.lineup = {
+              starters: userLineupData.starters,
+              target_minutes: {},
+              rotation: [],
+            }
+          }
+        }
+
+        // Mark draft as completed (top-level flag)
+        campaign.draftCompleted = true
+        campaign.draft_completed = true
+        await CampaignRepository.save(campaign)
       }
 
       // Clear draft cache
