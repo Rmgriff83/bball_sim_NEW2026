@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '@/composables/useApi'
-import { campaignCacheService } from '@/services/CampaignCacheService'
+import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { TeamRepository } from '@/engine/db/TeamRepository'
 
 export const useLeagueStore = defineStore('league', () => {
   // State
@@ -53,19 +54,41 @@ export const useLeagueStore = defineStore('league', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/standings`)
-      standings.value = response.data.standings
+      // Get the campaign to determine the current season year
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+
+      const seasonYear = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? new Date().getFullYear()
+
+      // Read standings and teams in parallel
+      const [standingsData, teams] = await Promise.all([
+        SeasonRepository.getStandings(campaignId, seasonYear),
+        TeamRepository.getAllForCampaign(campaignId),
+      ])
+
+      if (standingsData) {
+        // Build team lookup by ID
+        const teamsById = {}
+        for (const t of (teams || [])) {
+          teamsById[t.id] = t
+        }
+
+        // Enrich each standing entry with its full team object
+        const enrichConference = (entries) =>
+          (entries || []).map(s => ({ ...s, team: teamsById[s.teamId] || null }))
+
+        standings.value = {
+          east: enrichConference(standingsData.east),
+          west: enrichConference(standingsData.west),
+        }
+      } else {
+        standings.value = { east: [], west: [] }
+      }
+
       _standingsCampaignId.value = campaignId
-
-      // Get year from response or use current year
-      const seasonYear = response.data.year || new Date().getFullYear()
-
-      // Always update standings in cache
-      await campaignCacheService.updateStandings(campaignId, seasonYear, standings.value)
-
       return standings.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch standings'
+      error.value = err.message || 'Failed to fetch standings'
       throw err
     } finally {
       loading.value = false
@@ -109,12 +132,89 @@ export const useLeagueStore = defineStore('league', () => {
     loadingLeaders.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/league-leaders`)
-      playerLeaders.value = response.data.leaders || []
+      // Get the campaign to determine the current season year
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+
+      const seasonYear = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? new Date().getFullYear()
+
+      // Read player stats and teams from IndexedDB
+      const [playerStats, teams] = await Promise.all([
+        SeasonRepository.getPlayerStats(campaignId, seasonYear),
+        TeamRepository.getAllForCampaign(campaignId),
+      ])
+
+      if (!playerStats || typeof playerStats !== 'object') {
+        playerLeaders.value = []
+        _leadersCampaignId.value = campaignId
+        return playerLeaders.value
+      }
+
+      // Build team lookup by ID for enrichment
+      const teamsById = {}
+      for (const t of (teams || [])) {
+        teamsById[t.id] = t
+      }
+
+      // Compute leaders from raw player stats
+      // Convert playerStats map to array with per-game averages
+      const leaders = []
+      for (const [playerId, stats] of Object.entries(playerStats)) {
+        const gamesPlayed = stats.gamesPlayed ?? stats.games_played ?? 0
+        if (gamesPlayed <= 0) continue
+
+        const ppg = (stats.points ?? 0) / gamesPlayed
+        // rebounds is already total (offensive + defensive), don't double-count
+        const rpg = (stats.rebounds ?? 0) / gamesPlayed
+        const apg = (stats.assists ?? 0) / gamesPlayed
+        const spg = (stats.steals ?? 0) / gamesPlayed
+        const bpg = (stats.blocks ?? 0) / gamesPlayed
+        const topg = (stats.turnovers ?? 0) / gamesPlayed
+        const fga = stats.fga ?? stats.fieldGoalsAttempted ?? 0
+        const fgPct = fga > 0
+          ? ((stats.fgm ?? stats.fieldGoalsMade ?? 0) / fga) * 100
+          : 0
+        const tpa = stats.tpa ?? stats.fg3a ?? stats.threePointersAttempted ?? 0
+        const threePct = tpa > 0
+          ? ((stats.tpm ?? stats.fg3m ?? stats.threePointersMade ?? 0) / tpa) * 100
+          : 0
+        const fta = stats.fta ?? stats.freeThrowsAttempted ?? 0
+        const ftPct = fta > 0
+          ? ((stats.ftm ?? stats.freeThrowsMade ?? 0) / fta) * 100
+          : 0
+
+        // Enrich with team data
+        const team = teamsById[stats.teamId] || null
+        const teamAbbreviation = team?.abbreviation ?? stats.teamAbbreviation ?? stats.team_abbreviation ?? ''
+
+        leaders.push({
+          playerId,
+          name: stats.playerName ?? stats.player_name ?? 'Unknown',
+          teamId: stats.teamId ?? null,
+          teamAbbreviation,
+          teamColor: team?.primary_color ?? '#6B7280',
+          position: stats.position ?? '',
+          gamesPlayed,
+          ppg: Math.round(ppg * 10) / 10,
+          rpg: Math.round(rpg * 10) / 10,
+          apg: Math.round(apg * 10) / 10,
+          spg: Math.round(spg * 10) / 10,
+          bpg: Math.round(bpg * 10) / 10,
+          topg: Math.round(topg * 10) / 10,
+          fgPct: Math.round(fgPct * 10) / 10,
+          threePct: Math.round(threePct * 10) / 10,
+          ftPct: Math.round(ftPct * 10) / 10,
+        })
+      }
+
+      // Sort by ppg descending as default
+      leaders.sort((a, b) => b.ppg - a.ppg)
+
+      playerLeaders.value = leaders
       _leadersCampaignId.value = campaignId
       return playerLeaders.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch league leaders'
+      error.value = err.message || 'Failed to fetch league leaders'
       throw err
     } finally {
       loadingLeaders.value = false

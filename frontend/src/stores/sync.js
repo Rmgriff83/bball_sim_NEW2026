@@ -1,24 +1,25 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/composables/useApi'
-import { useLocalCache } from '@/composables/useLocalCache'
 import { useToastStore } from '@/stores/toast'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { TeamRepository } from '@/engine/db/TeamRepository'
+import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { SeasonRepository } from '@/engine/db/SeasonRepository'
 
 const SYNC_INTERVAL_MS = 60000 // 60 seconds
 
 export const useSyncStore = defineStore('sync', () => {
-  const cache = useLocalCache()
-
   // State
   const isSyncing = ref(false)
   const lastSyncAt = ref(null)
-  const dirtyKeys = ref(new Set())
+  const isDirty = ref(false)
   const syncError = ref(null)
   const autoSyncIntervalId = ref(null)
   const activeCampaignId = ref(null)
 
   // Getters
-  const hasPendingChanges = computed(() => dirtyKeys.value.size > 0)
+  const hasPendingChanges = computed(() => isDirty.value)
 
   const lastSyncText = computed(() => {
     if (!lastSyncAt.value) return 'Never synced'
@@ -39,39 +40,38 @@ export const useSyncStore = defineStore('sync', () => {
   // Actions
 
   /**
-   * Initialize sync state from IndexedDB
+   * Initialize sync state.
+   * Simplified: just check if we have local data that might need syncing.
    */
   async function initFromCache() {
-    const state = await cache.getSyncState()
-    lastSyncAt.value = state.lastSyncAt
-    dirtyKeys.value = new Set(state.dirtyKeys || [])
+    // No granular dirty tracking to restore; isDirty starts false
+    // and gets set whenever a write happens via markDirty()
   }
 
   /**
-   * Set the active campaign for syncing
+   * Set the active campaign for syncing.
    */
   function setActiveCampaign(campaignId) {
     activeCampaignId.value = campaignId
   }
 
   /**
-   * Mark a cache key as dirty (needs sync)
+   * Mark data as dirty (needs sync).
+   * Simplified: just sets a boolean flag.
    */
-  async function markDirty(key) {
-    dirtyKeys.value.add(key)
-    await cache.markDirty(key)
+  async function markDirty(_key) {
+    isDirty.value = true
   }
 
   /**
-   * Clear a key from dirty set (synced successfully)
+   * Clear dirty flag after successful sync.
    */
-  async function clearDirty(key) {
-    dirtyKeys.value.delete(key)
-    await cache.clearDirty(key)
+  async function clearDirty(_key) {
+    isDirty.value = false
   }
 
   /**
-   * Start the auto-sync timer (60 second interval)
+   * Start the auto-sync timer (60 second interval).
    */
   function startAutoSync() {
     if (autoSyncIntervalId.value) return
@@ -84,7 +84,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Stop the auto-sync timer
+   * Stop the auto-sync timer.
    */
   function stopAutoSync() {
     if (autoSyncIntervalId.value) {
@@ -94,8 +94,26 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Trigger immediate sync (for "Save to Cloud" button)
-   * Push-only: local IndexedDB is always the source of truth
+   * Serialize full campaign state from IndexedDB into a single payload.
+   */
+  async function _serializeCampaignSnapshot(campaignId) {
+    const campaign = await CampaignRepository.get(campaignId)
+    const teams = await TeamRepository.getAllForCampaign(campaignId)
+    const players = await PlayerRepository.getAllForCampaign(campaignId)
+    const seasons = await SeasonRepository.getAllForCampaign(campaignId)
+
+    return {
+      campaign,
+      teams,
+      players,
+      seasons,
+      clientUpdatedAt: new Date().toISOString(),
+    }
+  }
+
+  /**
+   * Trigger immediate sync (for "Save to Cloud" button).
+   * Serializes the full campaign snapshot and pushes to server.
    */
   async function syncNow() {
     if (!activeCampaignId.value) return
@@ -107,12 +125,12 @@ export const useSyncStore = defineStore('sync', () => {
       isSyncing.value = true
       syncError.value = null
 
-      // Push local changes to cloud (push-only, no pull)
+      // Push full snapshot to cloud
       await pushChanges(activeCampaignId.value)
 
       // Update sync timestamp
       lastSyncAt.value = new Date().toISOString()
-      await cache.updateLastSyncAt()
+      isDirty.value = false
 
       toastStore.showSuccess('Saved to cloud', 2000)
     } catch (err) {
@@ -124,109 +142,77 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Push dirty data to the server
-   *
-   * IMPORTANT: Only syncs JSON file data (AI teams, season data)
-   * User team data (lineup, settings) is stored in MySQL and handled by direct API calls
+   * Push full campaign snapshot to the server.
    */
   async function pushChanges(campaignId) {
-    const dirtyList = [...dirtyKeys.value].filter(k => k.startsWith(`campaign_${campaignId}`))
+    const snapshot = await _serializeCampaignSnapshot(campaignId)
 
-    if (dirtyList.length === 0) return
+    // Only make API call if we have data to push
+    if (!snapshot.campaign) return
 
-    const payload = {}
-
-    // Gather dirty data - ONLY season and player data (JSON files)
-    // Do NOT include campaign meta/settings (those are in MySQL, not JSON)
-    for (const key of dirtyList) {
-      if (key.includes('_season_')) {
-        const match = key.match(/_season_(\d+)/)
-        if (match) {
-          const year = parseInt(match[1])
-          const data = await cache.getSeason(campaignId, year)
-          if (data) {
-            payload.seasons = payload.seasons || {}
-            // Only include JSON file data, not settings
-            payload.seasons[year] = {
-              standings: data.standings,
-              playerStats: data.playerStats,
-              schedule: data.schedule,
-            }
-          }
-        }
-      } else if (key.includes('_players')) {
-        const data = await cache.getPlayers(campaignId)
-        if (data) payload.players = data
-      }
-      // Note: _meta keys are cleared but NOT pushed - campaign settings are in MySQL
-    }
-
-    // Clear all dirty keys (including _meta which we're not pushing)
-    for (const key of dirtyList) {
-      await clearDirty(key)
-    }
-
-    // Only make API call if we have actual data to push
-    if (Object.keys(payload).length === 0) return
-
-    // Add client timestamp
-    payload.clientUpdatedAt = new Date().toISOString()
-
-    // Push to server
-    const response = await api.post(`/api/campaigns/${campaignId}/sync/push`, payload)
-
+    const response = await api.post(`/api/sync/${campaignId}/push`, snapshot)
     return response.data
   }
 
   /**
-   * Pull latest data from the server
-   * Only updates local cache if local data doesn't exist (remote is fallback only)
+   * Pull latest data from the server and hydrate IndexedDB.
+   * Only used for initial load or recovery -- local is always preferred if it exists.
    */
   async function pullChanges(campaignId) {
-    const response = await api.get(`/api/campaigns/${campaignId}/sync/pull`)
-    const { campaign, season, players, metadata } = response.data
+    const response = await api.get(`/api/sync/${campaignId}/pull`)
+    const data = response.data
 
-    // Only use remote data if local doesn't exist (local is always preferred)
-    if (campaign) {
-      const localCampaign = await cache.getCampaign(campaignId)
+    // Hydrate IndexedDB from remote snapshot
+    if (data.campaign) {
+      const localCampaign = await CampaignRepository.get(campaignId)
       if (!localCampaign) {
-        // No local data - use remote as initial seed
-        await cache.setCampaign(campaignId, { ...campaign, metadata })
+        await CampaignRepository.save(data.campaign)
         console.log('[Sync] No local campaign data, using remote')
       } else {
         console.log('[Sync] Local campaign data exists, keeping local')
       }
     }
 
-    if (season) {
-      const year = season.year
-      const localSeason = await cache.getSeason(campaignId, year)
-      if (!localSeason) {
-        // No local data - use remote as initial seed
-        await cache.setSeason(campaignId, year, { ...season, metadata })
-        console.log('[Sync] No local season data, using remote')
+    if (data.teams && Array.isArray(data.teams) && data.teams.length > 0) {
+      const localTeams = await TeamRepository.getAllForCampaign(campaignId)
+      if (!localTeams || localTeams.length === 0) {
+        await TeamRepository.saveBulk(data.teams)
+        console.log('[Sync] No local teams data, using remote')
       } else {
-        console.log('[Sync] Local season data exists, keeping local')
+        console.log('[Sync] Local teams data exists, keeping local')
       }
     }
 
-    if (players) {
-      const localPlayers = await cache.getPlayers(campaignId)
-      if (!localPlayers) {
-        // No local data - use remote as initial seed
-        await cache.setPlayers(campaignId, { players, metadata })
+    if (data.players && Array.isArray(data.players) && data.players.length > 0) {
+      const localPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+      if (!localPlayers || localPlayers.length === 0) {
+        await PlayerRepository.saveBulk(data.players)
         console.log('[Sync] No local players data, using remote')
       } else {
         console.log('[Sync] Local players data exists, keeping local')
       }
     }
 
-    return response.data
+    if (data.seasons && Array.isArray(data.seasons)) {
+      for (const season of data.seasons) {
+        const year = season.metadata?.year ?? season.year
+        if (!year) continue
+        const localSeason = await SeasonRepository.get(campaignId, year)
+        if (!localSeason) {
+          await SeasonRepository.save(season)
+          console.log(`[Sync] No local season ${year} data, using remote`)
+        } else {
+          console.log(`[Sync] Local season ${year} data exists, keeping local`)
+        }
+      }
+    }
+
+    return data
   }
 
   /**
-   * Resolve conflict between local and remote data
-   * Strategy: Local always wins if it exists (local is the working copy)
+   * Resolve conflict between local and remote data.
+   * Strategy: Local always wins if it exists (local is the working copy).
    */
   function resolveConflict(localData, remoteData) {
     // If local data exists, it always wins (it's the active working copy)
@@ -238,30 +224,27 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Check sync status without full sync
+   * Fetch list of campaigns that exist on the server (for recovery).
    */
-  async function checkSyncStatus(campaignId) {
+  async function fetchServerCampaigns() {
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/sync/status`)
-      return response.data
+      const response = await api.get('/api/sync/campaigns')
+      return response.data?.campaigns ?? []
     } catch {
-      return { needsSync: false }
+      return []
     }
   }
 
   /**
-   * Queue a background sync check
-   * Now push-only: just pushes local changes if dirty, never pulls
+   * Queue a background sync check.
+   * Push-only: just pushes local changes if dirty, never pulls.
    */
   async function queueSyncCheck(campaignId) {
-    // Only push if we have dirty local changes
-    const dirtyList = [...dirtyKeys.value].filter(k => k.startsWith(`campaign_${campaignId}`))
-
-    if (dirtyList.length > 0) {
+    if (isDirty.value) {
       try {
         await pushChanges(campaignId)
         lastSyncAt.value = new Date().toISOString()
-        await cache.updateLastSyncAt()
+        isDirty.value = false
       } catch {
         // Ignore errors for background sync
       }
@@ -272,7 +255,7 @@ export const useSyncStore = defineStore('sync', () => {
     // State
     isSyncing,
     lastSyncAt,
-    dirtyKeys,
+    isDirty,
     syncError,
     activeCampaignId,
     // Getters
@@ -289,7 +272,7 @@ export const useSyncStore = defineStore('sync', () => {
     pushChanges,
     pullChanges,
     resolveConflict,
-    checkSyncStatus,
+    fetchServerCampaigns,
     queueSyncCheck,
   }
 })

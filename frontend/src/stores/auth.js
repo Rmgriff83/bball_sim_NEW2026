@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/composables/useApi'
+import { clearDatabase } from '@/engine/db/GameDatabase'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
@@ -36,6 +37,9 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(credentials) {
     loading.value = true
     try {
+      // Clear any previous user's local data before logging in
+      await clearDatabase().catch(() => {})
+
       const response = await api.post('/api/auth/login', credentials)
       token.value = response.data.token
       user.value = response.data.user
@@ -49,6 +53,9 @@ export const useAuthStore = defineStore('auth', () => {
   async function register(data) {
     loading.value = true
     try {
+      // Clear any previous user's local data before registering
+      await clearDatabase().catch(() => {})
+
       const response = await api.post('/api/auth/register', data)
       token.value = response.data.token
       user.value = response.data.user
@@ -71,6 +78,13 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = null
       profile.value = null
       localStorage.removeItem('auth_token')
+
+      // Clear all local campaign data so the next user doesn't see it
+      try {
+        await clearDatabase()
+      } catch (e) {
+        console.warn('[Auth] Failed to clear IndexedDB on logout:', e)
+      }
     }
   }
 

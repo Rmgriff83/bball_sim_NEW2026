@@ -1,7 +1,82 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '@/composables/useApi'
-import { campaignCacheService } from '@/services/CampaignCacheService'
+import { TeamRepository } from '@/engine/db/TeamRepository'
+import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { coachingEngine } from '@/engine/simulation/CoachingEngine'
+import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from '@/engine/simulation/CoachingEngine'
+import { getStrategyDisplayInfo, getDefaultTargetMinutes } from '@/engine/simulation/SubstitutionEngine'
+import { SUBSTITUTION_STRATEGIES } from '@/engine/config/GameConfig'
+import { useSyncStore } from '@/stores/sync'
+import { recalculateOverall } from '@/engine/evolution/PlayerEvolution'
+
+/**
+ * Attach season_stats (per-game averages) to each player in an array.
+ * Mutates player objects in place.
+ */
+async function _attachSeasonStats(players, campaignId) {
+  if (!players || players.length === 0) return
+
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) return
+
+  const seasonYear = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? 2025
+  const allPlayerStats = await SeasonRepository.getPlayerStats(campaignId, seasonYear)
+  if (!allPlayerStats || typeof allPlayerStats !== 'object') return
+
+  for (const player of players) {
+    if (!player) continue
+    const raw = allPlayerStats[player.id]
+    if (raw && raw.gamesPlayed > 0) {
+      const gp = raw.gamesPlayed
+      player.season_stats = {
+        games_played: gp,
+        gamesPlayed: gp,
+        ppg: Math.round((raw.points / gp) * 10) / 10,
+        rpg: Math.round((raw.rebounds / gp) * 10) / 10,
+        apg: Math.round((raw.assists / gp) * 10) / 10,
+        spg: Math.round((raw.steals / gp) * 10) / 10,
+        bpg: Math.round((raw.blocks / gp) * 10) / 10,
+        mpg: Math.round((raw.minutesPlayed / gp) * 10) / 10,
+        fg_pct: raw.fieldGoalsAttempted > 0
+          ? Math.round((raw.fieldGoalsMade / raw.fieldGoalsAttempted) * 1000) / 10
+          : 0,
+        fgPct: raw.fieldGoalsAttempted > 0
+          ? Math.round((raw.fieldGoalsMade / raw.fieldGoalsAttempted) * 1000) / 10
+          : 0,
+        three_pct: raw.threePointersAttempted > 0
+          ? Math.round((raw.threePointersMade / raw.threePointersAttempted) * 1000) / 10
+          : 0,
+        threePct: raw.threePointersAttempted > 0
+          ? Math.round((raw.threePointersMade / raw.threePointersAttempted) * 1000) / 10
+          : 0,
+        ft_pct: raw.freeThrowsAttempted > 0
+          ? Math.round((raw.freeThrowsMade / raw.freeThrowsAttempted) * 1000) / 10
+          : 0,
+        ftPct: raw.freeThrowsAttempted > 0
+          ? Math.round((raw.freeThrowsMade / raw.freeThrowsAttempted) * 1000) / 10
+          : 0,
+        // Raw totals for detail views
+        points: raw.points,
+        rebounds: raw.rebounds,
+        assists: raw.assists,
+        steals: raw.steals,
+        blocks: raw.blocks,
+        turnovers: raw.turnovers,
+        minutesPlayed: raw.minutesPlayed,
+        fgm: raw.fieldGoalsMade,
+        fga: raw.fieldGoalsAttempted,
+        fg3m: raw.threePointersMade,
+        fg3a: raw.threePointersAttempted,
+        ftm: raw.freeThrowsMade,
+        fta: raw.freeThrowsAttempted,
+      }
+    } else {
+      player.season_stats = null
+    }
+  }
+}
 
 export const useTeamStore = defineStore('team', () => {
   // State
@@ -85,7 +160,7 @@ export const useTeamStore = defineStore('team', () => {
     Object.values(targetMinutes.value).reduce((sum, m) => sum + m, 0)
   )
 
-  // Team chemistry — from API team_chemistry or computed from roster morale
+  // Team chemistry — from team_chemistry field or computed from roster morale
   const teamChemistry = computed(() => {
     if (team.value?.team_chemistry) return team.value.team_chemistry
     if (roster.value.length === 0) return 80
@@ -113,24 +188,61 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/team`)
-      team.value = response.data.team
-      roster.value = response.data.roster
-      coach.value = response.data.coach
+      // Load campaign to get user team ID and lineup settings
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
 
-      // Populate lineup from saved settings or default to first 5 roster players
-      const savedLineup = response.data.lineup_settings?.starters
+      const userTeamId = campaign.teamId ?? campaign.userTeamId ?? campaign.team_id ?? campaign.user_team_id
+      if (!userTeamId) throw new Error('No user team found for campaign')
+
+      // Load team and roster in parallel
+      const [teamData, rosterData] = await Promise.all([
+        TeamRepository.get(campaignId, userTeamId),
+        PlayerRepository.getByTeam(campaignId, userTeamId),
+      ])
+
+      if (!teamData) throw new Error('Team not found')
+
+      team.value = teamData
+      // Normalize player objects to ensure derived fields exist
+      roster.value = (rosterData || []).map(p => {
+        if (!p) return p
+        if (!p.name) p.name = `${p.firstName || p.first_name || ''} ${p.lastName || p.last_name || ''}`.trim()
+        if (!p.height && p.heightInches) p.height = `${Math.floor(p.heightInches / 12)}'${p.heightInches % 12}"`
+        else if (!p.height && p.height_inches) p.height = `${Math.floor(p.height_inches / 12)}'${p.height_inches % 12}"`
+        if (!p.weight) p.weight = p.weightLbs || p.weight_lbs || 0
+        if (!p.age && p.birthDate) {
+          const birth = new Date(p.birthDate)
+          p.age = new Date().getFullYear() - birth.getFullYear()
+        } else if (!p.age && p.birth_date) {
+          const birth = new Date(p.birth_date)
+          p.age = new Date().getFullYear() - birth.getFullYear()
+        }
+        return p
+      })
+      coach.value = teamData.coach || null
+
+      // Populate lineup from campaign settings or default to first 5 roster players
+      const savedLineup = campaign.settings?.lineup?.starters
       if (savedLineup && Array.isArray(savedLineup) && savedLineup.length === 5) {
         lineup.value = [...savedLineup]
-      } else if (response.data.roster && response.data.roster.length >= 5) {
-        // Default: first 5 players in roster order (they are ordered by lineup)
-        lineup.value = response.data.roster.slice(0, 5).map(p => p.id)
+
+        // Reorder roster so starters come first in lineup order, bench sorted by rating
+        const starterSet = new Set(savedLineup.filter(id => id !== null))
+        const starterObjs = savedLineup.map(id => roster.value.find(p => p && p.id === id)).filter(Boolean)
+        const benchObjs = roster.value
+          .filter(p => p && !starterSet.has(p.id))
+          .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+        roster.value = [...starterObjs, ...benchObjs]
+      } else if (rosterData && rosterData.length >= 5) {
+        // Default: first 5 players in roster order
+        lineup.value = rosterData.slice(0, 5).map(p => p.id)
       } else {
         lineup.value = [null, null, null, null, null]
       }
 
       // Populate target minutes
-      const savedMinutes = response.data.lineup_settings?.target_minutes
+      const savedMinutes = campaign.settings?.lineup?.target_minutes
       if (savedMinutes && typeof savedMinutes === 'object') {
         targetMinutes.value = { ...savedMinutes }
       } else {
@@ -140,18 +252,14 @@ export const useTeamStore = defineStore('team', () => {
       // Attach target_minutes to each player object
       applyMinutesToRoster()
 
+      // Attach season stats (per-game averages) to each player object
+      await _attachSeasonStats(roster.value, campaignId)
+
       _loadedCampaignId.value = campaignId
 
-      // Update cache with team/roster data
-      await campaignCacheService.updateCampaign(campaignId, {
-        team: response.data.team,
-        roster: response.data.roster,
-        coach: response.data.coach,
-      })
-
-      return response.data
+      return { team: team.value, roster: roster.value, coach: coach.value }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch team'
+      error.value = err.message || 'Failed to fetch team'
       throw err
     } finally {
       loading.value = false
@@ -162,11 +270,14 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/players/${playerId}`)
-      selectedPlayer.value = response.data.player
-      return response.data
+      const player = await PlayerRepository.get(campaignId, playerId)
+      if (!player) throw new Error('Player not found')
+      // Attach season stats for player detail views
+      await _attachSeasonStats([player], campaignId)
+      selectedPlayer.value = player
+      return { player }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch player'
+      error.value = err.message || 'Failed to fetch player'
       throw err
     } finally {
       loading.value = false
@@ -177,27 +288,43 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
+      // Convert reactive proxies to plain arrays for IndexedDB storage
+      const plainStarters = [...starters]
+      const plainRotation = [...rotation]
+
       // Update local state immediately for responsive UI
-      if (Array.isArray(starters) && starters.length === 5) {
-        lineup.value = [...starters]
+      if (Array.isArray(plainStarters) && plainStarters.length === 5) {
+        lineup.value = [...plainStarters]
       }
 
-      const response = await api.put(`/api/campaigns/${campaignId}/team/lineup`, {
-        starters,
-        rotation,
+      // Persist lineup to campaign settings
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+
+      const currentLineupSettings = campaign.settings?.lineup || {}
+      await CampaignRepository.updateSettings(campaignId, {
+        lineup: {
+          ...currentLineupSettings,
+          starters: plainStarters,
+          rotation: plainRotation,
+        },
       })
+      useSyncStore().markDirty()
 
-      // Mark cache as dirty (lineup changed)
-      await campaignCacheService.updateCampaign(campaignId, {
-        lineup: { starters, rotation }
-      })
+      // Reorder roster so starters come first in position order
+      const starterSet = new Set(starters.filter(id => id !== null))
+      const starterPlayers = starters
+        .filter(id => id !== null)
+        .map(id => roster.value.find(p => p.id === id))
+        .filter(Boolean)
+      const benchPlayersList = roster.value
+        .filter(p => !starterSet.has(p.id))
+        .sort((a, b) => (b.overall_rating ?? 0) - (a.overall_rating ?? 0))
+      roster.value = [...starterPlayers, ...benchPlayersList]
 
-      // Refresh roster to ensure order matches new lineup
-      await fetchTeam(campaignId)
-
-      return response.data
+      return { starters, rotation }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to update lineup'
+      error.value = err.message || 'Failed to update lineup'
       throw err
     } finally {
       loading.value = false
@@ -208,11 +335,11 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/teams`)
-      allTeams.value = response.data.teams
+      const teams = await TeamRepository.getAllForCampaign(campaignId)
+      allTeams.value = teams || []
       return allTeams.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch teams'
+      error.value = err.message || 'Failed to fetch teams'
       throw err
     } finally {
       loading.value = false
@@ -223,10 +350,12 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/teams/${teamId}/roster`)
-      return response.data
+      const players = await PlayerRepository.getByTeam(campaignId, teamId)
+      // Attach season stats so AI team views can display per-game averages
+      await _attachSeasonStats(players, campaignId)
+      return { roster: players || [] }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch team roster'
+      error.value = err.message || 'Failed to fetch team roster'
       throw err
     } finally {
       loading.value = false
@@ -237,11 +366,11 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/free-agents`)
-      freeAgents.value = response.data.free_agents
+      const agents = await PlayerRepository.getFreeAgents(campaignId)
+      freeAgents.value = agents || []
       return freeAgents.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch free agents'
+      error.value = err.message || 'Failed to fetch free agents'
       throw err
     } finally {
       loading.value = false
@@ -252,20 +381,34 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.post(`/api/campaigns/${campaignId}/players/${playerId}/sign`, {
-        years,
-        salary,
-      })
+      // Get the player from free agents
+      const player = await PlayerRepository.get(campaignId, playerId)
+      if (!player) throw new Error('Player not found')
 
-      // Remove from free agents
+      // Get user team ID
+      const campaign = await CampaignRepository.get(campaignId)
+      const userTeamId = campaign?.teamId ?? campaign?.userTeamId ?? campaign?.user_team_id
+      if (!userTeamId) throw new Error('No user team found')
+
+      // Update player: assign to team with contract
+      player.teamId = userTeamId
+      player.isFreeAgent = 0
+      player.contractSalary = salary
+      player.contract_salary = salary
+      player.contractYearsRemaining = years
+      player.contract_years_remaining = years
+      await PlayerRepository.save(player)
+      useSyncStore().markDirty()
+
+      // Remove from free agents list
       freeAgents.value = freeAgents.value.filter(p => p.id !== playerId)
 
       // Add to roster
-      roster.value.push(response.data.player)
+      roster.value.push(player)
 
-      return response.data
+      return { player }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to sign player'
+      error.value = err.message || 'Failed to sign player'
       throw err
     } finally {
       loading.value = false
@@ -276,18 +419,30 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      await api.post(`/api/campaigns/${campaignId}/players/${playerId}/release`)
+      // Get the player
+      const player = await PlayerRepository.get(campaignId, playerId)
+      if (!player) throw new Error('Player not found')
+
+      // Update player: clear team, mark as free agent
+      player.teamId = null
+      player.isFreeAgent = 1
+      player.contractSalary = 0
+      player.contract_salary = 0
+      player.contractYearsRemaining = 0
+      player.contract_years_remaining = 0
+      await PlayerRepository.save(player)
+      useSyncStore().markDirty()
 
       // Remove from roster
-      const player = roster.value.find(p => p.id === playerId)
+      const rosterPlayer = roster.value.find(p => p.id === playerId)
       roster.value = roster.value.filter(p => p.id !== playerId)
 
       // Add to free agents
-      if (player) {
-        freeAgents.value.push({ ...player, contract: { years_remaining: 0, salary: 0 } })
+      if (rosterPlayer) {
+        freeAgents.value.push({ ...rosterPlayer, contract: { years_remaining: 0, salary: 0 } })
       }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to release player'
+      error.value = err.message || 'Failed to release player'
       throw err
     } finally {
       loading.value = false
@@ -303,14 +458,27 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/team/coaching-schemes`)
-      coachingSchemes.value = response.data.schemes
-      recommendedScheme.value = response.data.recommended
-      substitutionStrategies.value = response.data.substitution_strategies || {}
+      // Build schemes from engine config -- no API call needed
+      const schemes = {
+        offensive: OFFENSIVE_SCHEMES,
+        defensive: DEFENSIVE_SCHEMES,
+      }
+      coachingSchemes.value = schemes
+
+      // Recommend a scheme based on current roster
+      if (roster.value.length > 0) {
+        recommendedScheme.value = coachingEngine.recommendScheme(roster.value)
+      } else {
+        recommendedScheme.value = 'balanced'
+      }
+
+      // Build substitution strategies from engine
+      substitutionStrategies.value = SUBSTITUTION_STRATEGIES
       _schemesCampaignId.value = campaignId
-      return response.data
+
+      return { schemes, recommended: recommendedScheme.value, substitution_strategies: substitutionStrategies.value }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch coaching schemes'
+      error.value = err.message || 'Failed to fetch coaching schemes'
       throw err
     } finally {
       loading.value = false
@@ -329,14 +497,23 @@ export const useTeamStore = defineStore('team', () => {
         defensive: defensiveScheme || currentDefensive,
         substitution: substitutionStrategy || currentSubstitution,
       }
-      const response = await api.put(`/api/campaigns/${campaignId}/team/coaching-scheme`, payload)
-      // Update local team state with new format
+
+      // Get user team ID from campaign
+      const campaign = await CampaignRepository.get(campaignId)
+      const userTeamId = campaign?.teamId ?? campaign?.userTeamId ?? campaign?.user_team_id
+      if (!userTeamId) throw new Error('No user team found')
+
+      // Persist to team data via TeamRepository
+      await TeamRepository.updateCoachingScheme(campaignId, userTeamId, payload)
+
+      // Update local team state
       if (team.value) {
-        team.value.coaching_scheme = response.data.coaching_scheme || payload
+        team.value.coaching_scheme = payload
       }
-      return response.data
+
+      return { coaching_scheme: payload }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to update coaching scheme'
+      error.value = err.message || 'Failed to update coaching scheme'
       throw err
     } finally {
       loading.value = false
@@ -356,14 +533,27 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.put(`/api/campaigns/${campaignId}/team/target-minutes`, {
-        target_minutes: minutes,
+      // Convert reactive proxy to plain object for IndexedDB storage
+      const plainMinutes = JSON.parse(JSON.stringify(minutes))
+
+      // Persist to campaign settings
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+
+      const currentLineupSettings = campaign.settings?.lineup || {}
+      await CampaignRepository.updateSettings(campaignId, {
+        lineup: {
+          ...currentLineupSettings,
+          target_minutes: plainMinutes,
+        },
       })
-      targetMinutes.value = response.data.target_minutes || minutes
+
+      targetMinutes.value = plainMinutes
       applyMinutesToRoster()
-      return response.data
+
+      return { target_minutes: minutes }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to update target minutes'
+      error.value = err.message || 'Failed to update target minutes'
       throw err
     } finally {
       loading.value = false
@@ -377,20 +567,53 @@ export const useTeamStore = defineStore('team', () => {
 
   async function upgradePlayerAttribute(campaignId, playerId, category, attribute) {
     try {
-      const response = await api.post(
-        `/api/campaigns/${campaignId}/players/${playerId}/upgrade`,
-        { category, attribute }
-      )
+      // Get the player from IndexedDB
+      const player = await PlayerRepository.get(campaignId, playerId)
+      if (!player) throw new Error('Player not found')
+
+      // Validate upgrade points
+      const currentPoints = player.upgrade_points ?? player.upgradePoints ?? 0
+      if (currentPoints <= 0) throw new Error('No upgrade points available')
+
+      // Get current attribute value
+      const currentValue = player.attributes?.[category]?.[attribute]
+      if (currentValue === undefined) throw new Error('Invalid attribute')
+
+      // Check potential cap
+      const potential = player.potentialRating ?? player.potential_rating ?? 99
+      if (currentValue >= potential) throw new Error('Attribute already at potential cap')
+
+      // Apply the upgrade
+      const newValue = Math.min(potential, currentValue + 1)
+      player.attributes[category][attribute] = newValue
+
+      // Deduct upgrade point
+      const remainingPoints = currentPoints - 1
+      player.upgrade_points = remainingPoints
+      player.upgradePoints = remainingPoints
+
+      // Recalculate overall rating
+      recalculateOverall(player)
+
+      // Save to IndexedDB
+      await PlayerRepository.save(player)
+      useSyncStore().markDirty()
 
       // Update local roster
       const idx = roster.value.findIndex(p => p.id === playerId)
       if (idx !== -1) {
-        roster.value[idx].attributes[category][attribute] = response.data.new_value
-        roster.value[idx].upgrade_points = response.data.remaining_points
-        roster.value[idx].overall_rating = response.data.new_overall
+        roster.value[idx].attributes[category][attribute] = newValue
+        roster.value[idx].upgrade_points = remainingPoints
+        roster.value[idx].upgradePoints = remainingPoints
+        roster.value[idx].overall_rating = player.overall_rating
+        roster.value[idx].overallRating = player.overallRating
       }
 
-      return response.data
+      return {
+        new_value: newValue,
+        remaining_points: remainingPoints,
+        new_overall: player.overall_rating ?? player.overallRating,
+      }
     } catch (err) {
       throw err
     }

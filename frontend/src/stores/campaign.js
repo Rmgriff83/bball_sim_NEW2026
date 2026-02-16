@@ -1,7 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '@/composables/useApi'
-import { campaignCacheService } from '@/services/CampaignCacheService'
+import {
+  createCampaign as engineCreateCampaign,
+  loadCampaign as engineLoadCampaign,
+  deleteCampaign as engineDeleteCampaign,
+  listCampaigns,
+} from '@/engine/campaign/CampaignManager'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { TEAMS } from '@/engine/data/teams'
 import { useSyncStore } from '@/stores/sync'
 
 export const useCampaignStore = defineStore('campaign', () => {
@@ -23,18 +29,44 @@ export const useCampaignStore = defineStore('campaign', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get('/api/campaigns')
-      campaigns.value = response.data.campaigns
+      // Load campaigns from IndexedDB (local)
+      const localCampaigns = await listCampaigns()
+
+      // Also check server for cloud-synced campaigns not in IndexedDB
+      const syncStore = useSyncStore()
+      const serverCampaigns = await syncStore.fetchServerCampaigns()
+
+      // Find campaigns that exist on server but not locally
+      const localIds = new Set(localCampaigns.map(c => c.id))
+      const cloudOnlyCampaigns = serverCampaigns.filter(sc => !localIds.has(sc.id))
+
+      // Pull any cloud-only campaigns into IndexedDB
+      for (const sc of cloudOnlyCampaigns) {
+        try {
+          await syncStore.pullChanges(sc.id)
+          console.log(`[Campaign] Recovered cloud campaign: ${sc.name} (${sc.id})`)
+        } catch (pullErr) {
+          console.warn(`[Campaign] Failed to pull cloud campaign ${sc.id}:`, pullErr)
+        }
+      }
+
+      // Re-read from IndexedDB if we pulled anything
+      if (cloudOnlyCampaigns.length > 0) {
+        campaigns.value = await listCampaigns()
+      } else {
+        campaigns.value = localCampaigns
+      }
+
       return campaigns.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch campaigns'
+      error.value = err.message || 'Failed to fetch campaigns'
       throw err
     } finally {
       loading.value = false
     }
   }
 
-  async function fetchCampaign(id, forceRefresh = false) {
+  async function fetchCampaign(id) {
     loading.value = true
     error.value = null
     try {
@@ -42,39 +74,44 @@ export const useCampaignStore = defineStore('campaign', () => {
       const syncStore = useSyncStore()
       syncStore.setActiveCampaign(id)
 
-      let campaignData = null
-
-      // Force refresh bypasses cache entirely
-      if (forceRefresh) {
-        const response = await api.get(`/api/campaigns/${id}`)
-        // Note: roster is included here for backwards compatibility, but
-        // teamStore.roster should be used as the single source of truth.
-        // Access roster and lineup data via teamStore.fetchTeam() instead.
-        campaignData = {
-          ...response.data.campaign,
-          team: response.data.team,
-          roster: response.data.roster, // @deprecated - use teamStore.roster
-          coach: response.data.coach,
-          season: response.data.season,
-          standings: response.data.standings,
-          upcoming_games: response.data.upcoming_games,
-          news: response.data.news,
+      let result
+      try {
+        result = await engineLoadCampaign(id)
+      } catch (loadErr) {
+        // Campaign not found locally — try pulling from cloud
+        console.log(`[Campaign] Not found locally, trying cloud recovery for ${id}`)
+        try {
+          await syncStore.pullChanges(id)
+          result = await engineLoadCampaign(id)
+        } catch (pullErr) {
+          throw loadErr // Re-throw original error if pull also fails
         }
-        // Save fresh data to cache
-        await campaignCacheService.saveCampaign(id, campaignData)
-      } else {
-        // Use cache-first strategy (service handles cache + API fallback)
-        campaignData = await campaignCacheService.loadCampaign(id)
       }
 
-      if (!campaignData) {
+      if (!result || !result.campaign) {
         throw new Error('Failed to load campaign')
+      }
+
+      const { campaign, teams, userTeam, seasonData, year } = result
+
+      // Map engine result to the currentCampaign shape expected by Vue views
+      const campaignData = {
+        ...campaign,
+        team: userTeam,
+        roster: null, // @deprecated - use teamStore.roster
+        coach: userTeam?.coach ?? null,
+        season: seasonData,
+        standings: seasonData?.standings ?? null,
+        upcoming_games: seasonData?.schedule?.filter(g => !g.played) ?? [],
+        news: seasonData?.news ?? [],
+        current_date: campaign.currentDate,
+        allTeams: teams,
       }
 
       currentCampaign.value = campaignData
       return currentCampaign.value
     } catch (err) {
-      error.value = err.response?.data?.message || err.message || 'Failed to fetch campaign'
+      error.value = err.message || 'Failed to fetch campaign'
       throw err
     } finally {
       loading.value = false
@@ -85,12 +122,18 @@ export const useCampaignStore = defineStore('campaign', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.post('/api/campaigns', data)
-      const newCampaign = response.data.campaign
+      const result = await engineCreateCampaign(data)
+      const newCampaign = result.campaign
       campaigns.value.push(newCampaign)
+
+      // Mark for cloud sync
+      const syncStore = useSyncStore()
+      syncStore.setActiveCampaign(newCampaign.id)
+      syncStore.markDirty()
+
       return newCampaign
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to create campaign'
+      error.value = err.message || 'Failed to create campaign'
       throw err
     } finally {
       loading.value = false
@@ -101,8 +144,13 @@ export const useCampaignStore = defineStore('campaign', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.put(`/api/campaigns/${id}`, data)
-      const updated = response.data.campaign
+      // Fetch current campaign from IndexedDB, merge updates, and save back
+      const existing = await CampaignRepository.get(id)
+      if (!existing) {
+        throw new Error(`Campaign ${id} not found`)
+      }
+      const updated = { ...existing, ...data }
+      await CampaignRepository.save(updated)
 
       // Update in list
       const index = campaigns.value.findIndex(c => c.id === id)
@@ -115,12 +163,9 @@ export const useCampaignStore = defineStore('campaign', () => {
         currentCampaign.value = { ...currentCampaign.value, ...updated }
       }
 
-      // Update cache
-      await campaignCacheService.updateCampaign(id, updated)
-
       return updated
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to update campaign'
+      error.value = err.message || 'Failed to update campaign'
       throw err
     } finally {
       loading.value = false
@@ -131,14 +176,14 @@ export const useCampaignStore = defineStore('campaign', () => {
     loading.value = true
     error.value = null
     try {
-      await api.delete(`/api/campaigns/${id}`)
+      await engineDeleteCampaign(id)
       campaigns.value = campaigns.value.filter(c => c.id !== id)
 
       if (currentCampaign.value?.id === id) {
         currentCampaign.value = null
       }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to delete campaign'
+      error.value = err.message || 'Failed to delete campaign'
       throw err
     } finally {
       loading.value = false
@@ -147,11 +192,10 @@ export const useCampaignStore = defineStore('campaign', () => {
 
   async function fetchAvailableTeams() {
     try {
-      const response = await api.get('/api/teams')
-      availableTeams.value = response.data.teams
+      availableTeams.value = TEAMS
       return availableTeams.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch teams'
+      error.value = err.message || 'Failed to fetch teams'
       throw err
     }
   }

@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '@/composables/useApi'
+import { PlayoffManager } from '@/engine/season/PlayoffManager'
+import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { TeamRepository } from '@/engine/db/TeamRepository'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
 
 export const usePlayoffStore = defineStore('playoff', () => {
   // State
@@ -52,24 +55,48 @@ export const usePlayoffStore = defineStore('playoff', () => {
     ]
   }
 
+  // Helper: get campaign year and season data
+  async function _getSeasonData(campaignId) {
+    const campaign = await CampaignRepository.get(campaignId)
+    const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+    const seasonData = await SeasonRepository.get(campaignId, year)
+    return { campaign, year, seasonData }
+  }
+
   // Actions
   async function checkRegularSeasonEnd(campaignId) {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/playoffs/check-regular-season-end`)
-      regularSeasonComplete.value = response.data.regularSeasonComplete
-      bracketGenerated.value = response.data.bracketGenerated
-      userStatus.value = response.data.userStatus
+      const { campaign, seasonData } = await _getSeasonData(campaignId)
+      const userTeamId = campaign?.team_id ?? campaign?.teamId
+      const teams = await TeamRepository.getAllForCampaign(campaignId)
+
+      // Check if regular season is complete using PlayoffManager
+      const isComplete = PlayoffManager.isRegularSeasonComplete(seasonData)
+      regularSeasonComplete.value = isComplete
+
+      // Check if bracket already exists
+      const existingBracket = PlayoffManager.getBracket(seasonData)
+      bracketGenerated.value = existingBracket !== null
+
+      // Get user playoff status
+      if (isComplete && seasonData) {
+        userStatus.value = PlayoffManager.getUserPlayoffStatus(seasonData, userTeamId, teams)
+      }
 
       // Show season end modal if regular season just completed and bracket not yet generated
       if (regularSeasonComplete.value && !bracketGenerated.value) {
         showSeasonEndModal.value = true
       }
 
-      return response.data
+      return {
+        regularSeasonComplete: regularSeasonComplete.value,
+        bracketGenerated: bracketGenerated.value,
+        userStatus: userStatus.value,
+      }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to check season status'
+      error.value = err.message || 'Failed to check season status'
       throw err
     } finally {
       loading.value = false
@@ -80,11 +107,12 @@ export const usePlayoffStore = defineStore('playoff', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/playoffs/bracket`)
-      bracket.value = response.data.bracket
+      const { seasonData } = await _getSeasonData(campaignId)
+
+      bracket.value = PlayoffManager.getBracket(seasonData)
       return bracket.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch bracket'
+      error.value = err.message || 'Failed to fetch bracket'
       throw err
     } finally {
       loading.value = false
@@ -95,13 +123,28 @@ export const usePlayoffStore = defineStore('playoff', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.post(`/api/campaigns/${campaignId}/playoffs/generate`)
-      bracket.value = response.data.bracket
-      userStatus.value = response.data.userStatus
+      const { campaign, seasonData } = await _getSeasonData(campaignId)
+      const userTeamId = campaign?.team_id ?? campaign?.teamId
+      const teams = await TeamRepository.getAllForCampaign(campaignId)
+
+      // Generate the bracket (mutates seasonData in place)
+      const generatedBracket = PlayoffManager.generatePlayoffBracket(seasonData, teams)
+      bracket.value = generatedBracket
+
+      // Get user playoff status
+      userStatus.value = PlayoffManager.getUserPlayoffStatus(seasonData, userTeamId, teams)
+
       bracketGenerated.value = true
-      return response.data
+
+      // Persist updated season data with the new bracket
+      await SeasonRepository.save(seasonData)
+
+      return {
+        bracket: bracket.value,
+        userStatus: userStatus.value,
+      }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to generate bracket'
+      error.value = err.message || 'Failed to generate bracket'
       throw err
     } finally {
       loading.value = false
@@ -112,11 +155,12 @@ export const usePlayoffStore = defineStore('playoff', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/playoffs/series/${seriesId}`)
-      currentSeries.value = response.data.series
+      const { seasonData } = await _getSeasonData(campaignId)
+
+      currentSeries.value = PlayoffManager.getSeries(seasonData, seriesId)
       return currentSeries.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch series'
+      error.value = err.message || 'Failed to fetch series'
       throw err
     } finally {
       loading.value = false
@@ -127,11 +171,13 @@ export const usePlayoffStore = defineStore('playoff', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/playoffs/next-series`)
-      currentSeries.value = response.data.series
+      const { campaign, seasonData } = await _getSeasonData(campaignId)
+      const userTeamId = campaign?.team_id ?? campaign?.teamId
+
+      currentSeries.value = PlayoffManager.getNextUserSeries(seasonData, userTeamId)
       return currentSeries.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch next series'
+      error.value = err.message || 'Failed to fetch next series'
       throw err
     } finally {
       loading.value = false

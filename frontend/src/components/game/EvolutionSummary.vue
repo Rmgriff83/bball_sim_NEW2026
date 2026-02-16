@@ -159,7 +159,7 @@ function formatAttribute(attr) {
         </span>
         <span v-else-if="item.type === 'hot_streak'" class="streak-info">{{ item.games }} game hot streak!</span>
         <span v-else-if="item.type === 'cold_streak'" class="streak-info">{{ item.games }} game cold streak</span>
-        <span v-else-if="item.type === 'fatigue'" class="fatigue-info">Fatigue: {{ item.fatigue }}%</span>
+        <span v-else-if="item.type === 'fatigue'" class="fatigue-info">Fatigue: {{ Math.round(item.fatigue) }}%</span>
         <span v-else-if="item.type === 'morale'" class="morale-info">
           Morale {{ item.change > 0 ? '+' : '' }}{{ item.change }}
         </span>

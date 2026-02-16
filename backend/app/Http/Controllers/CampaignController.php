@@ -507,6 +507,203 @@ class CampaignController extends Controller
     }
 
     /**
+     * Export full campaign snapshot for IndexedDB migration.
+     * Returns all campaign data in the format expected by sync.js pullChanges().
+     */
+    public function exportFull(Request $request, Campaign $campaign): JsonResponse
+    {
+        if ($campaign->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $campaign->load(['team.coach', 'currentSeason']);
+
+        $campaignId = $campaign->id;
+        $year = $campaign->currentSeason?->year ?? 2025;
+
+        // --- Campaign ---
+        $campaignData = [
+            'id' => $campaign->id,
+            'userId' => $campaign->user_id,
+            'name' => $campaign->name,
+            'teamId' => $campaign->team_id,
+            'currentSeasonId' => $campaign->current_season_id,
+            'current_date' => $campaign->current_date->format('Y-m-d'),
+            'game_year' => $campaign->game_year,
+            'difficulty' => $campaign->difficulty,
+            'draft_mode' => $campaign->draft_mode ?? 'standard',
+            'draft_completed' => $campaign->draft_completed ?? true,
+            'settings' => $campaign->settings,
+            'simulation_batch_id' => $campaign->simulation_batch_id,
+            'updatedAt' => $campaign->updated_at->toISOString(),
+        ];
+
+        // --- Teams ---
+        $allTeams = Team::where('campaign_id', $campaignId)->with('coach')->get();
+        $teamsData = $allTeams->map(function ($team) use ($campaignId) {
+            return [
+                'id' => $team->id,
+                'campaignId' => $campaignId,
+                'name' => $team->name,
+                'city' => $team->city,
+                'abbreviation' => $team->abbreviation,
+                'conference' => $team->conference,
+                'division' => $team->division,
+                'primary_color' => $team->primary_color,
+                'secondary_color' => $team->secondary_color,
+                'logo_url' => $team->logo_url,
+                'salary_cap' => $team->salary_cap,
+                'total_payroll' => $team->total_payroll,
+                'luxury_tax_bill' => $team->luxury_tax_bill,
+                'facilities' => $team->facilities,
+                'coaching_scheme' => $team->coaching_scheme,
+                'offensive_playbook' => $team->offensive_playbook,
+                'lineup_settings' => $team->lineup_settings,
+                'coach' => $team->coach ? [
+                    'id' => $team->coach->id,
+                    'name' => $team->coach->name,
+                    'first_name' => $team->coach->first_name,
+                    'last_name' => $team->coach->last_name,
+                    'style' => $team->coach->style,
+                    'offensive_philosophy' => $team->coach->offensive_philosophy,
+                    'defensive_philosophy' => $team->coach->defensive_philosophy,
+                    'experience' => $team->coach->experience,
+                    'rating' => $team->coach->rating,
+                ] : null,
+            ];
+        })->values()->toArray();
+
+        // --- Players ---
+        // User team players from MySQL
+        $playerService = app(CampaignPlayerService::class);
+
+        $dbPlayers = Player::where('campaign_id', $campaignId)->get();
+        $userTeamAbbr = $campaign->team?->abbreviation ?? '';
+
+        $userPlayers = $dbPlayers->map(function ($player) use ($campaignId, $userTeamAbbr) {
+            $badges = $player->getAllBadges();
+            return [
+                'id' => $player->id,
+                'campaignId' => $campaignId,
+                'teamId' => $player->team_id,
+                'teamAbbreviation' => $userTeamAbbr,
+                'isFreeAgent' => $player->team_id ? 0 : 1,
+                'firstName' => $player->first_name,
+                'lastName' => $player->last_name,
+                'position' => $player->position,
+                'secondaryPosition' => $player->secondary_position,
+                'jerseyNumber' => $player->jersey_number,
+                'heightInches' => $player->height_inches,
+                'weightLbs' => $player->weight_lbs,
+                'birthDate' => $player->birth_date?->format('Y-m-d'),
+                'country' => $player->country,
+                'college' => $player->college,
+                'draftYear' => $player->draft_year,
+                'draftRound' => $player->draft_round,
+                'draftPick' => $player->draft_pick,
+                'overallRating' => $player->overall_rating,
+                'potentialRating' => $player->potential_rating,
+                'attributes' => $player->attributes,
+                'badges' => $badges,
+                'tendencies' => $player->tendencies,
+                'personality' => $player->personality,
+                'contractSalary' => (int) $player->contract_salary,
+                'contractYearsRemaining' => $player->contract_years_remaining,
+                'contract_years_remaining' => $player->contract_years_remaining,
+                'contract_salary' => (int) $player->contract_salary,
+                'tradeValue' => $player->trade_value ? (float) $player->trade_value : null,
+                'tradeValueTotal' => $player->trade_value_total ? (float) $player->trade_value_total : null,
+                'injuryRisk' => $player->injury_risk ?? 'M',
+                'fatigue' => $player->fatigue ?? 0,
+                'isInjured' => $player->is_injured ?? false,
+                'is_injured' => $player->is_injured ?? false,
+                'injuryDetails' => $player->injury_details,
+                'injury_details' => $player->injury_details,
+                'gamesPlayedThisSeason' => $player->games_played_this_season ?? 0,
+                'minutesPlayedThisSeason' => $player->minutes_played_this_season ?? 0,
+                'development_history' => $player->development_history ?? [],
+                'streakData' => $player->streak_data,
+                'streak_data' => $player->streak_data,
+                'recentPerformances' => $player->recent_performances ?? [],
+                'recent_performances' => $player->recent_performances ?? [],
+                'allStarSelections' => $player->all_star_selections ?? 0,
+            ];
+        })->toArray();
+
+        // League players from JSON file
+        $leaguePlayers = $playerService->loadLeaguePlayers($campaignId);
+        $teamIdLookup = $allTeams->pluck('id', 'abbreviation')->toArray();
+
+        $leaguePlayersFormatted = array_map(function ($player) use ($campaignId, $teamIdLookup) {
+            $abbr = $player['teamAbbreviation'] ?? 'FA';
+            $teamId = $teamIdLookup[$abbr] ?? null;
+            return array_merge($player, [
+                'campaignId' => $campaignId,
+                'teamId' => $teamId,
+                'isFreeAgent' => (!$abbr || $abbr === 'FA') ? 1 : 0,
+            ]);
+        }, $leaguePlayers);
+
+        $allPlayers = array_merge($userPlayers, $leaguePlayersFormatted);
+
+        // --- Seasons ---
+        $seasonService = $this->seasonService;
+        $seasons = [];
+
+        // Load all season files that exist for this campaign
+        $campaignDir = "campaigns/{$campaignId}";
+        if (\Storage::exists($campaignDir)) {
+            $files = \Storage::files($campaignDir);
+            foreach ($files as $file) {
+                $basename = basename($file);
+                if (preg_match('/^season_(\d+)\.json$/', $basename, $matches)) {
+                    $seasonYear = (int) $matches[1];
+                    $seasonData = $seasonService->loadSeason($campaignId, $seasonYear);
+                    if ($seasonData) {
+                        // Ensure campaignId and year are in the data for IndexedDB keyPath
+                        $seasonData['campaignId'] = $campaignId;
+                        $seasonData['year'] = $seasonYear;
+                        $seasons[] = $seasonData;
+                    }
+                }
+            }
+        }
+
+        // --- Draft Picks ---
+        $draftPicks = $campaign->draftPicks()
+            ->with(['originalTeam:id,abbreviation,name', 'currentOwner:id,abbreviation,name'])
+            ->orderBy('year')
+            ->orderBy('round')
+            ->orderBy('pick_number')
+            ->get()
+            ->map(function ($pick) {
+                return [
+                    'id' => $pick->id,
+                    'campaignId' => $pick->campaign_id,
+                    'originalTeamId' => $pick->original_team_id,
+                    'currentOwnerId' => $pick->current_owner_id,
+                    'year' => $pick->year,
+                    'round' => $pick->round,
+                    'pickNumber' => $pick->pick_number,
+                    'playerId' => $pick->player_id,
+                    'isTraded' => $pick->is_traded ?? false,
+                    'tradeConditions' => $pick->trade_conditions,
+                    'originalTeamAbbreviation' => $pick->originalTeam?->abbreviation,
+                    'currentOwnerAbbreviation' => $pick->currentOwner?->abbreviation,
+                ];
+            })
+            ->toArray();
+
+        return response()->json([
+            'campaign' => $campaignData,
+            'teams' => $teamsData,
+            'players' => $allPlayers,
+            'seasons' => $seasons,
+            'draftPicks' => $draftPicks,
+        ]);
+    }
+
+    /**
      * Format upcoming games with team info for API response.
      */
     private function formatUpcomingGames(array $games, Campaign $campaign): array

@@ -1045,8 +1045,9 @@ async function startGame() {
       }, 500)
     }
 
-    // Check if game completed
+    // Check if game completed (can happen when resuming an in-progress game)
     if (result.isGameComplete) {
+      gameJustCompleted.value = true
       isLiveMode.value = false
       await leagueStore.fetchStandings(campaignId.value, { force: true })
       showUpgradePointToasts()
@@ -1197,8 +1198,8 @@ function viewBoxScore() {
   gameJustCompleted.value = false
   // Restore scroll when leaving overlay
   document.body.style.overflow = ''
-  // Refresh the game data to get final stats
-  gameStore.fetchGame(campaignId.value, gameId.value)
+  // currentGame already has full data (box_score, evolution, rewards) from simulation
+  // Do NOT call fetchGame here — it rebuilds from schedule which lacks evolution data
 }
 
 /**
@@ -1299,6 +1300,12 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
 
 // Load animation when game data is available
 watch(gameAnimationData, (newData) => {
+  // Skip if we're in live mode or animation is already playing — the live game flow
+  // manages animation data manually via loadAnimationData() calls in startGame/continueToNextQuarter.
+  // Without this guard, the watcher overwrites isLive:true with isLive:false when the store
+  // updates currentGame.animation_data on game completion, which prevents the end-game modal.
+  if (isLiveMode.value || showAnimationMode.value) return
+
   if (newData && newData.possessions?.length > 0) {
     loadAnimationData(newData)
   }
@@ -2193,7 +2200,7 @@ onUnmounted(() => {
                                     <div class="lineup-player-info">
                                       <div class="lineup-player-name-row">
                                         <span class="lineup-player-name">{{ slot.player.name }}</span>
-                                        <span class="lineup-fatigue" :style="{ color: getFatigueColor(slot.player.fatigue || 0) }">{{ slot.player.fatigue || 0 }}%</span>
+                                        <span class="lineup-fatigue" :style="{ color: getFatigueColor(slot.player.fatigue || 0) }">{{ Math.round(slot.player.fatigue || 0) }}%</span>
                                       </div>
                                       <span class="lineup-inline-stats">
                                         {{ slot.player.points || 0 }}p {{ slot.player.rebounds || 0 }}r {{ slot.player.assists || 0 }}a
@@ -2242,7 +2249,7 @@ onUnmounted(() => {
                                         </span>
                                         <div class="swap-option-name-row">
                                           <span class="swap-option-name">{{ candidate.name }}</span>
-                                          <span class="swap-option-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ candidate.fatigue || 0 }}%</span>
+                                          <span class="swap-option-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ Math.round(candidate.fatigue || 0) }}%</span>
                                         </div>
                                         <span class="swap-option-stats">
                                           {{ candidate.points || 0 }}p {{ candidate.rebounds || 0 }}r
@@ -2745,7 +2752,7 @@ onUnmounted(() => {
                             <div class="lineup-player-info">
                               <div class="lineup-player-name-row">
                                 <span class="lineup-player-name">{{ slot.player.name }}</span>
-                                <span class="lineup-fatigue" :style="{ color: getFatigueColor(slot.player.fatigue || 0) }">{{ slot.player.fatigue || 0 }}%</span>
+                                <span class="lineup-fatigue" :style="{ color: getFatigueColor(slot.player.fatigue || 0) }">{{ Math.round(slot.player.fatigue || 0) }}%</span>
                               </div>
                               <span class="lineup-player-pos-secondary">{{ slot.player.position }}{{ slot.player.secondary_position ? ` / ${slot.player.secondary_position}` : '' }}</span>
                             </div>
@@ -2786,7 +2793,7 @@ onUnmounted(() => {
                                 </span>
                                 <div class="swap-option-name-row">
                                   <span class="swap-option-name">{{ candidate.name }}</span>
-                                  <span class="swap-option-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ candidate.fatigue || 0 }}%</span>
+                                  <span class="swap-option-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ Math.round(candidate.fatigue || 0) }}%</span>
                                 </div>
                                 <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
                               </button>
@@ -3205,9 +3212,9 @@ onUnmounted(() => {
                   <div v-for="warn in evolutionData.home.fatigue_warnings" :key="warn.player_id" class="evolution-item warning">
                     <span class="player-name">{{ warn.name }}</span>
                     <span class="fatigue-bar">
-                      <span class="fatigue-fill" :style="{ width: warn.fatigue + '%' }"></span>
+                      <span class="fatigue-fill" :style="{ width: Math.round(warn.fatigue) + '%' }"></span>
                     </span>
-                    <span class="fatigue-value">{{ warn.fatigue }}%</span>
+                    <span class="fatigue-value">{{ Math.round(warn.fatigue) }}%</span>
                   </div>
                 </div>
               </div>
@@ -3320,9 +3327,9 @@ onUnmounted(() => {
                   <div v-for="warn in evolutionData.away.fatigue_warnings" :key="warn.player_id" class="evolution-item warning">
                     <span class="player-name">{{ warn.name }}</span>
                     <span class="fatigue-bar">
-                      <span class="fatigue-fill" :style="{ width: warn.fatigue + '%' }"></span>
+                      <span class="fatigue-fill" :style="{ width: Math.round(warn.fatigue) + '%' }"></span>
                     </span>
-                    <span class="fatigue-value">{{ warn.fatigue }}%</span>
+                    <span class="fatigue-value">{{ Math.round(warn.fatigue) }}%</span>
                   </div>
                 </div>
               </div>
