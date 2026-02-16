@@ -50,7 +50,8 @@ export const useGameStore = defineStore('game', () => {
     if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
     const year = campaign.currentSeasonYear ?? 2025
     const userTeamId = campaign.teamId
-    return { campaign, year, userTeamId }
+    const userLineup = campaign.settings?.lineup?.starters || null
+    return { campaign, year, userTeamId, userLineup }
   }
 
   /**
@@ -441,7 +442,7 @@ export const useGameStore = defineStore('game', () => {
     simulating.value = true
     error.value = null
     try {
-      const { year: seasonYear, userTeamId, campaign } = await _getCampaignContext(campaignId)
+      const { year: seasonYear, userTeamId, userLineup, campaign } = await _getCampaignContext(campaignId)
       const effectiveYear = year || seasonYear
 
       // Load season data
@@ -465,6 +466,7 @@ export const useGameStore = defineStore('game', () => {
         generateAnimationData,
         isLiveGame: false,
         userTeamId,
+        userLineup,
       })
 
       // Process post-game evolution
@@ -542,7 +544,7 @@ export const useGameStore = defineStore('game', () => {
     simulating.value = true
     error.value = null
     try {
-      const { year, userTeamId, campaign } = await _getCampaignContext(campaignId)
+      const { year, userTeamId, userLineup, campaign } = await _getCampaignContext(campaignId)
       const currentDate = campaign.currentDate || '2025-10-21'
 
       const seasonData = await SeasonRepository.get(campaignId, year)
@@ -577,6 +579,7 @@ export const useGameStore = defineStore('game', () => {
         const result = await worker.simulateGame(homeTeam, awayTeam, homePlayers, awayPlayers, {
           generateAnimationData: false,
           userTeamId,
+          userLineup,
         })
 
         // Post-game evolution
@@ -646,7 +649,7 @@ export const useGameStore = defineStore('game', () => {
     error.value = null
 
     try {
-      const { year, userTeamId } = await _getCampaignContext(campaignId)
+      const { year, userTeamId, userLineup } = await _getCampaignContext(campaignId)
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData) throw new Error(`Season ${year} not found`)
 
@@ -670,6 +673,7 @@ export const useGameStore = defineStore('game', () => {
           generateAnimationData: true,
           isLiveGame: true,
           userTeamId,
+          userLineup,
           ...(settings || {}),
         },
       })
@@ -1073,7 +1077,7 @@ export const useGameStore = defineStore('game', () => {
     simulating.value = true
     error.value = null
     try {
-      const { year, userTeamId, campaign } = await _getCampaignContext(campaignId)
+      const { year, userTeamId, userLineup, campaign } = await _getCampaignContext(campaignId)
       const currentDate = campaign.currentDate || '2025-10-21'
 
       const seasonData = await SeasonRepository.get(campaignId, year)
@@ -1107,6 +1111,7 @@ export const useGameStore = defineStore('game', () => {
         const result = await worker.simulateGame(homeTeam, awayTeam, homePlayers, awayPlayers, {
           generateAnimationData: false,
           userTeamId,
+          userLineup,
         })
 
         // Post-game evolution for user game
@@ -1212,7 +1217,7 @@ export const useGameStore = defineStore('game', () => {
     simulating.value = true
     error.value = null
     try {
-      const { year, userTeamId, campaign } = await _getCampaignContext(campaignId)
+      const { year, userTeamId, userLineup, campaign } = await _getCampaignContext(campaignId)
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData) throw new Error(`Season ${year} not found`)
 
@@ -1249,6 +1254,7 @@ export const useGameStore = defineStore('game', () => {
           const result = await worker.simulateGame(homeTeam, awayTeam, homePlayers, awayPlayers, {
             generateAnimationData: false,
             userTeamId,
+            userLineup,
           })
           const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
             userTeamId,

@@ -1048,6 +1048,12 @@ export async function loadCampaign(campaignId) {
     throw new Error(`Campaign ${campaignId} not found`)
   }
 
+  // Normalize camelCase → snake_case for Vue views
+  if (!campaign.draft_mode) campaign.draft_mode = campaign.draftMode
+  if (!campaign.draft_completed && campaign.draftCompleted !== undefined) campaign.draft_completed = campaign.draftCompleted
+  if (!campaign.game_year) campaign.game_year = campaign.gameYear
+  if (!campaign.current_date) campaign.current_date = campaign.currentDate
+
   // Update last played time
   campaign.lastPlayedAt = new Date().toISOString()
   await CampaignRepository.save(campaign)

@@ -7,7 +7,8 @@ import { useToastStore } from '@/stores/toast'
 import { LoadingSpinner } from '@/components/ui'
 import DraftCompleteModal from '@/components/draft/DraftCompleteModal.vue'
 import { Search, ChevronUp, ChevronDown, FastForward, SkipForward, SkipBack, Users, X } from 'lucide-vue-next'
-import api from '@/composables/useApi'
+import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { TeamRepository } from '@/engine/db/TeamRepository'
 
 const route = useRoute()
 const router = useRouter()
@@ -192,14 +193,17 @@ onMounted(async () => {
       return
     }
 
+    // Load draft data from IndexedDB
+    const [allPlayers, teamsList] = await Promise.all([
+      PlayerRepository.getAllForCampaign(campaignId.value),
+      TeamRepository.getAllForCampaign(campaignId.value),
+    ])
+
     const restored = await draftStore.loadDraftFromCache(campaignId.value)
 
     if (restored && draftStore.draftOrder.length > 0) {
-      const poolRes = await api.get(`/api/campaigns/${campaignId.value}/draft-pool`)
-      draftStore.allPlayers = poolRes.data.players
-
-      const teamsRes = await api.get(`/api/campaigns/${campaignId.value}/teams`)
-      draftStore.teams = teamsRes.data.teams || teamsRes.data
+      draftStore.allPlayers = allPlayers
+      draftStore.teams = teamsList
 
       // Resume: if user's turn start timer, otherwise autoplay AI picks
       if (draftStore.isUserPick && !draftStore.isDraftComplete) {
@@ -208,15 +212,7 @@ onMounted(async () => {
         draftStore.autoPlayAIPicks(campaignId.value)
       }
     } else {
-      const [poolRes, teamsRes] = await Promise.all([
-        api.get(`/api/campaigns/${campaignId.value}/draft-pool`),
-        api.get(`/api/campaigns/${campaignId.value}/teams`),
-      ])
-
-      const players = poolRes.data.players
-      const teamsList = teamsRes.data.teams || teamsRes.data
-
-      draftStore.initializeDraft(campaign, players, teamsList)
+      draftStore.initializeDraft(campaign, allPlayers, teamsList)
       draftStore.saveDraftToCache(campaignId.value)
 
       // Start live draft — AI picks play with realistic delays

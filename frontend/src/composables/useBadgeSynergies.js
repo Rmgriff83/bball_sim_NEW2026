@@ -1,10 +1,9 @@
 import { ref } from 'vue'
-import api from './useApi'
+import { SYNERGIES } from '@/engine/data/synergies'
 
 // Module-level singleton — cached across all consumers
-const synergies = ref([])
-const loaded = ref(false)
-const loading = ref(false)
+const synergies = ref(SYNERGIES)
+const loaded = ref(true)
 
 const LEVEL_ORDER = { bronze: 1, silver: 2, gold: 3, hof: 4 }
 
@@ -14,18 +13,8 @@ function findBadge(player, badgeId) {
 }
 
 export function useBadgeSynergies() {
-  async function loadSynergies() {
-    if (loaded.value || loading.value) return
-    loading.value = true
-    try {
-      const { data } = await api.get('/api/badge-synergies')
-      synergies.value = data
-      loaded.value = true
-    } catch (err) {
-      console.error('Failed to load badge synergies:', err)
-    } finally {
-      loading.value = false
-    }
+  function loadSynergies() {
+    // No-op: synergies are bundled at build time
   }
 
   /**

@@ -1443,7 +1443,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
             <div class="flex items-center justify-between mb-4">
               <h3 class="h4">Offensive Scheme</h3>
               <div v-if="teamStore.recommendedScheme" class="recommended-badge">
-                Recommended: {{ teamStore.coachingSchemes[teamStore.recommendedScheme]?.name }}
+                Recommended: {{ teamStore.coachingSchemes?.offensive?.[teamStore.recommendedScheme]?.name }}
               </div>
             </div>
 
@@ -1457,7 +1457,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 
             <div v-else class="schemes-grid">
               <div
-                v-for="(scheme, schemeId) in teamStore.coachingSchemes"
+                v-for="(scheme, schemeId) in teamStore.coachingSchemes?.offensive"
                 :key="schemeId"
                 class="scheme-card"
                 :class="{
