@@ -67,6 +67,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/teams', [CampaignController::class, 'getTeams']);
     Route::apiResource('/campaigns', CampaignController::class);
 
+    // Cloud sync (client-id based, no route model binding)
+    Route::get('/sync/campaigns', [SyncController::class, 'listCampaigns']);
+    Route::post('/sync/{clientId}/push', [SyncController::class, 'pushSnapshot']);
+    Route::get('/sync/{clientId}/pull', [SyncController::class, 'pullSnapshot']);
+
     // Campaign-specific routes
     Route::prefix('campaigns/{campaign}')->group(function () {
         // Fantasy draft
@@ -140,6 +145,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/finances/resign/{player}', [FinanceController::class, 'resignPlayer']);
         Route::post('/finances/sign/{playerId}', [FinanceController::class, 'signFreeAgent']);
         Route::post('/finances/drop/{player}', [FinanceController::class, 'dropPlayer']);
+
+        // Full campaign export (for IndexedDB migration)
+        Route::get('/export-full', [CampaignController::class, 'exportFull']);
 
         // Sync (cloud save/load)
         Route::get('/sync/status', [SyncController::class, 'status']);

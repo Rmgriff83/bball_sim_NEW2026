@@ -102,7 +102,7 @@ onUnmounted(() => {
 
 // Computed values from preview data
 const nextGame = computed(() => props.preview?.nextUserGame)
-const hasNextGame = computed(() => props.preview?.hasNextGame)
+const hasNextGame = computed(() => !!props.preview?.nextUserGame)
 const isGameToday = computed(() => props.preview?.isGameToday)
 const daysToSimulate = computed(() => props.preview?.daysToSimulate || 0)
 const totalGames = computed(() => props.preview?.totalGamesToSimulate || 0)

@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useGameStore } from '@/stores/game'
 import { useAuthStore } from '@/stores/auth'
+import { useEngineStore } from '@/stores/engine'
+import { useSyncStore } from '@/stores/sync'
 import { BottomNav } from '@/components/ui'
 import { ArrowLeft, Play, User, FolderOpen, LogOut } from 'lucide-vue-next'
 
@@ -12,6 +14,8 @@ const router = useRouter()
 const campaignStore = useCampaignStore()
 const gameStore = useGameStore()
 const authStore = useAuthStore()
+const engineStore = useEngineStore()
+const syncStore = useSyncStore()
 
 const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
@@ -81,12 +85,29 @@ onMounted(async () => {
     router.replace(`/campaign/${campaignId.value}/draft`)
     return
   }
+
+  // Initialize the simulation engine for this campaign
+  await engineStore.initialize(campaignId.value)
+
+  // Start cloud sync timer and push immediately if dirty (e.g. just created)
+  syncStore.setActiveCampaign(campaignId.value)
+  syncStore.startAutoSync()
+  if (syncStore.hasPendingChanges) {
+    syncStore.syncNow()
+  }
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('scroll', handleScroll, true)
+  engineStore.teardown()
+
+  // Stop sync timer and push any pending changes
+  syncStore.stopAutoSync()
+  if (syncStore.hasPendingChanges) {
+    syncStore.syncNow()
+  }
 })
 
 async function handleLogout() {

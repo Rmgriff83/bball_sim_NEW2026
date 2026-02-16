@@ -406,11 +406,13 @@ const evolutionHistory = computed(() => {
   return selectedPlayer.value.development_history || []
 })
 
-// Get date 7 days ago for filtering recent evolution
+// Get date 7 days ago for filtering recent evolution (using in-game date)
 const sevenDaysAgo = computed(() => {
-  const date = new Date()
+  const currentDateStr = campaign.value?.current_date || new Date().toISOString().split('T')[0]
+  const [y, m, d] = currentDateStr.split('-').map(Number)
+  const date = new Date(y, m - 1, d)
   date.setDate(date.getDate() - 7)
-  return date.toISOString().split('T')[0]
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 })
 
 // Aggregate evolution by attribute (category.attribute as key)

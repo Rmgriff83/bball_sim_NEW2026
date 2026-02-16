@@ -102,7 +102,7 @@ async function createCampaign() {
       router.push(`/campaign/${campaign.id}`)
     }
   } catch (err) {
-    createError.value = err.response?.data?.message || 'Failed to create campaign'
+    createError.value = err.message || 'Failed to create campaign'
   } finally {
     creating.value = false
   }
@@ -527,7 +527,7 @@ function getDifficultyLabel(value) {
 
 .empty-title {
   font-size: 1.25rem;
-  font-weight: 600;
+  font-weight: 400;
   color: var(--color-text-primary);
   margin-bottom: 0.5rem;
 }

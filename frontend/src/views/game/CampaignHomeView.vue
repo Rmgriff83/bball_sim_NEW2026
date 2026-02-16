@@ -54,7 +54,7 @@ const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => campaign.value?.team)
 // Use teamStore roster which includes season_stats
 const roster = computed(() => teamStore.roster || [])
-const news = computed(() => campaign.value?.news || [])
+const news = computed(() => (campaign.value?.news || []).slice().reverse())
 
 // Top player by overall rating
 const topPlayer = computed(() => {

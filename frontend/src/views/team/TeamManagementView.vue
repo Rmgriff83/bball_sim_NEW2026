@@ -778,11 +778,13 @@ const evolutionHistory = computed(() => {
   return selectedPlayer.value.development_history || []
 })
 
-// Get date 7 days ago for filtering recent evolution
+// Get date 7 days ago for filtering recent evolution (using in-game date)
 const sevenDaysAgo = computed(() => {
-  const date = new Date()
+  const currentDateStr = campaign.value?.current_date || new Date().toISOString().split('T')[0]
+  const [y, m, d] = currentDateStr.split('-').map(Number)
+  const date = new Date(y, m - 1, d)
   date.setDate(date.getDate() - 7)
-  return date.toISOString().split('T')[0]
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 })
 
 // Aggregate evolution by attribute (category.attribute as key)
@@ -1065,12 +1067,12 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                       <div
                         class="fatigue-meter-fill"
                         :style="{
-                          width: (slot.player.fatigue || 0) + '%',
+                          width: Math.round(slot.player.fatigue || 0) + '%',
                           backgroundColor: getFatigueColor(slot.player.fatigue || 0)
                         }"
                       ></div>
                     </div>
-                    <span class="fatigue-value">{{ slot.player.fatigue || 0 }}%</span>
+                    <span class="fatigue-value">{{ Math.round(slot.player.fatigue || 0) }}%</span>
                     <AlertTriangle v-if="isOverFatigued(slot.player.fatigue || 0)" :size="12" class="fatigue-warning-icon" />
                   </div>
                 </div>
@@ -1110,7 +1112,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                       </div>
                       <div class="dropdown-name-row">
                         <span class="dropdown-name">{{ candidate.name }}</span>
-                        <span class="dropdown-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ candidate.fatigue || 0 }}%</span>
+                        <span class="dropdown-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ Math.round(candidate.fatigue || 0) }}%</span>
                       </div>
                       <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
                         {{ candidate.position }}
@@ -1230,12 +1232,12 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                     <div
                       class="fatigue-meter-fill"
                       :style="{
-                        width: (player.fatigue || 0) + '%',
+                        width: Math.round(player.fatigue || 0) + '%',
                         backgroundColor: getFatigueColor(player.fatigue || 0)
                       }"
                     ></div>
                   </div>
-                  <span class="fatigue-value">{{ player.fatigue || 0 }}%</span>
+                  <span class="fatigue-value">{{ Math.round(player.fatigue || 0) }}%</span>
                   <AlertTriangle v-if="isOverFatigued(player.fatigue || 0)" :size="12" class="fatigue-warning-icon" />
                 </div>
               </div>
@@ -1282,7 +1284,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
                     </div>
                     <div class="dropdown-name-row">
                       <span class="dropdown-name">{{ candidate.name }}</span>
-                      <span class="dropdown-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ candidate.fatigue || 0 }}%</span>
+                      <span class="dropdown-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ Math.round(candidate.fatigue || 0) }}%</span>
                     </div>
                     <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
                       {{ candidate.slotPosition }}

@@ -179,7 +179,7 @@ function handleUpgrade(category, attrKey) {
 }
 
 // Fatigue helpers
-const fatiguePercent = computed(() => normalizedPlayer.value?.fatigue ?? 0)
+const fatiguePercent = computed(() => Math.round(normalizedPlayer.value?.fatigue ?? 0))
 const isOverFatigued = computed(() => fatiguePercent.value >= 70)
 
 function getFatigueColor(fatigue) {

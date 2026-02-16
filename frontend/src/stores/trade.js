@@ -1,6 +1,26 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '@/composables/useApi'
+import { TeamRepository } from '@/engine/db/TeamRepository'
+import { SALARY_CAP } from '@/engine/data/teams'
+import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { useSyncStore } from '@/stores/sync'
+import {
+  evaluateTrade,
+  generateWeeklyProposals,
+  buildAiOffer,
+  findTargetPlayers,
+  identifyNeed,
+  analyzeTeamDirection,
+  buildContext,
+} from '@/engine/ai/AITradeService'
+import {
+  validateSalaryCap,
+  buildTradeDetails,
+  executeTrade as executeTradeEngine,
+  formatTradeForDisplay,
+} from '@/engine/finance/TradeExecutor'
 
 export const useTradeStore = defineStore('trade', () => {
   // State
@@ -46,16 +66,67 @@ export const useTradeStore = defineStore('trade', () => {
     return userOffering.value.length > 0 && userRequesting.value.length > 0 && !proposing.value
   })
 
+  // Helper: build a player lookup function from an array
+  function _buildPlayerLookup(players) {
+    const map = {}
+    for (const p of players) {
+      map[p.id] = p
+    }
+    return (playerId) => map[playerId] || null
+  }
+
+  // Helper: get campaign year
+  async function _getCampaignYear(campaignId) {
+    const campaign = await CampaignRepository.get(campaignId)
+    return campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+  }
+
   // Actions
   async function fetchTradeableTeams(campaignId) {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/trade/teams`)
-      tradeableTeams.value = response.data.teams
+      const campaign = await CampaignRepository.get(campaignId)
+      const userTeamId = campaign?.team_id ?? campaign?.teamId
+      const allTeams = await TeamRepository.getAllForCampaign(campaignId)
+
+      // Load standings to attach win/loss records
+      const year = campaign?.currentSeasonYear ?? campaign?.gameYear ?? 2025
+      const seasonData = await SeasonRepository.get(campaignId, year)
+      const standings = seasonData?.standings ?? { east: [], west: [] }
+      const allStandings = [...(standings.east ?? []), ...(standings.west ?? [])]
+
+      // Build a lookup from teamId to standings record
+      const standingsMap = {}
+      for (const s of allStandings) {
+        standingsMap[s.teamId] = s
+      }
+
+      // Filter out the user's team and enrich with record + direction
+      tradeableTeams.value = allTeams
+        .filter(t => t.id !== userTeamId)
+        .map(t => {
+          const s = standingsMap[t.id]
+          const wins = s?.wins ?? 0
+          const losses = s?.losses ?? 0
+          const winPct = (wins + losses) > 0 ? wins / (wins + losses) : 0.5
+          // Simple direction heuristic based on record
+          let direction = 'ascending'
+          if (winPct >= 0.6) direction = 'win_now'
+          else if (winPct >= 0.5) direction = 'ascending'
+          else if (winPct < 0.35) direction = 'rebuilding'
+          const totalPayroll = t.total_payroll ?? t.totalPayroll ?? 0
+          return {
+            ...t,
+            record: { wins, losses },
+            direction,
+            cap_space: SALARY_CAP - totalPayroll,
+          }
+        })
+
       return tradeableTeams.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch teams'
+      error.value = err.message || 'Failed to fetch teams'
       throw err
     } finally {
       loading.value = false
@@ -66,13 +137,22 @@ export const useTradeStore = defineStore('trade', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/trade/teams/${teamId}`)
-      selectedTeam.value = response.data.team
-      selectedTeamRoster.value = response.data.roster
-      selectedTeamPicks.value = response.data.picks
-      return response.data
+      const team = await TeamRepository.get(campaignId, teamId)
+      const roster = await PlayerRepository.getByTeam(campaignId, teamId)
+
+      // Merge with existing selectedTeam to preserve enriched props (record, direction, cap_space)
+      const existing = selectedTeam.value
+      if (existing && existing.id === teamId) {
+        selectedTeam.value = { ...existing, ...team, record: existing.record, direction: existing.direction, cap_space: existing.cap_space }
+      } else {
+        selectedTeam.value = team
+      }
+      selectedTeamRoster.value = roster
+      selectedTeamPicks.value = team?.draftPicks ?? []
+
+      return { team: selectedTeam.value, roster, picks: selectedTeamPicks.value }
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch team details'
+      error.value = err.message || 'Failed to fetch team details'
       throw err
     } finally {
       loading.value = false
@@ -83,11 +163,19 @@ export const useTradeStore = defineStore('trade', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/trade/user-assets`)
-      userAssets.value = response.data
+      const campaign = await CampaignRepository.get(campaignId)
+      const userTeamId = campaign?.team_id ?? campaign?.teamId
+      const team = await TeamRepository.get(campaignId, userTeamId)
+      const roster = await PlayerRepository.getByTeam(campaignId, userTeamId)
+
+      userAssets.value = {
+        roster,
+        picks: team?.draftPicks ?? [],
+        team,
+      }
       return userAssets.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch your assets'
+      error.value = err.message || 'Failed to fetch your assets'
       throw err
     } finally {
       loading.value = false
@@ -102,16 +190,39 @@ export const useTradeStore = defineStore('trade', () => {
     lastProposalResult.value = null
 
     try {
-      const response = await api.post(`/api/campaigns/${campaignId}/trade/propose`, {
-        aiTeamId: selectedTeam.value.id,
-        userGives: userOffering.value.map(formatAssetForApi),
-        userReceives: userRequesting.value.map(formatAssetForApi),
+      const campaign = await CampaignRepository.get(campaignId)
+      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      const difficulty = campaign?.settings?.difficulty ?? 'pro'
+      const seasonData = await SeasonRepository.get(campaignId, year)
+      const allTeams = await TeamRepository.getAllForCampaign(campaignId)
+      const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+
+      const aiTeamId = selectedTeam.value.id
+      const aiTeamRoster = await PlayerRepository.getByTeam(campaignId, aiTeamId)
+      const getPlayerFn = _buildPlayerLookup(allPlayers)
+
+      const standings = seasonData?.standings ?? { east: [], west: [] }
+      const context = buildContext({ standings, teams: allTeams, seasonPhase: 'regular_season' })
+
+      // Build the proposal in AI format: aiReceives = what user is offering, aiGives = what user is requesting
+      const proposal = {
+        aiReceives: userOffering.value.map(formatAssetForApi),
+        aiGives: userRequesting.value.map(formatAssetForApi),
+      }
+
+      const result = evaluateTrade({
+        proposal,
+        team: selectedTeam.value,
+        teamRoster: aiTeamRoster,
+        difficulty,
+        context,
+        getPlayerFn,
       })
 
-      lastProposalResult.value = response.data
-      return response.data
+      lastProposalResult.value = result
+      return result
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to propose trade'
+      error.value = err.message || 'Failed to propose trade'
       throw err
     } finally {
       proposing.value = false
@@ -125,18 +236,82 @@ export const useTradeStore = defineStore('trade', () => {
     error.value = null
 
     try {
-      const response = await api.post(`/api/campaigns/${campaignId}/trade/execute`, {
-        aiTeamId: selectedTeam.value.id,
+      const campaign = await CampaignRepository.get(campaignId)
+      const userTeamId = campaign?.team_id ?? campaign?.teamId
+      const userTeam = await TeamRepository.get(campaignId, userTeamId)
+      const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+      const getPlayerFn = _buildPlayerLookup(allPlayers)
+
+      // Build trade details
+      const details = buildTradeDetails({
+        userTeam,
+        aiTeam: selectedTeam.value,
         userGives: userOffering.value.map(formatAssetForApi),
         userReceives: userRequesting.value.map(formatAssetForApi),
+        getPlayerFn,
       })
+
+      // Separate players into user roster vs league players
+      const userRoster = allPlayers.filter(p => {
+        const tid = p.teamId ?? p.team_id
+        return tid == userTeamId
+      })
+      const leaguePlayers = allPlayers.filter(p => {
+        const tid = p.teamId ?? p.team_id
+        return tid != userTeamId
+      })
+
+      const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
+
+      const result = executeTradeEngine({
+        tradeDetails: details,
+        leaguePlayers,
+        userRoster,
+        draftPicks: [],
+        userTeam: { id: userTeamId, abbreviation: userTeam.abbreviation },
+        currentDate,
+      })
+
+      // Persist player changes: update teamId for all moved players
+      const playersToSave = []
+      for (const asset of details.assets) {
+        if (asset.type === 'player') {
+          // Find the player in the combined result arrays
+          const player = [...result.updatedLeaguePlayers, ...result.updatedUserRoster]
+            .find(p => (p.id ?? '') == asset.playerId)
+          if (player) {
+            player.teamId = asset.to
+            player.campaignId = campaignId
+            playersToSave.push(player)
+          }
+        }
+      }
+
+      if (playersToSave.length > 0) {
+        await PlayerRepository.saveBulk(playersToSave)
+      }
+
+      // Save trade to history in season data
+      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      const seasonData = await SeasonRepository.get(campaignId, year)
+      if (seasonData) {
+        if (!seasonData.tradeHistory) seasonData.tradeHistory = []
+        seasonData.tradeHistory.push({
+          id: `trade_${Date.now()}`,
+          ...result.trade,
+        })
+        await SeasonRepository.save(seasonData)
+      }
+
+      // Mark for cloud sync
+      useSyncStore().markDirty()
 
       // Clear the trade after successful execution
       clearTrade()
 
-      return response.data
+      return result
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to execute trade'
+      error.value = err.message || 'Failed to execute trade'
       throw err
     } finally {
       proposing.value = false
@@ -147,11 +322,14 @@ export const useTradeStore = defineStore('trade', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/trade/history`)
-      tradeHistory.value = response.data.trades
+      const year = await _getCampaignYear(campaignId)
+      const seasonData = await SeasonRepository.get(campaignId, year)
+
+      const rawTrades = seasonData?.tradeHistory ?? []
+      tradeHistory.value = rawTrades.map(formatTradeForDisplay)
       return tradeHistory.value
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to fetch trade history'
+      error.value = err.message || 'Failed to fetch trade history'
       throw err
     } finally {
       loading.value = false
@@ -161,8 +339,53 @@ export const useTradeStore = defineStore('trade', () => {
   // AI-initiated trade proposal actions
   async function fetchPendingProposals(campaignId) {
     try {
-      const response = await api.get(`/api/campaigns/${campaignId}/trade/proposals`)
-      pendingProposals.value = response.data.proposals
+      const campaign = await CampaignRepository.get(campaignId)
+      const userTeamId = campaign?.team_id ?? campaign?.teamId
+      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      const difficulty = campaign?.settings?.difficulty ?? 'pro'
+      const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
+
+      const allTeams = await TeamRepository.getAllForCampaign(campaignId)
+      const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+      const seasonData = await SeasonRepository.get(campaignId, year)
+
+      const userTeam = allTeams.find(t => t.id === userTeamId)
+      const aiTeams = allTeams.filter(t => t.id !== userTeamId)
+      const userRoster = allPlayers.filter(p => {
+        const tid = p.teamId ?? p.team_id
+        return tid == userTeamId
+      })
+
+      const standings = seasonData?.standings ?? { east: [], west: [] }
+      const getPlayerFn = _buildPlayerLookup(allPlayers)
+
+      const getTeamRosterFn = (teamAbbr) => {
+        return allPlayers.filter(p => {
+          const abbr = p.teamAbbreviation ?? p.team_abbreviation ?? ''
+          return abbr === teamAbbr
+        })
+      }
+
+      const newProposals = generateWeeklyProposals({
+        aiTeams,
+        userRoster,
+        standings,
+        allTeams,
+        currentDate,
+        seasonYear: year,
+        difficulty,
+        seasonPhase: 'regular_season',
+        pendingProposals: pendingProposals.value,
+        getTeamRosterFn,
+        getPlayerFn,
+      })
+
+      // Assign IDs to new proposals and add to pending
+      for (const proposal of newProposals) {
+        proposal.id = `proposal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        pendingProposals.value.push(proposal)
+      }
+
       return pendingProposals.value
     } catch (err) {
       console.error('Failed to fetch trade proposals:', err)
@@ -175,12 +398,89 @@ export const useTradeStore = defineStore('trade', () => {
     proposing.value = true
     error.value = null
     try {
-      const response = await api.post(`/api/campaigns/${campaignId}/trade/proposals/${proposalId}/accept`)
+      const proposal = pendingProposals.value.find(p => p.id === proposalId)
+      if (!proposal) throw new Error('Proposal not found')
+
+      const campaign = await CampaignRepository.get(campaignId)
+      const userTeamId = campaign?.team_id ?? campaign?.teamId
+      const userTeam = await TeamRepository.get(campaignId, userTeamId)
+      const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+      const getPlayerFn = _buildPlayerLookup(allPlayers)
+
+      // Build trade details from the proposal
+      const aiTeam = {
+        id: proposal.proposing_team_id,
+        name: proposal.proposing_team_name,
+        abbreviation: proposal.proposing_team_abbreviation,
+      }
+
+      const details = buildTradeDetails({
+        userTeam,
+        aiTeam,
+        userGives: proposal.proposal.aiReceives,   // AI receives = user gives
+        userReceives: proposal.proposal.aiGives,    // AI gives = user receives
+        getPlayerFn,
+      })
+
+      const userRoster = allPlayers.filter(p => {
+        const tid = p.teamId ?? p.team_id
+        return tid == userTeamId
+      })
+      const leaguePlayers = allPlayers.filter(p => {
+        const tid = p.teamId ?? p.team_id
+        return tid != userTeamId
+      })
+
+      const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
+
+      const result = executeTradeEngine({
+        tradeDetails: details,
+        leaguePlayers,
+        userRoster,
+        draftPicks: [],
+        userTeam: { id: userTeamId, abbreviation: userTeam.abbreviation },
+        currentDate,
+      })
+
+      // Persist player moves
+      const playersToSave = []
+      for (const asset of details.assets) {
+        if (asset.type === 'player') {
+          const player = [...result.updatedLeaguePlayers, ...result.updatedUserRoster]
+            .find(p => (p.id ?? '') == asset.playerId)
+          if (player) {
+            player.teamId = asset.to
+            player.campaignId = campaignId
+            playersToSave.push(player)
+          }
+        }
+      }
+
+      if (playersToSave.length > 0) {
+        await PlayerRepository.saveBulk(playersToSave)
+      }
+
+      // Save trade to history
+      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      const seasonData = await SeasonRepository.get(campaignId, year)
+      if (seasonData) {
+        if (!seasonData.tradeHistory) seasonData.tradeHistory = []
+        seasonData.tradeHistory.push({
+          id: `trade_${Date.now()}`,
+          ...result.trade,
+        })
+        await SeasonRepository.save(seasonData)
+      }
+
+      // Mark for cloud sync
+      useSyncStore().markDirty()
+
       // Remove from pending list
       pendingProposals.value = pendingProposals.value.filter(p => p.id !== proposalId)
-      return response.data
+
+      return result
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to accept trade proposal'
+      error.value = err.message || 'Failed to accept trade proposal'
       throw err
     } finally {
       proposing.value = false
@@ -189,11 +489,10 @@ export const useTradeStore = defineStore('trade', () => {
 
   async function rejectProposal(campaignId, proposalId) {
     try {
-      await api.post(`/api/campaigns/${campaignId}/trade/proposals/${proposalId}/reject`)
-      // Remove from pending list
+      // Simply remove from pending list -- no API call needed
       pendingProposals.value = pendingProposals.value.filter(p => p.id !== proposalId)
     } catch (err) {
-      error.value = err.response?.data?.message || 'Failed to reject trade proposal'
+      error.value = err.message || 'Failed to reject trade proposal'
       throw err
     }
   }

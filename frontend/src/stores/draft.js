@@ -1,8 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed, toRaw } from 'vue'
-import api from '@/composables/useApi'
 import { set, get, del } from 'idb-keyval'
 import { selectAIPick } from '@/services/AIDraftService'
+import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { TeamRepository } from '@/engine/db/TeamRepository'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { initializeAllTeamLineups } from '@/engine/ai/AILineupService'
 
 export const useDraftStore = defineStore('draft', () => {
   // State
@@ -16,7 +19,7 @@ export const useDraftStore = defineStore('draft', () => {
   const isDraftActive = ref(false)
   const isDraftComplete = ref(false)
   const isSimming = ref(false)       // fast-forward mode (skip to pick / skip all)
-  const isAutoPlaying = ref(false)   // live mode — AI picks play out with delays
+  const isAutoPlaying = ref(false)   // live mode -- AI picks play out with delays
   const isFinalizing = ref(false)
   const teams = ref([])
   const filterPosition = ref('ALL')
@@ -102,7 +105,7 @@ export const useDraftStore = defineStore('draft', () => {
   function initializeDraft(campaign, players, teamsList) {
     allPlayers.value = players
     teams.value = teamsList
-    userTeamId.value = campaign.team?.id || campaign.team_id
+    userTeamId.value = campaign.teamId || campaign.team?.id || campaign.team_id
     userTeamAbbr.value = campaign.team?.abbreviation
 
     draftResults.value = []
@@ -221,7 +224,7 @@ export const useDraftStore = defineStore('draft', () => {
     advancePick()
   }
 
-  // Live AI play — shows each pick with realistic delay
+  // Live AI play -- shows each pick with realistic delay
   async function autoPlayAIPicks(campaignId) {
     if (isDraftComplete.value || isAutoPlaying.value || isSimming.value) return
 
@@ -418,17 +421,68 @@ export const useDraftStore = defineStore('draft', () => {
   async function finalizeDraft(campaignId) {
     isFinalizing.value = true
     try {
-      const formattedResults = draftResults.value.map(r => ({
-        playerId: r.playerId,
-        teamAbbreviation: r.teamAbbr,
-        round: r.round,
-        pick: r.pick,
-      }))
+      // Build a map of teamAbbr -> teamId for lookups
+      const teamsByAbbr = {}
+      for (const team of teams.value) {
+        teamsByAbbr[team.abbreviation] = team
+      }
 
-      await api.post(`/api/campaigns/${campaignId}/finalize-draft`, {
-        draftResults: formattedResults,
+      // Assign each drafted player to their team in PlayerRepository
+      const playerUpdates = []
+      for (const result of draftResults.value) {
+        const player = allPlayers.value.find(p => p.id === result.playerId)
+        if (!player) continue
+
+        const team = teamsByAbbr[result.teamAbbr]
+        if (!team) continue
+
+        player.teamId = team.id
+        player.teamAbbreviation = result.teamAbbr
+        player.isFreeAgent = 0
+        player.campaignId = campaignId
+        playerUpdates.push(player)
+      }
+
+      if (playerUpdates.length > 0) {
+        await PlayerRepository.saveBulk(playerUpdates)
+      }
+
+      // Initialize lineups for all teams
+      const allTeams = await TeamRepository.getAllForCampaign(campaignId)
+      const allPlayersUpdated = await PlayerRepository.getAllForCampaign(campaignId)
+
+      const getTeamRosterFn = (teamAbbr) => {
+        return allPlayersUpdated.filter(p => {
+          const abbr = p.teamAbbreviation ?? p.team_abbreviation ?? ''
+          return abbr === teamAbbr
+        })
+      }
+
+      const lineupResults = initializeAllTeamLineups({
+        aiTeams: allTeams,
+        getTeamRosterFn,
       })
 
+      // Save lineup settings to each team
+      for (const team of allTeams) {
+        const teamKey = team.id ?? team.abbreviation
+        const lineupData = lineupResults[teamKey]
+        if (lineupData) {
+          await TeamRepository.updateLineup(campaignId, team.id, {
+            starters: lineupData.starters,
+            subStrategy: lineupData.subStrategy,
+          })
+        }
+      }
+
+      // Mark draft as completed in campaign
+      const campaign = await CampaignRepository.get(campaignId)
+      if (campaign) {
+        const updatedSettings = { ...campaign.settings, draftCompleted: true }
+        await CampaignRepository.updateSettings(campaignId, updatedSettings)
+      }
+
+      // Clear draft cache
       await clearDraftCache(campaignId)
 
       return true
