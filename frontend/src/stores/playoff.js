@@ -58,7 +58,7 @@ export const usePlayoffStore = defineStore('playoff', () => {
   // Helper: get campaign year and season data
   async function _getSeasonData(campaignId) {
     const campaign = await CampaignRepository.get(campaignId)
-    const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+    const year = campaign?.currentSeasonYear ?? 2025
     const seasonData = await SeasonRepository.get(campaignId, year)
     return { campaign, year, seasonData }
   }
@@ -123,7 +123,7 @@ export const usePlayoffStore = defineStore('playoff', () => {
     loading.value = true
     error.value = null
     try {
-      const { campaign, seasonData } = await _getSeasonData(campaignId)
+      const { campaign, year, seasonData } = await _getSeasonData(campaignId)
       const userTeamId = campaign?.team_id ?? campaign?.teamId
       const teams = await TeamRepository.getAllForCampaign(campaignId)
 
@@ -131,12 +131,15 @@ export const usePlayoffStore = defineStore('playoff', () => {
       const generatedBracket = PlayoffManager.generatePlayoffBracket(seasonData, teams)
       bracket.value = generatedBracket
 
+      // Generate round 1 playoff schedule
+      PlayoffManager.generatePlayoffSchedule(seasonData, teams, 1, year)
+
       // Get user playoff status
       userStatus.value = PlayoffManager.getUserPlayoffStatus(seasonData, userTeamId, teams)
 
       bracketGenerated.value = true
 
-      // Persist updated season data with the new bracket
+      // Persist updated season data with bracket and round 1 schedule
       await SeasonRepository.save(seasonData)
 
       return {
@@ -184,7 +187,38 @@ export const usePlayoffStore = defineStore('playoff', () => {
     }
   }
 
-  // Handle playoff update from game simulation
+  /**
+   * Process a completed playoff game: update series, advance rounds, generate schedule.
+   * Called from game store after persisting a playoff game result.
+   * @returns {Object|null} Playoff update for UI (modals, bracket refresh)
+   */
+  async function processPlayoffGameResult(campaignId, seasonData, game, homeScore, awayScore) {
+    const seriesUpdate = PlayoffManager.updateSeriesAfterGame(seasonData, game, homeScore, awayScore)
+    if (!seriesUpdate) return null
+
+    // If series is complete, advance to next round
+    if (seriesUpdate.seriesComplete) {
+      PlayoffManager.advanceWinnerToNextRound(seasonData, seriesUpdate)
+
+      // Generate schedule for the next round if new matchups were created
+      const nextRound = seriesUpdate.round + 1
+      if (nextRound <= 4) {
+        const teams = await TeamRepository.getAllForCampaign(campaignId)
+        const campaign = await CampaignRepository.get(campaignId)
+        const year = campaign?.currentSeasonYear ?? 2025
+        PlayoffManager.generatePlayoffSchedule(seasonData, teams, nextRound, year)
+      }
+    }
+
+    // Note: caller (_persistGameResult) saves seasonData to IndexedDB
+
+    // Update local bracket state
+    bracket.value = seasonData.playoffBracket
+
+    return seriesUpdate
+  }
+
+  // Handle playoff update from game simulation (updates UI state / modals)
   function handlePlayoffUpdate(playoffUpdate) {
     if (!playoffUpdate) return
 
@@ -312,6 +346,7 @@ export const usePlayoffStore = defineStore('playoff', () => {
     generateBracket,
     fetchSeries,
     fetchNextUserSeries,
+    processPlayoffGameResult,
     handlePlayoffUpdate,
     updateSeriesInBracket,
     closeSeasonEndModal,

@@ -420,17 +420,17 @@ export const RETIREMENT = {
 export const FATIGUE = {
   minute_thresholds: [
     // 0-8 mins: light duty -- player stays loose, net fatigue RECOVERY
-    { min: 0, max: 8, type: 'recovery', base: 4 },
+    { min: 0, max: 8, type: 'recovery', base: 4.4 },
     // 9-20 mins: rotation role -- marginal fatigue gain
-    { min: 9, max: 20, type: 'gain', base: 2 },
+    { min: 9, max: 20, type: 'gain', base: 1.8 },
     // 21-30 mins: significant role -- moderate fatigue gain
-    { min: 21, max: 30, type: 'gain', base: 6 },
+    { min: 21, max: 30, type: 'gain', base: 5.4 },
     // 31+ mins: heavy minutes -- significant fatigue gain
-    { min: 31, max: 48, type: 'gain', base: 12 },
+    { min: 31, max: 48, type: 'gain', base: 10.8 },
   ],
   max_fatigue: 100,
-  weekly_recovery: 15,
-  rest_day_recovery: 15,
+  weekly_recovery: 16.5,
+  rest_day_recovery: 16.5,
   performance_penalty_start: 50,
   max_performance_penalty: 0.25,
 };

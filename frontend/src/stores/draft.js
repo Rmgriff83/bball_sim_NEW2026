@@ -440,11 +440,13 @@ export const useDraftStore = defineStore('draft', () => {
         const team = teamsByAbbr[result.teamAbbr]
         if (!team) continue
 
-        player.teamId = team.id
-        player.teamAbbreviation = result.teamAbbr
-        player.isFreeAgent = 0
-        player.campaignId = campaignId
-        playerUpdates.push(player)
+        // Convert reactive proxy to plain object for IndexedDB storage
+        const plain = { ...toRaw(player) }
+        plain.teamId = team.id
+        plain.teamAbbreviation = result.teamAbbr
+        plain.isFreeAgent = 0
+        plain.campaignId = campaignId
+        playerUpdates.push(plain)
       }
 
       if (playerUpdates.length > 0) {

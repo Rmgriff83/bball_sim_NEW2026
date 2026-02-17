@@ -95,6 +95,8 @@ export const useSyncStore = defineStore('sync', () => {
 
   /**
    * Serialize full campaign state from IndexedDB into a single payload.
+   * Strips duplicate keys and heavy data to keep the snapshot under server limits.
+   * Local IndexedDB retains full-fidelity data.
    */
   async function _serializeCampaignSnapshot(campaignId) {
     const campaign = await CampaignRepository.get(campaignId)
@@ -104,11 +106,153 @@ export const useSyncStore = defineStore('sync', () => {
 
     return {
       campaign,
-      teams,
-      players,
-      seasons,
+      teams: teams.map(_stripTeamForSync),
+      players: players.map(_stripPlayerForSync),
+      seasons: seasons.map(_stripSeasonForSync),
       clientUpdatedAt: new Date().toISOString(),
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Snapshot size reduction helpers
+  // -------------------------------------------------------------------------
+  // Players have dual camelCase/snake_case keys (both serialized by JSON.stringify
+  // even though they reference the same data in memory). Arrays like
+  // development_history (up to 200 entries × 530 players × 2 copies) can push
+  // the snapshot well over 20 MB. These helpers strip duplicates and trim heavy
+  // arrays so the sync payload stays lean while IndexedDB keeps full fidelity.
+
+  /** Keys to drop from player objects for sync (camelCase duplicates of snake_case). */
+  const PLAYER_DROP_KEYS = [
+    // Duplicate identity fields (keep snake_case)
+    'firstName', 'lastName', 'secondaryPosition', 'jerseyNumber',
+    'heightInches', 'weightLbs',
+    // Duplicate rating fields
+    'overallRating', 'potentialRating',
+    // Duplicate contract fields
+    'contractYearsRemaining', 'contractSalary', 'contractDetails',
+    // Duplicate status fields
+    'isInjured', 'injuryDetails',
+    // Duplicate evolution fields (arrays — biggest savings)
+    'developmentHistory', 'recentPerformances',
+    'streakData', 'upgradePoints',
+    'gamesPlayedThisSeason', 'minutesPlayedThisSeason', 'careerSeasons',
+    // Duplicate award fields
+    'allStarSelections', 'mvpAwards', 'finalsMvpAwards',
+    // Duplicate misc
+    'birthDate', 'wingspanInches', 'tradeValueTotal',
+  ]
+
+  function _stripPlayerForSync(player) {
+    const slim = { ...player }
+
+    // Remove camelCase duplicates
+    for (const key of PLAYER_DROP_KEYS) {
+      delete slim[key]
+    }
+
+    // Trim development_history to last 20 entries (from up to 200)
+    if (Array.isArray(slim.development_history) && slim.development_history.length > 20) {
+      slim.development_history = slim.development_history.slice(-20)
+    }
+
+    // Trim recent_performances to last 5 (from up to 10)
+    if (Array.isArray(slim.recent_performances) && slim.recent_performances.length > 5) {
+      slim.recent_performances = slim.recent_performances.slice(-5)
+    }
+
+    return slim
+  }
+
+  function _stripTeamForSync(team) {
+    const slim = { ...team }
+    // Remove draft picks detail (can be regenerated)
+    delete slim.draftPicks
+    return slim
+  }
+
+  function _stripSeasonForSync(season) {
+    const slim = { ...season }
+
+    // Compact schedule: strip box scores, evolution, and saved game state
+    if (Array.isArray(slim.schedule)) {
+      slim.schedule = slim.schedule.map(game => {
+        const g = { ...game }
+        // Remove heavy fields from completed games
+        delete g.savedGameState
+        delete g.evolution
+
+        // Compact box scores for all games (keep only essential stats)
+        if (g.boxScore && g.isComplete) {
+          g.boxScore = _compactBoxScore(g.boxScore)
+        }
+
+        return g
+      })
+    }
+
+    return slim
+  }
+
+  function _compactBoxScore(boxScore) {
+    const compact = {}
+    for (const side of ['home', 'away']) {
+      compact[side] = (boxScore[side] ?? []).map(p => ({
+        player_id: p.player_id ?? p.playerId ?? null,
+        name: p.name ?? 'Unknown',
+        points: p.points ?? 0,
+        rebounds: p.rebounds ?? 0,
+        assists: p.assists ?? 0,
+        minutes: p.minutes ?? 0,
+      }))
+    }
+    return compact
+  }
+
+  /**
+   * Rebuild camelCase keys from snake_case when restoring from a stripped snapshot.
+   * Ensures restored players have the same shape as locally-created ones.
+   */
+  function _hydratePlayerKeys(player) {
+    const p = { ...player }
+
+    // Identity
+    if (p.first_name && !p.firstName) p.firstName = p.first_name
+    if (p.last_name && !p.lastName) p.lastName = p.last_name
+    if (p.secondary_position !== undefined && !p.secondaryPosition) p.secondaryPosition = p.secondary_position
+    if (p.jersey_number !== undefined && !p.jerseyNumber) p.jerseyNumber = p.jersey_number
+    if (p.height_inches !== undefined && !p.heightInches) p.heightInches = p.height_inches
+    if (p.weight_lbs !== undefined && !p.weightLbs) p.weightLbs = p.weight_lbs
+    if (p.birth_date && !p.birthDate) p.birthDate = p.birth_date
+
+    // Ratings
+    if (p.overall_rating !== undefined && !p.overallRating) p.overallRating = p.overall_rating
+    if (p.potential_rating !== undefined && !p.potentialRating) p.potentialRating = p.potential_rating
+
+    // Contract
+    if (p.contract_years_remaining !== undefined && p.contractYearsRemaining === undefined) p.contractYearsRemaining = p.contract_years_remaining
+    if (p.contract_salary !== undefined && p.contractSalary === undefined) p.contractSalary = p.contract_salary
+    if (p.contract_details && !p.contractDetails) p.contractDetails = p.contract_details
+
+    // Status
+    if (p.is_injured !== undefined && p.isInjured === undefined) p.isInjured = p.is_injured
+    if (p.injury_details !== undefined && !p.injuryDetails) p.injuryDetails = p.injury_details
+
+    // Evolution
+    if (p.development_history && !p.developmentHistory) p.developmentHistory = p.development_history
+    if (p.recent_performances && !p.recentPerformances) p.recentPerformances = p.recent_performances
+    if (p.streak_data !== undefined && p.streakData === undefined) p.streakData = p.streak_data
+    if (p.upgrade_points !== undefined && p.upgradePoints === undefined) p.upgradePoints = p.upgrade_points
+    if (p.games_played_this_season !== undefined && p.gamesPlayedThisSeason === undefined) p.gamesPlayedThisSeason = p.games_played_this_season
+    if (p.minutes_played_this_season !== undefined && p.minutesPlayedThisSeason === undefined) p.minutesPlayedThisSeason = p.minutes_played_this_season
+    if (p.career_seasons !== undefined && p.careerSeasons === undefined) p.careerSeasons = p.career_seasons
+
+    // Awards
+    if (p.all_star_selections !== undefined && p.allStarSelections === undefined) p.allStarSelections = p.all_star_selections
+    if (p.mvp_awards !== undefined && p.mvpAwards === undefined) p.mvpAwards = p.mvp_awards
+    if (p.finals_mvp_awards !== undefined && p.finalsMvpAwards === undefined) p.finalsMvpAwards = p.finals_mvp_awards
+
+    return p
   }
 
   /**
@@ -186,7 +330,9 @@ export const useSyncStore = defineStore('sync', () => {
     if (data.players && Array.isArray(data.players) && data.players.length > 0) {
       const localPlayers = await PlayerRepository.getAllForCampaign(campaignId)
       if (!localPlayers || localPlayers.length === 0) {
-        await PlayerRepository.saveBulk(data.players)
+        // Rebuild camelCase keys stripped during sync
+        const hydrated = data.players.map(_hydratePlayerKeys)
+        await PlayerRepository.saveBulk(hydrated)
         console.log('[Sync] No local players data, using remote')
       } else {
         console.log('[Sync] Local players data exists, keeping local')

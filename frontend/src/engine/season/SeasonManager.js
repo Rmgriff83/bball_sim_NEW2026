@@ -826,7 +826,18 @@ export class SeasonManager {
    * @returns {Object|null}
    */
   static getSimulateToNextGamePreview(seasonData, userTeamId, currentDateStr) {
-    const nextUserGame = SeasonManager.getNextTeamGame(seasonData, userTeamId, currentDateStr)
+    let nextUserGame = SeasonManager.getNextTeamGame(seasonData, userTeamId, currentDateStr)
+
+    // Fallback: if date filter excluded all games, try without it.
+    // Handles edge case where currentDate advanced past an unplayed game.
+    if (!nextUserGame) {
+      nextUserGame = SeasonManager.getNextTeamGame(seasonData, userTeamId, null)
+      if (nextUserGame) {
+        // Use the found game's date as the effective current date
+        currentDateStr = nextUserGame.gameDate
+      }
+    }
+
     if (!nextUserGame) return null
 
     const nextGameDate = nextUserGame.gameDate

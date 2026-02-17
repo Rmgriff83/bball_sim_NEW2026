@@ -6,6 +6,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
+import { usePlayoffStore } from '@/stores/playoff'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
 import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X } from 'lucide-vue-next'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
@@ -22,6 +23,7 @@ const campaignStore = useCampaignStore()
 const leagueStore = useLeagueStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
+const playoffStore = usePlayoffStore()
 const { loadSynergies, getActivatedBadges, getHypotheticalActivations, getLineupSynergyCount } = useBadgeSynergies()
 
 // Animation composable
@@ -1104,6 +1106,11 @@ async function continueToNextQuarter() {
         await leagueStore.fetchStandings(campaignId.value, { force: true })
       }
 
+      // Handle playoff series update
+      if (result.playoffUpdate) {
+        playoffStore.handlePlayoffUpdate(result.playoffUpdate)
+      }
+
       // Check for user team injuries and recoveries
       const teamKey = userIsHome.value ? 'home' : 'away'
       const evoData = game.value?.evolution?.[teamKey]
@@ -1178,6 +1185,11 @@ async function handleSimToEnd() {
       gameStore.startPollingSimulationStatus(campaignId.value, response.batchId)
     } else {
       await leagueStore.fetchStandings(campaignId.value, { force: true })
+    }
+
+    // Handle playoff series update
+    if (response.playoffUpdate) {
+      playoffStore.handlePlayoffUpdate(response.playoffUpdate)
     }
 
     showUpgradePointToasts()

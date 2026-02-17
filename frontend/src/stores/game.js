@@ -4,11 +4,13 @@ import { useEngineStore } from '@/stores/engine'
 import { useToastStore } from '@/stores/toast'
 import { useCampaignStore } from '@/stores/campaign'
 import { useSyncStore } from '@/stores/sync'
+import { usePlayoffStore } from '@/stores/playoff'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { SeasonManager } from '@/engine/season/SeasonManager'
+import { PlayoffManager } from '@/engine/season/PlayoffManager'
 import { processGameRewards } from '@/engine/rewards/RewardService'
 import { NewsService } from '@/engine/season/NewsService'
 
@@ -258,6 +260,15 @@ export const useGameStore = defineStore('game', () => {
     // Generate and persist news
     _generateNews(seasonData, game, result)
 
+    // Handle playoff series update if this is a playoff game
+    let playoffUpdate = null
+    if (game?.isPlayoff && game?.playoffSeriesId) {
+      const playoffStore = usePlayoffStore()
+      playoffUpdate = await playoffStore.processPlayoffGameResult(
+        campaignId, seasonData, game, result.home_score, result.away_score
+      )
+    }
+
     // Save to IndexedDB
     await SeasonRepository.save({
       campaignId,
@@ -267,6 +278,8 @@ export const useGameStore = defineStore('game', () => {
 
     // Mark for cloud sync
     useSyncStore().markDirty()
+
+    return { playoffUpdate }
   }
 
   /**
@@ -493,7 +506,7 @@ export const useGameStore = defineStore('game', () => {
       }
 
       // Persist to IndexedDB
-      await _persistGameResult(campaignId, effectiveYear, seasonData, gameId, result, isUserGame)
+      const { playoffUpdate } = await _persistGameResult(campaignId, effectiveYear, seasonData, gameId, result, isUserGame)
 
       // Save evolution changes to player records
       await _applyEvolutionToPlayers(evolution, game)
@@ -531,6 +544,7 @@ export const useGameStore = defineStore('game', () => {
       // Advance campaign date
       await _advanceDateIfNeeded(campaignId, game.gameDate)
 
+      result.playoffUpdate = playoffUpdate
       return result
     } catch (err) {
       error.value = err.message || 'Failed to simulate game'
@@ -817,7 +831,7 @@ export const useGameStore = defineStore('game', () => {
         result.rewards = rewards
 
         // Persist game result and clear saved in-progress state
-        await _persistGameResult(campaignId, year, seasonData, gameId, result, true)
+        const { playoffUpdate } = await _persistGameResult(campaignId, year, seasonData, gameId, result, true)
         // Clean up the savedGameState from the schedule entry (already handled by _persistGameResult setting isComplete)
         const completedEntry = seasonData.schedule.find(g => g.id === gameId)
         if (completedEntry) {
@@ -866,6 +880,7 @@ export const useGameStore = defineStore('game', () => {
 
         return {
           ...quarterResult,
+          playoffUpdate,
           // Keep backward-compatible fields
           year,
           standings: seasonData.standings,
@@ -960,7 +975,7 @@ export const useGameStore = defineStore('game', () => {
       result.rewards = rewards
 
       // Persist and clean up saved in-progress state
-      await _persistGameResult(campaignId, year, seasonData, gameId, result, true)
+      const { playoffUpdate } = await _persistGameResult(campaignId, year, seasonData, gameId, result, true)
       const completedEntry = seasonData.schedule.find(g => g.id === gameId)
       if (completedEntry) {
         delete completedEntry.savedGameState
@@ -1004,6 +1019,7 @@ export const useGameStore = defineStore('game', () => {
       return {
         result,
         rewards,
+        playoffUpdate,
         upgrade_points_awarded: rewards?.tokens_awarded || null,
       }
     } catch (err) {
@@ -1041,6 +1057,17 @@ export const useGameStore = defineStore('game', () => {
       }
 
       const preview = SeasonManager.getSimulateToNextGamePreview(seasonData, userTeamId, currentDate)
+
+      // If the fallback found a game with a date before currentDate,
+      // auto-correct the campaign date so this doesn't recur
+      if (preview?.nextUserGame && preview.nextUserGame.gameDate < currentDate) {
+        campaign.currentDate = preview.nextUserGame.gameDate
+        await CampaignRepository.save(campaign)
+        const campaignStore = useCampaignStore()
+        if (campaignStore.currentCampaign?.id === campaignId) {
+          campaignStore.updateCurrentDate(preview.nextUserGame.gameDate)
+        }
+      }
 
       // Enrich preview with team objects so the modal can display team info
       if (preview?.nextUserGame) {
@@ -1133,7 +1160,7 @@ export const useGameStore = defineStore('game', () => {
         })
         result.rewards = rewards
 
-        await _persistGameResult(campaignId, year, seasonData, nextUserGame.id, result, true)
+        const { playoffUpdate } = await _persistGameResult(campaignId, year, seasonData, nextUserGame.id, result, true)
         await _applyEvolutionToPlayers(evolution, nextUserGame)
 
         userGameResult = {
@@ -1146,6 +1173,7 @@ export const useGameStore = defineStore('game', () => {
           evolution: result.evolution,
           rewards: result.rewards,
           is_user_home: isHome,
+          playoffUpdate,
         }
 
         // Update in games list
@@ -1175,11 +1203,15 @@ export const useGameStore = defineStore('game', () => {
         }
       }
 
-      // Advance date to after the user's next game date
-      // Must happen BEFORE backgroundSimulating goes false, otherwise the
-      // CampaignHomeView watcher re-fetches campaign with the old date.
-      const latestDate = nextUserGame?.gameDate || currentDate
-      await _advanceDateIfNeeded(campaignId, latestDate)
+      // Advance date to after the user's next game date.
+      // Only do this when we actually simulated the user's game.
+      // When excludeUserGame is true (live play), the game completion handler
+      // (continueGame Q4 / simToEnd) will advance the date after the game finishes.
+      // Advancing early would cause "no upcoming games" if the user reloads mid-game.
+      if (!excludeUserGame) {
+        const latestDate = nextUserGame?.gameDate || currentDate
+        await _advanceDateIfNeeded(campaignId, latestDate)
+      }
 
       // Simulate AI games in bulk with progress
       if (aiGames.length > 0) {
@@ -1364,6 +1396,30 @@ export const useGameStore = defineStore('game', () => {
     })
 
     SeasonManager.bulkMergeResults(seasonData, results)
+
+    // Update playoff series for any AI playoff games
+    const playoffGames = aiGames.filter(g => g.isPlayoff && g.playoffSeriesId)
+    if (playoffGames.length > 0) {
+      const teams = await TeamRepository.getAllForCampaign(campaignId)
+      for (const game of playoffGames) {
+        const r = results.find(res => res.gameId === game.id)
+        if (!r) continue
+        // Re-read the updated game from seasonData (bulkMergeResults marks it complete)
+        const updatedGame = seasonData.schedule.find(g => g.id === game.id)
+        if (!updatedGame || !updatedGame.isComplete) continue
+
+        const seriesUpdate = PlayoffManager.updateSeriesAfterGame(
+          seasonData, updatedGame, r.homeScore, r.awayScore
+        )
+        if (seriesUpdate?.seriesComplete) {
+          PlayoffManager.advanceWinnerToNextRound(seasonData, seriesUpdate)
+          const nextRound = seriesUpdate.round + 1
+          if (nextRound <= 4) {
+            PlayoffManager.generatePlayoffSchedule(seasonData, teams, nextRound, year)
+          }
+        }
+      }
+    }
 
     // Generate news for notable AI games
     for (const r of (bulkResult.results || [])) {

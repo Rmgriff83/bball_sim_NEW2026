@@ -17,6 +17,7 @@ import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import PlayoffBracket from '@/components/playoffs/PlayoffBracket.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
+import { advanceToNextSeason } from '@/engine/campaign/CampaignManager'
 import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -337,22 +338,61 @@ async function handleSeasonEndContinue() {
       toastStore.showError('Failed to generate bracket')
     }
   } else {
-    // Team didn't qualify - advance to offseason
-    toastStore.showSuccess('Advancing to offseason...')
+    // Team didn't qualify - advance to next season
+    await _advanceToNextSeasonFlow()
   }
 }
 
 // Handle playoff series result modal
-function handleSeriesResultClose() {
+async function handleSeriesResultClose() {
+  const result = playoffStore.seriesResult
+  const userTeamId = campaignStore.currentCampaign?.teamId
+  const userLost = result?.seriesComplete && result?.winner?.teamId != userTeamId
+
   playoffStore.closeSeriesResultModal()
-  // Refresh bracket to show updated state
-  playoffStore.fetchBracket(campaignId.value)
+
+  if (userLost) {
+    // User eliminated — advance to next season
+    await _advanceToNextSeasonFlow()
+  } else {
+    // User won — refresh bracket and games to show next round schedule
+    await Promise.all([
+      playoffStore.fetchBracket(campaignId.value),
+      gameStore.fetchGames(campaignId.value, { force: true }),
+    ])
+  }
 }
 
-// Handle championship modal
-function handleChampionshipClose() {
+// Handle championship modal — advance to next season
+async function handleChampionshipClose() {
   playoffStore.closeChampionshipModal()
-  toastStore.showSuccess('Congratulations, Champion!')
+  await _advanceToNextSeasonFlow()
+}
+
+// Advance to the next season (used after championship or season end for non-qualifying teams)
+async function _advanceToNextSeasonFlow() {
+  const loadingToastId = toastStore.showLoading('Advancing to next season...')
+  try {
+    await advanceToNextSeason(campaignId.value)
+
+    // Reset playoff state for the new season
+    playoffStore.$reset()
+
+    // Refresh all data from the new season
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value, true),
+      teamStore.fetchTeam(campaignId.value, { force: true }),
+      gameStore.fetchGames(campaignId.value, { force: true }),
+      leagueStore.fetchStandings(campaignId.value, { force: true }),
+    ])
+
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showSuccess('New season has begun!')
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError('Failed to advance to next season')
+    console.error('Failed to advance to next season:', err)
+  }
 }
 
 // Toggle playoff bracket view
