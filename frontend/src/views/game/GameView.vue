@@ -168,6 +168,18 @@ const evolutionData = computed(() => game.value?.evolution)
 const gameNews = computed(() => game.value?.news || [])
 const rewardsData = computed(() => game.value?.rewards)
 
+// Playoff series info for display
+const playoffSeriesInfo = computed(() => {
+  if (!game.value?.is_playoff || !game.value?.playoff_series_id) return null
+  const series = playoffStore.getSeriesFromBracket(game.value.playoff_series_id)
+  if (!series) return null
+  const gameNum = game.value.playoff_game_number
+  const label = gameNum
+    ? `Game ${gameNum} — Series ${series.team1Wins}-${series.team2Wins}`
+    : `Series ${series.team1Wins}-${series.team2Wins}`
+  return { ...series, label }
+})
+
 // Scores: use game store values when game is complete (simToEnd skips animation),
 // otherwise use the animation composable's running scores
 const displayHomeScore = computed(() =>
@@ -1868,7 +1880,13 @@ onUnmounted(() => {
             <p v-else-if="isInProgress" class="in-progress-text">Q{{ savedQuarter }} Complete</p>
             <p v-else class="vs-text">VS</p>
             <p class="game-date">{{ formatDate(game.game_date) }}</p>
-            <p class="game-type-label">Regular Season</p>
+            <p v-if="game.is_playoff" class="game-type-label playoff">
+              {{ playoffStore.getPlayoffRoundLabel(game.playoff_round) }}
+            </p>
+            <p v-else class="game-type-label">Regular Season</p>
+            <p v-if="game.is_playoff && playoffSeriesInfo" class="series-record-badge">
+              {{ playoffSeriesInfo.label }}
+            </p>
             <p v-if="isUserGame" class="user-game-badge">Your Game</p>
           </div>
 
@@ -3882,6 +3900,21 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-top: 2px;
+}
+
+.game-type-label.playoff {
+  color: #ffd700;
+}
+
+.series-record-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-top: 4px;
+  padding: 3px 10px;
+  background: rgba(255, 215, 0, 0.1);
+  border: 1px solid rgba(255, 215, 0, 0.25);
+  border-radius: var(--radius-full);
 }
 
 .user-game-badge {

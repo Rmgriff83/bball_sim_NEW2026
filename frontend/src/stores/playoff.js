@@ -44,6 +44,35 @@ export const usePlayoffStore = defineStore('playoff', () => {
 
   const finalsMVP = computed(() => bracket.value?.finalsMVP ?? null)
 
+  // Get playoff round label
+  function getPlayoffRoundLabel(round) {
+    switch (round) {
+      case 1: return 'First Round'
+      case 2: return 'Semifinals'
+      case 3: return 'Conference Finals'
+      case 4: return 'NBA Finals'
+      default: return 'Playoffs'
+    }
+  }
+
+  // Look up a series from the already-loaded bracket (synchronous)
+  function getSeriesFromBracket(seriesId) {
+    if (!bracket.value || !seriesId) return null
+    for (const conf of ['east', 'west']) {
+      const confData = bracket.value[conf]
+      if (!confData) continue
+      for (const series of (confData.round1 || [])) {
+        if (series?.seriesId === seriesId) return series
+      }
+      for (const series of (confData.round2 || [])) {
+        if (series?.seriesId === seriesId) return series
+      }
+      if (confData.confFinals?.seriesId === seriesId) return confData.confFinals
+    }
+    if (bracket.value.finals?.seriesId === seriesId) return bracket.value.finals
+    return null
+  }
+
   // Get all series for a conference
   const getConferenceSeries = (conference) => {
     if (!bracket.value || !bracket.value[conference]) return []
@@ -339,6 +368,8 @@ export const usePlayoffStore = defineStore('playoff', () => {
     finals,
     finalsMVP,
     getConferenceSeries,
+    getPlayoffRoundLabel,
+    getSeriesFromBracket,
 
     // Actions
     checkRegularSeasonEnd,

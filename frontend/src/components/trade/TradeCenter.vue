@@ -3,6 +3,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTradeStore } from '@/stores/trade'
 import { useTeamStore } from '@/stores/team'
+import { useBreakingNewsStore } from '@/stores/breakingNews'
+import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowRight, ArrowLeft, X, Check, AlertCircle, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus, Package, Users, Repeat, AlertTriangle, CheckCircle, Info, Star, Calendar, DollarSign } from 'lucide-vue-next'
 
@@ -18,6 +20,7 @@ const emit = defineEmits(['trade-completed'])
 const router = useRouter()
 const tradeStore = useTradeStore()
 const teamStore = useTeamStore()
+const breakingNewsStore = useBreakingNewsStore()
 
 // Wizard state
 const loading = ref(true)
@@ -343,7 +346,15 @@ async function confirmAndProposeTrade() {
 async function executeTrade() {
   try {
     confirmModalState.value = 'loading'
-    await tradeStore.executeTrade(props.campaignId)
+    const result = await tradeStore.executeTrade(props.campaignId)
+
+    // Enqueue breaking news for the trade
+    if (result?.tradeContext) {
+      breakingNewsStore.enqueue(
+        BreakingNewsService.tradeCompleted(result.tradeContext),
+        props.campaignId
+      )
+    }
 
     // Refresh user assets and team roster
     await Promise.all([

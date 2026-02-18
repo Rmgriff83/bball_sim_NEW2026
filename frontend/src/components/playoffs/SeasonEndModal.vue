@@ -49,7 +49,7 @@ function handleContinue() {
 </script>
 
 <template>
-  <BaseModal :show="show" :title="qualified ? 'Playoff Bound!' : 'Season Complete'" :closable="false" size="md">
+  <BaseModal :show="show" :title="qualified ? 'Playoff Bound!' : 'Season Complete'" @close="emit('close')" size="md">
     <div class="season-end-content">
       <!-- Animation Area -->
       <div class="animation-area">
@@ -106,6 +106,7 @@ function handleContinue() {
 
     <template #footer>
       <div class="modal-footer-buttons">
+        <button class="btn-cancel" @click="emit('close')">Close</button>
         <button class="btn-confirm" @click="handleContinue">
           <Trophy v-if="qualified" :size="16" />
           {{ qualified ? 'Continue to Playoffs' : 'Continue to Offseason' }}
@@ -203,6 +204,29 @@ function handleContinue() {
 .modal-footer-buttons {
   display: flex;
   gap: 12px;
+}
+
+.btn-cancel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-secondary);
+}
+
+.btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-primary);
 }
 
 .btn-confirm {

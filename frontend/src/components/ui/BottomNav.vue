@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { usePlayoffStore } from '@/stores/playoff'
 import { Home, Users, Trophy, Play } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -11,43 +12,59 @@ const props = defineProps({
 })
 
 const route = useRoute()
+const playoffStore = usePlayoffStore()
 
-const navItems = computed(() => [
-  {
-    name: 'home',
-    label: 'HOME',
-    to: `/campaign/${props.campaignId}`,
-    routeName: 'campaign-home',
-    icon: 'home'
-  },
-  {
-    name: 'gm',
-    label: 'GM VIEW',
-    to: `/campaign/${props.campaignId}/team`,
-    routeName: 'team-management',
-    icon: 'users'
-  },
-  {
-    name: 'league',
-    label: 'LEAGUE',
-    to: `/campaign/${props.campaignId}/league`,
-    routeName: 'league',
-    icon: 'trophy'
-  },
-  {
-    name: 'play',
-    label: 'PLAY',
-    to: `/campaign/${props.campaignId}/play`,
-    routeName: 'game',
-    icon: 'play',
-    highlight: true
-  }
-])
+const navItems = computed(() => {
+  const thirdTab = playoffStore.isInPlayoffs
+    ? {
+        name: 'playoffs',
+        label: 'PLAYOFFS',
+        to: `/campaign/${props.campaignId}/playoffs`,
+        routeName: 'playoffs',
+        icon: 'trophy'
+      }
+    : {
+        name: 'league',
+        label: 'LEAGUE',
+        to: `/campaign/${props.campaignId}/league`,
+        routeName: 'league',
+        icon: 'trophy'
+      }
+
+  return [
+    {
+      name: 'home',
+      label: 'HOME',
+      to: `/campaign/${props.campaignId}`,
+      routeName: 'campaign-home',
+      icon: 'home'
+    },
+    {
+      name: 'gm',
+      label: 'GM VIEW',
+      to: `/campaign/${props.campaignId}/team`,
+      routeName: 'team-management',
+      icon: 'users'
+    },
+    thirdTab,
+    {
+      name: 'play',
+      label: 'PLAY',
+      to: `/campaign/${props.campaignId}/play`,
+      routeName: 'game',
+      icon: 'play',
+      highlight: true
+    }
+  ]
+})
 
 function isActive(routeName) {
   // Handle play nav item - active when on game or play route
   if (routeName === 'game') {
     return route.name === 'game' || route.name === 'play'
+  }
+  if (routeName === 'playoffs') {
+    return route.name === 'playoffs'
   }
   return route.name === routeName
 }

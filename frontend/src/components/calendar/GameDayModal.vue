@@ -5,10 +5,11 @@ import { useGameStore } from '@/stores/game'
 import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
 import { useLeagueStore } from '@/stores/league'
+import { usePlayoffStore } from '@/stores/playoff'
 import { useToastStore } from '@/stores/toast'
 import { LoadingSpinner } from '@/components/ui'
 import BoxScore from '@/components/game/BoxScore.vue'
-import { X, Play, FastForward, Eye, Lock, AlertTriangle } from 'lucide-vue-next'
+import { X, Play, FastForward, Eye, Lock, AlertTriangle, Trophy } from 'lucide-vue-next'
 
 const props = defineProps({
   show: {
@@ -39,6 +40,7 @@ const gameStore = useGameStore()
 const campaignStore = useCampaignStore()
 const teamStore = useTeamStore()
 const leagueStore = useLeagueStore()
+const playoffStore = usePlayoffStore()
 const toastStore = useToastStore()
 
 const loadingBoxScore = ref(false)
@@ -155,6 +157,19 @@ const formattedDate = computed(() => {
     day: 'numeric',
     year: 'numeric'
   })
+})
+
+// Playoff series info
+const playoffSeriesInfo = computed(() => {
+  if (!props.game?.is_playoff || !props.game?.playoff_series_id) return null
+  const series = playoffStore.getSeriesFromBracket(props.game.playoff_series_id)
+  if (!series) return null
+  const gameNum = props.game.playoff_game_number
+  return {
+    ...series,
+    roundLabel: playoffStore.getPlayoffRoundLabel(props.game.playoff_round),
+    gameLabel: gameNum ? `Game ${gameNum}` : ''
+  }
 })
 
 // Game status text and class
@@ -371,8 +386,19 @@ onUnmounted(() => {
             </button>
           </header>
 
+          <!-- Playoff Info Bar -->
+          <div v-if="game.is_playoff && playoffSeriesInfo" class="playoff-info-bar">
+            <div class="playoff-info-left">
+              <Trophy :size="14" class="playoff-bar-icon" />
+              <span class="playoff-bar-round">{{ playoffSeriesInfo.roundLabel }}</span>
+            </div>
+            <span class="playoff-bar-series">
+              {{ playoffSeriesInfo.gameLabel }}<template v-if="playoffSeriesInfo.gameLabel"> &middot; </template>Series {{ playoffSeriesInfo.team1Wins }}-{{ playoffSeriesInfo.team2Wins }}
+            </span>
+          </div>
+
           <!-- Matchup Card -->
-          <div class="matchup-card card-cosmic" :class="{ 'in-progress': isGameInProgress }">
+          <div class="matchup-card card-cosmic" :class="{ 'in-progress': isGameInProgress, 'is-playoff': game.is_playoff }">
             <div class="matchup-content">
               <!-- Away Team -->
               <div class="team-side away">
@@ -643,6 +669,42 @@ onUnmounted(() => {
   color: var(--color-text-primary);
 }
 
+/* Playoff Info Bar */
+.playoff-info-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 20px;
+  background: rgba(255, 215, 0, 0.06);
+  border-bottom: 1px solid rgba(255, 215, 0, 0.15);
+}
+
+.playoff-info-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.playoff-bar-icon {
+  color: #ffd700;
+  flex-shrink: 0;
+}
+
+.playoff-bar-round {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #ffd700;
+}
+
+.playoff-bar-series {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
 /* Matchup Card */
 .matchup-card {
   margin: 20px;
@@ -652,6 +714,10 @@ onUnmounted(() => {
 .matchup-card.in-progress {
   border: 2px solid rgba(34, 197, 94, 0.4);
   box-shadow: 0 0 20px rgba(34, 197, 94, 0.15);
+}
+
+.matchup-card.is-playoff {
+  border-color: rgba(255, 215, 0, 0.25);
 }
 
 .matchup-content {

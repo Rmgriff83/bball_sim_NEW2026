@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/game'
 import { useCampaignStore } from '@/stores/campaign'
+import { usePlayoffStore } from '@/stores/playoff'
 import { LoadingSpinner } from '@/components/ui'
 import GameDayModal from '@/components/calendar/GameDayModal.vue'
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-vue-next'
@@ -17,6 +18,7 @@ const props = defineProps({
 const router = useRouter()
 const gameStore = useGameStore()
 const campaignStore = useCampaignStore()
+const playoffStore = usePlayoffStore()
 
 const campaign = computed(() => campaignStore.currentCampaign)
 const userTeam = computed(() => campaign.value?.team)
@@ -79,6 +81,12 @@ const seasonMonths = computed(() => {
   for (let m = 0; m <= 3; m++) {
     months.push(new Date(year + 1, m, 1))
   }
+  // May, Jun when playoffs are active
+  if (playoffStore.isInPlayoffs) {
+    for (let m = 4; m <= 5; m++) {
+      months.push(new Date(year + 1, m, 1))
+    }
+  }
   return months
 })
 
@@ -100,10 +108,11 @@ const focusDate = computed(() => {
   return campaignDate.value
 })
 
-// Group games by date string
+// Group games by date string (exclude cancelled playoff games)
 const gamesGroupedByDate = computed(() => {
   const grouped = {}
   for (const game of gameStore.userGames) {
+    if (game.is_cancelled) continue
     const dateKey = game.game_date // Already in YYYY-MM-DD format
     if (!grouped[dateKey]) {
       grouped[dateKey] = []
@@ -447,12 +456,19 @@ watch(focusDate, () => {
                 'game-lost': dayData.games[0] && getGameResult(dayData.games[0]) && !getGameResult(dayData.games[0])?.won,
                 'game-in-progress': dayData.games[0] && isGameInProgress(dayData.games[0]),
                 'game-upcoming': dayData.games[0] && !dayData.games[0].is_complete && !isGameInProgress(dayData.games[0]),
-                'game-next': dayData.games[0] && isNextGame(dayData.games[0]) && !isGameInProgress(dayData.games[0])
+                'game-next': dayData.games[0] && isNextGame(dayData.games[0]) && !isGameInProgress(dayData.games[0]),
+                'game-playoff': dayData.games[0]?.is_playoff
               }"
               @click="handleDayClick(dayData)"
             >
               <!-- Day number in corner -->
               <span class="day-number">{{ dayData.day }}</span>
+
+              <!-- PO badge for playoff games -->
+              <span
+                v-if="dayData.games[0]?.is_playoff && !dayData.games[0]?.is_complete"
+                class="playoff-badge"
+              >PO</span>
 
               <!-- W/L badge in upper left for completed games -->
               <span
@@ -742,9 +758,23 @@ watch(focusDate, () => {
   }
 }
 
+/* Playoff game gold border accent */
+.calendar-day.game-playoff {
+  box-shadow: inset 0 0 0 2px rgba(255, 215, 0, 0.5);
+}
+
+.calendar-day.game-playoff.game-won,
+.calendar-day.game-playoff.game-lost {
+  box-shadow: inset 0 0 0 2px rgba(255, 215, 0, 0.35);
+}
+
 .calendar-day.game-next {
   background: rgba(34, 197, 94, 0.1);
   box-shadow: inset 0 0 0 2px var(--color-success);
+}
+
+.calendar-day.game-playoff.game-next {
+  box-shadow: inset 0 0 0 2px rgba(255, 215, 0, 0.6);
 }
 
 .calendar-day.game-upcoming:not(.game-next) {
@@ -957,6 +987,37 @@ watch(focusDate, () => {
   50% {
     transform: scale(1.05);
     box-shadow: 0 4px 16px rgba(239, 68, 68, 0.6);
+  }
+}
+
+/* Playoff Badge */
+.playoff-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  font-size: 0.55rem;
+  font-weight: 800;
+  color: #1a1520;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  padding: 2px 4px;
+  background: linear-gradient(135deg, #ffd700, #ffb300);
+  border-radius: 3px;
+  z-index: 1;
+}
+
+@media (min-width: 500px) {
+  .playoff-badge {
+    font-size: 0.6rem;
+    padding: 2px 5px;
+  }
+}
+
+@media (min-width: 700px) {
+  .playoff-badge {
+    font-size: 0.65rem;
+    padding: 3px 6px;
   }
 }
 

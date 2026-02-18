@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { Trophy, Award, ChevronRight } from 'lucide-vue-next'
+import { Trophy, Award } from 'lucide-vue-next'
 import BaseModal from '@/components/ui/BaseModal.vue'
 
 const props = defineProps({
@@ -65,15 +65,12 @@ function handleClose() {
 </script>
 
 <template>
-  <BaseModal :show="show" :closable="true" size="md" @close="handleClose">
+  <BaseModal :show="show" :title="roundLabel" :closable="true" size="md" @close="handleClose">
     <div class="series-result-content">
-      <!-- Header -->
-      <div class="result-header">
-        <span class="round-label">{{ roundLabel }}</span>
-        <h2 class="result-title" :class="{ 'text-gradient': userWon }">
-          {{ userWon ? 'SERIES VICTORY!' : 'SERIES COMPLETE' }}
-        </h2>
-      </div>
+      <!-- Result Heading -->
+      <h2 class="result-title" :class="{ 'text-gradient': userWon }">
+        {{ userWon ? 'SERIES VICTORY!' : 'SERIES COMPLETE' }}
+      </h2>
 
       <!-- Series Summary -->
       <div class="series-summary">
@@ -85,7 +82,7 @@ function handleClose() {
         </div>
       </div>
 
-      <!-- Series MVP (Conference Finals only) -->
+      <!-- Series MVP (Conference Finals) -->
       <div v-if="isConferenceFinals && seriesMVP" class="mvp-section">
         <div class="mvp-header">
           <Trophy :size="24" />
@@ -101,8 +98,8 @@ function handleClose() {
         </div>
       </div>
 
-      <!-- Best Performers -->
-      <div v-if="seriesMVP" class="performers-section">
+      <!-- Best Performer (non-conference-finals) -->
+      <div v-else-if="seriesMVP" class="performers-section">
         <h3 class="section-title">Series Best Performer</h3>
         <div class="performer-card">
           <Award :size="20" />
@@ -114,15 +111,16 @@ function handleClose() {
           </div>
         </div>
       </div>
-
-      <!-- Action Button -->
-      <div class="action-buttons">
-        <button class="btn-primary" @click="handleClose">
-          Continue
-          <ChevronRight :size="18" />
-        </button>
-      </div>
     </div>
+
+    <template #footer>
+      <button class="modal-btn modal-btn-secondary" @click="handleClose">
+        Close
+      </button>
+      <button class="modal-btn modal-btn-primary" @click="handleClose">
+        Continue
+      </button>
+    </template>
   </BaseModal>
 </template>
 
@@ -132,31 +130,20 @@ function handleClose() {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 1rem;
+  padding: 0.5rem 0;
   gap: 1.5rem;
 }
 
-.result-header {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.round-label {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--color-text-tertiary);
-}
-
 .result-title {
-  font-size: 1.75rem;
-  font-weight: 800;
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 2rem;
+  font-weight: 400;
   letter-spacing: 0.05em;
+  margin: 0;
 }
 
 .series-summary {
-  padding: 1rem 0;
+  padding: 0.5rem 0;
 }
 
 .team-result {
@@ -185,7 +172,7 @@ function handleClose() {
 .series-score {
   font-weight: 700;
   color: var(--color-primary);
-  background: var(--glass-bg);
+  background: rgba(232, 90, 79, 0.12);
   padding: 0.25rem 0.75rem;
   border-radius: var(--radius-full);
   margin-left: 0.5rem;
@@ -250,9 +237,13 @@ function handleClose() {
   align-items: center;
   gap: 0.75rem;
   padding: 0.875rem;
-  background: var(--glass-bg);
+  background: rgba(0, 0, 0, 0.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
+}
+
+[data-theme="light"] .performer-card {
+  background: rgba(0, 0, 0, 0.04);
 }
 
 .performer-card svg {
@@ -277,13 +268,36 @@ function handleClose() {
   color: var(--color-text-secondary);
 }
 
-.action-buttons {
-  margin-top: 0.5rem;
+/* Footer buttons (modal standard) */
+.modal-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
 }
 
-.btn-primary {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.modal-btn-secondary {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-secondary);
+}
+
+.modal-btn-secondary:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.modal-btn-primary {
+  background: var(--color-primary);
+  color: white;
+}
+
+.modal-btn-primary:hover {
+  filter: brightness(1.1);
 }
 </style>

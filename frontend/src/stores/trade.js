@@ -306,10 +306,25 @@ export const useTradeStore = defineStore('trade', () => {
       // Mark for cloud sync
       useSyncStore().markDirty()
 
+      // Build trade context for breaking news before clearing state
+      const playersSent = details.assets
+        .filter(a => a.type === 'player' && a.from == userTeamId)
+        .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' })
+      const playersReceived = details.assets
+        .filter(a => a.type === 'player' && a.to == userTeamId)
+        .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' })
+      const tradeContext = {
+        playersSent,
+        playersReceived,
+        otherTeamName: selectedTeam.value?.name || 'Unknown',
+        userTeamName: userTeam?.name || 'Unknown',
+        date: currentDate,
+      }
+
       // Clear the trade after successful execution
       clearTrade()
 
-      return result
+      return { ...result, tradeContext }
     } catch (err) {
       error.value = err.message || 'Failed to execute trade'
       throw err
@@ -475,10 +490,25 @@ export const useTradeStore = defineStore('trade', () => {
       // Mark for cloud sync
       useSyncStore().markDirty()
 
+      // Build trade context for breaking news
+      const playersSent = details.assets
+        .filter(a => a.type === 'player' && a.from == userTeamId)
+        .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' })
+      const playersReceived = details.assets
+        .filter(a => a.type === 'player' && a.to == userTeamId)
+        .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' })
+      const tradeContext = {
+        playersSent,
+        playersReceived,
+        otherTeamName: aiTeam.name || 'Unknown',
+        userTeamName: userTeam?.name || 'Unknown',
+        date: currentDate,
+      }
+
       // Remove from pending list
       pendingProposals.value = pendingProposals.value.filter(p => p.id !== proposalId)
 
-      return result
+      return { ...result, tradeContext }
     } catch (err) {
       error.value = err.message || 'Failed to accept trade proposal'
       throw err

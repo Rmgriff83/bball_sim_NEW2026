@@ -9,16 +9,17 @@ import { useLeagueStore } from '@/stores/league'
 import { useToastStore } from '@/stores/toast'
 import { usePlayoffStore } from '@/stores/playoff'
 import { useTradeStore } from '@/stores/trade'
+import { useBreakingNewsStore } from '@/stores/breakingNews'
+import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { LoadingSpinner, BaseModal } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
 import SeasonEndModal from '@/components/playoffs/SeasonEndModal.vue'
 import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
-import PlayoffBracket from '@/components/playoffs/PlayoffBracket.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
 import { advanceToNextSeason } from '@/engine/campaign/CampaignManager'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X } from 'lucide-vue-next'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -29,12 +30,12 @@ const leagueStore = useLeagueStore()
 const toastStore = useToastStore()
 const playoffStore = usePlayoffStore()
 const tradeStore = useTradeStore()
+const breakingNewsStore = useBreakingNewsStore()
 
 const showSimulateModal = ref(false)
 const lastSimResult = ref(null) // Last simulated user game result shown during background sim
 const showTradeProposalModal = ref(false)
 const currentProposal = ref(null)
-const showPlayoffBracket = ref(false)
 const showAllStarModal = ref(false)
 const allStarRosters = ref(null)
 const showInjuryModal = ref(false)
@@ -46,6 +47,7 @@ const pendingGameAction = ref(null) // 'simulate' or gameId for play
 const showRosterWarningModal = ref(false)
 const rosterWarningMessage = ref('')
 const rosterWarningHint = ref('')
+const advancingToNextSeason = ref(false)
 
 // Only show loading if we don't have cached campaign data
 const loading = ref(!campaignStore.currentCampaign)
@@ -117,6 +119,51 @@ const conferenceLabel = computed(() => {
   return team.value.conference === 'east' ? 'EAST' : 'WEST'
 })
 
+// Check if user's team has been eliminated from playoffs
+const userEliminated = computed(() => {
+  if (!playoffStore.isInPlayoffs || !team.value) return false
+  // If there's a next user game, they're still playing
+  if (nextGame.value) return false
+  // If champion is already declared, show offseason card instead
+  if (playoffStore.champion) return false
+  // No next game and no champion — user is eliminated or between rounds
+  // Check bracket for any active/pending series involving the user
+  const bracket = playoffStore.bracket
+  if (!bracket) return false
+  const userId = team.value.id
+  for (const conf of ['east', 'west']) {
+    const confData = bracket[conf]
+    if (!confData) continue
+    for (const round of ['round1', 'round2']) {
+      for (const series of (confData[round] || [])) {
+        if ((series.team1?.teamId == userId || series.team2?.teamId == userId) &&
+            series.status !== 'complete') {
+          return false // user still has an active series
+        }
+        if ((series.team1?.teamId == userId || series.team2?.teamId == userId) &&
+            series.status === 'complete' && series.winner?.teamId != userId) {
+          return true // user lost this series
+        }
+      }
+    }
+    if (confData.confFinals) {
+      const s = confData.confFinals
+      if ((s.team1?.teamId == userId || s.team2?.teamId == userId) &&
+          s.status === 'complete' && s.winner?.teamId != userId) {
+        return true
+      }
+    }
+  }
+  if (bracket.finals) {
+    const s = bracket.finals
+    if ((s.team1?.teamId == userId || s.team2?.teamId == userId) &&
+        s.status === 'complete' && s.winner?.teamId != userId) {
+      return true
+    }
+  }
+  return false
+})
+
 // Check if lineup is complete - use teamStore as single source of truth
 const isLineupComplete = computed(() => teamStore.isLineupComplete)
 
@@ -181,6 +228,18 @@ const inProgressScores = computed(() => {
     homeScore: nextGame.value.home_score ?? 0,
     awayScore: nextGame.value.away_score ?? 0,
     quarter: nextGame.value.current_quarter ?? gameStore.currentSimQuarter ?? 1
+  }
+})
+
+// Playoff series info for next game
+const nextGameSeriesInfo = computed(() => {
+  if (!nextGame.value?.is_playoff || !nextGame.value?.playoff_series_id) return null
+  const series = playoffStore.getSeriesFromBracket(nextGame.value.playoff_series_id)
+  if (!series) return null
+  const gameNum = nextGame.value.playoff_game_number
+  return {
+    ...series,
+    gameLabel: gameNum ? `Game ${gameNum}` : ''
   }
 })
 
@@ -330,9 +389,27 @@ async function handleSeasonEndContinue() {
     const loadingToastId = toastStore.showLoading('Generating playoff bracket...')
     try {
       await playoffStore.generateBracket(campaignId.value)
+
+      // Breaking news: top seed
+      if (playoffStore.userSeed === 1) {
+        const userTeam = campaignStore.currentCampaign?.team
+        const standing = teamStanding.value
+        const record = standing ? `${standing.wins}-${standing.losses}` : ''
+        const conf = userTeam?.conference || 'east'
+        breakingNewsStore.enqueue(
+          BreakingNewsService.topSeed({
+            teamName: userTeam?.name || 'Your Team',
+            conference: conf,
+            record,
+            date: campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0],
+          }),
+          campaignId.value
+        )
+      }
+
       toastStore.removeMinimalToast(loadingToastId)
       toastStore.showSuccess('Playoffs have begun!')
-      showPlayoffBracket.value = true
+      router.push(`/campaign/${campaignId.value}/playoffs`)
     } catch (err) {
       toastStore.removeMinimalToast(loadingToastId)
       toastStore.showError('Failed to generate bracket')
@@ -352,9 +429,28 @@ async function handleSeriesResultClose() {
   playoffStore.closeSeriesResultModal()
 
   if (userLost) {
-    // User eliminated — advance to next season
-    await _advanceToNextSeasonFlow()
+    // User eliminated — refresh to show between-rounds / sim to next round card
+    await Promise.all([
+      playoffStore.fetchBracket(campaignId.value),
+      gameStore.fetchGames(campaignId.value, { force: true }),
+    ])
   } else {
+    // Breaking news: making the finals (conference finals win, round 3)
+    if (result?.seriesComplete && result?.round === 3) {
+      const userTeam = campaignStore.currentCampaign?.team
+      const loserName = result?.winner?.teamId == campaignStore.currentCampaign?.teamId
+        ? (result?.series?.awayTeam?.name || result?.series?.homeTeam?.name || 'their opponent')
+        : 'their opponent'
+      breakingNewsStore.enqueue(
+        BreakingNewsService.makingFinals({
+          teamName: userTeam?.name || 'Your Team',
+          opponentName: loserName,
+          date: campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0],
+        }),
+        campaignId.value
+      )
+    }
+
     // User won — refresh bracket and games to show next round schedule
     await Promise.all([
       playoffStore.fetchBracket(campaignId.value),
@@ -363,10 +459,31 @@ async function handleSeriesResultClose() {
   }
 }
 
-// Handle championship modal — advance to next season
-async function handleChampionshipClose() {
+// Handle championship modal — show offseason card (don't auto-advance)
+function handleChampionshipClose() {
+  // Breaking news: winning the championship
+  const userTeam = campaignStore.currentCampaign?.team
+  const year = campaignStore.currentCampaign?.season?.year || campaignStore.currentCampaign?.game_year || new Date().getFullYear()
+  breakingNewsStore.enqueue(
+    BreakingNewsService.winningFinals({
+      teamName: userTeam?.name || 'Your Team',
+      year,
+      date: campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0],
+    }),
+    campaignId.value
+  )
+
   playoffStore.closeChampionshipModal()
-  await _advanceToNextSeasonFlow()
+}
+
+// Handle advancing to next season from offseason card
+async function handleAdvanceToNextSeason() {
+  advancingToNextSeason.value = true
+  try {
+    await _advanceToNextSeasonFlow()
+  } finally {
+    advancingToNextSeason.value = false
+  }
 }
 
 // Advance to the next season (used after championship or season end for non-qualifying teams)
@@ -375,8 +492,9 @@ async function _advanceToNextSeasonFlow() {
   try {
     await advanceToNextSeason(campaignId.value)
 
-    // Reset playoff state for the new season
+    // Reset playoff state and breaking news for the new season
     playoffStore.$reset()
+    breakingNewsStore.clear()
 
     // Refresh all data from the new season
     await Promise.all([
@@ -393,11 +511,6 @@ async function _advanceToNextSeasonFlow() {
     toastStore.showError('Failed to advance to next season')
     console.error('Failed to advance to next season:', err)
   }
-}
-
-// Toggle playoff bracket view
-function togglePlayoffBracket() {
-  showPlayoffBracket.value = !showPlayoffBracket.value
 }
 
 function navigateToRoster() {
@@ -652,6 +765,8 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
       ])
       await checkPlayoffStatus()
       toastStore.showSuccess('All league games simulated')
+      // Check for trade deadline
+      await checkTradeDeadline()
       // Check for new trade proposals generated during simulation
       await checkPendingTradeProposals()
       // Check for All-Star selections
@@ -661,6 +776,25 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
     }
   }
 })
+
+// Trade deadline check
+const tradeDeadlineAlerted = ref(false)
+async function checkTradeDeadline() {
+  if (tradeDeadlineAlerted.value) return
+  const settings = campaignStore.currentCampaign?.settings || {}
+  const currentDate = settings.currentDate
+  if (!currentDate) return
+  const year = settings.currentYear ?? campaignStore.currentCampaign?.game_year ?? new Date().getFullYear()
+  // Trade deadline is January 6 of the season year
+  const deadlineDate = `${year}-01-06`
+  if (currentDate > deadlineDate && !settings.trade_deadline_passed) {
+    tradeDeadlineAlerted.value = true
+    breakingNewsStore.enqueue(
+      BreakingNewsService.tradeDeadlinePassed({ date: deadlineDate }),
+      campaignId.value
+    )
+  }
+}
 
 // Trade proposal handling
 async function checkPendingTradeProposals() {
@@ -677,7 +811,16 @@ async function checkPendingTradeProposals() {
 async function handleAcceptProposal(proposal) {
   const loadingToastId = toastStore.showLoading('Processing trade...')
   try {
-    await tradeStore.acceptProposal(campaignId.value, proposal.id)
+    const result = await tradeStore.acceptProposal(campaignId.value, proposal.id)
+
+    // Enqueue breaking news for the accepted trade
+    if (result?.tradeContext) {
+      breakingNewsStore.enqueue(
+        BreakingNewsService.tradeCompleted(result.tradeContext),
+        campaignId.value
+      )
+    }
+
     showTradeProposalModal.value = false
     currentProposal.value = null
     toastStore.removeMinimalToast(loadingToastId)
@@ -730,6 +873,26 @@ async function checkAllStarSelections() {
       const response = await api.get(`/api/campaigns/${campaignId.value}/all-star-rosters`)
       if (response.data.rosters) {
         allStarRosters.value = response.data.rosters
+
+        // Breaking news: check if user team players made All-Star
+        const userTeamId = campaignStore.currentCampaign?.teamId
+        const userTeamName = campaignStore.currentCampaign?.team?.name || 'Your Team'
+        const currentDate = campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0]
+        const allSelected = [...(response.data.rosters.east || []), ...(response.data.rosters.west || [])]
+        const userAllStars = allSelected.filter(p => p.team_id == userTeamId || p.teamId == userTeamId)
+        for (const player of userAllStars) {
+          const playerName = `${player.first_name || player.firstName || ''} ${player.last_name || player.lastName || ''}`.trim()
+          breakingNewsStore.enqueue(
+            BreakingNewsService.allStarSelection({
+              playerName,
+              teamName: userTeamName,
+              selectionType: 'all_star',
+              date: currentDate,
+            }),
+            campaignId.value
+          )
+        }
+
         showAllStarModal.value = true
       }
     } catch (err) {
@@ -789,6 +952,23 @@ async function handleFinishSeason() {
     await gameStore.simulateRemainingSeason(campaignId.value)
   } catch (err) {
     toastStore.showError('Failed to simulate remaining games')
+  }
+}
+
+async function handleSimToNextPlayoffRound() {
+  try {
+    await gameStore.simulateToNextPlayoffRound(campaignId.value)
+    // Refresh all data — bracket, games, standings
+    await Promise.all([
+      playoffStore.fetchBracket(campaignId.value),
+      gameStore.fetchGames(campaignId.value, { force: true }),
+      campaignStore.fetchCampaign(campaignId.value, true),
+      leagueStore.fetchStandings(campaignId.value, { force: true }),
+    ])
+    toastStore.showSuccess('Next round is ready!')
+  } catch (err) {
+    toastStore.showError('Failed to simulate playoff games')
+    console.error('Failed to sim to next playoff round:', err)
   }
 }
 
@@ -889,7 +1069,7 @@ function handleCloseSimulateModal() {
       </section>
 
       <!-- Next Game Card -->
-      <section v-else-if="nextGame" class="next-game-card glass-card-nebula" :class="{ 'in-progress': isGameInProgress }">
+      <section v-else-if="nextGame" class="next-game-card glass-card-nebula" :class="{ 'in-progress': isGameInProgress, 'is-playoff': nextGame.is_playoff }">
         <div class="next-game-header">
           <div class="next-game-label-group">
             <h3 class="next-game-label" :class="{ 'live': isGameInProgress }">
@@ -899,6 +1079,14 @@ function handleCloseSimulateModal() {
             <span v-else class="next-game-date">{{ nextGame?.game_date ? formatGameDate(nextGame.game_date) : '' }}</span>
           </div>
           <span class="next-game-location">{{ nextGameOpponent?.isHome ? 'HOME' : 'AWAY' }}</span>
+        </div>
+        <!-- Playoff Info Banner -->
+        <div v-if="nextGame.is_playoff" class="playoff-info-banner">
+          <Trophy :size="14" class="playoff-info-icon" />
+          <span class="playoff-round-label">{{ playoffStore.getPlayoffRoundLabel(nextGame.playoff_round) }}</span>
+          <span v-if="nextGameSeriesInfo" class="playoff-series-record">
+            {{ nextGameSeriesInfo.gameLabel }} &middot; Series {{ nextGameSeriesInfo.team1Wins }}-{{ nextGameSeriesInfo.team2Wins }}
+          </span>
         </div>
         <div class="next-game-content">
           <!-- Loading state while simulating -->
@@ -976,6 +1164,80 @@ function handleCloseSimulateModal() {
         </div>
       </section>
 
+      <!-- Playoff Between-Rounds Card -->
+      <section v-else-if="playoffStore.isInPlayoffs && !playoffStore.champion" class="next-game-card glass-card-nebula playoff-between-rounds">
+        <div class="next-game-header">
+          <div class="next-game-label-row">
+            <h3 class="next-game-label">{{ userEliminated ? 'SEASON OVER' : 'SERIES WON' }}</h3>
+            <Trophy :size="16" class="playoff-trophy-icon" />
+          </div>
+        </div>
+        <div class="next-game-content">
+          <div v-if="gameStore.simulating" class="next-game-loading">
+            <LoadingSpinner size="md" />
+            <span class="next-game-loading-text">Simulating playoff games...</span>
+          </div>
+          <template v-else>
+            <p class="season-wrap-text">
+              {{ userEliminated
+                ? 'Your season has ended. Simulate the remaining playoff games to crown a champion.'
+                : 'Waiting for other playoff series to finish before the next round begins.'
+              }}
+            </p>
+            <div class="next-game-buttons">
+              <button class="btn-play-game" @click="handleSimToNextPlayoffRound">
+                <FastForward class="btn-icon" :size="16" />
+                {{ userEliminated ? 'SIM REMAINING PLAYOFFS' : 'SIM TO NEXT ROUND' }}
+              </button>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <!-- Offseason Card (champion declared, waiting to advance) -->
+      <section v-else-if="playoffStore.champion" class="next-game-card glass-card-nebula offseason-card">
+        <div class="next-game-header">
+          <div class="next-game-label-row">
+            <h3 class="next-game-label">OFFSEASON</h3>
+            <Trophy :size="16" class="playoff-trophy-icon" />
+          </div>
+        </div>
+        <div class="next-game-content">
+          <div v-if="advancingToNextSeason" class="next-game-loading">
+            <LoadingSpinner size="md" />
+            <span class="next-game-loading-text">Advancing to next season...</span>
+          </div>
+          <template v-else>
+            <!-- Champion Banner -->
+            <div class="offseason-champion-banner">
+              <Trophy :size="20" class="offseason-champion-icon" />
+              <span class="offseason-champion-text">
+                {{ playoffStore.champion.city }} {{ playoffStore.champion.name }} are NBA Champions
+              </span>
+            </div>
+
+            <!-- User Season Summary -->
+            <div class="offseason-summary">
+              <div class="offseason-stat">
+                <span class="offseason-stat-label">Final Record</span>
+                <span class="offseason-stat-value">{{ wins }}-{{ losses }}</span>
+              </div>
+              <div class="offseason-stat">
+                <span class="offseason-stat-label">Conference Rank</span>
+                <span class="offseason-stat-value">#{{ teamRank }} {{ conferenceLabel }}</span>
+              </div>
+            </div>
+
+            <div class="next-game-buttons">
+              <button class="btn-play-game" @click="handleAdvanceToNextSeason">
+                <FastForward class="btn-icon" :size="16" />
+                ADVANCE TO NEXT SEASON
+              </button>
+            </div>
+          </template>
+        </div>
+      </section>
+
       <!-- Season Wrap-Up Card (user has no more games, league still playing) -->
       <section v-else class="next-game-card glass-card-nebula">
         <div class="next-game-header">
@@ -1038,7 +1300,7 @@ function handleCloseSimulateModal() {
             </div>
             <span class="action-label">GM View</span>
           </button>
-          <button v-if="playoffStore.isInPlayoffs" class="action-box playoffs" @click="togglePlayoffBracket">
+          <button v-if="playoffStore.isInPlayoffs" class="action-box playoffs" @click="router.push(`/campaign/${campaignId}/playoffs`)">
             <div class="action-icon">
               <Trophy :size="24" />
             </div>
@@ -1098,14 +1360,19 @@ function handleCloseSimulateModal() {
             v-for="item in news.slice(0, 5)"
             :key="item.id"
             class="news-item"
-            :class="{ 'news-highlight': item.event_type === 'award' && item.headline?.includes('All-Star') }"
+            :class="{
+              'news-highlight': item.event_type === 'award' && item.headline?.includes('All-Star'),
+              'news-breaking': item.is_breaking
+            }"
             @click="item.event_type === 'award' && item.headline?.includes('All-Star') ? openAllStarModal() : null"
           >
-            <div class="news-icon" :class="{ 'news-icon-star': item.event_type === 'award' }">
-              <Star v-if="item.event_type === 'award'" :size="18" />
+            <div class="news-icon" :class="{ 'news-icon-star': item.event_type === 'award', 'news-icon-breaking': item.is_breaking }">
+              <Zap v-if="item.is_breaking" :size="18" />
+              <Star v-else-if="item.event_type === 'award'" :size="18" />
               <Newspaper v-else :size="18" />
             </div>
             <div class="news-content">
+              <span v-if="item.is_breaking" class="news-breaking-tag">BREAKING</span>
               <p class="news-headline">{{ item.headline }}</p>
               <span class="news-date">{{ formatNewsDate(item.date) }}</span>
             </div>
@@ -1176,20 +1443,6 @@ function handleCloseSimulateModal() {
           </button>
         </div>
       </div>
-    </BaseModal>
-
-    <!-- Playoff Bracket Modal -->
-    <BaseModal
-      :show="showPlayoffBracket"
-      title="Playoff Bracket"
-      size="xl"
-      @close="showPlayoffBracket = false"
-    >
-      <PlayoffBracket
-        :bracket="playoffStore.bracket"
-        :user-team-id="team?.id"
-        @select-series="(series) => console.log('Selected series:', series)"
-      />
     </BaseModal>
 
     <!-- Season End Modal -->
@@ -1830,6 +2083,32 @@ function handleCloseSimulateModal() {
   background: linear-gradient(135deg, #f59e0b, #d97706) !important;
 }
 
+.news-breaking {
+  border-left: 3px solid #eab308;
+  background: linear-gradient(90deg, rgba(234, 179, 8, 0.1), rgba(234, 179, 8, 0.02), transparent) !important;
+}
+
+.news-breaking:hover {
+  background: linear-gradient(90deg, rgba(234, 179, 8, 0.18), rgba(234, 179, 8, 0.05), transparent) !important;
+}
+
+.news-icon-breaking {
+  background: linear-gradient(135deg, #eab308, #ca8a04) !important;
+}
+
+.news-breaking-tag {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #eab308;
+  background: rgba(234, 179, 8, 0.15);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 2px;
+}
+
 /* Glass Card with Nebula Effect */
 .glass-card-nebula {
   position: relative;
@@ -1964,6 +2243,40 @@ function handleCloseSimulateModal() {
   border-radius: var(--radius-full);
 }
 
+.playoff-info-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 215, 0, 0.08);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  border-radius: var(--radius-md);
+  margin-bottom: 4px;
+}
+
+.playoff-info-icon {
+  color: #ffd700;
+  flex-shrink: 0;
+}
+
+.playoff-round-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #ffd700;
+}
+
+.playoff-series-record {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.next-game-card.is-playoff {
+  border-color: rgba(255, 215, 0, 0.2);
+}
+
 .next-game-content {
   display: flex;
   flex-direction: column;
@@ -1984,6 +2297,75 @@ function handleCloseSimulateModal() {
   color: var(--color-text-secondary);
   line-height: 1.5;
   margin-bottom: 16px;
+}
+
+.playoff-trophy-icon {
+  color: #ffd700;
+}
+
+.playoff-between-rounds {
+  border-color: rgba(255, 215, 0, 0.25);
+}
+
+.offseason-card {
+  border-color: rgba(255, 215, 0, 0.25);
+}
+
+.offseason-champion-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.12), rgba(255, 140, 0, 0.08));
+  border: 1px solid rgba(255, 215, 0, 0.25);
+  border-radius: var(--radius-lg);
+}
+
+.offseason-champion-icon {
+  color: #ffd700;
+  flex-shrink: 0;
+}
+
+.offseason-champion-text {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.offseason-summary {
+  display: flex;
+  gap: 16px;
+}
+
+.offseason-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: var(--radius-md);
+}
+
+[data-theme="light"] .offseason-stat {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.offseason-stat-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+}
+
+.offseason-stat-value {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  line-height: 1;
 }
 
 .next-game-loading-text {

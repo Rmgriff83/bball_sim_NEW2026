@@ -6,6 +6,7 @@ import { useGameStore } from '@/stores/game'
 import { useAuthStore } from '@/stores/auth'
 import { useEngineStore } from '@/stores/engine'
 import { useSyncStore } from '@/stores/sync'
+import { usePlayoffStore } from '@/stores/playoff'
 import { BottomNav } from '@/components/ui'
 import { ArrowLeft, Play, User, FolderOpen, LogOut } from 'lucide-vue-next'
 
@@ -16,6 +17,7 @@ const gameStore = useGameStore()
 const authStore = useAuthStore()
 const engineStore = useEngineStore()
 const syncStore = useSyncStore()
+const playoffStore = usePlayoffStore()
 
 const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
@@ -167,6 +169,14 @@ function closeMobileMenu() {
             :class="{ active: route.name === 'league' }"
           >
             League
+          </router-link>
+          <router-link
+            v-if="playoffStore.isInPlayoffs"
+            :to="`/campaign/${campaignId}/playoffs`"
+            class="nav-link"
+            :class="{ active: route.name === 'playoffs' }"
+          >
+            Playoffs
           </router-link>
           <router-link
             :to="`/campaign/${campaignId}/play`"

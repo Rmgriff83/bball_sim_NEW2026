@@ -1,9 +1,12 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { ToastContainer, MinimalToast } from '@/components/ui'
+import BreakingNewsModal from '@/components/game/BreakingNewsModal.vue'
 
 const authStore = useAuthStore()
+const breakingNewsStore = useBreakingNewsStore()
 
 onMounted(() => {
   // Initialize theme from localStorage or system preference
@@ -24,4 +27,9 @@ onMounted(() => {
   </router-view>
   <ToastContainer />
   <MinimalToast />
+  <BreakingNewsModal
+    :show="breakingNewsStore.isShowing"
+    :item="breakingNewsStore.currentItem"
+    @dismiss="breakingNewsStore.dismiss()"
+  />
 </template>

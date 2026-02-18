@@ -414,10 +414,14 @@ function handleSeriesClick(series) {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   text-align: center;
   padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--glass-border);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+[data-theme="light"] .conference-title {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
 }
 
 .bracket-grid {
@@ -440,7 +444,7 @@ function handleSeriesClick(series) {
   font-size: 0.625rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   text-align: center;
 }
 
@@ -467,8 +471,8 @@ function handleSeriesClick(series) {
 }
 
 .matchup {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-md);
   padding: 0.25rem;
   cursor: pointer;
@@ -476,9 +480,19 @@ function handleSeriesClick(series) {
   flex: 1;
 }
 
+[data-theme="light"] .matchup {
+  background: rgba(255, 255, 255, 0.7);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
 .matchup:hover {
   border-color: var(--color-primary);
+  background: rgba(0, 0, 0, 0.35);
   transform: translateY(-1px);
+}
+
+[data-theme="light"] .matchup:hover {
+  background: rgba(255, 255, 255, 0.85);
 }
 
 .matchup.complete {
@@ -510,7 +524,7 @@ function handleSeriesClick(series) {
   gap: 0.25rem;
   padding: 0.25rem 0.375rem;
   font-size: 0.75rem;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
 }
 
 .team.winner {
@@ -525,7 +539,7 @@ function handleSeriesClick(series) {
 
 .seed {
   font-size: 0.625rem;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 
 .abbr {
@@ -543,8 +557,12 @@ function handleSeriesClick(series) {
 .connector {
   width: 8px;
   height: 1px;
-  background: var(--glass-border);
+  background: rgba(255, 255, 255, 0.15);
   flex-shrink: 0;
+}
+
+[data-theme="light"] .connector {
+  background: rgba(0, 0, 0, 0.12);
 }
 
 /* Finals Section */
@@ -586,13 +604,13 @@ function handleSeriesClick(series) {
 
 .finals-matchup .conf-label {
   font-size: 0.5rem;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   letter-spacing: 0.1em;
 }
 
 .finals-matchup .vs {
   font-size: 0.625rem;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   text-align: center;
   padding: 0.25rem 0;
 }

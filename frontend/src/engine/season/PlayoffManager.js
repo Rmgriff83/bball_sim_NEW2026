@@ -287,11 +287,17 @@ export class PlayoffManager {
       return null
     }
 
+    // Skip cancelled games
+    if (game.isCancelled) return null
+
     const bracket = seasonData.playoffBracket
     const seriesId = game.playoffSeriesId
     const series = PlayoffManager._findSeriesById(bracket, seriesId)
 
     if (!series) return null
+
+    // Skip if series is already complete (prevents double-counting in bulk sim)
+    if (series.status === 'complete') return null
 
     // Determine winner
     const homeTeamId = game.homeTeamId
@@ -314,6 +320,9 @@ export class PlayoffManager {
       // Calculate series MVP
       const mvp = PlayoffManager.calculateSeriesMVP(seasonData, series)
       series.seriesMVP = mvp
+
+      // Cancel remaining unplayed games in this series
+      PlayoffManager._cancelRemainingSeriesGames(seasonData, seriesId)
     }
 
     // Update series in bracket
@@ -342,6 +351,21 @@ export class PlayoffManager {
     }
 
     return result
+  }
+
+  /**
+   * Cancel remaining unplayed games in a completed series.
+   * Marks them as isComplete + isCancelled so they are skipped by scheduling logic.
+   * @private
+   */
+  static _cancelRemainingSeriesGames(seasonData, seriesId) {
+    if (!seasonData?.schedule) return
+    for (const game of seasonData.schedule) {
+      if (game.playoffSeriesId === seriesId && !game.isComplete) {
+        game.isComplete = true
+        game.isCancelled = true
+      }
+    }
   }
 
   /**
@@ -502,12 +526,15 @@ export class PlayoffManager {
     const bracket = seasonData.playoffBracket
     const series = completedSeries.series
     const round = completedSeries.round
-    const conference = series.conference ?? null
 
     if (round === 1) {
-      PlayoffManager._createRound2MatchupIfReady(bracket, conference)
+      // Check both conferences for Round 2 readiness
+      PlayoffManager._createRound2MatchupIfReady(bracket, 'east')
+      PlayoffManager._createRound2MatchupIfReady(bracket, 'west')
     } else if (round === 2) {
-      PlayoffManager._createConferenceFinals(bracket, conference)
+      // Check both conferences for Conference Finals readiness
+      PlayoffManager._createConferenceFinals(bracket, 'east')
+      PlayoffManager._createConferenceFinals(bracket, 'west')
     } else if (round === 3) {
       PlayoffManager._createFinalsIfReady(bracket)
     } else if (round === 4) {

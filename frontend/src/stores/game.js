@@ -95,7 +95,11 @@ export const useGameStore = defineStore('game', () => {
       away_team_abbreviation: game.awayTeamAbbreviation,
       game_date: game.gameDate,
       is_playoff: game.isPlayoff ?? false,
+      playoff_round: game.playoffRound ?? null,
+      playoff_series_id: game.playoffSeriesId ?? null,
+      playoff_game_number: game.playoffGameNumber ?? null,
       is_complete: game.isComplete ?? false,
+      is_cancelled: game.isCancelled ?? false,
       is_in_progress: game.isInProgress ?? false,
       home_score: game.homeScore ?? null,
       away_score: game.awayScore ?? null,
@@ -1335,6 +1339,68 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * Simulate all remaining AI playoff games so the next round schedule can be generated.
+   * Used between playoff rounds when the user has finished their series but AI series are still ongoing.
+   */
+  async function simulateToNextPlayoffRound(campaignId) {
+    simulating.value = true
+    error.value = null
+    try {
+      const { year, userTeamId, campaign } = await _getCampaignContext(campaignId)
+      const seasonData = await SeasonRepository.get(campaignId, year)
+      if (!seasonData) throw new Error(`Season ${year} not found`)
+
+      const engineStore = useEngineStore()
+      const worker = engineStore.getWorker()
+      const toastStore = useToastStore()
+
+      // Find all remaining incomplete AI playoff games (non-cancelled)
+      const remainingAiPlayoffGames = seasonData.schedule.filter(g =>
+        g.isPlayoff &&
+        !g.isComplete &&
+        !g.isCancelled &&
+        g.homeTeamId !== userTeamId &&
+        g.awayTeamId !== userTeamId
+      )
+
+      if (remainingAiPlayoffGames.length === 0) {
+        simulating.value = false
+        return { message: 'No remaining playoff games to simulate' }
+      }
+
+      backgroundSimulating.value = true
+      simulationProgress.value = { completed: 0, total: remainingAiPlayoffGames.length }
+      const progressToastId = toastStore.showProgress('Playoff games', 0, remainingAiPlayoffGames.length)
+
+      try {
+        await _simulateAiGamesBulk(campaignId, year, seasonData, remainingAiPlayoffGames, worker, (progress) => {
+          simulationProgress.value = progress
+          toastStore.updateProgress(progressToastId, progress.completed, progress.total)
+        })
+      } finally {
+        toastStore.removeMinimalToast(progressToastId)
+        backgroundSimulating.value = false
+        simulationProgress.value = null
+      }
+
+      // Advance date past the last simulated game
+      const lastGame = remainingAiPlayoffGames[remainingAiPlayoffGames.length - 1]
+      if (lastGame) {
+        await _advanceDateIfNeeded(campaignId, lastGame.gameDate)
+      }
+
+      simulating.value = false
+      return { completed: remainingAiPlayoffGames.length }
+    } catch (err) {
+      error.value = err.message || 'Failed to simulate playoff round'
+      simulating.value = false
+      backgroundSimulating.value = false
+      simulationProgress.value = null
+      throw err
+    }
+  }
+
+  /**
    * Clear the simulate preview state.
    */
   function clearSimulatePreview() {
@@ -1401,12 +1467,15 @@ export const useGameStore = defineStore('game', () => {
     const playoffGames = aiGames.filter(g => g.isPlayoff && g.playoffSeriesId)
     if (playoffGames.length > 0) {
       const teams = await TeamRepository.getAllForCampaign(campaignId)
+      // Sort playoff games by game number to process in order within each series
+      playoffGames.sort((a, b) => (a.playoffGameNumber ?? 0) - (b.playoffGameNumber ?? 0))
+
       for (const game of playoffGames) {
         const r = results.find(res => res.gameId === game.id)
         if (!r) continue
         // Re-read the updated game from seasonData (bulkMergeResults marks it complete)
         const updatedGame = seasonData.schedule.find(g => g.id === game.id)
-        if (!updatedGame || !updatedGame.isComplete) continue
+        if (!updatedGame || !updatedGame.isComplete || updatedGame.isCancelled) continue
 
         const seriesUpdate = PlayoffManager.updateSeriesAfterGame(
           seasonData, updatedGame, r.homeScore, r.awayScore
@@ -1534,6 +1603,7 @@ export const useGameStore = defineStore('game', () => {
     fetchSimulateToNextGamePreview,
     simulateToNextGame,
     simulateRemainingSeason,
+    simulateToNextPlayoffRound,
     clearSimulatePreview,
     invalidate,
   }
