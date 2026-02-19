@@ -3909,12 +3909,18 @@ onUnmounted(() => {
 .series-record-badge {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--color-text-secondary);
+  color: #ffd700;
   margin-top: 4px;
   padding: 3px 10px;
   background: rgba(255, 215, 0, 0.1);
   border: 1px solid rgba(255, 215, 0, 0.25);
   border-radius: var(--radius-full);
+}
+
+[data-theme="light"] .series-record-badge {
+  color: #b8860b;
+  background: rgba(184, 134, 11, 0.1);
+  border-color: rgba(184, 134, 11, 0.3);
 }
 
 .user-game-badge {

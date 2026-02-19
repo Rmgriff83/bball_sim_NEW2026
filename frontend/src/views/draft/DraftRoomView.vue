@@ -9,6 +9,10 @@ import DraftCompleteModal from '@/components/draft/DraftCompleteModal.vue'
 import { Search, ChevronUp, ChevronDown, FastForward, SkipForward, SkipBack, Users, X } from 'lucide-vue-next'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
+import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { generateAndSaveRookieClass } from '@/engine/draft/RookieGenerationService'
+import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
+import { analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,6 +21,7 @@ const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
 
 const campaignId = computed(() => route.params.id)
+const isRookieMode = computed(() => route.query.mode === 'rookie' || draftStore.draftMode === 'rookie')
 const loading = ref(true)
 const error = ref(null)
 const showCompleteModal = ref(false)
@@ -169,7 +174,11 @@ function handleSkipCurrent() {
 
 async function handleFinalize() {
   try {
-    await draftStore.finalizeDraft(campaignId.value)
+    if (isRookieMode.value) {
+      await draftStore.finalizeRookieDraft(campaignId.value)
+    } else {
+      await draftStore.finalizeDraft(campaignId.value)
+    }
     showCompleteModal.value = false
     await campaignStore.fetchCampaign(campaignId.value)
     router.push(`/campaign/${campaignId.value}`)
@@ -192,7 +201,9 @@ onMounted(async () => {
       campaign = await campaignStore.fetchCampaign(campaignId.value)
     }
 
-    if (campaign?.draft_completed) {
+    const rookieMode = route.query.mode === 'rookie'
+
+    if (!rookieMode && campaign?.draft_completed) {
       router.replace(`/campaign/${campaignId.value}`)
       return
     }
@@ -209,27 +220,80 @@ onMounted(async () => {
       throw new Error('No teams found for this campaign. Try recreating the campaign.')
     }
 
-    const restored = await draftStore.loadDraftFromCache(campaignId.value)
+    if (rookieMode) {
+      // --- ROOKIE DRAFT MODE ---
+      const cacheMode = 'rookie'
+      const restored = await draftStore.loadDraftFromCache(campaignId.value, cacheMode)
 
-    if (restored && draftStore.draftOrder.length > 0) {
-      draftStore.allPlayers = allPlayers
-      draftStore.teams = teamsList
+      if (restored && draftStore.draftOrder.length > 0) {
+        // Reload rookies (draft prospects for this year)
+        const gameYear = campaign.gameYear ?? 1
+        const rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === gameYear)
+        draftStore.allPlayers = rookies
+        draftStore.teams = teamsList
 
-      // Resume: if user's turn start timer, otherwise autoplay AI picks
-      if (draftStore.isUserPick && !draftStore.isDraftComplete) {
-        draftStore.startTimer()
-      } else if (!draftStore.isDraftComplete) {
-        draftStore.autoPlayAIPicks(campaignId.value)
+        if (draftStore.isUserPick && !draftStore.isDraftComplete) {
+          draftStore.startTimer()
+        } else if (!draftStore.isDraftComplete) {
+          draftStore.autoPlayAIPicks(campaignId.value)
+        }
+      } else {
+        // Fresh rookie draft
+        const gameYear = campaign.gameYear ?? 1
+
+        // Get or generate rookies
+        let rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === gameYear)
+        if (rookies.length === 0) {
+          rookies = await generateAndSaveRookieClass(campaignId.value, gameYear)
+        }
+
+        // Load standings for draft order
+        const seasonYear = campaign.currentSeasonYear ?? 2025
+        const seasonData = await SeasonRepository.get(campaignId.value, seasonYear)
+        const standings = seasonData?.standings || { east: [], west: [] }
+
+        // Build draft order from standings
+        const draftOrderSlots = buildRookieDraftOrder(teamsList, standings, gameYear)
+
+        // Compute team directions for AI drafting
+        const context = buildContext({ standings, teams: teamsList, seasonPhase: 'offseason' })
+        const directions = {}
+        for (const team of teamsList) {
+          const teamRoster = allPlayers.filter(p => p.teamId === team.id)
+          directions[team.id] = analyzeTeamDirection(team, teamRoster, context)
+        }
+
+        draftStore.initializeRookieDraft(campaign, rookies, teamsList, draftOrderSlots, directions)
+        draftStore.saveDraftToCache(campaignId.value)
+
+        if (!draftStore.isUserPick) {
+          draftStore.autoPlayAIPicks(campaignId.value)
+        } else {
+          draftStore.startTimer()
+        }
       }
     } else {
-      draftStore.initializeDraft(campaign, allPlayers, teamsList)
-      draftStore.saveDraftToCache(campaignId.value)
+      // --- FANTASY DRAFT MODE (existing behavior) ---
+      const restored = await draftStore.loadDraftFromCache(campaignId.value)
 
-      // Start live draft — AI picks play with realistic delays
-      if (!draftStore.isUserPick) {
-        draftStore.autoPlayAIPicks(campaignId.value)
+      if (restored && draftStore.draftOrder.length > 0) {
+        draftStore.allPlayers = allPlayers
+        draftStore.teams = teamsList
+
+        if (draftStore.isUserPick && !draftStore.isDraftComplete) {
+          draftStore.startTimer()
+        } else if (!draftStore.isDraftComplete) {
+          draftStore.autoPlayAIPicks(campaignId.value)
+        }
       } else {
-        draftStore.startTimer()
+        draftStore.initializeDraft(campaign, allPlayers, teamsList)
+        draftStore.saveDraftToCache(campaignId.value)
+
+        if (!draftStore.isUserPick) {
+          draftStore.autoPlayAIPicks(campaignId.value)
+        } else {
+          draftStore.startTimer()
+        }
       }
     }
   } catch (e) {
@@ -265,7 +329,7 @@ onUnmounted(() => {
       <!-- Header Bar -->
       <header class="draft-header">
         <div class="header-left">
-          <h1 class="draft-title">FANTASY DRAFT</h1>
+          <h1 class="draft-title">{{ isRookieMode ? 'ROOKIE DRAFT' : 'FANTASY DRAFT' }}</h1>
           <span class="campaign-label">{{ campaignStore.currentCampaign?.name }}</span>
         </div>
         <div class="header-right">
@@ -337,7 +401,7 @@ onUnmounted(() => {
         <!-- Left Sidebar: User Roster -->
         <aside class="draft-sidebar roster-panel">
           <h3 class="sidebar-title">YOUR ROSTER</h3>
-          <div class="roster-count">{{ draftStore.userRoster.length }} / 15</div>
+          <div class="roster-count">{{ isRookieMode ? `${draftStore.userRoster.length} picks made` : `${draftStore.userRoster.length} / 15` }}</div>
 
           <div class="roster-positions">
             <div
@@ -513,7 +577,7 @@ onUnmounted(() => {
               <X :size="18" />
             </button>
           </div>
-          <div class="roster-count">{{ draftStore.userRoster.length }} / 15</div>
+          <div class="roster-count">{{ isRookieMode ? `${draftStore.userRoster.length} picks made` : `${draftStore.userRoster.length} / 15` }}</div>
 
           <div class="roster-positions">
             <div
@@ -582,6 +646,7 @@ onUnmounted(() => {
       :show="showCompleteModal"
       :user-roster="draftStore.userRoster"
       :finalizing="draftStore.isFinalizing"
+      :draft-mode="draftStore.draftMode"
       @continue="handleFinalize"
       @close="showCompleteModal = false"
     />

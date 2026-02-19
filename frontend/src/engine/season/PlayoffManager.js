@@ -734,7 +734,9 @@ export class PlayoffManager {
           result.opponent = {
             teamId: opponent.id,
             name: opponent.name,
+            city: opponent.city,
             abbreviation: opponent.abbreviation,
+            primaryColor: opponent.primary_color ?? opponent.primaryColor ?? '#6B7280',
             seed: opponentSeed,
             wins: opponentStanding.wins,
             losses: opponentStanding.losses,

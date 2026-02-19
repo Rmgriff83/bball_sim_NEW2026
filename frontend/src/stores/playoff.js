@@ -115,7 +115,8 @@ export const usePlayoffStore = defineStore('playoff', () => {
       }
 
       // Show season end modal if regular season just completed and bracket not yet generated
-      if (regularSeasonComplete.value && !bracketGenerated.value) {
+      // Don't show if already in offseason (user already handled this transition)
+      if (regularSeasonComplete.value && !bracketGenerated.value && campaign?.phase !== 'offseason') {
         showSeasonEndModal.value = true
       }
 

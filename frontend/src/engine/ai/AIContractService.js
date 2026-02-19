@@ -1,8 +1,8 @@
 // =============================================================================
 // AIContractService.js
 // =============================================================================
-// AI team contract decision logic (extensions, signings, releases).
-// Translated from PHP: backend/app/Services/AIContractService.php
+// AI team roster management: cuts, extensions, signings, backfill.
+// Cap-aware with draft capital assessment and team direction integration.
 // =============================================================================
 
 import { analyzeTeamDirection, buildContext } from './AITradeService';
@@ -10,14 +10,20 @@ import { analyzeTeamDirection, buildContext } from './AITradeService';
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
 // =============================================================================
+// CONSTANTS
+// =============================================================================
+
+const SALARY_CAP = 136_000_000;
+const LUXURY_TAX_LINE = 165_000_000;
+const MIN_ROSTER_SIZE = 10;
+const TARGET_ROSTER_SIZE = 14;
+const MAX_ROSTER_SIZE = 15;
+const MINIMUM_SEASON_ROSTER = 14;
+
+// =============================================================================
 // SALARY LOOKUP
 // =============================================================================
 
-/**
- * Calculate expected salary based on player rating.
- * @param {number} rating
- * @returns {number}
- */
 function calculateExpectedSalary(rating) {
   if (rating >= 90) return 40_000_000;
   if (rating >= 85) return 30_000_000;
@@ -64,12 +70,6 @@ function getTeamRoster(leaguePlayers, teamAbbr) {
   });
 }
 
-/**
- * Check if team has position need (fewer than 2 at a position).
- * @param {Array} roster
- * @param {string} position
- * @returns {boolean}
- */
 function hasPositionNeed(roster, position) {
   const positionCounts = { PG: 0, SG: 0, SF: 0, PF: 0, C: 0 };
 
@@ -83,13 +83,14 @@ function hasPositionNeed(roster, position) {
   return (positionCounts[position] ?? 0) < 2;
 }
 
-/**
- * Check if player matches team direction.
- * @param {number} age
- * @param {number} rating
- * @param {string} direction
- * @returns {boolean}
- */
+function getPositionCount(roster, position) {
+  let count = 0;
+  for (const player of roster) {
+    if ((player.position ?? 'SF') === position) count++;
+  }
+  return count;
+}
+
 function playerMatchesDirection(age, rating, direction) {
   switch (direction) {
     case 'rebuilding':
@@ -102,18 +103,213 @@ function playerMatchesDirection(age, rating, direction) {
 }
 
 // =============================================================================
-// EVALUATE RE-SIGNING
+// CAP & PAYROLL HELPERS
 // =============================================================================
 
-/**
- * Evaluate whether AI should re-sign a player.
- * @param {object} player
- * @param {string} direction
- * @param {object|null} stats - Season stats
- * @param {number} rosterCount - Current roster size
- * @returns {boolean}
- */
-export function evaluateResigning(player, direction, stats, rosterCount = 12) {
+function calculateTeamPayroll(roster) {
+  return roster.reduce((sum, p) => sum + (p.contractSalary ?? p.contract_salary ?? 0), 0);
+}
+
+function getCapSituation(roster) {
+  const payroll = calculateTeamPayroll(roster);
+  const capSpace = SALARY_CAP - payroll;
+  return {
+    payroll,
+    capSpace,
+    isOverCap: payroll > SALARY_CAP,
+    isInTax: payroll > LUXURY_TAX_LINE,
+    capRoom: Math.max(0, capSpace),
+  };
+}
+
+// =============================================================================
+// DRAFT CAPITAL ASSESSMENT
+// =============================================================================
+
+function assessDraftCapital(team, gameYear) {
+  const picks = team.draftPicks || [];
+  const ownedPicks = picks.filter(p => p.currentOwnerId === team.id);
+
+  let firstRoundNext2Years = 0;
+  let otherFirstRound = 0;
+  let secondRound = 0;
+
+  for (const pick of ownedPicks) {
+    const yearOffset = (pick.year ?? 0) - (gameYear ?? 1);
+    if (pick.round === 1) {
+      if (yearOffset >= 0 && yearOffset <= 1) {
+        firstRoundNext2Years++;
+      } else {
+        otherFirstRound++;
+      }
+    } else {
+      secondRound++;
+    }
+  }
+
+  const draftRichness = Math.min(1,
+    firstRoundNext2Years * 0.3 + otherFirstRound * 0.15 + secondRound * 0.05
+  );
+
+  return {
+    totalPicks: ownedPicks.length,
+    firstRoundPicks: firstRoundNext2Years + otherFirstRound,
+    draftRichness,
+  };
+}
+
+// =============================================================================
+// PLAYER CONTRACT VALUE EVALUATION
+// =============================================================================
+
+function evaluatePlayerContract(player, direction, stats, rosterContext) {
+  const rating = getPlayerRating(player);
+  const age = getPlayerAge(player);
+  const salary = player.contractSalary ?? player.contract_salary ?? 0;
+  const yearsRemaining = player.contractYearsRemaining ?? player.contract_years_remaining ?? 0;
+  const expectedSalary = calculateExpectedSalary(rating);
+
+  // Base value score (0-100)
+  let valueScore = rating * 0.6;
+
+  // Age adjustment
+  if (age > 30) valueScore -= (age - 30) * 5;
+  if (age < 25) valueScore += (25 - age) * 5;
+
+  // Stats bonus
+  if (stats && (stats.gamesPlayed ?? 0) >= 5) {
+    const ppg = (stats.points ?? 0) / stats.gamesPlayed;
+    if (ppg > 8) valueScore += 10;
+    else if (ppg > 4) valueScore += 5;
+  }
+
+  // Contract value comparison
+  const salaryRatio = expectedSalary > 0 ? salary / expectedSalary : 1;
+  if (salaryRatio <= 1.0) valueScore += 10;
+  else if (salaryRatio <= 1.3) { /* fair — no adjustment */ }
+  else if (salaryRatio <= 1.5) valueScore -= 10;
+  else valueScore -= 20;
+
+  // Direction fit
+  if (direction === 'rebuilding') {
+    if (age <= 25) valueScore += 10;
+    if (age >= 30 && rating < 80) valueScore -= 10;
+  } else if (direction === 'contending' || direction === 'title_contender' || direction === 'win_now') {
+    if (rating >= 78) valueScore += 10;
+  }
+
+  valueScore = Math.max(0, Math.min(100, valueScore));
+
+  // Cut decision
+  const { rosterSize, isInTax, topPlayerIds } = rosterContext;
+  const isTop3 = topPlayerIds.slice(0, 3).includes(player.id);
+  const isTop5 = topPlayerIds.slice(0, 5).includes(player.id);
+  const wouldDropBelowMin = rosterSize - 1 < MIN_ROSTER_SIZE;
+
+  let shouldCut = false;
+  let cutReason = null;
+
+  if (isTop3 || wouldDropBelowMin) {
+    // Never cut top 3 or if roster would be too small
+  } else if (valueScore < 35 && salary > 5_000_000 && yearsRemaining >= 2) {
+    shouldCut = true;
+    cutReason = 'low_value_overpaid';
+  } else if (direction === 'rebuilding' && age >= 31 && salary > 10_000_000 && yearsRemaining >= 2) {
+    shouldCut = true;
+    cutReason = 'rebuilding_veteran_cut';
+  } else if (isInTax && valueScore < 45 && !isTop5) {
+    shouldCut = true;
+    cutReason = 'luxury_tax_relief';
+  }
+
+  return { valueScore, shouldCut, cutReason };
+}
+
+// =============================================================================
+// PROCESS TEAM CUTS
+// =============================================================================
+
+export function processTeamCuts({
+  roster,
+  direction,
+  leaguePlayers,
+  teamAbbreviation,
+  getPlayerStatsFn = () => null,
+  draftCapital = { draftRichness: 0.5 },
+}) {
+  const cuts = [];
+  let updatedPlayers = [...leaguePlayers];
+  const capSituation = getCapSituation(roster);
+
+  // Sort roster by rating descending to identify top players
+  const sortedByRating = [...roster].sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
+  const topPlayerIds = sortedByRating.map(p => p.id);
+
+  const rosterContext = {
+    rosterSize: roster.length,
+    isInTax: capSituation.isInTax,
+    topPlayerIds,
+  };
+
+  // Determine max cuts based on direction and draft capital
+  let maxCuts;
+  if (direction === 'rebuilding' && draftCapital.draftRichness > 0.5) {
+    maxCuts = 3;
+  } else if (direction === 'rebuilding' || capSituation.isInTax) {
+    maxCuts = 2;
+  } else if (direction === 'contending' || direction === 'title_contender' || direction === 'win_now') {
+    maxCuts = 1;
+  } else {
+    maxCuts = 1; // ascending or default
+  }
+
+  // Evaluate all players and sort by value (worst first)
+  const evaluations = roster.map(player => {
+    const stats = getPlayerStatsFn(player.id);
+    const eval_ = evaluatePlayerContract(player, direction, stats, rosterContext);
+    return { player, ...eval_ };
+  });
+  evaluations.sort((a, b) => a.valueScore - b.valueScore);
+
+  let cutCount = 0;
+  for (const { player, shouldCut, cutReason } of evaluations) {
+    if (cutCount >= maxCuts) break;
+    if (rosterContext.rosterSize - cutCount <= MIN_ROSTER_SIZE) break;
+    if (!shouldCut) continue;
+
+    // Release the player
+    for (let i = 0; i < updatedPlayers.length; i++) {
+      if ((updatedPlayers[i].id ?? '') == player.id) {
+        updatedPlayers[i] = {
+          ...updatedPlayers[i],
+          isFreeAgent: 1,
+          teamId: null,
+          teamAbbreviation: 'FA',
+          team_abbreviation: 'FA',
+        };
+        break;
+      }
+    }
+
+    cuts.push({
+      team: teamAbbreviation,
+      player: getPlayerName(player),
+      playerId: player.id,
+      salary: player.contractSalary ?? player.contract_salary ?? 0,
+      reason: cutReason,
+    });
+
+    cutCount++;
+  }
+
+  return { cuts, updatedPlayers };
+}
+
+// =============================================================================
+// EVALUATE RE-SIGNING (cap-aware)
+// =============================================================================
+
+export function evaluateResigning(player, direction, stats, rosterCount = 12, capSituation = null, draftCapital = null) {
   const rating = getPlayerRating(player);
   const age = getPlayerAge(player);
   const salary = player.contractSalary ?? player.contract_salary ?? 0;
@@ -134,64 +330,82 @@ export function evaluateResigning(player, direction, stats, rosterCount = 12) {
   const matchesDirection = playerMatchesDirection(age, rating, direction);
 
   // Factor 4: Minimum roster needs
-  const needsPlayers = rosterCount < 12;
+  const needsPlayers = rosterCount < MINIMUM_SEASON_ROSTER;
+
+  // Cap-aware factors
+  if (capSituation) {
+    // In luxury tax: don't re-sign expensive role players
+    if (capSituation.isInTax && salary > 8_000_000 && rating < 75) {
+      return false;
+    }
+  }
+
+  // Draft-rich rebuilding teams are pickier
+  if (draftCapital && direction === 'rebuilding' && draftCapital.draftRichness > 0.6) {
+    if (age > 27 && rating < 82) {
+      return false;
+    }
+  }
 
   // Decision logic
   if (isMassivelyOverpaid && !needsPlayers) {
-    return false; // Let overpaid players walk unless desperate
+    return false;
   }
 
   if (!matchesDirection && rating < 78) {
-    return false; // Don't resign mismatched role players
+    return false;
   }
 
   return isPerformingWell || needsPlayers;
 }
 
 // =============================================================================
-// EVALUATE FREE AGENT SIGNING
+// EVALUATE FREE AGENT SIGNING (cap-aware)
 // =============================================================================
 
-/**
- * Evaluate whether AI should sign a free agent.
- * @param {object} player
- * @param {string} direction
- * @param {Array} teamRoster - Current roster (from allPlayers filtered)
- * @returns {boolean}
- */
-export function evaluateFreeAgentSigning(player, direction, teamRoster) {
+export function evaluateFreeAgentSigning(player, direction, teamRoster, capSituation = null) {
   const rating = getPlayerRating(player);
   const age = getPlayerAge(player);
   const position = player.position ?? 'SF';
 
   const hasNeed = hasPositionNeed(teamRoster, position);
   const meetsRatingThreshold = rating >= 65;
+  const posCount = getPositionCount(teamRoster, position);
+  const needsPlayers = teamRoster.length < MINIMUM_SEASON_ROSTER;
+
+  // Don't sign if team already has 3+ at this position (unless roster is short)
+  if (posCount >= 3 && !needsPlayers) return false;
+
+  // Any team below 14 should sign serviceable players regardless of direction
+  if (needsPlayers && rating >= 60) return true;
+
+  // Cap-aware: if in luxury tax, only sign minimum-salary caliber players
+  if (capSituation && capSituation.isInTax) {
+    return rating >= 70 && hasNeed;
+  }
 
   // Rebuilding teams want young players with upside
   if (direction === 'rebuilding') {
-    return age <= 26 && rating >= 68 && (hasNeed || teamRoster.length < 10);
+    if (age <= 24 && rating >= 62) return hasNeed;
+    return age <= 26 && rating >= 68 && hasNeed;
   }
 
-  // Contending teams want proven players
-  if (direction === 'contending') {
-    return rating >= 72 && hasNeed;
+  // Contending teams want proven players (sign vets even if over cap)
+  if (direction === 'contending' || direction === 'title_contender' || direction === 'win_now') {
+    if (rating >= 72 && hasNeed) return true;
+    if (rating >= 70 && teamRoster.length < TARGET_ROSTER_SIZE) return true;
+    return false;
   }
 
-  // Middling teams fill gaps
+  // Middling/ascending teams fill gaps
   return meetsRatingThreshold && hasNeed;
 }
 
 // =============================================================================
-// CALCULATE CONTRACT OFFER
+// CALCULATE CONTRACT OFFER (cap-aware)
 // =============================================================================
 
-/**
- * Calculate contract offer for a player.
- * @param {object} player
- * @param {string} direction
- * @returns {{ years: number, salary: number }}
- */
-export function calculateContractOffer(player, direction) {
+export function calculateContractOffer(player, direction, capSituation = null) {
   const rating = getPlayerRating(player);
   const age = getPlayerAge(player);
 
@@ -203,6 +417,17 @@ export function calculateContractOffer(player, direction) {
     baseSalary *= 1.1; // Youth premium
   } else if (age >= 32) {
     baseSalary *= 0.85; // Age discount
+  }
+
+  // Cap-aware salary adjustments
+  if (capSituation) {
+    if (capSituation.isInTax) {
+      baseSalary *= 0.80; // Tax teams offer discount
+    } else if (capSituation.isOverCap) {
+      baseSalary *= 0.90; // Over-cap teams offer slight discount
+    } else if (!capSituation.isOverCap && (direction === 'contending' || direction === 'title_contender' || direction === 'win_now')) {
+      baseSalary *= 1.10; // Contending teams with cap room pay premium
+    }
   }
 
   // Determine years based on age and direction
@@ -227,41 +452,33 @@ export function calculateContractOffer(player, direction) {
 }
 
 // =============================================================================
-// PROCESS TEAM EXTENSIONS
+// PROCESS TEAM EXTENSIONS (cap-aware)
 // =============================================================================
 
-/**
- * Process contract extensions for a single AI team.
- * @param {object} params
- * @param {Array} params.roster - Team's current roster
- * @param {string} params.direction - Team direction
- * @param {Array} params.leaguePlayers - Full league players array (will be mutated)
- * @param {string} params.teamAbbreviation
- * @param {function} [params.getPlayerStatsFn] - (playerId) => stats or null
- * @returns {{ extensions: Array, updatedPlayers: Array }}
- */
 export function processTeamExtensions({
   roster,
   direction,
   leaguePlayers,
   teamAbbreviation,
   getPlayerStatsFn = () => null,
+  capSituation = null,
+  draftCapital = null,
 }) {
   const extensions = [];
   const updatedPlayers = [...leaguePlayers];
 
   const expiringPlayers = roster.filter(player => {
     const years = player.contractYearsRemaining ?? player.contract_years_remaining ?? 0;
-    return years === 1;
+    return years === 0;
   });
 
   for (const player of expiringPlayers) {
     const playerStats = getPlayerStatsFn(player.id);
     const rosterCount = roster.length;
-    const shouldResign = evaluateResigning(player, direction, playerStats, rosterCount);
+    const shouldResign = evaluateResigning(player, direction, playerStats, rosterCount, capSituation, draftCapital);
 
     if (shouldResign) {
-      const contract = calculateContractOffer(player, direction);
+      const contract = calculateContractOffer(player, direction, capSituation);
 
       // Update player in league players array
       for (let i = 0; i < updatedPlayers.length; i++) {
@@ -269,7 +486,9 @@ export function processTeamExtensions({
           updatedPlayers[i] = {
             ...updatedPlayers[i],
             contractYearsRemaining: contract.years,
+            contract_years_remaining: contract.years,
             contractSalary: contract.salary,
+            contract_salary: contract.salary,
           };
           break;
         }
@@ -290,30 +509,26 @@ export function processTeamExtensions({
 }
 
 // =============================================================================
-// PROCESS TEAM SIGNINGS
+// PROCESS TEAM SIGNINGS (cap-aware, target 13)
 // =============================================================================
 
-/**
- * Process free agent signings for a single AI team.
- * @param {object} params
- * @param {string} params.direction
- * @param {Array} params.leaguePlayers - Full league players (will be mutated)
- * @param {string} params.teamAbbreviation
- * @param {number} params.currentRosterCount
- * @returns {{ signings: Array, updatedPlayers: Array }}
- */
 export function processTeamSignings({
   direction,
   leaguePlayers,
   teamAbbreviation,
+  teamId = null,
   currentRosterCount,
+  capSituation = null,
 }) {
   const signings = [];
   let updatedPlayers = [...leaguePlayers];
-  const maxSignings = Math.min(3, 12 - currentRosterCount);
+  const maxSignings = Math.min(4, TARGET_ROSTER_SIZE - currentRosterCount);
+
+  if (maxSignings <= 0) return { signings, updatedPlayers };
 
   // Get free agents
   let freeAgents = updatedPlayers.filter(player => {
+    if (player.isFreeAgent === 1 || player.is_free_agent === 1) return true;
     const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
     return !teamAbbr || teamAbbr === 'FA';
   });
@@ -327,19 +542,33 @@ export function processTeamSignings({
     if (signedCount >= maxSignings) break;
 
     const teamRoster = getTeamRoster(updatedPlayers, teamAbbreviation);
-    const shouldSign = evaluateFreeAgentSigning(player, direction, teamRoster);
+    const shouldSign = evaluateFreeAgentSigning(player, direction, teamRoster, capSituation);
 
     if (shouldSign) {
-      const contract = calculateContractOffer(player, direction);
+      const contract = calculateContractOffer(player, direction, capSituation);
+
+      // Cap check: skip if signing would push team over luxury tax (unless contending)
+      if (capSituation) {
+        const projectedPayroll = calculateTeamPayroll(teamRoster) + contract.salary;
+        const isContending = direction === 'contending' || direction === 'title_contender' || direction === 'win_now';
+        if (projectedPayroll > LUXURY_TAX_LINE && !isContending) {
+          continue;
+        }
+      }
 
       // Update player in league players array
       for (let i = 0; i < updatedPlayers.length; i++) {
         if ((updatedPlayers[i].id ?? '') == player.id) {
           updatedPlayers[i] = {
             ...updatedPlayers[i],
+            teamId,
             teamAbbreviation,
+            team_abbreviation: teamAbbreviation,
             contractYearsRemaining: contract.years,
+            contract_years_remaining: contract.years,
             contractSalary: contract.salary,
+            contract_salary: contract.salary,
+            isFreeAgent: 0,
           };
           break;
         }
@@ -362,31 +591,91 @@ export function processTeamSignings({
 }
 
 // =============================================================================
-// MAIN: RUN AI CONTRACT DECISIONS
+// ROSTER BACKFILL
 // =============================================================================
 
-/**
- * Process all AI teams' contract decisions for a campaign.
- * Called during offseason processing.
- *
- * @param {object} params
- * @param {Array} params.aiTeams - AI team objects (with abbreviation, id, etc.)
- * @param {Array} params.leaguePlayers - All league players
- * @param {object} params.standings - { east: [...], west: [...] }
- * @param {Array} params.allTeams - All teams for context
- * @param {string} params.seasonPhase
- * @param {function} [params.getPlayerStatsFn]
- * @returns {{ extensions: Array, signings: Array, updatedPlayers: Array }}
- */
-export function runAIContractDecisions({
+function backfillRoster({
+  leaguePlayers,
+  teamAbbreviation,
+  teamId,
+}) {
+  const signings = [];
+  let updatedPlayers = [...leaguePlayers];
+
+  const teamRoster = getTeamRoster(updatedPlayers, teamAbbreviation);
+  const slotsNeeded = MINIMUM_SEASON_ROSTER - teamRoster.length;
+
+  if (slotsNeeded <= 0) return { signings, updatedPlayers };
+
+  // Get free agents, sorted by rating
+  let freeAgents = updatedPlayers.filter(player => {
+    if (player.isDraftProspect) return false;
+    if (player.isFreeAgent === 1 || player.is_free_agent === 1) return true;
+    const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
+    return !teamAbbr || teamAbbr === 'FA';
+  });
+  freeAgents.sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
+
+  // Less selective — just need warm bodies
+  const minRating = 50;
+  let filled = 0;
+
+  for (const player of freeAgents) {
+    if (filled >= slotsNeeded) break;
+    if (getPlayerRating(player) < minRating) break;
+
+    // Minimum-salary 1-year contract
+    const salary = 2_000_000;
+    const years = 1;
+
+    for (let i = 0; i < updatedPlayers.length; i++) {
+      if ((updatedPlayers[i].id ?? '') == player.id) {
+        updatedPlayers[i] = {
+          ...updatedPlayers[i],
+          teamId,
+          teamAbbreviation,
+          team_abbreviation: teamAbbreviation,
+          contractYearsRemaining: years,
+          contract_years_remaining: years,
+          contractSalary: salary,
+          contract_salary: salary,
+          isFreeAgent: 0,
+        };
+        break;
+      }
+    }
+
+    signings.push({
+      team: teamAbbreviation,
+      player: getPlayerName(player),
+      playerId: player.id,
+      years,
+      salary,
+      totalValue: salary,
+      isBackfill: true,
+    });
+
+    filled++;
+  }
+
+  return { signings, updatedPlayers };
+}
+
+// =============================================================================
+// MAIN: RUN AI ROSTER MANAGEMENT
+// =============================================================================
+
+export function runAIRosterManagement({
   aiTeams,
   leaguePlayers,
   standings,
   allTeams,
   seasonPhase = 'offseason',
   getPlayerStatsFn = () => null,
+  gameYear = 1,
 }) {
   const results = {
+    cuts: [],
     extensions: [],
     signings: [],
   };
@@ -397,35 +686,150 @@ export function runAIContractDecisions({
   for (const team of aiTeams) {
     const teamRoster = getTeamRoster(currentPlayers, team.abbreviation);
     const direction = analyzeTeamDirection(team, teamRoster, context);
+    const draftCapital = assessDraftCapital(team, gameYear);
+    const capSituation = getCapSituation(teamRoster);
 
-    // Process re-signings first
-    const extensionResults = processTeamExtensions({
+    // Step 1: Evaluate & cut overpaid/underperforming players
+    const cutResults = processTeamCuts({
       roster: teamRoster,
       direction,
       leaguePlayers: currentPlayers,
       teamAbbreviation: team.abbreviation,
       getPlayerStatsFn,
+      draftCapital,
+    });
+    results.cuts.push(...cutResults.cuts);
+    currentPlayers = cutResults.updatedPlayers;
+
+    // Refresh roster and cap after cuts
+    const rosterAfterCuts = getTeamRoster(currentPlayers, team.abbreviation);
+    const capAfterCuts = getCapSituation(rosterAfterCuts);
+
+    // Step 2: Re-sign expiring players (cap-aware)
+    const extensionResults = processTeamExtensions({
+      roster: rosterAfterCuts,
+      direction,
+      leaguePlayers: currentPlayers,
+      teamAbbreviation: team.abbreviation,
+      getPlayerStatsFn,
+      capSituation: capAfterCuts,
+      draftCapital,
     });
     results.extensions.push(...extensionResults.extensions);
     currentPlayers = extensionResults.updatedPlayers;
 
-    // Process free agent signings if roster has room
-    const updatedRoster = getTeamRoster(currentPlayers, team.abbreviation);
-    if (updatedRoster.length < 12) {
+    // Step 3: Sign free agents (cap-aware, target 13)
+    const rosterAfterExtensions = getTeamRoster(currentPlayers, team.abbreviation);
+    const capAfterExtensions = getCapSituation(rosterAfterExtensions);
+
+    if (rosterAfterExtensions.length < TARGET_ROSTER_SIZE) {
       const signingResults = processTeamSignings({
         direction,
         leaguePlayers: currentPlayers,
         teamAbbreviation: team.abbreviation,
-        currentRosterCount: updatedRoster.length,
+        teamId: team.id,
+        currentRosterCount: rosterAfterExtensions.length,
+        capSituation: capAfterExtensions,
       });
       results.signings.push(...signingResults.signings);
       currentPlayers = signingResults.updatedPlayers;
     }
+
+    // Step 4: Backfill if roster below 14 players (retirement + cuts + releases)
+    const rosterAfterSignings = getTeamRoster(currentPlayers, team.abbreviation);
+    if (rosterAfterSignings.length < MINIMUM_SEASON_ROSTER) {
+      const backfillResults = backfillRoster({
+        leaguePlayers: currentPlayers,
+        teamAbbreviation: team.abbreviation,
+        teamId: team.id,
+      });
+      results.signings.push(...backfillResults.signings);
+      currentPlayers = backfillResults.updatedPlayers;
+    }
   }
 
   return {
+    cuts: results.cuts,
     extensions: results.extensions,
     signings: results.signings,
     updatedPlayers: currentPlayers,
   };
 }
+
+// =============================================================================
+// ENSURE MINIMUM ROSTERS (post-release safety net)
+// =============================================================================
+
+/**
+ * After expired contracts are released, backfill every AI team to at least
+ * MINIMUM_SEASON_ROSTER (14) players so no team enters the season short-handed.
+ *
+ * @param {Array} aiTeams - AI team objects
+ * @param {Array} leaguePlayers - all players (already mutated by prior steps)
+ * @returns {{ signings: Array, updatedPlayers: Array }}
+ */
+export function ensureMinimumRosters({ aiTeams, leaguePlayers }) {
+  const signings = [];
+  let currentPlayers = [...leaguePlayers];
+
+  for (const team of aiTeams) {
+    const teamRoster = getTeamRoster(currentPlayers, team.abbreviation);
+    const slotsNeeded = MINIMUM_SEASON_ROSTER - teamRoster.length;
+
+    if (slotsNeeded <= 0) continue;
+
+    // Get free agents, sorted by rating descending
+    let freeAgents = currentPlayers.filter(player => {
+      if (player.isDraftProspect) return false;
+      if (player.isFreeAgent === 1 || player.is_free_agent === 1) return true;
+      const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
+      return !teamAbbr || teamAbbr === 'FA';
+    });
+    freeAgents.sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
+
+    let filled = 0;
+    for (const player of freeAgents) {
+      if (filled >= slotsNeeded) break;
+
+      // Accept anyone rated 50+ to ensure roster fills
+      if (getPlayerRating(player) < 50) break;
+
+      const salary = 2_000_000;
+      const years = 1;
+
+      for (let i = 0; i < currentPlayers.length; i++) {
+        if ((currentPlayers[i].id ?? '') == player.id) {
+          currentPlayers[i] = {
+            ...currentPlayers[i],
+            teamId: team.id,
+            teamAbbreviation: team.abbreviation,
+            team_abbreviation: team.abbreviation,
+            contractYearsRemaining: years,
+            contract_years_remaining: years,
+            contractSalary: salary,
+            contract_salary: salary,
+            isFreeAgent: 0,
+          };
+          break;
+        }
+      }
+
+      signings.push({
+        team: team.abbreviation,
+        player: getPlayerName(player),
+        playerId: player.id,
+        years,
+        salary,
+        totalValue: salary,
+        isBackfill: true,
+      });
+
+      filled++;
+    }
+  }
+
+  return { signings, updatedPlayers: currentPlayers };
+}
+
+// Backward compatibility alias
+export const runAIContractDecisions = runAIRosterManagement;

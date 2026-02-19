@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed, toRaw } from 'vue'
 import { set, get, del } from 'idb-keyval'
-import { selectAIPick } from '@/services/AIDraftService'
+import { selectAIPick, selectRookieDraftPick } from '@/services/AIDraftService'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { initializeAllTeamLineups } from '@/engine/ai/AILineupService'
+import { assignRookieContract, assignUndraftedContract } from '@/engine/draft/RookieContractService'
+import { rollDraftPicks } from '@/engine/draft/DraftPickService'
 
 export const useDraftStore = defineStore('draft', () => {
   // State
@@ -28,6 +30,8 @@ export const useDraftStore = defineStore('draft', () => {
   const sortDir = ref('desc')
   const lastPickResult = ref(null)   // last completed pick for toast
   const skipRequested = ref(false)   // signal to break out of live play loop
+  const draftMode = ref('fantasy')   // 'fantasy' | 'rookie'
+  const teamDirections = ref({})     // map of teamId → direction string
 
   let timerInterval = null
 
@@ -94,8 +98,13 @@ export const useDraftStore = defineStore('draft', () => {
   })
 
   // Generate a realistic AI thinking delay (in ms)
-  // Early rounds: 5-12s, mid rounds: 3-8s, late rounds: 2-5s
   function getRealisticDelay(round) {
+    if (draftMode.value === 'rookie') {
+      // Rookie draft: 2 rounds only
+      if (round === 1) return 5000 + Math.random() * 7000    // 5-12s
+      return 3000 + Math.random() * 5000                      // 3-8s
+    }
+    // Fantasy draft
     if (round <= 3) return 5000 + Math.random() * 7000       // 5-12s
     if (round <= 8) return 3000 + Math.random() * 5000        // 3-8s
     return 2000 + Math.random() * 3000                        // 2-5s
@@ -213,13 +222,30 @@ export const useDraftStore = defineStore('draft', () => {
     const pick = currentPick.value
     if (!pick) return
 
-    const teamPicks = (teamRosters.value[pick.teamId] || [])
-    const selected = selectAIPick(
-      availablePlayers.value,
-      teamPicks,
-      pick.round,
-      15
-    )
+    let selected
+
+    if (draftMode.value === 'rookie') {
+      // Rookie draft: direction-aware AI picking
+      const direction = teamDirections.value[pick.teamId] || 'ascending'
+      // Build roster context: existing team roster + already drafted players for this team
+      const existingRoster = (teamRosters.value[pick.teamId] || [])
+      selected = selectRookieDraftPick(
+        availablePlayers.value,
+        existingRoster,
+        direction,
+        pick.pick,
+        pick.round
+      )
+    } else {
+      // Fantasy draft: existing behavior
+      const teamPicks = (teamRosters.value[pick.teamId] || [])
+      selected = selectAIPick(
+        availablePlayers.value,
+        teamPicks,
+        pick.round,
+        15
+      )
+    }
 
     if (selected) {
       recordPick(selected)
@@ -380,13 +406,16 @@ export const useDraftStore = defineStore('draft', () => {
 
   async function saveDraftToCache(campaignId) {
     try {
-      await set(`draft_${campaignId}`, JSON.parse(JSON.stringify({
+      const cacheKey = draftMode.value === 'rookie' ? `rookie_draft_${campaignId}` : `draft_${campaignId}`
+      await set(cacheKey, JSON.parse(JSON.stringify({
         draftResults: toRaw(draftResults.value),
         currentPickIndex: currentPickIndex.value,
         draftOrder: toRaw(draftOrder.value),
         isDraftComplete: isDraftComplete.value,
         userTeamId: userTeamId.value,
         userTeamAbbr: userTeamAbbr.value,
+        draftMode: draftMode.value,
+        teamDirections: toRaw(teamDirections.value),
         _savedAt: new Date().toISOString(),
       })))
     } catch (e) {
@@ -394,9 +423,10 @@ export const useDraftStore = defineStore('draft', () => {
     }
   }
 
-  async function loadDraftFromCache(campaignId) {
+  async function loadDraftFromCache(campaignId, mode = 'fantasy') {
     try {
-      const cached = await get(`draft_${campaignId}`)
+      const cacheKey = mode === 'rookie' ? `rookie_draft_${campaignId}` : `draft_${campaignId}`
+      const cached = await get(cacheKey)
       if (!cached) return false
 
       draftResults.value = cached.draftResults || []
@@ -405,6 +435,8 @@ export const useDraftStore = defineStore('draft', () => {
       isDraftComplete.value = cached.isDraftComplete || false
       userTeamId.value = cached.userTeamId
       userTeamAbbr.value = cached.userTeamAbbr
+      draftMode.value = cached.draftMode || mode
+      teamDirections.value = cached.teamDirections || {}
       isDraftActive.value = !isDraftComplete.value
 
       return true
@@ -417,6 +449,7 @@ export const useDraftStore = defineStore('draft', () => {
   async function clearDraftCache(campaignId) {
     try {
       await del(`draft_${campaignId}`)
+      await del(`rookie_draft_${campaignId}`)
     } catch (e) {
       console.warn('Failed to clear draft cache:', e)
     }
@@ -515,6 +548,146 @@ export const useDraftStore = defineStore('draft', () => {
     }
   }
 
+  /**
+   * Initialize a rookie draft with pre-built draft order and team directions.
+   */
+  function initializeRookieDraft(campaign, rookies, teamsList, draftOrderSlots, directions) {
+    draftMode.value = 'rookie'
+    allPlayers.value = rookies
+    teams.value = teamsList
+    userTeamId.value = campaign.teamId || campaign.team?.id || campaign.team_id
+    userTeamAbbr.value = campaign.team?.abbreviation || campaign.teamAbbreviation
+    teamDirections.value = directions || {}
+
+    draftOrder.value = draftOrderSlots
+    draftResults.value = []
+    currentPickIndex.value = 0
+    isDraftActive.value = true
+    isDraftComplete.value = false
+    isSimming.value = false
+    isAutoPlaying.value = false
+    lastPickResult.value = null
+    skipRequested.value = false
+  }
+
+  /**
+   * Finalize a rookie draft: assign contracts, handle undrafted, roll picks.
+   */
+  async function finalizeRookieDraft(campaignId) {
+    isFinalizing.value = true
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+
+      const allTeams = await TeamRepository.getAllForCampaign(campaignId)
+      const gameYear = campaign.gameYear ?? 1
+
+      // 1. Assign drafted rookies to teams with rookie-scale contracts
+      const playerUpdates = []
+      for (const result of draftResults.value) {
+        const player = allPlayers.value.find(p => p.id === result.playerId)
+        if (!player) continue
+
+        const team = allTeams.find(t => t.id === result.teamId)
+        if (!team) continue
+
+        const plain = { ...toRaw(player) }
+        plain.teamId = team.id
+        plain.teamAbbreviation = team.abbreviation
+        plain.isFreeAgent = 0
+        plain.isDraftProspect = false
+        plain.campaignId = campaignId
+
+        // Apply rookie contract
+        const contract = assignRookieContract(result.pick)
+        Object.assign(plain, contract)
+
+        playerUpdates.push(plain)
+      }
+
+      // 2. Mark undrafted rookies as regular free agents with minimum contracts
+      const draftedIds = new Set(draftResults.value.map(r => r.playerId))
+      const allCampaignPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+
+      for (const player of allCampaignPlayers) {
+        if (player.isDraftProspect && player.draftYear === gameYear && !draftedIds.has(player.id)) {
+          const plain = { ...toRaw(player) }
+          plain.isDraftProspect = false
+          plain.isFreeAgent = 1
+          plain.teamId = null
+          plain.teamAbbreviation = 'FA'
+          plain.campaignId = campaignId
+
+          // Minimum contract for undrafted
+          const contract = assignUndraftedContract()
+          Object.assign(plain, contract)
+
+          playerUpdates.push(plain)
+        }
+      }
+
+      if (playerUpdates.length > 0) {
+        await PlayerRepository.saveBulk(playerUpdates)
+      }
+
+      // 3. Re-initialize team lineups (new players on rosters)
+      const allPlayersUpdated = await PlayerRepository.getAllForCampaign(campaignId)
+      const getTeamRosterFn = (teamAbbr) => {
+        return allPlayersUpdated.filter(p => {
+          const abbr = p.teamAbbreviation ?? p.team_abbreviation ?? ''
+          return abbr === teamAbbr
+        })
+      }
+
+      const lineupResults = initializeAllTeamLineups({
+        aiTeams: allTeams,
+        getTeamRosterFn,
+      })
+
+      for (const team of allTeams) {
+        const teamKey = team.id ?? team.abbreviation
+        const lineupData = lineupResults[teamKey]
+        if (lineupData) {
+          await TeamRepository.updateLineup(campaignId, team.id, {
+            starters: lineupData.starters,
+            subStrategy: lineupData.subStrategy,
+          })
+        }
+      }
+
+      // Save user lineup to campaign settings
+      const userTeam = allTeams.find(t => t.id === campaign.teamId)
+      if (userTeam) {
+        const userLineupData = lineupResults[userTeam.id ?? userTeam.abbreviation]
+        if (userLineupData) {
+          campaign.settings = campaign.settings ?? {}
+          campaign.settings.lineup = {
+            starters: userLineupData.starters,
+            target_minutes: {},
+            rotation: [],
+          }
+        }
+      }
+
+      // 4. Consume used picks and generate year+5 picks
+      await rollDraftPicks(allTeams, campaignId, gameYear, gameYear + 5)
+
+      // 5. Mark rookie draft completed for this year
+      campaign[`rookieDraftCompleted_${gameYear}`] = true
+      await CampaignRepository.save(campaign)
+
+      // 6. Clear draft cache
+      await clearDraftCache(campaignId)
+
+      return true
+    } catch (e) {
+      console.error('Failed to finalize rookie draft:', e)
+      throw e
+    } finally {
+      isFinalizing.value = false
+    }
+  }
+
   function toggleSort(field) {
     if (sortField.value === field) {
       sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc'
@@ -544,6 +717,8 @@ export const useDraftStore = defineStore('draft', () => {
     sortDir.value = 'desc'
     lastPickResult.value = null
     skipRequested.value = false
+    draftMode.value = 'fantasy'
+    teamDirections.value = {}
     stopTimer()
   }
 
@@ -567,6 +742,8 @@ export const useDraftStore = defineStore('draft', () => {
     sortField,
     sortDir,
     lastPickResult,
+    draftMode,
+    teamDirections,
     // Getters
     currentPick,
     isUserPick,
@@ -591,6 +768,8 @@ export const useDraftStore = defineStore('draft', () => {
     loadDraftFromCache,
     clearDraftCache,
     finalizeDraft,
+    initializeRookieDraft,
+    finalizeRookieDraft,
     toggleSort,
     $reset,
   }

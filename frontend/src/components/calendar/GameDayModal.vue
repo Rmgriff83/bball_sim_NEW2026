@@ -256,6 +256,11 @@ async function simulateToGame() {
       })
     }
 
+    // Show series result modal if series completed
+    if (response.playoffUpdate) {
+      playoffStore.handlePlayoffUpdate(response.playoffUpdate)
+    }
+
     // Refresh data
     await Promise.all([
       campaignStore.fetchCampaign(props.campaignId, true),
@@ -298,8 +303,13 @@ async function simToEndOfGame() {
         awayScore: response.result.away_score,
         gameId: props.game.id,
         campaignId: props.campaignId,
-        isUserHome: props.game.is_user_home
+        isUserHome: isUserHome.value
       })
+    }
+
+    // Show series result modal if series completed
+    if (response.playoffUpdate) {
+      playoffStore.handlePlayoffUpdate(response.playoffUpdate)
     }
 
     await Promise.all([

@@ -113,6 +113,11 @@ const routes = [
         path: 'play',
         name: 'play',
         component: lazyLoad(() => import('@/views/game/GameView.vue'))
+      },
+      {
+        path: 'scouting',
+        name: 'scouting',
+        component: lazyLoad(() => import('@/views/draft/ScoutingView.vue'))
       }
     ]
   }

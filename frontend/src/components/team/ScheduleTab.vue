@@ -4,9 +4,11 @@ import { useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/game'
 import { useCampaignStore } from '@/stores/campaign'
 import { usePlayoffStore } from '@/stores/playoff'
+import { useTeamStore } from '@/stores/team'
+import { useToastStore } from '@/stores/toast'
 import { LoadingSpinner } from '@/components/ui'
 import GameDayModal from '@/components/calendar/GameDayModal.vue'
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, FastForward } from 'lucide-vue-next'
 
 const props = defineProps({
   campaignId: {
@@ -19,6 +21,8 @@ const router = useRouter()
 const gameStore = useGameStore()
 const campaignStore = useCampaignStore()
 const playoffStore = usePlayoffStore()
+const teamStore = useTeamStore()
+const toastStore = useToastStore()
 
 const campaign = computed(() => campaignStore.currentCampaign)
 const userTeam = computed(() => campaign.value?.team)
@@ -399,6 +403,47 @@ watch(focusDate, () => {
     goToGameDate(formatDateKey(focusDate.value))
   }
 })
+
+// Sim Season
+const remainingSeasonGames = computed(() => {
+  const allGames = gameStore.games || []
+  const remaining = allGames.filter(g => !g.is_complete && !g.is_playoff)
+  const userGames = remaining.filter(g => g.is_user_game)
+  const aiGames = remaining.filter(g => !g.is_user_game)
+  return { totalGames: remaining.length, userGames: userGames.length, aiGames: aiGames.length }
+})
+
+const simSeasonAvailable = computed(() => {
+  return remainingSeasonGames.value.totalGames > 0
+    && !playoffStore.isInPlayoffs
+    && !gameStore.simulating
+    && !gameStore.backgroundSimulating
+})
+
+async function handleSimSeason() {
+  // Validate lineup
+  if (!teamStore.isLineupComplete) {
+    toastStore.showError('Your starting lineup is incomplete. Set 5 starters before simming.')
+    return
+  }
+  const starters = teamStore.starterPlayers || []
+  const injuredStarters = starters.filter(p => p && (p.is_injured || p.isInjured))
+  if (injuredStarters.length > 0) {
+    toastStore.showError('You have injured starters. Adjust your lineup before simming.')
+    return
+  }
+  const totalMins = teamStore.totalTargetMinutes
+  if (totalMins !== 200) {
+    toastStore.showError(`Rotation minutes total ${totalMins} — must equal 200. Adjust before simming.`)
+    return
+  }
+
+  try {
+    await gameStore.simulateRemainingSeason(props.campaignId)
+  } catch (err) {
+    toastStore.showError('Failed to simulate remaining season')
+  }
+}
 </script>
 
 <template>
@@ -541,6 +586,41 @@ watch(focusDate, () => {
             <span>Next</span>
             <ChevronRight :size="20" />
           </button>
+        </div>
+      </div>
+
+      <!-- Sim Season Button -->
+      <div v-if="simSeasonAvailable" class="sim-season-section">
+        <button
+          class="sim-season-btn"
+          :disabled="gameStore.backgroundSimulating"
+          @click="handleSimSeason"
+        >
+          <FastForward :size="16" class="sim-season-icon" />
+          <div class="sim-season-text">
+            <span class="sim-season-label">SIM REMAINING SEASON</span>
+            <span class="sim-season-detail">{{ remainingSeasonGames.userGames }} user + {{ remainingSeasonGames.aiGames }} AI games</span>
+          </div>
+        </button>
+      </div>
+
+      <!-- Sim Progress -->
+      <div v-if="gameStore.backgroundSimulating" class="sim-progress-section">
+        <span class="sim-progress-text">
+          Simulating league games...
+          <template v-if="gameStore.simulationProgress">
+            {{ gameStore.simulationProgress.completed }}/{{ gameStore.simulationProgress.total }}
+          </template>
+        </span>
+        <div class="sim-progress-bar">
+          <div
+            class="sim-progress-fill"
+            :style="{
+              width: gameStore.simulationProgress
+                ? `${(gameStore.simulationProgress.completed / gameStore.simulationProgress.total) * 100}%`
+                : '0%'
+            }"
+          ></div>
         </div>
       </div>
     </div>
@@ -1105,5 +1185,90 @@ watch(focusDate, () => {
 
 .expand-toggle-btn:hover {
   color: var(--color-text-primary);
+}
+
+/* Sim Season Section */
+.sim-season-section {
+  margin-top: 16px;
+}
+
+.sim-season-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sim-season-btn:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  border-color: rgba(255, 140, 0, 0.3);
+}
+
+.sim-season-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sim-season-icon {
+  color: #ff8c00;
+  flex-shrink: 0;
+}
+
+.sim-season-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.sim-season-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sim-season-detail {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+}
+
+/* Sim Progress */
+.sim-progress-section {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sim-progress-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.sim-progress-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.sim-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff8c00, #ffd700);
+  border-radius: 2px;
+  transition: width 0.3s ease;
 }
 </style>

@@ -10,6 +10,7 @@ import { useToastStore } from '@/stores/toast'
 import { usePlayoffStore } from '@/stores/playoff'
 import { useTradeStore } from '@/stores/trade'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
+import { useFinanceStore } from '@/stores/finance'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { LoadingSpinner, BaseModal } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
@@ -18,8 +19,9 @@ import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
-import { advanceToNextSeason } from '@/engine/campaign/CampaignManager'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap } from 'lucide-vue-next'
+import { enterOffseason, startNewSeason } from '@/engine/campaign/CampaignManager'
+import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Eye } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,8 +33,10 @@ const toastStore = useToastStore()
 const playoffStore = usePlayoffStore()
 const tradeStore = useTradeStore()
 const breakingNewsStore = useBreakingNewsStore()
+const financeStore = useFinanceStore()
 
 const showSimulateModal = ref(false)
+const simSeasonMode = ref(false)
 const lastSimResult = ref(null) // Last simulated user game result shown during background sim
 const showTradeProposalModal = ref(false)
 const currentProposal = ref(null)
@@ -48,6 +52,7 @@ const showRosterWarningModal = ref(false)
 const rosterWarningMessage = ref('')
 const rosterWarningHint = ref('')
 const advancingToNextSeason = ref(false)
+const offseasonData = ref(null) // Stores AI contract results + expiring players after entering offseason
 
 // Only show loading if we don't have cached campaign data
 const loading = ref(!campaignStore.currentCampaign)
@@ -117,6 +122,44 @@ const teamRank = computed(() => {
 const conferenceLabel = computed(() => {
   if (!team.value?.conference) return ''
   return team.value.conference === 'east' ? 'EAST' : 'WEST'
+})
+
+// Offseason state
+const isOffseason = computed(() => campaign.value?.phase === 'offseason')
+
+const lastSeasonChampion = computed(() => {
+  const teams = campaign.value?.allTeams
+  if (!teams) return null
+  const year = campaign.value?.currentSeasonYear ?? 2025
+  for (const t of teams) {
+    const last = t.seasonHistory?.[t.seasonHistory.length - 1]
+    if (last?.champion && last.year === year) return t
+  }
+  return null
+})
+
+const userSeasonHistory = computed(() => {
+  const userTeam = campaign.value?.allTeams?.find(t => t.id === campaign.value?.teamId)
+  if (!userTeam?.seasonHistory?.length) return null
+  return userTeam.seasonHistory[userTeam.seasonHistory.length - 1]
+})
+
+const releasedUserPlayers = computed(() => offseasonData.value?.releasedUserPlayers || [])
+
+const rookieDraftCompleted = computed(() => {
+  const c = campaign.value
+  const year = c?.gameYear
+  return c?.[`rookieDraftCompleted_${year}`] === true
+})
+
+const aiTransactionSummary = computed(() => {
+  if (!offseasonData.value?.aiContractResults) return null
+  const { cuts, extensions, signings } = offseasonData.value.aiContractResults
+  return {
+    cuts: cuts?.length || 0,
+    reSignings: extensions?.length || 0,
+    freeAgentSignings: signings?.length || 0,
+  }
 })
 
 // Check if user's team has been eliminated from playoffs
@@ -220,6 +263,15 @@ const nextGame = computed(() => gameStore.nextUserGame)
 
 // Check if next game is in progress
 const isGameInProgress = computed(() => nextGame.value?.is_in_progress || false)
+
+// Remaining regular season games for "Sim Season" feature
+const remainingSeasonGames = computed(() => {
+  const allGames = gameStore.games || []
+  const remaining = allGames.filter(g => !g.is_complete && !g.is_playoff)
+  const userGames = remaining.filter(g => g.is_user_game)
+  const aiGames = remaining.filter(g => !g.is_user_game)
+  return { totalGames: remaining.length, userGames: userGames.length, aiGames: aiGames.length }
+})
 
 // Get current scores for in-progress game
 const inProgressScores = computed(() => {
@@ -415,8 +467,8 @@ async function handleSeasonEndContinue() {
       toastStore.showError('Failed to generate bracket')
     }
   } else {
-    // Team didn't qualify - advance to next season
-    await _advanceToNextSeasonFlow()
+    // Team didn't qualify - enter offseason
+    await handleEnterOffseason()
   }
 }
 
@@ -476,25 +528,51 @@ function handleChampionshipClose() {
   playoffStore.closeChampionshipModal()
 }
 
-// Handle advancing to next season from offseason card
-async function handleAdvanceToNextSeason() {
+// Handle entering the offseason (after champion declared or non-qualifying)
+async function handleEnterOffseason() {
   advancingToNextSeason.value = true
+  const loadingToastId = toastStore.showLoading('Processing offseason...')
   try {
-    await _advanceToNextSeasonFlow()
+    const result = await enterOffseason(campaignId.value)
+
+    // Store offseason data for the UI hub
+    offseasonData.value = {
+      aiContractResults: result.aiContractResults,
+      releasedUserPlayers: result.releasedUserPlayers,
+    }
+
+    // Reset playoff state and breaking news
+    playoffStore.$reset()
+    breakingNewsStore.clear()
+    financeStore.invalidate()
+
+    // Refresh campaign data (phase is now 'offseason')
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value, true),
+      teamStore.fetchTeam(campaignId.value, { force: true }),
+    ])
+
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showSuccess('Welcome to the offseason!')
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError('Failed to enter offseason')
+    console.error('Failed to enter offseason:', err)
   } finally {
     advancingToNextSeason.value = false
   }
 }
 
-// Advance to the next season (used after championship or season end for non-qualifying teams)
-async function _advanceToNextSeasonFlow() {
-  const loadingToastId = toastStore.showLoading('Advancing to next season...')
+// Handle starting a new season from offseason hub
+async function handleStartNewSeason() {
+  advancingToNextSeason.value = true
+  const loadingToastId = toastStore.showLoading('Starting new season...')
   try {
-    await advanceToNextSeason(campaignId.value)
+    await startNewSeason(campaignId.value)
 
-    // Reset playoff state and breaking news for the new season
-    playoffStore.$reset()
-    breakingNewsStore.clear()
+    // Clear offseason data
+    offseasonData.value = null
+    financeStore.invalidate()
 
     // Refresh all data from the new season
     await Promise.all([
@@ -508,8 +586,38 @@ async function _advanceToNextSeasonFlow() {
     toastStore.showSuccess('New season has begun!')
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Failed to advance to next season')
-    console.error('Failed to advance to next season:', err)
+    toastStore.showError('Failed to start new season')
+    console.error('Failed to start new season:', err)
+  } finally {
+    advancingToNextSeason.value = false
+  }
+}
+
+// Handle "Sim Offseason" one-click flow (auto-drafts + starts new season)
+async function handleSimOffseason() {
+  advancingToNextSeason.value = true
+  const loadingToastId = toastStore.showLoading('Simulating offseason...')
+  try {
+    await simFullOffseason(campaignId.value)
+
+    offseasonData.value = null
+    financeStore.invalidate()
+
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value, true),
+      teamStore.fetchTeam(campaignId.value, { force: true }),
+      gameStore.fetchGames(campaignId.value, { force: true }),
+      leagueStore.fetchStandings(campaignId.value, { force: true }),
+    ])
+
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showSuccess('Offseason complete! New season has begun!')
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError('Failed to simulate offseason')
+    console.error('Failed to sim offseason:', err)
+  } finally {
+    advancingToNextSeason.value = false
   }
 }
 
@@ -518,7 +626,7 @@ function navigateToRoster() {
 }
 
 function navigateToScout() {
-  router.push(`/campaign/${campaignId.value}/team`)
+  router.push(`/campaign/${campaignId.value}/scouting`)
 }
 
 function openPlayerDetails() {
@@ -753,6 +861,11 @@ async function handleSimToEnd() {
 // Watch for background simulation completion to refresh data
 watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
   if (oldVal === true && newVal === false) {
+    // Close sim-season modal if open
+    if (simSeasonMode.value) {
+      showSimulateModal.value = false
+      simSeasonMode.value = false
+    }
     // Clear last sim result so the next game card shows the upcoming game
     lastSimResult.value = null
 
@@ -955,6 +1068,27 @@ async function handleFinishSeason() {
   }
 }
 
+async function handleConfirmSimSeason() {
+  if (!isLineupComplete.value) {
+    showSimulateModal.value = false
+    simSeasonMode.value = false
+    pendingGameAction.value = 'simulate'
+    showLineupWarningModal.value = true
+    return
+  }
+  if (!validateRosterForGame()) {
+    showSimulateModal.value = false
+    simSeasonMode.value = false
+    return
+  }
+  try {
+    await gameStore.simulateRemainingSeason(campaignId.value)
+    // Modal stays open during simulation — backgroundSimulating watcher handles refresh
+  } catch (err) {
+    toastStore.showError('Failed to simulate remaining season')
+  }
+}
+
 async function handleSimToNextPlayoffRound() {
   try {
     await gameStore.simulateToNextPlayoffRound(campaignId.value)
@@ -974,6 +1108,7 @@ async function handleSimToNextPlayoffRound() {
 
 function handleCloseSimulateModal() {
   showSimulateModal.value = false
+  simSeasonMode.value = false
   gameStore.clearSimulatePreview()
 }
 </script>
@@ -1194,8 +1329,8 @@ function handleCloseSimulateModal() {
         </div>
       </section>
 
-      <!-- Offseason Card (champion declared, waiting to advance) -->
-      <section v-else-if="playoffStore.champion" class="next-game-card glass-card-nebula offseason-card">
+      <!-- Offseason Hub (interactive offseason period) -->
+      <section v-else-if="isOffseason" class="next-game-card glass-card-nebula offseason-card">
         <div class="next-game-header">
           <div class="next-game-label-row">
             <h3 class="next-game-label">OFFSEASON</h3>
@@ -1205,7 +1340,100 @@ function handleCloseSimulateModal() {
         <div class="next-game-content">
           <div v-if="advancingToNextSeason" class="next-game-loading">
             <LoadingSpinner size="md" />
-            <span class="next-game-loading-text">Advancing to next season...</span>
+            <span class="next-game-loading-text">Starting new season...</span>
+          </div>
+          <template v-else>
+            <!-- Champion Banner -->
+            <div v-if="lastSeasonChampion" class="offseason-champion-banner">
+              <Trophy :size="20" class="offseason-champion-icon" />
+              <span class="offseason-champion-text">
+                {{ lastSeasonChampion.city }} {{ lastSeasonChampion.name }} are NBA Champions
+              </span>
+            </div>
+
+            <!-- User Season Summary -->
+            <div class="offseason-summary">
+              <div class="offseason-stat">
+                <span class="offseason-stat-label">Final Record</span>
+                <span class="offseason-stat-value offseason-record-row">
+                  <span
+                    class="offseason-team-badge"
+                    :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
+                  >{{ team?.abbreviation }}</span>
+                  {{ userSeasonHistory ? `${userSeasonHistory.wins}-${userSeasonHistory.losses}` : `${wins}-${losses}` }}
+                </span>
+              </div>
+              <div class="offseason-stat">
+                <span class="offseason-stat-label">Conference Rank</span>
+                <span class="offseason-stat-value">#{{ userSeasonHistory?.conferenceRank || teamRank }} {{ conferenceLabel }}</span>
+              </div>
+            </div>
+
+            <!-- AI Transactions Summary -->
+            <div v-if="aiTransactionSummary" class="offseason-transactions">
+              <span class="offseason-transactions-text">
+                League transactions: {{ aiTransactionSummary.reSignings }} re-signed, {{ aiTransactionSummary.freeAgentSignings }} FA signed{{ aiTransactionSummary.cuts > 0 ? `, ${aiTransactionSummary.cuts} released` : '' }}
+              </span>
+            </div>
+
+            <!-- Released Players Warning -->
+            <div v-if="releasedUserPlayers.length > 0" class="offseason-expiring">
+              <div class="offseason-expiring-header">
+                <AlertTriangle :size="16" class="offseason-expiring-icon" />
+                <span class="offseason-expiring-title">Players Released</span>
+              </div>
+              <p class="offseason-expiring-hint">These players' contracts expired and they are now free agents. You can re-sign them from Free Agents in Manage Roster.</p>
+              <div class="offseason-expiring-list">
+                <div
+                  v-for="player in releasedUserPlayers"
+                  :key="player.id"
+                  class="offseason-expiring-player"
+                >
+                  <span class="offseason-expiring-name">{{ player.name }}</span>
+                  <span class="offseason-expiring-pos">{{ player.position }}</span>
+                  <span class="offseason-expiring-ovr">{{ player.overallRating }} OVR</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="next-game-buttons offseason-buttons">
+              <button class="btn-simulate-game" @click="router.push(`/campaign/${campaignId}/team`)">
+                <Users class="btn-icon" :size="16" />
+                MANAGE ROSTER
+              </button>
+              <button v-if="!rookieDraftCompleted" class="btn-simulate-game" @click="router.push(`/campaign/${campaignId}/scouting`)">
+                <Eye class="btn-icon" :size="16" />
+                SCOUTING
+              </button>
+              <button v-if="!rookieDraftCompleted" class="btn-play-game" @click="router.push(`/campaign/${campaignId}/draft?mode=rookie`)">
+                <Star class="btn-icon" :size="16" />
+                BEGIN DRAFT
+              </button>
+              <button class="btn-simulate-game" @click="handleSimOffseason" :disabled="advancingToNextSeason">
+                <FastForward class="btn-icon" :size="16" />
+                SIM OFFSEASON
+              </button>
+              <button v-if="rookieDraftCompleted" class="btn-play-game" @click="handleStartNewSeason" :disabled="advancingToNextSeason">
+                <FastForward class="btn-icon" :size="16" />
+                START SEASON
+              </button>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <!-- Champion Card (champion declared, enter offseason) -->
+      <section v-else-if="playoffStore.champion" class="next-game-card glass-card-nebula offseason-card">
+        <div class="next-game-header">
+          <div class="next-game-label-row">
+            <h3 class="next-game-label">SEASON COMPLETE</h3>
+            <Trophy :size="16" class="playoff-trophy-icon" />
+          </div>
+        </div>
+        <div class="next-game-content">
+          <div v-if="advancingToNextSeason" class="next-game-loading">
+            <LoadingSpinner size="md" />
+            <span class="next-game-loading-text">Processing offseason...</span>
           </div>
           <template v-else>
             <!-- Champion Banner -->
@@ -1220,7 +1448,13 @@ function handleCloseSimulateModal() {
             <div class="offseason-summary">
               <div class="offseason-stat">
                 <span class="offseason-stat-label">Final Record</span>
-                <span class="offseason-stat-value">{{ wins }}-{{ losses }}</span>
+                <span class="offseason-stat-value offseason-record-row">
+                  <span
+                    class="offseason-team-badge"
+                    :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
+                  >{{ team?.abbreviation }}</span>
+                  {{ wins }}-{{ losses }}
+                </span>
               </div>
               <div class="offseason-stat">
                 <span class="offseason-stat-label">Conference Rank</span>
@@ -1229,9 +1463,9 @@ function handleCloseSimulateModal() {
             </div>
 
             <div class="next-game-buttons">
-              <button class="btn-play-game" @click="handleAdvanceToNextSeason">
+              <button class="btn-play-game" @click="handleEnterOffseason">
                 <FastForward class="btn-icon" :size="16" />
-                ADVANCE TO NEXT SEASON
+                ENTER OFFSEASON
               </button>
             </div>
           </template>
@@ -1290,9 +1524,9 @@ function handleCloseSimulateModal() {
         <div class="quick-actions-grid">
           <button class="action-box" @click="navigateToScout">
             <div class="action-icon">
-              <Search :size="24" />
+              <Eye :size="24" />
             </div>
-            <span class="action-label">Scout</span>
+            <span class="action-label">Scouting</span>
           </button>
           <button class="action-box" @click="navigateToRoster">
             <div class="action-icon">
@@ -1392,9 +1626,13 @@ function handleCloseSimulateModal() {
       :simulating="gameStore.simulating"
       :user-team="team"
       :game-in-progress="isGameInProgress"
+      :sim-season-mode="simSeasonMode"
+      :remaining-season-games="remainingSeasonGames"
+      :background-progress="gameStore.simulationProgress"
       @close="handleCloseSimulateModal"
       @confirm="handleConfirmSimulate"
       @sim-to-end="handleSimToEndFromModal"
+      @sim-season="handleConfirmSimSeason"
     />
 
     <!-- Lineup Warning Modal -->
@@ -1450,6 +1688,7 @@ function handleCloseSimulateModal() {
       :show="playoffStore.showSeasonEndModal"
       :user-status="playoffStore.userStatus"
       :user-team="team"
+      :roster="roster"
       @close="playoffStore.closeSeasonEndModal()"
       @continue="handleSeasonEndContinue"
     />
@@ -2283,6 +2522,97 @@ function handleCloseSimulateModal() {
   gap: 16px;
 }
 
+.offseason-transactions {
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.offseason-transactions-text {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .offseason-transactions {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.offseason-expiring {
+  padding: 12px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.offseason-expiring-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.offseason-expiring-icon {
+  color: #fbbf24;
+  flex-shrink: 0;
+}
+
+.offseason-expiring-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-primary);
+}
+
+.offseason-expiring-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
+.offseason-expiring-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.offseason-expiring-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+[data-theme="light"] .offseason-expiring-player {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.offseason-expiring-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  flex: 1;
+}
+
+.offseason-expiring-pos {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.offseason-expiring-ovr {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
 .next-game-loading {
   display: flex;
   flex-direction: column;
@@ -2366,6 +2696,27 @@ function handleCloseSimulateModal() {
   font-weight: 400;
   color: var(--color-text-primary);
   line-height: 1;
+}
+
+.offseason-record-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.offseason-team-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body, sans-serif);
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.2);
 }
 
 .next-game-loading-text {
@@ -2556,6 +2907,35 @@ function handleCloseSimulateModal() {
 
 [data-theme="light"] .btn-simulate-game:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.03);
+}
+
+.btn-sim-season {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+  border-radius: var(--radius-xl);
+  color: var(--color-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-sim-season:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border-color: var(--color-primary);
+}
+
+.btn-sim-season .btn-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
 }
 
 .btn-box-score {
@@ -2751,6 +3131,7 @@ function handleCloseSimulateModal() {
 
   .btn-play-game,
   .btn-simulate-game,
+  .btn-sim-season,
   .btn-box-score {
     flex: 1;
   }

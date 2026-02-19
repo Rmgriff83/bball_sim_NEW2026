@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { Trophy, ChevronRight } from 'lucide-vue-next'
+import { Trophy } from 'lucide-vue-next'
 
 const props = defineProps({
   bracket: {
@@ -26,15 +26,81 @@ const westConfFinals = computed(() => props.bracket?.west?.confFinals ?? null)
 const finals = computed(() => props.bracket?.finals ?? null)
 const champion = computed(() => props.bracket?.champion ?? null)
 
+// Preview data for next-round slots (shows winners before full matchup is created)
+// East R2 Slot 1: fed by R1[0] (1v8) and R1[1] (4v5)
+const eastR2Slot1Preview = computed(() => {
+  if (eastRound2.value[0]) return null
+  return {
+    team1: eastRound1.value[0]?.winner ?? null,
+    team2: eastRound1.value[1]?.winner ?? null
+  }
+})
+// East R2 Slot 2: fed by R1[3] (2v7) and R1[2] (3v6)
+const eastR2Slot2Preview = computed(() => {
+  if (eastRound2.value[1]) return null
+  return {
+    team1: eastRound1.value[3]?.winner ?? null,
+    team2: eastRound1.value[2]?.winner ?? null
+  }
+})
+// West R2 Slot 1: fed by R1[0] (1v8) and R1[1] (4v5)
+const westR2Slot1Preview = computed(() => {
+  if (westRound2.value[0]) return null
+  return {
+    team1: westRound1.value[0]?.winner ?? null,
+    team2: westRound1.value[1]?.winner ?? null
+  }
+})
+// West R2 Slot 2: fed by R1[3] (2v7) and R1[2] (3v6)
+const westR2Slot2Preview = computed(() => {
+  if (westRound2.value[1]) return null
+  return {
+    team1: westRound1.value[3]?.winner ?? null,
+    team2: westRound1.value[2]?.winner ?? null
+  }
+})
+// East Conf Finals: fed by R2[0] and R2[1]
+const eastCFPreview = computed(() => {
+  if (eastConfFinals.value) return null
+  return {
+    team1: eastRound2.value[0]?.winner ?? null,
+    team2: eastRound2.value[1]?.winner ?? null
+  }
+})
+// West Conf Finals: fed by R2[0] and R2[1]
+const westCFPreview = computed(() => {
+  if (westConfFinals.value) return null
+  return {
+    team1: westRound2.value[0]?.winner ?? null,
+    team2: westRound2.value[1]?.winner ?? null
+  }
+})
+// Finals: fed by East CF and West CF
+const finalsPreview = computed(() => {
+  if (finals.value) return null
+  return {
+    team1: eastConfFinals.value?.winner ?? null,
+    team2: westConfFinals.value?.winner ?? null
+  }
+})
+
 function isUserTeam(teamId) {
   return teamId == props.userTeamId
 }
 
+function isUserSeries(series) {
+  if (!series || !props.userTeamId) return false
+  return series.team1?.teamId == props.userTeamId || series.team2?.teamId == props.userTeamId
+}
+
 function getSeriesStatusClass(series) {
   if (!series) return 'pending'
-  if (series.status === 'complete') return 'complete'
-  if (series.status === 'in_progress') return 'in-progress'
-  return 'pending'
+  const classes = []
+  if (series.status === 'complete') classes.push('complete')
+  else if (series.status === 'in_progress') classes.push('in-progress')
+  else classes.push('pending')
+  if (isUserSeries(series)) classes.push('user-series')
+  return classes.join(' ')
 }
 
 function getSeriesScoreDisplay(series) {
@@ -77,6 +143,7 @@ function handleSeriesClick(series) {
                     'user-team': isUserTeam(series?.team1?.teamId)
                   }"
                 >
+                  <span class="team-color-dot" :style="{ background: series?.team1?.primaryColor }" />
                   <span class="seed">[{{ series?.team1?.seed }}]</span>
                   <span class="abbr">{{ series?.team1?.abbreviation }}</span>
                   <span class="wins">{{ series?.team1Wins }}</span>
@@ -88,12 +155,12 @@ function handleSeriesClick(series) {
                     'user-team': isUserTeam(series?.team2?.teamId)
                   }"
                 >
+                  <span class="team-color-dot" :style="{ background: series?.team2?.primaryColor }" />
                   <span class="seed">[{{ series?.team2?.seed }}]</span>
                   <span class="abbr">{{ series?.team2?.abbreviation }}</span>
                   <span class="wins">{{ series?.team2Wins }}</span>
                 </div>
               </div>
-              <div class="connector right" />
             </div>
           </div>
         </div>
@@ -102,47 +169,118 @@ function handleSeriesClick(series) {
         <div class="round round-2">
           <div class="round-label">Semifinals</div>
           <div class="matchups">
+            <!-- Slot 1: first semifinal (fed by R1 matchups 1 & 2) -->
             <div
-              v-for="(series, idx) in eastRound2"
-              :key="series?.seriesId || `e2-${idx}`"
+              v-if="eastRound2[0]"
               class="matchup-wrapper"
             >
-              <div class="connector left" />
               <div
                 class="matchup"
-                :class="getSeriesStatusClass(series)"
-                @click="handleSeriesClick(series)"
+                :class="getSeriesStatusClass(eastRound2[0])"
+                @click="handleSeriesClick(eastRound2[0])"
               >
                 <div
                   class="team team-1"
                   :class="{
-                    winner: series?.winner?.teamId === series?.team1?.teamId,
-                    'user-team': isUserTeam(series?.team1?.teamId)
+                    winner: eastRound2[0]?.winner?.teamId === eastRound2[0]?.team1?.teamId,
+                    'user-team': isUserTeam(eastRound2[0]?.team1?.teamId)
                   }"
                 >
-                  <span class="seed">[{{ series?.team1?.seed }}]</span>
-                  <span class="abbr">{{ series?.team1?.abbreviation }}</span>
-                  <span class="wins">{{ series?.team1Wins }}</span>
+                  <span class="team-color-dot" :style="{ background: eastRound2[0]?.team1?.primaryColor }" />
+                  <span class="seed">[{{ eastRound2[0]?.team1?.seed }}]</span>
+                  <span class="abbr">{{ eastRound2[0]?.team1?.abbreviation }}</span>
+                  <span class="wins">{{ eastRound2[0]?.team1Wins }}</span>
                 </div>
                 <div
                   class="team team-2"
                   :class="{
-                    winner: series?.winner?.teamId === series?.team2?.teamId,
-                    'user-team': isUserTeam(series?.team2?.teamId)
+                    winner: eastRound2[0]?.winner?.teamId === eastRound2[0]?.team2?.teamId,
+                    'user-team': isUserTeam(eastRound2[0]?.team2?.teamId)
                   }"
                 >
-                  <span class="seed">[{{ series?.team2?.seed }}]</span>
-                  <span class="abbr">{{ series?.team2?.abbreviation }}</span>
-                  <span class="wins">{{ series?.team2Wins }}</span>
+                  <span class="team-color-dot" :style="{ background: eastRound2[0]?.team2?.primaryColor }" />
+                  <span class="seed">[{{ eastRound2[0]?.team2?.seed }}]</span>
+                  <span class="abbr">{{ eastRound2[0]?.team2?.abbreviation }}</span>
+                  <span class="wins">{{ eastRound2[0]?.team2Wins }}</span>
                 </div>
               </div>
-              <div class="connector right" />
             </div>
-            <!-- Placeholder if no round 2 yet -->
-            <div v-if="eastRound2.length === 0" class="matchup-wrapper placeholder">
+            <div v-else class="matchup-wrapper placeholder">
               <div class="matchup pending">
-                <div class="team">TBD</div>
-                <div class="team">TBD</div>
+                <div class="team" :class="{ 'preview-team': eastR2Slot1Preview?.team1, 'user-team': eastR2Slot1Preview?.team1 && isUserTeam(eastR2Slot1Preview.team1.teamId) }">
+                  <template v-if="eastR2Slot1Preview?.team1">
+                    <span class="team-color-dot" :style="{ background: eastR2Slot1Preview.team1.primaryColor }" />
+                    <span class="seed">[{{ eastR2Slot1Preview.team1.seed }}]</span>
+                    <span class="abbr">{{ eastR2Slot1Preview.team1.abbreviation }}</span>
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
+                <div class="team" :class="{ 'preview-team': eastR2Slot1Preview?.team2, 'user-team': eastR2Slot1Preview?.team2 && isUserTeam(eastR2Slot1Preview.team2.teamId) }">
+                  <template v-if="eastR2Slot1Preview?.team2">
+                    <span class="team-color-dot" :style="{ background: eastR2Slot1Preview.team2.primaryColor }" />
+                    <span class="seed">[{{ eastR2Slot1Preview.team2.seed }}]</span>
+                    <span class="abbr">{{ eastR2Slot1Preview.team2.abbreviation }}</span>
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
+              </div>
+            </div>
+
+            <!-- Slot 2: second semifinal (fed by R1 matchups 3 & 4) -->
+            <div
+              v-if="eastRound2[1]"
+              class="matchup-wrapper"
+            >
+
+              <div
+                class="matchup"
+                :class="getSeriesStatusClass(eastRound2[1])"
+                @click="handleSeriesClick(eastRound2[1])"
+              >
+                <div
+                  class="team team-1"
+                  :class="{
+                    winner: eastRound2[1]?.winner?.teamId === eastRound2[1]?.team1?.teamId,
+                    'user-team': isUserTeam(eastRound2[1]?.team1?.teamId)
+                  }"
+                >
+                  <span class="team-color-dot" :style="{ background: eastRound2[1]?.team1?.primaryColor }" />
+                  <span class="seed">[{{ eastRound2[1]?.team1?.seed }}]</span>
+                  <span class="abbr">{{ eastRound2[1]?.team1?.abbreviation }}</span>
+                  <span class="wins">{{ eastRound2[1]?.team1Wins }}</span>
+                </div>
+                <div
+                  class="team team-2"
+                  :class="{
+                    winner: eastRound2[1]?.winner?.teamId === eastRound2[1]?.team2?.teamId,
+                    'user-team': isUserTeam(eastRound2[1]?.team2?.teamId)
+                  }"
+                >
+                  <span class="team-color-dot" :style="{ background: eastRound2[1]?.team2?.primaryColor }" />
+                  <span class="seed">[{{ eastRound2[1]?.team2?.seed }}]</span>
+                  <span class="abbr">{{ eastRound2[1]?.team2?.abbreviation }}</span>
+                  <span class="wins">{{ eastRound2[1]?.team2Wins }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="matchup-wrapper placeholder">
+              <div class="matchup pending">
+                <div class="team" :class="{ 'preview-team': eastR2Slot2Preview?.team1, 'user-team': eastR2Slot2Preview?.team1 && isUserTeam(eastR2Slot2Preview.team1.teamId) }">
+                  <template v-if="eastR2Slot2Preview?.team1">
+                    <span class="team-color-dot" :style="{ background: eastR2Slot2Preview.team1.primaryColor }" />
+                    <span class="seed">[{{ eastR2Slot2Preview.team1.seed }}]</span>
+                    <span class="abbr">{{ eastR2Slot2Preview.team1.abbreviation }}</span>
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
+                <div class="team" :class="{ 'preview-team': eastR2Slot2Preview?.team2, 'user-team': eastR2Slot2Preview?.team2 && isUserTeam(eastR2Slot2Preview.team2.teamId) }">
+                  <template v-if="eastR2Slot2Preview?.team2">
+                    <span class="team-color-dot" :style="{ background: eastR2Slot2Preview.team2.primaryColor }" />
+                    <span class="seed">[{{ eastR2Slot2Preview.team2.seed }}]</span>
+                    <span class="abbr">{{ eastR2Slot2Preview.team2.abbreviation }}</span>
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
               </div>
             </div>
           </div>
@@ -153,7 +291,7 @@ function handleSeriesClick(series) {
           <div class="round-label">Conf. Finals</div>
           <div class="matchups">
             <div class="matchup-wrapper">
-              <div class="connector left" />
+
               <div
                 v-if="eastConfFinals"
                 class="matchup"
@@ -167,6 +305,7 @@ function handleSeriesClick(series) {
                     'user-team': isUserTeam(eastConfFinals?.team1?.teamId)
                   }"
                 >
+                  <span class="team-color-dot" :style="{ background: eastConfFinals?.team1?.primaryColor }" />
                   <span class="abbr">{{ eastConfFinals?.team1?.abbreviation }}</span>
                   <span class="wins">{{ eastConfFinals?.team1Wins }}</span>
                 </div>
@@ -177,15 +316,28 @@ function handleSeriesClick(series) {
                     'user-team': isUserTeam(eastConfFinals?.team2?.teamId)
                   }"
                 >
+                  <span class="team-color-dot" :style="{ background: eastConfFinals?.team2?.primaryColor }" />
                   <span class="abbr">{{ eastConfFinals?.team2?.abbreviation }}</span>
                   <span class="wins">{{ eastConfFinals?.team2Wins }}</span>
                 </div>
               </div>
               <div v-else class="matchup pending">
-                <div class="team">TBD</div>
-                <div class="team">TBD</div>
+                <div class="team" :class="{ 'preview-team': eastCFPreview?.team1, 'user-team': eastCFPreview?.team1 && isUserTeam(eastCFPreview.team1.teamId) }">
+                  <template v-if="eastCFPreview?.team1">
+                    <span class="team-color-dot" :style="{ background: eastCFPreview.team1.primaryColor }" />
+                    <span class="abbr">{{ eastCFPreview.team1.abbreviation }}</span>
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
+                <div class="team" :class="{ 'preview-team': eastCFPreview?.team2, 'user-team': eastCFPreview?.team2 && isUserTeam(eastCFPreview.team2.teamId) }">
+                  <template v-if="eastCFPreview?.team2">
+                    <span class="team-color-dot" :style="{ background: eastCFPreview.team2.primaryColor }" />
+                    <span class="abbr">{{ eastCFPreview.team2.abbreviation }}</span>
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
               </div>
-              <div class="connector right finals" />
+
             </div>
           </div>
         </div>
@@ -213,6 +365,7 @@ function handleSeriesClick(series) {
             }"
           >
             <span class="conf-label">EAST</span>
+            <span class="team-color-dot finals-dot" :style="{ background: finals?.team1?.primaryColor }" />
             <span class="abbr">{{ finals?.team1?.abbreviation }}</span>
             <span class="wins">{{ finals?.team1Wins }}</span>
           </div>
@@ -225,14 +378,29 @@ function handleSeriesClick(series) {
             }"
           >
             <span class="conf-label">WEST</span>
+            <span class="team-color-dot finals-dot" :style="{ background: finals?.team2?.primaryColor }" />
             <span class="abbr">{{ finals?.team2?.abbreviation }}</span>
             <span class="wins">{{ finals?.team2Wins }}</span>
           </div>
         </div>
         <div v-else class="matchup finals-matchup pending">
-          <div class="team"><span class="conf-label">EAST</span>TBD</div>
+          <div class="team" :class="{ 'preview-team': finalsPreview?.team1, 'user-team': finalsPreview?.team1 && isUserTeam(finalsPreview.team1.teamId) }">
+            <span class="conf-label">EAST</span>
+            <template v-if="finalsPreview?.team1">
+              <span class="team-color-dot finals-dot" :style="{ background: finalsPreview.team1.primaryColor }" />
+              <span class="abbr">{{ finalsPreview.team1.abbreviation }}</span>
+            </template>
+            <template v-else>TBD</template>
+          </div>
           <div class="vs">VS</div>
-          <div class="team"><span class="conf-label">WEST</span>TBD</div>
+          <div class="team" :class="{ 'preview-team': finalsPreview?.team2, 'user-team': finalsPreview?.team2 && isUserTeam(finalsPreview.team2.teamId) }">
+            <span class="conf-label">WEST</span>
+            <template v-if="finalsPreview?.team2">
+              <span class="team-color-dot finals-dot" :style="{ background: finalsPreview.team2.primaryColor }" />
+              <span class="abbr">{{ finalsPreview.team2.abbreviation }}</span>
+            </template>
+            <template v-else>TBD</template>
+          </div>
         </div>
       </div>
 
@@ -260,7 +428,7 @@ function handleSeriesClick(series) {
               :key="series?.seriesId || `w1-${idx}`"
               class="matchup-wrapper"
             >
-              <div class="connector left" />
+
               <div
                 class="matchup"
                 :class="getSeriesStatusClass(series)"
@@ -276,6 +444,7 @@ function handleSeriesClick(series) {
                   <span class="wins">{{ series?.team1Wins }}</span>
                   <span class="abbr">{{ series?.team1?.abbreviation }}</span>
                   <span class="seed">[{{ series?.team1?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: series?.team1?.primaryColor }" />
                 </div>
                 <div
                   class="team team-2"
@@ -287,6 +456,7 @@ function handleSeriesClick(series) {
                   <span class="wins">{{ series?.team2Wins }}</span>
                   <span class="abbr">{{ series?.team2?.abbreviation }}</span>
                   <span class="seed">[{{ series?.team2?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: series?.team2?.primaryColor }" />
                 </div>
               </div>
             </div>
@@ -297,46 +467,121 @@ function handleSeriesClick(series) {
         <div class="round round-2">
           <div class="round-label">Semifinals</div>
           <div class="matchups">
+            <!-- Slot 1: first semifinal (fed by R1 matchups 1 & 2) -->
             <div
-              v-for="(series, idx) in westRound2"
-              :key="series?.seriesId || `w2-${idx}`"
+              v-if="westRound2[0]"
               class="matchup-wrapper"
             >
-              <div class="connector right" />
+
               <div
                 class="matchup"
-                :class="getSeriesStatusClass(series)"
-                @click="handleSeriesClick(series)"
+                :class="getSeriesStatusClass(westRound2[0])"
+                @click="handleSeriesClick(westRound2[0])"
               >
                 <div
                   class="team team-1"
                   :class="{
-                    winner: series?.winner?.teamId === series?.team1?.teamId,
-                    'user-team': isUserTeam(series?.team1?.teamId)
+                    winner: westRound2[0]?.winner?.teamId === westRound2[0]?.team1?.teamId,
+                    'user-team': isUserTeam(westRound2[0]?.team1?.teamId)
                   }"
                 >
-                  <span class="wins">{{ series?.team1Wins }}</span>
-                  <span class="abbr">{{ series?.team1?.abbreviation }}</span>
-                  <span class="seed">[{{ series?.team1?.seed }}]</span>
+                  <span class="wins">{{ westRound2[0]?.team1Wins }}</span>
+                  <span class="abbr">{{ westRound2[0]?.team1?.abbreviation }}</span>
+                  <span class="seed">[{{ westRound2[0]?.team1?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: westRound2[0]?.team1?.primaryColor }" />
                 </div>
                 <div
                   class="team team-2"
                   :class="{
-                    winner: series?.winner?.teamId === series?.team2?.teamId,
-                    'user-team': isUserTeam(series?.team2?.teamId)
+                    winner: westRound2[0]?.winner?.teamId === westRound2[0]?.team2?.teamId,
+                    'user-team': isUserTeam(westRound2[0]?.team2?.teamId)
                   }"
                 >
-                  <span class="wins">{{ series?.team2Wins }}</span>
-                  <span class="abbr">{{ series?.team2?.abbreviation }}</span>
-                  <span class="seed">[{{ series?.team2?.seed }}]</span>
+                  <span class="wins">{{ westRound2[0]?.team2Wins }}</span>
+                  <span class="abbr">{{ westRound2[0]?.team2?.abbreviation }}</span>
+                  <span class="seed">[{{ westRound2[0]?.team2?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: westRound2[0]?.team2?.primaryColor }" />
                 </div>
               </div>
-              <div class="connector left" />
+
             </div>
-            <div v-if="westRound2.length === 0" class="matchup-wrapper placeholder">
+            <div v-else class="matchup-wrapper placeholder">
               <div class="matchup pending">
-                <div class="team">TBD</div>
-                <div class="team">TBD</div>
+                <div class="team" :class="{ 'preview-team': westR2Slot1Preview?.team1, 'user-team': westR2Slot1Preview?.team1 && isUserTeam(westR2Slot1Preview.team1.teamId) }">
+                  <template v-if="westR2Slot1Preview?.team1">
+                    <span class="abbr">{{ westR2Slot1Preview.team1.abbreviation }}</span>
+                    <span class="seed">[{{ westR2Slot1Preview.team1.seed }}]</span>
+                    <span class="team-color-dot" :style="{ background: westR2Slot1Preview.team1.primaryColor }" />
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
+                <div class="team" :class="{ 'preview-team': westR2Slot1Preview?.team2, 'user-team': westR2Slot1Preview?.team2 && isUserTeam(westR2Slot1Preview.team2.teamId) }">
+                  <template v-if="westR2Slot1Preview?.team2">
+                    <span class="abbr">{{ westR2Slot1Preview.team2.abbreviation }}</span>
+                    <span class="seed">[{{ westR2Slot1Preview.team2.seed }}]</span>
+                    <span class="team-color-dot" :style="{ background: westR2Slot1Preview.team2.primaryColor }" />
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
+              </div>
+            </div>
+
+            <!-- Slot 2: second semifinal (fed by R1 matchups 3 & 4) -->
+            <div
+              v-if="westRound2[1]"
+              class="matchup-wrapper"
+            >
+
+              <div
+                class="matchup"
+                :class="getSeriesStatusClass(westRound2[1])"
+                @click="handleSeriesClick(westRound2[1])"
+              >
+                <div
+                  class="team team-1"
+                  :class="{
+                    winner: westRound2[1]?.winner?.teamId === westRound2[1]?.team1?.teamId,
+                    'user-team': isUserTeam(westRound2[1]?.team1?.teamId)
+                  }"
+                >
+                  <span class="wins">{{ westRound2[1]?.team1Wins }}</span>
+                  <span class="abbr">{{ westRound2[1]?.team1?.abbreviation }}</span>
+                  <span class="seed">[{{ westRound2[1]?.team1?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: westRound2[1]?.team1?.primaryColor }" />
+                </div>
+                <div
+                  class="team team-2"
+                  :class="{
+                    winner: westRound2[1]?.winner?.teamId === westRound2[1]?.team2?.teamId,
+                    'user-team': isUserTeam(westRound2[1]?.team2?.teamId)
+                  }"
+                >
+                  <span class="wins">{{ westRound2[1]?.team2Wins }}</span>
+                  <span class="abbr">{{ westRound2[1]?.team2?.abbreviation }}</span>
+                  <span class="seed">[{{ westRound2[1]?.team2?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: westRound2[1]?.team2?.primaryColor }" />
+                </div>
+              </div>
+
+            </div>
+            <div v-else class="matchup-wrapper placeholder">
+              <div class="matchup pending">
+                <div class="team" :class="{ 'preview-team': westR2Slot2Preview?.team1, 'user-team': westR2Slot2Preview?.team1 && isUserTeam(westR2Slot2Preview.team1.teamId) }">
+                  <template v-if="westR2Slot2Preview?.team1">
+                    <span class="abbr">{{ westR2Slot2Preview.team1.abbreviation }}</span>
+                    <span class="seed">[{{ westR2Slot2Preview.team1.seed }}]</span>
+                    <span class="team-color-dot" :style="{ background: westR2Slot2Preview.team1.primaryColor }" />
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
+                <div class="team" :class="{ 'preview-team': westR2Slot2Preview?.team2, 'user-team': westR2Slot2Preview?.team2 && isUserTeam(westR2Slot2Preview.team2.teamId) }">
+                  <template v-if="westR2Slot2Preview?.team2">
+                    <span class="abbr">{{ westR2Slot2Preview.team2.abbreviation }}</span>
+                    <span class="seed">[{{ westR2Slot2Preview.team2.seed }}]</span>
+                    <span class="team-color-dot" :style="{ background: westR2Slot2Preview.team2.primaryColor }" />
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
               </div>
             </div>
           </div>
@@ -347,7 +592,7 @@ function handleSeriesClick(series) {
           <div class="round-label">Conf. Finals</div>
           <div class="matchups">
             <div class="matchup-wrapper">
-              <div class="connector left finals" />
+
               <div
                 v-if="westConfFinals"
                 class="matchup"
@@ -363,6 +608,7 @@ function handleSeriesClick(series) {
                 >
                   <span class="wins">{{ westConfFinals?.team1Wins }}</span>
                   <span class="abbr">{{ westConfFinals?.team1?.abbreviation }}</span>
+                  <span class="team-color-dot" :style="{ background: westConfFinals?.team1?.primaryColor }" />
                 </div>
                 <div
                   class="team team-2"
@@ -373,13 +619,26 @@ function handleSeriesClick(series) {
                 >
                   <span class="wins">{{ westConfFinals?.team2Wins }}</span>
                   <span class="abbr">{{ westConfFinals?.team2?.abbreviation }}</span>
+                  <span class="team-color-dot" :style="{ background: westConfFinals?.team2?.primaryColor }" />
                 </div>
               </div>
               <div v-else class="matchup pending">
-                <div class="team">TBD</div>
-                <div class="team">TBD</div>
+                <div class="team" :class="{ 'preview-team': westCFPreview?.team1, 'user-team': westCFPreview?.team1 && isUserTeam(westCFPreview.team1.teamId) }">
+                  <template v-if="westCFPreview?.team1">
+                    <span class="abbr">{{ westCFPreview.team1.abbreviation }}</span>
+                    <span class="team-color-dot" :style="{ background: westCFPreview.team1.primaryColor }" />
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
+                <div class="team" :class="{ 'preview-team': westCFPreview?.team2, 'user-team': westCFPreview?.team2 && isUserTeam(westCFPreview.team2.teamId) }">
+                  <template v-if="westCFPreview?.team2">
+                    <span class="abbr">{{ westCFPreview.team2.abbreviation }}</span>
+                    <span class="team-color-dot" :style="{ background: westCFPreview.team2.primaryColor }" />
+                  </template>
+                  <template v-else>TBD</template>
+                </div>
               </div>
-              <div class="connector right" />
+
             </div>
           </div>
         </div>
@@ -437,7 +696,7 @@ function handleSeriesClick(series) {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  min-width: 100px;
+  min-width: 120px;
 }
 
 .round-label {
@@ -473,8 +732,8 @@ function handleSeriesClick(series) {
 .matchup {
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-md);
-  padding: 0.25rem;
+  border-radius: var(--radius-lg);
+  padding: 0.375rem;
   cursor: pointer;
   transition: all 0.2s;
   flex: 1;
@@ -501,17 +760,41 @@ function handleSeriesClick(series) {
 
 .matchup.in-progress {
   border-color: var(--color-primary);
-  animation: pulse-border 2s infinite;
 }
 
-@keyframes pulse-border {
-  0%, 100% { border-color: var(--color-primary); }
-  50% { border-color: rgba(var(--color-primary-rgb), 0.5); }
+.matchup.user-series.in-progress {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: var(--color-success);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.15), inset 0 0 0 1px rgba(34, 197, 94, 0.1);
+  animation: pulse-user-series 2s ease-in-out infinite;
+}
+
+@keyframes pulse-user-series {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.15), inset 0 0 0 1px rgba(34, 197, 94, 0.1);
+    border-color: var(--color-success);
+  }
+  50% {
+    box-shadow: 0 0 18px rgba(34, 197, 94, 0.3), inset 0 0 0 1px rgba(34, 197, 94, 0.2);
+    border-color: rgba(34, 197, 94, 0.8);
+  }
+}
+
+.matchup.user-series.complete {
+  border-color: var(--color-success);
+  background: rgba(34, 197, 94, 0.05);
 }
 
 .matchup.pending {
-  opacity: 0.5;
+  opacity: 1;
   cursor: default;
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 1);
+}
+
+[data-theme="light"] .matchup.pending {
+  border-color: rgba(0, 0, 0, 0.15);
+  color: rgba(0, 0, 0, 1);
 }
 
 .matchup.pending:hover {
@@ -521,10 +804,11 @@ function handleSeriesClick(series) {
 .team {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem 0.375rem;
-  font-size: 0.75rem;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.8rem;
   color: var(--color-text-primary);
+  border-radius: var(--radius-sm);
 }
 
 .team.winner {
@@ -534,11 +818,29 @@ function handleSeriesClick(series) {
 
 .team.user-team {
   background: rgba(var(--color-primary-rgb), 0.15);
-  border-radius: var(--radius-sm);
+}
+
+.matchup.pending .team.preview-team {
+  font-weight: 600;
+}
+
+.matchup.pending .team.user-team {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.user-series .team.user-team {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.team-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .seed {
-  font-size: 0.625rem;
+  font-size: 0.65rem;
   color: var(--color-text-secondary);
 }
 
@@ -549,20 +851,10 @@ function handleSeriesClick(series) {
 
 .wins {
   font-weight: 700;
+  font-size: 0.85rem;
   color: var(--color-primary);
-  min-width: 0.75rem;
+  min-width: 0.875rem;
   text-align: center;
-}
-
-.connector {
-  width: 8px;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.15);
-  flex-shrink: 0;
-}
-
-[data-theme="light"] .connector {
-  background: rgba(0, 0, 0, 0.12);
 }
 
 /* Finals Section */
@@ -588,12 +880,13 @@ function handleSeriesClick(series) {
 
 .finals-matchup-wrapper {
   width: 100%;
-  max-width: 160px;
+  max-width: 180px;
 }
 
 .finals-matchup {
   background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 140, 0, 0.05));
   border: 2px solid rgba(255, 215, 0, 0.3);
+  padding: 0.5rem;
 }
 
 .finals-matchup .team {
@@ -606,6 +899,20 @@ function handleSeriesClick(series) {
   font-size: 0.5rem;
   color: var(--color-text-secondary);
   letter-spacing: 0.1em;
+}
+
+.finals-matchup .abbr {
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.finals-matchup .wins {
+  font-size: 1rem;
+}
+
+.finals-dot {
+  width: 10px;
+  height: 10px;
 }
 
 .finals-matchup .vs {
@@ -665,7 +972,7 @@ function handleSeriesClick(series) {
 }
 
 /* Responsive */
-@media (max-width: 768px) {
+@media (max-width: 1000px) {
   .playoff-bracket {
     grid-template-columns: 1fr;
     gap: 2rem;

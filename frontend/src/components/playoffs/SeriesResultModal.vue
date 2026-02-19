@@ -1,7 +1,6 @@
 <script setup>
-import { computed } from 'vue'
-import { Trophy, Award } from 'lucide-vue-next'
-import BaseModal from '@/components/ui/BaseModal.vue'
+import { computed, watch, onUnmounted } from 'vue'
+import { X, Trophy, ShieldX, FastForward } from 'lucide-vue-next'
 
 const props = defineProps({
   show: {
@@ -10,294 +9,524 @@ const props = defineProps({
   },
   seriesResult: {
     type: Object,
-    default: () => ({})
+    default: null
   },
   userTeamId: {
     type: [Number, String],
     default: null
+  },
+  simulating: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'simNextSeries', 'simRemainingPlayoffs'])
 
-const series = computed(() => props.seriesResult?.series ?? {})
-const winner = computed(() => series.value?.winner ?? null)
-const seriesMVP = computed(() => series.value?.seriesMVP ?? null)
-const isConferenceFinals = computed(() => props.seriesResult?.isConferenceFinals ?? false)
+const series = computed(() => props.seriesResult?.series ?? null)
+const winner = computed(() => props.seriesResult?.winner ?? null)
+const round = computed(() => props.seriesResult?.round ?? 0)
 
 const userWon = computed(() => {
   if (!winner.value || !props.userTeamId) return false
   return winner.value.teamId == props.userTeamId
 })
 
-const team1 = computed(() => series.value?.team1 ?? {})
-const team2 = computed(() => series.value?.team2 ?? {})
-const team1Wins = computed(() => series.value?.team1Wins ?? 0)
-const team2Wins = computed(() => series.value?.team2Wins ?? 0)
-
-const winnerName = computed(() => winner.value?.name ?? 'Unknown')
-const loserName = computed(() => {
-  if (!winner.value) return 'Unknown'
-  return winner.value.teamId === team1.value.teamId ? team2.value.name : team1.value.name
-})
-
-const seriesScore = computed(() => {
-  if (winner.value?.teamId === team1.value.teamId) {
-    return `${team1Wins.value}-${team2Wins.value}`
-  }
-  return `${team2Wins.value}-${team1Wins.value}`
-})
-
 const roundLabel = computed(() => {
-  const round = props.seriesResult?.round ?? 1
-  switch (round) {
+  switch (round.value) {
     case 1: return 'First Round'
-    case 2: return 'Conference Semifinals'
+    case 2: return 'Semifinals'
     case 3: return 'Conference Finals'
     case 4: return 'NBA Finals'
     default: return 'Playoffs'
   }
 })
 
-function handleClose() {
-  emit('close')
+const userTeam = computed(() => {
+  if (!series.value || !props.userTeamId) return null
+  if (series.value.team1?.teamId == props.userTeamId) return series.value.team1
+  if (series.value.team2?.teamId == props.userTeamId) return series.value.team2
+  return null
+})
+
+const opponentTeam = computed(() => {
+  if (!series.value || !props.userTeamId) return null
+  if (series.value.team1?.teamId == props.userTeamId) return series.value.team2
+  if (series.value.team2?.teamId == props.userTeamId) return series.value.team1
+  return null
+})
+
+const userWins = computed(() => {
+  if (!series.value || !props.userTeamId) return 0
+  return series.value.team1?.teamId == props.userTeamId
+    ? series.value.team1Wins
+    : series.value.team2Wins
+})
+
+const opponentWins = computed(() => {
+  if (!series.value || !props.userTeamId) return 0
+  return series.value.team1?.teamId == props.userTeamId
+    ? series.value.team2Wins
+    : series.value.team1Wins
+})
+
+const mvp = computed(() => props.seriesResult?.seriesMVP ?? series.value?.seriesMVP ?? null)
+
+function close() {
+  if (!props.simulating) {
+    emit('close')
+  }
 }
+
+function handleKeydown(e) {
+  if (e.key === 'Escape' && !props.simulating) {
+    close()
+  }
+}
+
+watch(() => props.show, (isOpen) => {
+  if (isOpen) {
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', handleKeydown)
+  } else {
+    document.body.style.overflow = ''
+    document.removeEventListener('keydown', handleKeydown)
+  }
+})
+
+onUnmounted(() => {
+  document.body.style.overflow = ''
+  document.removeEventListener('keydown', handleKeydown)
+})
 </script>
 
 <template>
-  <BaseModal :show="show" :title="roundLabel" :closable="true" size="md" @close="handleClose">
-    <div class="series-result-content">
-      <!-- Result Heading -->
-      <h2 class="result-title" :class="{ 'text-gradient': userWon }">
-        {{ userWon ? 'SERIES VICTORY!' : 'SERIES COMPLETE' }}
-      </h2>
+  <Teleport to="body">
+    <Transition name="modal">
+      <div
+        v-if="show && seriesResult"
+        class="modal-overlay"
+        @click.self="close"
+      >
+        <div class="modal-container">
+          <!-- Header -->
+          <header class="modal-header">
+            <h2 class="modal-title">{{ roundLabel }}</h2>
+            <button
+              v-if="!simulating"
+              class="btn-close"
+              @click="close"
+              aria-label="Close"
+            >
+              <X :size="20" />
+            </button>
+          </header>
 
-      <!-- Series Summary -->
-      <div class="series-summary">
-        <div class="team-result winner">
-          <span class="team-name">{{ winnerName }}</span>
-          <span class="result-text">defeat</span>
-          <span class="team-name loser">{{ loserName }}</span>
-          <span class="series-score">{{ seriesScore }}</span>
+          <!-- Content -->
+          <main class="modal-content">
+            <!-- Result Icon -->
+            <div class="result-icon-wrap" :class="userWon ? 'win' : 'loss'">
+              <Trophy v-if="userWon" :size="40" class="result-icon" />
+              <ShieldX v-else :size="40" class="result-icon" />
+            </div>
+
+            <!-- Result Title -->
+            <h3 class="result-title">{{ userWon ? 'Series Won!' : 'Eliminated' }}</h3>
+            <p class="result-subtitle">{{ roundLabel }} · Best of 7</p>
+
+            <!-- Series Score -->
+            <div class="series-final-score">
+              <div class="score-team" :class="{ 'is-winner': userWon }">
+                <div
+                  class="score-badge"
+                  :style="{ backgroundColor: userTeam?.primaryColor || '#666' }"
+                >
+                  {{ userTeam?.abbreviation }}
+                </div>
+                <span class="score-name">{{ userTeam?.name }}</span>
+              </div>
+              <div class="score-display">
+                <span class="score-value" :class="{ leading: userWins > opponentWins }">{{ userWins }}</span>
+                <span class="score-dash">-</span>
+                <span class="score-value" :class="{ leading: opponentWins > userWins }">{{ opponentWins }}</span>
+              </div>
+              <div class="score-team" :class="{ 'is-winner': !userWon }">
+                <div
+                  class="score-badge"
+                  :style="{ backgroundColor: opponentTeam?.primaryColor || '#666' }"
+                >
+                  {{ opponentTeam?.abbreviation }}
+                </div>
+                <span class="score-name">{{ opponentTeam?.name }}</span>
+              </div>
+            </div>
+
+            <!-- Series MVP -->
+            <div v-if="mvp" class="series-mvp">
+              <span class="mvp-label">Series MVP</span>
+              <span class="mvp-name">{{ mvp.name || `${mvp.first_name} ${mvp.last_name}` }}</span>
+              <span v-if="mvp.ppg" class="mvp-stats">
+                {{ mvp.ppg }} PTS · {{ mvp.rpg }} REB · {{ mvp.apg }} AST
+              </span>
+            </div>
+
+            <!-- Message -->
+            <p v-if="userWon" class="result-message">
+              Congratulations! You advance to the next round.
+            </p>
+            <p v-else class="result-message">
+              Your playoff run is over. Sim the remaining playoffs and prepare for next season.
+            </p>
+          </main>
+
+          <!-- Footer -->
+          <footer class="modal-footer">
+            <button
+              class="btn-cancel"
+              :disabled="simulating"
+              @click="close"
+            >
+              Close
+            </button>
+            <button
+              v-if="userWon"
+              class="btn-confirm"
+              :disabled="simulating"
+              @click="emit('simNextSeries')"
+            >
+              <FastForward :size="16" class="btn-icon" />
+              Sim to Next Series
+            </button>
+            <button
+              v-else
+              class="btn-confirm"
+              :disabled="simulating"
+              @click="emit('simRemainingPlayoffs')"
+            >
+              <FastForward :size="16" class="btn-icon" />
+              Sim Playoffs
+            </button>
+          </footer>
         </div>
       </div>
-
-      <!-- Series MVP (Conference Finals) -->
-      <div v-if="isConferenceFinals && seriesMVP" class="mvp-section">
-        <div class="mvp-header">
-          <Trophy :size="24" />
-          <span>CONFERENCE FINALS MVP</span>
-        </div>
-        <div class="mvp-card">
-          <span class="mvp-name">{{ seriesMVP.name }}</span>
-          <div class="mvp-stats">
-            <span>{{ seriesMVP.ppg }} PPG</span>
-            <span>{{ seriesMVP.rpg }} RPG</span>
-            <span>{{ seriesMVP.apg }} APG</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Best Performer (non-conference-finals) -->
-      <div v-else-if="seriesMVP" class="performers-section">
-        <h3 class="section-title">Series Best Performer</h3>
-        <div class="performer-card">
-          <Award :size="20" />
-          <div class="performer-info">
-            <span class="performer-name">{{ seriesMVP.name }}</span>
-            <span class="performer-stats">
-              {{ seriesMVP.ppg }} PPG | {{ seriesMVP.rpg }} RPG | {{ seriesMVP.apg }} APG
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <template #footer>
-      <button class="modal-btn modal-btn-secondary" @click="handleClose">
-        Close
-      </button>
-      <button class="modal-btn modal-btn-primary" @click="handleClose">
-        Continue
-      </button>
-    </template>
-  </BaseModal>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
-.series-result-content {
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+.modal-container {
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.modal-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.btn-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 12px;
   text-align: center;
-  padding: 0.5rem 0;
-  gap: 1.5rem;
+}
+
+/* Result Icon */
+.result-icon-wrap {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.result-icon-wrap.win {
+  background: rgba(34, 197, 94, 0.15);
+}
+
+.result-icon-wrap.win .result-icon {
+  color: var(--color-success, #22c55e);
+}
+
+.result-icon-wrap.loss {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.result-icon-wrap.loss .result-icon {
+  color: var(--color-primary);
 }
 
 .result-title {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
   font-size: 2rem;
   font-weight: 400;
-  letter-spacing: 0.05em;
+  color: var(--color-text-primary);
   margin: 0;
+  letter-spacing: 0.02em;
 }
 
-.series-summary {
-  padding: 0.5rem 0;
+.result-subtitle {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
 }
 
-.team-result {
+/* Series Score */
+.series-final-score {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  font-size: 1.125rem;
+  gap: 20px;
+  padding: 16px 20px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  width: 100%;
+  margin-top: 4px;
 }
 
-.team-name {
+.score-team {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.score-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
   font-weight: 700;
-  color: var(--color-text-primary);
+  color: white;
+  border: 2px solid rgba(255, 255, 255, 0.2);
 }
 
-.team-name.loser {
+.score-team.is-winner .score-badge {
+  border-color: var(--color-success);
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+}
+
+.score-name {
+  font-size: 0.7rem;
+  font-weight: 600;
   color: var(--color-text-secondary);
 }
 
-.result-text {
-  color: var(--color-text-tertiary);
-  font-style: italic;
-}
-
-.series-score {
-  font-weight: 700;
-  color: var(--color-primary);
-  background: rgba(232, 90, 79, 0.12);
-  padding: 0.25rem 0.75rem;
-  border-radius: var(--radius-full);
-  margin-left: 0.5rem;
-}
-
-.mvp-section {
-  width: 100%;
-  max-width: 320px;
-}
-
-.mvp-header {
+.score-display {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  font-size: 0.875rem;
+  gap: 6px;
+}
+
+.score-value {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 2.25rem;
+  color: var(--color-text-secondary);
+  line-height: 1;
+}
+
+.score-value.leading {
+  color: var(--color-text-primary);
+}
+
+.score-dash {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.75rem;
+  color: var(--color-text-tertiary);
+  line-height: 1;
+}
+
+/* Series MVP */
+.series-mvp {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 20px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  width: 100%;
+}
+
+.mvp-label {
+  font-size: 0.6rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: gold;
-}
-
-.mvp-card {
-  background: linear-gradient(135deg, rgba(255, 215, 0, 0.15), rgba(255, 140, 0, 0.1));
-  border: 1px solid rgba(255, 215, 0, 0.3);
-  border-radius: var(--radius-lg);
-  padding: 1rem;
+  color: var(--color-text-tertiary);
 }
 
 .mvp-name {
-  font-size: 1.25rem;
+  font-size: 0.95rem;
   font-weight: 700;
   color: var(--color-text-primary);
-  display: block;
-  margin-bottom: 0.5rem;
 }
 
 .mvp-stats {
-  display: flex;
-  justify-content: center;
-  gap: 1rem;
-  font-size: 0.875rem;
-  color: var(--color-text-secondary);
-}
-
-.performers-section {
-  width: 100%;
-  max-width: 320px;
-}
-
-.section-title {
   font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--color-text-tertiary);
-  margin-bottom: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
 
-.performer-card {
+.result-message {
+  font-size: 0.8rem;
+  color: var(--color-text-tertiary);
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+/* Footer */
+.modal-footer {
+  display: flex;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.btn-cancel,
+.btn-confirm {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.875rem;
-  background: rgba(0, 0, 0, 0.15);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-}
-
-[data-theme="light"] .performer-card {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-.performer-card svg {
-  color: var(--color-primary);
-  flex-shrink: 0;
-}
-
-.performer-info {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.125rem;
-}
-
-.performer-name {
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.performer-stats {
-  font-size: 0.75rem;
-  color: var(--color-text-secondary);
-}
-
-/* Footer buttons (modal standard) */
-.modal-btn {
-  flex: 1;
-  padding: 12px;
-  border-radius: var(--radius-md);
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
   font-size: 0.85rem;
   font-weight: 600;
   text-transform: uppercase;
+  letter-spacing: 0.03em;
   cursor: pointer;
   transition: all 0.2s ease;
-  border: none;
 }
 
-.modal-btn-secondary {
+.btn-cancel {
   background: transparent;
   border: 1px solid var(--glass-border);
-  color: var(--color-text-secondary);
-}
-
-.modal-btn-secondary:hover {
-  background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
 }
 
-.modal-btn-primary {
+.btn-cancel:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+.btn-confirm {
   background: var(--color-primary);
+  border: none;
   color: white;
 }
 
-.modal-btn-primary:hover {
-  filter: brightness(1.1);
+.btn-confirm:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.btn-cancel:disabled,
+.btn-confirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-icon {
+  fill: currentColor;
+}
+
+/* Modal Transition */
+.modal-enter-active {
+  transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.modal-leave-active {
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-container {
+  animation: scaleIn 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.modal-leave-active .modal-container {
+  animation: scaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes scaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.95); }
 }
 </style>

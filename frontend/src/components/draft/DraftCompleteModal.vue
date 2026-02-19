@@ -7,7 +7,10 @@ const props = defineProps({
   show: { type: Boolean, default: false },
   userRoster: { type: Array, default: () => [] },
   finalizing: { type: Boolean, default: false },
+  draftMode: { type: String, default: 'fantasy' },
 })
+
+const isRookieMode = computed(() => props.draftMode === 'rookie')
 
 const emit = defineEmits(['continue', 'close'])
 
@@ -67,7 +70,7 @@ onUnmounted(() => {
         <div class="modal-container">
           <!-- Header -->
           <header class="modal-header">
-            <h2 class="modal-title">Draft Complete</h2>
+            <h2 class="modal-title">{{ isRookieMode ? 'Rookie Draft Complete' : 'Draft Complete' }}</h2>
             <button class="modal-close" @click="close" aria-label="Close">
               <X :size="20" />
             </button>
@@ -110,7 +113,7 @@ onUnmounted(() => {
             </button>
             <button class="btn-continue" @click="emit('continue')" :disabled="finalizing">
               <LoadingSpinner v-if="finalizing" size="sm" />
-              <template v-else>Continue to Campaign</template>
+              <template v-else>{{ isRookieMode ? 'Return to Offseason' : 'Continue to Campaign' }}</template>
             </button>
           </footer>
         </div>

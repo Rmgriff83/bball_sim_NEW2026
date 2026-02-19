@@ -32,6 +32,8 @@ import {
 } from '../ai/AILineupService'
 import { generateAITargetMinutes } from '../simulation/SubstitutionEngine'
 import { processSeasonEnd } from '../evolution/PlayerEvolution'
+import { runAIRosterManagement, ensureMinimumRosters } from '../ai/AIContractService'
+import { generateAndSaveRookieClass } from '../draft/RookieGenerationService'
 
 // =============================================================================
 // HELPERS
@@ -855,6 +857,7 @@ export async function createCampaign(options) {
     name,
     currentDate: '2025-10-21',  // NBA season start
     gameYear: 1,
+    phase: 'regular_season',
     difficulty,
     draftMode,
     draftCompleted: !isFantasy,
@@ -1023,7 +1026,12 @@ export async function createCampaign(options) {
   await TeamRepository.saveBulk(teams)
 
   // -------------------------------------------------------------------------
-  // 9. Save final campaign state
+  // 9. Generate Year 1 rookie draft class (visible on Scouting page from day 1)
+  // -------------------------------------------------------------------------
+  await generateAndSaveRookieClass(campaignId, 1)
+
+  // -------------------------------------------------------------------------
+  // 10. Save final campaign state
   // -------------------------------------------------------------------------
   await CampaignRepository.save(campaign)
 
@@ -1088,6 +1096,168 @@ export async function deleteCampaign(campaignId) {
 
   // Delete the campaign record itself
   await CampaignRepository.delete(campaignId)
+}
+
+/**
+ * Archive season data (player stats, team records, coach career stats) before resetting.
+ * Called before processSeasonEnd to preserve historical data.
+ *
+ * @param {string} campaignId
+ * @param {number} currentYear
+ * @param {Array} teams
+ * @param {Array} allPlayers
+ * @returns {Promise<void>}
+ */
+async function archiveSeasonData(campaignId, currentYear, teams, allPlayers) {
+  const seasonData = await SeasonRepository.get(campaignId, currentYear)
+  if (!seasonData) return
+
+  // 2A. Player season history
+  const playerStats = seasonData.playerStats || {}
+  for (const player of allPlayers) {
+    const stats = playerStats[String(player.id)]
+    if (!stats || !stats.gamesPlayed) continue
+
+    player.seasonHistory = player.seasonHistory || []
+    player.seasonHistory.push({
+      year: currentYear,
+      teamId: player.teamId,
+      teamAbbreviation: player.teamAbbreviation,
+      stats: {
+        gamesPlayed: stats.gamesPlayed ?? 0,
+        points: stats.points ?? 0,
+        rebounds: stats.rebounds ?? 0,
+        assists: stats.assists ?? 0,
+        steals: stats.steals ?? 0,
+        blocks: stats.blocks ?? 0,
+        turnovers: stats.turnovers ?? 0,
+        minutesPlayed: stats.minutesPlayed ?? 0,
+        fieldGoalsMade: stats.fieldGoalsMade ?? 0,
+        fieldGoalsAttempted: stats.fieldGoalsAttempted ?? 0,
+        threePointersMade: stats.threePointersMade ?? 0,
+        threePointersAttempted: stats.threePointersAttempted ?? 0,
+        freeThrowsMade: stats.freeThrowsMade ?? 0,
+        freeThrowsAttempted: stats.freeThrowsAttempted ?? 0,
+        offensiveRebounds: stats.offensiveRebounds ?? 0,
+        defensiveRebounds: stats.defensiveRebounds ?? 0,
+        personalFouls: stats.personalFouls ?? 0,
+      },
+    })
+  }
+
+  // 2B. Team season history
+  const allStandings = [
+    ...(seasonData.standings?.east || []),
+    ...(seasonData.standings?.west || []),
+  ]
+  const teamStats = seasonData.teamStats || {}
+  const bracket = seasonData.playoffBracket || null
+
+  for (const team of teams) {
+    team.seasonHistory = team.seasonHistory || []
+
+    const standing = allStandings.find(s =>
+      (s.teamId ?? s.team_id) === team.id ||
+      s.teamAbbreviation === team.abbreviation
+    )
+    if (!standing) continue
+
+    // Conference rank = position in standings array
+    const confStandings = team.conference === 'east'
+      ? (seasonData.standings?.east || [])
+      : (seasonData.standings?.west || [])
+    const confRank = confStandings.findIndex(s =>
+      (s.teamId ?? s.team_id) === team.id ||
+      s.teamAbbreviation === team.abbreviation
+    ) + 1
+
+    const ts = teamStats[team.id] || {}
+    const isChampion = bracket?.champion?.teamId === team.id
+
+    team.seasonHistory.push({
+      year: currentYear,
+      wins: standing.wins ?? 0,
+      losses: standing.losses ?? 0,
+      conferenceRank: confRank || null,
+      playoffSeed: ts.playoffSeed ?? null,
+      playoffResult: ts.playoffResult ?? null,
+      champion: isChampion,
+    })
+  }
+
+  // 2C. Coach career stats
+
+  // Tally playoff wins/losses per team from the bracket
+  const playoffRecord = {} // { [teamId]: { wins, losses } }
+  if (bracket) {
+    const allSeries = []
+    for (const conf of ['east', 'west']) {
+      const confData = bracket[conf]
+      if (!confData) continue
+      for (const round of ['round1', 'round2']) {
+        if (confData[round]) allSeries.push(...confData[round])
+      }
+      if (confData.confFinals) allSeries.push(confData.confFinals)
+    }
+    if (bracket.finals) allSeries.push(bracket.finals)
+
+    for (const series of allSeries) {
+      if (!series || series.status !== 'complete') continue
+      const t1Id = series.team1?.teamId
+      const t2Id = series.team2?.teamId
+      const t1Wins = series.team1Wins ?? 0
+      const t2Wins = series.team2Wins ?? 0
+      if (t1Id) {
+        if (!playoffRecord[t1Id]) playoffRecord[t1Id] = { wins: 0, losses: 0 }
+        playoffRecord[t1Id].wins += t1Wins
+        playoffRecord[t1Id].losses += t2Wins
+      }
+      if (t2Id) {
+        if (!playoffRecord[t2Id]) playoffRecord[t2Id] = { wins: 0, losses: 0 }
+        playoffRecord[t2Id].wins += t2Wins
+        playoffRecord[t2Id].losses += t1Wins
+      }
+    }
+  }
+
+  for (const team of teams) {
+    if (!team.coach) continue
+
+    const standing = allStandings.find(s =>
+      (s.teamId ?? s.team_id) === team.id ||
+      s.teamAbbreviation === team.abbreviation
+    )
+    if (!standing) continue
+
+    const cs = team.coach.career_stats || {}
+    cs.seasons_coached = (cs.seasons_coached ?? 0) + 1
+    cs.wins = (cs.wins ?? 0) + (standing.wins ?? 0)
+    cs.losses = (cs.losses ?? 0) + (standing.losses ?? 0)
+    const totalGames = cs.wins + cs.losses
+    cs.win_pct = totalGames > 0 ? Math.round((cs.wins / totalGames) * 1000) / 1000 : 0
+
+    // Playoff record
+    const pr = playoffRecord[team.id]
+    if (pr) {
+      cs.playoff_wins = (cs.playoff_wins ?? 0) + pr.wins
+      cs.playoff_losses = (cs.playoff_losses ?? 0) + pr.losses
+    }
+    const totalPlayoffGames = (cs.playoff_wins ?? 0) + (cs.playoff_losses ?? 0)
+    cs.playoff_win_pct = totalPlayoffGames > 0
+      ? Math.round(((cs.playoff_wins ?? 0) / totalPlayoffGames) * 1000) / 1000
+      : 0
+
+    const isChampion = bracket?.champion?.teamId === team.id
+    if (isChampion) {
+      cs.championships = (cs.championships ?? 0) + 1
+    }
+
+    team.coach.career_stats = cs
+  }
+
+  // Persist archived data
+  await PlayerRepository.saveBulk(allPlayers)
+  await TeamRepository.saveBulk(teams)
 }
 
 /**
@@ -1192,6 +1362,231 @@ export async function advanceToNextSeason(campaignId) {
     gamesCreated,
     seasonEndResult: seasonEndResult.results,
     news: seasonEndResult.news,
+  }
+}
+
+/**
+ * Enter the offseason phase: archive data, process season end, run AI contracts.
+ * Does NOT start the new season — the user gets an interactive offseason period first.
+ *
+ * @param {string} campaignId
+ * @returns {Promise<Object>} { campaign, seasonEndResult, aiContractResults, userExpiringPlayers }
+ */
+export async function enterOffseason(campaignId) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
+
+  const currentYear = campaign.currentSeasonYear ?? 2025
+  const teams = await TeamRepository.getAllForCampaign(campaignId)
+  const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+
+  // 1. Archive season data (player/team history, coach career stats)
+  await archiveSeasonData(campaignId, currentYear, teams, allPlayers)
+
+  // 2. Process season end (aging, retirement, contract decrement, stat resets — injuries preserved)
+  const seasonEndResult = processSeasonEnd(
+    allPlayers,
+    {},
+    campaign.difficulty ?? 'pro'
+  )
+
+  // Save updated players (retired excluded)
+  await PlayerRepository.saveBulk(
+    seasonEndResult.players.map(p => ({ ...p, campaignId }))
+  )
+
+  // 3. Run AI roster management (cuts + re-signings + FA signings + backfill)
+  const seasonData = await SeasonRepository.get(campaignId, currentYear)
+  const standings = seasonData?.standings || { east: [], west: [] }
+  const userTeamId = campaign.teamId
+  const aiTeams = teams.filter(t => t.id !== userTeamId)
+
+  const aiContractResults = runAIRosterManagement({
+    aiTeams,
+    leaguePlayers: seasonEndResult.players,
+    standings,
+    allTeams: teams,
+    seasonPhase: 'offseason',
+    gameYear: campaign.gameYear ?? 1,
+  })
+
+  // 4. All players with contract_years_remaining === 0 (not re-signed) → free agent
+  let updatedPlayers = aiContractResults.updatedPlayers
+  const releasedUserPlayers = []
+  for (let i = 0; i < updatedPlayers.length; i++) {
+    const p = updatedPlayers[i]
+    if (p.teamId) {
+      const years = p.contractYearsRemaining ?? p.contract_years_remaining ?? 0
+      if (years === 0) {
+        // Track user team players that are being released
+        if (p.teamId === userTeamId) {
+          releasedUserPlayers.push({
+            id: p.id,
+            name: p.name || `${p.firstName} ${p.lastName}`,
+            position: p.position,
+            overallRating: p.overallRating ?? p.overall_rating,
+          })
+        }
+        updatedPlayers[i] = {
+          ...p,
+          isFreeAgent: 1,
+          teamId: null,
+          teamAbbreviation: 'FA',
+        }
+      }
+    }
+  }
+
+  // 4b. Backfill AI teams to 14 players after expired-contract releases
+  const backfillResult = ensureMinimumRosters({
+    aiTeams,
+    leaguePlayers: updatedPlayers,
+  })
+  updatedPlayers = backfillResult.updatedPlayers
+  aiContractResults.signings.push(...backfillResult.signings)
+
+  await PlayerRepository.saveBulk(
+    updatedPlayers.map(p => ({ ...p, campaignId }))
+  )
+
+  // 5. Update campaign phase
+  campaign.phase = 'offseason'
+  // Reset trade deadline for next season
+  if (campaign.settings) {
+    delete campaign.settings.trade_deadline_passed
+  }
+  await CampaignRepository.save(campaign)
+
+  return {
+    campaign,
+    seasonEndResult: seasonEndResult.results,
+    news: seasonEndResult.news,
+    aiContractResults: {
+      cuts: aiContractResults.cuts,
+      extensions: aiContractResults.extensions,
+      signings: aiContractResults.signings,
+    },
+    releasedUserPlayers,
+  }
+}
+
+/**
+ * Start a new season after the offseason period.
+ * Releases any remaining expired-contract players and initializes the new season.
+ *
+ * @param {string} campaignId
+ * @returns {Promise<Object>} { campaign, seasonData, gamesCreated, releasedPlayers }
+ */
+export async function startNewSeason(campaignId) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
+
+  if (campaign.phase !== 'offseason') {
+    throw new Error('Campaign must be in offseason phase to start a new season')
+  }
+
+  const currentYear = campaign.currentSeasonYear ?? 2025
+  const nextYear = currentYear + 1
+
+  // 1. Release un-re-signed expired contracts (including user team)
+  let allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+  const releasedPlayers = []
+
+  for (let i = 0; i < allPlayers.length; i++) {
+    const p = allPlayers[i]
+    const years = p.contractYearsRemaining ?? p.contract_years_remaining ?? 1
+    if (years === 0 && p.teamId) {
+      releasedPlayers.push({
+        id: p.id,
+        name: p.name || `${p.firstName} ${p.lastName}`,
+        teamId: p.teamId,
+        teamAbbreviation: p.teamAbbreviation,
+      })
+      allPlayers[i] = {
+        ...p,
+        isFreeAgent: 1,
+        teamId: null,
+        teamAbbreviation: 'FA',
+      }
+    }
+  }
+
+  // 1b. Backfill AI teams to 14 players after expired-contract releases
+  const teams0 = await TeamRepository.getAllForCampaign(campaignId)
+  const userTeamId0 = campaign.teamId
+  const aiTeams0 = teams0.filter(t => t.id !== userTeamId0)
+  const backfillResult = ensureMinimumRosters({
+    aiTeams: aiTeams0,
+    leaguePlayers: allPlayers,
+  })
+  allPlayers = backfillResult.updatedPlayers
+
+  await PlayerRepository.saveBulk(
+    allPlayers.map(p => ({ ...p, campaignId }))
+  )
+
+  // 2. Update campaign to next season
+  campaign.gameYear = (campaign.gameYear ?? 1) + 1
+  campaign.currentSeasonYear = nextYear
+  campaign.currentDate = `${nextYear}-10-21`
+  campaign.phase = 'regular_season'
+
+  // 3. Load current teams and re-read players (may have changed during offseason)
+  const teams = await TeamRepository.getAllForCampaign(campaignId)
+  allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+
+  // 4. Initialize new season (schedule + standings)
+  const seasonData = SeasonManager.initializeSeason(teams, nextYear, campaignId)
+  const userTeamId = campaign.teamId
+  const gamesCreated = SeasonManager.generateSchedule(
+    seasonData, teams, userTeamId, nextYear, `${nextYear}-10-21`
+  )
+
+  await SeasonRepository.save({
+    campaignId,
+    year: nextYear,
+    ...seasonData,
+  })
+
+  // 5. Generate next year's rookie class (viewable on Scouting page throughout the season)
+  const newGameYear = campaign.gameYear
+  await generateAndSaveRookieClass(campaignId, newGameYear)
+
+  // 6. Re-initialize all team lineups + target minutes
+  for (const team of teams) {
+    const teamPlayers = allPlayers.filter(p => p.teamId === team.id)
+    if (teamPlayers.length === 0) continue
+    const { starters, subStrategy } = initializeTeamLineup(teamPlayers)
+    const targetMinutes = generateAITargetMinutes(teamPlayers, starters, subStrategy)
+    team.lineup_settings = {
+      starters,
+      subStrategy,
+      target_minutes: targetMinutes,
+    }
+  }
+  await TeamRepository.saveBulk(teams)
+
+  // Re-initialize user lineup
+  const userPlayers = allPlayers.filter(p => p.teamId === userTeamId)
+  if (userPlayers.length > 0) {
+    const userStarters = initializeUserTeamLineup(userPlayers)
+    const userTargetMinutes = generateAITargetMinutes(userPlayers, userStarters, 'staggered')
+    campaign.settings = campaign.settings ?? {}
+    campaign.settings.lineup = {
+      starters: userStarters,
+      target_minutes: userTargetMinutes,
+      rotation: [],
+    }
+  }
+
+  // 7. Save campaign
+  await CampaignRepository.save(campaign)
+
+  return {
+    campaign,
+    seasonData,
+    gamesCreated,
+    releasedPlayers,
   }
 }
 

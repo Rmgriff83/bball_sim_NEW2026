@@ -1,5 +1,5 @@
 <script setup>
-import { watch, onMounted, onUnmounted } from 'vue'
+import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { X, Repeat, Clock, Star, Trophy } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -9,6 +9,8 @@ const props = defineProps({
 const emit = defineEmits(['dismiss'])
 
 const iconMap = { Repeat, Clock, Star, Trophy }
+
+const isChampion = computed(() => props.item?.category === 'CHAMPION')
 
 function getIcon(name) {
   return iconMap[name] || Trophy
@@ -20,7 +22,7 @@ function getCategoryColor(category) {
     case 'DEADLINE': return '#f59e0b'
     case 'ALL-STAR': return '#eab308'
     case 'PLAYOFFS': return '#8b5cf6'
-    case 'CHAMPION': return '#eab308'
+    case 'CHAMPION': return '#ffd700'
     default: return '#3b82f6'
   }
 }
@@ -55,10 +57,12 @@ onUnmounted(() => {
   <Teleport to="body">
     <Transition name="bn-modal">
       <div v-if="show && item" class="bn-overlay" @click.self="emit('dismiss')">
-        <div class="bn-container">
+        <div class="bn-container" :class="{ 'is-champion': isChampion }">
           <!-- Breaking News Banner -->
-          <div class="bn-banner">
-            <span class="bn-banner-text">BREAKING NEWS</span>
+          <div class="bn-banner" :class="{ 'bn-banner-champion': isChampion }">
+            <Trophy v-if="isChampion" :size="20" class="bn-banner-trophy" />
+            <span class="bn-banner-text">{{ isChampion ? 'NBA CHAMPIONS' : 'BREAKING NEWS' }}</span>
+            <Trophy v-if="isChampion" :size="20" class="bn-banner-trophy" />
             <div class="bn-banner-shimmer"></div>
           </div>
 
@@ -145,6 +149,10 @@ onUnmounted(() => {
   padding: 14px 20px;
   background: linear-gradient(135deg, #dc2626, #b91c1c, #f59e0b);
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
 }
 
 .bn-banner-text {
@@ -156,6 +164,29 @@ onUnmounted(() => {
   color: #fff;
   letter-spacing: 0.15em;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Champion Banner */
+.bn-banner-champion {
+  background: linear-gradient(135deg, #b8860b, #daa520, #ffd700, #daa520, #b8860b);
+  padding: 18px 20px;
+}
+
+.bn-banner-champion .bn-banner-text {
+  font-size: 1.8rem;
+  letter-spacing: 0.2em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.bn-banner-trophy {
+  position: relative;
+  z-index: 1;
+  color: #fff;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+.bn-container.is-champion {
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5), 0 0 40px rgba(255, 215, 0, 0.15);
 }
 
 .bn-banner-shimmer {

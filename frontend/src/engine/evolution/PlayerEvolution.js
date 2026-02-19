@@ -1251,7 +1251,6 @@ export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro') 
     developed: [],
     regressed: [],
     retired: [],
-    injuries_healed: [],
   };
   const newsEvents = [];
   const activePlayers = [];
@@ -1260,14 +1259,7 @@ export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro') 
     let player = clonePlayer(rawPlayer);
     const oldOverall = player.overallRating ?? player.overall_rating ?? 70;
 
-    // Heal all injuries
-    if (player.is_injured || player.isInjured) {
-      results.injuries_healed.push(getPlayerName(player));
-    }
-    player.is_injured = false;
-    player.isInjured = false;
-    player.injury_details = null;
-    player.injuryDetails = null;
+    // Injuries carry over — heal game-by-game next season via processRecovery()
 
     // Reset fatigue
     player.fatigue = 0;

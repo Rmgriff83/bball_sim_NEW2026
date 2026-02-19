@@ -31,10 +31,18 @@ const props = defineProps({
   gameInProgress: {
     type: Boolean,
     default: false
+  },
+  simSeasonMode: {
+    type: Boolean,
+    default: false
+  },
+  remainingSeasonGames: {
+    type: Object,
+    default: null
   }
 })
 
-const emit = defineEmits(['close', 'confirm', 'simToEnd'])
+const emit = defineEmits(['close', 'confirm', 'simToEnd', 'simSeason'])
 
 // Track which date sections are expanded
 const expandedDates = ref({})
@@ -75,6 +83,10 @@ function confirm() {
 
 function simToEnd() {
   emit('simToEnd')
+}
+
+function simSeason() {
+  emit('simSeason')
 }
 
 function handleKeydown(e) {
@@ -131,7 +143,7 @@ const opponentTeamData = computed(() => {
         <div class="modal-container">
           <!-- Header -->
           <header class="modal-header">
-            <h2 class="modal-title">Simulate</h2>
+            <h2 class="modal-title">{{ simSeasonMode ? 'Sim Season' : 'Simulate' }}</h2>
             <button
               v-if="!simulating"
               class="btn-close"
@@ -148,7 +160,7 @@ const opponentTeamData = computed(() => {
             <div v-if="simulating" class="simulating-overlay">
               <LoadingSpinner size="lg" />
               <p class="simulating-text">
-                {{ backgroundProgress ? 'Simulating league games...' : 'Simulating your game...' }}
+                {{ simSeasonMode ? 'Simulating remaining season...' : (backgroundProgress ? 'Simulating league games...' : 'Simulating your game...') }}
               </p>
               <span v-if="!backgroundProgress" class="simulating-sub">AI games will process in the background</span>
               <template v-if="backgroundProgress">
@@ -166,6 +178,33 @@ const opponentTeamData = computed(() => {
                   ></div>
                 </div>
               </template>
+            </div>
+
+            <!-- Sim Season Mode -->
+            <div v-else-if="simSeasonMode" class="sim-season-content">
+              <div class="sim-season-icon-wrap">
+                <FastForward :size="40" class="sim-season-icon" />
+              </div>
+              <h3 class="sim-season-title">Sim Rest of Season</h3>
+              <div class="summary-stats">
+                <div class="stat-item">
+                  <span class="stat-value">{{ remainingSeasonGames?.totalGames || 0 }}</span>
+                  <span class="stat-label">Total Games</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ remainingSeasonGames?.userGames || 0 }}</span>
+                  <span class="stat-label">Your Games</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ remainingSeasonGames?.aiGames || 0 }}</span>
+                  <span class="stat-label">AI Games</span>
+                </div>
+              </div>
+              <p class="sim-season-warning">
+                This will simulate all remaining regular season games including yours. This cannot be undone.
+              </p>
             </div>
 
             <!-- Loading State -->
@@ -288,14 +327,33 @@ const opponentTeamData = computed(() => {
           </main>
 
           <!-- Footer -->
-          <footer v-if="hasNextGame || !loading" class="modal-footer">
-            <button
-              v-if="!hasNextGame"
-              class="btn-cancel"
-              @click="close"
-            >
-              Close
-            </button>
+          <footer v-if="hasNextGame || simSeasonMode || !loading" class="modal-footer">
+            <template v-if="simSeasonMode">
+              <button
+                class="btn-cancel"
+                :disabled="simulating"
+                @click="close"
+              >
+                Cancel
+              </button>
+              <button
+                class="btn-confirm"
+                :disabled="simulating"
+                @click="simSeason"
+              >
+                <span v-if="simulating" class="btn-loading"></span>
+                <FastForward v-else :size="16" class="btn-icon" />
+                {{ simulating ? 'Simulating...' : 'Sim Season' }}
+              </button>
+            </template>
+            <template v-else-if="!hasNextGame">
+              <button
+                class="btn-cancel"
+                @click="close"
+              >
+                Close
+              </button>
+            </template>
             <template v-else>
               <button
                 class="btn-cancel"
@@ -449,6 +507,47 @@ const opponentTeamData = computed(() => {
   border-radius: var(--radius-full);
   transition: width 0.5s ease;
   min-width: 2%;
+}
+
+/* Sim Season Mode */
+.sim-season-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 0;
+  text-align: center;
+}
+
+.sim-season-icon-wrap {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.sim-season-icon {
+  color: var(--color-primary);
+}
+
+.sim-season-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.sim-season-warning {
+  font-size: 0.8rem;
+  color: var(--color-text-tertiary);
+  margin: 4px 0 0;
+  padding: 0 8px;
+  line-height: 1.5;
 }
 
 /* Loading & Empty States */
