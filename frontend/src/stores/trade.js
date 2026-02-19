@@ -263,11 +263,18 @@ export const useTradeStore = defineStore('trade', () => {
 
       const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
 
+      // Collect all draft picks from both teams for the executor
+      const aiTeamObj = await TeamRepository.get(campaignId, selectedTeam.value.id)
+      const allDraftPicks = [
+        ...(userTeam.draftPicks || []),
+        ...(aiTeamObj?.draftPicks || []),
+      ]
+
       const result = executeTradeEngine({
         tradeDetails: details,
         leaguePlayers,
         userRoster,
-        draftPicks: [],
+        draftPicks: allDraftPicks,
         userTeam: { id: userTeamId, abbreviation: userTeam.abbreviation },
         currentDate,
       })
@@ -289,6 +296,50 @@ export const useTradeStore = defineStore('trade', () => {
 
       if (playersToSave.length > 0) {
         await PlayerRepository.saveBulk(playersToSave)
+      }
+
+      // Persist draft pick ownership changes: move picks between teams
+      const pickAssets = details.assets.filter(a => a.type === 'pick')
+      if (pickAssets.length > 0) {
+        const userPicks = [...(userTeam.draftPicks || [])]
+        const aiPicks = [...(aiTeamObj?.draftPicks || [])]
+
+        for (const asset of pickAssets) {
+          const pickId = asset.pickId
+          const fromId = asset.from
+          const toId = asset.to
+
+          // Find and remove pick from source team
+          let pick = null
+          const fromUserTeam = fromId == userTeamId
+          const sourceArr = fromUserTeam ? userPicks : aiPicks
+          const destArr = fromUserTeam ? aiPicks : userPicks
+          const destTeamId = toId
+
+          const idx = sourceArr.findIndex(p => (p.id ?? '') == pickId)
+          if (idx >= 0) {
+            pick = { ...sourceArr[idx] }
+            sourceArr.splice(idx, 1)
+
+            // Update ownership fields
+            pick.currentOwnerId = destTeamId
+            pick.current_owner_id = destTeamId
+            pick.isTraded = true
+            pick.is_traded = true
+
+            // Add to destination team
+            destArr.push(pick)
+          }
+        }
+
+        // Save both teams with updated draftPicks
+        userTeam.draftPicks = userPicks
+        await TeamRepository.save(userTeam)
+
+        if (aiTeamObj) {
+          aiTeamObj.draftPicks = aiPicks
+          await TeamRepository.save(aiTeamObj)
+        }
       }
 
       // Save trade to history in season data
@@ -448,11 +499,18 @@ export const useTradeStore = defineStore('trade', () => {
 
       const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
 
+      // Collect all draft picks from both teams for the executor
+      const aiTeamObj = await TeamRepository.get(campaignId, aiTeam.id)
+      const allDraftPicks = [
+        ...(userTeam.draftPicks || []),
+        ...(aiTeamObj?.draftPicks || []),
+      ]
+
       const result = executeTradeEngine({
         tradeDetails: details,
         leaguePlayers,
         userRoster,
-        draftPicks: [],
+        draftPicks: allDraftPicks,
         userTeam: { id: userTeamId, abbreviation: userTeam.abbreviation },
         currentDate,
       })
@@ -473,6 +531,46 @@ export const useTradeStore = defineStore('trade', () => {
 
       if (playersToSave.length > 0) {
         await PlayerRepository.saveBulk(playersToSave)
+      }
+
+      // Persist draft pick ownership changes: move picks between teams
+      const pickAssets = details.assets.filter(a => a.type === 'pick')
+      if (pickAssets.length > 0) {
+        const userPicks = [...(userTeam.draftPicks || [])]
+        const aiPicks = [...(aiTeamObj?.draftPicks || [])]
+
+        for (const asset of pickAssets) {
+          const pickId = asset.pickId
+          const fromId = asset.from
+          const toId = asset.to
+
+          let pick = null
+          const fromUserTeam = fromId == userTeamId
+          const sourceArr = fromUserTeam ? userPicks : aiPicks
+          const destArr = fromUserTeam ? aiPicks : userPicks
+          const destTeamId = toId
+
+          const idx = sourceArr.findIndex(p => (p.id ?? '') == pickId)
+          if (idx >= 0) {
+            pick = { ...sourceArr[idx] }
+            sourceArr.splice(idx, 1)
+
+            pick.currentOwnerId = destTeamId
+            pick.current_owner_id = destTeamId
+            pick.isTraded = true
+            pick.is_traded = true
+
+            destArr.push(pick)
+          }
+        }
+
+        userTeam.draftPicks = userPicks
+        await TeamRepository.save(userTeam)
+
+        if (aiTeamObj) {
+          aiTeamObj.draftPicks = aiPicks
+          await TeamRepository.save(aiTeamObj)
+        }
       }
 
       // Save trade to history

@@ -63,7 +63,10 @@ export function buildRookieDraftOrder(teams, standings, gameYear) {
           teamAbbr: ownerTeam.abbreviation,
           teamName: `${ownerTeam.city} ${ownerTeam.name}`,
           teamColor: ownerTeam.primary_color || '#666',
+          originalTeamId: originalTeam.id,
           originalTeamAbbr: originalTeam.abbreviation,
+          originalTeamName: `${originalTeam.city} ${originalTeam.name}`,
+          originalTeamColor: originalTeam.primary_color || '#666',
           isTraded: pick.isTraded || false,
           pickId: pick.id,
         })

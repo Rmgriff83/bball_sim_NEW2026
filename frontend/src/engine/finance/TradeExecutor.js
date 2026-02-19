@@ -331,7 +331,9 @@ function transferPick({ pickId, newOwnerId, draftPicks }) {
     if ((pick.id ?? '') == pickId) {
       return {
         ...pick,
+        currentOwnerId: newOwnerId,
         current_owner_id: newOwnerId,
+        isTraded: true,
         is_traded: true,
       };
     }

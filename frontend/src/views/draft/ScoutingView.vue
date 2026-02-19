@@ -260,14 +260,28 @@ onMounted(async () => {
               v-for="slot in mockRound1"
               :key="slot.pick"
               class="mock-pick-row"
-              :class="{ 'user-team': slot.teamId === userTeamId }"
+              :class="{
+                'user-team': slot.teamId === userTeamId,
+                'is-traded': slot.isTraded
+              }"
             >
-              <span class="pick-number">{{ slot.pick }}</span>
-              <div class="team-logo" :style="{ backgroundColor: slot.teamColor }">
-                {{ slot.teamAbbr }}
+              <span class="pick-number">{{ slot.pickInRound }}</span>
+              <div class="pick-team-info">
+                <div class="pick-owner">
+                  <div class="team-logo" :style="{ backgroundColor: slot.teamColor }">
+                    {{ slot.teamAbbr }}
+                  </div>
+                  <span class="team-name">{{ slot.teamName }}</span>
+                </div>
+                <div v-if="slot.isTraded" class="pick-origin">
+                  <span class="traded-badge">TRADED</span>
+                  <span class="origin-text">
+                    Originally
+                    <span class="origin-team-abbr" :style="{ color: slot.originalTeamColor }">{{ slot.originalTeamAbbr }}</span>
+                    pick ({{ slot.originalTeamName }})
+                  </span>
+                </div>
               </div>
-              <span class="team-name">{{ slot.teamName }}</span>
-              <span v-if="slot.isTraded" class="traded-label">(via {{ slot.originalTeamAbbr }})</span>
             </div>
           </div>
         </div>
@@ -280,14 +294,28 @@ onMounted(async () => {
               v-for="slot in mockRound2"
               :key="slot.pick"
               class="mock-pick-row"
-              :class="{ 'user-team': slot.teamId === userTeamId }"
+              :class="{
+                'user-team': slot.teamId === userTeamId,
+                'is-traded': slot.isTraded
+              }"
             >
-              <span class="pick-number">{{ slot.pick }}</span>
-              <div class="team-logo" :style="{ backgroundColor: slot.teamColor }">
-                {{ slot.teamAbbr }}
+              <span class="pick-number">{{ slot.pickInRound }}</span>
+              <div class="pick-team-info">
+                <div class="pick-owner">
+                  <div class="team-logo" :style="{ backgroundColor: slot.teamColor }">
+                    {{ slot.teamAbbr }}
+                  </div>
+                  <span class="team-name">{{ slot.teamName }}</span>
+                </div>
+                <div v-if="slot.isTraded" class="pick-origin">
+                  <span class="traded-badge">TRADED</span>
+                  <span class="origin-text">
+                    Originally
+                    <span class="origin-team-abbr" :style="{ color: slot.originalTeamColor }">{{ slot.originalTeamAbbr }}</span>
+                    pick ({{ slot.originalTeamName }})
+                  </span>
+                </div>
               </div>
-              <span class="team-name">{{ slot.teamName }}</span>
-              <span v-if="slot.isTraded" class="traded-label">(via {{ slot.originalTeamAbbr }})</span>
             </div>
           </div>
         </div>
@@ -626,6 +654,10 @@ onMounted(async () => {
   background: rgba(232, 90, 79, 0.15);
 }
 
+.mock-pick-row.is-traded {
+  padding: 10px 12px;
+}
+
 .pick-number {
   width: 32px;
   font-weight: 700;
@@ -633,6 +665,19 @@ onMounted(async () => {
   color: var(--color-text-secondary);
   text-align: center;
   flex-shrink: 0;
+}
+
+.pick-team-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pick-owner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .team-logo {
@@ -654,10 +699,32 @@ onMounted(async () => {
   color: var(--color-text-primary);
 }
 
-.traded-label {
-  font-size: 0.75rem;
+.pick-origin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 42px;
+}
+
+.traded-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(244, 162, 89, 0.15);
+  color: #F4A259;
+  flex-shrink: 0;
+}
+
+.origin-text {
+  font-size: 0.72rem;
   color: var(--color-text-tertiary);
-  font-style: italic;
+}
+
+.origin-team-abbr {
+  font-weight: 700;
 }
 
 /* Responsive */
