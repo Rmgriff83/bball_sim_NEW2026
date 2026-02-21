@@ -5,7 +5,7 @@ import { X, Star, Users } from 'lucide-vue-next'
 const props = defineProps({
   show: Boolean,
   rosters: Object,
-  userTeamId: Number,
+  userTeamId: [Number, String],
 })
 
 const emit = defineEmits(['close'])
@@ -22,7 +22,7 @@ const tabLabel = computed(() => activeTab.value === 'allStars' ? 'All-Star' : 'R
 const positions = ['PG', 'SG', 'SF', 'PF', 'C']
 
 function isUserPlayer(player) {
-  return player.teamId === props.userTeamId
+  return player.teamId == props.userTeamId
 }
 
 function close() {

@@ -90,7 +90,7 @@ function isWin(toast) {
               <div class="draft-pick-player">{{ toast.playerName }}</div>
               <div class="draft-pick-meta">
                 <span class="draft-pick-pos">{{ toast.position }}</span>
-                <span class="draft-pick-ovr">{{ toast.overallRating }} OVR</span>
+                <span v-if="toast.overallRating != null" class="draft-pick-ovr">{{ toast.overallRating }} OVR</span>
               </div>
             </div>
             <button class="toast-close" @click="toastStore.removeToast(toast.id)">

@@ -479,6 +479,16 @@ export const useDraftStore = defineStore('draft', () => {
         plain.teamAbbreviation = result.teamAbbr
         plain.isFreeAgent = 0
         plain.campaignId = campaignId
+
+        // Save draft selection data on player
+        plain.draftInfo = {
+          year: null, // Fantasy draft has no year context
+          round: result.round,
+          pick: result.pick,
+          teamAbbreviation: result.teamAbbr,
+          teamName: result.teamName,
+        }
+
         playerUpdates.push(plain)
       }
 
@@ -597,6 +607,15 @@ export const useDraftStore = defineStore('draft', () => {
         plain.isFreeAgent = 0
         plain.isDraftProspect = false
         plain.campaignId = campaignId
+
+        // Save draft selection data on player
+        plain.draftInfo = {
+          year: gameYear,
+          round: result.round,
+          pick: result.pick,
+          teamAbbreviation: result.teamAbbr,
+          teamName: result.teamName,
+        }
 
         // Apply rookie contract
         const contract = assignRookieContract(result.pick)

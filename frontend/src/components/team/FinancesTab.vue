@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useFinanceStore } from '@/stores/finance'
 import { useTeamStore } from '@/stores/team'
+import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, LoadingSpinner } from '@/components/ui'
 import { DollarSign, Users, TrendingUp, Calendar, FileText } from 'lucide-vue-next'
@@ -20,6 +21,7 @@ const props = defineProps({
 
 const financeStore = useFinanceStore()
 const teamStore = useTeamStore()
+const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
 
 const loading = ref(true)
@@ -411,6 +413,7 @@ onMounted(() => {
     <PlayerDetailModal
       :show="showPlayerInfoModal"
       :player="detailPlayer"
+      :current-season-year="campaignStore.currentCampaign?.currentSeasonYear"
       @close="closePlayerInfoModal"
     />
   </div>

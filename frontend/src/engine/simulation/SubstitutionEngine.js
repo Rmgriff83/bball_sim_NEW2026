@@ -246,12 +246,14 @@ export function evaluateSubstitutions(
   // Calculate game minutes elapsed
   const gameElapsed = calculateGameElapsed(currentQuarter, timeRemaining);
 
-  // Q4 close game override - force best 5 back in
+  // Q4 close game override - force best available back in (respects minute targets)
   const closeGameLineup = applyCloseGameOverride(
     fullRoster,
     currentQuarter,
     timeRemaining,
-    scoreDiff
+    scoreDiff,
+    targetMinutes,
+    boxScore
   );
   if (closeGameLineup !== null) {
     return closeGameLineup;
@@ -351,19 +353,25 @@ export function evaluateSubstitutions(
 
 /**
  * If Q4, timeRemaining <= 5.0, scoreDiff <= CLOSE_GAME_THRESHOLD:
- * Force best 5 players (by overall_rating) back into lineup.
+ * Force best available players (by overall_rating) back into lineup.
+ * Respects target minutes — players who have already exceeded their
+ * target are not forced back in.
  *
  * @param {Array}  fullRoster     - Full roster of player objects
  * @param {number} currentQuarter - 1-4
  * @param {number} timeRemaining  - Minutes remaining in current quarter
  * @param {number} scoreDiff      - Team score minus opponent score
+ * @param {Object} targetMinutes  - { [playerId]: targetMinutesNumber }
+ * @param {Object} boxScore       - { [playerId]: { minutes, ... } }
  * @returns {Array|null} Array of 5 player IDs or null
  */
 export function applyCloseGameOverride(
   fullRoster,
   currentQuarter,
   timeRemaining,
-  scoreDiff
+  scoreDiff,
+  targetMinutes,
+  boxScore
 ) {
   if (
     currentQuarter < 4 ||
@@ -374,8 +382,18 @@ export function applyCloseGameOverride(
   }
 
   // Get healthy players sorted by rating descending
+  // Filter out players who have exceeded their target minutes
   const healthy = fullRoster
-    .filter((p) => !isPlayerInjured(p))
+    .filter((p) => {
+      if (isPlayerInjured(p)) return false;
+      if (targetMinutes && boxScore) {
+        const target = targetMinutes[p.id];
+        const actual = boxScore[p.id]?.minutes ?? 0;
+        // If player has a target set and has exceeded it, don't force them in
+        if (target != null && target > 0 && actual >= target) return false;
+      }
+      return true;
+    })
     .sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
 
   // Take best 5

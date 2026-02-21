@@ -139,6 +139,7 @@ export const useSyncStore = defineStore('sync', () => {
     'gamesPlayedThisSeason', 'minutesPlayedThisSeason', 'careerSeasons',
     // Duplicate award fields
     'allStarSelections', 'mvpAwards', 'finalsMvpAwards',
+    'rookieOfTheYear', 'allNbaSelections', 'allNbaFirstTeam', 'allRookieTeam', 'allDefensiveTeam',
     // Duplicate misc
     'birthDate', 'wingspanInches', 'tradeValueTotal',
   ]
@@ -251,6 +252,11 @@ export const useSyncStore = defineStore('sync', () => {
     if (p.all_star_selections !== undefined && p.allStarSelections === undefined) p.allStarSelections = p.all_star_selections
     if (p.mvp_awards !== undefined && p.mvpAwards === undefined) p.mvpAwards = p.mvp_awards
     if (p.finals_mvp_awards !== undefined && p.finalsMvpAwards === undefined) p.finalsMvpAwards = p.finals_mvp_awards
+    if (p.rookie_of_the_year !== undefined && p.rookieOfTheYear === undefined) p.rookieOfTheYear = p.rookie_of_the_year
+    if (p.all_nba_selections !== undefined && p.allNbaSelections === undefined) p.allNbaSelections = p.all_nba_selections
+    if (p.all_nba_first_team !== undefined && p.allNbaFirstTeam === undefined) p.allNbaFirstTeam = p.all_nba_first_team
+    if (p.all_rookie_team !== undefined && p.allRookieTeam === undefined) p.allRookieTeam = p.all_rookie_team
+    if (p.all_defensive_team !== undefined && p.allDefensiveTeam === undefined) p.allDefensiveTeam = p.all_defensive_team
 
     return p
   }

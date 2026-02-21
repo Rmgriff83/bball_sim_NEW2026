@@ -70,4 +70,24 @@ export const BreakingNewsService = {
       date,
     }
   },
+
+  seasonMVP({ playerName, teamName, stats, date }) {
+    return {
+      headline: `${playerName.toUpperCase()} WINS LEAGUE MVP`,
+      body: `${playerName} of the ${teamName} has been named the League MVP after a dominant season${stats ? `, averaging ${stats.ppg} PPG, ${stats.rpg} RPG, and ${stats.apg} APG` : ''}.`,
+      category: 'AWARD',
+      icon: 'Award',
+      date,
+    }
+  },
+
+  rookieOfTheYear({ playerName, teamName, stats, date }) {
+    return {
+      headline: `${playerName.toUpperCase()} NAMED ROOKIE OF THE YEAR`,
+      body: `${playerName} of the ${teamName} has been named Rookie of the Year after an impressive debut season${stats ? `, averaging ${stats.ppg} PPG, ${stats.rpg} RPG, and ${stats.apg} APG` : ''}.`,
+      category: 'AWARD',
+      icon: 'Award',
+      date,
+    }
+  },
 }

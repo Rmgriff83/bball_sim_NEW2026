@@ -11,6 +11,7 @@ import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/u
 import { User, Users, ArrowUpDown, AlertTriangle, Calendar } from 'lucide-vue-next'
 import TradeCenter from '@/components/trade/TradeCenter.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
+import FacilitiesTab from '@/components/team/FacilitiesTab.vue'
 import ScheduleTab from '@/components/team/ScheduleTab.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 
@@ -23,7 +24,7 @@ const { loadSynergies, getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSyne
 
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
-const validTabs = ['team', 'coach', 'finances', 'trades', 'schedule']
+const validTabs = ['team', 'coach', 'finances', 'trades', 'facilities', 'schedule']
 const queryTab = route.query?.tab
 const hashTab = route.hash?.slice(1)
 const initialTab = queryTab || hashTab
@@ -921,6 +922,13 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
           Trades
         </button>
         <button
+          class="tab-btn"
+          :class="{ active: activeTab === 'facilities' }"
+          @click="activeTab = 'facilities'"
+        >
+          Facilities
+        </button>
+        <button
           class="tab-btn tab-btn-icon"
           :class="{ active: activeTab === 'schedule' }"
           @click="activeTab = 'schedule'"
@@ -1633,6 +1641,11 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
         <TradeCenter :campaign-id="campaignId" @trade-completed="activeTab = 'team'" />
       </div>
 
+      <!-- Facilities View -->
+      <div v-else-if="activeTab === 'facilities'" class="facilities-content">
+        <FacilitiesTab :campaign-id="campaignId" />
+      </div>
+
       <!-- Schedule View -->
       <div v-else-if="activeTab === 'schedule'" class="schedule-content">
         <ScheduleTab :campaign-id="campaignId" />
@@ -1649,6 +1662,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
       :player-news="playerNews"
       :show-history="true"
       :can-upgrade="true"
+      :current-season-year="campaignStore.currentCampaign?.currentSeasonYear"
       :lineup-players="teamStore.starterPlayers?.filter(p => p != null) || []"
       @close="closePlayerModal"
       @upgrade-attribute="handleUpgradeAttribute"

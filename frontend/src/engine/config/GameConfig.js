@@ -300,23 +300,24 @@ export const DEVELOPMENT = {
 // DIFFICULTY-BASED DEVELOPMENT SETTINGS
 // =============================================================================
 // Per-game micro-development thresholds and gains vary by difficulty.
-// Lower thresholds = easier to trigger growth.
-// Higher gains = more attribute improvement per good game.
+// Performance rating uses a PER-inspired formula (average ~15).
+// Stat thresholds are per-36-minute baselines, auto-scaled by actual minutes.
 
 export const DIFFICULTY_SETTINGS = {
   rookie: {
     // Very achievable growth - most decent performances trigger development
-    micro_dev_threshold_high: 9,    // Reduced ~15% for shorter quarters
-    micro_dev_threshold_low: 4,
+    micro_dev_threshold_high: 13,   // PER-scale: slightly below average triggers growth
+    micro_dev_threshold_low: 6,     // Only truly bad games regress
     micro_dev_gain_min: 0.15,       // Higher gains
     micro_dev_gain_max: 0.4,
-    micro_dev_loss_min: 0.05,       // Lower losses
-    micro_dev_loss_max: 0.1,
-    // Stat thresholds for which attributes improve
+    micro_dev_loss_min: 0.04,       // Lower losses
+    micro_dev_loss_max: 0.08,
+    min_minutes_for_regression: 12, // Need 12+ min for regression to apply
+    // Per-36-minute stat thresholds (auto-scaled by actual minutes played)
     stat_thresholds: {
-      points: 10,
+      points: 12,
       assists: 3,
-      rebounds: 4,
+      rebounds: 5,
       steals: 1,
       blocks: 1,
       threes: 2,
@@ -326,19 +327,20 @@ export const DIFFICULTY_SETTINGS = {
     regression_multiplier: 0.7,     // 30% less regression
   },
   pro: {
-    // Balanced - good performances trigger development
-    micro_dev_threshold_high: 12,   // Reduced ~15% for shorter quarters
-    micro_dev_threshold_low: 5,
+    // Balanced - above-average performances trigger development
+    micro_dev_threshold_high: 16,   // PER-scale: above average triggers growth
+    micro_dev_threshold_low: 8,     // Below average triggers regression
     micro_dev_gain_min: 0.1,
     micro_dev_gain_max: 0.3,
-    micro_dev_loss_min: 0.08,
-    micro_dev_loss_max: 0.15,
+    micro_dev_loss_min: 0.05,
+    micro_dev_loss_max: 0.1,
+    min_minutes_for_regression: 10,
     stat_thresholds: {
-      points: 13,
+      points: 14,
       assists: 4,
       rebounds: 5,
-      steals: 2,
-      blocks: 2,
+      steals: 1,
+      blocks: 1,
       threes: 2,
     },
     development_multiplier: 1.0,
@@ -346,33 +348,35 @@ export const DIFFICULTY_SETTINGS = {
   },
   all_star: {
     // Challenging - need solid performances for growth
-    micro_dev_threshold_high: 15,   // Reduced ~15% for shorter quarters
-    micro_dev_threshold_low: 6,
+    micro_dev_threshold_high: 19,   // PER-scale: need good games for growth
+    micro_dev_threshold_low: 10,    // Average-ish games trigger regression
     micro_dev_gain_min: 0.08,
     micro_dev_gain_max: 0.25,
-    micro_dev_loss_min: 0.1,
-    micro_dev_loss_max: 0.2,
+    micro_dev_loss_min: 0.06,
+    micro_dev_loss_max: 0.15,
+    min_minutes_for_regression: 10,
     stat_thresholds: {
-      points: 15,
+      points: 16,
       assists: 5,
       rebounds: 6,
       steals: 2,
       blocks: 2,
-      threes: 3,
+      threes: 2,
     },
     development_multiplier: 0.85,
     regression_multiplier: 1.15,
   },
   hall_of_fame: {
     // Very challenging - need great performances for growth
-    micro_dev_threshold_high: 19,   // Reduced ~15% for shorter quarters
-    micro_dev_threshold_low: 7,
+    micro_dev_threshold_high: 22,   // PER-scale: need great games for growth
+    micro_dev_threshold_low: 12,    // Below-average games trigger regression
     micro_dev_gain_min: 0.05,
     micro_dev_gain_max: 0.2,
-    micro_dev_loss_min: 0.12,
-    micro_dev_loss_max: 0.25,
+    micro_dev_loss_min: 0.08,
+    micro_dev_loss_max: 0.2,
+    min_minutes_for_regression: 8,
     stat_thresholds: {
-      points: 19,
+      points: 18,
       assists: 6,
       rebounds: 7,
       steals: 2,
@@ -390,11 +394,11 @@ export const DIFFICULTY_SETTINGS = {
 
 export const STREAKS = {
   hot_streak_games: 3,        // Games needed to trigger hot streak
-  hot_streak_threshold: 21,   // Performance rating threshold (reduced ~15% for shorter quarters)
+  hot_streak_threshold: 22,   // PER-scale: 3 consecutive great games (~All-Star level)
   hot_streak_bonus: 2,        // Attribute bonus during streak
 
   cold_streak_games: 3,
-  cold_streak_threshold: 9,
+  cold_streak_threshold: 8,   // PER-scale: 3 consecutive poor games
   cold_streak_penalty: -2,
 
   max_streak_length: 10,      // Streaks cap at 10 games
@@ -430,7 +434,7 @@ export const FATIGUE = {
   ],
   max_fatigue: 100,
   weekly_recovery: 16.5,
-  rest_day_recovery: 16.5,
+  rest_day_recovery: 19.0,
   performance_penalty_start: 50,
   max_performance_penalty: 0.25,
 };

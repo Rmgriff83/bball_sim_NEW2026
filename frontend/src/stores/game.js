@@ -5,6 +5,9 @@ import { useToastStore } from '@/stores/toast'
 import { useCampaignStore } from '@/stores/campaign'
 import { useSyncStore } from '@/stores/sync'
 import { usePlayoffStore } from '@/stores/playoff'
+import { useAuthStore } from '@/stores/auth'
+import { useLeagueStore } from '@/stores/league'
+import api from '@/composables/useApi'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
@@ -39,6 +42,9 @@ export const useGameStore = defineStore('game', () => {
   const backgroundSimulating = ref(false)
   const simulationProgress = ref(null)
 
+  // Weekly summary state
+  const weeklySummaryData = ref(null)
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -53,7 +59,8 @@ export const useGameStore = defineStore('game', () => {
     const year = campaign.currentSeasonYear ?? 2025
     const userTeamId = campaign.teamId
     const userLineup = campaign.settings?.lineup?.starters || null
-    return { campaign, year, userTeamId, userLineup }
+    const userTargetMinutes = campaign.settings?.lineup?.target_minutes || null
+    return { campaign, year, userTeamId, userLineup, userTargetMinutes }
   }
 
   /**
@@ -175,28 +182,110 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * Accumulate award tokens from game rewards into campaign settings.
+   */
+  async function _accumulateAwardTokens(campaignId, rewards) {
+    if (!rewards || !rewards.tokens_awarded) return
+    try {
+      const response = await api.post('/api/user/tokens', { amount: rewards.tokens_awarded })
+      const authStore = useAuthStore()
+      if (authStore.profile) {
+        authStore.profile.tokens = response.data.tokens
+      }
+    } catch (err) {
+      console.warn('[GameStore] Failed to push tokens to backend:', err)
+    }
+  }
+
+  /**
+   * Award scouting points based on weeks passed and scouting facility level.
+   * Returns the number of scouting points earned (for weekly summary).
+   */
+  /**
+   * Get Monday-aligned week number for a given date relative to season start.
+   * Weeks always begin on Monday so weekly reports trigger on Mondays.
+   */
+  function _getMondayWeek(dateMs) {
+    // Use a fixed Monday epoch (Jan 5 1970 = first Monday after Unix epoch)
+    const MONDAY_EPOCH = 4 * 24 * 60 * 60 * 1000 // Thu(0) + 4 days = Monday
+    return Math.floor((dateMs - MONDAY_EPOCH) / (7 * 24 * 60 * 60 * 1000))
+  }
+
+  async function _awardScoutingPoints(campaign, newDate) {
+    const prevDate = campaign.currentDate || `${campaign.currentSeasonYear ?? 2025}-10-21`
+    const prevMs = new Date(prevDate).getTime()
+    const newMs = new Date(newDate).getTime()
+
+    const prevWeek = _getMondayWeek(prevMs)
+    const currentWeek = _getMondayWeek(newMs)
+
+    const lastScoutingWeek = campaign.settings?.lastScoutingWeek ?? 0
+    const effectivePrevWeek = Math.max(prevWeek, lastScoutingWeek)
+
+    if (currentWeek > effectivePrevWeek) {
+      const userTeamId = campaign.teamId
+      if (!userTeamId) return 0
+
+      const userTeam = await TeamRepository.get(campaign.id, userTeamId)
+      const scoutingLevel = userTeam?.facilities?.scouting ?? 1
+      const newWeeks = currentWeek - effectivePrevWeek
+      const pointsEarned = newWeeks * scoutingLevel
+
+      campaign.settings = campaign.settings ?? {}
+      campaign.settings.scoutingPoints = (campaign.settings.scoutingPoints ?? 0) + pointsEarned
+      campaign.settings.lastScoutingWeek = currentWeek
+
+      return pointsEarned
+    }
+    return 0
+  }
+
+  /**
    * Advance the campaign date to the day after the given game date.
+   * Also awards scouting points for any new weeks that passed.
+   * Returns { scoutingPointsEarned, previousWeek, currentWeek } for weekly summary.
    */
   async function _advanceDateIfNeeded(campaignId, gameDate) {
-    if (!gameDate) return
+    if (!gameDate) return {}
     const campaign = await CampaignRepository.get(campaignId)
-    if (!campaign) return
+    if (!campaign) return {}
+
+    let scoutingPointsEarned = 0
+    let previousWeek = 0
+    let currentWeek = 0
 
     // Only advance if game date >= current date
     if (gameDate >= (campaign.currentDate || '')) {
+      const seasonStart = `${campaign.currentSeasonYear ?? 2025}-10-21`
+      const prevMs = new Date(campaign.currentDate || seasonStart).getTime()
+      previousWeek = _getMondayWeek(prevMs)
+
       const [y, m, d] = gameDate.split('-').map(Number)
       const nextDay = new Date(y, m - 1, d)
       nextDay.setDate(nextDay.getDate() + 1)
       const newDate = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`
+
+      const newMs = new Date(newDate).getTime()
+      currentWeek = _getMondayWeek(newMs)
+
+      // Award scouting points for any new weeks
+      scoutingPointsEarned = await _awardScoutingPoints(campaign, newDate)
+
       campaign.currentDate = newDate
       await CampaignRepository.save(campaign)
 
-      // Update campaign store if loaded
+      // Update campaign store if loaded (sync full settings including scouting points)
       const campaignStore = useCampaignStore()
       if (campaignStore.currentCampaign?.id === campaignId) {
         campaignStore.updateCurrentDate(newDate)
+        campaignStore.currentCampaign.settings = {
+          ...campaignStore.currentCampaign.settings,
+          ...campaign.settings,
+        }
       }
     }
+
+    return { scoutingPointsEarned, previousWeek, currentWeek }
   }
 
   /**
@@ -459,7 +548,7 @@ export const useGameStore = defineStore('game', () => {
     simulating.value = true
     error.value = null
     try {
-      const { year: seasonYear, userTeamId, userLineup, campaign } = await _getCampaignContext(campaignId)
+      const { year: seasonYear, userTeamId, userLineup, userTargetMinutes, campaign } = await _getCampaignContext(campaignId)
       const effectiveYear = year || seasonYear
 
       // Load season data
@@ -484,6 +573,7 @@ export const useGameStore = defineStore('game', () => {
         isLiveGame: false,
         userTeamId,
         userLineup,
+        targetMinutes: userTargetMinutes,
       })
 
       // Process post-game evolution
@@ -507,6 +597,9 @@ export const useGameStore = defineStore('game', () => {
           didWin,
         })
         result.rewards = rewards
+
+        // Accumulate award tokens
+        await _accumulateAwardTokens(campaignId, rewards)
       }
 
       // Persist to IndexedDB
@@ -546,7 +639,15 @@ export const useGameStore = defineStore('game', () => {
       }
 
       // Advance campaign date
-      await _advanceDateIfNeeded(campaignId, game.gameDate)
+      const advanceResult = await _advanceDateIfNeeded(campaignId, game.gameDate)
+      if (advanceResult.currentWeek > advanceResult.previousWeek) {
+        weeklySummaryData.value = {
+          scoutingPointsEarned: advanceResult.scoutingPointsEarned || 0,
+          previousWeek: advanceResult.previousWeek,
+          currentWeek: advanceResult.currentWeek,
+          evolution: result.evolution || null,
+        }
+      }
 
       result.playoffUpdate = playoffUpdate
       return result
@@ -562,7 +663,7 @@ export const useGameStore = defineStore('game', () => {
     simulating.value = true
     error.value = null
     try {
-      const { year, userTeamId, userLineup, campaign } = await _getCampaignContext(campaignId)
+      const { year, userTeamId, userLineup, userTargetMinutes, campaign } = await _getCampaignContext(campaignId)
       const currentDate = campaign.currentDate || '2025-10-21'
 
       const seasonData = await SeasonRepository.get(campaignId, year)
@@ -598,6 +699,7 @@ export const useGameStore = defineStore('game', () => {
           generateAnimationData: false,
           userTeamId,
           userLineup,
+          targetMinutes: userTargetMinutes,
         })
 
         // Post-game evolution
@@ -667,7 +769,7 @@ export const useGameStore = defineStore('game', () => {
     error.value = null
 
     try {
-      const { year, userTeamId, userLineup } = await _getCampaignContext(campaignId)
+      const { year, userTeamId, userLineup, userTargetMinutes } = await _getCampaignContext(campaignId)
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData) throw new Error(`Season ${year} not found`)
 
@@ -692,6 +794,7 @@ export const useGameStore = defineStore('game', () => {
           isLiveGame: true,
           userTeamId,
           userLineup,
+          targetMinutes: userTargetMinutes,
           ...(settings || {}),
         },
       })
@@ -834,6 +937,9 @@ export const useGameStore = defineStore('game', () => {
         })
         result.rewards = rewards
 
+        // Accumulate award tokens
+        await _accumulateAwardTokens(campaignId, rewards)
+
         // Persist game result and clear saved in-progress state
         const { playoffUpdate } = await _persistGameResult(campaignId, year, seasonData, gameId, result, true)
         // Clean up the savedGameState from the schedule entry (already handled by _persistGameResult setting isComplete)
@@ -880,7 +986,15 @@ export const useGameStore = defineStore('game', () => {
         }
 
         // Advance campaign date
-        await _advanceDateIfNeeded(campaignId, game.gameDate)
+        const advanceResult = await _advanceDateIfNeeded(campaignId, game.gameDate)
+        if (advanceResult.currentWeek > advanceResult.previousWeek) {
+          weeklySummaryData.value = {
+            scoutingPointsEarned: advanceResult.scoutingPointsEarned || 0,
+            previousWeek: advanceResult.previousWeek,
+            currentWeek: advanceResult.currentWeek,
+            evolution: result.evolution || null,
+          }
+        }
 
         return {
           ...quarterResult,
@@ -978,6 +1092,9 @@ export const useGameStore = defineStore('game', () => {
       })
       result.rewards = rewards
 
+      // Accumulate award tokens
+      await _accumulateAwardTokens(campaignId, rewards)
+
       // Persist and clean up saved in-progress state
       const { playoffUpdate } = await _persistGameResult(campaignId, year, seasonData, gameId, result, true)
       const completedEntry = seasonData.schedule.find(g => g.id === gameId)
@@ -1018,7 +1135,15 @@ export const useGameStore = defineStore('game', () => {
       }
 
       // Advance campaign date
-      await _advanceDateIfNeeded(campaignId, game.gameDate)
+      const advanceResult = await _advanceDateIfNeeded(campaignId, game.gameDate)
+      if (advanceResult.currentWeek > advanceResult.previousWeek) {
+        weeklySummaryData.value = {
+          scoutingPointsEarned: advanceResult.scoutingPointsEarned || 0,
+          previousWeek: advanceResult.previousWeek,
+          currentWeek: advanceResult.currentWeek,
+          evolution: result.evolution || null,
+        }
+      }
 
       return {
         result,
@@ -1108,7 +1233,7 @@ export const useGameStore = defineStore('game', () => {
     simulating.value = true
     error.value = null
     try {
-      const { year, userTeamId, userLineup, campaign } = await _getCampaignContext(campaignId)
+      const { year, userTeamId, userLineup, userTargetMinutes, campaign } = await _getCampaignContext(campaignId)
       const currentDate = campaign.currentDate || '2025-10-21'
 
       const seasonData = await SeasonRepository.get(campaignId, year)
@@ -1132,9 +1257,30 @@ export const useGameStore = defineStore('game', () => {
         }
       }
 
+      // Check for Monday boundary BEFORE simulating the user's game.
+      // Weekly reports should appear at the start of Monday (i.e., right after
+      // Sunday passes), not after the first game of the new week.
+      let preGameAdvanceResult = {}
+      const nextUserGame = preview.nextUserGame
+      if (nextUserGame) {
+        const campaignDateMs = new Date(currentDate).getTime()
+        const gameDateMs = new Date(nextUserGame.gameDate).getTime()
+        if (_getMondayWeek(gameDateMs) > _getMondayWeek(campaignDateMs)) {
+          // A Monday boundary exists between current date and the game.
+          // Advance to that Monday by passing the Sunday before it.
+          const MONDAY_EPOCH = 4 * 24 * 60 * 60 * 1000
+          const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+          const gameWeek = _getMondayWeek(gameDateMs)
+          const mondayMs = MONDAY_EPOCH + gameWeek * WEEK_MS
+          const sundayMs = mondayMs - 24 * 60 * 60 * 1000
+          const sun = new Date(sundayMs)
+          const sundayStr = `${sun.getUTCFullYear()}-${String(sun.getUTCMonth() + 1).padStart(2, '0')}-${String(sun.getUTCDate()).padStart(2, '0')}`
+          preGameAdvanceResult = await _advanceDateIfNeeded(campaignId, sundayStr)
+        }
+      }
+
       // Also include the user's game if not excluded
       let userGameResult = null
-      const nextUserGame = preview.nextUserGame
 
       if (!excludeUserGame && nextUserGame) {
         const { homeTeam, awayTeam, homePlayers, awayPlayers } = await _loadGameSimData(campaignId, nextUserGame)
@@ -1143,6 +1289,7 @@ export const useGameStore = defineStore('game', () => {
           generateAnimationData: false,
           userTeamId,
           userLineup,
+          targetMinutes: userTargetMinutes,
         })
 
         // Post-game evolution for user game
@@ -1163,6 +1310,9 @@ export const useGameStore = defineStore('game', () => {
           didWin,
         })
         result.rewards = rewards
+
+        // Accumulate award tokens
+        await _accumulateAwardTokens(campaignId, rewards)
 
         const { playoffUpdate } = await _persistGameResult(campaignId, year, seasonData, nextUserGame.id, result, true)
         await _applyEvolutionToPlayers(evolution, nextUserGame)
@@ -1212,9 +1362,27 @@ export const useGameStore = defineStore('game', () => {
       // When excludeUserGame is true (live play), the game completion handler
       // (continueGame Q4 / simToEnd) will advance the date after the game finishes.
       // Advancing early would cause "no upcoming games" if the user reloads mid-game.
+      let postGameAdvanceResult = {}
       if (!excludeUserGame) {
         const latestDate = nextUserGame?.gameDate || currentDate
-        await _advanceDateIfNeeded(campaignId, latestDate)
+        postGameAdvanceResult = await _advanceDateIfNeeded(campaignId, latestDate)
+      }
+
+      // Build weekly summary — prefer pre-game boundary (shows report before the game),
+      // fall back to post-game boundary (e.g., user plays Sunday, date advances to Monday)
+      const weeklyResult = (preGameAdvanceResult.currentWeek > preGameAdvanceResult.previousWeek)
+        ? preGameAdvanceResult
+        : (postGameAdvanceResult.currentWeek > postGameAdvanceResult.previousWeek)
+          ? postGameAdvanceResult
+          : null
+      if (weeklyResult) {
+        const summaryData = {
+          scoutingPointsEarned: weeklyResult.scoutingPointsEarned || 0,
+          previousWeek: weeklyResult.previousWeek,
+          currentWeek: weeklyResult.currentWeek,
+          evolution: userGameResult?.evolution || null,
+        }
+        weeklySummaryData.value = summaryData
       }
 
       // Simulate AI games in bulk with progress
@@ -1236,7 +1404,7 @@ export const useGameStore = defineStore('game', () => {
       }
 
       simulating.value = false
-      return { userGameResult }
+      return { userGameResult, weeklySummary: weeklySummaryData.value }
     } catch (err) {
       error.value = err.message || 'Failed to simulate to next game'
       simulating.value = false
@@ -1253,7 +1421,7 @@ export const useGameStore = defineStore('game', () => {
     simulating.value = true
     error.value = null
     try {
-      const { year, userTeamId, userLineup, campaign } = await _getCampaignContext(campaignId)
+      const { year, userTeamId, userLineup, userTargetMinutes, campaign } = await _getCampaignContext(campaignId)
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData) throw new Error(`Season ${year} not found`)
 
@@ -1291,6 +1459,7 @@ export const useGameStore = defineStore('game', () => {
             generateAnimationData: false,
             userTeamId,
             userLineup,
+            targetMinutes: userTargetMinutes,
           })
           const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
             userTeamId,
@@ -1327,6 +1496,10 @@ export const useGameStore = defineStore('game', () => {
         simulationProgress.value = null
       }
 
+      // Refresh games list and invalidate league standings so UI picks up new results
+      await fetchGames(campaignId, { force: true })
+      useLeagueStore().invalidate()
+
       simulating.value = false
       return { completed: remainingGames.length }
     } catch (err) {
@@ -1353,6 +1526,7 @@ export const useGameStore = defineStore('game', () => {
       const engineStore = useEngineStore()
       const worker = engineStore.getWorker()
       const toastStore = useToastStore()
+      const teams = await TeamRepository.getAllForCampaign(campaignId)
 
       // Find all remaining incomplete AI playoff games (non-cancelled)
       const remainingAiPlayoffGames = seasonData.schedule.filter(g =>
@@ -1363,34 +1537,66 @@ export const useGameStore = defineStore('game', () => {
         g.awayTeamId !== userTeamId
       )
 
-      if (remainingAiPlayoffGames.length === 0) {
-        simulating.value = false
-        return { message: 'No remaining playoff games to simulate' }
+      let totalCompleted = 0
+
+      if (remainingAiPlayoffGames.length > 0) {
+        backgroundSimulating.value = true
+        simulationProgress.value = { completed: 0, total: remainingAiPlayoffGames.length }
+        const progressToastId = toastStore.showProgress('Playoff games', 0, remainingAiPlayoffGames.length)
+
+        try {
+          await _simulateAiGamesBulk(campaignId, year, seasonData, remainingAiPlayoffGames, worker, (progress) => {
+            simulationProgress.value = progress
+            toastStore.updateProgress(progressToastId, progress.completed, progress.total)
+          })
+        } finally {
+          toastStore.removeMinimalToast(progressToastId)
+          backgroundSimulating.value = false
+          simulationProgress.value = null
+        }
+
+        totalCompleted = remainingAiPlayoffGames.length
+
+        // Advance date past the last simulated game
+        const lastGame = remainingAiPlayoffGames[remainingAiPlayoffGames.length - 1]
+        if (lastGame) {
+          await _advanceDateIfNeeded(campaignId, lastGame.gameDate)
+        }
       }
 
-      backgroundSimulating.value = true
-      simulationProgress.value = { completed: 0, total: remainingAiPlayoffGames.length }
-      const progressToastId = toastStore.showProgress('Playoff games', 0, remainingAiPlayoffGames.length)
+      // Safety net: ensure all completed series have been properly advanced
+      // and new round schedules are generated. This handles cases where AI games
+      // were already simulated during normal gameplay (via simulateToNextGame or
+      // _simulateAiGamesForDay) but advancement/scheduling was missed.
+      const bracket = seasonData.playoffBracket
+      if (bracket) {
+        let scheduleCreated = false
 
-      try {
-        await _simulateAiGamesBulk(campaignId, year, seasonData, remainingAiPlayoffGames, worker, (progress) => {
-          simulationProgress.value = progress
-          toastStore.updateProgress(progressToastId, progress.completed, progress.total)
-        })
-      } finally {
-        toastStore.removeMinimalToast(progressToastId)
-        backgroundSimulating.value = false
-        simulationProgress.value = null
-      }
+        // Idempotent: re-run matchup creation for each round transition.
+        // advanceWinnerToNextRound checks both conferences and won't create
+        // duplicates if matchups already exist (guarded by length/null checks).
+        for (const round of [1, 2, 3]) {
+          PlayoffManager.advanceWinnerToNextRound(seasonData, {
+            series: null,
+            round,
+            seriesComplete: true,
+          })
+        }
 
-      // Advance date past the last simulated game
-      const lastGame = remainingAiPlayoffGames[remainingAiPlayoffGames.length - 1]
-      if (lastGame) {
-        await _advanceDateIfNeeded(campaignId, lastGame.gameDate)
+        // Generate schedules for any pending matchups that don't have games yet
+        for (let round = 2; round <= 4; round++) {
+          const created = PlayoffManager.generatePlayoffSchedule(seasonData, teams, round, year)
+          if (created > 0) scheduleCreated = true
+        }
+
+        if (scheduleCreated || totalCompleted > 0) {
+          await SeasonRepository.save({ campaignId, year, ...seasonData })
+          useSyncStore().markDirty()
+        }
       }
 
       simulating.value = false
-      return { completed: remainingAiPlayoffGames.length }
+      return { completed: totalCompleted }
     } catch (err) {
       error.value = err.message || 'Failed to simulate playoff round'
       simulating.value = false
@@ -1584,6 +1790,8 @@ export const useGameStore = defineStore('game', () => {
     // Background simulation state (kept for view compatibility)
     backgroundSimulating,
     simulationProgress,
+    // Weekly summary
+    weeklySummaryData,
     // Getters
     upcomingGames,
     completedGames,

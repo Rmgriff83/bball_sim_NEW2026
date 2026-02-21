@@ -34,6 +34,8 @@ import { generateAITargetMinutes } from '../simulation/SubstitutionEngine'
 import { processSeasonEnd } from '../evolution/PlayerEvolution'
 import { runAIRosterManagement, ensureMinimumRosters } from '../ai/AIContractService'
 import { generateAndSaveRookieClass } from '../draft/RookieGenerationService'
+import { AwardService } from '../season/AwardService'
+import { AllStarService } from '../season/AllStarService'
 
 // =============================================================================
 // HELPERS
@@ -485,6 +487,16 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
     mvp_awards: 0,
     finalsMvpAwards: 0,
     finals_mvp_awards: 0,
+    rookieOfTheYear: 0,
+    rookie_of_the_year: 0,
+    allNbaSelections: 0,
+    all_nba_selections: 0,
+    allNbaFirstTeam: 0,
+    all_nba_first_team: 0,
+    allRookieTeam: 0,
+    all_rookie_team: 0,
+    allDefensiveTeam: 0,
+    all_defensive_team: 0,
 
     updatedAt: new Date().toISOString(),
   }
@@ -866,6 +878,10 @@ export async function createCampaign(options) {
       injuryFrequency: 'normal',
       tradeFrequency: 'normal',
       seasonLength,
+      awardTokens: 0,
+      scoutingPoints: 0,
+      lastScoutingWeek: 0,
+      scoutedPlayers: {},
     },
     lastPlayedAt: new Date().toISOString(),
   }
@@ -1383,6 +1399,38 @@ export async function enterOffseason(campaignId) {
   // 1. Archive season data (player/team history, coach career stats)
   await archiveSeasonData(campaignId, currentYear, teams, allPlayers)
 
+  // 1b. Compute end-of-season awards (before stats are reset)
+  const seasonData = await SeasonRepository.get(campaignId, currentYear)
+  let seasonAwards = null
+  if (seasonData) {
+    const awardResults = AwardService.processSeasonAwards({
+      seasonData, year: currentYear, allPlayers, teams, userTeamId: campaign.teamId,
+    })
+    AwardService.applyAwardsToPlayers(allPlayers, awardResults)
+    seasonAwards = awardResults
+
+    // Also fix: increment allStarSelections (currently never done)
+    const allStarRosters = seasonData?.allStarRosters?.allStars
+    if (allStarRosters) {
+      const ids = AllStarService._collectSelectedPlayerIds(allStarRosters)
+      const playerMap = Object.fromEntries(allPlayers.map(p => [String(p.id), p]))
+      for (const pid of ids) {
+        const p = playerMap[pid]
+        if (p) {
+          p.allStarSelections = (p.allStarSelections ?? 0) + 1
+          p.all_star_selections = p.allStarSelections
+        }
+      }
+    }
+
+    // Store awards on season data
+    seasonData.seasonAwards = awardResults
+    await SeasonRepository.save(seasonData)
+  }
+
+  // Save players with updated award counters
+  await PlayerRepository.saveBulk(allPlayers.map(p => ({ ...p, campaignId })))
+
   // 2. Process season end (aging, retirement, contract decrement, stat resets — injuries preserved)
   const seasonEndResult = processSeasonEnd(
     allPlayers,
@@ -1396,7 +1444,6 @@ export async function enterOffseason(campaignId) {
   )
 
   // 3. Run AI roster management (cuts + re-signings + FA signings + backfill)
-  const seasonData = await SeasonRepository.get(campaignId, currentYear)
   const standings = seasonData?.standings || { east: [], west: [] }
   const userTeamId = campaign.teamId
   const aiTeams = teams.filter(t => t.id !== userTeamId)
@@ -1467,6 +1514,7 @@ export async function enterOffseason(campaignId) {
       signings: aiContractResults.signings,
     },
     releasedUserPlayers,
+    seasonAwards,
   }
 }
 
@@ -1535,6 +1583,30 @@ export async function startNewSeason(campaignId) {
   const teams = await TeamRepository.getAllForCampaign(campaignId)
   allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
 
+  // 3b. Degrade all teams' facilities by 1 (min 1) for the new season
+  const userTeamFacilitiesBefore = {}
+  for (const team of teams) {
+    if (team.facilities) {
+      if (team.id === campaign.teamId) {
+        Object.assign(userTeamFacilitiesBefore, team.facilities)
+      }
+      for (const key of ['training', 'medical', 'scouting', 'analytics']) {
+        if (team.facilities[key] > 1) {
+          team.facilities[key] = team.facilities[key] - 1
+        }
+      }
+    }
+  }
+  const userTeam = teams.find(t => t.id === campaign.teamId)
+  const userTeamFacilitiesAfter = userTeam?.facilities ? { ...userTeam.facilities } : {}
+  await TeamRepository.saveBulk(teams)
+
+  // 3c. Reset scouting points and scouted players for the new season
+  campaign.settings = campaign.settings ?? {}
+  campaign.settings.scoutingPoints = 0
+  campaign.settings.lastScoutingWeek = 0
+  campaign.settings.scoutedPlayers = {}
+
   // 4. Initialize new season (schedule + standings)
   const seasonData = SeasonManager.initializeSeason(teams, nextYear, campaignId)
   const userTeamId = campaign.teamId
@@ -1587,6 +1659,8 @@ export async function startNewSeason(campaignId) {
     seasonData,
     gamesCreated,
     releasedPlayers,
+    facilitiesBefore: userTeamFacilitiesBefore,
+    facilitiesAfter: userTeamFacilitiesAfter,
   }
 }
 
@@ -1868,6 +1942,16 @@ export function generatePlayer(options) {
     mvp_awards: 0,
     finalsMvpAwards: 0,
     finals_mvp_awards: 0,
+    rookieOfTheYear: 0,
+    rookie_of_the_year: 0,
+    allNbaSelections: 0,
+    all_nba_selections: 0,
+    allNbaFirstTeam: 0,
+    all_nba_first_team: 0,
+    allRookieTeam: 0,
+    all_rookie_team: 0,
+    allDefensiveTeam: 0,
+    all_defensive_team: 0,
 
     updatedAt: new Date().toISOString(),
   }

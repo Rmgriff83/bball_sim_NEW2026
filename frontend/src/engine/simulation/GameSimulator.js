@@ -371,8 +371,13 @@ class GameSimulator {
     this.awaySubStrategy = awayScheme.substitution || 'staggered'
 
     // Apply variance so minutes differ game-to-game
-    this.homeTargetMinutes = applyVariance(this.homeTargetMinutes)
-    this.awayTargetMinutes = applyVariance(this.awayTargetMinutes)
+    // Skip variance for user team when they've explicitly set target minutes
+    if (!(isUserHomeTeam && options.targetMinutes)) {
+      this.homeTargetMinutes = applyVariance(this.homeTargetMinutes)
+    }
+    if (!(isUserAwayTeam && options.targetMinutes)) {
+      this.awayTargetMinutes = applyVariance(this.awayTargetMinutes)
+    }
 
     // Calculate team chemistry modifiers from roster morale
     const homeAvgMorale = this.averageMorale(this.homePlayers)

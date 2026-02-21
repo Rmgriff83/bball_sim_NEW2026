@@ -11,6 +11,7 @@ import { usePlayoffStore } from '@/stores/playoff'
 import { useTradeStore } from '@/stores/trade'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { useFinanceStore } from '@/stores/finance'
+import { useAuthStore } from '@/stores/auth'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { LoadingSpinner, BaseModal } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
@@ -19,9 +20,11 @@ import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
+import WeeklySummaryModal from '@/components/game/WeeklySummaryModal.vue'
+import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
 import { enterOffseason, startNewSeason } from '@/engine/campaign/CampaignManager'
 import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Eye } from 'lucide-vue-next'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Eye, Coins, Award } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,6 +37,7 @@ const playoffStore = usePlayoffStore()
 const tradeStore = useTradeStore()
 const breakingNewsStore = useBreakingNewsStore()
 const financeStore = useFinanceStore()
+const authStore = useAuthStore()
 
 const showSimulateModal = ref(false)
 const simSeasonMode = ref(false)
@@ -48,10 +52,14 @@ const showRecoveryModal = ref(false)
 const recoveredPlayers = ref([])
 const showLineupWarningModal = ref(false)
 const pendingGameAction = ref(null) // 'simulate' or gameId for play
+const showWeeklySummaryModal = ref(false)
+const weeklySummary = ref(null)
 const showRosterWarningModal = ref(false)
 const rosterWarningMessage = ref('')
 const rosterWarningHint = ref('')
 const advancingToNextSeason = ref(false)
+const showNewSeasonModal = ref(false)
+const newSeasonData = ref(null)
 const offseasonData = ref(null) // Stores AI contract results + expiring players after entering offseason
 
 // Only show loading if we don't have cached campaign data
@@ -371,6 +379,12 @@ function formatNewsDate(dateStr) {
 }
 
 onMounted(async () => {
+  // Check for pending weekly summary (e.g., from live game completion)
+  if (gameStore.weeklySummaryData) {
+    weeklySummary.value = gameStore.weeklySummaryData
+    showWeeklySummaryModal.value = true
+  }
+
   // If we already have campaign data, refresh in background without blocking
   const hasCachedData = campaignStore.currentCampaign
 
@@ -539,6 +553,7 @@ async function handleEnterOffseason() {
     offseasonData.value = {
       aiContractResults: result.aiContractResults,
       releasedUserPlayers: result.releasedUserPlayers,
+      seasonAwards: result.seasonAwards,
     }
 
     // Reset playoff state and breaking news
@@ -568,7 +583,7 @@ async function handleStartNewSeason() {
   advancingToNextSeason.value = true
   const loadingToastId = toastStore.showLoading('Starting new season...')
   try {
-    await startNewSeason(campaignId.value)
+    const result = await startNewSeason(campaignId.value)
 
     // Clear offseason data
     offseasonData.value = null
@@ -583,7 +598,14 @@ async function handleStartNewSeason() {
     ])
 
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showSuccess('New season has begun!')
+
+    // Show new season modal
+    newSeasonData.value = {
+      seasonYear: result.campaign.currentSeasonYear,
+      facilitiesBefore: result.facilitiesBefore,
+      facilitiesAfter: result.facilitiesAfter,
+    }
+    showNewSeasonModal.value = true
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Failed to start new season')
@@ -598,7 +620,7 @@ async function handleSimOffseason() {
   advancingToNextSeason.value = true
   const loadingToastId = toastStore.showLoading('Simulating offseason...')
   try {
-    await simFullOffseason(campaignId.value)
+    const result = await simFullOffseason(campaignId.value)
 
     offseasonData.value = null
     financeStore.invalidate()
@@ -611,7 +633,14 @@ async function handleSimOffseason() {
     ])
 
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showSuccess('Offseason complete! New season has begun!')
+
+    // Show new season modal
+    newSeasonData.value = {
+      seasonYear: result.campaign.currentSeasonYear,
+      facilitiesBefore: result.facilitiesBefore,
+      facilitiesAfter: result.facilitiesAfter,
+    }
+    showNewSeasonModal.value = true
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Failed to simulate offseason')
@@ -753,6 +782,12 @@ async function handleConfirmSimulate() {
       lastSimResult.value = null
       await checkPlayoffStatus()
     }
+
+    // Show weekly summary if weeks passed
+    if (response.weeklySummary) {
+      weeklySummary.value = response.weeklySummary
+      showWeeklySummaryModal.value = true
+    }
   } catch (err) {
     // Remove loading toast and show error
     toastStore.removeMinimalToast(loadingToastId)
@@ -851,6 +886,12 @@ async function handleSimToEnd() {
       lastSimResult.value = null
       await checkPlayoffStatus()
     }
+
+    // Show weekly summary if weeks passed
+    if (gameStore.weeklySummaryData) {
+      weeklySummary.value = gameStore.weeklySummaryData
+      showWeeklySummaryModal.value = true
+    }
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Sim to end failed. Please try again.')
@@ -894,14 +935,27 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
 const tradeDeadlineAlerted = ref(false)
 async function checkTradeDeadline() {
   if (tradeDeadlineAlerted.value) return
-  const settings = campaignStore.currentCampaign?.settings || {}
-  const currentDate = settings.currentDate
+  const camp = campaignStore.currentCampaign
+  if (!camp) return
+  const currentDate = camp.current_date ?? camp.currentDate
   if (!currentDate) return
-  const year = settings.currentYear ?? campaignStore.currentCampaign?.game_year ?? new Date().getFullYear()
-  // Trade deadline is January 6 of the season year
-  const deadlineDate = `${year}-01-06`
-  if (currentDate > deadlineDate && !settings.trade_deadline_passed) {
+  const year = camp.currentSeasonYear ?? camp.game_year ?? new Date().getFullYear()
+  const settings = camp.settings || {}
+  // Trade deadline is January 6 of the season year + 1 (season starts in Oct)
+  const deadlineYear = year + 1
+  const deadlineDate = `${deadlineYear}-01-06`
+  if (currentDate >= deadlineDate && !settings.trade_deadline_passed) {
     tradeDeadlineAlerted.value = true
+    // Persist the flag so it doesn't fire again
+    if (!camp.settings) camp.settings = {}
+    camp.settings.trade_deadline_passed = true
+    const { CampaignRepository } = await import('@/engine/db/CampaignRepository')
+    const storedCampaign = await CampaignRepository.get(campaignId.value)
+    if (storedCampaign) {
+      if (!storedCampaign.settings) storedCampaign.settings = {}
+      storedCampaign.settings.trade_deadline_passed = true
+      await CampaignRepository.save(storedCampaign)
+    }
     breakingNewsStore.enqueue(
       BreakingNewsService.tradeDeadlinePassed({ date: deadlineDate }),
       campaignId.value
@@ -976,42 +1030,69 @@ function handleCloseProposalModal() {
 
 // All-Star selection handling
 async function checkAllStarSelections() {
-  const settings = campaignStore.currentCampaign?.settings || {}
-  const year = campaignStore.currentCampaign?.season?.year || campaignStore.currentCampaign?.game_year || 2025
-  const selectedKey = `all_star_selected_${year}`
-  const viewedKey = `all_star_viewed_${year}`
+  const camp = campaignStore.currentCampaign
+  if (!camp) return
 
-  if (settings[selectedKey] && !settings[viewedKey]) {
-    try {
-      const response = await api.get(`/api/campaigns/${campaignId.value}/all-star-rosters`)
-      if (response.data.rosters) {
-        allStarRosters.value = response.data.rosters
+  const year = camp.currentSeasonYear ?? camp.game_year ?? 2025
+  const currentDate = camp.current_date ?? camp.currentDate
+  if (!currentDate) return
 
-        // Breaking news: check if user team players made All-Star
-        const userTeamId = campaignStore.currentCampaign?.teamId
-        const userTeamName = campaignStore.currentCampaign?.team?.name || 'Your Team'
-        const currentDate = campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0]
-        const allSelected = [...(response.data.rosters.east || []), ...(response.data.rosters.west || [])]
-        const userAllStars = allSelected.filter(p => p.team_id == userTeamId || p.teamId == userTeamId)
-        for (const player of userAllStars) {
-          const playerName = `${player.first_name || player.firstName || ''} ${player.last_name || player.lastName || ''}`.trim()
-          breakingNewsStore.enqueue(
-            BreakingNewsService.allStarSelection({
-              playerName,
-              teamName: userTeamName,
-              selectionType: 'all_star',
-              date: currentDate,
-            }),
-            campaignId.value
-          )
-        }
+  const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+  const { TeamRepository } = await import('@/engine/db/TeamRepository')
+  const { PlayerRepository } = await import('@/engine/db/PlayerRepository')
+  const { AllStarService } = await import('@/engine/season/AllStarService')
 
-        showAllStarModal.value = true
-      }
-    } catch (err) {
-      console.error('Failed to fetch All-Star rosters:', err)
+  const seasonData = await SeasonRepository.get(campaignId.value, year)
+  if (!seasonData) return
+
+  // If rosters already exist on seasonData, check if user has viewed them
+  if (seasonData.allStarRosters) {
+    if (!seasonData.allStarViewed) {
+      allStarRosters.value = seasonData.allStarRosters
+      showAllStarModal.value = true
+    }
+    return
+  }
+
+  // Try to process selections (will return null if date hasn't been reached)
+  const teams = await TeamRepository.getAllForCampaign(campaignId.value)
+  const allPlayers = await PlayerRepository.getAllForCampaign(campaignId.value)
+  const userTeamId = camp.teamId
+
+  const result = AllStarService.processAllStarSelections({
+    seasonData,
+    year,
+    currentDate,
+    allPlayers,
+    teams,
+    userTeamId,
+    alreadySelected: false,
+  })
+
+  if (!result) return
+
+  // Save season data with allStarRosters
+  await SeasonRepository.save(seasonData)
+
+  allStarRosters.value = result.rosters
+
+  // Enqueue breaking news for user team All-Stars
+  const userTeamName = camp.team?.name || 'Your Team'
+  for (const event of result.newsEvents) {
+    if (event.playerId) {
+      breakingNewsStore.enqueue(
+        BreakingNewsService.allStarSelection({
+          playerName: event.headline.replace(/ selected to .*/, ''),
+          teamName: userTeamName,
+          selectionType: event.headline.includes('Rising') ? 'rising_stars' : 'all_star',
+          date: currentDate,
+        }),
+        campaignId.value
+      )
     }
   }
+
+  showAllStarModal.value = true
 }
 
 function getInjurySeverityColor(severity) {
@@ -1037,8 +1118,14 @@ function goToLineupFromRecovery() {
 async function handleCloseAllStarModal() {
   showAllStarModal.value = false
   try {
-    await api.post(`/api/campaigns/${campaignId.value}/all-star-viewed`)
-    await campaignStore.fetchCampaign(campaignId.value)
+    const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+    const camp = campaignStore.currentCampaign
+    const year = camp?.currentSeasonYear ?? camp?.game_year ?? 2025
+    const seasonData = await SeasonRepository.get(campaignId.value, year)
+    if (seasonData) {
+      seasonData.allStarViewed = true
+      await SeasonRepository.save(seasonData)
+    }
   } catch (err) {
     console.error('Failed to mark All-Star as viewed:', err)
   }
@@ -1050,9 +1137,12 @@ async function openAllStarModal() {
     return
   }
   try {
-    const response = await api.get(`/api/campaigns/${campaignId.value}/all-star-rosters`)
-    if (response.data.rosters) {
-      allStarRosters.value = response.data.rosters
+    const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+    const camp = campaignStore.currentCampaign
+    const year = camp?.currentSeasonYear ?? camp?.game_year ?? 2025
+    const seasonData = await SeasonRepository.get(campaignId.value, year)
+    if (seasonData?.allStarRosters) {
+      allStarRosters.value = seasonData.allStarRosters
       showAllStarModal.value = true
     }
   } catch (err) {
@@ -1155,6 +1245,11 @@ function handleCloseSimulateModal() {
           <div class="record-right">
             <span class="record-value">{{ wins }}-{{ losses }}</span>
           </div>
+        </div>
+        <div v-if="(authStore.profile?.tokens ?? 0) > 0" class="record-tokens">
+          <Coins :size="13" class="record-tokens-icon" />
+          <span class="record-tokens-value">{{ (authStore.profile?.tokens ?? 0).toLocaleString() }}</span>
+          <span class="record-tokens-label">tokens</span>
         </div>
       </section>
 
@@ -1349,6 +1444,22 @@ function handleCloseSimulateModal() {
               <span class="offseason-champion-text">
                 {{ lastSeasonChampion.city }} {{ lastSeasonChampion.name }} are NBA Champions
               </span>
+            </div>
+
+            <!-- Season Awards Summary -->
+            <div v-if="offseasonData?.seasonAwards" class="offseason-awards">
+              <div v-if="offseasonData.seasonAwards.mvp" class="offseason-award-line">
+                <Star :size="14" class="offseason-award-icon gold" />
+                <span class="offseason-award-text">MVP: <strong>{{ offseasonData.seasonAwards.mvp.playerName }}</strong> ({{ offseasonData.seasonAwards.mvp.teamAbbr }})</span>
+              </div>
+              <div v-if="offseasonData.seasonAwards.rookieOfTheYear" class="offseason-award-line">
+                <Award :size="14" class="offseason-award-icon gold" />
+                <span class="offseason-award-text">ROTY: <strong>{{ offseasonData.seasonAwards.rookieOfTheYear.playerName }}</strong> ({{ offseasonData.seasonAwards.rookieOfTheYear.teamAbbr }})</span>
+              </div>
+              <div v-if="offseasonData.seasonAwards.allNba?.first?.length" class="offseason-award-line">
+                <Trophy :size="14" class="offseason-award-icon" />
+                <span class="offseason-award-text">All-NBA 1st: {{ offseasonData.seasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
+              </div>
             </div>
 
             <!-- User Season Summary -->
@@ -1727,6 +1838,22 @@ function handleCloseSimulateModal() {
       @close="handleCloseAllStarModal"
     />
 
+    <!-- Weekly Summary Modal -->
+    <WeeklySummaryModal
+      :show="showWeeklySummaryModal"
+      :summary-data="weeklySummary"
+      @close="showWeeklySummaryModal = false; weeklySummary = null; gameStore.weeklySummaryData = null"
+    />
+
+    <!-- New Season Modal -->
+    <NewSeasonModal
+      :show="showNewSeasonModal"
+      :season-year="newSeasonData?.seasonYear"
+      :facilities-before="newSeasonData?.facilitiesBefore"
+      :facilities-after="newSeasonData?.facilitiesAfter"
+      @close="showNewSeasonModal = false; newSeasonData = null"
+    />
+
     <!-- Injury Notification Modal -->
     <Teleport to="body">
       <Transition name="inj-modal">
@@ -2017,6 +2144,37 @@ function handleCloseSimulateModal() {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   color: #1a1520;
   letter-spacing: -0.02em;
+}
+
+/* Record card token info */
+.record-tokens {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(26, 21, 32, 0.1);
+  position: relative;
+  z-index: 1;
+}
+
+.record-tokens-icon {
+  color: rgba(26, 21, 32, 0.45);
+  flex-shrink: 0;
+}
+
+.record-tokens-value {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #1a1520;
+}
+
+.record-tokens-label {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: rgba(26, 21, 32, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 /* Quick Actions Card */
@@ -2537,6 +2695,46 @@ function handleCloseSimulateModal() {
 [data-theme="light"] .offseason-transactions {
   background: rgba(0, 0, 0, 0.03);
   border-color: rgba(0, 0, 0, 0.06);
+}
+
+.offseason-awards {
+  padding: 10px 12px;
+  background: rgba(255, 200, 50, 0.06);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 200, 50, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.offseason-award-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.offseason-award-icon {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.offseason-award-icon.gold {
+  color: #F59E0B;
+}
+
+.offseason-award-text {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.offseason-award-text strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+[data-theme="light"] .offseason-awards {
+  background: rgba(255, 200, 50, 0.08);
+  border-color: rgba(200, 150, 0, 0.2);
 }
 
 .offseason-expiring {

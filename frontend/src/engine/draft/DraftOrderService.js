@@ -26,11 +26,14 @@ export function buildRookieDraftOrder(teams, standings, gameYear) {
       (s.teamId ?? s.team_id) === team.id ||
       s.teamAbbreviation === team.abbreviation
     )
+    const pointDiff = standing
+      ? (standing.pointDifferential ?? standing.pointDiff ?? ((standing.pointsFor ?? 0) - (standing.pointsAgainst ?? 0)))
+      : 0
     return {
       team,
       wins: standing?.wins ?? 0,
       losses: standing?.losses ?? 0,
-      pointDiff: standing?.pointDifferential ?? standing?.pointDiff ?? 0,
+      pointDiff,
     }
   })
 

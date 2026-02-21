@@ -8,6 +8,7 @@ import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { LoadingSpinner } from '@/components/ui'
 import GameDayModal from '@/components/calendar/GameDayModal.vue'
+import SimulateConfirmModal from '@/components/game/SimulateConfirmModal.vue'
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, FastForward } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -35,6 +36,7 @@ const currentMonth = ref(new Date())
 // Modal state
 const selectedGame = ref(null)
 const showGameModal = ref(false)
+const showSimSeasonModal = ref(false)
 
 // Team record (wins-losses)
 const teamRecord = computed(() => {
@@ -420,8 +422,8 @@ const simSeasonAvailable = computed(() => {
     && !gameStore.backgroundSimulating
 })
 
-async function handleSimSeason() {
-  // Validate lineup
+function confirmSimSeason() {
+  // Validate lineup before showing modal
   if (!teamStore.isLineupComplete) {
     toastStore.showError('Your starting lineup is incomplete. Set 5 starters before simming.')
     return
@@ -437,11 +439,16 @@ async function handleSimSeason() {
     toastStore.showError(`Rotation minutes total ${totalMins} — must equal 200. Adjust before simming.`)
     return
   }
+  showSimSeasonModal.value = true
+}
 
+async function handleSimSeason() {
   try {
     await gameStore.simulateRemainingSeason(props.campaignId)
   } catch (err) {
     toastStore.showError('Failed to simulate remaining season')
+  } finally {
+    showSimSeasonModal.value = false
   }
 }
 </script>
@@ -594,7 +601,7 @@ async function handleSimSeason() {
         <button
           class="sim-season-btn"
           :disabled="gameStore.backgroundSimulating"
-          @click="handleSimSeason"
+          @click="confirmSimSeason"
         >
           <FastForward :size="16" class="sim-season-icon" />
           <div class="sim-season-text">
@@ -634,6 +641,17 @@ async function handleSimSeason() {
       :campaign-id="campaignId"
       @close="closeGameModal"
       @simulated="handleSimulated"
+    />
+
+    <!-- Sim Season Confirmation Modal -->
+    <SimulateConfirmModal
+      :show="showSimSeasonModal"
+      :sim-season-mode="true"
+      :simulating="gameStore.backgroundSimulating"
+      :remaining-season-games="remainingSeasonGames"
+      :background-progress="gameStore.simulationProgress"
+      @close="showSimSeasonModal = false"
+      @sim-season="handleSimSeason"
     />
   </div>
 </template>

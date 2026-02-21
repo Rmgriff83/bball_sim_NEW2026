@@ -317,12 +317,13 @@ export class PlayoffManager {
       series.status = 'complete'
       series.winner = series.team1Wins >= 4 ? series.team1 : series.team2
 
-      // Calculate series MVP
+      // Cancel remaining games FIRST (before MVP calc) so that bulk-sim
+      // fake scores are cleared and don't pollute the MVP calculation
+      PlayoffManager._cancelRemainingSeriesGames(seasonData, seriesId)
+
+      // Calculate series MVP (only uses non-cancelled games with real box scores)
       const mvp = PlayoffManager.calculateSeriesMVP(seasonData, series)
       series.seriesMVP = mvp
-
-      // Cancel remaining unplayed games in this series
-      PlayoffManager._cancelRemainingSeriesGames(seasonData, seriesId)
     }
 
     // Update series in bracket
@@ -356,14 +357,30 @@ export class PlayoffManager {
   /**
    * Cancel remaining unplayed games in a completed series.
    * Marks them as isComplete + isCancelled so they are skipped by scheduling logic.
+   * Uses playoffGameNumber to determine the clinch point, so this works correctly
+   * even when bulkMergeResults has pre-marked all games as isComplete.
    * @private
    */
   static _cancelRemainingSeriesGames(seasonData, seriesId) {
     if (!seasonData?.schedule) return
+
+    // Find the series to know how many real games were played
+    const series = PlayoffManager._findSeriesById(seasonData.playoffBracket, seriesId)
+    const gamesPlayed = series ? (series.team1Wins + series.team2Wins) : 0
+
     for (const game of seasonData.schedule) {
-      if (game.playoffSeriesId === seriesId && !game.isComplete) {
+      if (game.playoffSeriesId !== seriesId) continue
+      if (game.isCancelled) continue
+
+      // Games beyond the clinch point should be cancelled
+      if ((game.playoffGameNumber ?? 0) > gamesPlayed) {
         game.isComplete = true
         game.isCancelled = true
+        // Clear any fake scores from bulk simulation
+        game.homeScore = null
+        game.awayScore = null
+        game.boxScore = null
+        game.quarterScores = null
       }
     }
   }
@@ -442,7 +459,7 @@ export class PlayoffManager {
 
     for (const gameId of series.games) {
       const game = SeasonManager.getGame(seasonData, gameId)
-      if (!game || !game.isComplete || !game.boxScore) continue
+      if (!game || !game.isComplete || game.isCancelled || !game.boxScore) continue
 
       // Determine which side the winning team was on
       const side = game.homeTeamId == winningTeamId ? 'home' : 'away'

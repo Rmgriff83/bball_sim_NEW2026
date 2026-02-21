@@ -7,6 +7,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useGameStore } from '@/stores/game'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { X, ChevronLeft } from 'lucide-vue-next'
+import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 
 const route = useRoute()
 const router = useRouter()
@@ -127,6 +128,18 @@ const showAllTimeExpanded = ref(false)
 
 // Badges display state
 const showAllBadges = ref(false)
+
+// Season history stats for player modal
+const seasonStatsRows = computed(() => {
+  const p = selectedPlayer.value
+  if (!p) return []
+  return buildSeasonStatsTable(
+    p.seasonHistory,
+    p.season_stats,
+    campaign.value?.currentSeasonYear,
+    p.teamAbbreviation || p.team_abbreviation
+  )
+})
 
 const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
@@ -828,7 +841,7 @@ function formatSalary(salary) {
                   {{ selectedTeam.team?.abbreviation }}
                 </div>
                 <div class="team-card-info">
-                  <h3 class="team-card-name">{{ selectedTeam.team?.city }} {{ selectedTeam.team?.name }}</h3>
+                  <h3 class="team-card-name">{{ selectedTeam.team?.name }}</h3>
                   <div class="team-card-record">{{ selectedTeam.wins }}-{{ selectedTeam.losses }}</div>
                 </div>
               </div>
@@ -1000,6 +1013,13 @@ function formatSalary(salary) {
                   @click="playerModalTab = 'attributes'"
                 >
                   Attributes
+                </button>
+                <button
+                  class="player-tab"
+                  :class="{ active: playerModalTab === 'history' }"
+                  @click="playerModalTab = 'history'"
+                >
+                  History
                 </button>
               </div>
 
@@ -1212,6 +1232,98 @@ function formatSalary(salary) {
                         </template>
                         <div v-else class="player-evolution-empty">No history available</div>
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- History Tab -->
+                <div v-if="playerModalTab === 'history'" class="player-tab-panel">
+                  <!-- Draft Info -->
+                  <div v-if="selectedPlayer.draftInfo" class="player-history-section">
+                    <div class="draft-info-card">
+                      <span class="draft-info-pick">#{{ selectedPlayer.draftInfo.pick }}</span>
+                      <div class="draft-info-details">
+                        <span class="draft-info-label">
+                          Round {{ selectedPlayer.draftInfo.round }}, Pick {{ selectedPlayer.draftInfo.pick }}
+                          <template v-if="selectedPlayer.draftInfo.year"> &middot; {{ selectedPlayer.draftInfo.year }}</template>
+                        </span>
+                        <span class="draft-info-team">Drafted by {{ selectedPlayer.draftInfo.teamAbbreviation }}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Season Stats -->
+                  <div class="player-history-section">
+                    <h4 class="player-attr-title">Season Stats</h4>
+                    <div v-if="seasonStatsRows.length > 0" class="game-log-table-wrap">
+                      <table class="game-log-table season-history-table">
+                        <thead>
+                          <tr>
+                            <th>Year</th><th>Team</th><th>GP</th>
+                            <th>PPG</th><th>RPG</th><th>APG</th>
+                            <th>SPG</th><th>BPG</th><th>FG%</th>
+                            <th>3P%</th><th>FT%</th><th>MPG</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="row in seasonStatsRows" :key="row.year" :class="{ 'current-season-row': row.isCurrent }">
+                            <td class="season-year-cell">
+                              {{ row.year }}<span v-if="row.isCurrent" class="current-tag">*</span>
+                            </td>
+                            <td>{{ row.team }}</td>
+                            <td>{{ row.gp }}</td>
+                            <td class="game-log-pts">{{ row.ppg }}</td>
+                            <td>{{ row.rpg }}</td>
+                            <td>{{ row.apg }}</td>
+                            <td>{{ row.spg }}</td>
+                            <td>{{ row.bpg }}</td>
+                            <td>{{ row.fg_pct }}%</td>
+                            <td>{{ row.three_pct }}%</td>
+                            <td>{{ row.ft_pct }}%</td>
+                            <td>{{ row.mpg }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div v-else class="player-empty-state">
+                      <p>No season stats yet</p>
+                    </div>
+                  </div>
+
+                  <!-- Awards -->
+                  <div class="player-history-section">
+                    <h4 class="player-attr-title">Awards</h4>
+                    <div v-if="selectedPlayer.championships || selectedPlayer.mvp_awards || selectedPlayer.mvpAwards || selectedPlayer.finals_mvp_awards || selectedPlayer.finalsMvpAwards || selectedPlayer.conference_finals_mvp_awards || selectedPlayer.conferenceFinalsMvpAwards || selectedPlayer.all_star_selections || selectedPlayer.allStarSelections || selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear || selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections || selectedPlayer.all_rookie_team || selectedPlayer.allRookieTeam || selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam" class="player-awards-grid">
+                      <span v-if="(selectedPlayer.championships || 0) > 0" class="player-award-item gold">
+                        {{ selectedPlayer.championships }}x Champion
+                      </span>
+                      <span v-if="(selectedPlayer.finals_mvp_awards || selectedPlayer.finalsMvpAwards || 0) > 0" class="player-award-item gold">
+                        {{ selectedPlayer.finals_mvp_awards || selectedPlayer.finalsMvpAwards }}x Finals MVP
+                      </span>
+                      <span v-if="(selectedPlayer.conference_finals_mvp_awards || selectedPlayer.conferenceFinalsMvpAwards || 0) > 0" class="player-award-item silver">
+                        {{ selectedPlayer.conference_finals_mvp_awards || selectedPlayer.conferenceFinalsMvpAwards }}x Conf Finals MVP
+                      </span>
+                      <span v-if="(selectedPlayer.mvp_awards || selectedPlayer.mvpAwards || 0) > 0" class="player-award-item gold">
+                        {{ selectedPlayer.mvp_awards || selectedPlayer.mvpAwards }}x League MVP
+                      </span>
+                      <span v-if="(selectedPlayer.all_star_selections || selectedPlayer.allStarSelections || 0) > 0" class="player-award-item">
+                        {{ selectedPlayer.all_star_selections || selectedPlayer.allStarSelections }}x All-Star
+                      </span>
+                      <span v-if="(selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear || 0) > 0" class="player-award-item gold">
+                        {{ selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear }}x ROTY
+                      </span>
+                      <span v-if="(selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections || 0) > 0" class="player-award-item silver">
+                        {{ selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections }}x All-NBA
+                      </span>
+                      <span v-if="(selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam || 0) > 0" class="player-award-item silver">
+                        {{ selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam }}x All-Defense
+                      </span>
+                      <span v-if="(selectedPlayer.all_rookie_team || selectedPlayer.allRookieTeam || 0) > 0" class="player-award-item">
+                        {{ selectedPlayer.all_rookie_team || selectedPlayer.allRookieTeam }}x All-Rookie
+                      </span>
+                    </div>
+                    <div v-else class="player-empty-state">
+                      <p>No awards yet</p>
                     </div>
                   </div>
                 </div>
@@ -3764,6 +3876,96 @@ function formatSalary(salary) {
 .game-log-loss {
   color: var(--color-error) !important;
   font-weight: 700;
+}
+
+.player-history-section {
+  margin-bottom: 16px;
+}
+
+.draft-info-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md, 8px);
+}
+
+.draft-info-pick {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--color-primary);
+  min-width: 36px;
+  text-align: center;
+}
+
+.draft-info-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.draft-info-label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.draft-info-team {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+}
+
+.current-season-row {
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.current-season-row:hover {
+  background: rgba(139, 92, 246, 0.14) !important;
+}
+
+.season-year-cell {
+  font-weight: 600;
+  color: var(--color-text-primary) !important;
+  text-align: left !important;
+  white-space: nowrap;
+}
+
+.current-tag {
+  color: var(--color-primary);
+  margin-left: 2px;
+  font-weight: 700;
+}
+
+.player-awards-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.player-award-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--radius-lg);
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.player-award-item.gold {
+  background: rgba(255, 215, 0, 0.1);
+  color: #ffd700;
+  border-color: rgba(255, 215, 0, 0.2);
+}
+
+.player-award-item.silver {
+  background: rgba(192, 192, 192, 0.1);
+  color: #c0c0c0;
+  border-color: rgba(192, 192, 192, 0.2);
 }
 
 </style>

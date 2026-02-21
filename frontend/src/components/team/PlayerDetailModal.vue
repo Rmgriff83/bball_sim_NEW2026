@@ -1,8 +1,9 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield } from 'lucide-vue-next'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
+import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 
 const { getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
 
@@ -42,6 +43,11 @@ const props = defineProps({
   backButton: {
     type: Object,
     default: null // { label: 'Back to Team', handler: Function }
+  },
+  // Current season year for season stats table
+  currentSeasonYear: {
+    type: Number,
+    default: null
   },
   // Whether user can upgrade attributes (only for user's own team players)
   canUpgrade: {
@@ -128,6 +134,13 @@ const normalizedPlayer = computed(() => {
     conference_finals_mvp_awards: p.conference_finals_mvp_awards || p.conferenceFinalsMvpAwards || 0,
     mvp_awards: p.mvp_awards || p.mvpAwards || 0,
     all_star_selections: p.all_star_selections || p.allStarSelections || 0,
+    rookie_of_the_year: p.rookie_of_the_year || p.rookieOfTheYear || 0,
+    all_nba_selections: p.all_nba_selections || p.allNbaSelections || 0,
+    all_nba_first_team: p.all_nba_first_team || p.allNbaFirstTeam || 0,
+    all_rookie_team: p.all_rookie_team || p.allRookieTeam || 0,
+    all_defensive_team: p.all_defensive_team || p.allDefensiveTeam || 0,
+    // Draft info
+    draftInfo: p.draftInfo || null,
     // Fatigue
     fatigue: p.fatigue ?? 0,
     // Upgrade points
@@ -177,6 +190,18 @@ function handleUpgrade(category, attrKey) {
     attribute: attrKey
   })
 }
+
+// Season history stats table
+const seasonStatsRows = computed(() => {
+  if (!props.player) return []
+  const p = props.player
+  return buildSeasonStatsTable(
+    p.seasonHistory,
+    p.season_stats,
+    props.currentSeasonYear,
+    p.teamAbbreviation || p.team_abbreviation
+  )
+})
 
 // Fatigue helpers
 const fatiguePercent = computed(() => Math.round(normalizedPlayer.value?.fatigue ?? 0))
@@ -237,7 +262,9 @@ const hasAwards = computed(() => {
   const p = normalizedPlayer.value
   return p.championships > 0 || p.finals_mvp_awards > 0 ||
          p.conference_finals_mvp_awards > 0 || p.mvp_awards > 0 ||
-         p.all_star_selections > 0
+         p.all_star_selections > 0 || p.rookie_of_the_year > 0 ||
+         p.all_nba_selections > 0 || p.all_rookie_team > 0 ||
+         p.all_defensive_team > 0
 })
 
 const hasNews = computed(() => props.playerNews && props.playerNews.length > 0)
@@ -943,6 +970,58 @@ function formatChange(change) {
 
               <!-- History Tab (Awards + News) -->
               <div v-if="activeTab === 'history' && showHistory" class="tab-panel">
+                <!-- Draft Info -->
+                <div v-if="normalizedPlayer.draftInfo" class="history-section draft-info-section">
+                  <div class="draft-info-card">
+                    <span class="draft-info-pick">#{{ normalizedPlayer.draftInfo.pick }}</span>
+                    <div class="draft-info-details">
+                      <span class="draft-info-label">
+                        Round {{ normalizedPlayer.draftInfo.round }}, Pick {{ normalizedPlayer.draftInfo.pick }}
+                        <template v-if="normalizedPlayer.draftInfo.year"> &middot; {{ normalizedPlayer.draftInfo.year }}</template>
+                      </span>
+                      <span class="draft-info-team">Drafted by {{ normalizedPlayer.draftInfo.teamAbbreviation }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Season Stats Section -->
+                <div class="history-section">
+                  <h4 class="history-section-title">Season Stats</h4>
+                  <div v-if="seasonStatsRows.length > 0" class="game-log-table-wrap">
+                    <table class="game-log-table season-history-table">
+                      <thead>
+                        <tr>
+                          <th>Year</th><th>Team</th><th>GP</th>
+                          <th>PPG</th><th>RPG</th><th>APG</th>
+                          <th>SPG</th><th>BPG</th><th>FG%</th>
+                          <th>3P%</th><th>FT%</th><th>MPG</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="row in seasonStatsRows" :key="row.year" :class="{ 'current-season-row': row.isCurrent }">
+                          <td class="season-year-cell">
+                            {{ row.year }}<span v-if="row.isCurrent" class="current-tag">*</span>
+                          </td>
+                          <td>{{ row.team }}</td>
+                          <td>{{ row.gp }}</td>
+                          <td class="game-log-pts">{{ row.ppg }}</td>
+                          <td>{{ row.rpg }}</td>
+                          <td>{{ row.apg }}</td>
+                          <td>{{ row.spg }}</td>
+                          <td>{{ row.bpg }}</td>
+                          <td>{{ row.fg_pct }}%</td>
+                          <td>{{ row.three_pct }}%</td>
+                          <td>{{ row.ft_pct }}%</td>
+                          <td>{{ row.mpg }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-else class="empty-state-inline">
+                    <p>No season stats yet</p>
+                  </div>
+                </div>
+
                 <!-- Awards Section -->
                 <div class="history-section">
                   <h4 class="history-section-title">Awards</h4>
@@ -980,6 +1059,34 @@ function formatChange(change) {
                       <Users :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_star_selections }}x</span>
                       <span class="award-label">All-Star</span>
+                    </div>
+
+                    <!-- Rookie of the Year -->
+                    <div v-if="normalizedPlayer.rookie_of_the_year > 0" class="award-card gold">
+                      <Award :size="32" />
+                      <span class="award-count">{{ normalizedPlayer.rookie_of_the_year }}x</span>
+                      <span class="award-label">Rookie of the Year</span>
+                    </div>
+
+                    <!-- All-NBA -->
+                    <div v-if="normalizedPlayer.all_nba_selections > 0" class="award-card silver">
+                      <Star :size="32" />
+                      <span class="award-count">{{ normalizedPlayer.all_nba_selections }}x</span>
+                      <span class="award-label">All-NBA</span>
+                    </div>
+
+                    <!-- All-Defense -->
+                    <div v-if="normalizedPlayer.all_defensive_team > 0" class="award-card silver">
+                      <Shield :size="32" />
+                      <span class="award-count">{{ normalizedPlayer.all_defensive_team }}x</span>
+                      <span class="award-label">All-Defense</span>
+                    </div>
+
+                    <!-- All-Rookie -->
+                    <div v-if="normalizedPlayer.all_rookie_team > 0" class="award-card">
+                      <Zap :size="32" />
+                      <span class="award-count">{{ normalizedPlayer.all_rookie_team }}x</span>
+                      <span class="award-label">All-Rookie</span>
                     </div>
                   </div>
                   <div v-else class="empty-state-inline">
@@ -2468,6 +2575,62 @@ function formatChange(change) {
 
 .game-log-loss {
   color: var(--color-error) !important;
+  font-weight: 700;
+}
+
+.draft-info-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md, 8px);
+}
+
+.draft-info-pick {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--color-primary);
+  min-width: 36px;
+  text-align: center;
+}
+
+.draft-info-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.draft-info-label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.draft-info-team {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+}
+
+.current-season-row {
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.current-season-row:hover {
+  background: rgba(139, 92, 246, 0.14) !important;
+}
+
+.season-year-cell {
+  font-weight: 600;
+  color: var(--color-text-primary) !important;
+  text-align: left !important;
+  white-space: nowrap;
+}
+
+.current-tag {
+  color: var(--color-primary);
+  margin-left: 2px;
   font-weight: 700;
 }
 </style>

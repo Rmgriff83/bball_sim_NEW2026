@@ -242,6 +242,39 @@ class UserController extends Controller
     }
 
     /**
+     * Add or deduct tokens from the user's profile.
+     * POST /api/user/tokens
+     */
+    public function updateTokens(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'amount' => 'required|integer',
+        ]);
+
+        $user = $request->user();
+        $profile = $user->profile;
+
+        if (!$profile) {
+            return response()->json(['message' => 'Profile not found'], 404);
+        }
+
+        $rewards = $profile->rewards ?? $profile::defaultRewards();
+        $newBalance = ($rewards['tokens'] ?? 0) + $validated['amount'];
+
+        if ($newBalance < 0) {
+            return response()->json(['message' => 'Insufficient tokens'], 422);
+        }
+
+        $rewards['tokens'] = $newBalance;
+        $profile->rewards = $rewards;
+        $profile->save();
+
+        return response()->json([
+            'tokens' => $newBalance,
+        ]);
+    }
+
+    /**
      * Get all available achievements.
      */
     public function allAchievements(): JsonResponse

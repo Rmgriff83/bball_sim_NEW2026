@@ -52,6 +52,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user/stats', [UserController::class, 'stats']);
     Route::get('/user/achievements', [UserController::class, 'achievements']);
 
+    // Token operations
+    Route::post('/user/tokens', [UserController::class, 'updateTokens']);
+
     // Cloud sync (client-id based, no route model binding)
     Route::get('/sync/campaigns', [SyncController::class, 'listCampaigns']);
     Route::post('/sync/{clientId}/push', [SyncController::class, 'pushSnapshot']);

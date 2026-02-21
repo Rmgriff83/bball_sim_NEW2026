@@ -358,15 +358,25 @@ export const useTradeStore = defineStore('trade', () => {
       useSyncStore().markDirty()
 
       // Build trade context for breaking news before clearing state
-      const playersSent = details.assets
-        .filter(a => a.type === 'player' && a.from == userTeamId)
-        .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' })
-      const playersReceived = details.assets
-        .filter(a => a.type === 'player' && a.to == userTeamId)
-        .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' })
+      const assetsSent = [
+        ...details.assets
+          .filter(a => a.type === 'player' && a.from == userTeamId)
+          .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' }),
+        ...details.assets
+          .filter(a => a.type === 'pick' && a.from == userTeamId)
+          .map(a => a.pickDisplay || `Draft Pick`),
+      ]
+      const assetsReceived = [
+        ...details.assets
+          .filter(a => a.type === 'player' && a.to == userTeamId)
+          .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' }),
+        ...details.assets
+          .filter(a => a.type === 'pick' && a.to == userTeamId)
+          .map(a => a.pickDisplay || `Draft Pick`),
+      ]
       const tradeContext = {
-        playersSent,
-        playersReceived,
+        playersSent: assetsSent,
+        playersReceived: assetsReceived,
         otherTeamName: selectedTeam.value?.name || 'Unknown',
         userTeamName: userTeam?.name || 'Unknown',
         date: currentDate,
@@ -589,15 +599,25 @@ export const useTradeStore = defineStore('trade', () => {
       useSyncStore().markDirty()
 
       // Build trade context for breaking news
-      const playersSent = details.assets
-        .filter(a => a.type === 'player' && a.from == userTeamId)
-        .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' })
-      const playersReceived = details.assets
-        .filter(a => a.type === 'player' && a.to == userTeamId)
-        .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' })
+      const assetsSent = [
+        ...details.assets
+          .filter(a => a.type === 'player' && a.from == userTeamId)
+          .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' }),
+        ...details.assets
+          .filter(a => a.type === 'pick' && a.from == userTeamId)
+          .map(a => a.pickDisplay || `Draft Pick`),
+      ]
+      const assetsReceived = [
+        ...details.assets
+          .filter(a => a.type === 'player' && a.to == userTeamId)
+          .map(a => { const p = getPlayerFn(a.playerId); return p ? `${p.first_name || p.firstName || ''} ${p.last_name || p.lastName || ''}`.trim() : 'Unknown' }),
+        ...details.assets
+          .filter(a => a.type === 'pick' && a.to == userTeamId)
+          .map(a => a.pickDisplay || `Draft Pick`),
+      ]
       const tradeContext = {
-        playersSent,
-        playersReceived,
+        playersSent: assetsSent,
+        playersReceived: assetsReceived,
         otherTeamName: aiTeam.name || 'Unknown',
         userTeamName: userTeam?.name || 'Unknown',
         date: currentDate,

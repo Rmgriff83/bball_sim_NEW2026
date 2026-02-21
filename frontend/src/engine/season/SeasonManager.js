@@ -846,8 +846,17 @@ export class SeasonManager {
 
     for (const game of schedule) {
       if (game.isComplete) continue
-      if (game.gameDate < currentDateStr) continue
+      if (game.isCancelled) continue
       if (game.gameDate > nextGameDate) continue
+
+      // Include AI playoff games from prior dates that were missed (e.g., if
+      // _simulateAiGamesForDay failed silently and the date advanced past them).
+      // For non-playoff games, skip anything before current date.
+      if (game.gameDate < currentDateStr) {
+        if (!game.isPlayoff) continue
+        // Only include missed AI playoff games, not user's own
+        if (game.homeTeamId === userTeamId || game.awayTeamId === userTeamId) continue
+      }
 
       // Skip the user's own game on game day
       if (game.gameDate === nextGameDate &&

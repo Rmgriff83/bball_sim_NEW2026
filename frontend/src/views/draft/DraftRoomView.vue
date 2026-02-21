@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDraftStore } from '@/stores/draft'
 import { useCampaignStore } from '@/stores/campaign'
+import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { LoadingSpinner } from '@/components/ui'
 import DraftCompleteModal from '@/components/draft/DraftCompleteModal.vue'
@@ -18,6 +19,7 @@ const route = useRoute()
 const router = useRouter()
 const draftStore = useDraftStore()
 const campaignStore = useCampaignStore()
+const teamStore = useTeamStore()
 const toastStore = useToastStore()
 
 const campaignId = computed(() => route.params.id)
@@ -27,6 +29,20 @@ const error = ref(null)
 const showCompleteModal = ref(false)
 const tickerRef = ref(null)
 const showMobileRoster = ref(false)
+
+// Scouting state — hide unscouted attributes during rookie draft
+const scoutedPlayers = ref({})
+
+function isAttributeRevealed(playerId, attr) {
+  if (!isRookieMode.value) return true
+  const revealed = scoutedPlayers.value[playerId]?.revealedAttributes
+  return revealed ? revealed.includes(attr) : false
+}
+
+function getScoutedDisplay(player, attr) {
+  if (isAttributeRevealed(player.id, attr)) return player[attr]
+  return '?'
+}
 
 // Computed
 const timerProgress = computed(() => draftStore.timerSeconds / 60)
@@ -137,13 +153,20 @@ watch(() => draftStore.draftResults.length, () => {
 // Toast: show pick result when a pick is made
 watch(() => draftStore.lastPickResult, (result) => {
   if (!result) return
+  // In rookie draft, hide OVR for unscouted players (user's own picks are fine)
+  let ovr = result.overallRating
+  if (isRookieMode.value && result.teamId !== draftStore.userTeamId) {
+    if (!isAttributeRevealed(result.playerId, 'overallRating')) {
+      ovr = null
+    }
+  }
   toastStore.showDraftPick({
     pickNumber: result.pick,
     teamAbbr: result.teamAbbr,
     teamColor: result.teamColor,
     playerName: result.playerName,
     position: result.position,
-    overallRating: result.overallRating,
+    overallRating: ovr,
     isUserTeam: result.teamId === draftStore.userTeamId,
   })
 })
@@ -181,6 +204,7 @@ async function handleFinalize() {
     }
     showCompleteModal.value = false
     await campaignStore.fetchCampaign(campaignId.value)
+    await teamStore.fetchTeam(campaignId.value, { force: true })
     router.push(`/campaign/${campaignId.value}`)
   } catch (e) {
     console.error('Finalize error:', e)
@@ -222,6 +246,9 @@ onMounted(async () => {
 
     if (rookieMode) {
       // --- ROOKIE DRAFT MODE ---
+      // Load scouting data so unscouted attributes stay hidden
+      scoutedPlayers.value = campaign?.settings?.scoutedPlayers || {}
+
       const cacheMode = 'rookie'
       const restored = await draftStore.loadDraftFromCache(campaignId.value, cacheMode)
 
@@ -540,8 +567,8 @@ onUnmounted(() => {
                     <td class="col-pos">
                       <span class="pos-badge">{{ player.position }}</span>
                     </td>
-                    <td class="col-num ovr-cell">{{ player.overallRating }}</td>
-                    <td class="col-num pot-cell">{{ player.potentialRating }}</td>
+                    <td class="col-num ovr-cell" :class="{ hidden: !isAttributeRevealed(player.id, 'overallRating') }">{{ getScoutedDisplay(player, 'overallRating') }}</td>
+                    <td class="col-num pot-cell" :class="{ hidden: !isAttributeRevealed(player.id, 'potentialRating') }">{{ getScoutedDisplay(player, 'potentialRating') }}</td>
                     <td class="col-num">{{ getPlayerAge(player.birthDate) }}</td>
                     <td class="col-ht">{{ formatHeight(player.heightInches) }}</td>
                     <td class="col-action">
@@ -1240,6 +1267,12 @@ onUnmounted(() => {
 
 .pot-cell {
   color: var(--color-text-secondary);
+}
+
+.hidden {
+  color: var(--color-text-tertiary) !important;
+  font-style: italic;
+  font-weight: 400 !important;
 }
 
 .btn-draft {
