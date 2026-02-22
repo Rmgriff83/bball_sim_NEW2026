@@ -21,6 +21,7 @@ return new class extends Migration
             $table->unsignedInteger('play_time_minutes')->default(0);
             $table->unsignedInteger('player_level')->default(1);
             $table->unsignedInteger('experience_points')->default(0);
+            $table->json('rewards')->nullable();
             $table->timestamps();
         });
     }
