@@ -12,10 +12,14 @@ const props = defineProps({
   campaignId: {
     type: [String, Number],
     required: true
+  },
+  prefill: {
+    type: Object,
+    default: null
   }
 })
 
-const emit = defineEmits(['trade-completed'])
+const emit = defineEmits(['trade-completed', 'prefill-consumed'])
 
 const router = useRouter()
 const tradeStore = useTradeStore()
@@ -161,6 +165,58 @@ watch(() => tradeStore.selectedTeamId, async (teamId) => {
     } catch (err) {
       console.error('Failed to load team details:', err)
     }
+  }
+})
+
+// Handle prefill from trading block
+async function applyPrefill(prefill) {
+  if (!prefill || loading.value) return
+
+  const { player, teamId } = prefill
+
+  // Find team from tradeable teams
+  const team = tradeableTeams.value.find(t => t.id === teamId)
+  if (!team) return
+
+  // Clear any existing trade state
+  tradeStore.clearTrade()
+  tradeStore.clearSelectedTeam()
+
+  // Select the team (triggers fetchTeamDetails via watcher)
+  selectTeam(team)
+
+  // Add the player to requesting
+  tradeStore.addToUserRequesting({
+    type: 'player',
+    id: player.id,
+    firstName: player.firstName || player.first_name,
+    lastName: player.lastName || player.last_name,
+    position: player.position,
+    overallRating: player.overallRating ?? player.overall_rating,
+    contractSalary: player.contractSalary ?? player.contract_salary,
+    contractYearsRemaining: player.contractYearsRemaining ?? player.contract_years_remaining,
+    tradeValue: player.tradeValue ?? player.trade_value,
+    age: player.age,
+  })
+
+  // Open wizard at step 1 so user picks what to offer
+  wizardStep.value = 1
+  assetTab.value = 'players'
+  showTradeWizard.value = true
+
+  emit('prefill-consumed')
+}
+
+watch(() => props.prefill, (val) => {
+  if (val && !loading.value) {
+    applyPrefill(val)
+  }
+})
+
+// If prefill arrives before data loads, apply once loading finishes
+watch(loading, (isLoading) => {
+  if (!isLoading && props.prefill) {
+    applyPrefill(props.prefill)
   }
 })
 
@@ -318,6 +374,11 @@ function togglePickSelection(pick) {
   }
 }
 
+function formatPickYear(year) {
+  if (year == null) return ''
+  return year < 100 ? 2024 + year : year
+}
+
 function isPlayerSelected(playerId) {
   if (wizardStep.value === 1) {
     return tradeStore.isInOffering('player', playerId)
@@ -454,40 +515,14 @@ function formatAge(age) {
           <div class="intro-icon">
             <Repeat :size="64" />
           </div>
-          <h2>Trade Center</h2>
           <p class="intro-description">
-            Build your championship roster by trading with other teams in the league.
-            Propose trades for players and draft picks to strengthen your team.
+            Build your roster by trading players and draft picks with other teams.
           </p>
 
-          <div class="intro-steps">
-            <div class="intro-step">
-              <div class="intro-step-number">1</div>
-              <div class="intro-step-info">
-                <span class="intro-step-title">Select Your Assets</span>
-                <span class="intro-step-desc">Choose players and picks to trade away</span>
-              </div>
-            </div>
-            <div class="intro-step">
-              <div class="intro-step-number">2</div>
-              <div class="intro-step-info">
-                <span class="intro-step-title">Choose Trade Partner</span>
-                <span class="intro-step-desc">Pick a team to negotiate with</span>
-              </div>
-            </div>
-            <div class="intro-step">
-              <div class="intro-step-number">3</div>
-              <div class="intro-step-info">
-                <span class="intro-step-title">Request Assets</span>
-                <span class="intro-step-desc">Select what you want in return</span>
-              </div>
-            </div>
-          </div>
-
-          <BaseButton variant="primary" size="lg" @click="startTradeWizard">
+          <button class="start-trade-btn" @click="startTradeWizard">
             <Repeat :size="20" />
             Start Trading
-          </BaseButton>
+          </button>
         </div>
       </GlassCard>
     </div>
@@ -533,7 +568,7 @@ function formatAge(age) {
                       <span class="wizard-slot-name">{{ asset.firstName }} {{ asset.lastName }}</span>
                     </template>
                     <template v-else>
-                      <span class="wizard-slot-pick-badge">{{ asset.year }}</span>
+                      <span class="wizard-slot-pick-badge">{{ formatPickYear(asset.year) }}</span>
                       <span class="wizard-slot-name">R{{ asset.round }}</span>
                     </template>
                   </div>
@@ -561,7 +596,7 @@ function formatAge(age) {
                       <span class="wizard-slot-name">{{ asset.firstName }} {{ asset.lastName }}</span>
                     </template>
                     <template v-else>
-                      <span class="wizard-slot-pick-badge">{{ asset.year }}</span>
+                      <span class="wizard-slot-pick-badge">{{ formatPickYear(asset.year) }}</span>
                       <span class="wizard-slot-name">R{{ asset.round }}</span>
                     </template>
                   </div>
@@ -627,7 +662,7 @@ function formatAge(age) {
             <div class="selected-chips">
               <div v-for="asset in userOffering" :key="`chip-${asset.type}-${asset.id}`" class="selected-chip">
                 <span v-if="asset.type === 'player'">{{ asset.firstName }} {{ asset.lastName }}</span>
-                <span v-else>{{ asset.year }} R{{ asset.round }}</span>
+                <span v-else>{{ formatPickYear(asset.year) }} R{{ asset.round }}</span>
                 <button class="chip-remove" @click.stop="removeFromOffer(asset)">
                   <X :size="12" />
                 </button>
@@ -682,7 +717,7 @@ function formatAge(age) {
               @click="togglePickSelection(pick)"
             >
               <div class="wizard-asset-card-content">
-                <div class="wizard-asset-pick-year">{{ pick.year }}</div>
+                <div class="wizard-asset-pick-year">{{ formatPickYear(pick.year) }}</div>
                 <div class="wizard-asset-info">
                   <span class="wizard-asset-name">Round {{ pick.round }}</span>
                   <span v-if="pick.original_team_abbreviation" class="wizard-asset-pick-team">({{ pick.original_team_abbreviation }})</span>
@@ -780,7 +815,7 @@ function formatAge(age) {
             <div class="selected-chips">
               <div v-for="asset in userRequesting" :key="`chip-${asset.type}-${asset.id}`" class="selected-chip">
                 <span v-if="asset.type === 'player'">{{ asset.firstName }} {{ asset.lastName }}</span>
-                <span v-else>{{ asset.year }} R{{ asset.round }}</span>
+                <span v-else>{{ formatPickYear(asset.year) }} R{{ asset.round }}</span>
                 <button class="chip-remove" @click.stop="removeFromRequest(asset)">
                   <X :size="12" />
                 </button>
@@ -835,7 +870,7 @@ function formatAge(age) {
               @click="togglePickSelection(pick)"
             >
               <div class="wizard-asset-card-content">
-                <div class="wizard-asset-pick-year">{{ pick.year }}</div>
+                <div class="wizard-asset-pick-year">{{ formatPickYear(pick.year) }}</div>
                 <div class="wizard-asset-info">
                   <span class="wizard-asset-name">Round {{ pick.round }}</span>
                   <span v-if="pick.original_team_abbreviation" class="wizard-asset-pick-team">({{ pick.original_team_abbreviation }})</span>
@@ -906,7 +941,7 @@ function formatAge(age) {
                     </template>
                     <template v-else>
                       <div class="modal-pick-card">
-                        <div class="modal-pick-year">{{ asset.year }}</div>
+                        <div class="modal-pick-year">{{ formatPickYear(asset.year) }}</div>
                         <div class="modal-pick-info">
                           <span class="modal-pick-round">Round {{ asset.round }}</span>
                           <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
@@ -967,7 +1002,7 @@ function formatAge(age) {
                     </template>
                     <template v-else>
                       <div class="modal-pick-card">
-                        <div class="modal-pick-year">{{ asset.year }}</div>
+                        <div class="modal-pick-year">{{ formatPickYear(asset.year) }}</div>
                         <div class="modal-pick-info">
                           <span class="modal-pick-round">Round {{ asset.round }}</span>
                           <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
@@ -1017,7 +1052,7 @@ function formatAge(age) {
                       <span>{{ asset.firstName }} {{ asset.lastName }}</span>
                     </template>
                     <template v-else>
-                      <span class="pick-badge">{{ asset.year }}</span>
+                      <span class="pick-badge">{{ formatPickYear(asset.year) }}</span>
                       <span>Round {{ asset.round }} Pick</span>
                     </template>
                   </div>
@@ -1040,7 +1075,7 @@ function formatAge(age) {
                       <span>{{ asset.firstName }} {{ asset.lastName }}</span>
                     </template>
                     <template v-else>
-                      <span class="pick-badge">{{ asset.year }}</span>
+                      <span class="pick-badge">{{ formatPickYear(asset.year) }}</span>
                       <span>Round {{ asset.round }} Pick</span>
                     </template>
                   </div>
@@ -2984,60 +3019,30 @@ function formatAge(age) {
   font-size: 1rem;
   color: var(--color-text-secondary);
   line-height: 1.6;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
   max-width: 450px;
 }
 
-.intro-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  width: 100%;
-  max-width: 400px;
-  margin-bottom: 2rem;
-}
-
-.intro-step {
-  display: flex;
+.start-trade-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 1rem;
-  padding: 1rem;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  text-align: left;
-}
-
-.intro-step-number {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, var(--color-primary), #8B5CF6);
-  border-radius: 50%;
-  font-size: 1rem;
+  gap: 8px;
+  padding: 12px 28px;
+  background: var(--gradient-cosmic);
+  color: black;
+  border: none;
+  border-radius: var(--radius-lg);
   font-weight: 700;
-  color: white;
-  flex-shrink: 0;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-.intro-step-info {
-  flex: 1;
-}
-
-.intro-step-title {
-  display: block;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin-bottom: 0.15rem;
-}
-
-.intro-step-desc {
-  display: block;
-  font-size: 0.8rem;
-  color: var(--color-text-secondary);
+.start-trade-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(232, 90, 79, 0.35);
 }
 
 /* ==================== TRADE WIZARD MODAL ==================== */

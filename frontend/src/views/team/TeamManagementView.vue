@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
 import { useTradeStore } from '@/stores/trade'
@@ -8,23 +8,28 @@ import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
-import { User, Users, ArrowUpDown, AlertTriangle, Calendar } from 'lucide-vue-next'
-import TradeCenter from '@/components/trade/TradeCenter.vue'
+import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Check, Lock } from 'lucide-vue-next'
+import TradesTab from '@/components/trade/TradesTab.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
 import FacilitiesTab from '@/components/team/FacilitiesTab.vue'
 import ScheduleTab from '@/components/team/ScheduleTab.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
+import HireScoutModal from '@/components/team/HireScoutModal.vue'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { useSyncStore } from '@/stores/sync'
 
 const route = useRoute()
+const router = useRouter()
 const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
 const tradeStore = useTradeStore()
 const toastStore = useToastStore()
+const syncStore = useSyncStore()
 const { loadSynergies, getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
 
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
-const validTabs = ['team', 'coach', 'finances', 'trades', 'facilities', 'schedule']
+const validTabs = ['team', 'personnel', 'finances', 'trades', 'facilities', 'schedule']
 const queryTab = route.query?.tab
 const hashTab = route.hash?.slice(1)
 const initialTab = queryTab || hashTab
@@ -43,6 +48,15 @@ const swappingLineup = ref(false)
 
 // Animation state for lineup changes - supports multiple players
 const animatingPlayers = ref({}) // { [playerId]: 'up' | 'down' }
+
+// Personnel sub-tab state
+const activePersonnelTab = ref('coach')
+const showHireScoutModal = ref(false)
+const firingScout = ref(false)
+
+// Scout computed
+const scoutingFacilityLevel = computed(() => teamStore.team?.facilities?.scouting ?? 1)
+const hiredScout = computed(() => campaignStore.currentCampaign?.settings?.scout ?? null)
 
 // Coach settings state
 const activeCoachTab = ref('offensive')
@@ -110,8 +124,35 @@ const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => teamStore.team)
 const roster = computed(() => teamStore.roster)
 const coach = computed(() => teamStore.coach)
+// Normalize career stats — supports both nested career_stats object (post-season-archive)
+// and flat fields (career_wins, career_losses, etc.) from initial coach generation
+const coachCareerStats = computed(() => {
+  const c = coach.value
+  if (!c) return null
+  if (c.career_stats) return c.career_stats
+  // Fall back to flat fields
+  const wins = c.career_wins ?? 0
+  const losses = c.career_losses ?? 0
+  const totalGames = wins + losses
+  const playoffWins = c.playoff_wins ?? 0
+  const playoffLosses = c.playoff_losses ?? 0
+  const totalPlayoff = playoffWins + playoffLosses
+  return {
+    wins,
+    losses,
+    win_pct: totalGames > 0 ? Math.round((wins / totalGames) * 1000) / 1000 : 0,
+    playoff_wins: playoffWins,
+    playoff_losses: playoffLosses,
+    playoff_win_pct: totalPlayoff > 0 ? Math.round((playoffWins / totalPlayoff) * 1000) / 1000 : 0,
+    championships: c.championships ?? 0,
+    seasons_coached: c.seasons_coached ?? 0,
+    conference_titles: c.conference_titles ?? 0,
+    coach_of_year_awards: c.coach_of_year_awards ?? 0,
+  }
+})
 const teamChemistry = computed(() => teamStore.teamChemistry)
 const chemistryColor = computed(() => teamChemistry.value >= 70 ? '#22c55e' : '#ef4444')
+const expiringContractsCount = computed(() => roster.value.filter(p => p.contractYearsRemaining === 1).length)
 
 // Starters in position order (PG, SG, SF, PF, C) - may contain nulls for empty slots
 const starters = computed(() => roster.value.slice(0, 5))
@@ -410,7 +451,7 @@ watch(activeTab, async (newTab, oldTab) => {
     tradeStore.clearSelectedTeam()
   }
 
-  if (newTab === 'coach' && !schemesFetched.value) {
+  if (newTab === 'personnel' && !schemesFetched.value) {
     try {
       await teamStore.fetchCoachingSchemes(campaignId.value)
       // coaching_scheme is now {offensive, defensive} object
@@ -865,6 +906,50 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
     toastStore.showError(err.response?.data?.message || 'Upgrade failed')
   }
 }
+
+// Scout functions
+async function fireScout() {
+  if (firingScout.value) return
+  firingScout.value = true
+  try {
+    const camp = await CampaignRepository.get(campaignId.value)
+    if (camp) {
+      camp.settings = camp.settings ?? {}
+      delete camp.settings.scout
+      await CampaignRepository.save(camp)
+    }
+    if (campaignStore.currentCampaign) {
+      const settings = { ...campaignStore.currentCampaign.settings }
+      delete settings.scout
+      campaignStore.currentCampaign.settings = settings
+    }
+    syncStore.markDirty()
+    toastStore.showSuccess('Scout released')
+  } catch (err) {
+    console.error('Failed to fire scout:', err)
+    toastStore.showError('Failed to release scout')
+  } finally {
+    firingScout.value = false
+  }
+}
+
+async function onScoutHired() {
+  try {
+    await campaignStore.fetchCampaign(campaignId.value)
+  } catch (err) {
+    console.error('Failed to refresh campaign after hiring scout:', err)
+  }
+}
+
+function isPerkActiveForScout(perk) {
+  return (teamStore.team?.facilities?.scouting ?? 1) >= perk.requiredLevel
+}
+
+const PERK_LABELS = {
+  extra_reveals: { label: 'Extra Reveals', description: 'Reveals 10 attributes per scout action instead of 8' },
+  badge_reveal: { label: 'Badge Intel', description: '35% chance per scout action to reveal badges' },
+  morale_reveal: { label: 'Personality Intel', description: '35% chance per scout action to reveal morale/personality' },
+}
 </script>
 
 <template>
@@ -902,10 +987,13 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
         </button>
         <button
           class="tab-btn"
-          :class="{ active: activeTab === 'coach' }"
-          @click="activeTab = 'coach'"
+          :class="{ active: activeTab === 'personnel' }"
+          @click="activeTab = 'personnel'"
         >
-          Coach
+          Personnel
+          <span v-if="!hiredScout" class="tab-badge tab-badge-warning">
+            <AlertTriangle :size="10" />
+          </span>
         </button>
         <button
           class="tab-btn"
@@ -913,6 +1001,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
           @click="activeTab = 'finances'"
         >
           Finances
+          <span v-if="expiringContractsCount > 0" class="tab-badge">{{ expiringContractsCount }}</span>
         </button>
         <button
           class="tab-btn"
@@ -1358,8 +1447,31 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
         </TransitionGroup>
       </div>
 
-      <!-- Coach Settings View -->
-      <div v-else-if="activeTab === 'coach'" class="coach-content">
+      <!-- Personnel View -->
+      <div v-else-if="activeTab === 'personnel'" class="coach-content">
+        <!-- Personnel Sub-tabs -->
+        <div class="coach-tabs">
+          <button
+            class="coach-tab-btn"
+            :class="{ active: activePersonnelTab === 'coach' }"
+            @click="activePersonnelTab = 'coach'"
+          >Coach</button>
+          <button
+            class="coach-tab-btn"
+            :class="{ active: activePersonnelTab === 'scout' }"
+            @click="activePersonnelTab = 'scout'"
+            style="position: relative;"
+          >
+            Scout
+            <span v-if="!hiredScout" class="tab-badge tab-badge-warning">
+              <AlertTriangle :size="10" />
+            </span>
+          </button>
+        </div>
+
+        <!-- Coach Sub-tab -->
+        <div v-if="activePersonnelTab === 'coach'">
+
         <!-- Coach Info Card -->
         <GlassCard v-if="coach" padding="lg" :hoverable="false">
           <h3 class="h4 mb-4">Head Coach</h3>
@@ -1377,36 +1489,36 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
           </div>
 
           <!-- Career Stats -->
-          <div v-if="coach.career_stats" class="career-stats-section mt-4">
+          <div v-if="coachCareerStats" class="career-stats-section mt-4">
             <h4 class="section-title">Career Record</h4>
             <div class="career-stats-grid">
               <div class="career-stat-box">
-                <span class="career-stat-value">{{ coach.career_stats.wins }}-{{ coach.career_stats.losses }}</span>
+                <span class="career-stat-value">{{ coachCareerStats.wins }}-{{ coachCareerStats.losses }}</span>
                 <span class="career-stat-label">Regular Season</span>
-                <span class="career-stat-pct">{{ coach.career_stats.win_pct }}%</span>
+                <span class="career-stat-pct">{{ coachCareerStats.win_pct }}%</span>
               </div>
               <div class="career-stat-box">
-                <span class="career-stat-value">{{ coach.career_stats.playoff_wins }}-{{ coach.career_stats.playoff_losses }}</span>
+                <span class="career-stat-value">{{ coachCareerStats.playoff_wins }}-{{ coachCareerStats.playoff_losses }}</span>
                 <span class="career-stat-label">Playoffs</span>
-                <span class="career-stat-pct">{{ coach.career_stats.playoff_win_pct }}%</span>
+                <span class="career-stat-pct">{{ coachCareerStats.playoff_win_pct }}%</span>
               </div>
               <div class="career-stat-box highlight">
-                <span class="career-stat-value">{{ coach.career_stats.championships }}</span>
+                <span class="career-stat-value">{{ coachCareerStats.championships }}</span>
                 <span class="career-stat-label">Championships</span>
               </div>
               <div class="career-stat-box">
-                <span class="career-stat-value">{{ coach.career_stats.seasons_coached }}</span>
+                <span class="career-stat-value">{{ coachCareerStats.seasons_coached }}</span>
                 <span class="career-stat-label">Seasons</span>
               </div>
             </div>
 
             <!-- Awards row -->
-            <div v-if="coach.career_stats.conference_titles > 0 || coach.career_stats.coach_of_year_awards > 0" class="awards-row mt-3">
-              <span v-if="coach.career_stats.conference_titles > 0" class="award-badge">
-                {{ coach.career_stats.conference_titles }}x Conference Champion
+            <div v-if="coachCareerStats.conference_titles > 0 || coachCareerStats.coach_of_year_awards > 0" class="awards-row mt-3">
+              <span v-if="coachCareerStats.conference_titles > 0" class="award-badge">
+                {{ coachCareerStats.conference_titles }}x Conference Champion
               </span>
-              <span v-if="coach.career_stats.coach_of_year_awards > 0" class="award-badge gold">
-                {{ coach.career_stats.coach_of_year_awards }}x Coach of the Year
+              <span v-if="coachCareerStats.coach_of_year_awards > 0" class="award-badge gold">
+                {{ coachCareerStats.coach_of_year_awards }}x Coach of the Year
               </span>
             </div>
           </div>
@@ -1629,6 +1741,93 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
             </div>
           </div>
         </GlassCard>
+        </div><!-- /Coach Sub-tab -->
+
+        <!-- Scout Sub-tab -->
+        <div v-else-if="activePersonnelTab === 'scout'">
+          <!-- Hired Scout Card -->
+          <GlassCard v-if="hiredScout" padding="lg" :hoverable="false">
+            <h3 class="h4 mb-4">Your Scout</h3>
+            <div class="coach-header">
+              <div class="coach-avatar scout-avatar">
+                {{ hiredScout.name?.charAt(0) || 'S' }}
+              </div>
+              <div class="coach-info">
+                <p class="coach-name">{{ hiredScout.name }}</p>
+                <div class="coach-rating">
+                  <StatBadge :value="hiredScout.tier === 4 ? 85 : 70" size="sm" />
+                  <span class="rating-label">{{ hiredScout.tier }}-Star Scout</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="scout-contract-info mt-3">
+              <span class="text-secondary text-sm">
+                {{ hiredScout.contractYears }} Season{{ hiredScout.contractYears !== 1 ? 's' : '' }} Remaining · Hired Season {{ hiredScout.hiredSeason }}
+              </span>
+            </div>
+
+            <!-- Scout Perks -->
+            <div class="scout-perks-section mt-4">
+              <h4 class="section-title">Perks</h4>
+              <div class="scout-perks-list">
+                <div
+                  v-for="perk in hiredScout.perks"
+                  :key="perk.key"
+                  class="scout-perk-row"
+                  :class="{ inactive: !isPerkActiveForScout(perk) }"
+                >
+                  <div class="scout-perk-icon">
+                    <Check v-if="isPerkActiveForScout(perk)" :size="14" />
+                    <Lock v-else :size="14" />
+                  </div>
+                  <div class="scout-perk-text">
+                    <span class="scout-perk-label">{{ PERK_LABELS[perk.key]?.label || perk.key }}</span>
+                    <span class="scout-perk-desc">{{ PERK_LABELS[perk.key]?.description || '' }}</span>
+                    <span v-if="!isPerkActiveForScout(perk)" class="scout-perk-req">
+                      Requires Scouting Facility Lv {{ perk.requiredLevel }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Fire Button -->
+            <button
+              class="btn-fire-scout mt-4"
+              :disabled="firingScout"
+              @click="fireScout"
+            >
+              {{ firingScout ? 'Releasing...' : 'Release Scout' }}
+            </button>
+          </GlassCard>
+
+          <!-- Empty State -->
+          <GlassCard v-else padding="lg" :hoverable="false">
+            <div class="scout-empty-state">
+              <Binoculars :size="48" class="empty-icon" />
+              <h3 class="empty-title">No Scout Hired</h3>
+              <p class="empty-desc">
+                Hire a scout to improve your draft scouting. Scouts can reveal more attributes per action and unlock badge and personality intel for draft prospects.
+              </p>
+              <button
+                class="btn-browse-scouts"
+                @click="showHireScoutModal = true"
+              >
+                Browse Scouts
+              </button>
+            </div>
+          </GlassCard>
+        </div><!-- /Scout Sub-tab -->
+
+        <!-- Hire Scout Modal -->
+        <HireScoutModal
+          :show="showHireScoutModal"
+          :campaign-id="campaignId"
+          :scouting-facility-level="scoutingFacilityLevel"
+          @close="showHireScoutModal = false"
+          @hired="onScoutHired"
+        />
       </div>
 
       <!-- Finances View -->
@@ -1638,7 +1837,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
 
       <!-- Trades View -->
       <div v-else-if="activeTab === 'trades'" class="trades-content">
-        <TradeCenter :campaign-id="campaignId" @trade-completed="activeTab = 'team'" />
+        <TradesTab :campaign-id="campaignId" @trade-completed="activeTab = 'team'" />
       </div>
 
       <!-- Facilities View -->
@@ -1662,6 +1861,8 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
       :player-news="playerNews"
       :show-history="true"
       :can-upgrade="true"
+      :is-user-player="true"
+      :campaign-id="campaignId"
       :current-season-year="campaignStore.currentCampaign?.currentSeasonYear"
       :lineup-players="teamStore.starterPlayers?.filter(p => p != null) || []"
       @close="closePlayerModal"
@@ -1682,8 +1883,19 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 200px;
-  opacity: 0.6;
+  height: 100vh;
+}
+
+.loading-container :deep(.loading-spinner) {
+  width: 64px;
+  height: 64px;
+}
+
+@media (min-width: 768px) {
+  .loading-container :deep(.loading-spinner) {
+    width: 80px;
+    height: 80px;
+  }
 }
 
 /* Team Header - Matching home page */
@@ -1776,6 +1988,31 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.tab-btn {
+  position: relative;
+}
+
+.tab-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #E85A4F;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.tab-btn.active .tab-badge {
+  background: #E85A4F;
+  color: white;
 }
 
 .tab-btn-icon :deep(svg) {
@@ -2824,6 +3061,185 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   font-size: 0.875rem;
 }
 
+/* Warning badge for Personnel/Scout tabs */
+.tab-badge-warning {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: #F59E0B;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+}
+
+.tab-btn.active .tab-badge-warning {
+  background: #F59E0B;
+  color: white;
+}
+
+.coach-tab-btn {
+  position: relative;
+}
+
+/* Scout avatar variant */
+.scout-avatar {
+  background: linear-gradient(135deg, #F59E0B, #D97706) !important;
+}
+
+/* Scout contract info */
+.scout-contract-info {
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Scout perks */
+.scout-perks-section {
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.scout-perks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scout-perk-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.scout-perk-row.inactive {
+  opacity: 0.5;
+}
+
+.scout-perk-icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  margin-top: 1px;
+}
+
+.scout-perk-row:not(.inactive) .scout-perk-icon {
+  color: #22c55e;
+}
+
+.scout-perk-row.inactive .scout-perk-icon {
+  color: var(--color-text-secondary);
+}
+
+.scout-perk-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scout-perk-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.scout-perk-row.inactive .scout-perk-label {
+  color: var(--color-text-secondary);
+}
+
+.scout-perk-desc {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  line-height: 1.3;
+}
+
+.scout-perk-req {
+  font-size: 0.7rem;
+  color: #F59E0B;
+  font-weight: 500;
+}
+
+/* Fire scout button */
+.btn-fire-scout {
+  width: 100%;
+  padding: 10px 16px;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-fire-scout:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+}
+
+.btn-fire-scout:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Scout empty state */
+.scout-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 16px;
+}
+
+.scout-empty-state .empty-icon {
+  color: var(--color-text-secondary);
+  opacity: 0.4;
+  margin-bottom: 16px;
+}
+
+.scout-empty-state .empty-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  color: var(--color-text-primary);
+  margin: 0 0 8px 0;
+}
+
+.scout-empty-state .empty-desc {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 20px 0;
+  line-height: 1.5;
+  max-width: 360px;
+}
+
+.btn-browse-scouts {
+  padding: 12px 24px;
+  border-radius: var(--radius-xl);
+  background: var(--color-primary);
+  border: none;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-browse-scouts:hover {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
 .recommended-badge {
   padding: 6px 12px;
   background: rgba(16, 185, 129, 0.15);
@@ -3676,7 +4092,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute }) {
   }
 }
 
-@media (max-width: 500px) {
+@media (max-width: 700px) {
   .tab-nav {
     flex-wrap: wrap;
     justify-content: flex-start;

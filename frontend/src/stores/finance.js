@@ -193,7 +193,7 @@ export const useFinanceStore = defineStore('finance', () => {
     }
   }
 
-  async function resignPlayer(campaignId, playerId, years) {
+  async function resignPlayer(campaignId, playerId, years, salary = null) {
     loading.value = true
     error.value = null
     try {
@@ -202,14 +202,18 @@ export const useFinanceStore = defineStore('finance', () => {
       if (!player) throw new Error('Player not found in roster')
 
       // Use FinanceManager to compute the re-sign result
-      const result = financeResignPlayer({ player, years })
+      const result = financeResignPlayer({ player, years, salary })
       if (!result.success) throw new Error(result.error || 'Failed to re-sign player')
+
+      const newSalary = result.player.contractSalary ?? salary ?? player.contractSalary
 
       // Persist to IndexedDB -- update the player's contract
       const dbPlayer = await PlayerRepository.get(campaignId, playerId)
       if (dbPlayer) {
         dbPlayer.contractYearsRemaining = years
         dbPlayer.contract_years_remaining = years
+        dbPlayer.contractSalary = newSalary
+        dbPlayer.contract_salary = newSalary
         await PlayerRepository.save(dbPlayer)
       }
 
@@ -219,6 +223,8 @@ export const useFinanceStore = defineStore('finance', () => {
         rosterWithContracts.value[playerIndex] = {
           ...rosterWithContracts.value[playerIndex],
           contractYearsRemaining: years,
+          contractSalary: newSalary,
+          contract_salary: newSalary,
         }
       }
 

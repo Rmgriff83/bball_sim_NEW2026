@@ -568,37 +568,42 @@ export class PlayoffManager {
    */
   static _createRound2MatchupIfReady(bracket, conference) {
     const round1 = bracket[conference].round1
+    const round2 = bracket[conference].round2
+    const confPrefix = conference.charAt(0).toUpperCase()
 
-    // Check 1v8 and 4v5 matchup
+    // Helper: check if a series ID already exists in round2
+    const hasSeriesId = (id) => round2.some(s => s.seriesId === id)
+
+    // Check 1v8 and 4v5 matchup → R2_A
     const series1 = round1[0] // 1v8
     const series2 = round1[1] // 4v5
+    const r2aId = `${confPrefix}_R2_A`
     if (series1.status === 'complete' && series2.status === 'complete' &&
-        bracket[conference].round2.length < 1) {
-      const confPrefix = conference.charAt(0).toUpperCase()
-      bracket[conference].round2.push(
+        !hasSeriesId(r2aId)) {
+      round2.push(
         PlayoffManager._createMatchup(
           series1.winner,
           series2.winner,
           conference,
           2,
-          `${confPrefix}_R2_A`
+          r2aId
         )
       )
     }
 
-    // Check 3v6 and 2v7 matchup
+    // Check 3v6 and 2v7 matchup → R2_B
     const series3 = round1[2] // 3v6
     const series4 = round1[3] // 2v7
+    const r2bId = `${confPrefix}_R2_B`
     if (series3.status === 'complete' && series4.status === 'complete' &&
-        bracket[conference].round2.length < 2) {
-      const confPrefix = conference.charAt(0).toUpperCase()
-      bracket[conference].round2.push(
+        !hasSeriesId(r2bId)) {
+      round2.push(
         PlayoffManager._createMatchup(
           series4.winner, // 2v7 winner (higher seed branch)
           series3.winner, // 3v6 winner
           conference,
           2,
-          `${confPrefix}_R2_B`
+          r2bId
         )
       )
     }

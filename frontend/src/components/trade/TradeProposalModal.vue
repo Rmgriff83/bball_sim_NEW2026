@@ -30,6 +30,11 @@ function getPlayerAge(player) {
   return Math.abs(Math.round(age))
 }
 
+function formatPickYear(year) {
+  if (year == null) return ''
+  return year < 100 ? 2024 + year : year
+}
+
 function handleClose() {
   emit('close')
 }
@@ -96,7 +101,7 @@ function handleKeydown(e) {
                     <template v-else-if="asset.type === 'pick' && asset.pick">
                       <div class="pick-info">
                         <span class="pick-label">Draft Pick</span>
-                        <span class="pick-detail">{{ asset.pick.year }} Rd {{ asset.pick.round }}</span>
+                        <span class="pick-detail">{{ formatPickYear(asset.pick.year) }} Rd {{ asset.pick.round }}</span>
                       </div>
                     </template>
                   </div>
@@ -132,7 +137,7 @@ function handleKeydown(e) {
                     <template v-else-if="asset.type === 'pick' && asset.pick">
                       <div class="pick-info">
                         <span class="pick-label">Draft Pick</span>
-                        <span class="pick-detail">{{ asset.pick.year }} Rd {{ asset.pick.round }}</span>
+                        <span class="pick-detail">{{ formatPickYear(asset.pick.year) }} Rd {{ asset.pick.round }}</span>
                       </div>
                     </template>
                   </div>

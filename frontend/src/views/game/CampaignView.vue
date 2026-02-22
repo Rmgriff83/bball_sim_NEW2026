@@ -8,7 +8,7 @@ import { useEngineStore } from '@/stores/engine'
 import { useSyncStore } from '@/stores/sync'
 import { usePlayoffStore } from '@/stores/playoff'
 import { BottomNav } from '@/components/ui'
-import { ArrowLeft, Play, User, FolderOpen, LogOut } from 'lucide-vue-next'
+import { ArrowLeft, Play, User, FolderOpen, LogOut, ShoppingBag } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,6 +22,10 @@ const playoffStore = usePlayoffStore()
 const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => campaign.value?.team)
+
+const scoutingPoints = computed(() => {
+  return campaign.value?.settings?.scoutingPoints ?? 0
+})
 
 // Parse a date string (YYYY-MM-DD or datetime) into a local Date, avoiding UTC shift
 function parseLocalDate(dateStr) {
@@ -137,13 +141,9 @@ function closeMobileMenu() {
             <ArrowLeft :size="20" />
           </router-link>
           <div v-if="team && !isMobile" class="team-badge">
-            <div
-              class="team-icon"
-              :style="{ backgroundColor: team.primary_color || '#E85A4F' }"
-            >
+            <div class="team-icon" :style="{ backgroundColor: team.primary_color || '#E85A4F' }">
               {{ team.abbreviation }}
             </div>
-            <span class="team-name">{{ team.name }}</span>
           </div>
         </div>
 
@@ -179,6 +179,14 @@ function closeMobileMenu() {
             Playoffs
           </router-link>
           <router-link
+            :to="`/campaign/${campaignId}/scouting`"
+            class="nav-link nav-link-scout"
+            :class="{ active: route.name === 'scouting' }"
+          >
+            Scout
+            <span v-if="scoutingPoints > 0" class="scout-pts-badge">{{ scoutingPoints }}</span>
+          </router-link>
+          <router-link
             :to="`/campaign/${campaignId}/play`"
             class="nav-link nav-link-play"
             :class="{ active: route.name === 'game' || route.name === 'play' }"
@@ -190,11 +198,14 @@ function closeMobileMenu() {
 
         <!-- Right: User Actions (Desktop) -->
         <div v-if="!isMobile" class="header-right">
-          <router-link to="/campaigns" class="nav-link-secondary">
-            All Campaigns
+          <router-link to="/store" class="header-icon-btn" title="Store">
+            <ShoppingBag :size="16" />
           </router-link>
-          <button class="logout-btn" @click="handleLogout">
-            Sign Out
+          <router-link to="/profile" class="header-icon-btn" title="Profile">
+            <User :size="16" />
+          </router-link>
+          <button class="header-icon-btn" @click="handleLogout" title="Sign Out">
+            <LogOut :size="16" />
           </button>
         </div>
 
@@ -219,6 +230,14 @@ function closeMobileMenu() {
 
       <!-- Mobile Navigation Slide-in -->
       <div v-if="isMobile" ref="mobileMenuRef" class="mobile-nav" :class="{ open: mobileMenuOpen }">
+        <router-link
+          to="/store"
+          class="mobile-nav-link"
+          @click="closeMobileMenu"
+        >
+          <ShoppingBag :size="14" />
+          Store
+        </router-link>
         <router-link
           to="/profile"
           class="mobile-nav-link"
@@ -377,6 +396,28 @@ function closeMobileMenu() {
   background: var(--color-primary);
 }
 
+.nav-link-scout {
+  position: relative;
+}
+
+.scout-pts-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--gradient-cosmic);
+  color: black;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.nav-link-scout.active .scout-pts-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+}
+
 .nav-link-play {
   display: flex;
   align-items: center;
@@ -401,29 +442,23 @@ function closeMobileMenu() {
   gap: 16px;
 }
 
-.nav-link-secondary {
-  color: var(--color-text-secondary);
-  text-decoration: none;
-  font-size: 0.875rem;
-  transition: color 0.2s ease;
-}
-
-.nav-link-secondary:hover {
-  color: var(--color-text-primary);
-}
-
-.logout-btn {
-  padding: 6px 12px;
+.header-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   background: var(--color-bg-tertiary);
   border: 1px solid var(--glass-border);
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--color-text-secondary);
-  font-size: 0.875rem;
+  text-decoration: none;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
-.logout-btn:hover {
+.header-icon-btn:hover {
   background: var(--color-bg-elevated);
   color: var(--color-text-primary);
 }

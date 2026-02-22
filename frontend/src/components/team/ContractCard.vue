@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { User, AlertTriangle, RefreshCw, UserMinus, Info } from 'lucide-vue-next'
+import { User, AlertTriangle, RefreshCw, UserMinus } from 'lucide-vue-next'
 import { StatBadge } from '@/components/ui'
 
 const props = defineProps({
@@ -94,6 +94,7 @@ function handleInfo() {
   <div
     class="contract-card"
     :class="{ expiring: isExpiringContract && !isFreeAgent }"
+    @click="handleInfo"
   >
     <div class="card-content">
       <!-- Left Column: Avatar + Buttons -->
@@ -110,7 +111,7 @@ function handleInfo() {
           <button
             v-if="isExpiringContract"
             class="action-btn resign-btn"
-            @click="handleResign"
+            @click.stop="handleResign"
             title="Re-sign player"
           >
             <RefreshCw :size="14" />
@@ -118,19 +119,11 @@ function handleInfo() {
           </button>
           <button
             class="action-btn drop-btn"
-            @click="handleDrop"
+            @click.stop="handleDrop"
             title="Drop player"
           >
             <UserMinus :size="14" />
             <span>Drop</span>
-          </button>
-          <button
-            class="action-btn info-btn"
-            @click="handleInfo"
-            title="Player details"
-          >
-            <Info :size="14" />
-            <span>Info</span>
           </button>
         </div>
 
@@ -138,19 +131,11 @@ function handleInfo() {
         <div v-if="showActions && isFreeAgent" class="action-buttons">
           <button
             class="action-btn sign-btn"
-            @click="handleSign"
+            @click.stop="handleSign"
             title="Sign player"
           >
             <User :size="14" />
             <span>Sign</span>
-          </button>
-          <button
-            class="action-btn info-btn"
-            @click="handleInfo"
-            title="Player details"
-          >
-            <Info :size="14" />
-            <span>Info</span>
           </button>
         </div>
       </div>
@@ -255,6 +240,12 @@ function handleInfo() {
   transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
+  cursor: pointer;
+}
+
+.contract-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(30, 35, 45, 1);
 }
 
 .contract-card.expiring {
@@ -343,18 +334,6 @@ function handleInfo() {
 .sign-btn:hover {
   background: rgba(34, 197, 94, 0.3);
   border-color: var(--color-success);
-}
-
-.info-btn {
-  background: rgba(107, 114, 128, 0.2);
-  color: var(--color-text-secondary);
-  border: 1px solid rgba(107, 114, 128, 0.3);
-}
-
-.info-btn:hover {
-  background: rgba(107, 114, 128, 0.3);
-  border-color: var(--color-text-secondary);
-  color: var(--color-text-primary);
 }
 
 .player-info {
@@ -585,12 +564,4 @@ function handleInfo() {
   background: rgba(34, 197, 94, 0.2);
 }
 
-[data-theme="light"] .info-btn {
-  background: rgba(107, 114, 128, 0.1);
-  border-color: rgba(107, 114, 128, 0.2);
-}
-
-[data-theme="light"] .info-btn:hover {
-  background: rgba(107, 114, 128, 0.18);
-}
 </style>

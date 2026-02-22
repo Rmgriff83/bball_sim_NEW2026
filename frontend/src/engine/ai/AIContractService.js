@@ -6,6 +6,7 @@
 // =============================================================================
 
 import { analyzeTeamDirection, buildContext } from './AITradeService';
+import { calculateRetentionScore, getMarketSize } from './MotivationService';
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
@@ -347,6 +348,21 @@ export function evaluateResigning(player, direction, stats, rosterCount = 12, ca
     }
   }
 
+  // Motivation-aware retention check
+  if (player.motivations) {
+    const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? '';
+    const retentionContext = {
+      contractSalary: salary,
+      expectedSalary,
+      teamMarketSize: getMarketSize(teamAbbr),
+    };
+    const retention = calculateRetentionScore(player, retentionContext);
+    // Player very unlikely to accept — don't bother unless desperate
+    if (retention < 30 && !needsPlayers) return false;
+    // Unhappy player — only re-sign if offering premium (handled in calculateContractOffer)
+    if (retention < 50 && isMassivelyOverpaid) return false;
+  }
+
   // Decision logic
   if (isMassivelyOverpaid && !needsPlayers) {
     return false;
@@ -417,6 +433,16 @@ export function calculateContractOffer(player, direction, capSituation = null) {
     baseSalary *= 1.1; // Youth premium
   } else if (age >= 32) {
     baseSalary *= 0.85; // Age discount
+  }
+
+  // Motivation-aware salary adjustment
+  if (player.motivations?.money) {
+    const moneyWeight = player.motivations.money.weight;
+    if (moneyWeight > 0.8) {
+      baseSalary *= 1.10; // Pay premium to retain money-motivated players
+    } else if (moneyWeight < 0.3) {
+      baseSalary *= 0.90; // Player doesn't care as much about money
+    }
   }
 
   // Cap-aware salary adjustments

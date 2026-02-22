@@ -33,6 +33,7 @@ import {
 import { generateAITargetMinutes } from '../simulation/SubstitutionEngine'
 import { processSeasonEnd } from '../evolution/PlayerEvolution'
 import { runAIRosterManagement, ensureMinimumRosters } from '../ai/AIContractService'
+import { generateMotivations, getMarketSize } from '../ai/MotivationService'
 import { generateAndSaveRookieClass } from '../draft/RookieGenerationService'
 import { AwardService } from '../season/AwardService'
 import { AllStarService } from '../season/AllStarService'
@@ -386,7 +387,8 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
   const age = masterData._age ?? (masterData.birthDate ? (2025 - parseInt(masterData.birthDate.substring(0, 4))) : 25)
   const heightInches = masterData.heightInches ?? 78
   const weightLbs = masterData.weightLbs ?? 210
-  const overall = masterData.overallRating ?? 70
+  const overall = masterData.overallRating ?? 75
+  const position = masterData.position ?? 'SF'
   const salary = masterData.contractSalary ?? calculateSalary(overall, age)
   const contractYears = randInt(1, 4)
   const contractDetailsObj = {
@@ -394,6 +396,44 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
     salaries: [salary],
     options: {},
     noTradeClause: false,
+  }
+
+  // Generate attributes/tendencies/badges/personality when master data is missing them
+  const attrs = masterData.attributes ?? generateAttributes(position, overall)
+  const tends = masterData.tendencies ?? generateTendencies(position)
+  const bdgs = (masterData.badges && masterData.badges.length > 0)
+    ? masterData.badges
+    : generateBadges(position, overall)
+  const pers = (masterData.personality && masterData.personality.traits?.length > 0)
+    ? masterData.personality
+    : generatePersonality()
+
+  // Generate motivations when missing
+  const motivations = masterData.motivations ?? generateMotivations({
+    age, overallRating: overall, personality: pers,
+  })
+
+  // Generate potential with upside when missing
+  const potentialDefault = Math.min(99, overall + randInt(0, 6))
+  const potentialRating = masterData.potentialRating ?? potentialDefault
+
+  // Generate trade value when missing
+  let tradeValue = masterData.tradeValue
+  let tradeValueTotal = masterData.tradeValueTotal
+  if (tradeValue == null) {
+    let tv
+    if (overall >= 92)      tv = randFloat(25, 40)
+    else if (overall >= 88) tv = randFloat(18, 28)
+    else if (overall >= 84) tv = randFloat(12, 20)
+    else if (overall >= 80) tv = randFloat(8, 14)
+    else if (overall >= 76) tv = randFloat(5, 10)
+    else if (overall >= 72) tv = randFloat(3, 7)
+    else if (overall >= 68) tv = randFloat(1.5, 4)
+    else                    tv = randFloat(0.5, 2)
+    if (age <= 24) tv *= 1.15
+    else if (age >= 32) tv *= 0.80
+    tradeValue = Math.round(tv * 100) / 100
+    tradeValueTotal = Math.round(tv * randFloat(0.6, 0.9) * 100) / 100
   }
 
   return {
@@ -410,7 +450,7 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
     lastName: masterData.lastName,
     last_name: masterData.lastName,
     name: `${masterData.firstName} ${masterData.lastName}`,
-    position: masterData.position,
+    position,
     secondaryPosition: masterData.secondaryPosition ?? null,
     secondary_position: masterData.secondaryPosition ?? null,
     jerseyNumber: masterData.jerseyNumber,
@@ -435,15 +475,16 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
     // Ratings — preserved from master data
     overallRating: overall,
     overall_rating: overall,
-    potentialRating: masterData.potentialRating ?? overall,
-    potential_rating: masterData.potentialRating ?? overall,
+    potentialRating,
+    potential_rating: potentialRating,
     archetype: masterData.archetype ?? null,
 
-    // Attributes & gameplay — preserved from master data
-    attributes: masterData.attributes,
-    tendencies: masterData.tendencies,
-    badges: masterData.badges ?? [],
-    personality: masterData.personality ?? { traits: [], morale: 80, chemistry: 75, mediaProfile: 'normal' },
+    // Attributes & gameplay — generated when missing from master data
+    attributes: attrs,
+    tendencies: tends,
+    badges: bdgs,
+    personality: pers,
+    motivations,
 
     // Contract
     contractYearsRemaining: contractYears,
@@ -452,8 +493,8 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
     contract_salary: salary,
     contractDetails: contractDetailsObj,
     contract_details: contractDetailsObj,
-    tradeValue: masterData.tradeValue ?? null,
-    tradeValueTotal: masterData.tradeValueTotal ?? null,
+    tradeValue,
+    tradeValueTotal,
     injuryRisk: masterData.injuryRisk ?? 'M',
 
     // Status
@@ -1431,11 +1472,54 @@ export async function enterOffseason(campaignId) {
   // Save players with updated award counters
   await PlayerRepository.saveBulk(allPlayers.map(p => ({ ...p, campaignId })))
 
-  // 2. Process season end (aging, retirement, contract decrement, stat resets — injuries preserved)
+  // 2. Build team context map for motivation recalculation
+  const standingsData = seasonData?.standings || { east: [], west: [] }
+  const allStandingsEntries = [...(standingsData.east || []), ...(standingsData.west || [])]
+  const playoffData = seasonData?.playoffs || null
+  const playoffTeamIds = new Set()
+  if (playoffData?.bracket) {
+    // Collect all team IDs that appeared in the playoff bracket
+    const collectBracketTeams = (bracket) => {
+      if (!bracket) return
+      for (const round of Object.values(bracket)) {
+        if (Array.isArray(round)) {
+          for (const series of round) {
+            if (series.team1Id) playoffTeamIds.add(series.team1Id)
+            if (series.team2Id) playoffTeamIds.add(series.team2Id)
+          }
+        }
+      }
+    }
+    collectBracketTeams(playoffData.bracket.east)
+    collectBracketTeams(playoffData.bracket.west)
+  }
+  const championTeamId = playoffData?.champion?.teamId ?? null
+
+  const teamContextMap = {}
+  for (const team of teams) {
+    const abbr = team.abbreviation
+    const standingsEntry = allStandingsEntries.find(s => s.teamId === team.id || s.team_id === team.id)
+    const wins = standingsEntry?.wins ?? standingsEntry?.w ?? 0
+    const losses = standingsEntry?.losses ?? standingsEntry?.l ?? 0
+    const totalGames = wins + losses
+    const teamRoster = allPlayers.filter(p => (p.teamAbbreviation ?? p.team_abbreviation) === abbr)
+
+    teamContextMap[abbr] = {
+      winPct: totalGames > 0 ? wins / totalGames : 0.5,
+      madePlayoffs: playoffTeamIds.has(team.id),
+      hasChampionship: team.id === championTeamId,
+      marketSize: getMarketSize(abbr),
+      coachStability: true, // TODO: track coach changes
+      roster: teamRoster,
+    }
+  }
+
+  // Process season end (aging, retirement, contract decrement, stat resets — injuries preserved)
   const seasonEndResult = processSeasonEnd(
     allPlayers,
     {},
-    campaign.difficulty ?? 'pro'
+    campaign.difficulty ?? 'pro',
+    teamContextMap
   )
 
   // Save updated players (retired excluded)
@@ -1606,6 +1690,14 @@ export async function startNewSeason(campaignId) {
   campaign.settings.scoutingPoints = 0
   campaign.settings.lastScoutingWeek = 0
   campaign.settings.scoutedPlayers = {}
+
+  // 3d. Decrement scout contract (2-season contracts)
+  if (campaign.settings.scout) {
+    campaign.settings.scout.contractYears -= 1
+    if (campaign.settings.scout.contractYears <= 0) {
+      delete campaign.settings.scout
+    }
+  }
 
   // 4. Initialize new season (schedule + standings)
   const seasonData = SeasonManager.initializeSeason(teams, nextYear, campaignId)

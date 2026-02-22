@@ -1,0 +1,60 @@
+Modern NBA players weigh a complex mix of factors when deciding whether to re-sign with their current team or leave in free agency.
+Financial incentives are often the biggest lever. The NBA's collective bargaining agreement gives incumbent teams a significant edge — they can offer a fifth year and higher annual raises on max contracts (the "supermax" or designated veteran extension), which can mean tens of millions of dollars more than any other team can offer. For many players, that financial gap is decisive.
+Beyond money, winning and roster construction matter enormously. Players evaluate whether the front office has built — or is capable of building — a legitimate contender around them. Stars increasingly want to see a clear path to a championship, and if they feel the organization has hit its ceiling, the pull of joining a better-positioned team can outweigh the financial advantage of staying.
+Organizational culture and relationships play a quieter but real role. Trust in coaching staffs, relationships with front office decision-makers, and how the franchise treats its players (minutes management, medical staff quality, off-court support) all factor in. Players talk, and organizations develop reputations.
+Market and lifestyle preferences also come up — taxes in states like Texas and Florida versus California or New York, city size, media pressure, proximity to family, and endorsement opportunities.
+Legacy and personal brand increasingly drive decisions too. Some players want to be franchise icons and value the narrative of loyalty (think Steph Curry in Golden State). Others want to prove themselves in a new context or pair up with other stars to chase rings.
+Finally, player empowerment and agency have reshaped the landscape. Stars now have enormous leverage through trade demands and public pressure, and many view free agency as a chance to exert control over their careers in ways previous generations couldn't. The rise of player-driven movement — facilitated by social media, player relationships across teams, and powerful agents — means re-signing is no longer a default. It's a genuine choice weighed against a broader set of possibilities than ever before.
+
+Core Concept: Motivation Profile
+Each player object gets a motivations property — essentially a personality profile that drives their free agency decisions. Each motivation is a category with a weight (how much that player cares about it) and a satisfaction score (how well their current team fulfills it).
+Player {
+  id, name, position, stats, contract, ...
+
+  motivations: {
+    money:        { weight: 0.9, satisfaction: 0.7 },
+    winning:      { weight: 0.8, satisfaction: 0.4 },
+    loyalty:      { weight: 0.3, satisfaction: 0.8 },
+    market:       { weight: 0.2, satisfaction: 0.5 },
+    role:         { weight: 0.6, satisfaction: 0.6 },
+    coaching:     { weight: 0.4, satisfaction: 0.7 },
+    legacy:       { weight: 0.5, satisfaction: 0.3 },
+    starPairing:  { weight: 0.7, satisfaction: 0.2 },
+  }
+}
+How the Weights Work
+Weights (0.0–1.0) are relatively static personality traits — a player who deeply cares about money will always care about money. These can be generated at player creation based on archetypes (e.g., a "mercenary" template vs. a "franchise loyal" template).
+Satisfaction (0.0–1.0) is dynamic and recalculated each season based on game state. For example:
+
+money.satisfaction → How does the team's offer compare to the max they could get elsewhere?
+winning.satisfaction → Team win %, playoff success, trajectory
+loyalty.satisfaction → Years with the team, how they've been treated (traded teammates? fired a beloved coach?)
+role.satisfaction → Usage rate, minutes, are they "the guy" or a sidekick?
+starPairing.satisfaction → Are there other high-rated players on the roster?
+market.satisfaction → City size, tax rate, endorsement modifier
+legacy.satisfaction → Championships won, franchise history, are they building something iconic?
+
+Decision Calculation
+At free agency, you compute a retention score for the current team and a desirability score for each suitor:
+score = sum(weight_i * satisfaction_i) / sum(weight_i)
+The current team gets a small incumbent bonus (familiarity, comfort, CBA financial edge) added to their score. Then compare scores across all options — the highest wins, possibly with some randomness/noise added so it's not perfectly deterministic.
+Archetypes for Generation
+You could define motivation templates to make player generation easier:
+
+Franchise Cornerstone → high loyalty, high legacy, moderate money
+Ring Chaser → high winning, high starPairing, low loyalty
+Max Contract Hunter → very high money, low loyalty, moderate winning
+Hometown Hero → high market (for specific city), high loyalty
+Competitor → high winning, high role, moderate legacy
+
+Then add some randomized variance so not every "ring chaser" is identical.
+Things That Could Shift Weights Over Time
+To make it feel alive, certain events could nudge weights during a career:
+
+Player ages past 32 → winning.weight increases (legacy mode)
+Player gets traded → loyalty.weight decreases
+Player wins a championship → money.weight may increase, winning.weight may dip slightly
+Player suffers major injury → money.weight increases (secure the bag)
+Player gets benched or role reduced → role.weight increases
+
+This gives you emergent narratives — a loyal franchise guy who gets traded becomes a mercenary, or a young star who keeps losing in the playoffs starts demanding better teammates. Those are the kinds of stories that make simulation games compelling.

@@ -1,9 +1,12 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars } from 'lucide-vue-next'
+import { useTradeStore } from '@/stores/trade'
+import { useToastStore } from '@/stores/toast'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
+import { getMotivationLabel, getArchetypeLabel, calculateRetentionScore } from '@/engine/ai/MotivationService'
 
 const { getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
 
@@ -58,10 +61,70 @@ const props = defineProps({
   lineupPlayers: {
     type: Array,
     default: () => []
+  },
+  // Enable trade block toggle for user's own players
+  isUserPlayer: {
+    type: Boolean,
+    default: false
+  },
+  // Campaign ID needed for trade block persistence
+  campaignId: {
+    type: [String, Number],
+    default: null
+  },
+  // Show resign/drop action buttons in header (finances page only)
+  showContractActions: {
+    type: Boolean,
+    default: false
+  },
+  // Whether player is on an expiring contract (for showing resign button)
+  isExpiringContract: {
+    type: Boolean,
+    default: false
+  },
+  // Scouting mode: hides unrevealed attributes, locks badges/morale
+  scoutingMode: {
+    type: Boolean,
+    default: false
+  },
+  // List of revealed attribute keys (from scouting system)
+  revealedAttributes: {
+    type: Array,
+    default: () => []
+  },
+  // Whether player is 100% scouted (gates potential rating display)
+  isFullyScouted: {
+    type: Boolean,
+    default: false
+  },
+  // Animating attribute keys for stat-pop effect { 'attrKey': true }
+  animatingAttributes: {
+    type: Object,
+    default: () => ({})
+  },
+  // Available scouting points (for scout button in modal header)
+  scoutingPoints: {
+    type: Number,
+    default: 0
+  },
+  // Whether a scout action is in progress
+  scoutingInProgress: {
+    type: Boolean,
+    default: false
+  },
+  // Whether badges have been revealed by scout perk
+  badgesRevealed: {
+    type: Boolean,
+    default: false
+  },
+  // Whether morale/personality has been revealed by scout perk
+  moraleRevealed: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['close', 'upgrade-attribute'])
+const emit = defineEmits(['close', 'upgrade-attribute', 'resign-player', 'drop-player', 'scout-player'])
 
 const activeTab = ref('stats')
 
@@ -73,12 +136,34 @@ const showAllTimeExpanded = ref(false)
 // Reset tab when modal opens
 watch(() => props.show, (newVal) => {
   if (newVal) {
-    activeTab.value = 'stats'
+    activeTab.value = props.scoutingMode ? 'attributes' : 'stats'
     showAllRecentEvolution.value = false
     showAllTimeEvolution.value = false
     showAllTimeExpanded.value = false
   }
 })
+
+// Trade block
+const tradeStore = useTradeStore()
+const toastStore = useToastStore()
+
+const isOnTradingBlock = computed(() => {
+  if (!props.isUserPlayer || !props.player) return false
+  const pid = props.player.id ?? props.player.playerId
+  return tradeStore.isOnUserTradingBlock(pid)
+})
+
+async function toggleTradingBlock() {
+  if (!props.campaignId || !props.player) return
+  const pid = props.player.id ?? props.player.playerId
+  const added = await tradeStore.togglePlayerOnTradingBlock(props.campaignId, pid)
+  const name = normalizedPlayer.value?.name || 'Player'
+  if (added) {
+    toastStore.showSuccess(`${name} added to trading block`)
+  } else {
+    toastStore.showSuccess(`${name} removed from trading block`)
+  }
+}
 
 function close() {
   emit('close')
@@ -216,6 +301,28 @@ function getFatigueColor(fatigue) {
 // Morale helpers
 const moraleValue = computed(() => normalizedPlayer.value?.morale ?? 80)
 
+// Motivation helpers
+const playerMotivations = computed(() => props.player?.motivations ?? null)
+const motivationArchetype = computed(() => props.player ? getArchetypeLabel(props.player) : '')
+const isContractYear = computed(() => {
+  const years = normalizedPlayer.value?.contract?.years_remaining ?? 2
+  return years <= 1
+})
+const retentionPct = computed(() => {
+  if (!props.player?.motivations) return null
+  return calculateRetentionScore(props.player, {})
+})
+function getMotivationBarColor(weight) {
+  if (weight >= 0.7) return '#f87171' // coral/red
+  if (weight >= 0.4) return '#fbbf24' // amber
+  return '#6b7280' // muted gray
+}
+function getRetentionColor(pct) {
+  if (pct >= 70) return '#22c55e'
+  if (pct >= 40) return '#f59e0b'
+  return '#ef4444'
+}
+
 function getMoraleLabel(morale) {
   if (morale >= 80) return 'Excellent'
   if (morale >= 50) return 'Good'
@@ -331,6 +438,27 @@ function formatWeight(weight) {
   return w
 }
 
+// Scouting-aware attribute value lookup
+function getScoutedAttrValue(attrKey, value) {
+  if (!props.scoutingMode) return roundAttr(value)
+  // potentialRating: only if 100% scouted
+  if (attrKey === 'potentialRating' && !props.isFullyScouted) return '?'
+  // Other attributes: check revealedAttributes array
+  if (props.revealedAttributes.includes(attrKey)) return roundAttr(value)
+  return '?'
+}
+
+function isAttrRevealed(attrKey) {
+  if (!props.scoutingMode) return true
+  if (attrKey === 'potentialRating' && !props.isFullyScouted) return false
+  return props.revealedAttributes.includes(attrKey)
+}
+
+function getScoutedAttrColor(attrKey, value) {
+  if (!isAttrRevealed(attrKey)) return 'var(--color-text-tertiary)'
+  return getAttrColor(value)
+}
+
 function formatSalary(salary) {
   if (!salary) return '$0'
   if (salary >= 1000000) {
@@ -420,8 +548,39 @@ function formatChange(change) {
                       {{ normalizedPlayer.name }}
                     </h2>
                     <div class="rating-with-injury">
-                      <StatBadge :value="normalizedPlayer.overallRating" size="lg" />
+                      <template v-if="scoutingMode && !revealedAttributes.includes('overallRating')">
+                        <div class="unknown-rating-modal">?</div>
+                      </template>
+                      <StatBadge v-else :value="normalizedPlayer.overallRating" size="lg" />
                       <span v-if="normalizedPlayer.isInjured" class="injury-badge-modal">INJ</span>
+                    </div>
+                    <!-- Scout Button (scouting page) -->
+                    <button
+                      v-if="scoutingMode && !isFullyScouted"
+                      class="header-scout-btn"
+                      :disabled="scoutingPoints < 1 || scoutingInProgress"
+                      @click.stop="emit('scout-player', player)"
+                    >
+                      <Binoculars :size="14" />
+                      Scout
+                    </button>
+                    <!-- Contract Action Buttons (finances page) -->
+                    <div v-if="showContractActions" class="header-contract-actions">
+                      <button
+                        v-if="isExpiringContract"
+                        class="header-action-btn resign"
+                        @click.stop="emit('resign-player', player)"
+                      >
+                        <RefreshCw :size="13" />
+                        Re-sign
+                      </button>
+                      <button
+                        class="header-action-btn drop"
+                        @click.stop="emit('drop-player', player)"
+                      >
+                        <UserMinus :size="13" />
+                        Drop
+                      </button>
                     </div>
                   </div>
                   <div class="position-vitals-row">
@@ -441,6 +600,15 @@ function formatChange(change) {
                       </span>
                       <span v-if="normalizedPlayer.isInjured" class="injury-tag">Injured</span>
                       <span v-else class="jersey-number">#{{ normalizedPlayer.jerseyNumber }}</span>
+                      <button
+                        v-if="isUserPlayer && campaignId"
+                        class="trade-block-toggle"
+                        :class="{ active: isOnTradingBlock }"
+                        @click.stop="toggleTradingBlock"
+                        :title="isOnTradingBlock ? 'Remove from trading block' : 'Add to trading block'"
+                      >
+                        <Repeat :size="14" />
+                      </button>
                     </div>
                     <div class="player-vitals">
                       <span>{{ normalizedPlayer.height }}</span>
@@ -452,8 +620,8 @@ function formatChange(change) {
                   </div>
                 </div>
               </div>
-              <!-- Fatigue Meter -->
-              <div class="fatigue-meter-container">
+              <!-- Fatigue Meter (hidden in scouting mode) -->
+              <div v-if="!scoutingMode" class="fatigue-meter-container">
                 <div class="fatigue-meter-label">
                   <span>Fatigue</span>
                   <span class="fatigue-value">{{ fatiguePercent }}%</span>
@@ -481,29 +649,45 @@ function formatChange(change) {
             <!-- Badges Preview -->
             <div v-if="normalizedPlayer.badges?.length > 0" class="badges-preview">
               <div class="badges-grid-preview">
-                <div
-                  v-for="badge in normalizedPlayer.badges.slice(0, 6)"
-                  :key="badge.id"
-                  class="badge-chip"
-                  :class="{ 'synergy-active': isBadgeActivated(badge.id) }"
-                  :style="{ borderColor: isBadgeActivated(badge.id) ? '#00E5FF' : getBadgeLevelColor(badge.level) }"
-                  :title="getBadgeSynergyTooltip(badge)"
-                >
-                  <Zap v-if="isBadgeActivated(badge.id)" :size="10" class="synergy-icon" />
-                  <span class="badge-level-icon" :style="{ color: getBadgeLevelColor(badge.level) }">
-                    {{ badge.level === 'hof' ? 'HOF' : badge.level.charAt(0).toUpperCase() }}
+                <template v-if="scoutingMode && !badgesRevealed">
+                  <div
+                    v-for="(badge, i) in normalizedPlayer.badges.slice(0, 6)"
+                    :key="i"
+                    class="badge-chip unknown-badge"
+                  >
+                    <Lock :size="10" />
+                    <span class="badge-name-preview">???</span>
+                  </div>
+                  <span v-if="normalizedPlayer.badges.length > 6" class="more-badges">
+                    +{{ normalizedPlayer.badges.length - 6 }} more
                   </span>
-                  <span class="badge-name-preview">{{ formatBadgeName(badge) }}</span>
-                </div>
-                <span v-if="normalizedPlayer.badges.length > 6" class="more-badges">
-                  +{{ normalizedPlayer.badges.length - 6 }} more
-                </span>
+                </template>
+                <template v-else>
+                  <div
+                    v-for="badge in normalizedPlayer.badges.slice(0, 6)"
+                    :key="badge.id"
+                    class="badge-chip"
+                    :class="{ 'synergy-active': isBadgeActivated(badge.id) }"
+                    :style="{ borderColor: isBadgeActivated(badge.id) ? '#00E5FF' : getBadgeLevelColor(badge.level) }"
+                    :title="getBadgeSynergyTooltip(badge)"
+                  >
+                    <Zap v-if="isBadgeActivated(badge.id)" :size="10" class="synergy-icon" />
+                    <span class="badge-level-icon" :style="{ color: getBadgeLevelColor(badge.level) }">
+                      {{ badge.level === 'hof' ? 'HOF' : badge.level.charAt(0).toUpperCase() }}
+                    </span>
+                    <span class="badge-name-preview">{{ formatBadgeName(badge) }}</span>
+                  </div>
+                  <span v-if="normalizedPlayer.badges.length > 6" class="more-badges">
+                    +{{ normalizedPlayer.badges.length - 6 }} more
+                  </span>
+                </template>
               </div>
             </div>
 
             <!-- Tab Navigation -->
             <div class="modal-tabs">
               <button
+                v-if="!scoutingMode"
                 class="tab-btn"
                 :class="{ active: activeTab === 'stats' }"
                 @click="activeTab = 'stats'"
@@ -525,7 +709,7 @@ function formatChange(change) {
                 Badges
               </button>
               <button
-                v-if="showGrowth"
+                v-if="showGrowth && !scoutingMode"
                 class="tab-btn"
                 :class="{ active: activeTab === 'growth' }"
                 @click="activeTab = 'growth'"
@@ -533,7 +717,7 @@ function formatChange(change) {
                 Growth
               </button>
               <button
-                v-if="showHistory"
+                v-if="showHistory && !scoutingMode"
                 class="tab-btn"
                 :class="{ active: activeTab === 'history' }"
                 @click="activeTab = 'history'"
@@ -541,7 +725,6 @@ function formatChange(change) {
                 History
               </button>
               <button
-                v-if="showGrowth"
                 class="tab-btn"
                 :class="{ active: activeTab === 'morale' }"
                 @click="activeTab = 'morale'"
@@ -641,8 +824,49 @@ function formatChange(change) {
 
               <!-- Attributes Tab -->
               <div v-if="activeTab === 'attributes'" class="tab-panel">
+                <!-- Ratings row (scouting mode) -->
+                <div v-if="scoutingMode" class="attr-section">
+                  <h4 class="attr-section-title">Ratings</h4>
+                  <div class="attributes-grid">
+                    <div class="attr-row">
+                      <span class="attr-name">Overall</span>
+                      <div class="attr-bar-container">
+                        <div
+                          class="attr-bar"
+                          :style="{
+                            width: isAttrRevealed('overallRating') ? `${normalizedPlayer.overallRating}%` : '0%',
+                            backgroundColor: getScoutedAttrColor('overallRating', normalizedPlayer.overallRating)
+                          }"
+                        />
+                      </div>
+                      <span
+                        class="attr-value"
+                        :class="{ 'stat-pop': animatingAttributes['overallRating'] }"
+                        :style="{ color: getScoutedAttrColor('overallRating', normalizedPlayer.overallRating) }"
+                      >{{ getScoutedAttrValue('overallRating', normalizedPlayer.overallRating) }}</span>
+                    </div>
+                    <div class="attr-row">
+                      <span class="attr-name">Potential</span>
+                      <div class="attr-bar-container">
+                        <div
+                          class="attr-bar"
+                          :style="{
+                            width: isAttrRevealed('potentialRating') ? `${normalizedPlayer.potentialRating}%` : '0%',
+                            backgroundColor: getScoutedAttrColor('potentialRating', normalizedPlayer.potentialRating)
+                          }"
+                        />
+                      </div>
+                      <span
+                        class="attr-value"
+                        :class="{ 'stat-pop': animatingAttributes['potentialRating'] }"
+                        :style="{ color: getScoutedAttrColor('potentialRating', normalizedPlayer.potentialRating) }"
+                      >{{ getScoutedAttrValue('potentialRating', normalizedPlayer.potentialRating) }}</span>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- Upgrade Points Banner - always show when canUpgrade is true -->
-                <div v-if="canUpgrade" class="upgrade-points-banner" :class="{ 'no-points': upgradePoints === 0 }">
+                <div v-if="canUpgrade && !scoutingMode" class="upgrade-points-banner" :class="{ 'no-points': upgradePoints === 0 }">
                   <div class="points-badge">
                     <span class="points-value" :class="{ 'zero': upgradePoints === 0 }">{{ upgradePoints }}</span>
                     <span class="points-label">Upgrade Points</span>
@@ -656,17 +880,24 @@ function formatChange(change) {
                 <div v-if="normalizedPlayer.attributes?.offense" class="attr-section">
                   <h4 class="attr-section-title">Offense</h4>
                   <div class="attributes-grid">
-                    <div v-for="(value, key) in normalizedPlayer.attributes.offense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints }">
+                    <div v-for="(value, key) in normalizedPlayer.attributes.offense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints && !scoutingMode }">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
-                          :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"
+                          :style="{
+                            width: scoutingMode ? (isAttrRevealed(key) ? `${value}%` : '0%') : `${value}%`,
+                            backgroundColor: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value)
+                          }"
                         />
                       </div>
-                      <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ roundAttr(value) }}</span>
+                      <span
+                        class="attr-value"
+                        :class="{ 'stat-pop': animatingAttributes[key] }"
+                        :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
+                      >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
                       <button
-                        v-if="hasUpgradePoints"
+                        v-if="hasUpgradePoints && !scoutingMode"
                         class="upgrade-btn"
                         :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
                         :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
@@ -682,17 +913,24 @@ function formatChange(change) {
                 <div v-if="normalizedPlayer.attributes?.defense" class="attr-section">
                   <h4 class="attr-section-title">Defense</h4>
                   <div class="attributes-grid">
-                    <div v-for="(value, key) in normalizedPlayer.attributes.defense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints }">
+                    <div v-for="(value, key) in normalizedPlayer.attributes.defense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints && !scoutingMode }">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
-                          :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"
+                          :style="{
+                            width: scoutingMode ? (isAttrRevealed(key) ? `${value}%` : '0%') : `${value}%`,
+                            backgroundColor: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value)
+                          }"
                         />
                       </div>
-                      <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ roundAttr(value) }}</span>
+                      <span
+                        class="attr-value"
+                        :class="{ 'stat-pop': animatingAttributes[key] }"
+                        :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
+                      >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
                       <button
-                        v-if="hasUpgradePoints"
+                        v-if="hasUpgradePoints && !scoutingMode"
                         class="upgrade-btn"
                         :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
                         :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
@@ -708,17 +946,24 @@ function formatChange(change) {
                 <div v-if="normalizedPlayer.attributes?.physical" class="attr-section">
                   <h4 class="attr-section-title">Physical</h4>
                   <div class="attributes-grid">
-                    <div v-for="(value, key) in normalizedPlayer.attributes.physical" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints }">
+                    <div v-for="(value, key) in normalizedPlayer.attributes.physical" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints && !scoutingMode }">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
-                          :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"
+                          :style="{
+                            width: scoutingMode ? (isAttrRevealed(key) ? `${value}%` : '0%') : `${value}%`,
+                            backgroundColor: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value)
+                          }"
                         />
                       </div>
-                      <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ roundAttr(value) }}</span>
+                      <span
+                        class="attr-value"
+                        :class="{ 'stat-pop': animatingAttributes[key] }"
+                        :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
+                      >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
                       <button
-                        v-if="hasUpgradePoints"
+                        v-if="hasUpgradePoints && !scoutingMode"
                         class="upgrade-btn"
                         :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
                         :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
@@ -734,7 +979,7 @@ function formatChange(change) {
                 <div v-if="normalizedPlayer.attributes?.mental" class="attr-section">
                   <h4 class="attr-section-title">
                     Mental
-                    <span v-if="canUpgrade" class="no-upgrade-hint">(Cannot be upgraded)</span>
+                    <span v-if="canUpgrade && !scoutingMode" class="no-upgrade-hint">(Cannot be upgraded)</span>
                   </h4>
                   <div class="attributes-grid">
                     <div v-for="(value, key) in normalizedPlayer.attributes.mental" :key="key" class="attr-row">
@@ -742,10 +987,17 @@ function formatChange(change) {
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
-                          :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }"
+                          :style="{
+                            width: scoutingMode ? (isAttrRevealed(key) ? `${value}%` : '0%') : `${value}%`,
+                            backgroundColor: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value)
+                          }"
                         />
                       </div>
-                      <span class="attr-value" :style="{ color: getAttrColor(value) }">{{ roundAttr(value) }}</span>
+                      <span
+                        class="attr-value"
+                        :class="{ 'stat-pop': animatingAttributes[key] }"
+                        :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
+                      >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
                     </div>
                   </div>
                 </div>
@@ -757,7 +1009,12 @@ function formatChange(change) {
 
               <!-- Badges Tab -->
               <div v-if="activeTab === 'badges'" class="tab-panel">
-                <div v-if="normalizedPlayer.badges?.length > 0" class="badges-tab-content">
+                <div v-if="scoutingMode && !badgesRevealed" class="scouting-locked-section">
+                  <Lock :size="24" />
+                  <p>Badge data is hidden for draft prospects</p>
+                  <span class="locked-hint">Hire a 4-Star Scout with Scouting Facility Lv 3 to unlock</span>
+                </div>
+                <div v-else-if="normalizedPlayer.badges?.length > 0" class="badges-tab-content">
                   <!-- HOF Badges -->
                   <div v-if="normalizedPlayer.badges.filter(b => b.level === 'hof').length > 0" class="badge-level-section">
                     <h4 class="badge-level-title hof">Hall of Fame</h4>
@@ -907,7 +1164,14 @@ function formatChange(change) {
               </div>
 
               <!-- Morale Tab -->
-              <div v-if="activeTab === 'morale' && showGrowth" class="tab-panel">
+              <div v-if="activeTab === 'morale' && scoutingMode && !moraleRevealed" class="tab-panel">
+                <div class="scouting-locked-section">
+                  <Lock :size="24" />
+                  <p>Personality & motivation data is hidden for draft prospects</p>
+                  <span class="locked-hint">Hire a 4-Star Scout with Scouting Facility Lv 3 to unlock</span>
+                </div>
+              </div>
+              <div v-else-if="activeTab === 'morale'" class="tab-panel">
                 <!-- Current Morale -->
                 <div class="morale-current-section">
                   <div class="morale-header-row">
@@ -948,6 +1212,50 @@ function formatChange(change) {
                   <div v-else class="morale-empty">
                     No notable personality traits
                   </div>
+                </div>
+
+                <!-- Motivations -->
+                <div v-if="playerMotivations" class="morale-motivations-section">
+                  <h4 class="morale-section-title">
+                    Motivations
+                    <span class="archetype-label">{{ motivationArchetype }}</span>
+                  </h4>
+                  <div class="motivation-bars">
+                    <div
+                      v-for="(data, key) in playerMotivations"
+                      :key="key"
+                      class="motivation-row"
+                    >
+                      <span class="motivation-label">{{ getMotivationLabel(key) }}</span>
+                      <div class="motivation-bar-track">
+                        <div
+                          class="motivation-bar-fill"
+                          :style="{
+                            width: (data.weight * 100) + '%',
+                            backgroundColor: getMotivationBarColor(data.weight)
+                          }"
+                        />
+                      </div>
+                      <span class="motivation-value">{{ Math.round(data.weight * 100) }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Re-sign Likelihood (contract year only) -->
+                <div v-if="isContractYear && retentionPct !== null" class="retention-section">
+                  <h4 class="morale-section-title">Re-sign Likelihood</h4>
+                  <div class="retention-bar-container">
+                    <div
+                      class="retention-bar-fill"
+                      :style="{
+                        width: retentionPct + '%',
+                        backgroundColor: getRetentionColor(retentionPct)
+                      }"
+                    />
+                  </div>
+                  <span class="retention-pct" :style="{ color: getRetentionColor(retentionPct) }">
+                    {{ retentionPct }}%
+                  </span>
                 </div>
 
                 <!-- Context -->
@@ -1340,9 +1648,9 @@ function formatChange(change) {
 .name-rating-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem;
   margin-bottom: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .player-name-title {
@@ -1373,6 +1681,76 @@ function formatChange(change) {
   color: var(--color-error) !important;
   text-decoration: line-through;
   text-decoration-color: rgba(239, 68, 68, 0.5);
+}
+
+/* Header Contract Action Buttons */
+.header-scout-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.6rem;
+  margin-left: auto;
+  border: 1px solid rgba(232, 90, 79, 0.3);
+  border-radius: 6px;
+  background: rgba(232, 90, 79, 0.15);
+  color: var(--color-primary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.header-scout-btn:hover:not(:disabled) {
+  background: rgba(232, 90, 79, 0.25);
+  border-color: var(--color-primary);
+}
+
+.header-scout-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.header-contract-actions {
+  display: flex;
+  gap: 0.375rem;
+  margin-left: auto;
+}
+
+.header-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.header-action-btn.resign {
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--color-primary);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.header-action-btn.resign:hover {
+  background: rgba(59, 130, 246, 0.3);
+  border-color: var(--color-primary);
+}
+
+.header-action-btn.drop {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--color-error);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.header-action-btn.drop:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: var(--color-error);
 }
 
 .position-vitals-row {
@@ -1412,6 +1790,32 @@ function formatChange(change) {
   font-size: 0.65rem;
   font-weight: 600;
   text-transform: uppercase;
+}
+
+.trade-block-toggle {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.trade-block-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-primary);
+}
+
+.trade-block-toggle.active {
+  background: rgba(232, 90, 79, 0.15);
+  border-color: rgba(232, 90, 79, 0.3);
+  color: #E85A4F;
 }
 
 .player-vitals {
@@ -2171,6 +2575,83 @@ function formatChange(change) {
   text-align: center;
 }
 
+/* Motivations */
+.morale-motivations-section,
+.retention-section {
+  margin-top: 0.5rem;
+}
+
+.archetype-label {
+  float: right;
+  font-weight: 500;
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.motivation-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.motivation-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.motivation-label {
+  flex: 0 0 130px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.motivation-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.motivation-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.motivation-value {
+  flex: 0 0 24px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-align: right;
+}
+
+.retention-bar-container {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.25rem;
+}
+
+.retention-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.retention-pct {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
 .context-items {
   display: flex;
   flex-direction: column;
@@ -2632,5 +3113,75 @@ function formatChange(change) {
   color: var(--color-primary);
   margin-left: 2px;
   font-weight: 700;
+}
+
+/* Scouting Mode Styles */
+.unknown-rating-modal {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+}
+
+.scouting-locked-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 20px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.scouting-locked-section svg {
+  opacity: 0.4;
+}
+
+.scouting-locked-section p {
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin: 0;
+}
+
+.locked-hint {
+  font-size: 0.72rem;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.unknown-badge {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  opacity: 0.5;
+}
+
+.unknown-badge .badge-name-preview {
+  color: var(--color-text-tertiary);
+}
+
+/* Stat pop animation for scouting reveal */
+@keyframes stat-pop {
+  0% {
+    transform: scale(1);
+    color: inherit;
+  }
+  30% {
+    transform: scale(1.3);
+    color: var(--color-success, #4CAF50);
+  }
+  100% {
+    transform: scale(1);
+    color: inherit;
+  }
+}
+
+.attr-value.stat-pop {
+  animation: stat-pop 0.4s ease-out;
 }
 </style>

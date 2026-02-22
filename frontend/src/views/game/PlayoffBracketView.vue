@@ -349,12 +349,8 @@ async function handleSimRemainingPlayoffs() {
   const loadingToastId = toastStore.showLoading('Simulating remaining playoffs...')
 
   try {
-    // Loop: sim current batch of AI playoff games, then check for new rounds
-    // Each iteration sims one batch; new round games are generated after series complete
-    for (let i = 0; i < 10; i++) { // safety cap
-      const result = await gameStore.simulateToNextPlayoffRound(campaignId.value)
-      if (!result.completed || result.completed === 0) break
-    }
+    // Sim all remaining AI playoff games internally (single in-memory loop)
+    await gameStore.simulateToNextPlayoffRound(campaignId.value, { simAll: true })
 
     toastStore.removeMinimalToast(loadingToastId)
 
@@ -616,6 +612,7 @@ function findSeriesById(seriesId) {
 <style scoped>
 .playoff-bracket-view {
   padding: 8px 16px;
+  padding-bottom: 100px;
 }
 
 @media (min-width: 1024px) {

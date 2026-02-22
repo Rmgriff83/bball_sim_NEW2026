@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/composables/useApi'
 import { useCampaignStore } from '@/stores/campaign'
@@ -24,7 +24,7 @@ import WeeklySummaryModal from '@/components/game/WeeklySummaryModal.vue'
 import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
 import { enterOffseason, startNewSeason } from '@/engine/campaign/CampaignManager'
 import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Eye, Coins, Award } from 'lucide-vue-next'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -378,7 +378,79 @@ function formatNewsDate(dateStr) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+// ---- Recent Games Ticker (idle detection) ----
+const showTicker = ref(false)
+let idleTimer = null
+const IDLE_TIMEOUT = 5000
+
+function resetIdleTimer() {
+  if (showTicker.value) showTicker.value = false
+  clearTimeout(idleTimer)
+  idleTimer = setTimeout(() => {
+    if (recentLeagueGames.value.length > 0) {
+      showTicker.value = true
+    }
+  }, IDLE_TIMEOUT)
+}
+
+const idleEvents = ['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart']
+
+function startIdleDetection() {
+  idleEvents.forEach(evt => window.addEventListener(evt, resetIdleTimer, { passive: true }))
+  resetIdleTimer()
+}
+
+function stopIdleDetection() {
+  idleEvents.forEach(evt => window.removeEventListener(evt, resetIdleTimer))
+  clearTimeout(idleTimer)
+}
+
+// Recent completed games across the league (last 7 in-game days), grouped by date
+const recentLeagueGames = computed(() => {
+  if (!currentDate.value) return []
+  const allGames = gameStore.games || []
+  const curDate = parseLocalDate(currentDate.value)
+  const weekAgo = new Date(curDate)
+  weekAgo.setDate(weekAgo.getDate() - 7)
+
+  const filtered = allGames
+    .filter(g => {
+      if (!g.is_complete || !g.game_date) return false
+      const gd = parseLocalDate(g.game_date)
+      return gd >= weekAgo && gd <= curDate
+    })
+    .sort((a, b) => {
+      const da = parseLocalDate(a.game_date)
+      const db = parseLocalDate(b.game_date)
+      return db - da
+    })
+
+  // Group by date and produce flat list with date headers
+  const userTeamId = campaign.value?.teamId
+  const items = []
+  let lastDate = null
+  for (const game of filtered) {
+    const dateKey = game.game_date.split('T')[0].split(' ')[0]
+    if (dateKey !== lastDate) {
+      const d = parseLocalDate(dateKey)
+      const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      items.push({ type: 'date', label, key: 'date-' + dateKey })
+      lastDate = dateKey
+    }
+    // Determine winner side and user result
+    const homeWon = game.home_score > game.away_score
+    let userResult = null
+    if (game.is_user_game) {
+      const userIsHome = game.home_team_id === userTeamId
+      userResult = (userIsHome && homeWon) || (!userIsHome && !homeWon) ? 'win' : 'loss'
+    }
+    items.push({ type: 'game', game, homeWon, userResult, key: 'game-' + game.id })
+  }
+  return items
+})
+
 onMounted(async () => {
+  startIdleDetection()
   // Check for pending weekly summary (e.g., from live game completion)
   if (gameStore.weeklySummaryData) {
     weeklySummary.value = gameStore.weeklySummaryData
@@ -431,6 +503,10 @@ onMounted(async () => {
       loading.value = false
     }
   }
+})
+
+onUnmounted(() => {
+  stopIdleDetection()
 })
 
 // Check if regular season ended and handle playoffs
@@ -781,6 +857,9 @@ async function handleConfirmSimulate() {
     if (!gameStore.backgroundSimulating) {
       lastSimResult.value = null
       await checkPlayoffStatus()
+      // Check for trade proposals after user game sim
+      await checkTradeDeadline()
+      await checkPendingTradeProposals()
     }
 
     // Show weekly summary if weeks passed
@@ -965,13 +1044,21 @@ async function checkTradeDeadline() {
 
 // Trade proposal handling
 async function checkPendingTradeProposals() {
-  const count = campaignStore.currentCampaign?.pending_trade_proposals
-  if (count && count > 0) {
+  const camp = campaignStore.currentCampaign
+  if (!camp) return
+
+  // Only generate proposals during regular season, before trade deadline
+  if (camp.phase === 'offseason' || camp.phase === 'playoffs') return
+  if (camp.settings?.trade_deadline_passed) return
+
+  try {
     const proposals = await tradeStore.fetchPendingProposals(campaignId.value)
     if (proposals.length > 0) {
       currentProposal.value = proposals[0]
       showTradeProposalModal.value = true
     }
+  } catch (err) {
+    console.error('Failed to check trade proposals:', err)
   }
 }
 
@@ -1181,7 +1268,13 @@ async function handleConfirmSimSeason() {
 
 async function handleSimToNextPlayoffRound() {
   try {
-    await gameStore.simulateToNextPlayoffRound(campaignId.value)
+    if (userEliminated.value) {
+      // User is eliminated — sim ALL remaining playoff rounds internally
+      await gameStore.simulateToNextPlayoffRound(campaignId.value, { simAll: true })
+    } else {
+      // User still in playoffs — sim one round of AI games
+      await gameStore.simulateToNextPlayoffRound(campaignId.value)
+    }
     // Refresh all data — bracket, games, standings
     await Promise.all([
       playoffStore.fetchBracket(campaignId.value),
@@ -1189,7 +1282,21 @@ async function handleSimToNextPlayoffRound() {
       campaignStore.fetchCampaign(campaignId.value, true),
       leagueStore.fetchStandings(campaignId.value, { force: true }),
     ])
-    toastStore.showSuccess('Next round is ready!')
+
+    if (userEliminated.value && playoffStore.champion) {
+      const champion = playoffStore.champion
+      const year = campaign.value?.season?.year || campaign.value?.game_year || new Date().getFullYear()
+      breakingNewsStore.enqueue(
+        BreakingNewsService.winningFinals({
+          teamName: `${champion.city} ${champion.name}`,
+          year,
+          date: campaign.value?.settings?.currentDate || new Date().toISOString().split('T')[0],
+        }),
+        campaignId.value
+      )
+    } else {
+      toastStore.showSuccess('Next round is ready!')
+    }
   } catch (err) {
     toastStore.showError('Failed to simulate playoff games')
     console.error('Failed to sim to next playoff round:', err)
@@ -1246,10 +1353,18 @@ function handleCloseSimulateModal() {
             <span class="record-value">{{ wins }}-{{ losses }}</span>
           </div>
         </div>
-        <div v-if="(authStore.profile?.tokens ?? 0) > 0" class="record-tokens">
+        <div class="record-tokens">
           <Coins :size="13" class="record-tokens-icon" />
-          <span class="record-tokens-value">{{ (authStore.profile?.tokens ?? 0).toLocaleString() }}</span>
+          <div class="tokens-score-container">
+            <TransitionGroup name="token-slide" tag="div" class="tokens-score-slot">
+              <span :key="authStore.profile?.tokens" class="record-tokens-value">{{ (authStore.profile?.tokens ?? 0).toLocaleString() }}</span>
+            </TransitionGroup>
+          </div>
           <span class="record-tokens-label">tokens</span>
+          <router-link to="/store" class="shop-link">
+            <ShoppingBag :size="11" />
+            Shop
+          </router-link>
         </div>
       </section>
 
@@ -1513,7 +1628,7 @@ function handleCloseSimulateModal() {
                 MANAGE ROSTER
               </button>
               <button v-if="!rookieDraftCompleted" class="btn-simulate-game" @click="router.push(`/campaign/${campaignId}/scouting`)">
-                <Eye class="btn-icon" :size="16" />
+                <Binoculars class="btn-icon" :size="16" />
                 SCOUTING
               </button>
               <button v-if="!rookieDraftCompleted" class="btn-play-game" @click="router.push(`/campaign/${campaignId}/draft?mode=rookie`)">
@@ -1635,9 +1750,9 @@ function handleCloseSimulateModal() {
         <div class="quick-actions-grid">
           <button class="action-box" @click="navigateToScout">
             <div class="action-icon">
-              <Eye :size="24" />
+              <Binoculars :size="24" />
             </div>
-            <span class="action-label">Scouting</span>
+            <span class="action-label">Scout</span>
           </button>
           <button class="action-box" @click="navigateToRoster">
             <div class="action-icon">
@@ -1976,6 +2091,42 @@ function handleCloseSimulateModal() {
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Recent Games Ticker (shows on idle) -->
+    <Teleport to="body">
+      <Transition name="ticker-slide">
+        <div v-if="showTicker && recentLeagueGames.length > 0" class="games-ticker">
+          <div class="games-ticker-track">
+            <div class="games-ticker-content">
+              <template v-for="item in recentLeagueGames" :key="'a-' + item.key">
+                <span v-if="item.type === 'date'" class="gt-date">{{ item.label }}</span>
+                <span v-else class="games-ticker-item">
+                  <span class="gt-abbr" :class="{ 'gt-user-win': item.userResult === 'win' && item.game.away_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.away_team_id === campaign?.teamId }">{{ item.game.away_team_abbreviation }}</span>
+                  <span class="gt-score" :class="{ 'gt-win': !item.homeWon && !item.game.is_user_game, 'gt-user-win': item.userResult === 'win' && item.game.away_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.away_team_id === campaign?.teamId }">{{ item.game.away_score }}</span>
+                  <span class="gt-at">@</span>
+                  <span class="gt-abbr" :class="{ 'gt-user-win': item.userResult === 'win' && item.game.home_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.home_team_id === campaign?.teamId }">{{ item.game.home_team_abbreviation }}</span>
+                  <span class="gt-score" :class="{ 'gt-win': item.homeWon && !item.game.is_user_game, 'gt-user-win': item.userResult === 'win' && item.game.home_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.home_team_id === campaign?.teamId }">{{ item.game.home_score }}</span>
+                  <span class="gt-divider"></span>
+                </span>
+              </template>
+            </div>
+            <div class="games-ticker-content" aria-hidden="true">
+              <template v-for="item in recentLeagueGames" :key="'b-' + item.key">
+                <span v-if="item.type === 'date'" class="gt-date">{{ item.label }}</span>
+                <span v-else class="games-ticker-item">
+                  <span class="gt-abbr" :class="{ 'gt-user-win': item.userResult === 'win' && item.game.away_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.away_team_id === campaign?.teamId }">{{ item.game.away_team_abbreviation }}</span>
+                  <span class="gt-score" :class="{ 'gt-win': !item.homeWon && !item.game.is_user_game, 'gt-user-win': item.userResult === 'win' && item.game.away_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.away_team_id === campaign?.teamId }">{{ item.game.away_score }}</span>
+                  <span class="gt-at">@</span>
+                  <span class="gt-abbr" :class="{ 'gt-user-win': item.userResult === 'win' && item.game.home_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.home_team_id === campaign?.teamId }">{{ item.game.home_team_abbreviation }}</span>
+                  <span class="gt-score" :class="{ 'gt-win': item.homeWon && !item.game.is_user_game, 'gt-user-win': item.userResult === 'win' && item.game.home_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.home_team_id === campaign?.teamId }">{{ item.game.home_score }}</span>
+                  <span class="gt-divider"></span>
+                </span>
+              </template>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -2163,10 +2314,48 @@ function handleCloseSimulateModal() {
   flex-shrink: 0;
 }
 
+.tokens-score-container {
+  position: relative;
+  height: 1.1rem;
+  overflow: hidden;
+}
+
+.tokens-score-slot {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
 .record-tokens-value {
   font-size: 0.8rem;
   font-weight: 700;
   color: #1a1520;
+  white-space: nowrap;
+  line-height: 1.1rem;
+}
+
+/* Token slide animation (matches broadcast scoreboard) */
+.token-slide-enter-active,
+.token-slide-leave-active {
+  transition: all 0.35s ease-out;
+}
+
+.token-slide-enter-from {
+  opacity: 0;
+  transform: translateY(100%);
+}
+
+.token-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-100%);
+  position: absolute;
+}
+
+.token-slide-leave-active {
+  position: absolute;
+  width: 100%;
 }
 
 .record-tokens-label {
@@ -2175,6 +2364,28 @@ function handleCloseSimulateModal() {
   color: rgba(26, 21, 32, 0.5);
   text-transform: uppercase;
   letter-spacing: 0.03em;
+}
+
+.shop-link {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: rgba(26, 21, 32, 0.5);
+  text-decoration: none;
+  border: 1px solid rgba(26, 21, 32, 0.12);
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.shop-link:hover {
+  color: rgba(26, 21, 32, 0.8);
+  border-color: rgba(26, 21, 32, 0.25);
 }
 
 /* Quick Actions Card */
@@ -3658,4 +3869,131 @@ function handleCloseSimulateModal() {
   color: #22c55e;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
+
+/* ---- Recent Games Ticker ---- */
+.games-ticker {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 35;
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+  border-top: 1px solid var(--glass-border);
+  height: 32px;
+}
+
+@media (max-width: 1023px) {
+  .games-ticker {
+    bottom: 70px; /* above BottomNav on mobile */
+  }
+}
+
+.games-ticker-track {
+  display: flex;
+  width: max-content;
+  animation: games-marquee 120s linear infinite;
+}
+
+.games-ticker-content {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 8px;
+}
+
+.games-ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 0;
+  white-space: nowrap;
+}
+
+/* Winning score in green for all games */
+.gt-win {
+  color: #22c55e;
+}
+
+/* User team: green for wins, red for losses (abbr + score) */
+.gt-user-win {
+  color: #22c55e;
+  font-weight: 700;
+}
+
+.gt-user-loss {
+  color: #ef4444;
+  font-weight: 700;
+}
+
+.gt-date {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.gt-abbr {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.gt-score {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  min-width: 18px;
+  text-align: center;
+}
+
+.gt-at {
+  font-size: 0.6rem;
+  color: var(--color-text-tertiary);
+}
+
+.gt-divider {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  margin: 0 20px;
+  flex-shrink: 0;
+}
+
+@keyframes games-marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* Ticker slide transitions */
+.ticker-slide-enter-active,
+.ticker-slide-leave-active {
+  transition: transform 0.35s ease-out, opacity 0.35s ease-out;
+}
+
+/* Pause marquee during slide in/out */
+.ticker-slide-enter-active .games-ticker-track,
+.ticker-slide-leave-active .games-ticker-track {
+  animation-play-state: paused;
+}
+
+/* Slide from bottom */
+.ticker-slide-enter-from {
+  transform: translateY(100%);
+  opacity: 0;
+}
+
+.ticker-slide-leave-to {
+  transform: translateY(100%);
+  opacity: 0;
+}
+
 </style>

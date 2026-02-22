@@ -7,6 +7,8 @@
 //   - backend/app/Services/AITradeEvaluationService.php
 // =============================================================================
 
+import { calculateRetentionScore } from './MotivationService';
+
 const TRADE_DEADLINE_MONTH = 1; // January
 const TRADE_DEADLINE_DAY = 6;
 
@@ -119,6 +121,77 @@ function getPlayerName(player) {
   const first = player.firstName ?? player.first_name ?? '';
   const last = player.lastName ?? player.last_name ?? '';
   return `${first} ${last}`.trim();
+}
+
+function getPlayerMorale(player) {
+  return player.morale ?? player.personality?.morale ?? 80;
+}
+
+function getPlayerContractYears(player) {
+  return player.contractYearsRemaining ?? player.contract_years_remaining ?? 2;
+}
+
+/**
+ * Central gating function: is a player available for trade targeting?
+ * Used by both user-targeting and AI-to-AI targeting.
+ * @param {object} player
+ * @param {Array} tradingBlock - Array of player IDs on the trading block
+ * @returns {boolean}
+ */
+function isPlayerAvailableForTrade(player, tradingBlock = []) {
+  const rating = getPlayerRating(player);
+  // Low-rated players are always available
+  if (rating < 82) return true;
+  // Explicitly on the trading block
+  if (tradingBlock.includes(player.id)) return true;
+  // Low morale makes them available
+  if (getPlayerMorale(player) < 50) return true;
+  // Expiring contract
+  if (getPlayerContractYears(player) === 1) return true;
+  // Low retention flight risks — teams want to move unhappy stars
+  if (player.motivations && calculateRetentionScore(player, {}) < 35) return true;
+  // Otherwise protected
+  return false;
+}
+
+/**
+ * Compute which players an AI team would place on their trading block.
+ * @param {object} params
+ * @param {Array} params.roster - Team roster
+ * @param {string} params.direction - Team direction archetype
+ * @returns {Array} Array of player IDs
+ */
+export function computeAiTradingBlock({ roster, direction }) {
+  const blockIds = [];
+  for (const player of roster) {
+    const morale = getPlayerMorale(player);
+    const age = getPlayerAge(player);
+    const years = getPlayerContractYears(player);
+    const salary = player.contractSalary ?? player.contract_salary ?? 0;
+    const rating = getPlayerRating(player);
+
+    // Low morale players
+    if (morale < 50) {
+      blockIds.push(player.id);
+      continue;
+    }
+    // Expiring contracts on rebuilding/ascending teams
+    // But keep top-tier players the team has a good chance of re-signing
+    if (years === 1 && ['rebuilding', 'ascending'].includes(direction)) {
+      const retention = calculateRetentionScore(player, {});
+      if (rating >= 78 && retention > 50) continue; // likely to re-sign, don't shop them
+      blockIds.push(player.id);
+      continue;
+    }
+    // Overpaid veterans (age >= 30, salary > 1.4x expected)
+    if (age >= 30) {
+      const expected = calculateExpectedSalary(null, rating);
+      if (salary > expected * 1.4) {
+        blockIds.push(player.id);
+      }
+    }
+  }
+  return blockIds;
 }
 
 // =============================================================================
@@ -334,7 +407,7 @@ function calculateYoungPlayerPremium(age) {
  * @param {number} overallRating
  * @returns {number}
  */
-function calculateExpectedSalary(playerStats, overallRating) {
+export function calculateExpectedSalary(playerStats, overallRating) {
   let ratingBase;
   if (overallRating >= 90) ratingBase = 40_000_000;
   else if (overallRating >= 85) ratingBase = 30_000_000;
@@ -606,6 +679,14 @@ export function calculateReceivingValue({
         baseValue *= 1.15;
       }
 
+      // Retention risk discount for contract-year players
+      if (yearsRemaining === 1 && player.motivations) {
+        const retentionScore = calculateRetentionScore(player, {});
+        // Low retention = risky acquisition. 50% → 0.75×, 30% → 0.65×
+        const retentionMultiplier = 0.5 + (retentionScore / 100) * 0.5;
+        baseValue *= retentionMultiplier;
+      }
+
       value += baseValue;
 
     } else if (asset.type === 'pick') {
@@ -809,6 +890,7 @@ export function expireStaleProposals(proposals, currentDate) {
   for (const proposal of proposals) {
     if (proposal.status === 'pending' && new Date(proposal.expires_at) < now) {
       proposal.status = 'expired';
+      proposal.resolved_at = currentDate;
       expired.push(proposal);
     }
   }
@@ -893,10 +975,13 @@ export function identifyNeed(direction, roster) {
  * @param {string} direction
  * @returns {Array}
  */
-export function findTargetPlayers(userRoster, need, direction) {
+export function findTargetPlayers(userRoster, need, direction, tradingBlock = []) {
   const targets = [];
 
   for (const player of userRoster) {
+    // Gate: skip protected players
+    if (!isPlayerAvailableForTrade(player, tradingBlock)) continue;
+
     const rating = getPlayerRating(player);
     const age = getPlayerAge(player);
     const position = getPlayerPosition(player);
@@ -925,11 +1010,6 @@ export function findTargetPlayers(userRoster, need, direction) {
 
   // Sort by trade value descending
   targets.sort((a, b) => getPlayerTradeValue(b) - getPlayerTradeValue(a));
-
-  // Skip the very best player (don't target the user's #1 guy unless it's the only option)
-  if (targets.length > 1) {
-    targets.shift();
-  }
 
   return targets.slice(0, 3);
 }
@@ -1050,6 +1130,7 @@ export function generateWeeklyProposals({
   getTeamPicksFn = () => [],
   getPlayerStatsFn = () => null,
   getPickValueFn = () => 5,
+  userTradingBlock = [],
 }) {
   if (!userRoster || userRoster.length === 0) return [];
 
@@ -1065,12 +1146,45 @@ export function generateWeeklyProposals({
   const context = buildContext({ standings, teams: allTeams, seasonPhase });
   const newProposals = [];
 
+  // Pre-compute cooldown: 30-day window for rejected/expired proposals
+  const cooldownDays = 30;
+  const cooldownCutoff = new Date(current);
+  cooldownCutoff.setDate(cooldownCutoff.getDate() - cooldownDays);
+
+  // Track team+player combos that were rejected recently (block exact repeat offers)
+  // Also track teams on cooldown (any rejection in the last 30 days)
+  // Use String() coercion on IDs to prevent type mismatches (number vs string from IndexedDB)
+  const rejectedTeamPlayerCombos = new Set(); // "teamId::playerId"
+  const recentlyDeclinedTeams = new Set();
+  for (const p of pendingProposals) {
+    const wasDeclined = p.status === 'rejected' || p.status === 'expired';
+    if (!wasDeclined) continue;
+
+    // Use resolved_at (when user rejected), falling back to expires_at
+    const resolvedDate = p.resolved_at ? new Date(p.resolved_at) : new Date(p.expires_at);
+    if (resolvedDate < cooldownCutoff) continue;
+
+    recentlyDeclinedTeams.add(String(p.proposing_team_id));
+
+    const receives = p.proposal?.aiReceives ?? [];
+    for (const a of receives) {
+      if (a.type === 'player' && a.playerId) {
+        rejectedTeamPlayerCombos.add(`${p.proposing_team_id}::${a.playerId}`);
+      }
+    }
+  }
+
   for (const aiTeam of aiTeams) {
+    const teamIdStr = String(aiTeam.id);
+
     // Skip if team already has a pending proposal
     const hasPending = pendingProposals.some(
-      p => p.proposing_team_id === aiTeam.id && p.status === 'pending'
+      p => String(p.proposing_team_id) === teamIdStr && p.status === 'pending'
     );
     if (hasPending) continue;
+
+    // Cooldown: skip teams whose proposal was rejected/expired within the last 30 days
+    if (recentlyDeclinedTeams.has(teamIdStr)) continue;
 
     const aiRoster = getTeamRosterFn(aiTeam.abbreviation);
     if (!aiRoster || aiRoster.length === 0) continue;
@@ -1094,11 +1208,31 @@ export function generateWeeklyProposals({
     if (!need) continue;
 
     // Find user players that fill the need
-    const targetPlayers = findTargetPlayers(userRoster, need, direction);
+    const targetPlayers = findTargetPlayers(userRoster, need, direction, userTradingBlock);
     if (targetPlayers.length === 0) continue;
 
+    // Filter out players this team already had rejected for (exact team+player combo, 30-day cooldown)
+    let filteredTargets = targetPlayers.filter(p =>
+      !rejectedTeamPlayerCombos.has(`${teamIdStr}::${p.id}`)
+    );
+
+    // Retention-based targeting: skip very happy players, prefer unhappy ones
+    filteredTargets = filteredTargets.filter(p => {
+      if (!p.motivations) return true; // No data = default targeting
+      const retention = calculateRetentionScore(p, {});
+      return retention <= 80; // Skip very happy players (unlikely to move)
+    });
+    if (filteredTargets.length === 0) continue;
+
+    // Sort: prefer lower retention (disgruntled players more likely to be poached)
+    filteredTargets.sort((a, b) => {
+      const retA = a.motivations ? calculateRetentionScore(a, {}) : 50;
+      const retB = b.motivations ? calculateRetentionScore(b, {}) : 50;
+      return retA - retB;
+    });
+
     // Pick the best target
-    const target = targetPlayers[0];
+    const target = filteredTargets[0];
 
     // Find AI players to offer in return
     const teamPicks = getTeamPicksFn(aiTeam.id);
@@ -1200,4 +1334,447 @@ export function processTradeDeadlineEvents({ currentDate, seasonYear, settings =
   }
 
   return { newsEvents, settingsChanged };
+}
+
+// =============================================================================
+// AI-TO-AI TRADING
+// =============================================================================
+
+const LUXURY_TAX_LINE = 165_000_000;
+
+/**
+ * Find target players from any roster that match a team's need.
+ * Adapts findTargetPlayers() for bilateral AI-to-AI use.
+ */
+function _findTargetPlayersFromRoster(roster, need, direction, tradingBlock = []) {
+  const targets = [];
+
+  for (const player of roster) {
+    // Gate: skip protected players
+    if (!isPlayerAvailableForTrade(player, tradingBlock)) continue;
+
+    const rating = getPlayerRating(player);
+    const age = getPlayerAge(player);
+    const position = getPlayerPosition(player);
+    const secondaryPosition = getPlayerSecondaryPosition(player);
+
+    switch (need.type) {
+      case 'position': {
+        const neededPos = need.position ?? '';
+        if ((position === neededPos || secondaryPosition === neededPos) && rating >= (need.minRating ?? 70)) {
+          targets.push(player);
+        }
+        break;
+      }
+      case 'star':
+        if (rating >= (need.minRating ?? 80)) {
+          targets.push(player);
+        }
+        break;
+      case 'young':
+        if (age <= (need.maxAge ?? 24) && rating >= 70) {
+          targets.push(player);
+        }
+        break;
+    }
+  }
+
+  // Sort by trade value descending
+  targets.sort((a, b) => getPlayerTradeValue(b) - getPlayerTradeValue(a));
+
+  return targets.slice(0, 3);
+}
+
+/**
+ * Calculate team payroll from roster.
+ */
+function _calculateTeamPayroll(roster) {
+  return roster.reduce((sum, p) => sum + (p.contractSalary ?? p.contract_salary ?? 0), 0);
+}
+
+/**
+ * Attempt to find a mutually acceptable AI-to-AI trade between two teams.
+ * Returns trade object or null.
+ */
+function _findAiToAiTrade({
+  team1, team1Roster, team1Dir, team1Picks,
+  team2, team2Roster, team2Dir, team2Picks,
+  team1TradingBlock = [], team2TradingBlock = [],
+  context, difficulty, getPlayerFn,
+}) {
+  const diffConfig = getDifficultyConfig(difficulty);
+  const need1 = identifyNeed(team1Dir, team1Roster);
+  const need2 = identifyNeed(team2Dir, team2Roster);
+
+  if (!need1 && !need2) return null;
+
+  // Find targets: what team1 wants from team2's roster and vice versa
+  const targets1 = need1 ? _findTargetPlayersFromRoster(team2Roster, need1, team1Dir, team2TradingBlock) : [];
+  const targets2 = need2 ? _findTargetPlayersFromRoster(team1Roster, need2, team2Dir, team1TradingBlock) : [];
+
+  const patterns = [];
+
+  // Pattern A: Player-for-player swap (both found targets)
+  if (targets1.length > 0 && targets2.length > 0) {
+    patterns.push({ type: 'swap', target1: targets1[0], target2: targets2[0] });
+  }
+
+  // Pattern B: Player-for-picks (rebuilder sells veteran to contender)
+  if (targets1.length > 0 &&
+      ['title_contender', 'win_now'].includes(team1Dir) &&
+      ['rebuilding', 'ascending'].includes(team2Dir) &&
+      team1Picks.length > 0) {
+    // Team1 (contender) wants a player from team2 (rebuilder), pays with picks
+    const veteran = targets1[0];
+    if (getPlayerAge(veteran) >= 26 && getPlayerRating(veteran) >= 74) {
+      patterns.push({ type: 'player_for_picks', buyer: 'team1', seller: 'team2', target: veteran });
+    }
+  }
+  if (targets2.length > 0 &&
+      ['title_contender', 'win_now'].includes(team2Dir) &&
+      ['rebuilding', 'ascending'].includes(team1Dir) &&
+      team2Picks.length > 0) {
+    // Team2 (contender) wants a player from team1 (rebuilder), pays with picks
+    const veteran = targets2[0];
+    if (getPlayerAge(veteran) >= 26 && getPlayerRating(veteran) >= 74) {
+      patterns.push({ type: 'player_for_picks', buyer: 'team2', seller: 'team1', target: veteran });
+    }
+  }
+
+  // Pattern C: Player + pick for player (one side found target, value gap)
+  if (targets1.length > 0 && targets2.length === 0 && team2Picks.length > 0) {
+    patterns.push({ type: 'player_plus_pick', upgrader: 'team1', target: targets1[0] });
+  }
+  if (targets2.length > 0 && targets1.length === 0 && team1Picks.length > 0) {
+    patterns.push({ type: 'player_plus_pick', upgrader: 'team2', target: targets2[0] });
+  }
+
+  // Try each pattern until one works
+  for (const pattern of patterns) {
+    let team1Gives = [];
+    let team2Gives = [];
+
+    if (pattern.type === 'swap') {
+      team1Gives = [{ type: 'player', playerId: pattern.target2.id }];
+      team2Gives = [{ type: 'player', playerId: pattern.target1.id }];
+
+      // If value gap > 30%, losing side sweetens with a pick
+      const val1 = getPlayerTradeValue(pattern.target1); // team2 gives this to team1
+      const val2 = getPlayerTradeValue(pattern.target2); // team1 gives this to team2
+      if (val1 > 0 && val2 > 0) {
+        const ratio = val2 / val1;
+        if (ratio < 0.7 && team1Picks.length > 0) {
+          // Team1 is getting more value, sweeten with a pick
+          team1Gives.push({ type: 'pick', pickId: team1Picks[0].id });
+        } else if (ratio > 1.3 && team2Picks.length > 0) {
+          // Team2 is getting more value, sweeten with a pick
+          team2Gives.push({ type: 'pick', pickId: team2Picks[0].id });
+        }
+      }
+    } else if (pattern.type === 'player_for_picks') {
+      const isBuyerTeam1 = pattern.buyer === 'team1';
+      const buyerPicks = isBuyerTeam1 ? team1Picks : team2Picks;
+
+      const picksToGive = [{ type: 'pick', pickId: buyerPicks[0].id }];
+      if (getPlayerRating(pattern.target) >= 78 && buyerPicks.length > 1) {
+        picksToGive.push({ type: 'pick', pickId: buyerPicks[1].id });
+      }
+
+      if (isBuyerTeam1) {
+        team1Gives = picksToGive;
+        team2Gives = [{ type: 'player', playerId: pattern.target.id }];
+      } else {
+        team2Gives = picksToGive;
+        team1Gives = [{ type: 'player', playerId: pattern.target.id }];
+      }
+    } else if (pattern.type === 'player_plus_pick') {
+      const isUpgraderTeam1 = pattern.upgrader === 'team1';
+      // Upgrader gets the better player, gives a lesser player + pick
+      const upgraderRoster = isUpgraderTeam1 ? team1Roster : team2Roster;
+      const upgraderPicks = isUpgraderTeam1 ? team1Picks : team2Picks;
+
+      // Find a lesser player from upgrader's roster to send back
+      const sorted = [...upgraderRoster].sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
+      const candidates = sorted.slice(3); // Skip top 3
+      const targetVal = getPlayerTradeValue(pattern.target);
+      let sendBack = null;
+      for (const c of candidates) {
+        const cVal = getPlayerTradeValue(c);
+        if (cVal >= targetVal * 0.4 && cVal <= targetVal * 0.85) {
+          sendBack = c;
+          break;
+        }
+      }
+      if (!sendBack) continue;
+
+      if (isUpgraderTeam1) {
+        team1Gives = [
+          { type: 'player', playerId: sendBack.id },
+          { type: 'pick', pickId: upgraderPicks[0].id },
+        ];
+        team2Gives = [{ type: 'player', playerId: pattern.target.id }];
+      } else {
+        team2Gives = [
+          { type: 'player', playerId: sendBack.id },
+          { type: 'pick', pickId: upgraderPicks[0].id },
+        ];
+        team1Gives = [{ type: 'player', playerId: pattern.target.id }];
+      }
+    }
+
+    if (team1Gives.length === 0 || team2Gives.length === 0) continue;
+
+    // Cap check: ensure neither team exceeds luxury tax after the trade
+    let team1IncomingSalary = 0, team1OutgoingSalary = 0;
+    let team2IncomingSalary = 0, team2OutgoingSalary = 0;
+    for (const a of team2Gives) {
+      if (a.type === 'player') {
+        const p = getPlayerFn(a.playerId);
+        if (p) team1IncomingSalary += (p.contractSalary ?? p.contract_salary ?? 0);
+      }
+    }
+    for (const a of team1Gives) {
+      if (a.type === 'player') {
+        const p = getPlayerFn(a.playerId);
+        if (p) {
+          team1OutgoingSalary += (p.contractSalary ?? p.contract_salary ?? 0);
+          team2IncomingSalary += (p.contractSalary ?? p.contract_salary ?? 0);
+        }
+      }
+    }
+    for (const a of team2Gives) {
+      if (a.type === 'player') {
+        const p = getPlayerFn(a.playerId);
+        if (p) team2OutgoingSalary += (p.contractSalary ?? p.contract_salary ?? 0);
+      }
+    }
+
+    const team1Payroll = _calculateTeamPayroll(team1Roster);
+    const team2Payroll = _calculateTeamPayroll(team2Roster);
+    if (team1Payroll + team1IncomingSalary - team1OutgoingSalary > LUXURY_TAX_LINE) continue;
+    if (team2Payroll + team2IncomingSalary - team2OutgoingSalary > LUXURY_TAX_LINE) continue;
+
+    // Evaluate from both perspectives
+    const eval1 = evaluateTrade({
+      proposal: { aiReceives: team2Gives, aiGives: team1Gives },
+      team: team1,
+      teamRoster: team1Roster,
+      difficulty,
+      context,
+      getPlayerFn,
+    });
+
+    const eval2 = evaluateTrade({
+      proposal: { aiReceives: team1Gives, aiGives: team2Gives },
+      team: team2,
+      teamRoster: team2Roster,
+      difficulty,
+      context,
+      getPlayerFn,
+    });
+
+    if (eval1.decision === 'accept' && eval2.decision === 'accept') {
+      return { team1Gives, team2Gives };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Process AI-to-AI trades for a weekly cycle.
+ * Called once per Monday boundary during the regular season.
+ *
+ * @param {object} params
+ * @param {Array} params.aiTeams - AI team objects (with draftPicks)
+ * @param {Array} params.allPlayers - All league players
+ * @param {object} params.standings - { east: [], west: [] }
+ * @param {Array} params.allTeams - All teams for context
+ * @param {string} params.currentDate - ISO date string
+ * @param {number} params.seasonYear
+ * @param {string} params.difficulty
+ * @returns {object} { trades, playerMoves, pickMoves, newsEvents }
+ */
+export function processAiToAiTrades({
+  aiTeams,
+  allPlayers,
+  standings,
+  allTeams,
+  currentDate,
+  seasonYear,
+  difficulty = 'pro',
+}) {
+  const empty = { trades: [], playerMoves: [], pickMoves: [], newsEvents: [] };
+
+  // Gate: must be before trade deadline
+  if (!isBeforeDeadline(currentDate, seasonYear)) return empty;
+
+  const context = buildContext({ standings, teams: allTeams, seasonPhase: 'regular_season' });
+
+  // Build player lookup
+  const playerMap = new Map();
+  for (const p of allPlayers) {
+    playerMap.set(p.id, p);
+  }
+  const getPlayerFn = (id) => playerMap.get(id) ?? null;
+
+  // Build team info: direction, roster, picks
+  const teamInfoMap = new Map();
+  for (const team of aiTeams) {
+    const roster = allPlayers.filter(p =>
+      (p.teamId === team.id || p.team_id === team.id) &&
+      (p.isFreeAgent !== 1 && p.is_free_agent !== 1)
+    );
+    const dir = analyzeTeamDirection(team, roster, context);
+    const picks = (team.draftPicks || []).filter(pk =>
+      (pk.currentOwnerId ?? pk.current_owner_id) === team.id
+    );
+    const tradingBlock = team.tradingBlock || computeAiTradingBlock({ roster, direction: dir });
+    teamInfoMap.set(team.id, { team, roster, dir, picks, tradingBlock });
+  }
+
+  // Deadline proximity multiplier
+  const deadline = getTradeDeadline(seasonYear);
+  const deadlineDate = new Date(deadline.year, deadline.month - 1, deadline.day);
+  const current = new Date(currentDate);
+  const daysUntilDeadline = Math.ceil((deadlineDate - current) / (1000 * 60 * 60 * 24));
+  const nearDeadline = daysUntilDeadline >= 0 && daysUntilDeadline <= 30;
+
+  // Shuffle teams for randomness
+  const shuffled = [...aiTeams].sort(() => Math.random() - 0.5);
+  const tradedTeams = new Set();
+  const trades = [];
+  const playerMoves = [];
+  const pickMoves = [];
+  const newsEvents = [];
+
+  // Iterate unique pairs
+  for (let i = 0; i < shuffled.length && trades.length < 3; i++) {
+    for (let j = i + 1; j < shuffled.length && trades.length < 3; j++) {
+      const t1 = shuffled[i];
+      const t2 = shuffled[j];
+
+      if (tradedTeams.has(t1.id) || tradedTeams.has(t2.id)) continue;
+
+      const info1 = teamInfoMap.get(t1.id);
+      const info2 = teamInfoMap.get(t2.id);
+      if (!info1 || !info2 || info1.roster.length < 8 || info2.roster.length < 8) continue;
+
+      // Probability gate
+      let probability = 0.08;
+      if (nearDeadline) {
+        if (['title_contender', 'win_now'].includes(info1.dir) ||
+            ['title_contender', 'win_now'].includes(info2.dir)) {
+          probability *= 2;
+        } else {
+          probability *= 1.5;
+        }
+      }
+      if (Math.random() > probability) continue;
+
+      // Attempt to find a deal
+      const deal = _findAiToAiTrade({
+        team1: info1.team, team1Roster: info1.roster, team1Dir: info1.dir, team1Picks: info1.picks,
+        team2: info2.team, team2Roster: info2.roster, team2Dir: info2.dir, team2Picks: info2.picks,
+        team1TradingBlock: info1.tradingBlock, team2TradingBlock: info2.tradingBlock,
+        context, difficulty, getPlayerFn,
+      });
+
+      if (!deal) continue;
+
+      tradedTeams.add(t1.id);
+      tradedTeams.add(t2.id);
+
+      // Build structured trade record
+      const trade = {
+        team1: { id: t1.id, abbreviation: t1.abbreviation, city: t1.city, name: t1.name },
+        team2: { id: t2.id, abbreviation: t2.abbreviation, city: t2.city, name: t2.name },
+        team1Gives: deal.team1Gives,
+        team2Gives: deal.team2Gives,
+      };
+      trades.push(trade);
+
+      // Track player moves
+      for (const a of deal.team1Gives) {
+        if (a.type === 'player') {
+          playerMoves.push({
+            playerId: a.playerId,
+            fromTeamId: t1.id,
+            toTeamId: t2.id,
+            fromAbbr: t1.abbreviation,
+            toAbbr: t2.abbreviation,
+          });
+        }
+        if (a.type === 'pick') {
+          pickMoves.push({ pickId: a.pickId, fromTeamId: t1.id, toTeamId: t2.id });
+        }
+      }
+      for (const a of deal.team2Gives) {
+        if (a.type === 'player') {
+          playerMoves.push({
+            playerId: a.playerId,
+            fromTeamId: t2.id,
+            toTeamId: t1.id,
+            fromAbbr: t2.abbreviation,
+            toAbbr: t1.abbreviation,
+          });
+        }
+        if (a.type === 'pick') {
+          pickMoves.push({ pickId: a.pickId, fromTeamId: t2.id, toTeamId: t1.id });
+        }
+      }
+
+      // Generate news headline (from perspective of team receiving higher-rated player)
+      const team1ReceivesPlayers = deal.team2Gives.filter(a => a.type === 'player');
+      const team2ReceivesPlayers = deal.team1Gives.filter(a => a.type === 'player');
+      let headlineTeam, otherTeam, receivedAssets, sentAssets;
+
+      const bestRating1 = team1ReceivesPlayers.reduce((max, a) => {
+        const p = getPlayerFn(a.playerId);
+        return p ? Math.max(max, getPlayerRating(p)) : max;
+      }, 0);
+      const bestRating2 = team2ReceivesPlayers.reduce((max, a) => {
+        const p = getPlayerFn(a.playerId);
+        return p ? Math.max(max, getPlayerRating(p)) : max;
+      }, 0);
+
+      if (bestRating1 >= bestRating2) {
+        headlineTeam = trade.team1;
+        otherTeam = trade.team2;
+        receivedAssets = deal.team2Gives;
+        sentAssets = deal.team1Gives;
+      } else {
+        headlineTeam = trade.team2;
+        otherTeam = trade.team1;
+        receivedAssets = deal.team1Gives;
+        sentAssets = deal.team2Gives;
+      }
+
+      const formatAssetList = (assets) => {
+        return assets.map(a => {
+          if (a.type === 'player') {
+            const p = getPlayerFn(a.playerId);
+            return p ? getPlayerName(p) : 'Unknown';
+          }
+          // Find pick display name
+          const allPicks = [...info1.picks, ...info2.picks];
+          const pk = allPicks.find(x => x.id === a.pickId);
+          return pk?.display_name || 'Draft Pick';
+        }).join(', ');
+      };
+
+      const receivedName = formatAssetList(receivedAssets);
+      const sentList = formatAssetList(sentAssets);
+      const receivedList = formatAssetList(receivedAssets);
+
+      newsEvents.push({
+        event_type: 'trade',
+        headline: `${headlineTeam.name} acquire ${receivedName} from ${otherTeam.name}`,
+        body: `The ${headlineTeam.city} ${headlineTeam.name} have traded ${sentList} to the ${otherTeam.city} ${otherTeam.name} in exchange for ${receivedList}.`,
+        date: currentDate,
+      });
+    }
+  }
+
+  return { trades, playerMoves, pickMoves, newsEvents };
 }

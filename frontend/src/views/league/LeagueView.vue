@@ -1360,6 +1360,8 @@ function formatSalary(salary) {
 <style scoped>
 .league-view {
   padding-bottom: 100px;
+  max-width: 1024px;
+  margin: 0 auto;
 }
 
 /* Remove padding-top on mobile when footer nav is showing */

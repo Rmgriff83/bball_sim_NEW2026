@@ -16,20 +16,26 @@ const props = defineProps({
 const emit = defineEmits(['select-series'])
 
 const eastRound1 = computed(() => props.bracket?.east?.round1 ?? [])
-const eastRound2 = computed(() => props.bracket?.east?.round2 ?? [])
+const eastRound2Raw = computed(() => props.bracket?.east?.round2 ?? [])
 const eastConfFinals = computed(() => props.bracket?.east?.confFinals ?? null)
 
 const westRound1 = computed(() => props.bracket?.west?.round1 ?? [])
-const westRound2 = computed(() => props.bracket?.west?.round2 ?? [])
+const westRound2Raw = computed(() => props.bracket?.west?.round2 ?? [])
 const westConfFinals = computed(() => props.bracket?.west?.confFinals ?? null)
 
 const finals = computed(() => props.bracket?.finals ?? null)
 const champion = computed(() => props.bracket?.champion ?? null)
 
+// Look up R2 matchups by seriesId (not array index) since they can be pushed in any order
+const eastR2A = computed(() => eastRound2Raw.value.find(s => s.seriesId === 'E_R2_A') ?? null)
+const eastR2B = computed(() => eastRound2Raw.value.find(s => s.seriesId === 'E_R2_B') ?? null)
+const westR2A = computed(() => westRound2Raw.value.find(s => s.seriesId === 'W_R2_A') ?? null)
+const westR2B = computed(() => westRound2Raw.value.find(s => s.seriesId === 'W_R2_B') ?? null)
+
 // Preview data for next-round slots (shows winners before full matchup is created)
 // East R2 Slot 1: fed by R1[0] (1v8) and R1[1] (4v5)
 const eastR2Slot1Preview = computed(() => {
-  if (eastRound2.value[0]) return null
+  if (eastR2A.value) return null
   return {
     team1: eastRound1.value[0]?.winner ?? null,
     team2: eastRound1.value[1]?.winner ?? null
@@ -37,7 +43,7 @@ const eastR2Slot1Preview = computed(() => {
 })
 // East R2 Slot 2: fed by R1[3] (2v7) and R1[2] (3v6)
 const eastR2Slot2Preview = computed(() => {
-  if (eastRound2.value[1]) return null
+  if (eastR2B.value) return null
   return {
     team1: eastRound1.value[3]?.winner ?? null,
     team2: eastRound1.value[2]?.winner ?? null
@@ -45,7 +51,7 @@ const eastR2Slot2Preview = computed(() => {
 })
 // West R2 Slot 1: fed by R1[0] (1v8) and R1[1] (4v5)
 const westR2Slot1Preview = computed(() => {
-  if (westRound2.value[0]) return null
+  if (westR2A.value) return null
   return {
     team1: westRound1.value[0]?.winner ?? null,
     team2: westRound1.value[1]?.winner ?? null
@@ -53,26 +59,26 @@ const westR2Slot1Preview = computed(() => {
 })
 // West R2 Slot 2: fed by R1[3] (2v7) and R1[2] (3v6)
 const westR2Slot2Preview = computed(() => {
-  if (westRound2.value[1]) return null
+  if (westR2B.value) return null
   return {
     team1: westRound1.value[3]?.winner ?? null,
     team2: westRound1.value[2]?.winner ?? null
   }
 })
-// East Conf Finals: fed by R2[0] and R2[1]
+// East Conf Finals: fed by R2_A and R2_B
 const eastCFPreview = computed(() => {
   if (eastConfFinals.value) return null
   return {
-    team1: eastRound2.value[0]?.winner ?? null,
-    team2: eastRound2.value[1]?.winner ?? null
+    team1: eastR2A.value?.winner ?? null,
+    team2: eastR2B.value?.winner ?? null
   }
 })
-// West Conf Finals: fed by R2[0] and R2[1]
+// West Conf Finals: fed by R2_A and R2_B
 const westCFPreview = computed(() => {
   if (westConfFinals.value) return null
   return {
-    team1: westRound2.value[0]?.winner ?? null,
-    team2: westRound2.value[1]?.winner ?? null
+    team1: westR2A.value?.winner ?? null,
+    team2: westR2B.value?.winner ?? null
   }
 })
 // Finals: fed by East CF and West CF
@@ -171,37 +177,37 @@ function handleSeriesClick(series) {
           <div class="matchups">
             <!-- Slot 1: first semifinal (fed by R1 matchups 1 & 2) -->
             <div
-              v-if="eastRound2[0]"
+              v-if="eastR2A"
               class="matchup-wrapper"
             >
               <div
                 class="matchup"
-                :class="getSeriesStatusClass(eastRound2[0])"
-                @click="handleSeriesClick(eastRound2[0])"
+                :class="getSeriesStatusClass(eastR2A)"
+                @click="handleSeriesClick(eastR2A)"
               >
                 <div
                   class="team team-1"
                   :class="{
-                    winner: eastRound2[0]?.winner?.teamId === eastRound2[0]?.team1?.teamId,
-                    'user-team': isUserTeam(eastRound2[0]?.team1?.teamId)
+                    winner: eastR2A?.winner?.teamId === eastR2A?.team1?.teamId,
+                    'user-team': isUserTeam(eastR2A?.team1?.teamId)
                   }"
                 >
-                  <span class="team-color-dot" :style="{ background: eastRound2[0]?.team1?.primaryColor }" />
-                  <span class="seed">[{{ eastRound2[0]?.team1?.seed }}]</span>
-                  <span class="abbr">{{ eastRound2[0]?.team1?.abbreviation }}</span>
-                  <span class="wins">{{ eastRound2[0]?.team1Wins }}</span>
+                  <span class="team-color-dot" :style="{ background: eastR2A?.team1?.primaryColor }" />
+                  <span class="seed">[{{ eastR2A?.team1?.seed }}]</span>
+                  <span class="abbr">{{ eastR2A?.team1?.abbreviation }}</span>
+                  <span class="wins">{{ eastR2A?.team1Wins }}</span>
                 </div>
                 <div
                   class="team team-2"
                   :class="{
-                    winner: eastRound2[0]?.winner?.teamId === eastRound2[0]?.team2?.teamId,
-                    'user-team': isUserTeam(eastRound2[0]?.team2?.teamId)
+                    winner: eastR2A?.winner?.teamId === eastR2A?.team2?.teamId,
+                    'user-team': isUserTeam(eastR2A?.team2?.teamId)
                   }"
                 >
-                  <span class="team-color-dot" :style="{ background: eastRound2[0]?.team2?.primaryColor }" />
-                  <span class="seed">[{{ eastRound2[0]?.team2?.seed }}]</span>
-                  <span class="abbr">{{ eastRound2[0]?.team2?.abbreviation }}</span>
-                  <span class="wins">{{ eastRound2[0]?.team2Wins }}</span>
+                  <span class="team-color-dot" :style="{ background: eastR2A?.team2?.primaryColor }" />
+                  <span class="seed">[{{ eastR2A?.team2?.seed }}]</span>
+                  <span class="abbr">{{ eastR2A?.team2?.abbreviation }}</span>
+                  <span class="wins">{{ eastR2A?.team2Wins }}</span>
                 </div>
               </div>
             </div>
@@ -228,38 +234,38 @@ function handleSeriesClick(series) {
 
             <!-- Slot 2: second semifinal (fed by R1 matchups 3 & 4) -->
             <div
-              v-if="eastRound2[1]"
+              v-if="eastR2B"
               class="matchup-wrapper"
             >
 
               <div
                 class="matchup"
-                :class="getSeriesStatusClass(eastRound2[1])"
-                @click="handleSeriesClick(eastRound2[1])"
+                :class="getSeriesStatusClass(eastR2B)"
+                @click="handleSeriesClick(eastR2B)"
               >
                 <div
                   class="team team-1"
                   :class="{
-                    winner: eastRound2[1]?.winner?.teamId === eastRound2[1]?.team1?.teamId,
-                    'user-team': isUserTeam(eastRound2[1]?.team1?.teamId)
+                    winner: eastR2B?.winner?.teamId === eastR2B?.team1?.teamId,
+                    'user-team': isUserTeam(eastR2B?.team1?.teamId)
                   }"
                 >
-                  <span class="team-color-dot" :style="{ background: eastRound2[1]?.team1?.primaryColor }" />
-                  <span class="seed">[{{ eastRound2[1]?.team1?.seed }}]</span>
-                  <span class="abbr">{{ eastRound2[1]?.team1?.abbreviation }}</span>
-                  <span class="wins">{{ eastRound2[1]?.team1Wins }}</span>
+                  <span class="team-color-dot" :style="{ background: eastR2B?.team1?.primaryColor }" />
+                  <span class="seed">[{{ eastR2B?.team1?.seed }}]</span>
+                  <span class="abbr">{{ eastR2B?.team1?.abbreviation }}</span>
+                  <span class="wins">{{ eastR2B?.team1Wins }}</span>
                 </div>
                 <div
                   class="team team-2"
                   :class="{
-                    winner: eastRound2[1]?.winner?.teamId === eastRound2[1]?.team2?.teamId,
-                    'user-team': isUserTeam(eastRound2[1]?.team2?.teamId)
+                    winner: eastR2B?.winner?.teamId === eastR2B?.team2?.teamId,
+                    'user-team': isUserTeam(eastR2B?.team2?.teamId)
                   }"
                 >
-                  <span class="team-color-dot" :style="{ background: eastRound2[1]?.team2?.primaryColor }" />
-                  <span class="seed">[{{ eastRound2[1]?.team2?.seed }}]</span>
-                  <span class="abbr">{{ eastRound2[1]?.team2?.abbreviation }}</span>
-                  <span class="wins">{{ eastRound2[1]?.team2Wins }}</span>
+                  <span class="team-color-dot" :style="{ background: eastR2B?.team2?.primaryColor }" />
+                  <span class="seed">[{{ eastR2B?.team2?.seed }}]</span>
+                  <span class="abbr">{{ eastR2B?.team2?.abbreviation }}</span>
+                  <span class="wins">{{ eastR2B?.team2Wins }}</span>
                 </div>
               </div>
             </div>
@@ -469,38 +475,38 @@ function handleSeriesClick(series) {
           <div class="matchups">
             <!-- Slot 1: first semifinal (fed by R1 matchups 1 & 2) -->
             <div
-              v-if="westRound2[0]"
+              v-if="westR2A"
               class="matchup-wrapper"
             >
 
               <div
                 class="matchup"
-                :class="getSeriesStatusClass(westRound2[0])"
-                @click="handleSeriesClick(westRound2[0])"
+                :class="getSeriesStatusClass(westR2A)"
+                @click="handleSeriesClick(westR2A)"
               >
                 <div
                   class="team team-1"
                   :class="{
-                    winner: westRound2[0]?.winner?.teamId === westRound2[0]?.team1?.teamId,
-                    'user-team': isUserTeam(westRound2[0]?.team1?.teamId)
+                    winner: westR2A?.winner?.teamId === westR2A?.team1?.teamId,
+                    'user-team': isUserTeam(westR2A?.team1?.teamId)
                   }"
                 >
-                  <span class="wins">{{ westRound2[0]?.team1Wins }}</span>
-                  <span class="abbr">{{ westRound2[0]?.team1?.abbreviation }}</span>
-                  <span class="seed">[{{ westRound2[0]?.team1?.seed }}]</span>
-                  <span class="team-color-dot" :style="{ background: westRound2[0]?.team1?.primaryColor }" />
+                  <span class="wins">{{ westR2A?.team1Wins }}</span>
+                  <span class="abbr">{{ westR2A?.team1?.abbreviation }}</span>
+                  <span class="seed">[{{ westR2A?.team1?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: westR2A?.team1?.primaryColor }" />
                 </div>
                 <div
                   class="team team-2"
                   :class="{
-                    winner: westRound2[0]?.winner?.teamId === westRound2[0]?.team2?.teamId,
-                    'user-team': isUserTeam(westRound2[0]?.team2?.teamId)
+                    winner: westR2A?.winner?.teamId === westR2A?.team2?.teamId,
+                    'user-team': isUserTeam(westR2A?.team2?.teamId)
                   }"
                 >
-                  <span class="wins">{{ westRound2[0]?.team2Wins }}</span>
-                  <span class="abbr">{{ westRound2[0]?.team2?.abbreviation }}</span>
-                  <span class="seed">[{{ westRound2[0]?.team2?.seed }}]</span>
-                  <span class="team-color-dot" :style="{ background: westRound2[0]?.team2?.primaryColor }" />
+                  <span class="wins">{{ westR2A?.team2Wins }}</span>
+                  <span class="abbr">{{ westR2A?.team2?.abbreviation }}</span>
+                  <span class="seed">[{{ westR2A?.team2?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: westR2A?.team2?.primaryColor }" />
                 </div>
               </div>
 
@@ -528,38 +534,38 @@ function handleSeriesClick(series) {
 
             <!-- Slot 2: second semifinal (fed by R1 matchups 3 & 4) -->
             <div
-              v-if="westRound2[1]"
+              v-if="westR2B"
               class="matchup-wrapper"
             >
 
               <div
                 class="matchup"
-                :class="getSeriesStatusClass(westRound2[1])"
-                @click="handleSeriesClick(westRound2[1])"
+                :class="getSeriesStatusClass(westR2B)"
+                @click="handleSeriesClick(westR2B)"
               >
                 <div
                   class="team team-1"
                   :class="{
-                    winner: westRound2[1]?.winner?.teamId === westRound2[1]?.team1?.teamId,
-                    'user-team': isUserTeam(westRound2[1]?.team1?.teamId)
+                    winner: westR2B?.winner?.teamId === westR2B?.team1?.teamId,
+                    'user-team': isUserTeam(westR2B?.team1?.teamId)
                   }"
                 >
-                  <span class="wins">{{ westRound2[1]?.team1Wins }}</span>
-                  <span class="abbr">{{ westRound2[1]?.team1?.abbreviation }}</span>
-                  <span class="seed">[{{ westRound2[1]?.team1?.seed }}]</span>
-                  <span class="team-color-dot" :style="{ background: westRound2[1]?.team1?.primaryColor }" />
+                  <span class="wins">{{ westR2B?.team1Wins }}</span>
+                  <span class="abbr">{{ westR2B?.team1?.abbreviation }}</span>
+                  <span class="seed">[{{ westR2B?.team1?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: westR2B?.team1?.primaryColor }" />
                 </div>
                 <div
                   class="team team-2"
                   :class="{
-                    winner: westRound2[1]?.winner?.teamId === westRound2[1]?.team2?.teamId,
-                    'user-team': isUserTeam(westRound2[1]?.team2?.teamId)
+                    winner: westR2B?.winner?.teamId === westR2B?.team2?.teamId,
+                    'user-team': isUserTeam(westR2B?.team2?.teamId)
                   }"
                 >
-                  <span class="wins">{{ westRound2[1]?.team2Wins }}</span>
-                  <span class="abbr">{{ westRound2[1]?.team2?.abbreviation }}</span>
-                  <span class="seed">[{{ westRound2[1]?.team2?.seed }}]</span>
-                  <span class="team-color-dot" :style="{ background: westRound2[1]?.team2?.primaryColor }" />
+                  <span class="wins">{{ westR2B?.team2Wins }}</span>
+                  <span class="abbr">{{ westR2B?.team2?.abbreviation }}</span>
+                  <span class="seed">[{{ westR2B?.team2?.seed }}]</span>
+                  <span class="team-color-dot" :style="{ background: westR2B?.team2?.primaryColor }" />
                 </div>
               </div>
 

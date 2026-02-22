@@ -1,7 +1,8 @@
 <script setup>
 import { computed } from 'vue'
-import { User, DollarSign, AlertTriangle, UserMinus, X } from 'lucide-vue-next'
+import { User, DollarSign, AlertTriangle, UserMinus } from 'lucide-vue-next'
 import { BaseModal, BaseButton, StatBadge, LoadingSpinner } from '@/components/ui'
+import { getMotivationLabel, calculateRetentionScore } from '@/engine/ai/MotivationService'
 
 const props = defineProps({
   show: {
@@ -26,6 +27,24 @@ const remainingContractValue = computed(() => {
   return props.player.contractSalary * props.player.contractYearsRemaining
 })
 
+// Top motivations (compact — 3 bars, read-only)
+const topMotivations = computed(() => {
+  if (!props.player?.motivations) return []
+  return Object.entries(props.player.motivations)
+    .map(([key, data]) => ({ key, ...data }))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 3)
+})
+
+const isContractYear = computed(() => {
+  return (props.player?.contractYearsRemaining ?? 2) <= 1
+})
+
+const retentionPct = computed(() => {
+  if (!props.player?.motivations) return null
+  return calculateRetentionScore(props.player, {})
+})
+
 function getPositionColor(position) {
   const colors = {
     PG: '#3B82F6',
@@ -35,6 +54,18 @@ function getPositionColor(position) {
     C: '#8B5CF6',
   }
   return colors[position] || '#6B7280'
+}
+
+function getMotivationBarColor(weight) {
+  if (weight >= 0.7) return '#f87171'
+  if (weight >= 0.4) return '#fbbf24'
+  return '#6b7280'
+}
+
+function getRetentionColor(pct) {
+  if (pct >= 70) return '#22c55e'
+  if (pct >= 40) return '#f59e0b'
+  return '#ef4444'
 }
 
 function formatSalary(salary) {
@@ -106,9 +137,34 @@ function handleConfirm() {
         </div>
       </div>
 
+      <!-- Motivations (compact, top 3) -->
+      <div v-if="topMotivations.length > 0" class="motivations-card">
+        <h4 class="card-title">Key Motivations</h4>
+        <div class="motivation-bars">
+          <div
+            v-for="m in topMotivations"
+            :key="m.key"
+            class="motivation-row"
+          >
+            <span class="motivation-label">{{ getMotivationLabel(m.key) }}</span>
+            <div class="motivation-bar-track">
+              <div
+                class="motivation-bar-fill"
+                :style="{ width: (m.weight * 100) + '%', backgroundColor: getMotivationBarColor(m.weight) }"
+              />
+            </div>
+            <span class="motivation-value">{{ Math.round(m.weight * 100) }}</span>
+          </div>
+        </div>
+        <div v-if="isContractYear && retentionPct !== null" class="retention-note">
+          <span class="retention-label">Re-sign likelihood:</span>
+          <span class="retention-pct" :style="{ color: getRetentionColor(retentionPct) }">{{ retentionPct }}%</span>
+        </div>
+      </div>
+
       <!-- Contract Details -->
       <div class="contract-details">
-        <h4>Contract Being Terminated</h4>
+        <h4 class="card-title">Contract Being Terminated</h4>
         <div class="contract-info">
           <div class="contract-row">
             <span class="contract-label">Annual Salary:</span>
@@ -161,6 +217,16 @@ function handleConfirm() {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+}
+
+/* Card Title */
+.card-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.5rem;
 }
 
 /* Warning Banner */
@@ -248,21 +314,82 @@ function handleConfirm() {
   color: var(--color-text-secondary);
 }
 
-/* Contract Details */
-.contract-details {
-  padding: 1rem;
+/* Motivations Card */
+.motivations-card {
+  padding: 0.75rem;
   background: rgba(255, 255, 255, 0.03);
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.contract-details h4 {
-  font-size: 0.85rem;
+.motivation-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.motivation-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.motivation-label {
+  flex: 0 0 130px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.motivation-bar-track {
+  flex: 1;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.motivation-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.motivation-value {
+  flex: 0 0 24px;
+  font-size: 0.7rem;
   font-weight: 600;
   color: var(--color-text-secondary);
-  margin-bottom: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  text-align: right;
+}
+
+.retention-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.retention-label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.retention-pct {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+/* Contract Details */
+.contract-details {
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .contract-info {

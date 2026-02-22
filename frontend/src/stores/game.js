@@ -14,8 +14,9 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { SeasonManager } from '@/engine/season/SeasonManager'
 import { PlayoffManager } from '@/engine/season/PlayoffManager'
-import { processGameRewards } from '@/engine/rewards/RewardService'
+import { processGameRewards, TOKENS_PER_SYNERGY, WIN_MULTIPLIER } from '@/engine/rewards/RewardService'
 import { NewsService } from '@/engine/season/NewsService'
+import { processAiToAiTrades, computeAiTradingBlock, analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
 
 export const useGameStore = defineStore('game', () => {
   // State
@@ -212,6 +213,10 @@ export const useGameStore = defineStore('game', () => {
   }
 
   async function _awardScoutingPoints(campaign, newDate) {
+    // Only award scouting points during the regular season
+    const phase = campaign.settings?.season_phase ?? campaign.settings?.seasonPhase ?? campaign.phase ?? 'regular_season'
+    if (phase !== 'regular_season') return 0
+
     const prevDate = campaign.currentDate || `${campaign.currentSeasonYear ?? 2025}-10-21`
     const prevMs = new Date(prevDate).getTime()
     const newMs = new Date(newDate).getTime()
@@ -238,6 +243,158 @@ export const useGameStore = defineStore('game', () => {
       return pointsEarned
     }
     return 0
+  }
+
+  /**
+   * Process weekly AI-to-AI trades when a Monday boundary is crossed.
+   * Moves players between AI teams, transfers pick ownership, and records news/history.
+   */
+  async function _processWeeklyAiTrades(campaignId) {
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) return
+
+      // Only run during regular season
+      const phase = campaign.settings?.season_phase ?? campaign.settings?.seasonPhase ?? 'regular_season'
+      if (phase !== 'regular_season') return
+
+      const year = campaign.currentSeasonYear ?? 2025
+      const currentDate = campaign.currentDate || `${year}-10-21`
+      const difficulty = campaign.difficulty || 'pro'
+
+      const [seasonData, allTeams, allPlayers] = await Promise.all([
+        SeasonRepository.get(campaignId, year),
+        TeamRepository.getAllForCampaign(campaignId),
+        PlayerRepository.getAllForCampaign(campaignId),
+      ])
+      if (!seasonData || !allTeams || !allPlayers) return
+
+      const userTeamId = campaign.teamId
+      const aiTeams = allTeams.filter(t => t.id !== userTeamId)
+
+      // Compute and persist AI trading blocks
+      const context = buildContext({ standings: seasonData.standings || { east: [], west: [] }, teams: allTeams, seasonPhase: 'regular_season' })
+      const aiTeamsToSaveBlock = []
+      for (const team of aiTeams) {
+        const roster = allPlayers.filter(p =>
+          (p.teamId === team.id || p.team_id === team.id) &&
+          (p.isFreeAgent !== 1 && p.is_free_agent !== 1)
+        )
+        const dir = analyzeTeamDirection(team, roster, context)
+        const blockIds = computeAiTradingBlock({ roster, direction: dir })
+        const oldBlock = team.tradingBlock || []
+        if (JSON.stringify(blockIds.sort()) !== JSON.stringify(oldBlock.sort())) {
+          team.tradingBlock = blockIds
+          aiTeamsToSaveBlock.push(team)
+        }
+      }
+      if (aiTeamsToSaveBlock.length > 0) {
+        await TeamRepository.saveBulk(aiTeamsToSaveBlock)
+      }
+
+      const result = processAiToAiTrades({
+        aiTeams,
+        allPlayers,
+        standings: seasonData.standings || { east: [], west: [] },
+        allTeams,
+        currentDate,
+        seasonYear: year,
+        difficulty,
+      })
+
+      if (result.trades.length === 0) return
+
+      // Apply player moves
+      const playersToSave = []
+      for (const move of result.playerMoves) {
+        const player = allPlayers.find(p => p.id === move.playerId)
+        if (!player) continue
+        player.teamId = move.toTeamId
+        player.team_id = move.toTeamId
+        player.teamAbbreviation = move.toAbbr
+        player.team_abbreviation = move.toAbbr
+        playersToSave.push(player)
+      }
+      if (playersToSave.length > 0) {
+        await PlayerRepository.saveBulk(playersToSave)
+      }
+
+      // Apply pick moves
+      const teamsToSave = new Set()
+      for (const move of result.pickMoves) {
+        const fromTeam = allTeams.find(t => t.id === move.fromTeamId)
+        const toTeam = allTeams.find(t => t.id === move.toTeamId)
+        if (!fromTeam || !toTeam) continue
+
+        const fromPicks = fromTeam.draftPicks || []
+        const idx = fromPicks.findIndex(p => p.id === move.pickId)
+        if (idx < 0) continue
+
+        const pick = { ...fromPicks[idx] }
+        fromPicks.splice(idx, 1)
+
+        pick.currentOwnerId = move.toTeamId
+        pick.current_owner_id = move.toTeamId
+        pick.isTraded = true
+        pick.is_traded = true
+
+        if (!toTeam.draftPicks) toTeam.draftPicks = []
+        toTeam.draftPicks.push(pick)
+        fromTeam.draftPicks = fromPicks
+
+        teamsToSave.add(fromTeam.id)
+        teamsToSave.add(toTeam.id)
+      }
+      for (const teamId of teamsToSave) {
+        const team = allTeams.find(t => t.id === teamId)
+        if (team) await TeamRepository.save(team)
+      }
+
+      // Record trade history
+      if (!seasonData.tradeHistory) seasonData.tradeHistory = []
+      for (const trade of result.trades) {
+        const assets = []
+        for (const a of trade.team1Gives) {
+          assets.push({ ...a, from: trade.team1.id, to: trade.team2.id })
+        }
+        for (const a of trade.team2Gives) {
+          assets.push({ ...a, from: trade.team2.id, to: trade.team1.id })
+        }
+        seasonData.tradeHistory.push({
+          id: `trade_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          trade_date: currentDate,
+          details: {
+            teams: [trade.team1.id, trade.team2.id],
+            team_names: {
+              [trade.team1.id]: `${trade.team1.city} ${trade.team1.name}`,
+              [trade.team2.id]: `${trade.team2.city} ${trade.team2.name}`,
+            },
+            assets,
+          },
+        })
+      }
+
+      // Append news events
+      if (!seasonData.news) seasonData.news = []
+      for (const evt of result.newsEvents) {
+        seasonData.news.push({
+          id: `news_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          event_type: evt.event_type,
+          headline: evt.headline,
+          body: evt.body,
+          date: evt.date,
+        })
+      }
+      if (seasonData.news.length > 50) {
+        seasonData.news = seasonData.news.slice(-50)
+      }
+
+      // Save season data and mark dirty
+      await SeasonRepository.save({ campaignId, year, ...seasonData })
+      useSyncStore().markDirty()
+    } catch (err) {
+      console.warn('[GameStore] AI-to-AI trade processing failed:', err)
+    }
   }
 
   /**
@@ -270,6 +427,11 @@ export const useGameStore = defineStore('game', () => {
 
       // Award scouting points for any new weeks
       scoutingPointsEarned = await _awardScoutingPoints(campaign, newDate)
+
+      // Process AI-to-AI trades on Monday boundary
+      if (currentWeek > previousWeek) {
+        await _processWeeklyAiTrades(campaignId)
+      }
 
       campaign.currentDate = newDate
       await CampaignRepository.save(campaign)
@@ -317,6 +479,11 @@ export const useGameStore = defineStore('game', () => {
       awayScore: result.away_score,
       boxScore: result.box_score,
       quarterScores: result.quarter_scores,
+    }
+
+    // Persist rewards for user games (small object, no need to strip)
+    if (isUserGame && result.rewards) {
+      persistData.rewards = result.rewards
     }
 
     // Persist evolution summary (without the heavy players map) for user games
@@ -586,16 +753,26 @@ export const useGameStore = defineStore('game', () => {
 
       // Process rewards for user games
       let rewards = null
-      if (isUserGame && result.animation_data) {
+      if (isUserGame) {
         const isHome = game.homeTeamId === userTeamId
         const didWin = isHome
           ? result.home_score > result.away_score
           : result.away_score > result.home_score
+        const synCount = isHome
+          ? result.synergies_activated?.home
+          : result.synergies_activated?.away
         rewards = processGameRewards({
           animationData: result.animation_data,
           isHome,
           didWin,
+          synergiesActivated: synCount,
         })
+
+        // Simmed (non-animated) games only earn 10% of tokens
+        if (mode !== 'animated' && rewards.tokens_awarded > 0) {
+          rewards.tokens_awarded = Math.max(1, Math.round(rewards.tokens_awarded * 0.1))
+        }
+
         result.rewards = rewards
 
         // Accumulate award tokens
@@ -709,6 +886,32 @@ export const useGameStore = defineStore('game', () => {
           gameDate: userGame.gameDate,
         })
         result.evolution = evolution
+
+        // Award tokens at 10% rate for simmed games (using synergy counts from result)
+        const isHome = userGame.homeTeamId === userTeamId
+        const synergyCount = isHome
+          ? (result.synergies_activated?.home ?? 0)
+          : (result.synergies_activated?.away ?? 0)
+        const didWin = isHome
+          ? result.home_score > result.away_score
+          : result.away_score > result.home_score
+        if (synergyCount > 0) {
+          const baseTokens = synergyCount * TOKENS_PER_SYNERGY
+          const fullTokens = didWin ? Math.ceil(baseTokens * WIN_MULTIPLIER) : baseTokens
+          const simTokens = Math.max(1, Math.round(fullTokens * 0.1))
+          result.rewards = {
+            synergies_activated: synergyCount,
+            tokens_awarded: simTokens,
+            win_bonus_applied: didWin,
+          }
+          await _accumulateAwardTokens(campaignId, { tokens_awarded: simTokens })
+        } else {
+          result.rewards = {
+            synergies_activated: 0,
+            tokens_awarded: 0,
+            win_bonus_applied: false,
+          }
+        }
 
         await _persistGameResult(campaignId, year, seasonData, userGame.id, result, true)
         await _applyEvolutionToPlayers(evolution, userGame)
@@ -930,10 +1133,14 @@ export const useGameStore = defineStore('game', () => {
         const didWin = isHome
           ? result.home_score > result.away_score
           : result.away_score > result.home_score
+        const synCount = isHome
+          ? result.synergies_activated?.home
+          : result.synergies_activated?.away
         const rewards = processGameRewards({
           animationData: { possessions: allPossessions },
           isHome,
           didWin,
+          synergiesActivated: synCount,
         })
         result.rewards = rewards
 
@@ -1085,11 +1292,21 @@ export const useGameStore = defineStore('game', () => {
       const didWin = isHome
         ? result.home_score > result.away_score
         : result.away_score > result.home_score
+      const synCount = isHome
+        ? result.synergies_activated?.home
+        : result.synergies_activated?.away
       const rewards = processGameRewards({
         animationData: result.animation_data || { possessions: [] },
         isHome,
         didWin,
+        synergiesActivated: synCount,
       })
+
+      // Sim-to-end only earns 10% of tokens
+      if (rewards.tokens_awarded > 0) {
+        rewards.tokens_awarded = Math.max(1, Math.round(rewards.tokens_awarded * 0.1))
+      }
+
       result.rewards = rewards
 
       // Accumulate award tokens
@@ -1304,11 +1521,21 @@ export const useGameStore = defineStore('game', () => {
         const didWin = isHome
           ? result.home_score > result.away_score
           : result.away_score > result.home_score
+        const synCount = isHome
+          ? result.synergies_activated?.home
+          : result.synergies_activated?.away
         const rewards = processGameRewards({
           animationData: result.animation_data || { possessions: [] },
           isHome,
           didWin,
+          synergiesActivated: synCount,
         })
+
+        // Simmed games only earn 10% of tokens
+        if (rewards.tokens_awarded > 0) {
+          rewards.tokens_awarded = Math.max(1, Math.round(rewards.tokens_awarded * 0.1))
+        }
+
         result.rewards = rewards
 
         // Accumulate award tokens
@@ -1512,10 +1739,13 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * Simulate all remaining AI playoff games so the next round schedule can be generated.
-   * Used between playoff rounds when the user has finished their series but AI series are still ongoing.
+   * Simulate remaining AI playoff games so the next round schedule can be generated.
+   * When simAll is true, loops internally on the same in-memory seasonData to sim
+   * through ALL remaining rounds until a champion is crowned or no games remain.
+   * @param {string} campaignId
+   * @param {{ simAll?: boolean }} options
    */
-  async function simulateToNextPlayoffRound(campaignId) {
+  async function simulateToNextPlayoffRound(campaignId, { simAll = false } = {}) {
     simulating.value = true
     error.value = null
     try {
@@ -1528,71 +1758,75 @@ export const useGameStore = defineStore('game', () => {
       const toastStore = useToastStore()
       const teams = await TeamRepository.getAllForCampaign(campaignId)
 
-      // Find all remaining incomplete AI playoff games (non-cancelled)
-      const remainingAiPlayoffGames = seasonData.schedule.filter(g =>
-        g.isPlayoff &&
-        !g.isComplete &&
-        !g.isCancelled &&
-        g.homeTeamId !== userTeamId &&
-        g.awayTeamId !== userTeamId
-      )
-
       let totalCompleted = 0
+      let lastGameDate = null
 
-      if (remainingAiPlayoffGames.length > 0) {
+      // Loop: sim current batch of AI playoff games, advance bracket, repeat.
+      // When simAll is false, only one pass is made. When true, keeps going
+      // until no more AI games remain (champion crowned or user has next game).
+      for (let pass = 0; pass < (simAll ? 8 : 1); pass++) {
+        // Find remaining incomplete AI playoff games from in-memory seasonData
+        const aiGames = seasonData.schedule.filter(g =>
+          g.isPlayoff &&
+          !g.isComplete &&
+          !g.isCancelled &&
+          g.homeTeamId !== userTeamId &&
+          g.awayTeamId !== userTeamId
+        )
+
+        if (aiGames.length === 0) break
+
+        // Check if champion already crowned
+        if (seasonData.playoffBracket?.champion) break
+
         backgroundSimulating.value = true
-        simulationProgress.value = { completed: 0, total: remainingAiPlayoffGames.length }
-        const progressToastId = toastStore.showProgress('Playoff games', 0, remainingAiPlayoffGames.length)
+        simulationProgress.value = { completed: totalCompleted, total: totalCompleted + aiGames.length }
+        const progressToastId = toastStore.showProgress('Playoff games', totalCompleted, totalCompleted + aiGames.length)
 
         try {
-          await _simulateAiGamesBulk(campaignId, year, seasonData, remainingAiPlayoffGames, worker, (progress) => {
-            simulationProgress.value = progress
-            toastStore.updateProgress(progressToastId, progress.completed, progress.total)
+          await _simulateAiGamesBulk(campaignId, year, seasonData, aiGames, worker, (progress) => {
+            simulationProgress.value = { completed: totalCompleted + progress.completed, total: totalCompleted + aiGames.length }
+            toastStore.updateProgress(progressToastId, totalCompleted + progress.completed, totalCompleted + aiGames.length)
           })
         } finally {
           toastStore.removeMinimalToast(progressToastId)
-          backgroundSimulating.value = false
-          simulationProgress.value = null
         }
 
-        totalCompleted = remainingAiPlayoffGames.length
+        totalCompleted += aiGames.length
 
-        // Advance date past the last simulated game
-        const lastGame = remainingAiPlayoffGames[remainingAiPlayoffGames.length - 1]
-        if (lastGame) {
-          await _advanceDateIfNeeded(campaignId, lastGame.gameDate)
+        // Track last game date for date advancement
+        const lastGame = aiGames[aiGames.length - 1]
+        if (lastGame?.gameDate) lastGameDate = lastGame.gameDate
+
+        // Safety net: ensure all completed series have been advanced
+        // and new round schedules generated for the next pass
+        const bracket = seasonData.playoffBracket
+        if (bracket) {
+          for (const round of [1, 2, 3]) {
+            PlayoffManager.advanceWinnerToNextRound(seasonData, {
+              series: null,
+              round,
+              seriesComplete: true,
+            })
+          }
+          for (let round = 2; round <= 4; round++) {
+            PlayoffManager.generatePlayoffSchedule(seasonData, teams, round, year)
+          }
         }
       }
 
-      // Safety net: ensure all completed series have been properly advanced
-      // and new round schedules are generated. This handles cases where AI games
-      // were already simulated during normal gameplay (via simulateToNextGame or
-      // _simulateAiGamesForDay) but advancement/scheduling was missed.
-      const bracket = seasonData.playoffBracket
-      if (bracket) {
-        let scheduleCreated = false
+      backgroundSimulating.value = false
+      simulationProgress.value = null
 
-        // Idempotent: re-run matchup creation for each round transition.
-        // advanceWinnerToNextRound checks both conferences and won't create
-        // duplicates if matchups already exist (guarded by length/null checks).
-        for (const round of [1, 2, 3]) {
-          PlayoffManager.advanceWinnerToNextRound(seasonData, {
-            series: null,
-            round,
-            seriesComplete: true,
-          })
-        }
+      // Advance date once at the end (not per-pass)
+      if (lastGameDate) {
+        await _advanceDateIfNeeded(campaignId, lastGameDate)
+      }
 
-        // Generate schedules for any pending matchups that don't have games yet
-        for (let round = 2; round <= 4; round++) {
-          const created = PlayoffManager.generatePlayoffSchedule(seasonData, teams, round, year)
-          if (created > 0) scheduleCreated = true
-        }
-
-        if (scheduleCreated || totalCompleted > 0) {
-          await SeasonRepository.save({ campaignId, year, ...seasonData })
-          useSyncStore().markDirty()
-        }
+      // Save final state
+      if (totalCompleted > 0) {
+        await SeasonRepository.save({ campaignId, year, ...seasonData })
+        useSyncStore().markDirty()
       }
 
       simulating.value = false

@@ -14,6 +14,7 @@ import {
   identifyNeed,
   analyzeTeamDirection,
   buildContext,
+  expireStaleProposals,
 } from '@/engine/ai/AITradeService'
 import {
   validateSalaryCap,
@@ -37,6 +38,9 @@ export const useTradeStore = defineStore('trade', () => {
 
   // AI-initiated trade proposals
   const pendingProposals = ref([])
+
+  // Trading block
+  const userTradingBlock = ref([])
 
   const loading = ref(false)
   const proposing = ref(false)
@@ -425,43 +429,121 @@ export const useTradeStore = defineStore('trade', () => {
       const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
       const seasonData = await SeasonRepository.get(campaignId, year)
 
-      const userTeam = allTeams.find(t => t.id === userTeamId)
-      const aiTeams = allTeams.filter(t => t.id !== userTeamId)
-      const userRoster = allPlayers.filter(p => {
-        const tid = p.teamId ?? p.team_id
-        return tid == userTeamId
-      })
-
-      const standings = seasonData?.standings ?? { east: [], west: [] }
       const getPlayerFn = _buildPlayerLookup(allPlayers)
 
-      const getTeamRosterFn = (teamAbbr) => {
-        return allPlayers.filter(p => {
-          const abbr = p.teamAbbreviation ?? p.team_abbreviation ?? ''
-          return abbr === teamAbbr
+      // 1. Load persisted proposals from seasonData
+      const allProposals = seasonData?.tradeProposals ?? []
+
+      // 2. Expire stale proposals
+      expireStaleProposals(allProposals, currentDate)
+
+      // 3. Load trading block
+      const tradingBlockIds = campaign?.settings?.tradingBlock ?? []
+      userTradingBlock.value = tradingBlockIds
+
+      // 4. Generate new proposals — only if game date has advanced since last generation
+      const lastGenDate = seasonData?.lastProposalGenerationDate ?? null
+      const shouldGenerate = !lastGenDate || lastGenDate !== currentDate
+
+      let newProposals = []
+      if (shouldGenerate) {
+        const aiTeams = allTeams.filter(t => t.id !== userTeamId)
+        const userRoster = allPlayers.filter(p => {
+          const tid = p.teamId ?? p.team_id
+          return tid == userTeamId
         })
+
+        const standings = seasonData?.standings ?? { east: [], west: [] }
+
+        const getTeamRosterFn = (teamAbbr) => {
+          return allPlayers.filter(p => {
+            const abbr = p.teamAbbreviation ?? p.team_abbreviation ?? ''
+            return abbr === teamAbbr
+          })
+        }
+
+        newProposals = generateWeeklyProposals({
+          aiTeams,
+          userRoster,
+          standings,
+          allTeams,
+          currentDate,
+          seasonYear: year,
+          difficulty,
+          seasonPhase: 'regular_season',
+          pendingProposals: allProposals,
+          getTeamRosterFn,
+          getPlayerFn,
+          userTradingBlock: tradingBlockIds,
+        })
+
+        // Track last generation date so we don't re-generate on same game day
+        if (seasonData) {
+          seasonData.lastProposalGenerationDate = currentDate
+        }
       }
 
-      const newProposals = generateWeeklyProposals({
-        aiTeams,
-        userRoster,
-        standings,
-        allTeams,
-        currentDate,
-        seasonYear: year,
-        difficulty,
-        seasonPhase: 'regular_season',
-        pendingProposals: pendingProposals.value,
-        getTeamRosterFn,
-        getPlayerFn,
-      })
-
-      // Assign IDs to new proposals and add to pending
+      // 5. Enrich new proposals
       for (const proposal of newProposals) {
         proposal.id = `proposal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        pendingProposals.value.push(proposal)
+
+        const proposingTeam = allTeams.find(t => t.id === proposal.proposing_team_id)
+        proposal.proposing_team = proposingTeam ? {
+          id: proposingTeam.id,
+          abbreviation: proposingTeam.abbreviation,
+          city: proposingTeam.city,
+          name: proposingTeam.name,
+          primary_color: proposingTeam.primary_color || proposingTeam.primaryColor || null,
+        } : {
+          id: proposal.proposing_team_id,
+          abbreviation: proposal.proposing_team_abbreviation,
+          city: '',
+          name: proposal.proposing_team_name,
+          primary_color: null,
+        }
+
+        // Merge into allProposals
+        allProposals.push(proposal)
       }
 
+      // 6. Save back to seasonData
+      if (seasonData) {
+        seasonData.tradeProposals = allProposals
+        await SeasonRepository.save(seasonData)
+      }
+
+      // 7. Enrich all pending proposals for the UI and set state
+      const enrichAsset = (asset, proposalTeamId) => {
+        if (asset.type === 'player') {
+          const player = getPlayerFn(asset.playerId)
+          return { ...asset, player: player || null }
+        }
+        if (asset.type === 'pick') {
+          const team = allTeams.find(t => t.id === proposalTeamId)
+          const pick = (team?.draftPicks || []).find(p => p.id === asset.pickId)
+          return { ...asset, pick: pick || null }
+        }
+        return asset
+      }
+
+      const pending = allProposals.filter(p => p.status === 'pending')
+      for (const proposal of pending) {
+        if (!proposal.proposing_team) {
+          const proposingTeam = allTeams.find(t => t.id === proposal.proposing_team_id)
+          proposal.proposing_team = proposingTeam ? {
+            id: proposingTeam.id,
+            abbreviation: proposingTeam.abbreviation,
+            city: proposingTeam.city,
+            name: proposingTeam.name,
+            primary_color: proposingTeam.primary_color || proposingTeam.primaryColor || null,
+          } : null
+        }
+        const innerProposal = proposal.proposal || {}
+        proposal.ai_gives = (innerProposal.aiGives || []).map(a => enrichAsset(a, proposal.proposing_team_id))
+        proposal.ai_receives = (innerProposal.aiReceives || []).map(a => enrichAsset(a, proposal.proposing_team_id))
+      }
+
+      pendingProposals.value = pending
       return pendingProposals.value
     } catch (err) {
       console.error('Failed to fetch trade proposals:', err)
@@ -623,8 +705,9 @@ export const useTradeStore = defineStore('trade', () => {
         date: currentDate,
       }
 
-      // Remove from pending list
+      // Remove from pending list and persist status
       pendingProposals.value = pendingProposals.value.filter(p => p.id !== proposalId)
+      await _updateProposalStatus(campaignId, proposalId, 'accepted')
 
       return { ...result, tradeContext }
     } catch (err) {
@@ -637,11 +720,29 @@ export const useTradeStore = defineStore('trade', () => {
 
   async function rejectProposal(campaignId, proposalId) {
     try {
-      // Simply remove from pending list -- no API call needed
       pendingProposals.value = pendingProposals.value.filter(p => p.id !== proposalId)
+      await _updateProposalStatus(campaignId, proposalId, 'rejected')
     } catch (err) {
       error.value = err.message || 'Failed to reject trade proposal'
       throw err
+    }
+  }
+
+  async function _updateProposalStatus(campaignId, proposalId, status) {
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
+      const seasonData = await SeasonRepository.get(campaignId, year)
+      if (!seasonData?.tradeProposals) return
+      const proposal = seasonData.tradeProposals.find(p => p.id === proposalId)
+      if (proposal) {
+        proposal.status = status
+        proposal.resolved_at = currentDate
+        await SeasonRepository.save(seasonData)
+      }
+    } catch (err) {
+      console.warn('Failed to update proposal status:', err)
     }
   }
 
@@ -710,6 +811,39 @@ export const useTradeStore = defineStore('trade', () => {
     return { type: 'pick', pickId: asset.id }
   }
 
+  // Trading block actions
+  async function loadUserTradingBlock(campaignId) {
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      userTradingBlock.value = campaign?.settings?.tradingBlock ?? []
+    } catch (err) {
+      console.warn('Failed to load trading block:', err)
+      userTradingBlock.value = []
+    }
+  }
+
+  async function togglePlayerOnTradingBlock(campaignId, playerId) {
+    const idx = userTradingBlock.value.indexOf(playerId)
+    let added = false
+    if (idx >= 0) {
+      userTradingBlock.value.splice(idx, 1)
+    } else {
+      userTradingBlock.value.push(playerId)
+      added = true
+    }
+    try {
+      await CampaignRepository.updateSettings(campaignId, { tradingBlock: [...userTradingBlock.value] })
+      useSyncStore().markDirty()
+    } catch (err) {
+      console.warn('Failed to save trading block:', err)
+    }
+    return added
+  }
+
+  function isOnUserTradingBlock(playerId) {
+    return userTradingBlock.value.includes(playerId)
+  }
+
   // Check if asset is in offering
   function isInOffering(assetType, assetId) {
     return userOffering.value.some(a => a.type === assetType && a.id === assetId)
@@ -766,6 +900,7 @@ export const useTradeStore = defineStore('trade', () => {
     userOffering,
     userRequesting,
     pendingProposals,
+    userTradingBlock,
     loading,
     proposing,
     error,
@@ -788,6 +923,9 @@ export const useTradeStore = defineStore('trade', () => {
     fetchPendingProposals,
     acceptProposal,
     rejectProposal,
+    loadUserTradingBlock,
+    togglePlayerOnTradingBlock,
+    isOnUserTradingBlock,
     addToUserOffering,
     removeFromUserOffering,
     addToUserRequesting,

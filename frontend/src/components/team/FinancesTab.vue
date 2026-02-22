@@ -143,10 +143,20 @@ function closePlayerInfoModal() {
   detailPlayer.value = null
 }
 
+function handleResignFromDetail(player) {
+  closePlayerInfoModal()
+  financeStore.openResignModal(player)
+}
+
+function handleDropFromDetail(player) {
+  closePlayerInfoModal()
+  financeStore.openDropModal(player)
+}
+
 async function handleResignConfirm(data) {
   resignLoading.value = true
   try {
-    await financeStore.resignPlayer(props.campaignId, data.playerId, data.years)
+    await financeStore.resignPlayer(props.campaignId, data.playerId, data.years, data.salary)
     // Refresh roster data
     await financeStore.fetchRosterContracts(props.campaignId, { force: true })
     toastStore.showSuccess('Player re-signed')
@@ -413,8 +423,15 @@ onMounted(() => {
     <PlayerDetailModal
       :show="showPlayerInfoModal"
       :player="detailPlayer"
+      :show-growth="true"
+      :is-user-player="true"
+      :campaign-id="campaignId"
       :current-season-year="campaignStore.currentCampaign?.currentSeasonYear"
+      :show-contract-actions="true"
+      :is-expiring-contract="detailPlayer?.contractYearsRemaining === 1"
       @close="closePlayerInfoModal"
+      @resign-player="handleResignFromDetail"
+      @drop-player="handleDropFromDetail"
     />
   </div>
 </template>

@@ -158,10 +158,11 @@ export function enrichPlayerData(player, stats = null) {
   const basketballIQ = attributes?.mental?.basketballIQ ?? null;
 
   return {
-    id: player.id,
+    // Spread original player so no fields (motivations, personality, morale, etc.) are lost
+    ...player,
+    // Normalized/computed fields override originals
     firstName: player.firstName ?? player.first_name,
     lastName: player.lastName ?? player.last_name,
-    position: player.position,
     secondaryPosition: player.secondaryPosition ?? player.secondary_position ?? null,
     jerseyNumber: player.jerseyNumber ?? player.jersey_number ?? null,
     overallRating: player.overallRating ?? player.overall_rating,
@@ -437,14 +438,18 @@ export function signFreeAgent({ playerId, leaguePlayers, currentRoster, capMode 
  * @param {number} params.years - Number of years
  * @returns {{ success: boolean, player: object, transaction: object, message: string }}
  */
-export function resignPlayer({ player, years }) {
-  const salary = parseFloat(player.contractSalary ?? player.contract_salary ?? 0);
+export function resignPlayer({ player, years, salary: salaryOverride }) {
+  const salary = salaryOverride != null
+    ? parseFloat(salaryOverride)
+    : parseFloat(player.contractSalary ?? player.contract_salary ?? 0);
   const playerName = `${player.firstName ?? player.first_name ?? ''} ${player.lastName ?? player.last_name ?? ''}`.trim();
 
   const updatedPlayer = {
     ...player,
     contractYearsRemaining: years,
     contract_years_remaining: years,
+    contractSalary: salary,
+    contract_salary: salary,
   };
 
   return {

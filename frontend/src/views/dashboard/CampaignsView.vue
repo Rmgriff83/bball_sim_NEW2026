@@ -75,8 +75,8 @@ onUnmounted(() => {
 })
 
 async function createCampaign() {
-  if (!newCampaignName.value.trim() || !selectedTeam.value) {
-    createError.value = 'Please enter a name and select a team'
+  if (!selectedTeam.value) {
+    createError.value = 'Please select a team'
     return
   }
 
@@ -84,8 +84,9 @@ async function createCampaign() {
   createError.value = null
 
   try {
+    const campaignName = newCampaignName.value.trim() || `${selectedTeam.value.name} Dynasty`
     const payload = {
-      name: newCampaignName.value.trim(),
+      name: campaignName,
       team_abbreviation: selectedTeam.value.abbreviation,
       difficulty: selectedDifficulty.value,
     }
@@ -256,18 +257,6 @@ function getDifficultyLabel(value) {
                 <span>{{ createError }}</span>
               </div>
 
-              <!-- Campaign Name -->
-              <div class="form-group">
-                <label class="form-label">Campaign Name</label>
-                <input
-                  v-model="newCampaignName"
-                  type="text"
-                  class="form-input"
-                  placeholder="My Dynasty"
-                  maxlength="100"
-                />
-              </div>
-
               <!-- Difficulty Selection -->
               <div class="form-group">
                 <label class="form-label">Difficulty</label>
@@ -377,7 +366,7 @@ function getDifficultyLabel(value) {
               </button>
               <button
                 class="btn-create"
-                :disabled="!newCampaignName.trim() || !selectedTeam || creating"
+                :disabled="!selectedTeam || creating"
                 @click="createCampaign"
               >
                 <LoadingSpinner v-if="creating" size="sm" />

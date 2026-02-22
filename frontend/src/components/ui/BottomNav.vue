@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { usePlayoffStore } from '@/stores/playoff'
-import { Home, Users, Trophy, Play } from 'lucide-vue-next'
+import { useCampaignStore } from '@/stores/campaign'
+import { Home, Users, Trophy, Play, Binoculars } from 'lucide-vue-next'
 
 const props = defineProps({
   campaignId: {
@@ -13,19 +14,22 @@ const props = defineProps({
 
 const route = useRoute()
 const playoffStore = usePlayoffStore()
+const campaignStore = useCampaignStore()
+
+const scoutingPoints = computed(() => {
+  return campaignStore.currentCampaign?.settings?.scoutingPoints ?? 0
+})
 
 const navItems = computed(() => {
   const thirdTab = playoffStore.isInPlayoffs
     ? {
         name: 'playoffs',
-        label: 'PLAYOFFS',
         to: `/campaign/${props.campaignId}/playoffs`,
         routeName: 'playoffs',
         icon: 'trophy'
       }
     : {
         name: 'league',
-        label: 'LEAGUE',
         to: `/campaign/${props.campaignId}/league`,
         routeName: 'league',
         icon: 'trophy'
@@ -34,19 +38,23 @@ const navItems = computed(() => {
   return [
     {
       name: 'home',
-      label: 'HOME',
       to: `/campaign/${props.campaignId}`,
       routeName: 'campaign-home',
       icon: 'home'
     },
     {
       name: 'gm',
-      label: 'GM VIEW',
       to: `/campaign/${props.campaignId}/team`,
       routeName: 'team-management',
       icon: 'users'
     },
     thirdTab,
+    {
+      name: 'scout',
+      to: `/campaign/${props.campaignId}/scouting`,
+      routeName: 'scouting',
+      icon: 'binoculars'
+    },
     {
       name: 'play',
       label: 'PLAY',
@@ -103,6 +111,16 @@ function isActive(routeName) {
         :fill="isActive(item.routeName) ? 'currentColor' : 'none'"
       />
 
+      <!-- Binoculars Icon (Scout) -->
+      <template v-else-if="item.icon === 'binoculars'">
+        <Binoculars
+          class="bottom-nav-icon"
+          :size="24"
+          fill="none"
+        />
+        <span v-if="scoutingPoints > 0" class="scout-badge">{{ scoutingPoints }}</span>
+      </template>
+
       <!-- Play Button (special styling) -->
       <template v-else-if="item.icon === 'play'">
         <div class="play-btn">
@@ -110,8 +128,6 @@ function isActive(routeName) {
           <span class="play-btn-label">{{ item.label }}</span>
         </div>
       </template>
-
-      <span v-if="!item.highlight" class="bottom-nav-label">{{ item.label }}</span>
     </router-link>
   </nav>
 </template>
@@ -205,10 +221,20 @@ function isActive(routeName) {
   height: 24px;
 }
 
-.bottom-nav-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+.scout-badge {
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--gradient-cosmic);
+  color: black;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
 }
 
 /* Hide on desktop */

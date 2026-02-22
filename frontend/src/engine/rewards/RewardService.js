@@ -56,9 +56,10 @@ export function countUserTeamSynergies(animationData, teamKey) {
  * @param {boolean} params.didWin - Whether the user's team won
  * @returns {{ synergies_activated: number, tokens_awarded: number, win_bonus_applied: boolean }}
  */
-export function processGameRewards({ animationData, isHome, didWin }) {
+export function processGameRewards({ animationData, isHome, didWin, synergiesActivated }) {
   const teamKey = isHome ? 'home' : 'away';
-  const synergyCount = countUserTeamSynergies(animationData, teamKey);
+  // Use animation data if available, otherwise fall back to the simulator's counters
+  const synergyCount = synergiesActivated ?? countUserTeamSynergies(animationData, teamKey);
 
   if (synergyCount === 0) {
     return {

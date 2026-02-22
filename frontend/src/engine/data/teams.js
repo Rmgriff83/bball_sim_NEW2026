@@ -25,7 +25,7 @@ export const TEAMS = [
   { name: 'Minnesota Timberpups', city: 'Minnesota', abbreviation: 'MIN', conference: 'west', division: 'Northwest', primary_color: '#0C2340', secondary_color: '#236192', facilities: { training: 3, medical: 3, scouting: 3, analytics: 3 } },
   { name: 'Oklahoma City Blunder', city: 'Oklahoma City', abbreviation: 'OKC', conference: 'west', division: 'Northwest', primary_color: '#007AC1', secondary_color: '#EF3B24', facilities: { training: 4, medical: 3, scouting: 5, analytics: 5 } },
   { name: 'Portland Trail Losers', city: 'Portland', abbreviation: 'POR', conference: 'west', division: 'Northwest', primary_color: '#E03A3E', secondary_color: '#000000', facilities: { training: 2, medical: 3, scouting: 3, analytics: 2 } },
-  { name: 'Utah Jizz', city: 'Utah', abbreviation: 'UTA', conference: 'west', division: 'Northwest', primary_color: '#002B5C', secondary_color: '#00471B', facilities: { training: 3, medical: 3, scouting: 4, analytics: 3 } },
+  { name: 'Utah Fizz', city: 'Utah', abbreviation: 'UTA', conference: 'west', division: 'Northwest', primary_color: '#002B5C', secondary_color: '#00471B', facilities: { training: 3, medical: 3, scouting: 4, analytics: 3 } },
 
   // WESTERN CONFERENCE - PACIFIC
   { name: 'Golden State Worriers', city: 'San Francisco', abbreviation: 'GSW', conference: 'west', division: 'Pacific', primary_color: '#1D428A', secondary_color: '#FFC72C', facilities: { training: 5, medical: 5, scouting: 4, analytics: 5 } },

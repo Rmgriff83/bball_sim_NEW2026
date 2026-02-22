@@ -233,6 +233,14 @@ export function executeTrade({
       });
       updatedLeaguePlayers = result.leaguePlayers;
       updatedUserRoster = result.userRoster;
+
+      // Mark player as traded for motivation weight shifts at season end
+      const markTraded = (arr) => {
+        const p = arr.find(pl => (pl.id ?? '') == asset.playerId);
+        if (p) p.wasTraded = true;
+      };
+      markTraded(updatedLeaguePlayers);
+      markTraded(updatedUserRoster);
     } else if (asset.type === 'pick') {
       updatedDraftPicks = transferPick({
         pickId: asset.pickId,

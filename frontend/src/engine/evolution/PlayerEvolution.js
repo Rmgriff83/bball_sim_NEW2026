@@ -24,10 +24,26 @@ import PersonalityEffects from './PersonalityEffects';
 import BadgeSynergyService from './BadgeSynergyService';
 import EvolutionNewsService from './EvolutionNewsService';
 import * as Config from '../config/GameConfig';
+import {
+  generateMotivations,
+  recalculateSatisfaction,
+  applyWeightShifts,
+  getMarketSize,
+} from '../ai/MotivationService';
 
 // Singleton instances for class-based services
 const personalityEffects = new PersonalityEffects();
 const badgeSynergyService = new BadgeSynergyService();
+
+// Simple expected salary lookup (avoids circular import with AITradeService)
+function calculateExpectedSalarySimple(rating) {
+  if (rating >= 90) return 40_000_000;
+  if (rating >= 85) return 30_000_000;
+  if (rating >= 80) return 20_000_000;
+  if (rating >= 75) return 10_000_000;
+  if (rating >= 70) return 5_000_000;
+  return 2_000_000;
+}
 const newsService = new EvolutionNewsService();
 
 /**
@@ -1246,7 +1262,7 @@ export function processMonthlyDevelopment(players, difficulty = 'pro', options =
  * @param {string} difficulty - Campaign difficulty
  * @returns {{ players: Array, results: Object, news: Array }}
  */
-export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro') {
+export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro', teamContextMap = {}) {
   const results = {
     developed: [],
     regressed: [],
@@ -1300,6 +1316,48 @@ export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro') 
     const yearsRemaining = player.contract_years_remaining ?? player.contractYearsRemaining ?? 1;
     player.contract_years_remaining = Math.max(0, yearsRemaining - 1);
     player.contractYearsRemaining = player.contract_years_remaining;
+
+    // Generate motivations if missing (covers existing campaigns)
+    if (!player.motivations) {
+      player.motivations = generateMotivations(player);
+    }
+
+    // Recalculate motivation satisfaction using team context
+    const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? '';
+    const teamCtx = teamContextMap[teamAbbr];
+    if (teamCtx && player.motivations) {
+      const gp = player.gamesPlayedThisSeason ?? player.games_played_this_season ?? 0;
+      const mins = player.minutesPlayedThisSeason ?? player.minutes_played_this_season ?? 0;
+      const playerRating = player.overallRating ?? player.overall_rating ?? 70;
+
+      // Build per-player context from team context + player stats
+      const motivationContext = {
+        teamWinPct: teamCtx.winPct ?? 0.5,
+        madePlayoffs: teamCtx.madePlayoffs ?? false,
+        playerStats: { gamesPlayed: gp, minutes: mins },
+        teamRoster: teamCtx.roster ?? [],
+        teamMarketSize: teamCtx.marketSize ?? getMarketSize(teamAbbr),
+        yearsWithTeam: player.careerSeasons ?? player.career_seasons ?? 1,
+        coachStability: teamCtx.coachStability ?? true,
+        hasChampionship: teamCtx.hasChampionship ?? false,
+        contractSalary: player.contractSalary ?? player.contract_salary ?? 0,
+        expectedSalary: calculateExpectedSalarySimple(playerRating),
+      };
+
+      recalculateSatisfaction(player, motivationContext);
+
+      // Apply weight shifts based on career events
+      applyWeightShifts(player, {
+        age,
+        wasTraded: player.wasTraded ?? false,
+        wonChampionship: teamCtx.hasChampionship ?? false,
+      });
+
+      // Clear the traded flag after processing
+      if (player.wasTraded) {
+        player.wasTraded = false;
+      }
+    }
 
     // Recalculate overall
     player = recalculateOverall(player);

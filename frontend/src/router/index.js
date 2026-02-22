@@ -67,6 +67,12 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/store',
+    name: 'store',
+    component: lazyLoad(() => import('@/views/store/StoreView.vue')),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/campaigns',
     name: 'campaigns',
     component: lazyLoad(() => import('@/views/dashboard/CampaignsView.vue')),

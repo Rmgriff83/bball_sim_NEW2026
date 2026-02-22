@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton } from '@/components/ui'
-import { Gamepad2, Plus, User, LogOut, LayoutDashboard, Trophy } from 'lucide-vue-next'
+import { Gamepad2, Plus, User, LogOut, LayoutDashboard, Trophy, ShoppingBag } from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -26,6 +26,10 @@ async function handleLogout() {
           <router-link to="/campaigns" class="nav-link">
             <LayoutDashboard :size="18" />
             <span>Campaigns</span>
+          </router-link>
+          <router-link to="/store" class="nav-link">
+            <ShoppingBag :size="18" />
+            <span>Store</span>
           </router-link>
           <router-link to="/profile" class="nav-link">
             <User :size="18" />
@@ -134,7 +138,7 @@ async function handleLogout() {
   font-size: 1.5rem;
   font-weight: 400;
   letter-spacing: 0.02em;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-tertiary));
+  background: linear-gradient(135deg, var(--color-primary), #F4A259);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -248,7 +252,7 @@ async function handleLogout() {
 }
 
 .action-icon.continue {
-  background: linear-gradient(135deg, var(--color-primary), var(--color-tertiary));
+  background: linear-gradient(135deg, var(--color-primary), #F4A259);
   color: white;
 }
 

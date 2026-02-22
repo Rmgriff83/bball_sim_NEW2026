@@ -52,7 +52,7 @@ export const TeamRepository = {
     const db = await getDB()
     const team = await db.get('teams', [campaignId, teamId])
     if (!team) throw new Error(`Team ${teamId} not found`)
-    team.coaching_scheme = scheme
+    team.coaching_scheme = JSON.parse(JSON.stringify(scheme))
     team.updatedAt = new Date().toISOString()
     return db.put('teams', team)
   },

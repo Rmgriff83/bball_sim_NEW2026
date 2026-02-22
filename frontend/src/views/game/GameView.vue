@@ -3663,6 +3663,8 @@ onUnmounted(() => {
 <style scoped>
 .game-view {
   padding-bottom: 100px;
+  max-width: 1024px;
+  margin: 0 auto;
 }
 
 .game-loading-placeholder {
