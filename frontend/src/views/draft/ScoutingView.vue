@@ -73,7 +73,9 @@ const ATTRIBUTE_CATEGORIES = {
   'Mental': ['workEthic', 'basketballIQ', 'clutch', 'consistency', 'intangibles'],
 }
 
-const TOTAL_SCOUT_ACTIONS = 4 // 4 scout actions x 8 attrs = 32 total
+const BASE_REVEAL_COUNT = 8
+const PERK_REVEAL_COUNT = Math.ceil(ALL_ATTRIBUTES.length / 3) // 33% per action = 3 actions to fully scout
+const TOTAL_SCOUT_ACTIONS = 4 // base: 4 scout actions x 8 attrs = 32 total
 
 function getRevealedAttributes(playerId) {
   return scoutedPlayers.value[playerId]?.revealedAttributes || []
@@ -85,8 +87,17 @@ function isAttributeRevealed(playerId, attr) {
 
 function getScoutProgress(playerId) {
   const revealed = getRevealedAttributes(playerId).length
-  const actions = Math.ceil(revealed / 8)
-  return { actions, total: TOTAL_SCOUT_ACTIONS, revealed, totalAttrs: ALL_ATTRIBUTES.length }
+  const perAction = hasExtraReveals() ? PERK_REVEAL_COUNT : BASE_REVEAL_COUNT
+  const total = hasExtraReveals() ? 3 : TOTAL_SCOUT_ACTIONS
+  const actions = Math.ceil(revealed / perAction)
+  return { actions, total, revealed, totalAttrs: ALL_ATTRIBUTES.length }
+}
+
+function hasExtraReveals() {
+  const scout = campaign.value?.settings?.scout
+  const facilityLevel = teamStore.team?.facilities?.scouting ?? 1
+  const perk = scout?.perks?.find(p => p.key === 'extra_reveals')
+  return perk && facilityLevel >= perk.requiredLevel
 }
 
 function isFullyScouted(playerId) {
@@ -162,8 +173,8 @@ async function scoutPlayer(player) {
       return perk && facilityLevel >= perk.requiredLevel
     }
 
-    // Randomly select attributes — 10 if extra_reveals perk is active, else 8
-    const revealCount = isPerkActive('extra_reveals') ? 10 : 8
+    // Randomly select attributes — 33% if extra_reveals perk is active, else 8
+    const revealCount = isPerkActive('extra_reveals') ? PERK_REVEAL_COUNT : BASE_REVEAL_COUNT
     const toReveal = []
     const pool = [...unrevealed]
     const count = Math.min(revealCount, pool.length)

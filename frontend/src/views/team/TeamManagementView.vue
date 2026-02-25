@@ -946,7 +946,7 @@ function isPerkActiveForScout(perk) {
 }
 
 const PERK_LABELS = {
-  extra_reveals: { label: 'Extra Reveals', description: 'Reveals 10 attributes per scout action instead of 8' },
+  extra_reveals: { label: 'Extra Reveals', description: 'Reveals 33% of attributes per scout action (3 actions to fully scout)' },
   badge_reveal: { label: 'Badge Intel', description: '35% chance per scout action to reveal badges' },
   morale_reveal: { label: 'Personality Intel', description: '35% chance per scout action to reveal morale/personality' },
 }

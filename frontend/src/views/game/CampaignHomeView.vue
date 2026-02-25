@@ -509,6 +509,15 @@ onUnmounted(() => {
   stopIdleDetection()
 })
 
+// Watch for date changes to trigger mid-season events (trade deadline, All-Star, etc.)
+watch(currentDate, async (newDate, oldDate) => {
+  if (!newDate || newDate === oldDate) return
+  // Skip if background sim is running — events will be checked when it finishes
+  if (gameStore.backgroundSimulating) return
+  await checkTradeDeadline()
+  await checkAllStarSelections()
+})
+
 // Check if regular season ended and handle playoffs
 async function checkPlayoffStatus() {
   try {

@@ -887,15 +887,6 @@ onMounted(async () => {
     // Refresh campaign data for settings
     await campaignStore.fetchCampaign(campaignId.value)
 
-    // Load saved coaching styles from campaign settings
-    const campaignSettings = campaignStore.currentCampaign?.settings
-    if (campaignSettings?.offensive_style) {
-      selectedOffense.value = campaignSettings.offensive_style
-    }
-    if (campaignSettings?.defensive_style) {
-      selectedDefense.value = campaignSettings.defensive_style
-    }
-
     // Fetch standings for team records display
     await leagueStore.fetchStandings(campaignId.value)
 
@@ -916,8 +907,17 @@ onMounted(async () => {
       await gameStore.fetchGame(campaignId.value, gameId.value)
     }
 
-    // Fetch opponent roster only (user roster comes from teamStore)
+    // Load coaching styles from user's team coaching_scheme
     const currentGame = gameStore.currentGame
+    const userTeamObj = userIsHome.value ? currentGame?.home_team : currentGame?.away_team
+    if (userTeamObj?.coaching_scheme?.offensive) {
+      selectedOffense.value = userTeamObj.coaching_scheme.offensive
+    }
+    if (userTeamObj?.coaching_scheme?.defensive) {
+      selectedDefense.value = userTeamObj.coaching_scheme.defensive
+    }
+
+    // Fetch opponent roster only (user roster comes from teamStore)
     if (currentGame?.home_team?.id && currentGame?.away_team?.id) {
       const opponentTeamId = userIsHome.value
         ? currentGame.away_team.id
@@ -1626,12 +1626,11 @@ watch(
     if (prevOffense === undefined || prevDefense === undefined) return
 
     try {
-      await campaignStore.updateCampaign(campaignId.value, {
-        settings: {
-          offensive_style: offense,
-          defensive_style: defense
-        }
-      })
+      await teamStore.updateCoachingScheme(
+        campaignId.value,
+        offense,
+        defense
+      )
     } catch (err) {
       console.error('Failed to save coaching styles:', err)
     }

@@ -33,7 +33,7 @@ const SCOUT_TIERS = {
     label: '3-Star Scout',
     rating: 70,
     perks: [
-      { key: 'extra_reveals', label: 'Extra Reveals', description: 'Reveals 10 attributes per scout action instead of 8', requiredLevel: 2 },
+      { key: 'extra_reveals', label: 'Extra Reveals', description: 'Reveals 33% of attributes per scout action (3 actions to fully scout)', requiredLevel: 2 },
     ]
   },
   4: {
@@ -41,7 +41,7 @@ const SCOUT_TIERS = {
     label: '4-Star Scout',
     rating: 85,
     perks: [
-      { key: 'extra_reveals', label: 'Extra Reveals', description: 'Reveals 10 attributes per scout action instead of 8', requiredLevel: 2 },
+      { key: 'extra_reveals', label: 'Extra Reveals', description: 'Reveals 33% of attributes per scout action (3 actions to fully scout)', requiredLevel: 2 },
       { key: 'badge_reveal', label: 'Badge Intel', description: '35% chance per scout action to reveal a rookie\'s badges', requiredLevel: 3 },
       { key: 'morale_reveal', label: 'Personality Intel', description: '35% chance per scout action to reveal a rookie\'s morale/personality', requiredLevel: 3 },
     ]
