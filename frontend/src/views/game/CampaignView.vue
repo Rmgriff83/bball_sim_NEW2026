@@ -109,11 +109,9 @@ onUnmounted(() => {
   window.removeEventListener('scroll', handleScroll, true)
   engineStore.teardown()
 
-  // Stop sync timer and push any pending changes
+  // Stop sync timer and push any pending changes on route leave
   syncStore.stopAutoSync()
-  if (syncStore.hasPendingChanges) {
-    syncStore.syncNow()
-  }
+  syncStore.syncOnRouteLeave()
 })
 
 async function handleLogout() {

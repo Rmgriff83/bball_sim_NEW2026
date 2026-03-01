@@ -13,6 +13,7 @@ import { ACHIEVEMENTS } from '../data/achievements';
 
 const TOKENS_PER_SYNERGY = 1;
 const WIN_MULTIPLIER = 1.5;
+const WIN_BONUS_TOKENS = 2;
 
 // =============================================================================
 // SYNERGY COUNTING
@@ -61,23 +62,19 @@ export function processGameRewards({ animationData, isHome, didWin, synergiesAct
   // Use animation data if available, otherwise fall back to the simulator's counters
   const synergyCount = synergiesActivated ?? countUserTeamSynergies(animationData, teamKey);
 
-  if (synergyCount === 0) {
-    return {
-      synergies_activated: 0,
-      tokens_awarded: 0,
-      win_bonus_applied: false,
-    };
-  }
+  // Flat win bonus: always awarded for wins regardless of synergies
+  const winBonus = didWin ? WIN_BONUS_TOKENS : 0;
 
-  // Calculate tokens with optional win multiplier
+  // Calculate synergy tokens with optional win multiplier
   const baseTokens = synergyCount * TOKENS_PER_SYNERGY;
-  const tokensAwarded = didWin
+  const synergyTokens = didWin
     ? Math.ceil(baseTokens * WIN_MULTIPLIER)
     : baseTokens;
 
   return {
     synergies_activated: synergyCount,
-    tokens_awarded: tokensAwarded,
+    tokens_awarded: synergyTokens + winBonus,
+    win_bonus: winBonus,
     win_bonus_applied: didWin,
   };
 }
@@ -178,4 +175,5 @@ export function getAchievementProgress(criteriaType, currentValue) {
 export {
   TOKENS_PER_SYNERGY,
   WIN_MULTIPLIER,
+  WIN_BONUS_TOKENS,
 };

@@ -442,13 +442,13 @@ export const FATIGUE = {
     // 9-20 mins: rotation role -- marginal fatigue gain
     { min: 9, max: 20, type: "gain", base: 1.0 },
     // 21-30 mins: significant role -- moderate fatigue gain
-    { min: 21, max: 30, type: "gain", base: 3.2 },
+    { min: 21, max: 30, type: "gain", base: 2.2 },
     // 31+ mins: heavy minutes -- significant fatigue gain
-    { min: 31, max: 48, type: "gain", base: 6.5 },
+    { min: 31, max: 48, type: "gain", base: 3.5 },
   ],
   max_fatigue: 100,
-  weekly_recovery: 19.5,
-  rest_day_recovery: 22.0,
+  weekly_recovery: 21.5,
+  rest_day_recovery: 23.0,
   performance_penalty_start: 50,
   max_performance_penalty: 0.25,
 };

@@ -7,7 +7,8 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 
-const SYNC_INTERVAL_MS = 60000 // 60 seconds
+const SYNC_INTERVAL_MS = 43200000 // 12 hours
+const SYNC_COOLDOWN_MS = 300000 // 5 minutes — minimum time between event-driven syncs
 
 export const useSyncStore = defineStore('sync', () => {
   // State
@@ -17,6 +18,8 @@ export const useSyncStore = defineStore('sync', () => {
   const syncError = ref(null)
   const autoSyncIntervalId = ref(null)
   const activeCampaignId = ref(null)
+  const _lastEventSyncAt = ref(0) // timestamp of last event-driven sync
+  const _visibilityHandler = ref(null)
 
   // Getters
   const hasPendingChanges = computed(() => isDirty.value)
@@ -71,7 +74,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Start the auto-sync timer (60 second interval).
+   * Start the auto-sync timer and register event-driven sync triggers.
    */
   function startAutoSync() {
     if (autoSyncIntervalId.value) return
@@ -81,16 +84,49 @@ export const useSyncStore = defineStore('sync', () => {
         await syncNow()
       }
     }, SYNC_INTERVAL_MS)
+
+    // Sync when tab becomes hidden (user switching away)
+    _visibilityHandler.value = () => {
+      if (document.hidden && activeCampaignId.value && hasPendingChanges.value) {
+        _eventDrivenSync()
+      }
+    }
+    document.addEventListener('visibilitychange', _visibilityHandler.value)
   }
 
   /**
-   * Stop the auto-sync timer.
+   * Stop the auto-sync timer and remove event listeners.
    */
   function stopAutoSync() {
     if (autoSyncIntervalId.value) {
       clearInterval(autoSyncIntervalId.value)
       autoSyncIntervalId.value = null
     }
+
+    if (_visibilityHandler.value) {
+      document.removeEventListener('visibilitychange', _visibilityHandler.value)
+      _visibilityHandler.value = null
+    }
+  }
+
+  /**
+   * Sync triggered by campaign route leave.
+   * Respects the 5-minute cooldown.
+   */
+  function syncOnRouteLeave() {
+    if (activeCampaignId.value && hasPendingChanges.value) {
+      _eventDrivenSync()
+    }
+  }
+
+  /**
+   * Event-driven sync with 5-minute cooldown to avoid rapid-fire syncs.
+   */
+  async function _eventDrivenSync() {
+    const now = Date.now()
+    if (now - _lastEventSyncAt.value < SYNC_COOLDOWN_MS) return
+    _lastEventSyncAt.value = now
+    await syncNow()
   }
 
   /**
@@ -172,18 +208,26 @@ export const useSyncStore = defineStore('sync', () => {
     return slim
   }
 
+  /**
+   * Strip season data for sync.
+   * Completed (past) seasons: only keep metadata + final standings + aggregate player stats;
+   * drop the entire schedule array (individual game results/box scores).
+   * Current season: keep stripped schedule (compact box scores, no savedGameState/evolution).
+   */
   function _stripSeasonForSync(season) {
     const slim = { ...season }
+    const isCompleted = slim.phase === 'offseason' || slim.isComplete || slim.is_complete
 
-    // Compact schedule: strip box scores, evolution, and saved game state
-    if (Array.isArray(slim.schedule)) {
+    if (isCompleted && Array.isArray(slim.schedule)) {
+      // Completed season: drop entire schedule to save space
+      delete slim.schedule
+    } else if (Array.isArray(slim.schedule)) {
+      // Current season: compact schedule, strip box scores, evolution, saved game state
       slim.schedule = slim.schedule.map(game => {
         const g = { ...game }
-        // Remove heavy fields from completed games
         delete g.savedGameState
         delete g.evolution
 
-        // Compact box scores for all games (keep only essential stats)
         if (g.boxScore && g.isComplete) {
           g.boxScore = _compactBoxScore(g.boxScore)
         }
@@ -263,7 +307,7 @@ export const useSyncStore = defineStore('sync', () => {
 
   /**
    * Trigger immediate sync (for "Save to Cloud" button).
-   * Serializes the full campaign snapshot and pushes to server.
+   * Serializes the full campaign snapshot and pushes to server in chunks.
    */
   async function syncNow() {
     if (!activeCampaignId.value) return
@@ -275,7 +319,7 @@ export const useSyncStore = defineStore('sync', () => {
       isSyncing.value = true
       syncError.value = null
 
-      // Push full snapshot to cloud
+      // Push snapshot in chunks to cloud
       await pushChanges(activeCampaignId.value)
 
       // Update sync timestamp
@@ -292,7 +336,10 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Push full campaign snapshot to the server.
+   * Push campaign snapshot to the server in 3 sequential chunked requests.
+   * 1. meta (campaign + teams) — always < 50KB
+   * 2. players — typically ~200-300KB
+   * 3. seasons — variable, but much smaller with aggressive stripping
    */
   async function pushChanges(campaignId) {
     const snapshot = await _serializeCampaignSnapshot(campaignId)
@@ -300,8 +347,27 @@ export const useSyncStore = defineStore('sync', () => {
     // Only make API call if we have data to push
     if (!snapshot.campaign) return
 
-    const response = await api.post(`/api/sync/${campaignId}/push`, snapshot)
-    return response.data
+    // Chunk 1: meta (campaign + teams)
+    await api.post(`/api/sync/${campaignId}/push`, {
+      part: 'meta',
+      campaign: snapshot.campaign,
+      teams: snapshot.teams,
+      clientUpdatedAt: snapshot.clientUpdatedAt,
+    })
+
+    // Chunk 2: players
+    await api.post(`/api/sync/${campaignId}/push`, {
+      part: 'players',
+      players: snapshot.players,
+      clientUpdatedAt: snapshot.clientUpdatedAt,
+    })
+
+    // Chunk 3: seasons
+    await api.post(`/api/sync/${campaignId}/push`, {
+      part: 'seasons',
+      seasons: snapshot.seasons,
+      clientUpdatedAt: snapshot.clientUpdatedAt,
+    })
   }
 
   /**
@@ -421,6 +487,7 @@ export const useSyncStore = defineStore('sync', () => {
     startAutoSync,
     stopAutoSync,
     syncNow,
+    syncOnRouteLeave,
     pushChanges,
     pullChanges,
     resolveConflict,

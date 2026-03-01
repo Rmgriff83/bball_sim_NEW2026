@@ -482,16 +482,6 @@ class GameSimulator {
       const player = playerMap[id]
       const requiredPosition = positions[index] || null
 
-      if (requiredPosition) {
-        const primaryPos = player.position || null
-        const secondaryPos = player.secondary_position || null
-
-        if (primaryPos !== requiredPosition && secondaryPos !== requiredPosition) {
-          console.warn(`Lineup validation failed: ${player.first_name} cannot play ${requiredPosition}`)
-          return this.selectLineup(allPlayers)
-        }
-      }
-
       // If starter is injured, find a healthy replacement who can play the position
       if (this._isInjured(player)) {
         const replacement = this._findHealthyReplacement(allPlayers, usedIds, playerIds, requiredPosition)

@@ -9,6 +9,7 @@ import {
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TEAMS } from '@/engine/data/teams'
 import { useSyncStore } from '@/stores/sync'
+import api from '@/composables/useApi'
 
 export const useCampaignStore = defineStore('campaign', () => {
   // State
@@ -181,6 +182,13 @@ export const useCampaignStore = defineStore('campaign', () => {
 
       if (currentCampaign.value?.id === id) {
         currentCampaign.value = null
+      }
+
+      // Best-effort S3 cleanup — deletion succeeds locally even if API fails
+      try {
+        await api.delete(`/api/sync/${id}`)
+      } catch {
+        console.warn(`[Campaign] S3 cleanup failed for ${id}, data will be orphaned`)
       }
     } catch (err) {
       error.value = err.message || 'Failed to delete campaign'

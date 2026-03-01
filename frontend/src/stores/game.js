@@ -14,9 +14,10 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { SeasonManager } from '@/engine/season/SeasonManager'
 import { PlayoffManager } from '@/engine/season/PlayoffManager'
-import { processGameRewards, TOKENS_PER_SYNERGY, WIN_MULTIPLIER } from '@/engine/rewards/RewardService'
+import { processGameRewards, TOKENS_PER_SYNERGY, WIN_MULTIPLIER, WIN_BONUS_TOKENS } from '@/engine/rewards/RewardService'
 import { NewsService } from '@/engine/season/NewsService'
 import { processAiToAiTrades, computeAiTradingBlock, analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
+import { AllStarService } from '@/engine/season/AllStarService'
 
 export const useGameStore = defineStore('game', () => {
   // State
@@ -398,6 +399,97 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * Process mid-season events (trade deadline, All-Star) when the date crosses
+   * their trigger dates.  Called from _advanceDateIfNeeded so events fire even
+   * during batch / background simulation.
+   */
+  async function _processMidSeasonEvents(campaignId, campaign, previousDate, newDate) {
+    try {
+      // Only run during regular season
+      const phase = campaign.settings?.season_phase ?? campaign.settings?.seasonPhase ?? campaign.phase ?? 'regular_season'
+      if (phase !== 'regular_season') return
+
+      const year = campaign.currentSeasonYear ?? 2025
+      const deadlineDate = `${year + 1}-01-06`
+      const allStarDate = `${year + 1}-01-13`
+
+      let seasonData = null
+      let dirty = false
+
+      // --- Trade deadline (Jan 6) ---
+      if (previousDate < deadlineDate && newDate >= deadlineDate && !campaign.settings?.trade_deadline_passed) {
+        if (!seasonData) seasonData = await SeasonRepository.get(campaignId, year)
+        if (seasonData) {
+          // Set flag on campaign (mutates the caller's object, saved by caller)
+          if (!campaign.settings) campaign.settings = {}
+          campaign.settings.trade_deadline_passed = true
+
+          // Add news event
+          if (!seasonData.news) seasonData.news = []
+          seasonData.news.push({
+            id: `news_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            event_type: 'trade_deadline',
+            headline: 'Trade deadline has passed',
+            body: 'The trade deadline has officially passed. No more trades can be made this season.',
+            date: deadlineDate,
+          })
+          dirty = true
+        }
+      }
+
+      // --- All-Star selections (Jan 13) ---
+      if (previousDate < allStarDate && newDate >= allStarDate) {
+        if (!seasonData) seasonData = await SeasonRepository.get(campaignId, year)
+        if (seasonData && !seasonData.allStarRosters) {
+          const [allTeams, allPlayers] = await Promise.all([
+            TeamRepository.getAllForCampaign(campaignId),
+            PlayerRepository.getAllForCampaign(campaignId),
+          ])
+          const userTeamId = campaign.teamId
+
+          const result = AllStarService.processAllStarSelections({
+            seasonData,
+            year,
+            currentDate: allStarDate,
+            allPlayers,
+            teams: allTeams,
+            userTeamId,
+            alreadySelected: false,
+          })
+
+          if (result) {
+            // Add news events
+            if (!seasonData.news) seasonData.news = []
+            for (const evt of result.newsEvents) {
+              seasonData.news.push({
+                id: `news_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                event_type: evt.eventType ?? evt.event_type ?? 'award',
+                headline: evt.headline ?? '',
+                body: evt.body ?? '',
+                date: evt.gameDate ?? allStarDate,
+                player_id: evt.playerId ?? null,
+                team_id: evt.teamId ?? null,
+              })
+            }
+            dirty = true
+          }
+        }
+      }
+
+      // Save once if anything was processed
+      if (dirty && seasonData) {
+        if (seasonData.news && seasonData.news.length > 50) {
+          seasonData.news = seasonData.news.slice(-50)
+        }
+        await SeasonRepository.save({ campaignId, year, ...seasonData })
+        useSyncStore().markDirty()
+      }
+    } catch (err) {
+      console.warn('[GameStore] Mid-season event processing failed:', err)
+    }
+  }
+
+  /**
    * Advance the campaign date to the day after the given game date.
    * Also awards scouting points for any new weeks that passed.
    * Returns { scoutingPointsEarned, previousWeek, currentWeek } for weekly summary.
@@ -432,6 +524,9 @@ export const useGameStore = defineStore('game', () => {
       if (currentWeek > previousWeek) {
         await _processWeeklyAiTrades(campaignId)
       }
+
+      // Process mid-season events (trade deadline, All-Star) if date crosses trigger dates
+      await _processMidSeasonEvents(campaignId, campaign, campaign.currentDate || '', newDate)
 
       campaign.currentDate = newDate
       await CampaignRepository.save(campaign)
@@ -768,9 +863,11 @@ export const useGameStore = defineStore('game', () => {
           synergiesActivated: synCount,
         })
 
-        // Simmed (non-animated) games only earn 10% of tokens
-        if (mode !== 'animated' && rewards.tokens_awarded > 0) {
-          rewards.tokens_awarded = Math.max(1, Math.round(rewards.tokens_awarded * 0.1))
+        // Simmed (non-animated) games only earn 10% of synergy tokens; win bonus stays full
+        if (mode !== 'animated') {
+          const synergyTokens = rewards.tokens_awarded - (rewards.win_bonus || 0)
+          const reducedSynergy = synergyTokens > 0 ? Math.max(1, Math.round(synergyTokens * 0.1)) : 0
+          rewards.tokens_awarded = reducedSynergy + (rewards.win_bonus || 0)
         }
 
         result.rewards = rewards
@@ -887,7 +984,7 @@ export const useGameStore = defineStore('game', () => {
         })
         result.evolution = evolution
 
-        // Award tokens at 10% rate for simmed games (using synergy counts from result)
+        // Award tokens: 10% of synergy tokens for simmed games + full win bonus
         const isHome = userGame.homeTeamId === userTeamId
         const synergyCount = isHome
           ? (result.synergies_activated?.home ?? 0)
@@ -895,22 +992,19 @@ export const useGameStore = defineStore('game', () => {
         const didWin = isHome
           ? result.home_score > result.away_score
           : result.away_score > result.home_score
-        if (synergyCount > 0) {
-          const baseTokens = synergyCount * TOKENS_PER_SYNERGY
-          const fullTokens = didWin ? Math.ceil(baseTokens * WIN_MULTIPLIER) : baseTokens
-          const simTokens = Math.max(1, Math.round(fullTokens * 0.1))
-          result.rewards = {
-            synergies_activated: synergyCount,
-            tokens_awarded: simTokens,
-            win_bonus_applied: didWin,
-          }
-          await _accumulateAwardTokens(campaignId, { tokens_awarded: simTokens })
-        } else {
-          result.rewards = {
-            synergies_activated: 0,
-            tokens_awarded: 0,
-            win_bonus_applied: false,
-          }
+        const winBonus = didWin ? WIN_BONUS_TOKENS : 0
+        const baseTokens = synergyCount * TOKENS_PER_SYNERGY
+        const fullSynergyTokens = didWin ? Math.ceil(baseTokens * WIN_MULTIPLIER) : baseTokens
+        const simSynergyTokens = fullSynergyTokens > 0 ? Math.max(1, Math.round(fullSynergyTokens * 0.1)) : 0
+        const totalTokens = simSynergyTokens + winBonus
+        result.rewards = {
+          synergies_activated: synergyCount,
+          tokens_awarded: totalTokens,
+          win_bonus: winBonus,
+          win_bonus_applied: didWin,
+        }
+        if (totalTokens > 0) {
+          await _accumulateAwardTokens(campaignId, { tokens_awarded: totalTokens })
         }
 
         await _persistGameResult(campaignId, year, seasonData, userGame.id, result, true)
@@ -1302,10 +1396,10 @@ export const useGameStore = defineStore('game', () => {
         synergiesActivated: synCount,
       })
 
-      // Sim-to-end only earns 10% of tokens
-      if (rewards.tokens_awarded > 0) {
-        rewards.tokens_awarded = Math.max(1, Math.round(rewards.tokens_awarded * 0.1))
-      }
+      // Sim-to-end only earns 10% of synergy tokens; win bonus stays full
+      const synergyTokens = rewards.tokens_awarded - (rewards.win_bonus || 0)
+      const reducedSynergy = synergyTokens > 0 ? Math.max(1, Math.round(synergyTokens * 0.1)) : 0
+      rewards.tokens_awarded = reducedSynergy + (rewards.win_bonus || 0)
 
       result.rewards = rewards
 
@@ -1531,10 +1625,10 @@ export const useGameStore = defineStore('game', () => {
           synergiesActivated: synCount,
         })
 
-        // Simmed games only earn 10% of tokens
-        if (rewards.tokens_awarded > 0) {
-          rewards.tokens_awarded = Math.max(1, Math.round(rewards.tokens_awarded * 0.1))
-        }
+        // Simmed games only earn 10% of synergy tokens; win bonus stays full
+        const synergyTokens = rewards.tokens_awarded - (rewards.win_bonus || 0)
+        const reducedSynergy = synergyTokens > 0 ? Math.max(1, Math.round(synergyTokens * 0.1)) : 0
+        rewards.tokens_awarded = reducedSynergy + (rewards.win_bonus || 0)
 
         result.rewards = rewards
 

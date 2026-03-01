@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton, LoadingSpinner } from '@/components/ui'
-import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle } from 'lucide-vue-next'
+import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2 } from 'lucide-vue-next'
 
 const router = useRouter()
 const campaignStore = useCampaignStore()
@@ -17,6 +17,10 @@ const selectedDifficulty = ref('pro')
 const selectedDraftMode = ref('standard')
 const creating = ref(false)
 const createError = ref(null)
+
+const MAX_CAMPAIGNS = 4
+const confirmDeleteId = ref(null)
+const deleting = ref(false)
 
 const draftModes = [
   { value: 'standard', label: 'Standard', description: 'Teams come with pre-built rosters' },
@@ -41,13 +45,43 @@ async function handleLogout() {
 }
 
 function openCreateModal() {
+  if (campaignStore.campaigns.length >= MAX_CAMPAIGNS) {
+    createError.value = `Maximum of ${MAX_CAMPAIGNS} campaigns reached. Delete an existing campaign to create a new one.`
+    return
+  }
+  createError.value = null
   showCreateModal.value = true
   newCampaignName.value = ''
   selectedTeam.value = null
   selectedDifficulty.value = 'pro'
   selectedDraftMode.value = 'standard'
-  createError.value = null
   document.body.style.overflow = 'hidden'
+}
+
+function requestDelete(campaignId, event) {
+  event.stopPropagation()
+  confirmDeleteId.value = campaignId
+}
+
+function cancelDelete(event) {
+  if (event) event.stopPropagation()
+  confirmDeleteId.value = null
+}
+
+async function confirmDelete(event) {
+  if (event) event.stopPropagation()
+  if (!confirmDeleteId.value) return
+
+  deleting.value = true
+  try {
+    await campaignStore.deleteCampaign(confirmDeleteId.value)
+    createError.value = null // Clear any "max campaigns" error
+  } catch (err) {
+    console.error('Failed to delete campaign:', err)
+  } finally {
+    confirmDeleteId.value = null
+    deleting.value = false
+  }
 }
 
 function closeCreateModal() {
@@ -187,8 +221,14 @@ function getDifficultyLabel(value) {
           </GlassCard>
         </div>
 
+        <!-- Campaign limit error -->
+        <div v-if="createError && !showCreateModal" class="limit-error">
+          <AlertCircle :size="16" />
+          <span>{{ createError }}</span>
+        </div>
+
         <!-- Campaigns Grid -->
-        <div v-else class="campaigns-grid">
+        <div v-if="!campaignStore.loading && campaignStore.campaigns.length > 0" class="campaigns-grid">
           <GlassCard
             v-for="campaign in campaignStore.campaigns"
             :key="campaign.id"
@@ -201,32 +241,54 @@ function getDifficultyLabel(value) {
                 <h3 class="campaign-name">{{ campaign.name }}</h3>
                 <p class="campaign-team">{{ campaign.team?.city }} {{ campaign.team?.name }}</p>
               </div>
-              <div
-                class="team-badge"
-                :style="{ backgroundColor: campaign.team?.primary_color || '#7c3aed' }"
-              >
-                {{ campaign.team?.abbreviation }}
+              <div class="campaign-header-actions">
+                <button
+                  class="delete-btn"
+                  @click="requestDelete(campaign.id, $event)"
+                  title="Delete campaign"
+                >
+                  <Trash2 :size="16" />
+                </button>
+                <div
+                  class="team-badge"
+                  :style="{ backgroundColor: campaign.team?.primary_color || '#7c3aed' }"
+                >
+                  {{ campaign.team?.abbreviation }}
+                </div>
               </div>
             </div>
 
-            <div class="campaign-meta">
-              <span class="meta-item">
-                <Calendar :size="14" />
-                Year {{ campaign.game_year }}
-              </span>
-              <span class="meta-divider">·</span>
-              <span class="meta-item difficulty">{{ getDifficultyLabel(campaign.difficulty) }}</span>
-            </div>
-
-            <div class="campaign-footer">
-              <span class="last-played">
-                Last played: {{ formatDate(campaign.last_played_at) }}
-              </span>
-              <div class="continue-btn">
-                Continue
-                <ChevronRight :size="16" />
+            <!-- Delete confirmation inline -->
+            <div v-if="confirmDeleteId === campaign.id" class="delete-confirm" @click.stop>
+              <p class="delete-confirm-text">Delete this campaign? This cannot be undone.</p>
+              <div class="delete-confirm-actions">
+                <button class="delete-confirm-cancel" @click="cancelDelete($event)">Cancel</button>
+                <button class="delete-confirm-yes" :disabled="deleting" @click="confirmDelete($event)">
+                  {{ deleting ? 'Deleting...' : 'Delete' }}
+                </button>
               </div>
             </div>
+
+            <template v-else>
+              <div class="campaign-meta">
+                <span class="meta-item">
+                  <Calendar :size="14" />
+                  Year {{ campaign.game_year }}
+                </span>
+                <span class="meta-divider">·</span>
+                <span class="meta-item difficulty">{{ getDifficultyLabel(campaign.difficulty) }}</span>
+              </div>
+
+              <div class="campaign-footer">
+                <span class="last-played">
+                  Last played: {{ formatDate(campaign.last_played_at) }}
+                </span>
+                <div class="continue-btn">
+                  Continue
+                  <ChevronRight :size="16" />
+                </div>
+              </div>
+            </template>
           </GlassCard>
         </div>
       </div>
@@ -624,6 +686,110 @@ function getDifficultyLabel(value) {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--color-primary);
+}
+
+/* Campaign limit error banner */
+.limit-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-lg);
+  color: #EF4444;
+  font-size: 0.875rem;
+}
+
+/* Campaign header actions */
+.campaign-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  opacity: 0;
+}
+
+.campaign-card:hover .delete-btn {
+  opacity: 1;
+}
+
+.delete-btn:hover {
+  color: #EF4444;
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Delete confirmation */
+.delete-confirm {
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: var(--radius-lg);
+}
+
+.delete-confirm-text {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.delete-confirm-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.delete-confirm-cancel,
+.delete-confirm-yes {
+  flex: 1;
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+}
+
+.delete-confirm-cancel {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.delete-confirm-cancel:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.delete-confirm-yes {
+  background: #EF4444;
+  border: none;
+  color: white;
+}
+
+.delete-confirm-yes:hover:not(:disabled) {
+  background: #DC2626;
+}
+
+.delete-confirm-yes:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Modal */

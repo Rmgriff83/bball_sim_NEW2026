@@ -59,6 +59,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/sync/campaigns', [SyncController::class, 'listCampaigns']);
     Route::post('/sync/{clientId}/push', [SyncController::class, 'pushSnapshot']);
     Route::get('/sync/{clientId}/pull', [SyncController::class, 'pullSnapshot']);
+    Route::delete('/sync/{clientId}', [SyncController::class, 'deleteCampaign']);
 });
 
 // Public routes

@@ -1025,25 +1025,12 @@ async function checkTradeDeadline() {
   if (tradeDeadlineAlerted.value) return
   const camp = campaignStore.currentCampaign
   if (!camp) return
-  const currentDate = camp.current_date ?? camp.currentDate
-  if (!currentDate) return
-  const year = camp.currentSeasonYear ?? camp.game_year ?? new Date().getFullYear()
   const settings = camp.settings || {}
-  // Trade deadline is January 6 of the season year + 1 (season starts in Oct)
-  const deadlineYear = year + 1
-  const deadlineDate = `${deadlineYear}-01-06`
-  if (currentDate >= deadlineDate && !settings.trade_deadline_passed) {
+  // Flag is now set by game.js _processMidSeasonEvents during date advancement
+  if (settings.trade_deadline_passed) {
     tradeDeadlineAlerted.value = true
-    // Persist the flag so it doesn't fire again
-    if (!camp.settings) camp.settings = {}
-    camp.settings.trade_deadline_passed = true
-    const { CampaignRepository } = await import('@/engine/db/CampaignRepository')
-    const storedCampaign = await CampaignRepository.get(campaignId.value)
-    if (storedCampaign) {
-      if (!storedCampaign.settings) storedCampaign.settings = {}
-      storedCampaign.settings.trade_deadline_passed = true
-      await CampaignRepository.save(storedCampaign)
-    }
+    const year = camp.currentSeasonYear ?? camp.game_year ?? new Date().getFullYear()
+    const deadlineDate = `${year + 1}-01-06`
     breakingNewsStore.enqueue(
       BreakingNewsService.tradeDeadlinePassed({ date: deadlineDate }),
       campaignId.value
@@ -1130,65 +1117,17 @@ async function checkAllStarSelections() {
   if (!camp) return
 
   const year = camp.currentSeasonYear ?? camp.game_year ?? 2025
-  const currentDate = camp.current_date ?? camp.currentDate
-  if (!currentDate) return
 
   const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
-  const { TeamRepository } = await import('@/engine/db/TeamRepository')
-  const { PlayerRepository } = await import('@/engine/db/PlayerRepository')
-  const { AllStarService } = await import('@/engine/season/AllStarService')
-
   const seasonData = await SeasonRepository.get(campaignId.value, year)
   if (!seasonData) return
 
-  // If rosters already exist on seasonData, check if user has viewed them
-  if (seasonData.allStarRosters) {
-    if (!seasonData.allStarViewed) {
-      allStarRosters.value = seasonData.allStarRosters
-      showAllStarModal.value = true
-    }
-    return
+  // Rosters are now populated by game.js _processMidSeasonEvents during date advancement.
+  // Here we only check if they exist and haven't been viewed yet.
+  if (seasonData.allStarRosters && !seasonData.allStarViewed) {
+    allStarRosters.value = seasonData.allStarRosters
+    showAllStarModal.value = true
   }
-
-  // Try to process selections (will return null if date hasn't been reached)
-  const teams = await TeamRepository.getAllForCampaign(campaignId.value)
-  const allPlayers = await PlayerRepository.getAllForCampaign(campaignId.value)
-  const userTeamId = camp.teamId
-
-  const result = AllStarService.processAllStarSelections({
-    seasonData,
-    year,
-    currentDate,
-    allPlayers,
-    teams,
-    userTeamId,
-    alreadySelected: false,
-  })
-
-  if (!result) return
-
-  // Save season data with allStarRosters
-  await SeasonRepository.save(seasonData)
-
-  allStarRosters.value = result.rosters
-
-  // Enqueue breaking news for user team All-Stars
-  const userTeamName = camp.team?.name || 'Your Team'
-  for (const event of result.newsEvents) {
-    if (event.playerId) {
-      breakingNewsStore.enqueue(
-        BreakingNewsService.allStarSelection({
-          playerName: event.headline.replace(/ selected to .*/, ''),
-          teamName: userTeamName,
-          selectionType: event.headline.includes('Rising') ? 'rising_stars' : 'all_star',
-          date: currentDate,
-        }),
-        campaignId.value
-      )
-    }
-  }
-
-  showAllStarModal.value = true
 }
 
 function getInjurySeverityColor(severity) {
@@ -1209,6 +1148,24 @@ function goToLineup() {
 function goToLineupFromRecovery() {
   showRecoveryModal.value = false
   router.push(`/campaign/${campaignId.value}/team`)
+}
+
+async function handleCpuSetLineup() {
+  try {
+    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const roster = teamStore.roster
+    if (!roster || roster.length < 5) {
+      toastStore.showError('Not enough players to set lineup')
+      return
+    }
+    const newLineup = selectBestLineup(roster)
+    await teamStore.updateLineup(campaignId.value, newLineup)
+    showInjuryModal.value = false
+    showRecoveryModal.value = false
+    toastStore.showSuccess('CPU adjusted your lineup')
+  } catch (err) {
+    toastStore.showError('Failed to auto-set lineup')
+  }
 }
 
 async function handleCloseAllStarModal() {
@@ -2031,6 +1988,10 @@ function handleCloseSimulateModal() {
               <button class="inj-btn-dismiss" @click="showInjuryModal = false">
                 Dismiss
               </button>
+              <button class="inj-btn-cpu" @click="handleCpuSetLineup">
+                <Zap :size="16" />
+                CPU Set Lineup
+              </button>
               <button class="inj-btn-lineup" @click="goToLineup">
                 <Users :size="16" />
                 Update Lineup
@@ -2090,6 +2051,10 @@ function handleCloseSimulateModal() {
             <footer class="inj-footer">
               <button class="inj-btn-dismiss" @click="showRecoveryModal = false">
                 Dismiss
+              </button>
+              <button class="inj-btn-cpu" @click="handleCpuSetLineup">
+                <Zap :size="16" />
+                CPU Set Lineup
               </button>
               <button class="inj-btn-lineup" @click="goToLineupFromRecovery">
                 <Users :size="16" />
@@ -3791,6 +3756,7 @@ function handleCloseSimulateModal() {
 }
 
 .inj-btn-dismiss,
+.inj-btn-cpu,
 .inj-btn-lineup {
   flex: 1;
   display: flex;
@@ -3816,6 +3782,17 @@ function handleCloseSimulateModal() {
 .inj-btn-dismiss:hover {
   background: var(--color-bg-tertiary);
   border-color: var(--color-text-secondary);
+}
+
+.inj-btn-cpu {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+}
+
+.inj-btn-cpu:hover {
+  background: rgba(var(--color-primary-rgb, 99, 102, 241), 0.15);
+  transform: translateY(-1px);
 }
 
 .inj-btn-lineup {

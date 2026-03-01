@@ -981,6 +981,24 @@ function goToLineupFromRecovery() {
   router.push(`/campaign/${campaignId.value}/team`)
 }
 
+async function handleCpuSetLineup() {
+  try {
+    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const roster = teamStore.roster
+    if (!roster || roster.length < 5) {
+      toastStore.showError('Not enough players to set lineup')
+      return
+    }
+    const newLineup = selectBestLineup(roster)
+    await teamStore.updateLineup(campaignId.value, newLineup)
+    showInjuryModal.value = false
+    showRecoveryModal.value = false
+    toastStore.showSuccess('CPU adjusted your lineup')
+  } catch (err) {
+    toastStore.showError('Failed to auto-set lineup')
+  }
+}
+
 /**
  * Handle confirm from simulate modal - simulate games then start user's game.
  * From the game preview page, we exclude the user's game so they can play it live.
@@ -1837,7 +1855,7 @@ onUnmounted(() => {
 <template>
   <div class="game-view p-6">
     <!-- Loading -->
-    <div v-if="loading" class="flex justify-center items-center py-12 opacity-60">
+    <div v-if="loading" class="page-loading-container">
       <LoadingSpinner size="md" />
     </div>
 
@@ -3587,6 +3605,10 @@ onUnmounted(() => {
               <button class="inj-btn-dismiss" @click="showInjuryModal = false">
                 Dismiss
               </button>
+              <button class="inj-btn-cpu" @click="handleCpuSetLineup">
+                <Zap :size="16" />
+                CPU Set Lineup
+              </button>
               <button class="inj-btn-lineup" @click="goToLineup">
                 <Users :size="16" />
                 Update Lineup
@@ -3647,6 +3669,10 @@ onUnmounted(() => {
               <button class="inj-btn-dismiss" @click="showRecoveryModal = false">
                 Dismiss
               </button>
+              <button class="inj-btn-cpu" @click="handleCpuSetLineup">
+                <Zap :size="16" />
+                CPU Set Lineup
+              </button>
               <button class="inj-btn-lineup" @click="goToLineupFromRecovery">
                 <Users :size="16" />
                 Update Lineup
@@ -3664,6 +3690,25 @@ onUnmounted(() => {
   padding-bottom: 100px;
   max-width: 1024px;
   margin: 0 auto;
+}
+
+.page-loading-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 60vh;
+}
+
+.page-loading-container :deep(.loading-spinner) {
+  width: 64px;
+  height: 64px;
+}
+
+@media (min-width: 768px) {
+  .page-loading-container :deep(.loading-spinner) {
+    width: 80px;
+    height: 80px;
+  }
 }
 
 .game-loading-placeholder {
@@ -7081,6 +7126,7 @@ onUnmounted(() => {
 }
 
 .inj-btn-dismiss,
+.inj-btn-cpu,
 .inj-btn-lineup {
   flex: 1;
   display: flex;
@@ -7106,6 +7152,17 @@ onUnmounted(() => {
 .inj-btn-dismiss:hover {
   background: var(--color-bg-tertiary);
   border-color: var(--color-text-secondary);
+}
+
+.inj-btn-cpu {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+}
+
+.inj-btn-cpu:hover {
+  background: rgba(var(--color-primary-rgb, 99, 102, 241), 0.15);
+  transform: translateY(-1px);
 }
 
 .inj-btn-lineup {
