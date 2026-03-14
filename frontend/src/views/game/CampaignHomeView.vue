@@ -1107,6 +1107,11 @@ async function handleRejectProposal(proposal) {
 }
 
 function handleCloseProposalModal() {
+  // Closing the modal without explicitly accepting counts as a rejection
+  // so the user doesn't keep seeing the same proposal repeatedly
+  if (currentProposal.value) {
+    tradeStore.rejectProposal(campaignId.value, currentProposal.value.id).catch(() => {})
+  }
   showTradeProposalModal.value = false
   currentProposal.value = null
 }
@@ -1160,6 +1165,42 @@ async function handleCpuSetLineup() {
     }
     const newLineup = selectBestLineup(roster)
     await teamStore.updateLineup(campaignId.value, newLineup)
+
+    // Also recompute target minutes for the new lineup so minutes total 200
+    const starterSet = new Set(newLineup.filter(id => id !== null))
+    const newMinutes = {}
+
+    // Starters: split 160 minutes evenly (max 40 each)
+    const healthyStarters = newLineup.filter(id => id !== null)
+    const starterMins = healthyStarters.length > 0 ? Math.min(Math.floor(160 / healthyStarters.length), 40) : 0
+    let starterTotal = 0
+    for (const id of healthyStarters) {
+      newMinutes[id] = starterMins
+      starterTotal += starterMins
+    }
+
+    // Bench: top healthy bench players get remaining minutes [16, 12, 8, 4]
+    const benchPlayers = roster
+      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
+      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+    let benchBudget = 200 - starterTotal
+    const benchSlots = [16, 12, 8, 4]
+    for (let i = 0; i < benchPlayers.length; i++) {
+      if (i < benchSlots.length && benchBudget > 0) {
+        const mins = Math.min(benchSlots[i], benchBudget)
+        newMinutes[benchPlayers[i].id] = mins
+        benchBudget -= mins
+      } else {
+        newMinutes[benchPlayers[i].id] = 0
+      }
+    }
+
+    // Everyone else (injured players, remaining bench) gets 0
+    for (const p of roster) {
+      if (p && !(p.id in newMinutes)) newMinutes[p.id] = 0
+    }
+    await teamStore.updateTargetMinutes(campaignId.value, newMinutes)
+
     showInjuryModal.value = false
     showRecoveryModal.value = false
     toastStore.showSuccess('CPU adjusted your lineup')

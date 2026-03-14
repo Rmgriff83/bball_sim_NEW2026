@@ -316,6 +316,8 @@ function handleProcessPostGame(payload) {
   const gameData = {
     homeTeamAbbreviation: gameResult.home_team_abbreviation || options?.homeTeamAbbreviation || '',
     awayTeamAbbreviation: gameResult.away_team_abbreviation || options?.awayTeamAbbreviation || '',
+    homeTeamId: gameResult.home_team_id || options?.homeTeamId || '',
+    awayTeamId: gameResult.away_team_id || options?.awayTeamId || '',
   }
 
   const homeScore = gameResult.home_score ?? gameResult.homeScore ?? 0
@@ -334,7 +336,11 @@ function handleProcessPostGame(payload) {
     awayPlayers || [],
     difficulty,
     isPlayoff,
-    gameDate
+    gameDate,
+    {
+      userTeamId: options?.userTeamId || null,
+      trainerPerks: options?.trainerPerks || {},
+    }
   )
 }
 

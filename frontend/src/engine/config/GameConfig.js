@@ -492,8 +492,8 @@ export const OVERALL_WEIGHTS = {
 
 export const UPGRADE_POINTS = {
   enabled: true,
-  points_per_growth: 1.5, // Base: 1.5 points per 1.0 growth (scaled by potential/75)
-  min_growth_threshold: 0.3, // Need 0.3+ total growth to earn any points
+  points_per_growth: 4, // Base: 4 points per 1.0 growth (scaled by potential/75)
+  min_growth_threshold: 0.1, // Need 0.1+ total growth to earn any points
   max_weekly_points: 3, // Cap at 3 points per week (4 for 90+ potential)
   max_stored_points: 99, // Cap total stored points
 };

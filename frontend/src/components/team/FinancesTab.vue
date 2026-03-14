@@ -134,7 +134,9 @@ function handleSign(player) {
 }
 
 function handleInfo(player) {
-  detailPlayer.value = player
+  // Merge with teamStore player data so season_stats and development_history are available
+  const teamPlayer = teamStore.roster?.find(p => p.id === player.id)
+  detailPlayer.value = teamPlayer ? { ...teamPlayer, ...player } : player
   showPlayerInfoModal.value = true
 }
 

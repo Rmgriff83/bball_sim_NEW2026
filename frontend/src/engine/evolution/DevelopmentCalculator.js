@@ -395,7 +395,7 @@ function getAttributeChangesFromStats(boxScore, change, diffSettings = {}, minut
  * @param {string} difficulty - Difficulty level
  * @returns {object} { performanceRating, attributeChanges, type }
  */
-function calculateMicroDevelopment(player, boxScore, difficulty = 'pro') {
+function calculateMicroDevelopment(player, boxScore, difficulty = 'pro', options = {}) {
   const diffSettings = getDifficultySettings(difficulty);
   const performance = calculatePerformanceRating(boxScore);
   const minutes = boxScore.minutes ?? 0;
@@ -418,7 +418,10 @@ function calculateMicroDevelopment(player, boxScore, difficulty = 'pro') {
       diffSettings.micro_dev_gain_min,
       diffSettings.micro_dev_gain_max
     );
-    const gain = baseGain * minutesFactor;
+    let gain = baseGain * minutesFactor;
+    if (options.growthBoost > 0) {
+      gain *= (1 + options.growthBoost);
+    }
     result.attributeChanges = getAttributeChangesFromStats(boxScore, gain, diffSettings, minutes);
   } else if (performance <= diffSettings.micro_dev_threshold_low && minutes >= minMinutes) {
     // Poor performance with significant minutes - slight regression

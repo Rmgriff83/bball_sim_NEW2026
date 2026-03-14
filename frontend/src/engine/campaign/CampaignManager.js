@@ -1034,7 +1034,7 @@ export async function createCampaign(options) {
       }
       team.coaching_scheme = {
         offensive: team.coach?.offensiveScheme ?? 'balanced',
-        defensive: team.coach?.defensiveScheme ?? 'man_to_man',
+        defensive: team.coach?.defensiveScheme ?? 'man',
         substitution: subStrategy,
       }
     }
@@ -1819,8 +1819,8 @@ function generateCoach(tier, index, usedNames) {
   const overall = randInt(range[0], range[1])
   const attributes = generateCoachAttributes(overall)
   const salary = calculateCoachSalary(overall)
-  const offensiveScheme = pickRandom(OFFENSIVE_SCHEMES)
-  const defensiveScheme = pickRandom(DEFENSIVE_SCHEMES)
+  const offensiveScheme = pickRandom(Object.keys(OFFENSIVE_SCHEMES))
+  const defensiveScheme = pickRandom(Object.keys(DEFENSIVE_SCHEMES))
 
   // Generate unique name
   let firstName, lastName, fullName

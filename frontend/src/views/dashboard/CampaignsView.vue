@@ -239,7 +239,7 @@ function getDifficultyLabel(value) {
             <div class="campaign-header">
               <div class="campaign-info">
                 <h3 class="campaign-name">{{ campaign.name }}</h3>
-                <p class="campaign-team">{{ campaign.team?.city }} {{ campaign.team?.name }}</p>
+                <p class="campaign-team">{{ campaign.team?.name }}</p>
               </div>
               <div class="campaign-header-actions">
                 <button
@@ -722,11 +722,7 @@ function getDifficultyLabel(value) {
   color: var(--color-text-tertiary);
   cursor: pointer;
   transition: all 0.2s ease;
-  opacity: 0;
-}
-
-.campaign-card:hover .delete-btn {
-  opacity: 1;
+  opacity: 0.5;
 }
 
 .delete-btn:hover {

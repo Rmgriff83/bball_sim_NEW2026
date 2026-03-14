@@ -241,7 +241,7 @@ function getPositionAttributeWeights(position) {
  * Stamina and durability reduce fatigue accumulation.
  * If player plays 0 minutes, they get rest recovery instead.
  */
-function updateFatigue(player, minutes) {
+function updateFatigue(player, minutes, options = {}) {
   const config = Config.FATIGUE;
   const current = player.fatigue ?? 0;
 
@@ -279,6 +279,11 @@ function updateFatigue(player, minutes) {
   } else {
     // Moderate/heavy minutes: player GAINS fatigue (high attributes reduce gain)
     let gain = bracket.base * (1.2 - athleticAvg * 0.4);
+
+    // Staff trainer fatigue reduction (applied before rookie wall so it stacks naturally)
+    if (options.fatigueReduction > 0) {
+      gain *= (1 - options.fatigueReduction);
+    }
 
     // Rookie wall penalty
     const gamesPlayed = player.games_played_this_season ?? player.gamesPlayedThisSeason ?? 0;
@@ -794,7 +799,8 @@ function processTeamPostGame(
   opponentAbbr = '',
   teamScore = 0,
   opponentScore = 0,
-  streak = 0
+  streak = 0,
+  options = {}
 ) {
   const evolutionSummary = {
     injuries: [],
@@ -826,7 +832,7 @@ function processTeamPostGame(
     // Process injury recovery for already-injured players FIRST
     if (checkIsInjured(player)) {
       const existingInjury = player.injury_details ?? player.injuryDetails ?? null;
-      player = processRecovery(player);
+      player = processRecovery(player, { recoverySpeedBonus: options.recoverySpeedBonus || 0 });
 
       // Check if just recovered
       const stillInjured = checkIsInjured(player);
@@ -846,7 +852,7 @@ function processTeamPostGame(
 
     // Update fatigue
     const oldFatigue = player.fatigue ?? 0;
-    player = updateFatigue(player, stats.minutes ?? 0);
+    player = updateFatigue(player, stats.minutes ?? 0, { fatigueReduction: options.fatigueReduction || 0 });
     const newFatigue = player.fatigue ?? 0;
 
     // Fatigue warning if getting high
@@ -864,7 +870,7 @@ function processTeamPostGame(
 
     let injury = null;
     if (minutesPlayed > 0 && !isCurrentlyInjured) {
-      injury = checkForInjury(player, minutesPlayed, isPlayoff);
+      injury = checkForInjury(player, minutesPlayed, isPlayoff, { injuryRiskReduction: options.injuryRiskReduction || 0 });
     }
 
     if (injury) {
@@ -906,7 +912,7 @@ function processTeamPostGame(
     const isInjuredNow = checkIsInjured(player);
 
     if (!isInjuredNow) {
-      const microDev = calculateMicroDevelopment(player, stats, difficulty);
+      const microDev = calculateMicroDevelopment(player, stats, difficulty, { growthBoost: options.growthBoost || 0 });
       if (microDev && microDev.attributeChanges && Object.keys(microDev.attributeChanges).length > 0) {
         player = applyAttributeChanges(player, microDev.attributeChanges, gameDate);
 
@@ -1013,9 +1019,19 @@ export function processPostGame(
   awayRoster,
   difficulty = 'pro',
   isPlayoff = false,
-  gameDate = null
+  gameDate = null,
+  options = {}
 ) {
   const date = gameDate ?? new Date().toISOString().split('T')[0];
+
+  // Determine trainer perks per team — only the user's team gets trainer bonuses
+  const userTeamId = options.userTeamId
+  const homeTeamId = gameData.homeTeamId
+  const awayTeamId = gameData.awayTeamId
+  const trainerPerks = options.trainerPerks || {}
+
+  const homeOptions = (userTeamId && String(homeTeamId) === String(userTeamId)) ? trainerPerks : {}
+  const awayOptions = (userTeamId && String(awayTeamId) === String(userTeamId)) ? trainerPerks : {}
 
   // Process home team
   const homeResult = processTeamPostGame(
@@ -1028,7 +1044,8 @@ export function processPostGame(
     gameData.awayTeamAbbreviation ?? '',
     homeScore,
     awayScore,
-    0 // streak - caller can provide via gameData if available
+    0, // streak - caller can provide via gameData if available
+    homeOptions
   );
 
   // Process away team
@@ -1042,7 +1059,8 @@ export function processPostGame(
     gameData.homeTeamAbbreviation ?? '',
     awayScore,
     homeScore,
-    0
+    0,
+    awayOptions
   );
 
   return {

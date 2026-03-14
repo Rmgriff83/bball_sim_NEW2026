@@ -53,29 +53,30 @@ const isOffseason = computed(() => campaign.value?.phase === 'offseason')
 // All 32 attributes in the scouting pool
 const ALL_ATTRIBUTES = [
   'overallRating', 'potentialRating',
-  // Offense (12)
-  'threePoint', 'midRange', 'closeShot', 'layup', 'passAccuracy', 'passVision',
-  'passIQ', 'ballHandling', 'postControl', 'drivingDunk', 'standingDunk', 'drawFoul',
-  // Defense (8)
+  // Offense (19)
+  'closeShot', 'midRange', 'threePoint', 'freeThrow', 'shotIQ', 'offensiveConsistency',
+  'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl',
+  'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ',
+  // Defense (9)
   'perimeterDefense', 'interiorDefense', 'helpDefenseIQ', 'passPerception',
-  'steal', 'block', 'defensiveRebound', 'offensiveRebound',
-  // Physical (5)
-  'speed', 'acceleration', 'vertical', 'stamina', 'strength',
+  'steal', 'block', 'defensiveRebound', 'offensiveRebound', 'defensiveConsistency',
+  // Physical (7)
+  'speed', 'acceleration', 'vertical', 'stamina', 'strength', 'hustle', 'durability',
   // Mental (5)
-  'workEthic', 'basketballIQ', 'clutch', 'consistency', 'intangibles',
+  'workEthic', 'basketballIQ', 'clutch', 'coachability', 'intangibles',
 ]
 
 const ATTRIBUTE_CATEGORIES = {
   'Ratings': ['overallRating', 'potentialRating'],
-  'Offense': ['threePoint', 'midRange', 'closeShot', 'layup', 'passAccuracy', 'passVision', 'passIQ', 'ballHandling', 'postControl', 'drivingDunk', 'standingDunk', 'drawFoul'],
-  'Defense': ['perimeterDefense', 'interiorDefense', 'helpDefenseIQ', 'passPerception', 'steal', 'block', 'defensiveRebound', 'offensiveRebound'],
-  'Physical': ['speed', 'acceleration', 'vertical', 'stamina', 'strength'],
-  'Mental': ['workEthic', 'basketballIQ', 'clutch', 'consistency', 'intangibles'],
+  'Offense': ['closeShot', 'midRange', 'threePoint', 'freeThrow', 'shotIQ', 'offensiveConsistency', 'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl', 'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ'],
+  'Defense': ['perimeterDefense', 'interiorDefense', 'helpDefenseIQ', 'passPerception', 'steal', 'block', 'defensiveRebound', 'offensiveRebound', 'defensiveConsistency'],
+  'Physical': ['speed', 'acceleration', 'vertical', 'stamina', 'strength', 'hustle', 'durability'],
+  'Mental': ['workEthic', 'basketballIQ', 'clutch', 'coachability', 'intangibles'],
 }
 
-const BASE_REVEAL_COUNT = 8
+const TOTAL_SCOUT_ACTIONS = 4 // 4 scout actions to fully reveal a player
+const BASE_REVEAL_COUNT = Math.ceil(ALL_ATTRIBUTES.length / TOTAL_SCOUT_ACTIONS) // attrs per action (base)
 const PERK_REVEAL_COUNT = Math.ceil(ALL_ATTRIBUTES.length / 3) // 33% per action = 3 actions to fully scout
-const TOTAL_SCOUT_ACTIONS = 4 // base: 4 scout actions x 8 attrs = 32 total
 
 function getRevealedAttributes(playerId) {
   return scoutedPlayers.value[playerId]?.revealedAttributes || []

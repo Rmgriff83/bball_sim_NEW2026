@@ -71,12 +71,13 @@ export const useTradeStore = defineStore('trade', () => {
   })
 
   // Helper: build a player lookup function from an array
+  // Uses String keys to prevent type mismatches (number vs string from IndexedDB)
   function _buildPlayerLookup(players) {
     const map = {}
     for (const p of players) {
-      map[p.id] = p
+      map[String(p.id)] = p
     }
-    return (playerId) => map[playerId] || null
+    return (playerId) => map[String(playerId)] || null
   }
 
   // Helper: get campaign year
@@ -265,7 +266,7 @@ export const useTradeStore = defineStore('trade', () => {
         return tid != userTeamId
       })
 
-      const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
+      const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
 
       // Collect all draft picks from both teams for the executor
       const aiTeamObj = await TeamRepository.get(campaignId, selectedTeam.value.id)
@@ -423,7 +424,7 @@ export const useTradeStore = defineStore('trade', () => {
       const userTeamId = campaign?.team_id ?? campaign?.teamId
       const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
       const difficulty = campaign?.settings?.difficulty ?? 'pro'
-      const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
+      const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
 
       const allTeams = await TeamRepository.getAllForCampaign(campaignId)
       const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
@@ -487,7 +488,7 @@ export const useTradeStore = defineStore('trade', () => {
       for (const proposal of newProposals) {
         proposal.id = `proposal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
-        const proposingTeam = allTeams.find(t => t.id === proposal.proposing_team_id)
+        const proposingTeam = allTeams.find(t => String(t.id) === String(proposal.proposing_team_id))
         proposal.proposing_team = proposingTeam ? {
           id: proposingTeam.id,
           abbreviation: proposingTeam.abbreviation,
@@ -513,14 +514,15 @@ export const useTradeStore = defineStore('trade', () => {
       }
 
       // 7. Enrich all pending proposals for the UI and set state
+      // Use == for ID comparisons to handle number/string mismatches from IndexedDB
       const enrichAsset = (asset, proposalTeamId) => {
         if (asset.type === 'player') {
           const player = getPlayerFn(asset.playerId)
           return { ...asset, player: player || null }
         }
         if (asset.type === 'pick') {
-          const team = allTeams.find(t => t.id === proposalTeamId)
-          const pick = (team?.draftPicks || []).find(p => p.id === asset.pickId)
+          const team = allTeams.find(t => String(t.id) === String(proposalTeamId))
+          const pick = (team?.draftPicks || []).find(p => String(p.id) === String(asset.pickId))
           return { ...asset, pick: pick || null }
         }
         return asset
@@ -529,7 +531,7 @@ export const useTradeStore = defineStore('trade', () => {
       const pending = allProposals.filter(p => p.status === 'pending')
       for (const proposal of pending) {
         if (!proposal.proposing_team) {
-          const proposingTeam = allTeams.find(t => t.id === proposal.proposing_team_id)
+          const proposingTeam = allTeams.find(t => String(t.id) === String(proposal.proposing_team_id))
           proposal.proposing_team = proposingTeam ? {
             id: proposingTeam.id,
             abbreviation: proposingTeam.abbreviation,
@@ -589,7 +591,7 @@ export const useTradeStore = defineStore('trade', () => {
         return tid != userTeamId
       })
 
-      const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
+      const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
 
       // Collect all draft picks from both teams for the executor
       const aiTeamObj = await TeamRepository.get(campaignId, aiTeam.id)
@@ -732,7 +734,7 @@ export const useTradeStore = defineStore('trade', () => {
     try {
       const campaign = await CampaignRepository.get(campaignId)
       const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
-      const currentDate = campaign?.settings?.currentDate ?? new Date().toISOString().split('T')[0]
+      const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData?.tradeProposals) return
       const proposal = seasonData.tradeProposals.find(p => p.id === proposalId)

@@ -8,13 +8,15 @@ import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
-import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Check, Lock } from 'lucide-vue-next'
+import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity } from 'lucide-vue-next'
 import TradesTab from '@/components/trade/TradesTab.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
 import FacilitiesTab from '@/components/team/FacilitiesTab.vue'
 import ScheduleTab from '@/components/team/ScheduleTab.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import HireScoutModal from '@/components/team/HireScoutModal.vue'
+import HireTrainerModal from '@/components/team/HireTrainerModal.vue'
+import HireStaffTrainerModal from '@/components/team/HireStaffTrainerModal.vue'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { useSyncStore } from '@/stores/sync'
 
@@ -53,10 +55,22 @@ const animatingPlayers = ref({}) // { [playerId]: 'up' | 'down' }
 const activePersonnelTab = ref('coach')
 const showHireScoutModal = ref(false)
 const firingScout = ref(false)
+const showHireTrainerModal = ref(false)
+const firingTrainer = ref(false)
+const showHireStaffTrainerModal = ref(false)
+const firingStaffTrainer = ref(false)
 
 // Scout computed
 const scoutingFacilityLevel = computed(() => teamStore.team?.facilities?.scouting ?? 1)
 const hiredScout = computed(() => campaignStore.currentCampaign?.settings?.scout ?? null)
+
+// Trainer (Physician) computed
+const medicalFacilityLevel = computed(() => teamStore.team?.facilities?.medical ?? 1)
+const hiredTrainer = computed(() => campaignStore.currentCampaign?.settings?.trainer ?? null)
+
+// Staff Trainer computed
+const trainingFacilityLevel = computed(() => teamStore.team?.facilities?.training ?? 1)
+const hiredStaffTrainer = computed(() => campaignStore.currentCampaign?.settings?.staff_trainer ?? null)
 
 // Coach settings state
 const activeCoachTab = ref('offensive')
@@ -950,6 +964,92 @@ const PERK_LABELS = {
   badge_reveal: { label: 'Badge Intel', description: '35% chance per scout action to reveal badges' },
   morale_reveal: { label: 'Personality Intel', description: '35% chance per scout action to reveal morale/personality' },
 }
+
+// Trainer functions
+async function fireTrainer() {
+  if (firingTrainer.value) return
+  firingTrainer.value = true
+  try {
+    const camp = await CampaignRepository.get(campaignId.value)
+    if (camp) {
+      camp.settings = camp.settings ?? {}
+      delete camp.settings.trainer
+      await CampaignRepository.save(camp)
+    }
+    if (campaignStore.currentCampaign) {
+      const settings = { ...campaignStore.currentCampaign.settings }
+      delete settings.trainer
+      campaignStore.currentCampaign.settings = settings
+    }
+    syncStore.markDirty()
+    toastStore.showSuccess('Physician released')
+  } catch (err) {
+    console.error('Failed to fire trainer:', err)
+    toastStore.showError('Failed to release physician')
+  } finally {
+    firingTrainer.value = false
+  }
+}
+
+async function onTrainerHired() {
+  try {
+    await campaignStore.fetchCampaign(campaignId.value)
+  } catch (err) {
+    console.error('Failed to refresh campaign after hiring trainer:', err)
+  }
+}
+
+function isPerkActiveForTrainer(perk) {
+  return (teamStore.team?.facilities?.medical ?? 1) >= perk.requiredLevel
+}
+
+const TRAINER_PERK_LABELS = {
+  fast_recovery: { label: 'Fast Recovery', description: 'Players recover from injuries faster' },
+  injury_prevention: { label: 'Injury Prevention', description: 'Players have less risk of getting injured' },
+}
+
+// Staff Trainer functions
+async function fireStaffTrainer() {
+  if (firingStaffTrainer.value) return
+  firingStaffTrainer.value = true
+  try {
+    const camp = await CampaignRepository.get(campaignId.value)
+    if (camp) {
+      camp.settings = camp.settings ?? {}
+      delete camp.settings.staff_trainer
+      await CampaignRepository.save(camp)
+    }
+    if (campaignStore.currentCampaign) {
+      const settings = { ...campaignStore.currentCampaign.settings }
+      delete settings.staff_trainer
+      campaignStore.currentCampaign.settings = settings
+    }
+    syncStore.markDirty()
+    toastStore.showSuccess('Trainer released')
+  } catch (err) {
+    console.error('Failed to fire staff trainer:', err)
+    toastStore.showError('Failed to release trainer')
+  } finally {
+    firingStaffTrainer.value = false
+  }
+}
+
+async function onStaffTrainerHired() {
+  try {
+    await campaignStore.fetchCampaign(campaignId.value)
+  } catch (err) {
+    console.error('Failed to refresh campaign after hiring staff trainer:', err)
+  }
+}
+
+function isPerkActiveForStaffTrainer(perk) {
+  return (teamStore.team?.facilities?.training ?? 1) >= perk.requiredLevel
+}
+
+const STAFF_TRAINER_PERK_LABELS = {
+  growth_boost: { label: 'Enhanced Development', description: 'Players develop faster from game performance' },
+  fatigue_reduction: { label: 'Conditioning Program', description: 'Players generate less fatigue during games' },
+}
 </script>
 
 <template>
@@ -991,7 +1091,7 @@ const PERK_LABELS = {
           @click="activeTab = 'personnel'"
         >
           Personnel
-          <span v-if="!hiredScout" class="tab-badge tab-badge-warning">
+          <span v-if="!hiredScout || !hiredTrainer || !hiredStaffTrainer" class="tab-badge tab-badge-warning">
             <AlertTriangle :size="10" />
           </span>
         </button>
@@ -1467,6 +1567,28 @@ const PERK_LABELS = {
               <AlertTriangle :size="10" />
             </span>
           </button>
+          <button
+            class="coach-tab-btn"
+            :class="{ active: activePersonnelTab === 'trainer' }"
+            @click="activePersonnelTab = 'trainer'"
+            style="position: relative;"
+          >
+            Team Physician
+            <span v-if="!hiredTrainer" class="tab-badge tab-badge-warning">
+              <AlertTriangle :size="10" />
+            </span>
+          </button>
+          <button
+            class="coach-tab-btn"
+            :class="{ active: activePersonnelTab === 'staff_trainer' }"
+            @click="activePersonnelTab = 'staff_trainer'"
+            style="position: relative;"
+          >
+            Trainer
+            <span v-if="!hiredStaffTrainer" class="tab-badge tab-badge-warning">
+              <AlertTriangle :size="10" />
+            </span>
+          </button>
         </div>
 
         <!-- Coach Sub-tab -->
@@ -1820,6 +1942,160 @@ const PERK_LABELS = {
           </GlassCard>
         </div><!-- /Scout Sub-tab -->
 
+        <!-- Trainer Sub-tab -->
+        <div v-else-if="activePersonnelTab === 'trainer'">
+          <!-- Hired Trainer Card -->
+          <GlassCard v-if="hiredTrainer" padding="lg" :hoverable="false">
+            <h3 class="h4 mb-4">Your Team Physician</h3>
+            <div class="coach-header">
+              <div class="coach-avatar trainer-avatar">
+                {{ hiredTrainer.name?.charAt(0) || 'T' }}
+              </div>
+              <div class="coach-info">
+                <p class="coach-name">{{ hiredTrainer.name }}</p>
+                <div class="coach-rating">
+                  <StatBadge :value="hiredTrainer.tier === 4 ? 85 : 70" size="sm" />
+                  <span class="rating-label">{{ hiredTrainer.tier }}-Star Physician</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="scout-contract-info mt-3">
+              <span class="text-secondary text-sm">
+                {{ hiredTrainer.contractYears }} Season{{ hiredTrainer.contractYears !== 1 ? 's' : '' }} Remaining · Hired Season {{ hiredTrainer.hiredSeason }}
+              </span>
+            </div>
+
+            <!-- Trainer Perks -->
+            <div class="scout-perks-section mt-4">
+              <h4 class="section-title">Perks</h4>
+              <div class="scout-perks-list">
+                <div
+                  v-for="perk in hiredTrainer.perks"
+                  :key="perk.key"
+                  class="scout-perk-row"
+                  :class="{ inactive: !isPerkActiveForTrainer(perk) }"
+                >
+                  <div class="scout-perk-icon">
+                    <Check v-if="isPerkActiveForTrainer(perk)" :size="14" />
+                    <Lock v-else :size="14" />
+                  </div>
+                  <div class="scout-perk-text">
+                    <span class="scout-perk-label">{{ TRAINER_PERK_LABELS[perk.key]?.label || perk.key }}</span>
+                    <span class="scout-perk-desc">{{ TRAINER_PERK_LABELS[perk.key]?.description || '' }}</span>
+                    <span v-if="!isPerkActiveForTrainer(perk)" class="scout-perk-req">
+                      Requires Medical Facility Lv {{ perk.requiredLevel }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Fire Button -->
+            <button
+              class="btn-fire-scout mt-4"
+              :disabled="firingTrainer"
+              @click="fireTrainer"
+            >
+              {{ firingTrainer ? 'Releasing...' : 'Release Physician' }}
+            </button>
+          </GlassCard>
+
+          <!-- Empty State -->
+          <GlassCard v-else padding="lg" :hoverable="false">
+            <div class="scout-empty-state">
+              <Heart :size="48" class="empty-icon" />
+              <h3 class="empty-title">No Team Physician</h3>
+              <p class="empty-desc">
+                Hire a team physician to improve your team's health. Physicians help players recover from injuries faster and can reduce the risk of injuries occurring.
+              </p>
+              <button
+                class="btn-browse-scouts"
+                @click="showHireTrainerModal = true"
+              >
+                Browse Physicians
+              </button>
+            </div>
+          </GlassCard>
+        </div><!-- /Trainer Sub-tab -->
+
+        <!-- Staff Trainer Sub-tab -->
+        <div v-else-if="activePersonnelTab === 'staff_trainer'">
+          <!-- Hired Staff Trainer Card -->
+          <GlassCard v-if="hiredStaffTrainer" padding="lg" :hoverable="false">
+            <h3 class="h4 mb-4">Your Trainer</h3>
+            <div class="coach-header">
+              <div class="coach-avatar staff-trainer-avatar">
+                {{ hiredStaffTrainer.name?.charAt(0) || 'T' }}
+              </div>
+              <div class="coach-info">
+                <p class="coach-name">{{ hiredStaffTrainer.name }}</p>
+                <div class="coach-rating">
+                  <StatBadge :value="hiredStaffTrainer.tier === 4 ? 85 : 70" size="sm" />
+                  <span class="rating-label">{{ hiredStaffTrainer.tier }}-Star Trainer</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="scout-contract-info mt-3">
+              <span class="text-secondary text-sm">
+                {{ hiredStaffTrainer.contractYears }} Season{{ hiredStaffTrainer.contractYears !== 1 ? 's' : '' }} Remaining · Hired Season {{ hiredStaffTrainer.hiredSeason }}
+              </span>
+            </div>
+
+            <!-- Staff Trainer Perks -->
+            <div class="scout-perks-section mt-4">
+              <h4 class="section-title">Perks</h4>
+              <div class="scout-perks-list">
+                <div
+                  v-for="perk in hiredStaffTrainer.perks"
+                  :key="perk.key"
+                  class="scout-perk-row"
+                  :class="{ inactive: !isPerkActiveForStaffTrainer(perk) }"
+                >
+                  <div class="scout-perk-icon">
+                    <Check v-if="isPerkActiveForStaffTrainer(perk)" :size="14" />
+                    <Lock v-else :size="14" />
+                  </div>
+                  <div class="scout-perk-text">
+                    <span class="scout-perk-label">{{ STAFF_TRAINER_PERK_LABELS[perk.key]?.label || perk.key }}</span>
+                    <span class="scout-perk-desc">{{ STAFF_TRAINER_PERK_LABELS[perk.key]?.description || '' }}</span>
+                    <span v-if="!isPerkActiveForStaffTrainer(perk)" class="scout-perk-req">
+                      Requires Training Facility Lv {{ perk.requiredLevel }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Fire Button -->
+            <button
+              class="btn-fire-scout mt-4"
+              :disabled="firingStaffTrainer"
+              @click="fireStaffTrainer"
+            >
+              {{ firingStaffTrainer ? 'Releasing...' : 'Release Trainer' }}
+            </button>
+          </GlassCard>
+
+          <!-- Empty State -->
+          <GlassCard v-else padding="lg" :hoverable="false">
+            <div class="scout-empty-state">
+              <Activity :size="48" class="empty-icon" />
+              <h3 class="empty-title">No Trainer</h3>
+              <p class="empty-desc">
+                Hire a trainer to boost your players' development. Trainers help players grow faster from game performance and can reduce fatigue accumulation.
+              </p>
+              <button
+                class="btn-browse-scouts"
+                @click="showHireStaffTrainerModal = true"
+              >
+                Browse Trainers
+              </button>
+            </div>
+          </GlassCard>
+        </div><!-- /Staff Trainer Sub-tab -->
+
         <!-- Hire Scout Modal -->
         <HireScoutModal
           :show="showHireScoutModal"
@@ -1827,6 +2103,24 @@ const PERK_LABELS = {
           :scouting-facility-level="scoutingFacilityLevel"
           @close="showHireScoutModal = false"
           @hired="onScoutHired"
+        />
+
+        <!-- Hire Trainer Modal -->
+        <HireTrainerModal
+          :show="showHireTrainerModal"
+          :campaign-id="campaignId"
+          :medical-facility-level="medicalFacilityLevel"
+          @close="showHireTrainerModal = false"
+          @hired="onTrainerHired"
+        />
+
+        <!-- Hire Staff Trainer Modal -->
+        <HireStaffTrainerModal
+          :show="showHireStaffTrainerModal"
+          :campaign-id="campaignId"
+          :training-facility-level="trainingFacilityLevel"
+          @close="showHireStaffTrainerModal = false"
+          @hired="onStaffTrainerHired"
         />
       </div>
 
@@ -2966,20 +3260,54 @@ const PERK_LABELS = {
   flex-direction: column;
   align-items: center;
   padding: 16px 12px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 10px;
   text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.career-stat-box::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.05) 0%, transparent 40%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.career-stat-box > * {
+  position: relative;
+  z-index: 1;
 }
 
 .career-stat-box.highlight {
-  background: rgba(232, 90, 79, 0.15);
-  border: 1px solid rgba(232, 90, 79, 0.3);
+  border-color: rgba(232, 90, 79, 0.3);
+}
+
+.career-stat-box.highlight::before {
+  background:
+    radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.10) 0%, transparent 40%);
 }
 
 .career-stat-value {
   font-size: 1.5rem;
   font-weight: 700;
   color: white;
+}
+
+[data-theme="light"] .career-stat-value {
+  color: black;
+}
+
+[data-theme="light"] .scheme-card::before {
+  background:
+    radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.12) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.08) 0%, transparent 40%);
 }
 
 .career-stat-label {
@@ -3087,6 +3415,16 @@ const PERK_LABELS = {
 
 /* Scout avatar variant */
 .scout-avatar {
+  background: linear-gradient(135deg, #F59E0B, #D97706) !important;
+}
+
+/* Trainer (Physician) avatar variant */
+.trainer-avatar {
+  background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+}
+
+/* Staff Trainer avatar variant */
+.staff-trainer-avatar {
   background: linear-gradient(135deg, #F59E0B, #D97706) !important;
 }
 
@@ -3259,21 +3597,42 @@ const PERK_LABELS = {
 .scheme-card {
   position: relative;
   padding: 20px;
-  background: rgba(0, 0, 0, 0.2);
-  border: 2px solid rgba(255, 255, 255, 0.1);
+  background: var(--glass-bg);
+  border: 2px solid var(--glass-border);
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
+  overflow: hidden;
+}
+
+.scheme-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.05) 0%, transparent 40%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.scheme-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .scheme-card:hover {
-  background: rgba(0, 0, 0, 0.3);
   border-color: rgba(255, 255, 255, 0.2);
 }
 
 .scheme-card.active {
-  background: rgba(232, 90, 79, 0.1);
   border-color: var(--color-primary);
+}
+
+.scheme-card.active::before {
+  background:
+    radial-gradient(ellipse at 90% 90%, rgba(232, 90, 79, 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(244, 162, 89, 0.10) 0%, transparent 40%);
 }
 
 .scheme-card.recommended:not(.active) {

@@ -908,20 +908,21 @@ onMounted(async () => {
     }
 
     // Load coaching styles from user's team coaching_scheme
-    const currentGame = gameStore.currentGame
-    const userTeamObj = userIsHome.value ? currentGame?.home_team : currentGame?.away_team
-    if (userTeamObj?.coaching_scheme?.offensive) {
-      selectedOffense.value = userTeamObj.coaching_scheme.offensive
+    // Prefer teamStore (single source of truth, updated in-memory), fall back to game's team object
+    const coachingScheme = teamStore.team?.coaching_scheme
+      || (userIsHome.value ? gameStore.currentGame?.home_team : gameStore.currentGame?.away_team)?.coaching_scheme
+    if (coachingScheme?.offensive) {
+      selectedOffense.value = coachingScheme.offensive
     }
-    if (userTeamObj?.coaching_scheme?.defensive) {
-      selectedDefense.value = userTeamObj.coaching_scheme.defensive
+    if (coachingScheme?.defensive) {
+      selectedDefense.value = coachingScheme.defensive
     }
 
     // Fetch opponent roster only (user roster comes from teamStore)
-    if (currentGame?.home_team?.id && currentGame?.away_team?.id) {
+    if (gameStore.currentGame?.home_team?.id && gameStore.currentGame?.away_team?.id) {
       const opponentTeamId = userIsHome.value
-        ? currentGame.away_team.id
-        : currentGame.home_team.id
+        ? gameStore.currentGame.away_team.id
+        : gameStore.currentGame.home_team.id
 
       try {
         const opponentData = await teamStore.fetchTeamRoster(campaignId.value, opponentTeamId)

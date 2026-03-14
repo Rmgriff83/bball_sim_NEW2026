@@ -1169,7 +1169,7 @@ export function generateWeeklyProposals({
     const receives = p.proposal?.aiReceives ?? [];
     for (const a of receives) {
       if (a.type === 'player' && a.playerId) {
-        rejectedTeamPlayerCombos.add(`${p.proposing_team_id}::${a.playerId}`);
+        rejectedTeamPlayerCombos.add(`${String(p.proposing_team_id)}::${String(a.playerId)}`);
       }
     }
   }
@@ -1213,7 +1213,7 @@ export function generateWeeklyProposals({
 
     // Filter out players this team already had rejected for (exact team+player combo, 30-day cooldown)
     let filteredTargets = targetPlayers.filter(p =>
-      !rejectedTeamPlayerCombos.has(`${teamIdStr}::${p.id}`)
+      !rejectedTeamPlayerCombos.has(`${teamIdStr}::${String(p.id)}`)
     );
 
     // Retention-based targeting: skip very happy players, prefer unhappy ones
@@ -1281,6 +1281,9 @@ export function generateWeeklyProposals({
     };
 
     newProposals.push(proposal);
+
+    // Cap at 2 new proposals per generation cycle to avoid overwhelming the user
+    if (newProposals.length >= 2) break;
   }
 
   return newProposals;

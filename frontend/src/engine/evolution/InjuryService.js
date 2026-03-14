@@ -142,8 +142,17 @@ function generateInjury(player) {
  * @param {boolean} isPlayoff - Whether this is a playoff game
  * @returns {object|null} Injury details object or null if no injury
  */
-function checkForInjury(player, minutesPlayed, isPlayoff = false) {
-  const chance = calculateInjuryChance(player, minutesPlayed, isPlayoff);
+function checkForInjury(player, minutesPlayed, isPlayoff = false, options = {}) {
+  let chance = calculateInjuryChance(player, minutesPlayed, isPlayoff);
+
+  // Apply injury risk reduction from trainer perk
+  if (options.injuryRiskReduction > 0) {
+    chance *= (1 - options.injuryRiskReduction);
+  }
+
+  // Re-apply 5% cap after reduction
+  chance = Math.min(0.05, chance);
+
   const roll = (Math.floor(Math.random() * 10000) + 1) / 10000; // 0.0001 to 1.0000
 
   if (roll <= chance) {
@@ -181,7 +190,7 @@ function getGamesRemaining(player) {
  * @param {object} player - Player data object
  * @returns {object} Updated player object
  */
-function processRecovery(player) {
+function processRecovery(player, options = {}) {
   if (!isInjured(player)) {
     return player;
   }
@@ -195,7 +204,13 @@ function processRecovery(player) {
   player = { ...player };
   injury = { ...injury };
 
-  injury.games_remaining = Math.max(0, (injury.games_remaining ?? 0) - 1);
+  // Base decrement is 1; with recovery speed bonus, probabilistically decrement by 2
+  let decrement = 1;
+  if (options.recoverySpeedBonus > 0 && Math.random() < options.recoverySpeedBonus) {
+    decrement = 2;
+  }
+
+  injury.games_remaining = Math.max(0, (injury.games_remaining ?? 0) - decrement);
 
   // Check if recovered
   if (injury.games_remaining <= 0) {

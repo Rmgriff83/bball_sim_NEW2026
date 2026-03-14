@@ -247,6 +247,70 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * Compute active trainer perks for the user's team.
+   * Returns { injuryRiskReduction, recoverySpeedBonus } based on hired trainer and medical facility level.
+   */
+  async function _getTrainerPerks(campaign) {
+    const trainer = campaign.settings?.trainer
+    if (!trainer) return {}
+
+    const userTeamId = campaign.teamId
+    if (!userTeamId) return {}
+
+    const userTeam = await TeamRepository.get(campaign.id, userTeamId)
+    const medicalLevel = userTeam?.facilities?.medical ?? 1
+
+    let injuryRiskReduction = 0
+    let recoverySpeedBonus = 0
+
+    for (const perk of (trainer.perks || [])) {
+      if (medicalLevel < perk.requiredLevel) continue
+
+      if (perk.key === 'fast_recovery') {
+        recoverySpeedBonus = trainer.tier === 4 ? 0.15 : 0.10
+      }
+      if (perk.key === 'injury_prevention') {
+        injuryRiskReduction = 0.10
+      }
+    }
+
+    if (injuryRiskReduction === 0 && recoverySpeedBonus === 0) return {}
+    return { injuryRiskReduction, recoverySpeedBonus }
+  }
+
+  /**
+   * Compute active staff trainer perks for the user's team.
+   * Returns { growthBoost, fatigueReduction } based on hired staff_trainer and training facility level.
+   */
+  async function _getStaffTrainerPerks(campaign) {
+    const staffTrainer = campaign.settings?.staff_trainer
+    if (!staffTrainer) return {}
+
+    const userTeamId = campaign.teamId
+    if (!userTeamId) return {}
+
+    const userTeam = await TeamRepository.get(campaign.id, userTeamId)
+    const trainingLevel = userTeam?.facilities?.training ?? 1
+
+    let growthBoost = 0
+    let fatigueReduction = 0
+
+    for (const perk of (staffTrainer.perks || [])) {
+      if (trainingLevel < perk.requiredLevel) continue
+
+      if (perk.key === 'growth_boost') {
+        growthBoost = staffTrainer.tier === 4 ? 0.10 : 0.05
+      }
+      if (perk.key === 'fatigue_reduction') {
+        fatigueReduction = 0.05
+      }
+    }
+
+    if (growthBoost === 0 && fatigueReduction === 0) return {}
+    return { growthBoost, fatigueReduction }
+  }
+
+  /**
    * Process weekly AI-to-AI trades when a Monday boundary is crossed.
    * Moves players between AI teams, transfers pick ownership, and records news/history.
    */
@@ -839,10 +903,14 @@ export const useGameStore = defineStore('game', () => {
       })
 
       // Process post-game evolution
+      const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
       const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
         userTeamId,
+        homeTeamId: game.homeTeamId,
+        awayTeamId: game.awayTeamId,
         difficulty: campaign.difficulty || 'pro',
         gameDate: game.gameDate,
+        trainerPerks,
       })
       result.evolution = evolution
 
@@ -977,10 +1045,14 @@ export const useGameStore = defineStore('game', () => {
         })
 
         // Post-game evolution
+        const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
         const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
           userTeamId,
+          homeTeamId: userGame.homeTeamId,
+          awayTeamId: userGame.awayTeamId,
           difficulty: campaign.difficulty || 'pro',
           gameDate: userGame.gameDate,
+          trainerPerks,
         })
         result.evolution = evolution
 
@@ -1215,10 +1287,14 @@ export const useGameStore = defineStore('game', () => {
           PlayerRepository.getByTeam(campaignId, game.awayTeamId),
         ])
 
+        const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
         const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
           userTeamId,
+          homeTeamId: game.homeTeamId,
+          awayTeamId: game.awayTeamId,
           difficulty: campaign.difficulty || 'pro',
           gameDate: game.gameDate,
+          trainerPerks,
         })
         result.evolution = evolution
 
@@ -1374,10 +1450,14 @@ export const useGameStore = defineStore('game', () => {
         PlayerRepository.getByTeam(campaignId, game.awayTeamId),
       ])
 
+      const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
       const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
         userTeamId,
+        homeTeamId: game.homeTeamId,
+        awayTeamId: game.awayTeamId,
         difficulty: campaign.difficulty || 'pro',
         gameDate: game.gameDate,
+        trainerPerks,
       })
       result.evolution = evolution
 
@@ -1604,10 +1684,14 @@ export const useGameStore = defineStore('game', () => {
         })
 
         // Post-game evolution for user game
+        const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
         const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
           userTeamId,
+          homeTeamId: nextUserGame.homeTeamId,
+          awayTeamId: nextUserGame.awayTeamId,
           difficulty: campaign.difficulty || 'pro',
           gameDate: nextUserGame.gameDate,
+          trainerPerks,
         })
         result.evolution = evolution
 
@@ -1772,6 +1856,7 @@ export const useGameStore = defineStore('game', () => {
         )
 
         let completedCount = 0
+        const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
 
         // Simulate user games one by one (for evolution tracking)
         for (const game of userGames) {
@@ -1784,8 +1869,11 @@ export const useGameStore = defineStore('game', () => {
           })
           const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
             userTeamId,
+            homeTeamId: game.homeTeamId,
+            awayTeamId: game.awayTeamId,
             difficulty: campaign.difficulty || 'pro',
             gameDate: game.gameDate,
+            trainerPerks,
           })
           result.evolution = evolution
           await _persistGameResult(campaignId, year, seasonData, game.id, result, true)
