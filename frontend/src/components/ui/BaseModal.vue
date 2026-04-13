@@ -19,6 +19,10 @@ const props = defineProps({
   closable: {
     type: Boolean,
     default: true
+  },
+  showHeader: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -77,7 +81,7 @@ const sizeClasses = {
           style="max-height: 90vh; overflow-y: auto;"
         >
           <!-- Header -->
-          <header v-if="title || closable" class="flex items-center justify-between p-4 border-b border-white/10">
+          <header v-if="showHeader && (title || closable)" class="flex items-center justify-between p-4 border-b border-white/10">
             <h2 v-if="title" class="h4 text-gradient">{{ title }}</h2>
             <button
               v-if="closable"

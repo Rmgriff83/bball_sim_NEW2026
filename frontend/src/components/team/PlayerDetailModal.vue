@@ -2,6 +2,7 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { StatBadge } from '@/components/ui'
 import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
@@ -236,6 +237,7 @@ const normalizedPlayer = computed(() => {
     morale: p.morale ?? p.personality?.morale ?? 80,
     personality: p.personality || null,
     personalityTraits: p.personality?.traits || [],
+    headshot: p.headshot || null,
   }
 })
 
@@ -540,7 +542,7 @@ function formatChange(change) {
             <div class="player-modal-header" :class="{ 'injured-header': normalizedPlayer.isInjured }">
               <div class="header-top-row">
                 <div class="modal-player-avatar">
-                  <User class="avatar-icon" :size="44" />
+                  <PlayerAvatar :player="normalizedPlayer" :size="64" class="avatar-icon" />
                 </div>
                 <div class="player-name-section">
                   <div class="name-rating-row">
@@ -1614,6 +1616,7 @@ function formatChange(change) {
 /* Player Header */
 .player-modal-header {
   padding: 1rem;
+  margin-bottom: 0.75rem;
   background: var(--color-bg-tertiary);
   border-radius: 12px;
 }
@@ -2724,7 +2727,7 @@ function formatChange(change) {
 }
 
 [data-theme="light"] .player-modal-header {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 [data-theme="light"] .player-modal-header.injured-header {
@@ -2732,7 +2735,24 @@ function formatChange(change) {
 }
 
 [data-theme="light"] .modal-player-avatar {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .trade-block-toggle {
+  border-color: rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .trade-block-toggle:hover {
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .trade-block-toggle.active {
+  background: rgba(232, 90, 79, 0.12);
+  border-color: rgba(232, 90, 79, 0.35);
+  color: #E85A4F;
 }
 
 [data-theme="light"] .fatigue-meter-container {
@@ -2748,15 +2768,15 @@ function formatChange(change) {
 }
 
 [data-theme="light"] .badges-preview {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 [data-theme="light"] .badge-chip {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 [data-theme="light"] .stat-cell {
-  background: rgba(0, 0, 0, 0.03);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 [data-theme="light"] .attr-bar-container {
@@ -2764,8 +2784,8 @@ function formatChange(change) {
 }
 
 [data-theme="light"] .badge-card-modal {
-  background: rgba(0, 0, 0, 0.03);
-  border-color: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.07);
+  border-color: rgba(0, 0, 0, 0.12);
 }
 
 [data-theme="light"] .badge-card-modal.hof {
@@ -2789,12 +2809,12 @@ function formatChange(change) {
 }
 
 [data-theme="light"] .badge-icon {
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 [data-theme="light"] .award-card {
-  background: rgba(0, 0, 0, 0.03);
-  border-color: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.07);
+  border-color: rgba(0, 0, 0, 0.12);
 }
 
 [data-theme="light"] .award-card.gold {

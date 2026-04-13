@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { User, DollarSign, AlertTriangle, Check, X } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { BaseModal, BaseButton, StatBadge, LoadingSpinner } from '@/components/ui'
 import { calculateRetentionScore, getMotivationLabel, getArchetypeLabel } from '@/engine/ai/MotivationService'
 import { calculateExpectedSalary } from '@/engine/ai/AITradeService'
@@ -171,7 +172,7 @@ function handleTryAgain() {
       <!-- Player Header Card -->
       <div class="player-card">
         <div class="player-avatar">
-          <User :size="32" />
+          <PlayerAvatar :player="player" :size="32" />
         </div>
         <div class="player-details">
           <h3 class="player-name">{{ player.firstName }} {{ player.lastName }}</h3>

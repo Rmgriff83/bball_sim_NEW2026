@@ -1,0 +1,2282 @@
+{
+    "generated_at": "2026-03-23T17:59:02+00:00",
+    "count": 569,
+    "players": {
+        "Luka Doncic": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629029.png",
+            "team": "LAL"
+        },
+        "Shai Gilgeous-Alexander": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628983.png",
+            "team": "OKC"
+        },
+        "Jaylen Brown": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627759.png",
+            "team": "BOS"
+        },
+        "Tyrese Maxey": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630178.png",
+            "team": "PHI"
+        },
+        "Donovan Mitchell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628378.png",
+            "team": "CLE"
+        },
+        "Jalen Brunson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628973.png",
+            "team": "NYK"
+        },
+        "Kevin Durant": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201142.png",
+            "team": "HOU"
+        },
+        "Anthony Edwards": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630162.png",
+            "team": "MIN"
+        },
+        "Jamal Murray": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627750.png",
+            "team": "DEN"
+        },
+        "Nikola Jokic": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203999.png",
+            "team": "DEN"
+        },
+        "Kawhi Leonard": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/202695.png",
+            "team": "LAC"
+        },
+        "Julius Randle": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203944.png",
+            "team": "MIN"
+        },
+        "Cade Cunningham": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630595.png",
+            "team": "DET"
+        },
+        "James Harden": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201935.png",
+            "team": "CLE"
+        },
+        "Brandon Ingram": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627742.png",
+            "team": "TOR"
+        },
+        "Jalen Johnson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630552.png",
+            "team": "ATL"
+        },
+        "Desmond Bane": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630217.png",
+            "team": "ORL"
+        },
+        "Devin Booker": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626164.png",
+            "team": "PHX"
+        },
+        "Nickeil Alexander-Walker": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629638.png",
+            "team": "ATL"
+        },
+        "Trey Murphy III": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630530.png",
+            "team": "NOP"
+        },
+        "Victor Wembanyama": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641705.png",
+            "team": "SAS"
+        },
+        "Karl-Anthony Towns": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626157.png",
+            "team": "NYK"
+        },
+        "Deni Avdija": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630166.png",
+            "team": "POR"
+        },
+        "Kon Knueppel": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642851.png",
+            "team": "CHA"
+        },
+        "Paolo Banchero": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631094.png",
+            "team": "ORL"
+        },
+        "Pascal Siakam": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627783.png",
+            "team": "IND"
+        },
+        "DeMar DeRozan": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201942.png",
+            "team": "SAC"
+        },
+        "Keyonte George": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641718.png",
+            "team": "UTA"
+        },
+        "Scottie Barnes": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630567.png",
+            "team": "TOR"
+        },
+        "Bam Adebayo": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628389.png",
+            "team": "MIA"
+        },
+        "Michael Porter Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629008.png",
+            "team": "BKN"
+        },
+        "CJ McCollum": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203468.png",
+            "team": "ATL"
+        },
+        "Alperen Sengun": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630578.png",
+            "team": "HOU"
+        },
+        "Amen Thompson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641708.png",
+            "team": "HOU"
+        },
+        "LaMelo Ball": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630163.png",
+            "team": "CHA"
+        },
+        "Cooper Flagg": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642843.png",
+            "team": "DAL"
+        },
+        "De'Aaron Fox": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628368.png",
+            "team": "SAS"
+        },
+        "Derrick White": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628401.png",
+            "team": "BOS"
+        },
+        "Zion Williamson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629627.png",
+            "team": "NOP"
+        },
+        "Norman Powell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626181.png",
+            "team": "MIA"
+        },
+        "Jalen Duren": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631105.png",
+            "team": "DET"
+        },
+        "Ryan Rollins": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631157.png",
+            "team": "MIL"
+        },
+        "Payton Pritchard": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630202.png",
+            "team": "BOS"
+        },
+        "Miles Bridges": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628970.png",
+            "team": "CHA"
+        },
+        "Immanuel Quickley": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630193.png",
+            "team": "TOR"
+        },
+        "Saddiq Bey": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630180.png",
+            "team": "NOP"
+        },
+        "Lauri Markkanen": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628374.png",
+            "team": "UTA"
+        },
+        "Matas Buzelis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641824.png",
+            "team": "CHI"
+        },
+        "Brandon Miller": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641706.png",
+            "team": "CHA"
+        },
+        "Stephen Curry": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201939.png",
+            "team": "GSW"
+        },
+        "Austin Reaves": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630559.png",
+            "team": "LAL"
+        },
+        "LeBron James": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/2544.png",
+            "team": "LAL"
+        },
+        "Mikal Bridges": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628969.png",
+            "team": "NYK"
+        },
+        "Chet Holmgren": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631096.png",
+            "team": "OKC"
+        },
+        "Dillon Brooks": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628415.png",
+            "team": "PHX"
+        },
+        "Naji Marshall": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630230.png",
+            "team": "DAL"
+        },
+        "Jabari Smith Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631095.png",
+            "team": "HOU"
+        },
+        "Jaden McDaniels": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630183.png",
+            "team": "MIN"
+        },
+        "Shaedon Sharpe": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631101.png",
+            "team": "POR"
+        },
+        "Jerami Grant": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203924.png",
+            "team": "POR"
+        },
+        "Evan Mobley": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630596.png",
+            "team": "CLE"
+        },
+        "VJ Edgecombe": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642845.png",
+            "team": "PHI"
+        },
+        "Onyeka Okongwu": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630168.png",
+            "team": "ATL"
+        },
+        "Giannis Antetokounmpo": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203507.png",
+            "team": "MIL"
+        },
+        "Tim Hardaway Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203501.png",
+            "team": "DEN"
+        },
+        "Stephon Castle": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642264.png",
+            "team": "SAS"
+        },
+        "Russell Westbrook": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201566.png",
+            "team": "SAC"
+        },
+        "OG Anunoby": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628384.png",
+            "team": "NYK"
+        },
+        "Jaime Jaquez Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631170.png",
+            "team": "MIA"
+        },
+        "Reed Sheppard": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642263.png",
+            "team": "HOU"
+        },
+        "Collin Gillespie": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631221.png",
+            "team": "PHX"
+        },
+        "Naz Reid": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629675.png",
+            "team": "MIN"
+        },
+        "Nikola Vucevic": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/202696.png",
+            "team": "BOS"
+        },
+        "Jeremiah Fears": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642847.png",
+            "team": "NOP"
+        },
+        "Jaren Jackson Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628991.png",
+            "team": "UTA"
+        },
+        "Brice Sensabaugh": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641729.png",
+            "team": "UTA"
+        },
+        "Anthony Black": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641710.png",
+            "team": "ORL"
+        },
+        "Toumani Camara": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641739.png",
+            "team": "POR"
+        },
+        "Ayo Dosunmu": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630245.png",
+            "team": "MIN"
+        },
+        "Brandin Podziemski": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641764.png",
+            "team": "GSW"
+        },
+        "Keldon Johnson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629640.png",
+            "team": "SAS"
+        },
+        "Andrew Nembhard": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629614.png",
+            "team": "IND"
+        },
+        "Andrew Wiggins": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203952.png",
+            "team": "MIA"
+        },
+        "Bobby Portis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626171.png",
+            "team": "MIL"
+        },
+        "Quentin Grimes": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629656.png",
+            "team": "PHI"
+        },
+        "Donte DiVincenzo": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628978.png",
+            "team": "MIN"
+        },
+        "Joel Embiid": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203954.png",
+            "team": "PHI"
+        },
+        "RJ Barrett": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629628.png",
+            "team": "TOR"
+        },
+        "Jaylen Wells": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642377.png",
+            "team": "MEM"
+        },
+        "Kyle Kuzma": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628398.png",
+            "team": "MIL"
+        },
+        "Josh Giddey": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630581.png",
+            "team": "CHI"
+        },
+        "Jaylon Tyson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642281.png",
+            "team": "CLE"
+        },
+        "Donovan Clingan": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642270.png",
+            "team": "POR"
+        },
+        "Max Christie": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631108.png",
+            "team": "DAL"
+        },
+        "Bennedict Mathurin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631097.png",
+            "team": "LAC"
+        },
+        "Collin Sexton": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629012.png",
+            "team": "CHI"
+        },
+        "Derik Queen": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642852.png",
+            "team": "NOP"
+        },
+        "John Collins": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628381.png",
+            "team": "LAC"
+        },
+        "Ace Bailey": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642846.png",
+            "team": "UTA"
+        },
+        "Duncan Robinson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629130.png",
+            "team": "DET"
+        },
+        "Jarace Walker": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641716.png",
+            "team": "IND"
+        },
+        "Devin Vassell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630170.png",
+            "team": "SAS"
+        },
+        "Julian Champagnie": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630577.png",
+            "team": "SAS"
+        },
+        "Dyson Daniels": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630700.png",
+            "team": "ATL"
+        },
+        "Anfernee Simons": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629014.png",
+            "team": "CHI"
+        },
+        "Jarrett Allen": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628386.png",
+            "team": "CLE"
+        },
+        "Myles Turner": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626167.png",
+            "team": "MIL"
+        },
+        "Wendell Carter Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628976.png",
+            "team": "ORL"
+        },
+        "Alex Sarr": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642259.png",
+            "team": "WAS"
+        },
+        "Noah Clowney": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641730.png",
+            "team": "BKN"
+        },
+        "Brandon Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630314.png",
+            "team": "DAL"
+        },
+        "Deandre Ayton": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629028.png",
+            "team": "LAL"
+        },
+        "Jimmy Butler III": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/202710.png",
+            "team": "GSW"
+        },
+        "Maxime Raynaud": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642875.png",
+            "team": "SAC"
+        },
+        "Rudy Gobert": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203497.png",
+            "team": "MIN"
+        },
+        "Grayson Allen": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628960.png",
+            "team": "PHX"
+        },
+        "Cam Spencer": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642285.png",
+            "team": "MEM"
+        },
+        "Zach LaVine": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203897.png",
+            "team": "SAC"
+        },
+        "Nic Claxton": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629651.png",
+            "team": "BKN"
+        },
+        "P.J. Washington": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629023.png",
+            "team": "DAL"
+        },
+        "Peyton Watson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631212.png",
+            "team": "DEN"
+        },
+        "Kel'el Ware": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642276.png",
+            "team": "MIA"
+        },
+        "Kyle Filipowski": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642271.png",
+            "team": "UTA"
+        },
+        "Sandro Mamukelashvili": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630572.png",
+            "team": "TOR"
+        },
+        "Klay Thompson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/202691.png",
+            "team": "DAL"
+        },
+        "Bub Carrington": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642267.png",
+            "team": "WAS"
+        },
+        "Cedric Coward": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642907.png",
+            "team": "MEM"
+        },
+        "Kyshawn George": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642273.png",
+            "team": "WAS"
+        },
+        "Moses Moody": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630541.png",
+            "team": "GSW"
+        },
+        "Coby White": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629632.png",
+            "team": "CHA"
+        },
+        "Malik Monk": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628370.png",
+            "team": "SAC"
+        },
+        "Ajay Mitchell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642349.png",
+            "team": "OKC"
+        },
+        "Josh Hart": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628404.png",
+            "team": "NYK"
+        },
+        "Tobias Harris": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/202699.png",
+            "team": "DET"
+        },
+        "Tre Johnson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642848.png",
+            "team": "WAS"
+        },
+        "Isaiah Collier": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642268.png",
+            "team": "UTA"
+        },
+        "Jrue Holiday": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201950.png",
+            "team": "POR"
+        },
+        "Royce O'Neale": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626220.png",
+            "team": "PHX"
+        },
+        "Tre Jones": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630200.png",
+            "team": "CHI"
+        },
+        "Isaiah Joe": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630198.png",
+            "team": "OKC"
+        },
+        "Ivica Zubac": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627826.png",
+            "team": "IND"
+        },
+        "Jock Landale": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629111.png",
+            "team": "ATL"
+        },
+        "Dennis Schroder": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203471.png",
+            "team": "CLE"
+        },
+        "Harrison Barnes": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203084.png",
+            "team": "SAS"
+        },
+        "Jay Huff": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630643.png",
+            "team": "IND"
+        },
+        "Kevin Porter Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629645.png",
+            "team": "MIL"
+        },
+        "Darius Garland": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629636.png",
+            "team": "LAC"
+        },
+        "Dylan Harper": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642844.png",
+            "team": "SAS"
+        },
+        "Neemias Queta": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629674.png",
+            "team": "BOS"
+        },
+        "Pelle Larsson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641796.png",
+            "team": "MIA"
+        },
+        "Rui Hachimura": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629060.png",
+            "team": "LAL"
+        },
+        "Jalen Suggs": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630591.png",
+            "team": "ORL"
+        },
+        "Mark Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631109.png",
+            "team": "PHX"
+        },
+        "AJ Green": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631260.png",
+            "team": "MIL"
+        },
+        "Tristan da Silva": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641783.png",
+            "team": "ORL"
+        },
+        "De'Andre Hunter": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629631.png",
+            "team": "SAC"
+        },
+        "Ausar Thompson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641709.png",
+            "team": "DET"
+        },
+        "Sam Hauser": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630573.png",
+            "team": "BOS"
+        },
+        "Kelly Oubre Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626162.png",
+            "team": "PHI"
+        },
+        "Santi Aldama": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630583.png",
+            "team": "MEM"
+        },
+        "Jake LaRavia": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631222.png",
+            "team": "LAL"
+        },
+        "Precious Achiuwa": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630173.png",
+            "team": "SAC"
+        },
+        "Franz Wagner": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630532.png",
+            "team": "ORL"
+        },
+        "Cason Wallace": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641717.png",
+            "team": "OKC"
+        },
+        "Sam Merrill": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630241.png",
+            "team": "CLE"
+        },
+        "Zaccharie Risacher": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642258.png",
+            "team": "ATL"
+        },
+        "Khris Middleton": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203114.png",
+            "team": "DAL"
+        },
+        "Marcus Smart": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203935.png",
+            "team": "LAL"
+        },
+        "Cam Thomas": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630560.png",
+            "team": "MIL"
+        },
+        "Kevin Huerter": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628989.png",
+            "team": "DET"
+        },
+        "Will Riley": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642860.png",
+            "team": "WAS"
+        },
+        "Aaron Nesmith": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630174.png",
+            "team": "IND"
+        },
+        "Ronald Holland II": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641842.png",
+            "team": "DET"
+        },
+        "Jordan Clarkson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203903.png",
+            "team": "NYK"
+        },
+        "Bilal Coulibaly": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641731.png",
+            "team": "WAS"
+        },
+        "Bruce Brown": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628971.png",
+            "team": "DEN"
+        },
+        "Aaron Wiggins": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630598.png",
+            "team": "OKC"
+        },
+        "Isaiah Stewart": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630191.png",
+            "team": "DET"
+        },
+        "Davion Mitchell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630558.png",
+            "team": "MIA"
+        },
+        "Vit Krejci": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630249.png",
+            "team": "POR"
+        },
+        "Cameron Johnson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629661.png",
+            "team": "DEN"
+        },
+        "Kris Dunn": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627739.png",
+            "team": "LAC"
+        },
+        "Luke Kennard": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628379.png",
+            "team": "LAL"
+        },
+        "Simone Fontecchio": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631323.png",
+            "team": "MIA"
+        },
+        "GG Jackson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641713.png",
+            "team": "MEM"
+        },
+        "Jordan Goodwin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630692.png",
+            "team": "PHX"
+        },
+        "Day'Ron Sharpe": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630549.png",
+            "team": "BKN"
+        },
+        "Egor Demin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642856.png",
+            "team": "BKN"
+        },
+        "De'Anthony Melton": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629001.png",
+            "team": "GSW"
+        },
+        "Marvin Bagley III": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628963.png",
+            "team": "DAL"
+        },
+        "Jalen Smith": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630188.png",
+            "team": "CHI"
+        },
+        "Nique Clifford": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642363.png",
+            "team": "SAC"
+        },
+        "Tyler Herro": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629639.png",
+            "team": "MIA"
+        },
+        "Quinten Post": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642366.png",
+            "team": "GSW"
+        },
+        "Danny Wolf": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642874.png",
+            "team": "BKN"
+        },
+        "Caleb Love": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631126.png",
+            "team": "POR"
+        },
+        "Moussa Diabate": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631217.png",
+            "team": "CHA"
+        },
+        "Bones Hyland": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630538.png",
+            "team": "MIN"
+        },
+        "Justin Champagnie": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630551.png",
+            "team": "WAS"
+        },
+        "Ziaire Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630533.png",
+            "team": "BKN"
+        },
+        "Tari Eason": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631106.png",
+            "team": "HOU"
+        },
+        "Aaron Gordon": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203932.png",
+            "team": "DEN"
+        },
+        "Isaac Okoro": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630171.png",
+            "team": "CHI"
+        },
+        "Draymond Green": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203110.png",
+            "team": "GSW"
+        },
+        "Brook Lopez": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201572.png",
+            "team": "LAC"
+        },
+        "Dominick Barlow": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631230.png",
+            "team": "PHI"
+        },
+        "Luguentz Dort": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629652.png",
+            "team": "OKC"
+        },
+        "Gui Santos": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630611.png",
+            "team": "GSW"
+        },
+        "Jordan Miller": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641757.png",
+            "team": "LAC"
+        },
+        "Jonas Valanciunas": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/202685.png",
+            "team": "DEN"
+        },
+        "Jared McCain": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642272.png",
+            "team": "OKC"
+        },
+        "T.J. McConnell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/204456.png",
+            "team": "IND"
+        },
+        "Daniss Jenkins": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642450.png",
+            "team": "DET"
+        },
+        "Javonte Green": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629750.png",
+            "team": "DET"
+        },
+        "Corey Kispert": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630557.png",
+            "team": "ATL"
+        },
+        "Jordan Poole": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629673.png",
+            "team": "NOP"
+        },
+        "Ryan Kalkbrenner": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641750.png",
+            "team": "CHA"
+        },
+        "Daniel Gafford": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629655.png",
+            "team": "DAL"
+        },
+        "Luka Garza": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630568.png",
+            "team": "BOS"
+        },
+        "Jamal Shead": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642347.png",
+            "team": "TOR"
+        },
+        "Jalen Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631114.png",
+            "team": "OKC"
+        },
+        "Oso Ighodaro": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642345.png",
+            "team": "PHX"
+        },
+        "Miles McBride": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630540.png",
+            "team": "NYK"
+        },
+        "Jusuf Nurki\u0107": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203994.png",
+            "team": "UTA"
+        },
+        "Jose Alvarado": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630631.png",
+            "team": "NYK"
+        },
+        "Herbert Jones": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630529.png",
+            "team": "NOP"
+        },
+        "Landry Shamet": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629013.png",
+            "team": "NYK"
+        },
+        "Svi Mykhailiuk": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629004.png",
+            "team": "UTA"
+        },
+        "Jaden Hardy": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630702.png",
+            "team": "WAS"
+        },
+        "Derrick Jones Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627884.png",
+            "team": "LAC"
+        },
+        "Gary Trent Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629018.png",
+            "team": "MIL"
+        },
+        "Gary Payton II": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627780.png",
+            "team": "GSW"
+        },
+        "Walter Clayton Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642383.png",
+            "team": "MEM"
+        },
+        "Paul George": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/202331.png",
+            "team": "PHI"
+        },
+        "Terance Mann": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629611.png",
+            "team": "BKN"
+        },
+        "Kentavious Caldwell-Pope": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203484.png",
+            "team": "MEM"
+        },
+        "Cody Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642262.png",
+            "team": "UTA"
+        },
+        "Christian Braun": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631128.png",
+            "team": "DEN"
+        },
+        "Jalen Green": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630224.png",
+            "team": "PHX"
+        },
+        "Will Richard": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642954.png",
+            "team": "GSW"
+        },
+        "Patrick Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630172.png",
+            "team": "CHI"
+        },
+        "Ben Sheppard": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641767.png",
+            "team": "IND"
+        },
+        "Jaylin Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631119.png",
+            "team": "OKC"
+        },
+        "Gradey Dick": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641711.png",
+            "team": "TOR"
+        },
+        "Ja'Kobe Walter": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642266.png",
+            "team": "TOR"
+        },
+        "Nolan Traore": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642849.png",
+            "team": "BKN"
+        },
+        "Olivier-Maxence Prosper": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641765.png",
+            "team": "MEM"
+        },
+        "Anthony Davis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203076.png",
+            "team": "WAS"
+        },
+        "Tristan Vukcevic": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641774.png",
+            "team": "WAS"
+        },
+        "Kobe Sanders": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642920.png",
+            "team": "LAC"
+        },
+        "Jaxson Hayes": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629637.png",
+            "team": "LAL"
+        },
+        "Luke Kornet": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628436.png",
+            "team": "SAS"
+        },
+        "Kristaps Porzi\u0146\u0123is": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/204001.png",
+            "team": "GSW"
+        },
+        "Ja Morant": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629630.png",
+            "team": "MEM"
+        },
+        "Dru Smith": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630696.png",
+            "team": "MIA"
+        },
+        "Keon Ellis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631165.png",
+            "team": "CLE"
+        },
+        "Sion James": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642883.png",
+            "team": "CHA"
+        },
+        "Pat Spencer": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630311.png",
+            "team": "GSW"
+        },
+        "Taylor Hendricks": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641707.png",
+            "team": "MEM"
+        },
+        "Isaiah Hartenstein": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628392.png",
+            "team": "OKC"
+        },
+        "Paul Reed": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630194.png",
+            "team": "DET"
+        },
+        "Ryan Dunn": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642346.png",
+            "team": "PHX"
+        },
+        "Sidy Cissoko": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631321.png",
+            "team": "POR"
+        },
+        "Caris LeVert": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627747.png",
+            "team": "DET"
+        },
+        "Collin Murray-Boyles": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642867.png",
+            "team": "TOR"
+        },
+        "Jakob Poeltl": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627751.png",
+            "team": "TOR"
+        },
+        "Al Horford": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201143.png",
+            "team": "GSW"
+        },
+        "Buddy Hield": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627741.png",
+            "team": "ATL"
+        },
+        "Andre Drummond": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203083.png",
+            "team": "PHI"
+        },
+        "Isaiah Jackson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630543.png",
+            "team": "LAC"
+        },
+        "Spencer Jones": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642461.png",
+            "team": "DEN"
+        },
+        "Robert Williams III": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629057.png",
+            "team": "POR"
+        },
+        "Bryce McGowens": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631121.png",
+            "team": "NOP"
+        },
+        "Nikola Jovi\u0107": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631107.png",
+            "team": "MIA"
+        },
+        "Justin Edwards": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642348.png",
+            "team": "PHI"
+        },
+        "Quenton Jackson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631245.png",
+            "team": "IND"
+        },
+        "Jonathan Kuminga": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630228.png",
+            "team": "ATL"
+        },
+        "Dean Wade": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629731.png",
+            "team": "CLE"
+        },
+        "Yves Missi": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642274.png",
+            "team": "NOP"
+        },
+        "Karlo Matkovi\u0107": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631255.png",
+            "team": "NOP"
+        },
+        "Drake Powell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642962.png",
+            "team": "BKN"
+        },
+        "Josh Okogie": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629006.png",
+            "team": "HOU"
+        },
+        "Micah Potter": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630695.png",
+            "team": "IND"
+        },
+        "Javon Small": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642914.png",
+            "team": "MEM"
+        },
+        "Keegan Murray": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631099.png",
+            "team": "SAC"
+        },
+        "Ryan Nembhard": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642948.png",
+            "team": "DAL"
+        },
+        "Baylor Scheierman": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631248.png",
+            "team": "BOS"
+        },
+        "Trendon Watford": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630570.png",
+            "team": "PHI"
+        },
+        "Kenrich Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629026.png",
+            "team": "OKC"
+        },
+        "Julian Strawther": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631124.png",
+            "team": "DEN"
+        },
+        "Jaden Ivey": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631093.png",
+            "team": "CHI"
+        },
+        "Thomas Bryant": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628418.png",
+            "team": "CLE"
+        },
+        "Nae'Qwan Tomlin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641772.png",
+            "team": "CLE"
+        },
+        "Mouhamed Gueye": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631243.png",
+            "team": "ATL"
+        },
+        "Jordan Walsh": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641775.png",
+            "team": "BOS"
+        },
+        "Alex Caruso": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627936.png",
+            "team": "OKC"
+        },
+        "Domantas Sabonis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627734.png",
+            "team": "SAC"
+        },
+        "Vince Williams Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631246.png",
+            "team": "UTA"
+        },
+        "Adem Bona": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641737.png",
+            "team": "PHI"
+        },
+        "Goga Bitadze": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629048.png",
+            "team": "ORL"
+        },
+        "Guerschon Yabusele": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627824.png",
+            "team": "CHI"
+        },
+        "Tyrese Martin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631213.png",
+            "team": "PHI"
+        },
+        "Mitchell Robinson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629011.png",
+            "team": "NYK"
+        },
+        "Josh Minott": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631169.png",
+            "team": "BKN"
+        },
+        "Ochai Agbaji": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630534.png",
+            "team": "BKN"
+        },
+        "Ty Jerome": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629660.png",
+            "team": "MEM"
+        },
+        "Rob Dillingham": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642265.png",
+            "team": "CHI"
+        },
+        "Tre Mann": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630544.png",
+            "team": "CHA"
+        },
+        "Scoot Henderson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630703.png",
+            "team": "POR"
+        },
+        "Kris Murray": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631200.png",
+            "team": "POR"
+        },
+        "Trae Young": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629027.png",
+            "team": "WAS"
+        },
+        "Jevon Carter": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628975.png",
+            "team": "ORL"
+        },
+        "Ousmane Dieng": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631172.png",
+            "team": "MIL"
+        },
+        "D'Angelo Russell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626156.png",
+            "team": "WAS"
+        },
+        "Hugo Gonz\u00e1lez": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642864.png",
+            "team": "BOS"
+        },
+        "Nick Richards": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630208.png",
+            "team": "CHI"
+        },
+        "Nicolas Batum": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201587.png",
+            "team": "LAC"
+        },
+        "Kasparas Jaku\u010dionis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642857.png",
+            "team": "MIA"
+        },
+        "Jabari Walker": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631133.png",
+            "team": "PHI"
+        },
+        "Craig Porter Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641854.png",
+            "team": "CLE"
+        },
+        "Tyler Kolek": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642278.png",
+            "team": "NYK"
+        },
+        "Jett Howard": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641724.png",
+            "team": "ORL"
+        },
+        "Kobe Brown": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641738.png",
+            "team": "IND"
+        },
+        "Aaron Holiday": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628988.png",
+            "team": "HOU"
+        },
+        "Kevin Love": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201567.png",
+            "team": "UTA"
+        },
+        "Jamir Watkins": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642364.png",
+            "team": "WAS"
+        },
+        "Jarred Vanderbilt": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629020.png",
+            "team": "LAL"
+        },
+        "Jalen Wilson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630592.png",
+            "team": "BKN"
+        },
+        "Rayan Rupert": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641712.png",
+            "team": "MEM"
+        },
+        "Clint Capela": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203991.png",
+            "team": "HOU"
+        },
+        "Carter Bryant": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642868.png",
+            "team": "SAS"
+        },
+        "Cole Anthony": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630175.png",
+            "team": "MIL"
+        },
+        "Jalen Pickett": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629618.png",
+            "team": "DEN"
+        },
+        "Jaylen Clark": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641740.png",
+            "team": "MIN"
+        },
+        "Caleb Martin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628997.png",
+            "team": "DAL"
+        },
+        "Josh Green": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630182.png",
+            "team": "CHA"
+        },
+        "Jamaree Bouyea": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631123.png",
+            "team": "PHX"
+        },
+        "Jericho Sims": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630579.png",
+            "team": "MIL"
+        },
+        "Moritz Wagner": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629021.png",
+            "team": "ORL"
+        },
+        "Noah Penda": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642869.png",
+            "team": "ORL"
+        },
+        "Tidjane Sala\u00fcn": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642275.png",
+            "team": "CHA"
+        },
+        "Mohamed Diawara": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642885.png",
+            "team": "NYK"
+        },
+        "Kyle Anderson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203937.png",
+            "team": "MIN"
+        },
+        "Drew Eubanks": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629234.png",
+            "team": "SAC"
+        },
+        "Ben Saraf": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642879.png",
+            "team": "BKN"
+        },
+        "Jase Richardson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642859.png",
+            "team": "ORL"
+        },
+        "Sharife Cooper": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630536.png",
+            "team": "WAS"
+        },
+        "Micah Peavy": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642877.png",
+            "team": "NOP"
+        },
+        "Asa Newell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642854.png",
+            "team": "ATL"
+        },
+        "Daeqwon Plowden": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631342.png",
+            "team": "SAC"
+        },
+        "Dalton Knecht": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642261.png",
+            "team": "LAL"
+        },
+        "Tyrese Proctor": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642878.png",
+            "team": "CLE"
+        },
+        "Devin Carter": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642269.png",
+            "team": "SAC"
+        },
+        "Mike Conley": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201144.png",
+            "team": "MIN"
+        },
+        "Cam Whitmore": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641715.png",
+            "team": "WAS"
+        },
+        "Grant Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629684.png",
+            "team": "CHA"
+        },
+        "Anthony Gill": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630264.png",
+            "team": "WAS"
+        },
+        "Gabe Vincent": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629216.png",
+            "team": "ATL"
+        },
+        "Dejounte Murray": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627749.png",
+            "team": "NOP"
+        },
+        "Steven Adams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203500.png",
+            "team": "HOU"
+        },
+        "Tyus Jones": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626145.png",
+            "team": "DEN"
+        },
+        "Rasheer Fleming": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642853.png",
+            "team": "PHX"
+        },
+        "Johnny Furphy": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642277.png",
+            "team": "IND"
+        },
+        "Dylan Cardwell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642928.png",
+            "team": "SAC"
+        },
+        "Zeke Nnaji": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630192.png",
+            "team": "DEN"
+        },
+        "Yanic Konan Niederh\u00e4user": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642949.png",
+            "team": "LAC"
+        },
+        "Leonard Miller": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631159.png",
+            "team": "CHI"
+        },
+        "Branden Carlson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642382.png",
+            "team": "OKC"
+        },
+        "Dwight Powell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203939.png",
+            "team": "DAL"
+        },
+        "Trayce Jackson-Davis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631218.png",
+            "team": "TOR"
+        },
+        "Pete Nance": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631250.png",
+            "team": "MIL"
+        },
+        "Keaton Wallace": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630811.png",
+            "team": "ATL"
+        },
+        "Jordan Hawkins": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641722.png",
+            "team": "NOP"
+        },
+        "Dalen Terry": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631207.png",
+            "team": "PHI"
+        },
+        "Lonzo Ball": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628366.png",
+            "team": "CLE"
+        },
+        "Jamison Battle": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642419.png",
+            "team": "TOR"
+        },
+        "Marcus Sasser": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631204.png",
+            "team": "DET"
+        },
+        "Bogdan Bogdanovi\u0107": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203992.png",
+            "team": "LAC"
+        },
+        "Jayson Tatum": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628369.png",
+            "team": "BOS"
+        },
+        "Tony Bradley": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628396.png",
+            "team": "IND"
+        },
+        "Zach Edey": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641744.png",
+            "team": "MEM"
+        },
+        "Nick Smith Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641733.png",
+            "team": "LAL"
+        },
+        "John Konchar": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629723.png",
+            "team": "UTA"
+        },
+        "Myron Gardner": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642066.png",
+            "team": "MIA"
+        },
+        "Elijah Harkless": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641989.png",
+            "team": "UTA"
+        },
+        "Cam Christie": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642353.png",
+            "team": "LAC"
+        },
+        "Jeremy Sochan": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631110.png",
+            "team": "NYK"
+        },
+        "Terrence Shannon Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630545.png",
+            "team": "MIN"
+        },
+        "Jonathan Isaac": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628371.png",
+            "team": "ORL"
+        },
+        "Cameron Payne": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626166.png",
+            "team": "PHI"
+        },
+        "Malaki Branham": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631103.png",
+            "team": "WAS"
+        },
+        "Moussa Cisse": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630619.png",
+            "team": "DAL"
+        },
+        "Amir Coffey": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629599.png",
+            "team": "PHX"
+        },
+        "Ethan Thompson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630679.png",
+            "team": "IND"
+        },
+        "Kam Jones": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642880.png",
+            "team": "IND"
+        },
+        "Blake Wesley": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631104.png",
+            "team": "POR"
+        },
+        "Taelon Peter": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643007.png",
+            "team": "IND"
+        },
+        "Kelly Olynyk": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203482.png",
+            "team": "SAS"
+        },
+        "Jahmai Mashack": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642942.png",
+            "team": "MEM"
+        },
+        "Obi Toppin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630167.png",
+            "team": "IND"
+        },
+        "Gary Harris": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203914.png",
+            "team": "MIL"
+        },
+        "Julian Phillips": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641763.png",
+            "team": "MIN"
+        },
+        "Liam McNeeley": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642862.png",
+            "team": "CHA"
+        },
+        "Scotty Pippen Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630590.png",
+            "team": "MEM"
+        },
+        "AJ Johnson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642358.png",
+            "team": "DAL"
+        },
+        "Dorian Finney-Smith": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627827.png",
+            "team": "HOU"
+        },
+        "Jamal Cain": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631288.png",
+            "team": "ORL"
+        },
+        "Doug McDermott": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203926.png",
+            "team": "SAC"
+        },
+        "Jeremiah Robinson-Earl": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630526.png",
+            "team": "DAL"
+        },
+        "Pat Connaughton": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626192.png",
+            "team": "CHA"
+        },
+        "Zach Collins": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628380.png",
+            "team": "CHI"
+        },
+        "Blake Hinson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642396.png",
+            "team": "UTA"
+        },
+        "Keshad Johnson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642352.png",
+            "team": "MIA"
+        },
+        "Larry Nance Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626204.png",
+            "team": "CLE"
+        },
+        "Duop Reath": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641871.png",
+            "team": "POR"
+        },
+        "Joan Beringer": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642866.png",
+            "team": "MIN"
+        },
+        "Matisse Thybulle": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629680.png",
+            "team": "POR"
+        },
+        "Jae'Sean Tate": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630256.png",
+            "team": "HOU"
+        },
+        "Taurean Prince": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627752.png",
+            "team": "MIL"
+        },
+        "KJ Simpson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642354.png",
+            "team": "DEN"
+        },
+        "Ariel Hukporti": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630574.png",
+            "team": "NYK"
+        },
+        "Khaman Maluach": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642863.png",
+            "team": "PHX"
+        },
+        "Lindy Waters III": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630322.png",
+            "team": "SAS"
+        },
+        "PJ Hall": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641790.png",
+            "team": "CHA"
+        },
+        "LJ Cryer": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643018.png",
+            "team": "GSW"
+        },
+        "Yang Hansen": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642905.png",
+            "team": "POR"
+        },
+        "DaRon Holmes II": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641747.png",
+            "team": "DEN"
+        },
+        "Ron Harper Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631199.png",
+            "team": "BOS"
+        },
+        "Oscar Tshiebwe": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631131.png",
+            "team": "UTA"
+        },
+        "Garrison Mathews": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629726.png",
+            "team": "IND"
+        },
+        "Tyson Etienne": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630623.png",
+            "team": "BKN"
+        },
+        "Jordan McLaughlin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629162.png",
+            "team": "SAS"
+        },
+        "Maxi Kleber": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628467.png",
+            "team": "LAL"
+        },
+        "MarJon Beauchamp": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630699.png",
+            "team": "PHI"
+        },
+        "Drew Timme": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631166.png",
+            "team": "LAL"
+        },
+        "Walker Kessler": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631117.png",
+            "team": "UTA"
+        },
+        "Killian Hayes": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630165.png",
+            "team": "SAC"
+        },
+        "Nate Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631466.png",
+            "team": "GSW"
+        },
+        "Bronny James": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642355.png",
+            "team": "LAL"
+        },
+        "Chaz Lanier": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642404.png",
+            "team": "DET"
+        },
+        "Chris Youngblood": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642959.png",
+            "team": "POR"
+        },
+        "Isaiah Livers": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630587.png",
+            "team": "PHX"
+        },
+        "RayJ Dennis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642484.png",
+            "team": "ATL"
+        },
+        "Christian Koloko": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631132.png",
+            "team": "ATL"
+        },
+        "Jeff Green": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201145.png",
+            "team": "HOU"
+        },
+        "Chaney Johnson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643052.png",
+            "team": "BKN"
+        },
+        "JD Davison": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631120.png",
+            "team": "HOU"
+        },
+        "Leaky Black": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641778.png",
+            "team": "WAS"
+        },
+        "Tyler Burton": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631174.png",
+            "team": "MEM"
+        },
+        "Kevon Looney": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1626172.png",
+            "team": "NOP"
+        },
+        "A.J. Lawson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630639.png",
+            "team": "TOR"
+        },
+        "Bradley Beal": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203078.png",
+            "team": "LAC"
+        },
+        "Andre Jackson Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641748.png",
+            "team": "MIL"
+        },
+        "Brooks Barnhizer": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642964.png",
+            "team": "OKC"
+        },
+        "Chris Paul": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/101108.png",
+            "team": "LAC"
+        },
+        "Malevy Leons": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642502.png",
+            "team": "GSW"
+        },
+        "E.J. Liddell": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630604.png",
+            "team": "BKN"
+        },
+        "Hunter Tyson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641816.png",
+            "team": "DEN"
+        },
+        "Julian Reese": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642882.png",
+            "team": "WAS"
+        },
+        "Alondes Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631214.png",
+            "team": "WAS"
+        },
+        "Johnny Juzang": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630548.png",
+            "team": "MIN"
+        },
+        "Jonathan Mogbo": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642367.png",
+            "team": "TOR"
+        },
+        "Miles Kelly": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642939.png",
+            "team": "DAL"
+        },
+        "DeAndre Jordan": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201599.png",
+            "team": "NOP"
+        },
+        "Alijah Martin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642918.png",
+            "team": "TOR"
+        },
+        "Jalen Slawson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641771.png",
+            "team": "IND"
+        },
+        "Tolu Smith": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642449.png",
+            "team": "DET"
+        },
+        "Kevin McCullar Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641755.png",
+            "team": "NYK"
+        },
+        "Thanasis Antetokounmpo": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203648.png",
+            "team": "MIL"
+        },
+        "Max Strus": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629622.png",
+            "team": "CLE"
+        },
+        "Xavier Tillman": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630214.png",
+            "team": "CHA"
+        },
+        "Lachlan Olbrich": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642950.png",
+            "team": "CHI"
+        },
+        "Nigel Hayes-Davis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628502.png",
+            "team": "PHX"
+        },
+        "Eric Gordon": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201569.png",
+            "team": "PHI"
+        },
+        "Haywood Highsmith": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629312.png",
+            "team": "PHX"
+        },
+        "Kobe Bufkin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641723.png",
+            "team": "LAL"
+        },
+        "Yuki Kawamura": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642530.png",
+            "team": "CHI"
+        },
+        "David Jones Garcia": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642357.png",
+            "team": "SAS"
+        },
+        "DeJon Jarreau": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630610.png",
+            "team": "MEM"
+        },
+        "Malachi Smith": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641869.png",
+            "team": "BKN"
+        },
+        "Dereck Lively II": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641726.png",
+            "team": "DAL"
+        },
+        "Pac\u00f4me Dadiet": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642359.png",
+            "team": "NYK"
+        },
+        "Adou Thiero": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642876.png",
+            "team": "LAL"
+        },
+        "Luke Travers": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631247.png",
+            "team": "CLE"
+        },
+        "Patrick Baldwin Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631116.png",
+            "team": "SAC"
+        },
+        "Antonio Reeves": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641810.png",
+            "team": "CHA"
+        },
+        "Mason Plumlee": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203486.png",
+            "team": "SAS"
+        },
+        "Seth Curry": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203552.png",
+            "team": "GSW"
+        },
+        "Andersson Garcia": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643158.png",
+            "team": "UTA"
+        },
+        "Caleb Houstan": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631216.png",
+            "team": "ATL"
+        },
+        "Kadary Richmond": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642955.png",
+            "team": "WAS"
+        },
+        "Amari Williams": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642873.png",
+            "team": "BOS"
+        },
+        "Bez Mbeng": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643016.png",
+            "team": "UTA"
+        },
+        "Javonte Cooke": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631451.png",
+            "team": "POR"
+        },
+        "Mac McClung": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630644.png",
+            "team": "CHI"
+        },
+        "Mark Sears": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641813.png",
+            "team": "MIL"
+        },
+        "Bismack Biyombo": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/202687.png",
+            "team": "SAS"
+        },
+        "Chris Boucher": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628449.png",
+            "team": "BOS"
+        },
+        "Bobi Klintman": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641752.png",
+            "team": "DET"
+        },
+        "Jahmir Young": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642443.png",
+            "team": "MIA"
+        },
+        "Joe Ingles": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/204060.png",
+            "team": "MIN"
+        },
+        "Kennedy Chandler": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631113.png",
+            "team": "UTA"
+        },
+        "TyTy Washington Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631102.png",
+            "team": "LAC"
+        },
+        "Monte Morris": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628420.png",
+            "team": "IND"
+        },
+        "Grant Nelson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641761.png",
+            "team": "BKN"
+        },
+        "Isaiah Crawford": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642384.png",
+            "team": "HOU"
+        },
+        "Koby Brea": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642886.png",
+            "team": "PHX"
+        },
+        "Nikola Topi\u0107": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642260.png",
+            "team": "OKC"
+        },
+        "Omer Yurtseven": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630209.png",
+            "team": "GSW"
+        },
+        "Emanuel Miller": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641801.png",
+            "team": "SAS"
+        },
+        "Garrett Temple": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/202066.png",
+            "team": "TOR"
+        },
+        "Kyle Lowry": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/200768.png",
+            "team": "PHI"
+        },
+        "Lawson Lovering": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643133.png",
+            "team": "MEM"
+        },
+        "Trey Alexander": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641725.png",
+            "team": "NOP"
+        },
+        "Charles Bassey": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629646.png",
+            "team": "BOS"
+        },
+        "James Wiseman": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630164.png",
+            "team": "IND"
+        },
+        "John Poulakidas": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642967.png",
+            "team": "DAL"
+        },
+        "Riley Minix": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642434.png",
+            "team": "CLE"
+        },
+        "Skal Labissiere": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627746.png",
+            "team": "WAS"
+        },
+        "Taj Gibson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/201959.png",
+            "team": "MEM"
+        },
+        "Tristan Enaruna": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642400.png",
+            "team": "CLE"
+        },
+        "Dalano Banton": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630625.png",
+            "team": "BOS"
+        },
+        "Isaiah Stevens": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641815.png",
+            "team": "SAC"
+        },
+        "Johni Broome": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641780.png",
+            "team": "PHI"
+        },
+        "Mo Bamba": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628964.png",
+            "team": "UTA"
+        },
+        "Wendell Moore Jr.": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631111.png",
+            "team": "DET"
+        },
+        "Chris Livingston": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641753.png",
+            "team": "CLE"
+        },
+        "Curtis Jones": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642938.png",
+            "team": "DEN"
+        },
+        "Harrison Ingram": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631127.png",
+            "team": "SAS"
+        },
+        "Trey Jemison III": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641998.png",
+            "team": "NYK"
+        },
+        "Brandon Clarke": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629634.png",
+            "team": "MEM"
+        },
+        "Jacob Toppin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631210.png",
+            "team": "ATL"
+        },
+        "Norchad Omier": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641807.png",
+            "team": "LAC"
+        },
+        "Sean Pedulla": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642951.png",
+            "team": "LAC"
+        },
+        "Cody Martin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1628998.png",
+            "team": "IND"
+        },
+        "Dillon Jones": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641794.png",
+            "team": "NYK"
+        },
+        "Hunter Sallis": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642282.png",
+            "team": "PHI"
+        },
+        "Isaac Jones": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642403.png",
+            "team": "DET"
+        },
+        "Orlando Robinson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631115.png",
+            "team": "ORL"
+        },
+        "Buddy Boeheim": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631205.png",
+            "team": "OKC"
+        },
+        "Keshon Gilbert": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642933.png",
+            "team": "ATL"
+        },
+        "Rocco Zikarsky": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642911.png",
+            "team": "MIN"
+        },
+        "Cormac Ryan": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642504.png",
+            "team": "MIL"
+        },
+        "Dario Saric": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/203967.png",
+            "team": "SAC"
+        },
+        "Drew Peterson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641809.png",
+            "team": "CHA"
+        },
+        "Jayson Kent": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643257.png",
+            "team": "POR"
+        },
+        "Max Shulga": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642917.png",
+            "team": "BOS"
+        },
+        "Trentyn Flowers": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642280.png",
+            "team": "CHI"
+        },
+        "Vladislav Goldin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642884.png",
+            "team": "MIA"
+        },
+        "Zyon Pullin": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642389.png",
+            "team": "MIN"
+        },
+        "N'Faly Dante": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642368.png",
+            "team": "ATL"
+        },
+        "Payton Sandfort": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642362.png",
+            "team": "OKC"
+        },
+        "Tyler Smith": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641890.png",
+            "team": "DAL"
+        },
+        "Alex Morales": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631457.png",
+            "team": "ORL"
+        },
+        "CJ Huntley": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643047.png",
+            "team": "PHX"
+        },
+        "Chris Ma\u00f1on": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643024.png",
+            "team": "LAL"
+        },
+        "Colby Jones": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641732.png",
+            "team": "DET"
+        },
+        "Colin Castleton": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630658.png",
+            "team": "ORL"
+        },
+        "David Roddy": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631223.png",
+            "team": "DEN"
+        },
+        "Hunter Dickinson": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630621.png",
+            "team": "NOP"
+        },
+        "John Tonje": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642910.png",
+            "team": "BOS"
+        },
+        "Stanley Umude": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630649.png",
+            "team": "SAS"
+        },
+        "Jahmyl Telfort": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1643141.png",
+            "team": "LAC"
+        },
+        "Chucky Hepburn": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642935.png",
+            "team": "TOR"
+        },
+        "Darius Brown": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642468.png",
+            "team": "CLE"
+        },
+        "Enrique Freeman": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642402.png",
+            "team": "MIN"
+        },
+        "Noa Essengue": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642855.png",
+            "team": "CHI"
+        },
+        "Tosan Evbuomwan": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1641787.png",
+            "team": "CHA"
+        },
+        "Trevor Keels": {
+            "url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631211.png",
+            "team": "MIA"
+        }
+    }
+}

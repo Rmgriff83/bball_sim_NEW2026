@@ -6,6 +6,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, LoadingSpinner } from '@/components/ui'
 import { DollarSign, Users, TrendingUp, Calendar, FileText } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import ContractCard from './ContractCard.vue'
 import ResignModal from './ResignModal.vue'
 import SignFreeAgentModal from './SignFreeAgentModal.vue'
@@ -297,55 +298,30 @@ onMounted(() => {
 
       <!-- Team Contracts View -->
       <div v-if="activeSubTab === 'team'" class="contracts-section">
-        <!-- Contract Visualization Table -->
-        <GlassCard padding="md" :hoverable="false" class="contract-table-card">
-          <h4 class="section-title">Contract Overview</h4>
-          <div class="contract-table-wrapper">
-            <table class="contract-table">
-              <thead>
-                <tr>
-                  <th class="player-col">Player</th>
-                  <th class="pos-col">Pos</th>
-                  <th class="salary-col">Salary</th>
-                  <th
-                    v-for="year in contractYears"
-                    :key="year"
-                    class="year-col"
-                  >
-                    {{ year }}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="player in sortedRoster"
-                  :key="player.id"
-                  class="contract-row"
-                  :class="{ expiring: player.contractYearsRemaining === 1 }"
-                >
-                  <td class="player-col">
-                    <span class="player-name">{{ player.firstName }} {{ player.lastName }}</span>
-                  </td>
-                  <td class="pos-col">
+        <!-- Expiring Contracts -->
+        <GlassCard v-if="expiringContracts.length > 0" padding="md" :hoverable="false" class="expiring-card">
+          <h4 class="section-title">
+            <Calendar :size="16" />
+            Expiring Contracts
+          </h4>
+          <div class="expiring-list">
+            <div
+              v-for="player in expiringContracts"
+              :key="player.id"
+              class="expiring-row"
+              @click="handleInfo(player)"
+            >
+              <div class="expiring-player-info">
+                <PlayerAvatar :player="player" :size="32" />
+                <div class="expiring-player-details">
+                  <span class="expiring-player-name">{{ player.firstName }} {{ player.lastName }}</span>
+                  <span class="expiring-player-meta">
                     <span class="pos-badge">{{ player.position }}</span>
-                  </td>
-                  <td class="salary-col">{{ formatSalary(player.contractSalary) }}</td>
-                  <td
-                    v-for="year in contractYears"
-                    :key="year"
-                    class="year-col"
-                  >
-                    <div
-                      class="year-cell"
-                      :class="{
-                        active: hasContractInYear(player, year),
-                        expiring: hasContractInYear(player, year) && year === currentYear + player.contractYearsRemaining - 1
-                      }"
-                    ></div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                    <span class="expiring-salary">{{ formatSalary(player.contractSalary) }}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
         </GlassCard>
 
@@ -583,9 +559,9 @@ onMounted(() => {
   gap: 1.25rem;
 }
 
-/* Contract Table */
-.contract-table-card {
-  overflow: hidden;
+/* Expiring Contracts */
+.expiring-card {
+  border: 1px solid rgba(245, 158, 11, 0.15);
 }
 
 .section-title {
@@ -598,57 +574,47 @@ onMounted(() => {
   gap: 0.5rem;
 }
 
-.title-hint {
-  font-size: 0.8rem;
-  font-weight: 400;
-  color: var(--color-text-tertiary);
+.expiring-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
-.contract-table-wrapper {
-  overflow-x: auto;
+.expiring-row {
+  display: flex;
+  align-items: center;
+  padding: 0.625rem 0.75rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
 
-.contract-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
+.expiring-row:hover {
+  background: rgba(255, 255, 255, 0.05);
 }
 
-.contract-table th {
-  text-align: left;
-  padding: 0.75rem 0.5rem;
-  color: var(--color-text-secondary);
-  font-weight: 600;
-  text-transform: uppercase;
-  font-size: 0.7rem;
-  letter-spacing: 0.5px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+.expiring-player-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 
-.contract-table td {
-  padding: 0.625rem 0.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+.expiring-player-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
-.contract-row:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.contract-row.expiring {
-  background: rgba(245, 158, 11, 0.05);
-}
-
-.player-col {
-  min-width: 150px;
-}
-
-.player-name {
+.expiring-player-name {
   font-weight: 500;
+  font-size: 0.9rem;
   color: var(--color-text-primary);
 }
 
-.pos-col {
-  width: 50px;
+.expiring-player-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .pos-badge {
@@ -661,30 +627,10 @@ onMounted(() => {
   color: var(--color-primary);
 }
 
-.salary-col {
-  min-width: 80px;
-  color: var(--color-success);
+.expiring-salary {
+  font-size: 0.8rem;
   font-weight: 600;
-}
-
-.year-col {
-  width: 60px;
-  text-align: center;
-}
-
-.year-cell {
-  width: 100%;
-  height: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
-}
-
-.year-cell.active {
-  background: linear-gradient(90deg, var(--color-primary), var(--color-tertiary));
-}
-
-.year-cell.expiring {
-  background: linear-gradient(90deg, #F59E0B, #EF4444);
+  color: var(--color-warning);
 }
 
 /* Player Cards Grid */
@@ -725,35 +671,11 @@ onMounted(() => {
 }
 
 /* Light Mode Overrides */
-[data-theme="light"] .contract-table th {
-  border-bottom-color: rgba(0, 0, 0, 0.1);
-}
-
-[data-theme="light"] .contract-table td {
-  border-bottom-color: rgba(0, 0, 0, 0.06);
-}
-
-[data-theme="light"] .contract-row:hover {
-  background: rgba(0, 0, 0, 0.03);
-}
-
-[data-theme="light"] .contract-row.expiring {
-  background: rgba(245, 158, 11, 0.08);
+[data-theme="light"] .expiring-row:hover {
+  background: rgba(0, 0, 0, 0.04);
 }
 
 [data-theme="light"] .pos-badge {
   background: rgba(59, 130, 246, 0.15);
-}
-
-[data-theme="light"] .year-cell {
-  background: rgba(0, 0, 0, 0.08);
-}
-
-[data-theme="light"] .year-cell.active {
-  background: linear-gradient(90deg, var(--color-primary), var(--color-tertiary));
-}
-
-[data-theme="light"] .year-cell.expiring {
-  background: linear-gradient(90deg, #F59E0B, #EF4444);
 }
 </style>

@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { User, AlertTriangle, RefreshCw, UserMinus } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { StatBadge } from '@/components/ui'
 
 const props = defineProps({
@@ -100,7 +101,7 @@ function handleInfo() {
       <!-- Left Column: Avatar + Buttons -->
       <div class="left-column">
         <div class="player-avatar">
-          <User :size="28" />
+          <PlayerAvatar :player="player" :size="42" />
           <div v-if="isExpiringContract && !isFreeAgent" class="expiring-indicator" title="Expiring contract">
             <AlertTriangle :size="12" />
           </div>

@@ -25,6 +25,7 @@ import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
 import { enterOffseason, startNewSeason } from '@/engine/campaign/CampaignManager'
 import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
 import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -1793,7 +1794,7 @@ function handleCloseSimulateModal() {
         <h3 class="section-header featured-header">FEATURED PLAYER</h3>
         <div class="player-content">
           <div class="player-avatar">
-            <User class="avatar-icon" :size="36" />
+            <PlayerAvatar :player="topPlayer" :size="36" class="avatar-icon" />
           </div>
           <div class="player-info">
             <h4 class="player-name">{{ topPlayer.name }}</h4>

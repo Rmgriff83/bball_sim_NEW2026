@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { User, Calendar, DollarSign, AlertTriangle, Check, X, Users } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { BaseModal, BaseButton, StatBadge, LoadingSpinner } from '@/components/ui'
 
 const props = defineProps({
@@ -97,7 +98,7 @@ function handleConfirm() {
       <!-- Player Info -->
       <div class="player-card">
         <div class="player-avatar">
-          <User :size="32" />
+          <PlayerAvatar :player="player" :size="32" />
         </div>
         <div class="player-details">
           <h3 class="player-name">{{ player.firstName }} {{ player.lastName }}</h3>

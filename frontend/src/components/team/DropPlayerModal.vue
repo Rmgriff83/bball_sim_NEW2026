@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { User, DollarSign, AlertTriangle, UserMinus } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { BaseModal, BaseButton, StatBadge, LoadingSpinner } from '@/components/ui'
 import { getMotivationLabel, calculateRetentionScore } from '@/engine/ai/MotivationService'
 
@@ -113,7 +114,7 @@ function handleConfirm() {
       <!-- Player Info -->
       <div class="player-card">
         <div class="player-avatar">
-          <User :size="32" />
+          <PlayerAvatar :player="player" :size="32" />
         </div>
         <div class="player-details">
           <h3 class="player-name">{{ player.firstName }} {{ player.lastName }}</h3>

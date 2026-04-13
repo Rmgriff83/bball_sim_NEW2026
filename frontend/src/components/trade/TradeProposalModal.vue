@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useTradeStore } from '@/stores/trade'
 import { X, ArrowLeftRight, Check, XCircle } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 
 const props = defineProps({
   show: Boolean,
@@ -88,6 +89,7 @@ function handleKeydown(e) {
                   >
                     <template v-if="asset.type === 'player' && asset.player">
                       <div class="player-info-row">
+                        <PlayerAvatar :player="asset.player" :size="32" />
                         <div class="player-details">
                           <span class="player-name">{{ asset.player.firstName }} {{ asset.player.lastName }}</span>
                           <span class="player-meta">{{ asset.player.position }} | Age {{ getPlayerAge(asset.player) }}</span>
@@ -124,6 +126,7 @@ function handleKeydown(e) {
                   >
                     <template v-if="asset.type === 'player' && asset.player">
                       <div class="player-info-row">
+                        <PlayerAvatar :player="asset.player" :size="32" />
                         <div class="player-details">
                           <span class="player-name">{{ asset.player.firstName }} {{ asset.player.lastName }}</span>
                           <span class="player-meta">{{ asset.player.position }} | Age {{ getPlayerAge(asset.player) }}</span>
@@ -188,7 +191,8 @@ function handleKeydown(e) {
 
 .modal-container {
   width: 100%;
-  max-width: 520px;
+  max-width: 620px;
+  min-height: 60vh;
   max-height: 90vh;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);

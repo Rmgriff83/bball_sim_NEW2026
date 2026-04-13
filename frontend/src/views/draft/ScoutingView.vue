@@ -13,6 +13,7 @@ import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
 import { useSyncStore } from '@/stores/sync'
 import { LoadingSpinner, StatBadge } from '@/components/ui'
 import { Search, Binoculars, User } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 
 const route = useRoute()
@@ -50,28 +51,26 @@ const userTeamId = ref(null)
 const campaign = computed(() => campaignStore.currentCampaign)
 const isOffseason = computed(() => campaign.value?.phase === 'offseason')
 
-// All 32 attributes in the scouting pool
+// All attributes in the scouting pool — must match the generated player schema
+// (see CampaignManager.js generateAttributes / generatePlayer)
 const ALL_ATTRIBUTES = [
   'overallRating', 'potentialRating',
-  // Offense (19)
-  'closeShot', 'midRange', 'threePoint', 'freeThrow', 'shotIQ', 'offensiveConsistency',
-  'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl',
-  'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ',
-  // Defense (9)
-  'perimeterDefense', 'interiorDefense', 'helpDefenseIQ', 'passPerception',
-  'steal', 'block', 'defensiveRebound', 'offensiveRebound', 'defensiveConsistency',
-  // Physical (7)
-  'speed', 'acceleration', 'vertical', 'stamina', 'strength', 'hustle', 'durability',
-  // Mental (5)
-  'workEthic', 'basketballIQ', 'clutch', 'coachability', 'intangibles',
+  // Offense (8)
+  'threePoint', 'midRange', 'postScoring', 'layup', 'dunk', 'ballHandling', 'passing', 'speedWithBall',
+  // Defense (5)
+  'perimeterD', 'interiorD', 'steal', 'block', 'defensiveIQ',
+  // Physical (5)
+  'speed', 'acceleration', 'strength', 'vertical', 'stamina',
+  // Mental (4)
+  'basketballIQ', 'consistency', 'clutch', 'workEthic',
 ]
 
 const ATTRIBUTE_CATEGORIES = {
   'Ratings': ['overallRating', 'potentialRating'],
-  'Offense': ['closeShot', 'midRange', 'threePoint', 'freeThrow', 'shotIQ', 'offensiveConsistency', 'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl', 'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ'],
-  'Defense': ['perimeterDefense', 'interiorDefense', 'helpDefenseIQ', 'passPerception', 'steal', 'block', 'defensiveRebound', 'offensiveRebound', 'defensiveConsistency'],
-  'Physical': ['speed', 'acceleration', 'vertical', 'stamina', 'strength', 'hustle', 'durability'],
-  'Mental': ['workEthic', 'basketballIQ', 'clutch', 'coachability', 'intangibles'],
+  'Offense': ['threePoint', 'midRange', 'postScoring', 'layup', 'dunk', 'ballHandling', 'passing', 'speedWithBall'],
+  'Defense': ['perimeterD', 'interiorD', 'steal', 'block', 'defensiveIQ'],
+  'Physical': ['speed', 'acceleration', 'strength', 'vertical', 'stamina'],
+  'Mental': ['basketballIQ', 'consistency', 'clutch', 'workEthic'],
 }
 
 const TOTAL_SCOUT_ACTIONS = 4 // 4 scout actions to fully reveal a player
@@ -79,7 +78,9 @@ const BASE_REVEAL_COUNT = Math.ceil(ALL_ATTRIBUTES.length / TOTAL_SCOUT_ACTIONS)
 const PERK_REVEAL_COUNT = Math.ceil(ALL_ATTRIBUTES.length / 3) // 33% per action = 3 actions to fully scout
 
 function getRevealedAttributes(playerId) {
-  return scoutedPlayers.value[playerId]?.revealedAttributes || []
+  const raw = scoutedPlayers.value[playerId]?.revealedAttributes || []
+  // Filter to only valid attributes (handles stale data from schema changes)
+  return raw.filter(a => ALL_ATTRIBUTES.includes(a))
 }
 
 function isAttributeRevealed(playerId, attr) {
@@ -107,7 +108,7 @@ function isFullyScouted(playerId) {
 
 function getScoutPercent(playerId) {
   const revealed = getRevealedAttributes(playerId).length
-  return Math.round((revealed / ALL_ATTRIBUTES.length) * 100)
+  return Math.min(100, Math.round((revealed / ALL_ATTRIBUTES.length) * 100))
 }
 
 function getPlayerAttributeValue(player, attr) {
@@ -425,7 +426,7 @@ onMounted(async () => {
             <div class="card-header">
               <div class="avatar-column">
                 <div class="player-avatar">
-                  <User class="avatar-icon" :size="32" />
+                  <PlayerAvatar :player="player" :size="32" class="avatar-icon" />
                 </div>
                 <span class="slot-position-label" :style="{ backgroundColor: getPositionColor(player.position) }">{{ player.position }}</span>
               </div>

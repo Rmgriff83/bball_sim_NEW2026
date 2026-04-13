@@ -7,6 +7,8 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useGameStore } from '@/stores/game'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { X, ChevronLeft } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import TeamLogo from '@/components/common/TeamLogo.vue'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 
 const route = useRoute()
@@ -837,9 +839,11 @@ function formatSalary(salary) {
             <main v-if="selectedTeam" class="team-modal-body">
               <!-- Team Card - Cosmic Style -->
               <div class="team-card-cosmic">
-                <div class="team-badge-lg" :style="{ backgroundColor: selectedTeam.team?.primary_color || '#666' }">
-                  {{ selectedTeam.team?.abbreviation }}
-                </div>
+                <TeamLogo
+                  :abbreviation="selectedTeam.team?.abbreviation"
+                  :color="selectedTeam.team?.primary_color"
+                  :size="56"
+                />
                 <div class="team-card-info">
                   <h3 class="team-card-name">{{ selectedTeam.team?.name }}</h3>
                   <div class="team-card-record">{{ selectedTeam.wins }}-{{ selectedTeam.losses }}</div>
@@ -882,6 +886,7 @@ function formatSalary(salary) {
                     @click="openPlayerFromTeam(player)"
                   >
                     <div class="roster-player-main">
+                      <PlayerAvatar :player="player" :size="32" />
                       <div class="roster-player-rating">
                         <StatBadge :value="player.overall_rating" size="sm" />
                         <span v-if="player.is_injured || player.isInjured" class="roster-injury-badge">INJ</span>
@@ -951,6 +956,9 @@ function formatSalary(salary) {
             <main v-else-if="selectedPlayer" class="player-modal-body">
               <!-- Player Card - Cosmic Style -->
               <div class="player-card-cosmic" :class="{ injured: selectedPlayer.is_injured || selectedPlayer.isInjured }">
+                <div class="player-avatar-circle">
+                  <PlayerAvatar :player="selectedPlayer" :size="64" />
+                </div>
                 <div class="player-card-rating">
                   <StatBadge :value="selectedPlayer.overall_rating" size="lg" />
                   <span v-if="selectedPlayer.is_injured || selectedPlayer.isInjured" class="player-card-injury">INJ</span>
@@ -2638,15 +2646,15 @@ function formatSalary(salary) {
 }
 
 [data-theme="light"] .stats-section {
-  background: rgba(0, 0, 0, 0.03);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 [data-theme="light"] .stat-cell {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 [data-theme="light"] .contract-footer {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 [data-theme="light"] .conf-btn {
@@ -3209,6 +3217,18 @@ function formatSalary(salary) {
 
 .player-card-cosmic.injured {
   background: linear-gradient(135deg, #ef4444 0%, #dc2626 50%, #b91c1c 100%);
+}
+
+.player-avatar-circle {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.25);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .player-card-cosmic::before {

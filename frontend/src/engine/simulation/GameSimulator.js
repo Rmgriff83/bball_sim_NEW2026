@@ -1539,6 +1539,7 @@ class GameSimulator {
     return {
       playerId: player.id,
       name: (player.first_name || '') + ' ' + (player.last_name || ''),
+      headshot: player.headshot || null,
       position: player.position,
       secondary_position: player.secondary_position || null,
       overall_rating: player.overall_rating || null,
@@ -1571,6 +1572,7 @@ class GameSimulator {
     return {
       player_id: stats.playerId,
       name: stats.name,
+      headshot: stats.headshot || null,
       position: stats.position,
       secondary_position: stats.secondary_position || null,
       overall_rating: stats.overall_rating || stats.overallRating || null,

@@ -5,6 +5,7 @@ import { SALARY_CAP } from '@/engine/data/teams'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { SeasonManager } from '@/engine/season/SeasonManager'
 import { useSyncStore } from '@/stores/sync'
 import {
   evaluateTrade,
@@ -347,10 +348,17 @@ export const useTradeStore = defineStore('trade', () => {
         }
       }
 
-      // Save trade to history in season data
+      // Save trade to history in season data & update player stats team
       const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (seasonData) {
+        // Update team ID in player stats so league leaders / stats history reflect the new team
+        for (const asset of details.assets) {
+          if (asset.type === 'player') {
+            SeasonManager.updatePlayerStatsTeam(seasonData, asset.playerId, asset.to)
+          }
+        }
+
         if (!seasonData.tradeHistory) seasonData.tradeHistory = []
         seasonData.tradeHistory.push({
           id: `trade_${Date.now()}`,
@@ -667,10 +675,17 @@ export const useTradeStore = defineStore('trade', () => {
         }
       }
 
-      // Save trade to history
+      // Save trade to history & update player stats team
       const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (seasonData) {
+        // Update team ID in player stats so league leaders / stats history reflect the new team
+        for (const asset of details.assets) {
+          if (asset.type === 'player') {
+            SeasonManager.updatePlayerStatsTeam(seasonData, asset.playerId, asset.to)
+          }
+        }
+
         if (!seasonData.tradeHistory) seasonData.tradeHistory = []
         seasonData.tradeHistory.push({
           id: `trade_${Date.now()}`,

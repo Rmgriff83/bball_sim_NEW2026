@@ -9,6 +9,7 @@ import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import TradesTab from '@/components/trade/TradesTab.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
 import FacilitiesTab from '@/components/team/FacilitiesTab.vue'
@@ -1176,7 +1177,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     >
                       <ArrowUpDown :size="14" class="dropdown-move-icon" />
                       <div class="dropdown-avatar">
-                        <User :size="16" />
+                        <PlayerAvatar :player="candidate" :size="16" />
                       </div>
                       <span class="dropdown-name">{{ candidate.name }}</span>
                       <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
@@ -1209,7 +1210,7 @@ const STAFF_TRAINER_PERK_LABELS = {
               <div class="card-header">
                 <div class="avatar-column">
                   <div class="player-avatar">
-                    <User class="avatar-icon" :size="32" />
+                    <PlayerAvatar :player="slot.player" :size="42" class="avatar-icon" />
                   </div>
                   <span class="slot-position-label card-cosmic">{{ slot.position }}</span>
                 </div>
@@ -1305,7 +1306,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     >
                       <ArrowUpDown :size="14" class="dropdown-move-icon" />
                       <div class="dropdown-avatar">
-                        <User :size="16" />
+                        <PlayerAvatar :player="candidate" :size="16" />
                       </div>
                       <div class="dropdown-name-row">
                         <span class="dropdown-name">{{ candidate.name }}</span>
@@ -1381,7 +1382,7 @@ const STAFF_TRAINER_PERK_LABELS = {
             <div class="card-header">
               <div class="avatar-column">
                 <div class="player-avatar">
-                  <User class="avatar-icon" :size="32" />
+                  <PlayerAvatar :player="player" :size="42" class="avatar-icon" />
                 </div>
                 <span class="slot-position-label bench-label">BENCH</span>
               </div>
@@ -1477,7 +1478,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                   >
                     <ArrowUpDown :size="14" class="dropdown-move-icon" />
                     <div class="dropdown-avatar">
-                      <User :size="16" />
+                      <PlayerAvatar :player="candidate" :size="16" />
                     </div>
                     <div class="dropdown-name-row">
                       <span class="dropdown-name">{{ candidate.name }}</span>

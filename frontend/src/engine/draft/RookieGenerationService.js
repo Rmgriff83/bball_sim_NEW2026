@@ -8,6 +8,10 @@
 import { generatePlayer } from '../campaign/CampaignManager'
 import { PlayerRepository } from '../db/PlayerRepository'
 
+// Build list of available headshot filenames for random assignment to rookies
+const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
+const AVAILABLE_HEADSHOTS = Object.keys(headshotModules).map(k => k.split('/').pop())
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -201,6 +205,8 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
   }
 
   let globalIdx = 0
+  const usedHeadshots = new Set()
+  const availableHeadshotPool = [...AVAILABLE_HEADSHOTS]
 
   for (let tierIdx = 0; tierIdx < TIER_CONFIG.length; tierIdx++) {
     const tier = TIER_CONFIG[tierIdx]
@@ -270,6 +276,22 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
       player.last_name = lastName
       player.name = `${firstName} ${lastName}`
       usedNames.add(player.name)
+
+      // Assign a random headshot, avoiding duplicates within this class
+      if (availableHeadshotPool.length > 0) {
+        // Reset pool if we've used all available headshots
+        if (usedHeadshots.size >= AVAILABLE_HEADSHOTS.length) {
+          usedHeadshots.clear()
+          availableHeadshotPool.length = 0
+          availableHeadshotPool.push(...AVAILABLE_HEADSHOTS)
+        }
+        const remaining = availableHeadshotPool.filter(h => !usedHeadshots.has(h))
+        const chosen = pickRandom(remaining.length > 0 ? remaining : availableHeadshotPool)
+        player.headshot = chosen
+        usedHeadshots.add(chosen)
+      } else {
+        player.headshot = null
+      }
 
       // College / international origin
       if (isInternational) {

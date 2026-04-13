@@ -7,6 +7,7 @@ import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowRight, ArrowLeft, X, Check, AlertCircle, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus, Package, Users, Repeat, AlertTriangle, CheckCircle, Info, Star, Calendar, DollarSign } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 
 const props = defineProps({
   campaignId: {
@@ -681,7 +682,7 @@ function formatAge(age) {
             >
               <div class="wizard-asset-card-content">
                 <div class="wizard-asset-avatar">
-                  <User :size="24" />
+                  <PlayerAvatar :player="player" :size="24" />
                 </div>
                 <div class="wizard-asset-info">
                   <span class="wizard-asset-name">{{ player.firstName }} {{ player.lastName }}</span>
@@ -834,7 +835,7 @@ function formatAge(age) {
             >
               <div class="wizard-asset-card-content">
                 <div class="wizard-asset-avatar">
-                  <User :size="24" />
+                  <PlayerAvatar :player="player" :size="24" />
                 </div>
                 <div class="wizard-asset-info">
                   <span class="wizard-asset-name">{{ player.firstName }} {{ player.lastName }}</span>
@@ -918,7 +919,7 @@ function formatAge(age) {
                     <template v-if="asset.type === 'player'">
                       <div class="modal-player-card">
                         <div class="modal-player-avatar">
-                          <User :size="24" />
+                          <PlayerAvatar :player="asset" :size="24" />
                         </div>
                         <div class="modal-player-info">
                           <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>
@@ -979,7 +980,7 @@ function formatAge(age) {
                     <template v-if="asset.type === 'player'">
                       <div class="modal-player-card">
                         <div class="modal-player-avatar">
-                          <User :size="24" />
+                          <PlayerAvatar :player="asset" :size="24" />
                         </div>
                         <div class="modal-player-info">
                           <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>

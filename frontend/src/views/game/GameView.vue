@@ -9,6 +9,7 @@ import { useToastStore } from '@/stores/toast'
 import { usePlayoffStore } from '@/stores/playoff'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
 import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
 import { SimulateConfirmModal, EvolutionSummary } from '@/components/game'
@@ -1281,15 +1282,20 @@ function formatDate(dateString) {
   })
 }
 
-function getTopPerformers(stats) {
+function getTopPerformers(stats, roster) {
   if (!stats || !Array.isArray(stats) || stats.length === 0) return []
   return [...stats]
     .sort((a, b) => (b.points || 0) - (a.points || 0))
     .slice(0, 3)
+    .map(p => {
+      if (p.headshot) return p
+      const rosterPlayer = roster?.find(r => r.id === p.player_id)
+      return rosterPlayer?.headshot ? { ...p, headshot: rosterPlayer.headshot } : p
+    })
 }
 
-const homeTopPerformers = computed(() => getTopPerformers(boxScore.value.home))
-const awayTopPerformers = computed(() => getTopPerformers(boxScore.value.away))
+const homeTopPerformers = computed(() => getTopPerformers(boxScore.value.home, homeRoster.value))
+const awayTopPerformers = computed(() => getTopPerformers(boxScore.value.away, awayRoster.value))
 
 // Player modal state
 const showPlayerModal = ref(false)
@@ -3024,7 +3030,7 @@ onUnmounted(() => {
                 @click="openPlayerModal(player)"
               >
                 <div class="performer-avatar">
-                  <User class="avatar-icon" :size="24" />
+                  <PlayerAvatar :player="player" :size="38" class="avatar-icon" />
                 </div>
                 <div class="performer-main">
                   <div class="performer-identity">
@@ -3068,7 +3074,7 @@ onUnmounted(() => {
                 @click="openPlayerModal(player)"
               >
                 <div class="performer-avatar">
-                  <User class="avatar-icon" :size="24" />
+                  <PlayerAvatar :player="player" :size="38" class="avatar-icon" />
                 </div>
                 <div class="performer-main">
                   <div class="performer-identity">
@@ -3457,18 +3463,19 @@ onUnmounted(() => {
       </template>
     </template>
 
-    <!-- Player Details Modal -->
+    <!-- Player Performance Modal -->
     <BaseModal
       :show="showPlayerModal"
       @close="closePlayerModal"
-      :title="selectedPlayer?.name || 'Player Details'"
+      title=""
+      :show-header="false"
       size="md"
     >
       <div v-if="selectedPlayer" class="player-modal-content">
         <!-- Player Header -->
         <div class="player-modal-header">
           <div class="player-avatar-lg">
-            <User class="avatar-icon" :size="32" />
+            <PlayerAvatar :player="selectedPlayer" :size="64" class="avatar-icon" />
           </div>
           <div class="player-header-info">
             <h2 class="player-modal-name">{{ selectedPlayer.name }}</h2>
@@ -3484,6 +3491,9 @@ onUnmounted(() => {
               </span>
             </div>
           </div>
+          <button class="perf-modal-close" @click="closePlayerModal" aria-label="Close">
+            <X :size="20" />
+          </button>
         </div>
 
         <!-- Game Stats -->
@@ -3542,6 +3552,12 @@ onUnmounted(() => {
           <span class="minutes-value">{{ selectedPlayer.minutes || 0 }}</span>
         </div>
       </div>
+
+      <template #footer>
+        <div class="modal-footer-buttons">
+          <button class="btn-close-modal" @click="closePlayerModal">Close</button>
+        </div>
+      </template>
     </BaseModal>
 
     <!-- Simulate Games Modal -->
@@ -5243,6 +5259,52 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.modal-footer-buttons {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.btn-close-modal {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn-close-modal:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.perf-modal-close {
+  margin-left: auto;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.perf-modal-close:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--color-text-primary);
 }
 
 .player-modal-header {

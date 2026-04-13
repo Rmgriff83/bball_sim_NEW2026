@@ -450,6 +450,9 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
     lastName: masterData.lastName,
     last_name: masterData.lastName,
     name: `${masterData.firstName} ${masterData.lastName}`,
+    headshot: masterData.originalName
+      ? `${masterData.originalName.trim().replace(/\./g, '').replace(/\s+/g, '_')}.png`
+      : null,
     position,
     secondaryPosition: masterData.secondaryPosition ?? null,
     secondary_position: masterData.secondaryPosition ?? null,
