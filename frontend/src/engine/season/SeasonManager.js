@@ -565,9 +565,13 @@ export class SeasonManager {
     }
 
     const stats = seasonData.playerStats[pid]
+    const minutesPlayed = gameStats.minutes ?? 0
 
-    stats.gamesPlayed++
-    stats.minutesPlayed += gameStats.minutes ?? 0
+    // Only count as a game played if the player actually got minutes
+    if (minutesPlayed > 0) {
+      stats.gamesPlayed++
+    }
+    stats.minutesPlayed += minutesPlayed
     stats.points += gameStats.points ?? 0
     stats.rebounds += gameStats.rebounds ?? 0
     stats.offensiveRebounds += gameStats.offensiveRebounds ?? gameStats.offensive_rebounds ?? 0
@@ -764,8 +768,11 @@ export class SeasonManager {
           }
 
           const s = seasonData.playerStats[pid]
-          s.gamesPlayed++
-          s.minutesPlayed += playerStats.minutes ?? 0
+          const mins = playerStats.minutes ?? 0
+          if (mins > 0) {
+            s.gamesPlayed++
+          }
+          s.minutesPlayed += mins
           s.points += playerStats.points ?? 0
           s.rebounds += playerStats.rebounds ?? 0
           s.offensiveRebounds += playerStats.offensiveRebounds ?? playerStats.offensive_rebounds ?? 0

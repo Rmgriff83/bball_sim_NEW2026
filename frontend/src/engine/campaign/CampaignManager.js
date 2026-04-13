@@ -413,8 +413,27 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
     age, overallRating: overall, personality: pers,
   })
 
-  // Generate potential with upside when missing
-  const potentialDefault = Math.min(99, overall + randInt(0, 6))
+  // Generate potential with upside when missing — weighted by age
+  let potentialDefault
+  if (!masterData.potentialRating) {
+    // Younger players have more room to grow
+    let potentialFloor, potentialCeiling
+    if (age <= 23) {
+      potentialFloor = Math.round(overall * 1.05)  // 5% above current
+      potentialCeiling = Math.round(overall * 1.20) // 20% above current
+    } else if (age <= 26) {
+      potentialFloor = Math.round(overall * 1.03)
+      potentialCeiling = Math.round(overall * 1.12)
+    } else if (age <= 31) {
+      potentialFloor = overall
+      potentialCeiling = Math.round(overall * 1.05)
+    } else {
+      // Decline-age players: potential is at or just below current
+      potentialFloor = Math.max(25, overall - 3)
+      potentialCeiling = overall
+    }
+    potentialDefault = Math.min(99, randInt(potentialFloor, potentialCeiling))
+  }
   const potentialRating = masterData.potentialRating ?? potentialDefault
 
   // Generate trade value when missing
@@ -516,6 +535,10 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
     recent_performances: [],
     upgradePoints: 0,
     upgrade_points: 0,
+    offenseUpgradePoints: 0,
+    offense_upgrade_points: 0,
+    defenseUpgradePoints: 0,
+    defense_upgrade_points: 0,
     gamesPlayedThisSeason: 0,
     games_played_this_season: 0,
     minutesPlayedThisSeason: 0,
@@ -2022,6 +2045,10 @@ export function generatePlayer(options) {
     recent_performances: [],
     upgradePoints: 0,
     upgrade_points: 0,
+    offenseUpgradePoints: 0,
+    offense_upgrade_points: 0,
+    defenseUpgradePoints: 0,
+    defense_upgrade_points: 0,
     gamesPlayedThisSeason: 0,
     games_played_this_season: 0,
     minutesPlayedThisSeason: 0,

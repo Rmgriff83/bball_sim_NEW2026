@@ -372,42 +372,53 @@ export const useSyncStore = defineStore('sync', () => {
 
   /**
    * Pull latest data from the server and hydrate IndexedDB.
-   * Only used for initial load or recovery -- local is always preferred if it exists.
+   * Compares remote clientUpdatedAt vs local updatedAt — remote wins if newer.
    */
   async function pullChanges(campaignId) {
     const response = await api.get(`/api/sync/${campaignId}/pull`)
     const data = response.data
 
+    const remoteUpdatedAt = data.clientUpdatedAt ? new Date(data.clientUpdatedAt).getTime() : 0
+
+    // Helper: returns true if remote is newer than local
+    function remoteIsNewer(localUpdatedAt) {
+      if (!localUpdatedAt) return true
+      const localTime = new Date(localUpdatedAt).getTime()
+      return remoteUpdatedAt > localTime
+    }
+
     // Hydrate IndexedDB from remote snapshot
+    let usedRemote = false
+
     if (data.campaign) {
       const localCampaign = await CampaignRepository.get(campaignId)
-      if (!localCampaign) {
+      if (!localCampaign || remoteIsNewer(localCampaign.updatedAt)) {
         await CampaignRepository.save(data.campaign)
-        console.log('[Sync] No local campaign data, using remote')
+        usedRemote = true
+        console.log('[Sync] Using remote campaign data (newer or no local)')
       } else {
-        console.log('[Sync] Local campaign data exists, keeping local')
+        console.log('[Sync] Local campaign data is newer, keeping local')
       }
     }
 
     if (data.teams && Array.isArray(data.teams) && data.teams.length > 0) {
       const localTeams = await TeamRepository.getAllForCampaign(campaignId)
-      if (!localTeams || localTeams.length === 0) {
+      if (!localTeams || localTeams.length === 0 || usedRemote) {
         await TeamRepository.saveBulk(data.teams)
-        console.log('[Sync] No local teams data, using remote')
+        console.log('[Sync] Using remote teams data')
       } else {
-        console.log('[Sync] Local teams data exists, keeping local')
+        console.log('[Sync] Local teams data is newer, keeping local')
       }
     }
 
     if (data.players && Array.isArray(data.players) && data.players.length > 0) {
       const localPlayers = await PlayerRepository.getAllForCampaign(campaignId)
-      if (!localPlayers || localPlayers.length === 0) {
-        // Rebuild camelCase keys stripped during sync
+      if (!localPlayers || localPlayers.length === 0 || usedRemote) {
         const hydrated = data.players.map(_hydratePlayerKeys)
         await PlayerRepository.saveBulk(hydrated)
-        console.log('[Sync] No local players data, using remote')
+        console.log('[Sync] Using remote players data')
       } else {
-        console.log('[Sync] Local players data exists, keeping local')
+        console.log('[Sync] Local players data is newer, keeping local')
       }
     }
 
@@ -416,16 +427,16 @@ export const useSyncStore = defineStore('sync', () => {
         const year = season.metadata?.year ?? season.year
         if (!year) continue
         const localSeason = await SeasonRepository.get(campaignId, year)
-        if (!localSeason) {
+        if (!localSeason || usedRemote) {
           await SeasonRepository.save(season)
-          console.log(`[Sync] No local season ${year} data, using remote`)
+          console.log(`[Sync] Using remote season ${year} data`)
         } else {
-          console.log(`[Sync] Local season ${year} data exists, keeping local`)
+          console.log(`[Sync] Local season ${year} data is newer, keeping local`)
         }
       }
     }
 
-    return data
+    return { ...data, usedRemote }
   }
 
   /**

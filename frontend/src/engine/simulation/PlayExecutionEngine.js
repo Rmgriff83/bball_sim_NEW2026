@@ -462,6 +462,13 @@ class PlayExecutionEngine {
         score += (offense.threePoint ?? 50) * 0.35;
         break;
 
+      case 'facilitator':
+      case 'playmaker':
+        score += (offense.passVision ?? 50) * 0.35;
+        score += (offense.passAccuracy ?? 50) * 0.25;
+        score += (offense.postControl ?? 50) * 0.1;
+        break;
+
       case 'cutter':
       case 'trailer1':
       case 'trailer2':
@@ -828,16 +835,18 @@ class PlayExecutionEngine {
    * Process action type for state updates.
    */
   processActionType(action, outcome, actor, lineup) {
-    // Handle pass - transfer ball carrier
+    // Handle pass - transfer ball carrier and track passer for assist attribution
     if (action.type === 'pass' && outcome.key !== 'stolen') {
+      this.playResult.lastPasserId = actor.id ?? null;
       const receiverRole = action.receiver ?? null;
       if (receiverRole && receiverRole in this.roleAssignments) {
         this.ballCarrierId = this.roleAssignments[receiverRole];
       }
     }
 
-    // Handle handoff
+    // Handle handoff - track passer for assist attribution
     if (action.type === 'handoff' && outcome.key !== 'turnover') {
+      this.playResult.lastPasserId = actor.id ?? null;
       const receiverRole = action.receiver ?? null;
       if (receiverRole && receiverRole in this.roleAssignments) {
         this.ballCarrierId = this.roleAssignments[receiverRole];
@@ -980,6 +989,7 @@ class PlayExecutionEngine {
       duration: this.elapsedTime,
       shotAttempt: this.playResult.shotAttempt ?? null,
       freeThrows: this.playResult.freeThrows ?? null,
+      lastPasserId: this.playResult.lastPasserId ?? null,
       keyframes: this.keyframes,
       roleAssignments: this.roleAssignments,
       activatedBadges: this.activatedBadges,

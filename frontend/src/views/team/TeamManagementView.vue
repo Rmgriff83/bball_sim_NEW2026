@@ -170,7 +170,7 @@ const chemistryColor = computed(() => teamChemistry.value >= 70 ? '#22c55e' : '#
 const expiringContractsCount = computed(() => roster.value.filter(p => p.contractYearsRemaining === 1).length)
 
 // Starters in position order (PG, SG, SF, PF, C) - may contain nulls for empty slots
-const starters = computed(() => roster.value.slice(0, 5))
+const starters = computed(() => teamStore.starterPlayers)
 
 // Starter slots - always 5 positions, with player or null
 const starterSlots = computed(() => {
@@ -185,7 +185,7 @@ const draggingPlayerId = ref(null)
 
 // Bench players sorted by target minutes (highest to lowest), injured players at end
 const benchPlayers = computed(() => {
-  return [...roster.value.slice(5)]
+  return [...teamStore.benchPlayers]
     .filter(p => p !== null)
     .sort((a, b) => {
       const aInjured = a.is_injured || a.isInjured ? 1 : 0
@@ -906,15 +906,16 @@ const playerNews = computed(() => {
 })
 
 // Handle attribute upgrade from PlayerDetailModal
-async function handleUpgradeAttribute({ playerId, category, attribute }) {
+async function handleUpgradeAttribute({ playerId, category, attribute, pool }) {
   try {
     const result = await teamStore.upgradePlayerAttribute(
       campaignId.value,
       playerId,
       category,
-      attribute
+      attribute,
+      pool
     )
-    toastStore.showSuccess(`${formatAttrName(attribute)} upgraded to ${result.new_value}!`)
+    toastStore.showSuccess(`${formatAttrName(attribute)} upgraded to ${Math.floor(result.new_value)}!`)
     // Refresh selected player with updated data
     selectedPlayer.value = roster.value.find(p => p.id === playerId)
   } catch (err) {
@@ -4612,6 +4613,41 @@ const STAFF_TRAINER_PERK_LABELS = {
 
 [data-theme="light"] .badges-tab-content {
   color: var(--color-text-primary);
+}
+
+[data-theme="light"] .tab-btn {
+  background: white;
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .tab-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .tab-btn.active {
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+}
+
+[data-theme="light"] .coach-tab-btn {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .coach-tab-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .coach-tab-btn.active {
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.2);
 }
 
 /* Header Metrics (chemistry + minutes) */

@@ -157,10 +157,12 @@ export const useFinanceStore = defineStore('finance', () => {
     loading.value = true
     error.value = null
     try {
-      const agents = await PlayerRepository.getFreeAgents(campaignId)
+      const allAgents = await PlayerRepository.getFreeAgents(campaignId)
+      // Filter out draft prospects — they belong on the scouting page, not free agency
+      const agents = (allAgents || []).filter(p => !p.isDraftProspect && !p.rookieTier)
 
       // Enrich each free agent with composite scores
-      const enrichedAgents = (agents || []).map(player => enrichPlayerData(player))
+      const enrichedAgents = agents.map(player => enrichPlayerData(player))
       freeAgents.value = enrichedAgents
       _freeAgentsCampaignId.value = campaignId
       return { free_agents: enrichedAgents }

@@ -5928,6 +5928,58 @@ onUnmounted(() => {
   background: rgba(0, 0, 0, 0.04);
 }
 
+/* Player Performance Modal - Light Mode */
+[data-theme="light"] .player-modal-header {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .perf-modal-close {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .perf-modal-close:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .game-stats-section,
+[data-theme="light"] .shooting-stats-section {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .game-stat-cell,
+[data-theme="light"] .shooting-stat-cell {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .game-stat-value,
+[data-theme="light"] .shooting-stat-line {
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .minutes-row {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .ovr-badge {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .ovr-badge.elite {
+  color: #1a1520;
+}
+
+[data-theme="light"] .ovr-badge.rotation {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .btn-close-modal {
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .btn-close-modal:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
 
 /* Animation Controls above court */
 .animation-controls {

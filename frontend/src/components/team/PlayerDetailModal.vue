@@ -231,6 +231,8 @@ const normalizedPlayer = computed(() => {
     fatigue: p.fatigue ?? 0,
     // Upgrade points
     upgrade_points: p.upgrade_points ?? p.upgradePoints ?? 0,
+    offense_upgrade_points: p.offense_upgrade_points ?? p.offenseUpgradePoints ?? 0,
+    defense_upgrade_points: p.defense_upgrade_points ?? p.defenseUpgradePoints ?? 0,
     // Recent performances
     recentPerformances: p.recent_performances || p.recentPerformances || [],
     // Morale & personality
@@ -259,22 +261,31 @@ function getBadgeSynergyTooltip(badge) {
   return details.map(d => `⚡ ${d.synergyName} (w/ ${d.partnerName})`).join('\n')
 }
 
-// Check if player has upgrade points available (for showing upgrade buttons)
-const hasUpgradePoints = computed(() =>
-  props.canUpgrade && (normalizedPlayer.value?.upgrade_points ?? 0) > 0
+// Offense/Defense upgrade point pools
+const offenseUpgradePoints = computed(() =>
+  normalizedPlayer.value?.offense_upgrade_points ?? normalizedPlayer.value?.offenseUpgradePoints ?? 0
 )
-
-// Current upgrade points count
-const upgradePoints = computed(() =>
-  normalizedPlayer.value?.upgrade_points ?? 0
+const defenseUpgradePoints = computed(() =>
+  normalizedPlayer.value?.defense_upgrade_points ?? normalizedPlayer.value?.defenseUpgradePoints ?? 0
 )
+const hasOffenseUpgradePoints = computed(() =>
+  props.canUpgrade && offenseUpgradePoints.value >= 1.0
+)
+const hasDefenseUpgradePoints = computed(() =>
+  props.canUpgrade && defenseUpgradePoints.value >= 1.0
+)
+// Legacy compat
+const hasUpgradePoints = computed(() => hasOffenseUpgradePoints.value || hasDefenseUpgradePoints.value)
+const upgradePoints = computed(() => offenseUpgradePoints.value + defenseUpgradePoints.value)
 
 // Handle upgrade button click
 function handleUpgrade(category, attrKey) {
+  const pool = (category === 'defense') ? 'defense' : 'offense'
   emit('upgrade-attribute', {
     playerId: props.player.id,
     category,
-    attribute: attrKey
+    attribute: attrKey,
+    pool
   })
 }
 
@@ -544,18 +555,43 @@ function formatChange(change) {
                 <div class="modal-player-avatar">
                   <PlayerAvatar :player="normalizedPlayer" :size="64" class="avatar-icon" />
                 </div>
-                <div class="player-name-section">
-                  <div class="name-rating-row">
-                    <h2 class="player-name-title" :class="{ 'injured-name': normalizedPlayer.isInjured }">
-                      {{ normalizedPlayer.name }}
-                    </h2>
-                    <div class="rating-with-injury">
-                      <template v-if="scoutingMode && !revealedAttributes.includes('overallRating')">
-                        <div class="unknown-rating-modal">?</div>
-                      </template>
-                      <StatBadge v-else :value="normalizedPlayer.overallRating" size="lg" />
-                      <span v-if="normalizedPlayer.isInjured" class="injury-badge-modal">INJ</span>
-                    </div>
+                <div class="header-rating-corner">
+                  <span class="ovr-label">OVR</span>
+                  <template v-if="scoutingMode && !revealedAttributes.includes('overallRating')">
+                    <div class="unknown-rating-modal">?</div>
+                  </template>
+                  <StatBadge v-else :value="normalizedPlayer.overallRating" size="lg" />
+                  <span v-if="normalizedPlayer.isInjured" class="injury-badge-modal">INJ</span>
+                  <button
+                    v-if="isUserPlayer && campaignId"
+                    class="trade-block-toggle"
+                    :class="{ active: isOnTradingBlock }"
+                    @click.stop="toggleTradingBlock"
+                    :title="isOnTradingBlock ? 'Remove from trading block' : 'Add to trading block'"
+                  >
+                    <Repeat :size="14" />
+                  </button>
+                </div>
+                <div class="player-card-info">
+                  <h3 class="player-card-name" :class="{ 'injured-name': normalizedPlayer.isInjured }">
+                    {{ normalizedPlayer.name }}
+                  </h3>
+                  <div class="player-card-meta">
+                    <span
+                      class="position-badge"
+                      :style="{ backgroundColor: getPositionColor(normalizedPlayer.position) }"
+                    >
+                      {{ normalizedPlayer.position }}
+                    </span>
+                    <span
+                      v-if="normalizedPlayer.secondaryPosition"
+                      class="position-badge secondary"
+                      :style="{ backgroundColor: getPositionColor(normalizedPlayer.secondaryPosition) }"
+                    >
+                      {{ normalizedPlayer.secondaryPosition }}
+                    </span>
+                    <span v-if="normalizedPlayer.isInjured" class="injury-tag">Injured</span>
+                    <span v-else class="player-card-jersey">#{{ normalizedPlayer.jerseyNumber }}</span>
                     <!-- Scout Button (scouting page) -->
                     <button
                       v-if="scoutingMode && !isFullyScouted"
@@ -566,59 +602,27 @@ function formatChange(change) {
                       <Binoculars :size="14" />
                       Scout
                     </button>
-                    <!-- Contract Action Buttons (finances page) -->
-                    <div v-if="showContractActions" class="header-contract-actions">
-                      <button
-                        v-if="isExpiringContract"
-                        class="header-action-btn resign"
-                        @click.stop="emit('resign-player', player)"
-                      >
-                        <RefreshCw :size="13" />
-                        Re-sign
-                      </button>
-                      <button
-                        class="header-action-btn drop"
-                        @click.stop="emit('drop-player', player)"
-                      >
-                        <UserMinus :size="13" />
-                        Drop
-                      </button>
-                    </div>
                   </div>
-                  <div class="position-vitals-row">
-                    <div class="position-badges">
-                      <span
-                        class="position-badge"
-                        :style="{ backgroundColor: getPositionColor(normalizedPlayer.position) }"
-                      >
-                        {{ normalizedPlayer.position }}
-                      </span>
-                      <span
-                        v-if="normalizedPlayer.secondaryPosition"
-                        class="position-badge secondary"
-                        :style="{ backgroundColor: getPositionColor(normalizedPlayer.secondaryPosition) }"
-                      >
-                        {{ normalizedPlayer.secondaryPosition }}
-                      </span>
-                      <span v-if="normalizedPlayer.isInjured" class="injury-tag">Injured</span>
-                      <span v-else class="jersey-number">#{{ normalizedPlayer.jerseyNumber }}</span>
-                      <button
-                        v-if="isUserPlayer && campaignId"
-                        class="trade-block-toggle"
-                        :class="{ active: isOnTradingBlock }"
-                        @click.stop="toggleTradingBlock"
-                        :title="isOnTradingBlock ? 'Remove from trading block' : 'Add to trading block'"
-                      >
-                        <Repeat :size="14" />
-                      </button>
-                    </div>
-                    <div class="player-vitals">
-                      <span>{{ normalizedPlayer.height }}</span>
-                      <span class="divider">|</span>
-                      <span>{{ normalizedPlayer.weight }} lbs</span>
-                      <span class="divider">|</span>
-                      <span>{{ normalizedPlayer.age || 25 }} years old</span>
-                    </div>
+                  <div class="player-card-bio">
+                    {{ normalizedPlayer.height }} · {{ normalizedPlayer.weight }} lbs · Age {{ normalizedPlayer.age || 25 }}
+                  </div>
+                  <!-- Contract Action Buttons (finances page) -->
+                  <div v-if="showContractActions" class="header-contract-actions">
+                    <button
+                      v-if="isExpiringContract"
+                      class="header-action-btn resign"
+                      @click.stop="emit('resign-player', player)"
+                    >
+                      <RefreshCw :size="13" />
+                      Re-sign
+                    </button>
+                    <button
+                      class="header-action-btn drop"
+                      @click.stop="emit('drop-player', player)"
+                    >
+                      <UserMinus :size="13" />
+                      Drop
+                    </button>
                   </div>
                 </div>
               </div>
@@ -626,7 +630,7 @@ function formatChange(change) {
               <div v-if="!scoutingMode" class="fatigue-meter-container">
                 <div class="fatigue-meter-label">
                   <span>Fatigue</span>
-                  <span class="fatigue-value">{{ fatiguePercent }}%</span>
+                  <span class="fatigue-value" :class="{ warning: fatiguePercent >= 50 && fatiguePercent < 70, high: fatiguePercent >= 70 }">{{ fatiguePercent }}%</span>
                 </div>
                 <div class="fatigue-meter-bar">
                   <div
@@ -740,47 +744,38 @@ function formatChange(change) {
               <!-- Stats Tab -->
               <div v-if="activeTab === 'stats'" class="tab-panel">
                 <template v-if="normalizedPlayer.seasonStats">
-                  <div class="stats-grid-modal">
-                    <div class="stat-cell">
-                      <span class="stat-label">PPG</span>
-                      <span class="stat-value highlight">{{ formatStat(getStat('ppg')) }}</span>
-                    </div>
-                    <div class="stat-cell">
-                      <span class="stat-label">RPG</span>
-                      <span class="stat-value">{{ formatStat(getStat('rpg')) }}</span>
-                    </div>
-                    <div class="stat-cell">
-                      <span class="stat-label">APG</span>
-                      <span class="stat-value">{{ formatStat(getStat('apg')) }}</span>
-                    </div>
-                    <div class="stat-cell">
-                      <span class="stat-label">SPG</span>
-                      <span class="stat-value">{{ formatStat(getStat('spg')) }}</span>
-                    </div>
-                    <div class="stat-cell">
-                      <span class="stat-label">BPG</span>
-                      <span class="stat-value">{{ formatStat(getStat('bpg')) }}</span>
-                    </div>
-                    <div class="stat-cell">
-                      <span class="stat-label">FG%</span>
-                      <span class="stat-value">{{ formatStat(getStat('fg_pct') || getStat('fgPct'), 0) }}%</span>
-                    </div>
-                    <div class="stat-cell">
-                      <span class="stat-label">3P%</span>
-                      <span class="stat-value">{{ formatStat(getStat('three_pct') || getStat('threePct'), 0) }}%</span>
-                    </div>
-                    <div class="stat-cell">
-                      <span class="stat-label">FT%</span>
-                      <span class="stat-value">{{ formatStat(getStat('ft_pct') || getStat('ftPct'), 0) }}%</span>
-                    </div>
-                    <div class="stat-cell">
-                      <span class="stat-label">MPG</span>
-                      <span class="stat-value">{{ formatStat(getStat('mpg'), 0) }}</span>
-                    </div>
-                    <div class="stat-cell">
-                      <span class="stat-label">GP</span>
-                      <span class="stat-value">{{ getStat('games_played') || getStat('gamesPlayed') || 0 }}</span>
-                    </div>
+                  <div v-if="seasonStatsRows.length > 0" class="game-log-table-wrap">
+                    <table class="game-log-table season-history-table">
+                      <thead>
+                        <tr>
+                          <th>Year</th><th>Team</th><th>GP</th>
+                          <th>PPG</th><th>RPG</th><th>APG</th>
+                          <th>SPG</th><th>BPG</th><th>FG%</th>
+                          <th>3P%</th><th>FT%</th><th>MPG</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="row in seasonStatsRows" :key="row.year" :class="{ 'current-season-row': row.isCurrent }">
+                          <td class="season-year-cell">
+                            {{ row.year }}<span v-if="row.isCurrent" class="current-tag">*</span>
+                          </td>
+                          <td>{{ row.team }}</td>
+                          <td>{{ row.gp }}</td>
+                          <td class="game-log-pts">{{ row.ppg }}</td>
+                          <td>{{ row.rpg }}</td>
+                          <td>{{ row.apg }}</td>
+                          <td>{{ row.spg }}</td>
+                          <td>{{ row.bpg }}</td>
+                          <td>{{ row.fg_pct }}%</td>
+                          <td>{{ row.three_pct }}%</td>
+                          <td>{{ row.ft_pct }}%</td>
+                          <td>{{ row.mpg }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-else class="empty-state-inline">
+                    <p>No season stats yet</p>
                   </div>
                   <!-- Recent Games (Game Log) -->
                   <div v-if="reversedPerformances.length > 0" class="recent-performances-section">
@@ -867,22 +862,66 @@ function formatChange(change) {
                   </div>
                 </div>
 
-                <!-- Upgrade Points Banner - always show when canUpgrade is true -->
+                <!-- Upgrade Points Banner - dual pools -->
                 <div v-if="canUpgrade && !scoutingMode" class="upgrade-points-banner" :class="{ 'no-points': upgradePoints === 0 }">
-                  <div class="points-badge">
-                    <span class="points-value" :class="{ 'zero': upgradePoints === 0 }">{{ upgradePoints }}</span>
-                    <span class="points-label">Upgrade Points</span>
+                  <div class="upgrade-pools">
+                    <div class="pool-item offense-pool" :class="{ 'has-points': offenseUpgradePoints >= 1.0 }">
+                      <span class="pool-value">{{ offenseUpgradePoints.toFixed(1) }}</span>
+                      <span class="pool-label">Offense</span>
+                    </div>
+                    <div class="pool-divider"></div>
+                    <div class="pool-item defense-pool" :class="{ 'has-points': defenseUpgradePoints >= 1.0 }">
+                      <span class="pool-value">{{ defenseUpgradePoints.toFixed(1) }}</span>
+                      <span class="pool-label">Defense</span>
+                    </div>
                   </div>
                   <p class="upgrade-hint">
-                    {{ upgradePoints > 0 ? 'Tap + to upgrade an attribute' : 'Earn points through weekly performance' }}
+                    {{ upgradePoints > 0 ? '1.0 pts = +1 attribute upgrade' : 'Earn points through game performance' }}
                   </p>
+                </div>
+
+                <!-- Ratings (non-scouting mode) -->
+                <div v-if="!scoutingMode" class="attr-section">
+                  <h4 class="attr-section-title">Ratings</h4>
+                  <div class="attributes-grid">
+                    <div class="attr-row">
+                      <span class="attr-name">Overall</span>
+                      <div class="attr-bar-container">
+                        <div
+                          class="attr-bar"
+                          :style="{
+                            width: `${normalizedPlayer.overallRating}%`,
+                            backgroundColor: getAttrColor(normalizedPlayer.overallRating)
+                          }"
+                        />
+                      </div>
+                      <span class="attr-value" :style="{ color: getAttrColor(normalizedPlayer.overallRating) }">
+                        {{ normalizedPlayer.overallRating }}
+                      </span>
+                    </div>
+                    <div v-if="normalizedPlayer.potentialRating" class="attr-row">
+                      <span class="attr-name">Potential</span>
+                      <div class="attr-bar-container">
+                        <div
+                          class="attr-bar"
+                          :style="{
+                            width: `${normalizedPlayer.potentialRating}%`,
+                            backgroundColor: getAttrColor(normalizedPlayer.potentialRating)
+                          }"
+                        />
+                      </div>
+                      <span class="attr-value" :style="{ color: getAttrColor(normalizedPlayer.potentialRating) }">
+                        {{ normalizedPlayer.potentialRating }}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <!-- Offensive Attributes -->
                 <div v-if="normalizedPlayer.attributes?.offense" class="attr-section">
                   <h4 class="attr-section-title">Offense</h4>
                   <div class="attributes-grid">
-                    <div v-for="(value, key) in normalizedPlayer.attributes.offense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints && !scoutingMode }">
+                    <div v-for="(value, key) in normalizedPlayer.attributes.offense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasOffenseUpgradePoints && !scoutingMode }">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
                       <div class="attr-bar-container">
                         <div
@@ -899,7 +938,7 @@ function formatChange(change) {
                         :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
                       >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
                       <button
-                        v-if="hasUpgradePoints && !scoutingMode"
+                        v-if="hasOffenseUpgradePoints && !scoutingMode"
                         class="upgrade-btn"
                         :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
                         :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
@@ -915,7 +954,7 @@ function formatChange(change) {
                 <div v-if="normalizedPlayer.attributes?.defense" class="attr-section">
                   <h4 class="attr-section-title">Defense</h4>
                   <div class="attributes-grid">
-                    <div v-for="(value, key) in normalizedPlayer.attributes.defense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints && !scoutingMode }">
+                    <div v-for="(value, key) in normalizedPlayer.attributes.defense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasDefenseUpgradePoints && !scoutingMode }">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
                       <div class="attr-bar-container">
                         <div
@@ -932,7 +971,7 @@ function formatChange(change) {
                         :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
                       >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
                       <button
-                        v-if="hasUpgradePoints && !scoutingMode"
+                        v-if="hasDefenseUpgradePoints && !scoutingMode"
                         class="upgrade-btn"
                         :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
                         :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
@@ -948,7 +987,7 @@ function formatChange(change) {
                 <div v-if="normalizedPlayer.attributes?.physical" class="attr-section">
                   <h4 class="attr-section-title">Physical</h4>
                   <div class="attributes-grid">
-                    <div v-for="(value, key) in normalizedPlayer.attributes.physical" :key="key" class="attr-row" :class="{ 'has-upgrade': hasUpgradePoints && !scoutingMode }">
+                    <div v-for="(value, key) in normalizedPlayer.attributes.physical" :key="key" class="attr-row">
                       <span class="attr-name">{{ formatAttrName(key) }}</span>
                       <div class="attr-bar-container">
                         <div
@@ -964,15 +1003,6 @@ function formatChange(change) {
                         :class="{ 'stat-pop': animatingAttributes[key] }"
                         :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
                       >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
-                      <button
-                        v-if="hasUpgradePoints && !scoutingMode"
-                        class="upgrade-btn"
-                        :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
-                        :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
-                        @click.stop="handleUpgrade('physical', key)"
-                      >
-                        +
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -1294,44 +1324,6 @@ function formatChange(change) {
                   </div>
                 </div>
 
-                <!-- Season Stats Section -->
-                <div class="history-section">
-                  <h4 class="history-section-title">Season Stats</h4>
-                  <div v-if="seasonStatsRows.length > 0" class="game-log-table-wrap">
-                    <table class="game-log-table season-history-table">
-                      <thead>
-                        <tr>
-                          <th>Year</th><th>Team</th><th>GP</th>
-                          <th>PPG</th><th>RPG</th><th>APG</th>
-                          <th>SPG</th><th>BPG</th><th>FG%</th>
-                          <th>3P%</th><th>FT%</th><th>MPG</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="row in seasonStatsRows" :key="row.year" :class="{ 'current-season-row': row.isCurrent }">
-                          <td class="season-year-cell">
-                            {{ row.year }}<span v-if="row.isCurrent" class="current-tag">*</span>
-                          </td>
-                          <td>{{ row.team }}</td>
-                          <td>{{ row.gp }}</td>
-                          <td class="game-log-pts">{{ row.ppg }}</td>
-                          <td>{{ row.rpg }}</td>
-                          <td>{{ row.apg }}</td>
-                          <td>{{ row.spg }}</td>
-                          <td>{{ row.bpg }}</td>
-                          <td>{{ row.fg_pct }}%</td>
-                          <td>{{ row.three_pct }}%</td>
-                          <td>{{ row.ft_pct }}%</td>
-                          <td>{{ row.mpg }}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  <div v-else class="empty-state-inline">
-                    <p>No season stats yet</p>
-                  </div>
-                </div>
-
                 <!-- Awards Section -->
                 <div class="history-section">
                   <h4 class="history-section-title">Awards</h4>
@@ -1617,12 +1609,32 @@ function formatChange(change) {
 .player-modal-header {
   padding: 1rem;
   margin-bottom: 0.75rem;
-  background: var(--color-bg-tertiary);
-  border-radius: 12px;
+  background: var(--gradient-cosmic);
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.player-modal-header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(1.5px 1.5px at 10% 20%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 30% 60%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1.5px 1.5px at 50% 10%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 70% 40%, rgba(255,255,255,0.3), transparent);
+  pointer-events: none;
+}
+
+.player-modal-header > * {
+  position: relative;
+  z-index: 1;
 }
 
 .player-modal-header.injured-header {
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.05));
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 50%, #b91c1c 100%);
 }
 
 .header-top-row {
@@ -1637,35 +1649,67 @@ function formatChange(change) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.25);
+  border: 2px solid rgba(255, 255, 255, 0.2);
   border-radius: 50%;
-  color: var(--color-text-secondary);
+  color: rgba(255, 255, 255, 0.9);
   flex-shrink: 0;
 }
 
-.player-name-section {
-  flex: 1;
-  min-width: 0;
+.header-rating-corner {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-.name-rating-row {
+.ovr-label {
+  font-size: 0.55rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(26, 21, 32, 0.5);
+}
+
+.player-modal-header :deep(.stat-badge) {
+  background: transparent;
+  color: #1a1520;
+  font-size: 1.3rem;
+  padding: 0;
+}
+
+.player-card-info {
+  position: relative;
+  z-index: 1;
+}
+
+.player-card-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1a1520;
+  margin: 0 0 6px 0;
+}
+
+.player-card-meta {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
-  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
-.player-name-title {
-  font-size: 1.25rem;
+.player-card-jersey {
+  color: rgba(26, 21, 32, 0.6);
+  font-size: 0.8rem;
   font-weight: 600;
-  margin: 0;
-  color: var(--color-text-primary);
 }
 
-.rating-with-injury {
-  position: relative;
-  flex-shrink: 0;
+.player-card-bio {
+  font-size: 0.8rem;
+  color: rgba(26, 21, 32, 0.7);
+  font-weight: 500;
 }
 
 .injury-badge-modal {
@@ -1681,9 +1725,8 @@ function formatChange(change) {
 }
 
 .injured-name {
-  color: var(--color-error) !important;
   text-decoration: line-through;
-  text-decoration-color: rgba(239, 68, 68, 0.5);
+  text-decoration-color: rgba(26, 21, 32, 0.4);
 }
 
 /* Header Contract Action Buttons */
@@ -1693,10 +1736,10 @@ function formatChange(change) {
   gap: 0.25rem;
   padding: 0.3rem 0.6rem;
   margin-left: auto;
-  border: 1px solid rgba(232, 90, 79, 0.3);
+  border: 1px solid rgba(26, 21, 32, 0.25);
   border-radius: 6px;
-  background: rgba(232, 90, 79, 0.15);
-  color: var(--color-primary);
+  background: rgba(26, 21, 32, 0.1);
+  color: rgba(26, 21, 32, 0.8);
   font-size: 0.7rem;
   font-weight: 600;
   cursor: pointer;
@@ -1705,8 +1748,8 @@ function formatChange(change) {
 }
 
 .header-scout-btn:hover:not(:disabled) {
-  background: rgba(232, 90, 79, 0.25);
-  border-color: var(--color-primary);
+  background: rgba(26, 21, 32, 0.2);
+  border-color: rgba(26, 21, 32, 0.4);
 }
 
 .header-scout-btn:disabled {
@@ -1735,31 +1778,25 @@ function formatChange(change) {
 }
 
 .header-action-btn.resign {
-  background: rgba(59, 130, 246, 0.2);
-  color: var(--color-primary);
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: rgba(26, 21, 32, 0.1);
+  color: rgba(26, 21, 32, 0.8);
+  border: 1px solid rgba(26, 21, 32, 0.2);
 }
 
 .header-action-btn.resign:hover {
-  background: rgba(59, 130, 246, 0.3);
-  border-color: var(--color-primary);
+  background: rgba(26, 21, 32, 0.2);
+  border-color: rgba(26, 21, 32, 0.4);
 }
 
 .header-action-btn.drop {
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--color-error);
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  background: rgba(180, 40, 40, 0.15);
+  color: rgba(140, 20, 20, 0.9);
+  border: 1px solid rgba(180, 40, 40, 0.25);
 }
 
 .header-action-btn.drop:hover {
-  background: rgba(239, 68, 68, 0.25);
-  border-color: var(--color-error);
-}
-
-.position-vitals-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
+  background: rgba(180, 40, 40, 0.25);
+  border-color: rgba(180, 40, 40, 0.4);
 }
 
 .position-badges {
@@ -1780,10 +1817,6 @@ function formatChange(change) {
   opacity: 0.7;
 }
 
-.jersey-number {
-  color: var(--color-text-secondary);
-  font-size: 0.875rem;
-}
 
 .injury-tag {
   padding: 2px 6px;
@@ -1796,23 +1829,22 @@ function formatChange(change) {
 }
 
 .trade-block-toggle {
-  margin-left: auto;
   width: 28px;
   height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--color-text-secondary);
+  border: 1px solid rgba(26, 21, 32, 0.2);
+  background: rgba(26, 21, 32, 0.1);
+  color: rgba(26, 21, 32, 0.6);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .trade-block-toggle:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--color-text-primary);
+  background: rgba(26, 21, 32, 0.15);
+  color: rgba(26, 21, 32, 0.8);
 }
 
 .trade-block-toggle.active {
@@ -1821,17 +1853,6 @@ function formatChange(change) {
   color: #E85A4F;
 }
 
-.player-vitals {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--color-text-secondary);
-  font-size: 0.85rem;
-}
-
-.player-vitals .divider {
-  color: rgba(255, 255, 255, 0.2);
-}
 
 /* Fatigue Meter */
 .fatigue-meter-container {
@@ -1840,7 +1861,6 @@ function formatChange(change) {
   gap: 10px;
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .fatigue-meter-label {
@@ -1849,21 +1869,34 @@ function formatChange(change) {
   gap: 6px;
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--color-text-secondary);
+  color: #1a1520;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   min-width: 80px;
 }
 
 .fatigue-value {
-  color: var(--color-text-primary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
   font-family: var(--font-mono, monospace);
+  color: white;
+  background: #22c55e;
+}
+
+.fatigue-value.warning {
+  background: #f59e0b;
+}
+
+.fatigue-value.high {
+  background: #ef4444;
 }
 
 .fatigue-meter-bar {
   flex: 1;
   height: 6px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(26, 21, 32, 0.2);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -2078,8 +2111,9 @@ function formatChange(change) {
 /* Upgrade Points UI */
 .upgrade-points-banner {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 12px 16px;
   background: rgba(34, 197, 94, 0.1);
   border: 1px solid rgba(34, 197, 94, 0.3);
@@ -2092,25 +2126,42 @@ function formatChange(change) {
   border-color: rgba(107, 114, 128, 0.3);
 }
 
-.points-badge {
+.upgrade-pools {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 16px;
+  width: 100%;
+  justify-content: center;
 }
 
-.points-value {
-  font-size: 1.5rem;
+.pool-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pool-value {
+  font-size: 1.25rem;
   font-weight: 700;
-  color: var(--color-success);
-}
-
-.points-value.zero {
   color: var(--color-text-tertiary);
 }
 
-.points-label {
-  font-size: 0.875rem;
+.pool-item.has-points .pool-value {
+  color: var(--color-success);
+}
+
+.pool-label {
+  font-size: 0.8rem;
+  font-weight: 600;
   color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.pool-divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .upgrade-hint {
@@ -2726,45 +2777,8 @@ function formatChange(change) {
   background: rgba(0, 0, 0, 0.12);
 }
 
-[data-theme="light"] .player-modal-header {
-  background: rgba(0, 0, 0, 0.07);
-}
-
 [data-theme="light"] .player-modal-header.injured-header {
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04));
-}
-
-[data-theme="light"] .modal-player-avatar {
-  background: rgba(0, 0, 0, 0.08);
-}
-
-[data-theme="light"] .trade-block-toggle {
-  border-color: rgba(0, 0, 0, 0.15);
-  background: rgba(255, 255, 255, 0.7);
-  color: var(--color-text-secondary);
-}
-
-[data-theme="light"] .trade-block-toggle:hover {
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--color-text-primary);
-}
-
-[data-theme="light"] .trade-block-toggle.active {
-  background: rgba(232, 90, 79, 0.12);
-  border-color: rgba(232, 90, 79, 0.35);
-  color: #E85A4F;
-}
-
-[data-theme="light"] .fatigue-meter-container {
-  border-top-color: rgba(0, 0, 0, 0.08);
-}
-
-[data-theme="light"] .fatigue-meter-bar {
-  background: rgba(0, 0, 0, 0.1);
-}
-
-[data-theme="light"] .player-vitals .divider {
-  color: rgba(0, 0, 0, 0.2);
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 50%, #b91c1c 100%);
 }
 
 [data-theme="light"] .badges-preview {
@@ -2874,6 +2888,10 @@ function formatChange(change) {
   border-color: rgba(107, 114, 128, 0.2);
 }
 
+[data-theme="light"] .pool-divider {
+  background: rgba(0, 0, 0, 0.15);
+}
+
 /* Mobile Responsive Styles */
 @media (max-width: 480px) {
   .modal-container {
@@ -2905,13 +2923,12 @@ function formatChange(change) {
     height: 56px;
   }
 
-  .player-name-title {
+  .player-card-name {
     font-size: 1.1rem;
   }
 
-  .player-vitals {
-    font-size: 0.75rem;
-    flex-wrap: wrap;
+  .player-card-bio {
+    font-size: 0.7rem;
   }
 
   .modal-tabs {
@@ -2990,13 +3007,11 @@ function formatChange(change) {
 
   .upgrade-points-banner {
     padding: 10px 12px;
-    flex-direction: column;
     gap: 6px;
-    text-align: center;
   }
 
-  .points-value {
-    font-size: 1.25rem;
+  .pool-value {
+    font-size: 1.1rem;
   }
 }
 

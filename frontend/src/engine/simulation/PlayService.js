@@ -24,7 +24,7 @@ const SCHEME_WEIGHTS = {
     transition: 1.0,
   },
   post_centric: {
-    post_up: 2.5,
+    post_up: 2.8,
     pick_and_roll: 1.0,
     cut: 1.2,
     isolation: 0.7,
@@ -119,6 +119,66 @@ function calculateAverageIQ(lineup) {
   }
 
   return count > 0 ? totalIQ / count : 50
+}
+
+/**
+ * Boost play selection weight for big-man plays based on the best big's talent.
+ * For facilitator-tagged plays, uses passVision; for scoring plays, uses overall rating.
+ */
+function calculateBigManBoost(play, lineup) {
+  const bigPrimary = (play.primaryPositions || []).some(p => p === 'C' || p === 'PF')
+  const bigCategory = play.category === 'post_up'
+
+  if (!bigPrimary && !bigCategory) return 1.0
+
+  const isFacilitatorPlay = (play.tags || []).includes('facilitator')
+
+  let bestValue = 0
+  for (const player of lineup) {
+    const pos = player.position ?? 'SF'
+    if (pos !== 'C' && pos !== 'PF') continue
+
+    if (isFacilitatorPlay) {
+      const passVision = player.attributes?.offense?.passVision ?? 50
+      if (passVision > bestValue) bestValue = passVision
+    } else {
+      const rating = player.overall_rating ?? player.overallRating ?? 70
+      if (rating > bestValue) bestValue = rating
+    }
+  }
+
+  if (bestValue === 0) return 1.0
+
+  if (isFacilitatorPlay) {
+    // passVision threshold: 75+, scale 0.025 per point (85=1.25x, 95=1.5x)
+    if (bestValue < 75) return 1.0
+    return 1.0 + (bestValue - 75) * 0.025
+  } else {
+    // Overall rating threshold: 80+, scale 0.02 per point (90=1.2x, 97=1.34x)
+    if (bestValue < 80) return 1.0
+    return 1.0 + (bestValue - 80) * 0.02
+  }
+}
+
+/**
+ * Boost play selection weight for guard-oriented plays based on the best guard's talent.
+ * Slightly lower coefficient than bigs since guards already benefit from more plays.
+ */
+function calculateGuardBoost(play, lineup) {
+  const guardPrimary = (play.primaryPositions || []).some(p => p === 'PG' || p === 'SG')
+
+  if (!guardPrimary) return 1.0
+
+  let bestGuardRating = 0
+  for (const player of lineup) {
+    const pos = player.position ?? 'SF'
+    if (pos !== 'PG' && pos !== 'SG') continue
+    const rating = player.overall_rating ?? player.overallRating ?? 70
+    if (rating > bestGuardRating) bestGuardRating = rating
+  }
+
+  if (bestGuardRating < 80) return 1.0
+  return 1.0 + (bestGuardRating - 80) * 0.015
 }
 
 /**
@@ -254,6 +314,10 @@ export function selectPlay(offensiveLineup, defensiveLineup, coachingScheme, con
 
     // Position fit bonus
     weight *= calculatePositionFit(play, offensiveLineup)
+
+    // Talent-weighted boosts for big-man and guard plays
+    weight *= calculateBigManBoost(play, offensiveLineup)
+    weight *= calculateGuardBoost(play, offensiveLineup)
 
     // Difficulty penalty based on average basketball IQ
     const avgIQ = calculateAverageIQ(offensiveLineup)

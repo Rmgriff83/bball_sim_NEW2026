@@ -959,7 +959,8 @@ function formatSalary(salary) {
                 <div class="player-avatar-circle">
                   <PlayerAvatar :player="selectedPlayer" :size="64" />
                 </div>
-                <div class="player-card-rating">
+                <div class="player-card-rating-corner">
+                  <span class="ovr-label">OVR</span>
                   <StatBadge :value="selectedPlayer.overall_rating" size="lg" />
                   <span v-if="selectedPlayer.is_injured || selectedPlayer.isInjured" class="player-card-injury">INJ</span>
                 </div>
@@ -1036,49 +1037,38 @@ function formatSalary(salary) {
                 <!-- Stats Tab -->
                 <div v-if="playerModalTab === 'stats'" class="player-tab-panel">
                   <template v-if="selectedPlayer.season_stats">
-                    <div class="player-stats-card">
-                      <div class="player-stats-grid">
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value highlight">{{ selectedPlayer.season_stats.ppg }}</span>
-                          <span class="player-stat-label">PPG</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.rpg }}</span>
-                          <span class="player-stat-label">RPG</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.apg }}</span>
-                          <span class="player-stat-label">APG</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.spg }}</span>
-                          <span class="player-stat-label">SPG</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.bpg }}</span>
-                          <span class="player-stat-label">BPG</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.fg_pct }}%</span>
-                          <span class="player-stat-label">FG%</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.three_pct }}%</span>
-                          <span class="player-stat-label">3P%</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.ft_pct }}%</span>
-                          <span class="player-stat-label">FT%</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.mpg }}</span>
-                          <span class="player-stat-label">MPG</span>
-                        </div>
-                        <div class="player-stat-cell">
-                          <span class="player-stat-value">{{ selectedPlayer.season_stats.games_played }}</span>
-                          <span class="player-stat-label">GP</span>
-                        </div>
-                      </div>
+                    <div v-if="seasonStatsRows.length > 0" class="game-log-table-wrap">
+                      <table class="game-log-table season-history-table">
+                        <thead>
+                          <tr>
+                            <th>Year</th><th>Team</th><th>GP</th>
+                            <th>PPG</th><th>RPG</th><th>APG</th>
+                            <th>SPG</th><th>BPG</th><th>FG%</th>
+                            <th>3P%</th><th>FT%</th><th>MPG</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="row in seasonStatsRows" :key="row.year" :class="{ 'current-season-row': row.isCurrent }">
+                            <td class="season-year-cell">
+                              {{ row.year }}<span v-if="row.isCurrent" class="current-tag">*</span>
+                            </td>
+                            <td>{{ row.team }}</td>
+                            <td>{{ row.gp }}</td>
+                            <td class="game-log-pts">{{ row.ppg }}</td>
+                            <td>{{ row.rpg }}</td>
+                            <td>{{ row.apg }}</td>
+                            <td>{{ row.spg }}</td>
+                            <td>{{ row.bpg }}</td>
+                            <td>{{ row.fg_pct }}%</td>
+                            <td>{{ row.three_pct }}%</td>
+                            <td>{{ row.ft_pct }}%</td>
+                            <td>{{ row.mpg }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div v-else class="player-empty-state">
+                      <p>No season stats yet</p>
                     </div>
                     <!-- Recent Games (Game Log) -->
                     <div v-if="playerRecentPerformances?.length > 0" class="recent-performances-section">
@@ -1124,6 +1114,31 @@ function formatSalary(salary) {
 
                 <!-- Attributes Tab -->
                 <div v-if="playerModalTab === 'attributes'" class="player-tab-panel">
+                  <!-- Ratings -->
+                  <div class="player-attr-card">
+                    <h4 class="player-attr-title">Ratings</h4>
+                    <div class="player-attr-list">
+                      <div class="player-attr-row">
+                        <span class="player-attr-name">Overall</span>
+                        <div class="player-attr-bar-wrap">
+                          <div class="player-attr-bar" :style="{ width: `${selectedPlayer.overall_rating || selectedPlayer.overallRating}%`, backgroundColor: getAttrColor(selectedPlayer.overall_rating || selectedPlayer.overallRating) }"></div>
+                        </div>
+                        <span class="player-attr-value" :style="{ color: getAttrColor(selectedPlayer.overall_rating || selectedPlayer.overallRating) }">
+                          {{ selectedPlayer.overall_rating || selectedPlayer.overallRating }}
+                        </span>
+                      </div>
+                      <div v-if="selectedPlayer.potentialRating || selectedPlayer.potential_rating" class="player-attr-row">
+                        <span class="player-attr-name">Potential</span>
+                        <div class="player-attr-bar-wrap">
+                          <div class="player-attr-bar" :style="{ width: `${selectedPlayer.potentialRating || selectedPlayer.potential_rating}%`, backgroundColor: getAttrColor(selectedPlayer.potentialRating || selectedPlayer.potential_rating) }"></div>
+                        </div>
+                        <span class="player-attr-value" :style="{ color: getAttrColor(selectedPlayer.potentialRating || selectedPlayer.potential_rating) }">
+                          {{ selectedPlayer.potentialRating || selectedPlayer.potential_rating }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
                   <!-- Offensive Attributes -->
                   <div v-if="selectedPlayer.attributes?.offense" class="player-attr-card">
                     <h4 class="player-attr-title">Offense</h4>
@@ -1257,44 +1272,6 @@ function formatSalary(salary) {
                         </span>
                         <span class="draft-info-team">Drafted by {{ selectedPlayer.draftInfo.teamAbbreviation }}</span>
                       </div>
-                    </div>
-                  </div>
-
-                  <!-- Season Stats -->
-                  <div class="player-history-section">
-                    <h4 class="player-attr-title">Season Stats</h4>
-                    <div v-if="seasonStatsRows.length > 0" class="game-log-table-wrap">
-                      <table class="game-log-table season-history-table">
-                        <thead>
-                          <tr>
-                            <th>Year</th><th>Team</th><th>GP</th>
-                            <th>PPG</th><th>RPG</th><th>APG</th>
-                            <th>SPG</th><th>BPG</th><th>FG%</th>
-                            <th>3P%</th><th>FT%</th><th>MPG</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr v-for="row in seasonStatsRows" :key="row.year" :class="{ 'current-season-row': row.isCurrent }">
-                            <td class="season-year-cell">
-                              {{ row.year }}<span v-if="row.isCurrent" class="current-tag">*</span>
-                            </td>
-                            <td>{{ row.team }}</td>
-                            <td>{{ row.gp }}</td>
-                            <td class="game-log-pts">{{ row.ppg }}</td>
-                            <td>{{ row.rpg }}</td>
-                            <td>{{ row.apg }}</td>
-                            <td>{{ row.spg }}</td>
-                            <td>{{ row.bpg }}</td>
-                            <td>{{ row.fg_pct }}%</td>
-                            <td>{{ row.three_pct }}%</td>
-                            <td>{{ row.ft_pct }}%</td>
-                            <td>{{ row.mpg }}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                    <div v-else class="player-empty-state">
-                      <p>No season stats yet</p>
                     </div>
                   </div>
 
@@ -2658,19 +2635,21 @@ function formatSalary(salary) {
 }
 
 [data-theme="light"] .conf-btn {
-  background: white;
-  border-color: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
   color: var(--color-text-secondary);
 }
 
 [data-theme="light"] .conf-btn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(0, 0, 0, 0.1);
   color: var(--color-text-primary);
 }
 
 [data-theme="light"] .conf-btn.active {
   background: var(--gradient-cosmic);
+  border-color: transparent;
   color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.2);
 }
 
 [data-theme="light"] .tab-btn {
@@ -2819,12 +2798,12 @@ function formatSalary(salary) {
 .team-modal-container,
 .player-modal-container {
   width: 100%;
-  max-width: 520px;
+  max-width: 42rem;
   max-height: 90vh;
-  background: var(--color-bg-secondary);
+  background: var(--glass-bg-light);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-2xl);
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden; /* Clip border-radius */
@@ -3243,10 +3222,30 @@ function formatSalary(salary) {
   pointer-events: none;
 }
 
-.player-card-rating {
-  position: relative;
-  z-index: 1;
-  flex-shrink: 0;
+.player-card-rating-corner {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.ovr-label {
+  font-size: 0.55rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(26, 21, 32, 0.5);
+}
+
+.player-card-rating-corner :deep(.stat-badge) {
+  background: transparent;
+  color: #1a1520;
+  font-size: 1.3rem;
+  padding: 0;
 }
 
 .player-card-injury {
@@ -3781,7 +3780,7 @@ function formatSalary(salary) {
 
 [data-theme="light"] .team-modal-container,
 [data-theme="light"] .player-modal-container {
-  background: white;
+  background: var(--glass-bg-light);
   border-color: rgba(0, 0, 0, 0.1);
 }
 

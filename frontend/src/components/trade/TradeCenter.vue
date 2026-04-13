@@ -3875,6 +3875,31 @@ function formatAge(age) {
   color: #374151;
 }
 
+/* Tab Light Mode */
+[data-theme="light"] .asset-tab,
+[data-theme="light"] .asset-modal-tab,
+[data-theme="light"] .wizard-asset-tab {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .asset-tab:hover,
+[data-theme="light"] .asset-modal-tab:hover,
+[data-theme="light"] .wizard-asset-tab:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .asset-tab.active,
+[data-theme="light"] .asset-modal-tab.active,
+[data-theme="light"] .wizard-asset-tab.active {
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.2);
+}
+
 /* Validation Light Mode */
 [data-theme="light"] .validation-item.error {
   background: rgba(239, 68, 68, 0.1);

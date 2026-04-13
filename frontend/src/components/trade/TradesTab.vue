@@ -316,4 +316,22 @@ onMounted(async () => {
   background: rgba(0, 0, 0, 0.3);
   color: white;
 }
+
+[data-theme="light"] .sub-tab-btn {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .sub-tab-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .sub-tab-btn.active {
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.2);
+}
 </style>

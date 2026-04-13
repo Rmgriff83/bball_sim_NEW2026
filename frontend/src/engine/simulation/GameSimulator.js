@@ -834,15 +834,21 @@ class GameSimulator {
           }
         }
 
-        // Assign assist -- chemistry boosts ball movement
+        // Assign assist -- credit the last passer, chemistry boosts probability
         const chemMod = isHome ? this.homeChemistryModifier : this.awayChemistryModifier
         const assistPct = 65 * (1 + chemMod)
         if (shotAttempt.made && Math.floor(Math.random() * 100) + 1 <= assistPct) {
-          for (const player of offense) {
-            const playerId = player.id || null
-            if (playerId && playerId !== shooterId && boxScore[playerId]) {
-              boxScore[playerId].assists++
-              break
+          const lastPasser = playResult.lastPasserId ?? null
+          if (lastPasser && lastPasser !== shooterId && boxScore[lastPasser]) {
+            boxScore[lastPasser].assists++
+          } else {
+            // Fallback: first non-shooter teammate
+            for (const player of offense) {
+              const playerId = player.id || null
+              if (playerId && playerId !== shooterId && boxScore[playerId]) {
+                boxScore[playerId].assists++
+                break
+              }
             }
           }
         }
@@ -1744,6 +1750,8 @@ class GameSimulator {
       awayTeamId: this.awayTeam ? this.awayTeam.id : null,
       homeTeamName: this.homeTeam ? this.homeTeam.name : null,
       awayTeamName: this.awayTeam ? this.awayTeam.name : null,
+      homeTeamAbbreviation: this.homeTeam?.abbreviation || null,
+      awayTeamAbbreviation: this.awayTeam?.abbreviation || null,
       homeSynergiesActivated: this.homeSynergiesActivated,
       awaySynergiesActivated: this.awaySynergiesActivated,
       // Substitution state
@@ -1812,8 +1820,8 @@ class GameSimulator {
     this.awayLineup = this.rebuildLineupFromIds(state.awayLineup, this.awayPlayers)
 
     // Restore team references (lightweight)
-    this.homeTeam = { id: state.homeTeamId, name: state.homeTeamName || null }
-    this.awayTeam = { id: state.awayTeamId, name: state.awayTeamName || null }
+    this.homeTeam = { id: state.homeTeamId, name: state.homeTeamName || null, abbreviation: state.homeTeamAbbreviation || null }
+    this.awayTeam = { id: state.awayTeamId, name: state.awayTeamName || null, abbreviation: state.awayTeamAbbreviation || null }
 
     // Restore synergy counters
     this.homeSynergiesActivated = state.homeSynergiesActivated || 0

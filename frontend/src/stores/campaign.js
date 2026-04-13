@@ -76,17 +76,21 @@ export const useCampaignStore = defineStore('campaign', () => {
       syncStore.setActiveCampaign(id)
 
       let result
+
+      // Always check cloud for newer data before using local
+      try {
+        const pullResult = await syncStore.pullChanges(id)
+        if (pullResult.usedRemote) {
+          console.log('[Campaign] Remote data was newer, reloading from IndexedDB')
+        }
+      } catch (pullErr) {
+        console.warn('[Campaign] Cloud pull failed, will use local data:', pullErr.message)
+      }
+
       try {
         result = await engineLoadCampaign(id)
       } catch (loadErr) {
-        // Campaign not found locally — try pulling from cloud
-        console.log(`[Campaign] Not found locally, trying cloud recovery for ${id}`)
-        try {
-          await syncStore.pullChanges(id)
-          result = await engineLoadCampaign(id)
-        } catch (pullErr) {
-          throw loadErr // Re-throw original error if pull also fails
-        }
+        throw loadErr
       }
 
       if (!result || !result.campaign) {

@@ -329,27 +329,78 @@ function applyAttributeChanges(player, changes, gameDate = null) {
 
   const today = gameDate ?? new Date().toISOString().split('T')[0];
 
+  // Check upfront if player can earn upgrade points
+  const overall = player.overallRating ?? player.overall_rating ?? 70;
+  const potential = player.potentialRating ?? player.potential_rating ?? 75;
+  const canEarnPoints = overall < potential;
+
+  let offensePointsEarned = 0;
+  let defensePointsEarned = 0;
+
   for (const [path, change] of Object.entries(changes)) {
     const parts = path.split('.');
-    if (parts.length === 2) {
-      const category = parts[0];
-      const attr = parts[1];
-      if (player.attributes?.[category]?.[attr] !== undefined) {
-        const current = player.attributes[category][attr];
-        const newValue = Math.max(25, Math.min(99, current + change));
-        player.attributes[category][attr] = newValue;
+    if (parts.length !== 2) continue;
+    const category = parts[0];
+    const attr = parts[1];
+    if (player.attributes?.[category]?.[attr] === undefined) continue;
 
-        // Record to development history
-        player.development_history.push({
-          date: today,
-          category,
-          attribute: attr,
-          change: Math.round(change * 100) / 100,
-          old_value: current,
-          new_value: newValue,
-        });
+    const current = player.attributes[category][attr];
+
+    if (change < 0) {
+      // REGRESSION: apply automatically
+      const newValue = Math.max(25, current + change);
+      player.attributes[category][attr] = newValue;
+
+      player.development_history.push({
+        date: today, category, attribute: attr,
+        change: Math.round(change * 100) / 100,
+        old_value: current, new_value: newValue,
+      });
+    } else if (canEarnPoints) {
+      // DEVELOPMENT: accumulate as upgrade points, don't apply to attribute
+      player.development_history.push({
+        date: today, category, attribute: attr,
+        change: Math.round(change * 100) / 100,
+        old_value: current, new_value: current,
+        pending: true,
+      });
+
+      if (category === 'offense') {
+        offensePointsEarned += change;
+      } else if (category === 'defense') {
+        defensePointsEarned += change;
       }
     }
+    // else: positive change but at potential cap — silently skip
+  }
+
+  if (canEarnPoints && (offensePointsEarned > 0 || defensePointsEarned > 0)) {
+    // Scale earned points by age and potential
+    const age = player.age ?? 25;
+    let ageMult = 0.0;
+    if (age <= 23) ageMult = 1.5;
+    else if (age <= 26) ageMult = 1.0;
+    else if (age <= 31) ageMult = 0.3;
+    // 32+ players earn no upgrade points (regression still auto-applies)
+
+    const potentialMult = potential / 75;
+
+    offensePointsEarned *= ageMult * potentialMult;
+    defensePointsEarned *= ageMult * potentialMult;
+  }
+
+  // Accumulate earned points
+  if (offensePointsEarned > 0) {
+    const current = player.offense_upgrade_points ?? player.offenseUpgradePoints ?? 0;
+    const newVal = Math.min(99, current + offensePointsEarned);
+    player.offense_upgrade_points = Math.round(newVal * 100) / 100;
+    player.offenseUpgradePoints = player.offense_upgrade_points;
+  }
+  if (defensePointsEarned > 0) {
+    const current = player.defense_upgrade_points ?? player.defenseUpgradePoints ?? 0;
+    const newVal = Math.min(99, current + defensePointsEarned);
+    player.defense_upgrade_points = Math.round(newVal * 100) / 100;
+    player.defenseUpgradePoints = player.defense_upgrade_points;
   }
 
   // Limit history to last 200 entries to prevent bloat
@@ -1157,21 +1208,8 @@ export function processWeeklyEvolution(players, gameResults = {}, difficulty = '
     // Check for hot/cold streaks
     player = processStreaks(player);
 
-    // Award upgrade points based on weekly growth
-    const earnedPoints = calculateUpgradePointsFromGrowth(player, weekAgoDate);
-    if (earnedPoints > 0) {
-      const maxPoints = Config.UPGRADE_POINTS.max_stored_points;
-      const currentPoints = player.upgrade_points ?? player.upgradePoints ?? 0;
-      player.upgrade_points = Math.min(maxPoints, currentPoints + earnedPoints);
-      player.upgradePoints = player.upgrade_points;
-
-      upgradePointsAwarded.push({
-        player_id: player.id,
-        name: getPlayerName(player),
-        points_earned: earnedPoints,
-        total_points: player.upgrade_points,
-      });
-    }
+    // Upgrade points are now earned per-game in applyAttributeChanges (offense/defense pools)
+    // No weekly accumulation needed
 
     // AI teams automatically spend upgrade points
     if (isAI) {

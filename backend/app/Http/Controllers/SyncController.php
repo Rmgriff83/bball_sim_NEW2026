@@ -258,7 +258,8 @@ class SyncController extends Controller
                     }
                 }
 
-                return response()->json($snapshot);
+                return response()->json($snapshot)
+                    ->header('Cache-Control', 'no-cache, no-store, must-revalidate');
             }
 
             // Fallback: legacy monolithic snapshot.json
@@ -274,7 +275,8 @@ class SyncController extends Controller
                 return response()->json(['message' => 'Failed to read snapshot'], 500);
             }
 
-            return response()->json($snapshot);
+            return response()->json($snapshot)
+                ->header('Cache-Control', 'no-cache, no-store, must-revalidate');
         } catch (\Exception $e) {
             Log::error("Error reading snapshot for campaign {$clientId}: " . $e->getMessage());
             return response()->json(['message' => 'Failed to read snapshot'], 500);

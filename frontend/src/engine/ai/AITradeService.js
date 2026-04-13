@@ -1045,11 +1045,22 @@ export function buildAiOffer({ aiRoster, targetPlayer, direction, teamPicks = []
     }
   }
 
-  // Find a suitable player to offer
+  // Find a suitable player to offer — value must be reasonably close to target
+  // AI should not offer players significantly more valuable than the target
   for (const candidate of candidates) {
     const candidateValue = getPlayerTradeValue(candidate);
+    const candidateRating = getPlayerRating(candidate);
+    const targetRating = getPlayerRating(targetPlayer);
 
-    if (candidateValue >= targetValue * 0.5 && candidateValue <= targetValue * 1.5) {
+    // Don't offer a player rated 8+ points higher than the target
+    if (candidateRating > targetRating + 8) continue;
+
+    // Don't offer players on long contracts for expiring/short contract targets
+    const targetYears = getPlayerContractYears(targetPlayer);
+    const candidateYears = getPlayerContractYears(candidate);
+    if (targetYears <= 1 && candidateYears >= 3 && candidateRating > targetRating) continue;
+
+    if (candidateValue >= targetValue * 0.6 && candidateValue <= targetValue * 1.3) {
       assets.push({ type: 'player', playerId: candidate.id });
       break;
     }
@@ -1148,28 +1159,41 @@ export function generateWeeklyProposals({
 
   // Pre-compute cooldown: 30-day window for rejected/expired proposals
   const cooldownDays = 30;
+  const playerCooldownDays = 14; // Per-player cooldown: ANY rejection blocks ALL teams for 14 days
   const cooldownCutoff = new Date(current);
   cooldownCutoff.setDate(cooldownCutoff.getDate() - cooldownDays);
+  const playerCooldownCutoff = new Date(current);
+  playerCooldownCutoff.setDate(playerCooldownCutoff.getDate() - playerCooldownDays);
 
   // Track team+player combos that were rejected recently (block exact repeat offers)
   // Also track teams on cooldown (any rejection in the last 30 days)
+  // Also track players on global cooldown (any rejection targeting them in the last 14 days)
   // Use String() coercion on IDs to prevent type mismatches (number vs string from IndexedDB)
   const rejectedTeamPlayerCombos = new Set(); // "teamId::playerId"
   const recentlyDeclinedTeams = new Set();
+  const recentlyDeclinedPlayers = new Set(); // playerId — blocks ALL teams from targeting
   for (const p of pendingProposals) {
     const wasDeclined = p.status === 'rejected' || p.status === 'expired';
     if (!wasDeclined) continue;
 
     // Use resolved_at (when user rejected), falling back to expires_at
     const resolvedDate = p.resolved_at ? new Date(p.resolved_at) : new Date(p.expires_at);
-    if (resolvedDate < cooldownCutoff) continue;
 
-    recentlyDeclinedTeams.add(String(p.proposing_team_id));
+    if (resolvedDate >= cooldownCutoff) {
+      recentlyDeclinedTeams.add(String(p.proposing_team_id));
+    }
 
     const receives = p.proposal?.aiReceives ?? [];
     for (const a of receives) {
       if (a.type === 'player' && a.playerId) {
-        rejectedTeamPlayerCombos.add(`${String(p.proposing_team_id)}::${String(a.playerId)}`);
+        if (resolvedDate >= cooldownCutoff) {
+          rejectedTeamPlayerCombos.add(`${String(p.proposing_team_id)}::${String(a.playerId)}`);
+        }
+        // Per-player global cooldown: if ANY team was rejected for this player recently,
+        // ALL teams stop targeting them for 14 days
+        if (resolvedDate >= playerCooldownCutoff) {
+          recentlyDeclinedPlayers.add(String(a.playerId));
+        }
       }
     }
   }
@@ -1191,8 +1215,8 @@ export function generateWeeklyProposals({
 
     const direction = analyzeTeamDirection(aiTeam, aiRoster, context);
 
-    // Probability check
-    let baseProbability = 0.15;
+    // Probability check — keep trade proposals infrequent so the user isn't overwhelmed
+    let baseProbability = 0.06;
     if (isDeadlineMonth) {
       if (['title_contender', 'win_now'].includes(direction)) {
         baseProbability *= 3.0;
@@ -1212,8 +1236,10 @@ export function generateWeeklyProposals({
     if (targetPlayers.length === 0) continue;
 
     // Filter out players this team already had rejected for (exact team+player combo, 30-day cooldown)
+    // Also filter out players on global cooldown (ANY team was rejected for them in last 14 days)
     let filteredTargets = targetPlayers.filter(p =>
-      !rejectedTeamPlayerCombos.has(`${teamIdStr}::${String(p.id)}`)
+      !rejectedTeamPlayerCombos.has(`${teamIdStr}::${String(p.id)}`) &&
+      !recentlyDeclinedPlayers.has(String(p.id))
     );
 
     // Retention-based targeting: skip very happy players, prefer unhappy ones

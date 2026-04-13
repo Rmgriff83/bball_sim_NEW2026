@@ -23,6 +23,8 @@ import AllStarModal from '@/components/game/AllStarModal.vue'
 import WeeklySummaryModal from '@/components/game/WeeklySummaryModal.vue'
 import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
 import { enterOffseason, startNewSeason } from '@/engine/campaign/CampaignManager'
+import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { TeamRepository } from '@/engine/db/TeamRepository'
 import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
 import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -356,6 +358,45 @@ const nextGameOpponent = computed(() => {
 const userTeamRating = computed(() => {
   return team.value?.overall_rating || team.value?.rating || null
 })
+
+// Top 3 starters by overall rating for the next game matchup display
+const userTopStarters = computed(() => {
+  const starters = teamStore.starterPlayers || []
+  return [...starters]
+    .filter(p => p != null)
+    .sort((a, b) => (b.overall_rating ?? b.overallRating ?? 0) - (a.overall_rating ?? a.overallRating ?? 0))
+    .slice(0, 3)
+})
+
+const opponentTopStarters = ref([])
+
+// Load opponent starters when next game changes
+watch(() => nextGame.value?.id, async () => {
+  if (!nextGame.value || !campaignId.value) {
+    opponentTopStarters.value = []
+    return
+  }
+  const homeTeam = nextGame.value.home_team
+  const awayTeam = nextGame.value.away_team
+  const isHome = homeTeam?.id === team.value?.id
+  const oppTeam = isHome ? awayTeam : homeTeam
+  if (!oppTeam?.id) {
+    opponentTopStarters.value = []
+    return
+  }
+  try {
+    const oppTeamData = await TeamRepository.get(campaignId.value, oppTeam.id)
+    const oppStarters = oppTeamData?.lineup_settings?.starters || []
+    const oppPlayers = await PlayerRepository.getByTeam(campaignId.value, oppTeam.id)
+    const starterSet = new Set(oppStarters)
+    const starters = oppPlayers.filter(p => starterSet.has(p.id))
+    opponentTopStarters.value = [...starters]
+      .sort((a, b) => (b.overall_rating ?? b.overallRating ?? 0) - (a.overall_rating ?? a.overallRating ?? 0))
+      .slice(0, 3)
+  } catch {
+    opponentTopStarters.value = []
+  }
+}, { immediate: true })
 
 const lastSimResultOutcome = computed(() => {
   if (!lastSimResult.value) return null
@@ -1452,38 +1493,60 @@ function handleCloseSimulateModal() {
           <template v-else>
             <div class="next-game-matchup">
               <div class="matchup-team user-team">
-                <div
-                  class="team-badge-game"
-                  :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
-                >
-                  <span class="badge-abbr">{{ team?.abbreviation }}</span>
-                  <span v-if="isGameInProgress && inProgressScores" class="badge-score">
-                    {{ nextGameOpponent?.isHome ? inProgressScores.awayScore : inProgressScores.homeScore }}
-                  </span>
-                  <span v-else class="badge-record">{{ wins }}-{{ losses }}</span>
+                <div class="matchup-top-players">
+                  <div v-for="p in userTopStarters" :key="p.id" class="top-player-card">
+                    <div class="top-player-avatar-wrap">
+                      <PlayerAvatar :player="p" :size="52" class="top-player-avatar" />
+                      <span class="top-player-ovr">{{ p.overall_rating ?? p.overallRating }}</span>
+                    </div>
+                    <span class="top-player-name">{{ p.last_name ?? p.lastName }}</span>
+                  </div>
                 </div>
-                <div class="team-info">
-                  <span v-if="userTeamRating" class="team-rating">{{ userTeamRating }} OVR</span>
-                  <span class="team-rank">#{{ teamRank }} {{ conferenceLabel }}</span>
+                <div class="team-badge-group">
+                  <div
+                    class="team-badge-game"
+                    :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
+                  >
+                    <span class="badge-abbr">{{ team?.abbreviation }}</span>
+                    <span v-if="isGameInProgress && inProgressScores" class="badge-score">
+                      {{ nextGameOpponent?.isHome ? inProgressScores.awayScore : inProgressScores.homeScore }}
+                    </span>
+                    <span v-else class="badge-record">{{ wins }}-{{ losses }}</span>
+                  </div>
+                  <div class="team-info">
+                    <span v-if="userTeamRating" class="team-rating">{{ userTeamRating }} OVR</span>
+                    <span class="team-rank">#{{ teamRank }} {{ conferenceLabel }}</span>
+                  </div>
                 </div>
               </div>
               <div class="matchup-vs">
                 <span class="vs-text">{{ isGameInProgress ? '-' : 'VS' }}</span>
               </div>
               <div class="matchup-team opponent-team">
-                <div
-                  class="team-badge-game"
-                  :style="{ backgroundColor: nextGameOpponent?.color || '#666' }"
-                >
-                  <span class="badge-abbr">{{ nextGameOpponent?.abbreviation }}</span>
-                  <span v-if="isGameInProgress && inProgressScores" class="badge-score">
-                    {{ nextGameOpponent?.isHome ? inProgressScores.homeScore : inProgressScores.awayScore }}
-                  </span>
-                  <span v-else class="badge-record">{{ nextGameOpponent?.wins }}-{{ nextGameOpponent?.losses }}</span>
+                <div class="team-badge-group">
+                  <div
+                    class="team-badge-game"
+                    :style="{ backgroundColor: nextGameOpponent?.color || '#666' }"
+                  >
+                    <span class="badge-abbr">{{ nextGameOpponent?.abbreviation }}</span>
+                    <span v-if="isGameInProgress && inProgressScores" class="badge-score">
+                      {{ nextGameOpponent?.isHome ? inProgressScores.homeScore : inProgressScores.awayScore }}
+                    </span>
+                    <span v-else class="badge-record">{{ nextGameOpponent?.wins }}-{{ nextGameOpponent?.losses }}</span>
+                  </div>
+                  <div class="team-info">
+                    <span v-if="nextGameOpponent?.rating" class="team-rating">{{ nextGameOpponent.rating }} OVR</span>
+                    <span v-if="nextGameOpponent?.rank" class="team-rank">#{{ nextGameOpponent.rank }} {{ nextGameOpponent.conference }}</span>
+                  </div>
                 </div>
-                <div class="team-info">
-                  <span v-if="nextGameOpponent?.rating" class="team-rating">{{ nextGameOpponent.rating }} OVR</span>
-                  <span v-if="nextGameOpponent?.rank" class="team-rank">#{{ nextGameOpponent.rank }} {{ nextGameOpponent.conference }}</span>
+                <div class="matchup-top-players">
+                  <div v-for="p in opponentTopStarters" :key="p.id" class="top-player-card">
+                    <div class="top-player-avatar-wrap">
+                      <PlayerAvatar :player="p" :size="52" class="top-player-avatar" />
+                      <span class="top-player-ovr">{{ p.overall_rating ?? p.overallRating }}</span>
+                    </div>
+                    <span class="top-player-name">{{ p.last_name ?? p.lastName }}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1794,7 +1857,7 @@ function handleCloseSimulateModal() {
         <h3 class="section-header featured-header">FEATURED PLAYER</h3>
         <div class="player-content">
           <div class="player-avatar">
-            <PlayerAvatar :player="topPlayer" :size="56" class="avatar-icon" />
+            <PlayerAvatar :player="topPlayer" :size="76" class="avatar-icon" />
           </div>
           <div class="player-info">
             <h4 class="player-name">{{ topPlayer.name }}</h4>
@@ -2536,8 +2599,8 @@ function handleCloseSimulateModal() {
 }
 
 .player-avatar {
-  width: 60px;
-  height: 60px;
+  width: 76px;
+  height: 76px;
   background: rgba(26, 21, 32, 0.15);
   border-radius: 50%;
   display: flex;
@@ -3161,6 +3224,81 @@ function handleCloseSimulateModal() {
 
 .matchup-team {
   display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.matchup-team.user-team {
+  flex-direction: row;
+}
+
+.matchup-team.opponent-team {
+  flex-direction: row;
+}
+
+.matchup-top-players {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.top-player-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.top-player-avatar-wrap {
+  position: relative;
+}
+
+.top-player-avatar {
+  border-radius: 50%;
+}
+
+.top-player-avatar-wrap :deep(img) {
+  width: 52px !important;
+  height: 52px !important;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.top-player-avatar-wrap :deep(svg) {
+  width: 52px !important;
+  height: 52px !important;
+}
+
+.top-player-ovr {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--gradient-cosmic);
+  color: #1a1520;
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.top-player-name {
+  font-size: 0.6rem;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  max-width: 58px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.team-badge-group {
+  display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
@@ -3604,6 +3742,7 @@ function handleCloseSimulateModal() {
     gap: 40px;
   }
 
+
   .vs-text {
     font-size: 2rem;
   }
@@ -4022,6 +4161,32 @@ function handleCloseSimulateModal() {
 .ticker-slide-leave-to {
   transform: translateY(100%);
   opacity: 0;
+}
+
+@media (max-width: 765px) {
+  .matchup-team.user-team,
+  .matchup-team.opponent-team {
+    flex-direction: column;
+  }
+
+  .matchup-team.user-team .matchup-top-players {
+    order: 2;
+  }
+
+  .matchup-team.user-team .team-badge-group {
+    order: 1;
+  }
+
+  .top-player-avatar-wrap :deep(img),
+  .top-player-avatar-wrap :deep(svg) {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  .top-player-name {
+    font-size: 0.55rem;
+    max-width: 40px;
+  }
 }
 
 </style>

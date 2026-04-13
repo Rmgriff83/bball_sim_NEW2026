@@ -757,9 +757,10 @@ function drawCourt() {
     }
     drawAnimatedPlayers(c)
     if (props.interpolatedBallPosition) {
-      const ballX = props.interpolatedBallPosition.x * w
-      const ballY = props.interpolatedBallPosition.y * h
       const inFlight = props.interpolatedBallPosition.inFlight
+      const ballOffset = !inFlight ? 16 : 0
+      const ballX = props.interpolatedBallPosition.x * w - ballOffset
+      const ballY = props.interpolatedBallPosition.y * h + ballOffset
       drawBall(c, ballX, ballY, inFlight)
     }
   } else {
@@ -767,7 +768,7 @@ function drawCourt() {
       drawPlayers(c)
     }
     if (props.ballPosition) {
-      drawBall(c, props.ballPosition.x * w, props.ballPosition.y * h)
+      drawBall(c, props.ballPosition.x * w - 16, props.ballPosition.y * h + 16)
     }
   }
 
@@ -1402,13 +1403,6 @@ function drawAnimatedPlayers(c) {
     newHistory[playerId].push({ x, y })
     if (newHistory[playerId].length > 10) {
       newHistory[playerId].shift()
-    }
-
-    if (hasBall) {
-      c.beginPath()
-      c.arc(x, y, 18, 0, Math.PI * 2)
-      c.fillStyle = 'rgba(255, 165, 0, 0.3)'
-      c.fill()
     }
 
     const radius = 14

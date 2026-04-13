@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useLeagueStore } from '@/stores/league'
@@ -238,6 +238,13 @@ async function scoutPlayer(player) {
   }
 }
 
+const PAGE_SIZE = 18
+const currentPage = ref(1)
+
+// Reset page when filters change
+function resetPage() { currentPage.value = 1 }
+watch(searchQuery, resetPage)
+
 const filteredRookies = computed(() => {
   let players = rookies.value
 
@@ -266,6 +273,14 @@ const filteredRookies = computed(() => {
   })
 
   return players
+})
+
+const paginatedRookies = computed(() => {
+  return filteredRookies.value.slice(0, currentPage.value * PAGE_SIZE)
+})
+
+const hasMorePages = computed(() => {
+  return paginatedRookies.value.length < filteredRookies.value.length
 })
 
 function formatHeight(inches) {
@@ -329,7 +344,28 @@ onMounted(async () => {
     const allPlayers = await PlayerRepository.getAllForCampaign(campaignId.value)
 
     // Filter draft prospects for this year
-    rookies.value = allPlayers.filter(p => p.isDraftProspect && p.draftYear === gameYear)
+    const prospects = allPlayers.filter(p => p.isDraftProspect && p.draftYear === gameYear)
+
+    // Patch headshots onto rookies that are missing them (older campaigns)
+    const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
+    const availableHeadshots = Object.keys(headshotModules).map(k => k.split('/').pop())
+    if (availableHeadshots.length > 0) {
+      const usedHeadshots = new Set(prospects.filter(p => p.headshot).map(p => p.headshot))
+      const playersToFix = prospects.filter(p => !p.headshot)
+      if (playersToFix.length > 0) {
+        for (const p of playersToFix) {
+          const remaining = availableHeadshots.filter(h => !usedHeadshots.has(h))
+          const pool = remaining.length > 0 ? remaining : availableHeadshots
+          const chosen = pool[Math.floor(Math.random() * pool.length)]
+          p.headshot = chosen
+          usedHeadshots.add(chosen)
+        }
+        // Persist patched headshots so this is a one-time fix
+        await PlayerRepository.saveBulk(playersToFix)
+      }
+    }
+
+    rookies.value = prospects
 
     // Build mock draft order
     const teams = await TeamRepository.getAllForCampaign(campaignId.value)
@@ -398,7 +434,7 @@ onMounted(async () => {
               :key="pos"
               class="pos-filter-btn"
               :class="{ active: filterPosition === pos }"
-              @click="filterPosition = pos"
+              @click="filterPosition = pos; resetPage()"
             >
               {{ pos }}
             </button>
@@ -418,7 +454,7 @@ onMounted(async () => {
         <!-- Player Cards Grid -->
         <div class="players-grid">
           <div
-            v-for="player in filteredRookies"
+            v-for="player in paginatedRookies"
             :key="player.id"
             class="player-card"
             @click="openPlayerModal(player)"
@@ -426,7 +462,7 @@ onMounted(async () => {
             <div class="card-header">
               <div class="avatar-column">
                 <div class="player-avatar">
-                  <PlayerAvatar :player="player" :size="32" class="avatar-icon" />
+                  <PlayerAvatar :player="player" :size="42" class="avatar-icon" />
                 </div>
                 <span class="slot-position-label" :style="{ backgroundColor: getPositionColor(player.position) }">{{ player.position }}</span>
               </div>
@@ -509,6 +545,13 @@ onMounted(async () => {
               <span v-if="player.badges.length > 3" class="badge-more-count">+{{ player.badges.length - 3 }}</span>
             </div>
           </div>
+        </div>
+
+        <!-- Load More -->
+        <div v-if="hasMorePages" class="load-more-container">
+          <button class="load-more-btn" @click="currentPage++">
+            Show More ({{ paginatedRookies.length }} of {{ filteredRookies.length }})
+          </button>
         </div>
       </div>
 
@@ -806,6 +849,41 @@ onMounted(async () => {
   .players-grid {
     grid-template-columns: repeat(3, 1fr);
   }
+}
+
+/* Load More */
+.load-more-container {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.load-more-btn {
+  padding: 10px 32px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.load-more-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .load-more-btn {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .load-more-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
 }
 
 /* Player Card - Nebula style */

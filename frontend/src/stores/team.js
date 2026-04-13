@@ -367,7 +367,8 @@ export const useTeamStore = defineStore('team', () => {
     error.value = null
     try {
       const agents = await PlayerRepository.getFreeAgents(campaignId)
-      freeAgents.value = agents || []
+      // Filter out draft prospects — they belong on the scouting page, not free agency
+      freeAgents.value = (agents || []).filter(p => !p.isDraftProspect && !p.rookieTier)
       return freeAgents.value
     } catch (err) {
       error.value = err.message || 'Failed to fetch free agents'
@@ -565,15 +566,16 @@ export const useTeamStore = defineStore('team', () => {
     return 0
   }
 
-  async function upgradePlayerAttribute(campaignId, playerId, category, attribute) {
+  async function upgradePlayerAttribute(campaignId, playerId, category, attribute, pool = 'offense') {
     try {
       // Get the player from IndexedDB
       const player = await PlayerRepository.get(campaignId, playerId)
       if (!player) throw new Error('Player not found')
 
-      // Validate upgrade points
-      const currentPoints = player.upgrade_points ?? player.upgradePoints ?? 0
-      if (currentPoints <= 0) throw new Error('No upgrade points available')
+      // Validate upgrade points from the correct pool
+      const pointsField = pool === 'defense' ? 'defense_upgrade_points' : 'offense_upgrade_points'
+      const currentPoints = player[pointsField] ?? 0
+      if (currentPoints < 1.0) throw new Error('Not enough upgrade points')
 
       // Get current attribute value
       const currentValue = player.attributes?.[category]?.[attribute]
@@ -587,10 +589,12 @@ export const useTeamStore = defineStore('team', () => {
       const newValue = Math.min(potential, currentValue + 1)
       player.attributes[category][attribute] = newValue
 
-      // Deduct upgrade point
-      const remainingPoints = currentPoints - 1
-      player.upgrade_points = remainingPoints
-      player.upgradePoints = remainingPoints
+      // Deduct 1.0 from the correct pool
+      const remaining = Math.round((currentPoints - 1.0) * 100) / 100
+      player[pointsField] = remaining
+      // Sync camelCase keys
+      player.offenseUpgradePoints = player.offense_upgrade_points ?? 0
+      player.defenseUpgradePoints = player.defense_upgrade_points ?? 0
 
       // Recalculate overall rating
       recalculateOverall(player)
@@ -603,15 +607,18 @@ export const useTeamStore = defineStore('team', () => {
       const idx = roster.value.findIndex(p => p.id === playerId)
       if (idx !== -1) {
         roster.value[idx].attributes[category][attribute] = newValue
-        roster.value[idx].upgrade_points = remainingPoints
-        roster.value[idx].upgradePoints = remainingPoints
+        roster.value[idx][pointsField] = remaining
+        roster.value[idx].offenseUpgradePoints = player.offenseUpgradePoints
+        roster.value[idx].defenseUpgradePoints = player.defenseUpgradePoints
+        roster.value[idx].offense_upgrade_points = player.offense_upgrade_points
+        roster.value[idx].defense_upgrade_points = player.defense_upgrade_points
         roster.value[idx].overall_rating = player.overall_rating
         roster.value[idx].overallRating = player.overallRating
       }
 
       return {
         new_value: newValue,
-        remaining_points: remainingPoints,
+        remaining_points: remaining,
         new_overall: player.overall_rating ?? player.overallRating,
       }
     } catch (err) {

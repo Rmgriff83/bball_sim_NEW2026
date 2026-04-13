@@ -274,7 +274,17 @@ export function evaluateSubstitutions(
     targetPcts[playerId] = mins / TOTAL_GAME_MINUTES;
   }
 
-  // Find players ahead of pace (candidates to sit)
+  // Build bench (players not in current lineup, not injured)
+  let benchPlayers = [];
+  for (const player of fullRoster) {
+    if (!currentLineupIds.includes(player.id)) {
+      if (!isPlayerInjured(player)) {
+        benchPlayers.push(player);
+      }
+    }
+  }
+
+  // --- Pass 1: Find players ahead of pace (candidates to sit) ---
   let sitCandidates = [];
   for (const playerId of currentLineupIds) {
     const actualMinutes = boxScore[playerId]?.minutes ?? 0;
@@ -289,6 +299,92 @@ export function evaluateSubstitutions(
         position: playerMap[playerId]?.position ?? 'SF',
         secondary_position: playerMap[playerId]?.secondary_position ?? null,
       });
+    }
+  }
+
+  // --- Pass 2: Find bench players falling behind pace and force them in ---
+  // This ensures players with assigned minutes don't get stranded on the bench
+  const BEHIND_PACE_THRESHOLD = 2.0; // minutes behind expected pace to trigger sub-in
+  let behindPaceCandidates = [];
+  for (const player of benchPlayers) {
+    const target = targetMinutes[player.id] ?? 0;
+    if (target <= 0) continue;
+
+    const actualMinutes = boxScore[player.id]?.minutes ?? 0;
+    const targetPct = target / TOTAL_GAME_MINUTES;
+    const expectedMinutes = gameElapsed * targetPct;
+    const deficit = expectedMinutes - actualMinutes;
+
+    if (deficit >= BEHIND_PACE_THRESHOLD) {
+      behindPaceCandidates.push({
+        player,
+        id: player.id,
+        deficit,
+        position: player.position ?? 'SF',
+        secondary_position: player.secondary_position ?? null,
+      });
+    }
+  }
+
+  // Sort by most behind pace first
+  behindPaceCandidates.sort((a, b) => b.deficit - a.deficit);
+
+  // For each behind-pace bench player, find the best on-court player to swap out
+  // (most ahead of pace at a compatible position) even if they haven't hit pace_threshold
+  for (const benchCandidate of behindPaceCandidates) {
+    // Check if there's already a sit candidate at a compatible position
+    const alreadyCovered = sitCandidates.some((c) => {
+      const posMatch =
+        c.position === benchCandidate.position ||
+        c.position === benchCandidate.secondary_position ||
+        c.secondary_position === benchCandidate.position;
+      return posMatch;
+    });
+
+    if (alreadyCovered) continue;
+
+    // Find the on-court player at a compatible position who is most ahead of pace
+    let bestSwapOut = null;
+    let bestPaceDelta = -Infinity;
+
+    for (const playerId of currentLineupIds) {
+      // Skip if already a sit candidate
+      if (sitCandidates.some((c) => c.id === playerId)) continue;
+
+      const onCourtPlayer = playerMap[playerId];
+      if (!onCourtPlayer) continue;
+
+      // Check position compatibility
+      const onCourtPos = onCourtPlayer.position ?? 'SF';
+      const onCourtSecondary = onCourtPlayer.secondary_position ?? null;
+      const canSwap =
+        onCourtPos === benchCandidate.position ||
+        onCourtPos === benchCandidate.secondary_position ||
+        onCourtSecondary === benchCandidate.position ||
+        benchCandidate.position === onCourtPos ||
+        benchCandidate.secondary_position === onCourtPos;
+
+      if (!canSwap) continue;
+
+      const actualMinutes = boxScore[playerId]?.minutes ?? 0;
+      const targetPct = targetPcts[playerId] ?? 0.5;
+      const expectedMinutes = gameElapsed * targetPct;
+      const paceDelta = actualMinutes - expectedMinutes;
+
+      // Only swap out players who are at least on pace (not behind themselves)
+      if (paceDelta > 0 && paceDelta > bestPaceDelta) {
+        bestPaceDelta = paceDelta;
+        bestSwapOut = {
+          id: playerId,
+          paceDelta,
+          position: onCourtPos,
+          secondary_position: onCourtSecondary,
+        };
+      }
+    }
+
+    if (bestSwapOut) {
+      sitCandidates.push(bestSwapOut);
     }
   }
 
@@ -307,16 +403,6 @@ export function evaluateSubstitutions(
   // Limit subs per check
   const maxSubs = strategyData.max_subs_per_check;
   sitCandidates = sitCandidates.slice(0, maxSubs);
-
-  // Build bench (players not in current lineup, not injured)
-  let benchPlayers = [];
-  for (const player of fullRoster) {
-    if (!currentLineupIds.includes(player.id)) {
-      if (!isPlayerInjured(player)) {
-        benchPlayers.push(player);
-      }
-    }
-  }
 
   // Find replacements for each sit candidate
   const newLineupIds = [...currentLineupIds];
