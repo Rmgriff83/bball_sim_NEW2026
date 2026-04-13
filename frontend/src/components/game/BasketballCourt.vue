@@ -2,6 +2,27 @@
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { NBA_COURT, COURT_CANVAS } from '@/config/courtConfig'
 
+// Pre-load all headshot images for canvas rendering
+const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
+const headshotImageCache = {}
+
+function getHeadshotImage(filename) {
+  if (!filename) return null
+  if (headshotImageCache[filename]) return headshotImageCache[filename]
+
+  const filenameLower = filename.toLowerCase()
+  const match = Object.entries(headshotModules).find(([k]) => {
+    const parts = k.split('/')
+    return parts[parts.length - 1].toLowerCase() === filenameLower
+  })
+  if (!match) return null
+
+  const img = new Image()
+  img.src = match[1].default
+  headshotImageCache[filename] = img
+  return img
+}
+
 const MOBILE_BREAKPOINT = 620
 
 const props = defineProps({
@@ -1177,35 +1198,55 @@ function drawPlayers(c) {
       : props.playerPositions.filter((p, i) => i < index && p.team === 'away').length
     const slot = teamIndex < 5 ? slotLabels[teamIndex] : 'BN'
 
-    c.beginPath()
-    c.arc(x, y, 12, 0, Math.PI * 2)
-    c.fillStyle = isHome ? (props.homeTeam?.primary_color || '#3B82F6') : (props.awayTeam?.primary_color || '#EF4444')
-    c.fill()
-    c.strokeStyle = '#FFFFFF'
-    c.lineWidth = 2
-    c.stroke()
+    const radius = 12
+    const headshotRadius = 17
+    const headshotImg = getHeadshotImage(player.headshot)
+    const hasHeadshot = headshotImg && headshotImg.complete && headshotImg.naturalWidth > 0
+
+    if (hasHeadshot) {
+      c.save()
+      c.beginPath()
+      c.arc(x, y, headshotRadius, 0, Math.PI * 2)
+      c.clip()
+      c.drawImage(headshotImg, x - headshotRadius, y - headshotRadius, headshotRadius * 2, headshotRadius * 2)
+      c.restore()
+
+    } else {
+      c.beginPath()
+      c.arc(x, y, radius, 0, Math.PI * 2)
+      c.fillStyle = isHome ? (props.homeTeam?.primary_color || '#3B82F6') : (props.awayTeam?.primary_color || '#EF4444')
+      c.fill()
+      c.strokeStyle = '#FFFFFF'
+      c.lineWidth = 2
+      c.stroke()
+    }
 
     // Draw position slot and last name (rotated on mobile to stay readable)
     c.save()
     c.translate(x, y)
     if (isMobile.value) {
-      c.rotate(-Math.PI / 2)  // Counter-rotate to stay upright when court is rotated
+      c.rotate(-Math.PI / 2)
     }
 
-    // Position slot (PG, SG, SF, PF, C)
-    c.fillStyle = '#FFFFFF'
-    c.font = 'bold 10px Arial'
     c.textAlign = 'center'
     c.textBaseline = 'middle'
-    c.fillText(slot, 0, 0)
+
+    // Position slot (only show on fallback circles)
+    if (!hasHeadshot) {
+      c.fillStyle = '#FFFFFF'
+      c.font = 'bold 10px Arial'
+      c.fillText(slot, 0, 0)
+    }
 
     // Last name below icon
+    const drawRadius = hasHeadshot ? headshotRadius : radius
     const playerName = player.last_name || player.name || ''
     const lastName = playerName.includes(' ') ? playerName.split(' ').pop() : playerName
     if (lastName) {
       c.font = '9px Arial'
       c.fillStyle = 'rgba(0, 0, 0, 0.85)'
-      c.fillText(lastName.substring(0, 8), 0, 20)
+      c.textBaseline = 'top'
+      c.fillText(lastName.substring(0, 8), 0, drawRadius + 4)
     }
     c.restore()
   })
@@ -1364,15 +1405,34 @@ function drawAnimatedPlayers(c) {
       c.fill()
     }
 
-    c.beginPath()
-    c.arc(x, y, 14, 0, Math.PI * 2)
-    c.fillStyle = isHome
-      ? (props.homeTeam?.primary_color || '#3B82F6')
-      : (props.awayTeam?.primary_color || '#EF4444')
-    c.fill()
-    c.strokeStyle = hasBall ? '#FFD700' : '#FFFFFF'
-    c.lineWidth = hasBall ? 3 : 2
-    c.stroke()
+    const radius = 14
+    const headshotRadius = 19
+    const headshotImg = getHeadshotImage(player?.headshot)
+    const hasHeadshot = headshotImg && headshotImg.complete && headshotImg.naturalWidth > 0
+
+    if (hasHeadshot) {
+      // Draw headshot clipped to circle
+      c.save()
+      c.beginPath()
+      c.arc(x, y, headshotRadius, 0, Math.PI * 2)
+      c.clip()
+      c.drawImage(headshotImg, x - headshotRadius, y - headshotRadius, headshotRadius * 2, headshotRadius * 2)
+      c.restore()
+
+    } else {
+      // Fallback: colored circle with position label
+      c.beginPath()
+      c.arc(x, y, radius, 0, Math.PI * 2)
+      c.fillStyle = isHome
+        ? (props.homeTeam?.primary_color || '#3B82F6')
+        : (props.awayTeam?.primary_color || '#EF4444')
+      c.fill()
+      c.strokeStyle = hasBall ? '#FFD700' : '#FFFFFF'
+      c.lineWidth = hasBall ? 3 : 2
+      c.stroke()
+    }
+
+    const drawRadius = hasHeadshot ? headshotRadius : radius
 
     // Determine slot from lineupIndex in position data (0-4 = starters, null = bench)
     const lineupIndex = pos.lineupIndex
@@ -1384,15 +1444,18 @@ function drawAnimatedPlayers(c) {
     c.save()
     c.translate(x, y)
     if (isMobile.value) {
-      c.rotate(-Math.PI / 2)  // Counter-rotate to stay upright when court is rotated
+      c.rotate(-Math.PI / 2)
     }
 
-    // Position slot (PG, SG, SF, PF, C)
-    c.fillStyle = '#FFFFFF'
-    c.font = 'bold 10px Arial'
     c.textAlign = 'center'
     c.textBaseline = 'middle'
-    c.fillText(slot, 0, 0)
+
+    // Position slot (only show on fallback circles)
+    if (!hasHeadshot) {
+      c.fillStyle = '#FFFFFF'
+      c.font = 'bold 10px Arial'
+      c.fillText(slot, 0, 0)
+    }
 
     // Last name below icon
     const playerName = player?.last_name || player?.name || ''
@@ -1400,7 +1463,8 @@ function drawAnimatedPlayers(c) {
     if (lastName) {
       c.font = '9px Arial'
       c.fillStyle = 'rgba(0, 0, 0, 0.85)'
-      c.fillText(lastName.substring(0, 8), 0, 22)
+      c.textBaseline = 'top'
+      c.fillText(lastName.substring(0, 8), 0, drawRadius + 4)
     }
     c.restore()
   })

@@ -62,7 +62,7 @@ export const COURT_CANVAS = {
 
   // Court colors
   COLORS: {
-    HARDWOOD: '#CD853F',
+    HARDWOOD: '#D4945A',
     WOOD_GRAIN: 'rgba(139, 90, 43, 0.15)',
     COURT_LINES: '#FFFFFF',
     RIM: '#FF4500',
