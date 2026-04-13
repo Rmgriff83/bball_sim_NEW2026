@@ -1794,7 +1794,7 @@ function handleCloseSimulateModal() {
         <h3 class="section-header featured-header">FEATURED PLAYER</h3>
         <div class="player-content">
           <div class="player-avatar">
-            <PlayerAvatar :player="topPlayer" :size="36" class="avatar-icon" />
+            <PlayerAvatar :player="topPlayer" :size="56" class="avatar-icon" />
           </div>
           <div class="player-info">
             <h4 class="player-name">{{ topPlayer.name }}</h4>

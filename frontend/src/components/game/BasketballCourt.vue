@@ -1208,7 +1208,13 @@ function drawPlayers(c) {
       c.beginPath()
       c.arc(x, y, headshotRadius, 0, Math.PI * 2)
       c.clip()
-      c.drawImage(headshotImg, x - headshotRadius, y - headshotRadius, headshotRadius * 2, headshotRadius * 2)
+      if (isMobile.value) {
+        c.translate(x, y)
+        c.rotate(-Math.PI / 2)
+        c.drawImage(headshotImg, -headshotRadius, -headshotRadius, headshotRadius * 2, headshotRadius * 2)
+      } else {
+        c.drawImage(headshotImg, x - headshotRadius, y - headshotRadius, headshotRadius * 2, headshotRadius * 2)
+      }
       c.restore()
 
     } else {
@@ -1416,7 +1422,13 @@ function drawAnimatedPlayers(c) {
       c.beginPath()
       c.arc(x, y, headshotRadius, 0, Math.PI * 2)
       c.clip()
-      c.drawImage(headshotImg, x - headshotRadius, y - headshotRadius, headshotRadius * 2, headshotRadius * 2)
+      if (isMobile.value) {
+        c.translate(x, y)
+        c.rotate(-Math.PI / 2)
+        c.drawImage(headshotImg, -headshotRadius, -headshotRadius, headshotRadius * 2, headshotRadius * 2)
+      } else {
+        c.drawImage(headshotImg, x - headshotRadius, y - headshotRadius, headshotRadius * 2, headshotRadius * 2)
+      }
       c.restore()
 
     } else {
