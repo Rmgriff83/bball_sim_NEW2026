@@ -553,7 +553,7 @@ function formatChange(change) {
             <div class="player-modal-header" :class="{ 'injured-header': normalizedPlayer.isInjured }">
               <div class="header-top-row">
                 <div class="modal-player-avatar">
-                  <PlayerAvatar :player="normalizedPlayer" :size="64" class="avatar-icon" />
+                  <PlayerAvatar :player="normalizedPlayer" :size="84" class="avatar-icon" />
                 </div>
                 <div class="header-rating-corner">
                   <span class="ovr-label">OVR</span>
@@ -743,7 +743,6 @@ function formatChange(change) {
             <div class="modal-tab-content">
               <!-- Stats Tab -->
               <div v-if="activeTab === 'stats'" class="tab-panel">
-                <template v-if="normalizedPlayer.seasonStats">
                   <div v-if="seasonStatsRows.length > 0" class="game-log-table-wrap">
                     <table class="game-log-table season-history-table">
                       <thead>
@@ -812,11 +811,6 @@ function formatChange(change) {
                       </table>
                     </div>
                   </div>
-                </template>
-                <div v-else class="empty-state-modal">
-                  <p>No stats available yet.</p>
-                  <p class="text-sm text-secondary">Play some games to see this player's stats.</p>
-                </div>
               </div>
 
               <!-- Attributes Tab -->
@@ -1644,8 +1638,8 @@ function formatChange(change) {
 }
 
 .modal-player-avatar {
-  width: 72px;
-  height: 72px;
+  width: 92px;
+  height: 92px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2916,11 +2910,6 @@ function formatChange(change) {
 
   .player-modal-header {
     padding: 0.75rem;
-  }
-
-  .modal-player-avatar {
-    width: 56px;
-    height: 56px;
   }
 
   .player-card-name {

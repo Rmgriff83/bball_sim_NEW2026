@@ -474,8 +474,9 @@ export const useGameStore = defineStore('game', () => {
       if (phase !== 'regular_season') return
 
       const year = campaign.currentSeasonYear ?? 2025
-      const deadlineDate = `${year + 1}-01-06`
-      const allStarDate = `${year + 1}-01-13`
+      // Trade deadline and All-Star at ~2/3 through the 54-game season (mid-December)
+      const deadlineDate = `${year}-12-15`
+      const allStarDate = `${year}-12-15`
 
       let seasonData = null
       let dirty = false

@@ -20,8 +20,14 @@ const scoutingPoints = computed(() => {
   return campaignStore.currentCampaign?.settings?.scoutingPoints ?? 0
 })
 
+const seasonPhase = computed(() => {
+  const c = campaignStore.currentCampaign
+  return c?.settings?.season_phase ?? c?.settings?.seasonPhase ?? c?.phase ?? 'regular_season'
+})
+
 const navItems = computed(() => {
-  const thirdTab = playoffStore.isInPlayoffs
+  const showPlayoffs = playoffStore.isInPlayoffs && seasonPhase.value !== 'regular_season'
+  const thirdTab = showPlayoffs
     ? {
         name: 'playoffs',
         to: `/campaign/${props.campaignId}/playoffs`,

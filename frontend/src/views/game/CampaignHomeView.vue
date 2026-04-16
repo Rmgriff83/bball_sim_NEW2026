@@ -712,8 +712,9 @@ async function handleStartNewSeason() {
   try {
     const result = await startNewSeason(campaignId.value)
 
-    // Clear offseason data
+    // Clear offseason and playoff state
     offseasonData.value = null
+    playoffStore.$reset()
     financeStore.invalidate()
 
     // Refresh all data from the new season
@@ -1831,7 +1832,7 @@ function handleCloseSimulateModal() {
             </div>
             <span class="action-label">GM View</span>
           </button>
-          <button v-if="playoffStore.isInPlayoffs" class="action-box playoffs" @click="router.push(`/campaign/${campaignId}/playoffs`)">
+          <button v-if="playoffStore.isInPlayoffs && campaign?.phase === 'playoffs'" class="action-box playoffs" @click="router.push(`/campaign/${campaignId}/playoffs`)">
             <div class="action-icon">
               <Trophy :size="24" />
             </div>

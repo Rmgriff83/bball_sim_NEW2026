@@ -9,8 +9,8 @@
 
 import { calculateRetentionScore } from './MotivationService';
 
-const TRADE_DEADLINE_MONTH = 1; // January
-const TRADE_DEADLINE_DAY = 6;
+const TRADE_DEADLINE_MONTH = 12; // December
+const TRADE_DEADLINE_DAY = 15;
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 const TOTAL_GAMES = 54;
@@ -855,11 +855,11 @@ export function getTradeInterest(team, teamRoster, context) {
  * @returns {{ month: number, day: number, year: number }}
  */
 export function getTradeDeadline(seasonYear) {
-  // Season 2025 starts Oct 2025, deadline is Jan 6, 2026
+  // Season 2025 starts Oct 2025, deadline is Dec 15, 2025 (~2/3 through season)
   return {
     month: TRADE_DEADLINE_MONTH,
     day: TRADE_DEADLINE_DAY,
-    year: seasonYear + 1,
+    year: seasonYear,
   };
 }
 
@@ -1341,7 +1341,7 @@ export function processTradeDeadlineEvents({ currentDate, seasonYear, settings =
     newsEvents.push({
       event_type: 'trade',
       headline: 'Trade deadline approaching',
-      body: `The January 6th trade deadline is ${daysUntil} days away. Teams are expected to increase activity.`,
+      body: `The December 15th trade deadline is ${daysUntil} days away. Teams are expected to increase activity.`,
       game_date: currentDate,
     });
 

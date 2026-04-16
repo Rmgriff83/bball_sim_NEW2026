@@ -347,15 +347,35 @@ function applyAttributeChanges(player, changes, gameDate = null) {
     const current = player.attributes[category][attr];
 
     if (change < 0) {
-      // REGRESSION: apply automatically
-      const newValue = Math.max(25, current + change);
-      player.attributes[category][attr] = newValue;
+      // REGRESSION: scale by age — young players barely regress, older players regress more
+      const age = player.age ?? 25;
+      let regressionMult = 0.0;
+      if (age <= 23) regressionMult = 0.1;       // Youth: almost no per-game regression
+      else if (age <= 26) regressionMult = 0.15;  // Rising: minimal
+      else if (age <= 31) regressionMult = 0.4;   // Prime: moderate
+      else if (age <= 35) regressionMult = 0.8;   // Decline: significant
+      else regressionMult = 1.0;                   // Veteran: full regression
 
-      player.development_history.push({
-        date: today, category, attribute: attr,
-        change: Math.round(change * 100) / 100,
-        old_value: current, new_value: newValue,
-      });
+      const scaledChange = change * regressionMult;
+
+      // Cap: no single attribute can drop more than 3 points total per season from per-game regression
+      const seasonDropKey = `_seasonDrop_${category}_${attr}`;
+      const currentSeasonDrop = player[seasonDropKey] ?? 0;
+      const maxSeasonDrop = -3;
+      const remainingDrop = maxSeasonDrop - currentSeasonDrop;
+      const clampedChange = Math.max(scaledChange, remainingDrop);
+
+      if (clampedChange < 0) {
+        const newValue = Math.max(25, current + clampedChange);
+        player.attributes[category][attr] = newValue;
+        player[seasonDropKey] = currentSeasonDrop + clampedChange;
+
+        player.development_history.push({
+          date: today, category, attribute: attr,
+          change: Math.round(clampedChange * 100) / 100,
+          old_value: current, new_value: newValue,
+        });
+      }
     } else if (canEarnPoints) {
       // DEVELOPMENT: accumulate as upgrade points, don't apply to attribute
       player.development_history.push({
@@ -495,6 +515,20 @@ function recalculateOverall(player) {
 
   player.overallRating = overall;
   player.overall_rating = overall;
+
+  // When a player regresses, drag potential down so it doesn't stay artificially high.
+  // Only applies to players past their development years (age 28+) to protect young prospects.
+  const currentPotential = player.potentialRating ?? player.potential_rating ?? 75;
+  const age = player.age ?? 25;
+  if (age >= 28 && overall < currentPotential) {
+    // Potential tracks overall, keeping at most a small gap
+    const maxGap = 2;
+    if (currentPotential - overall > maxGap) {
+      const newPotential = overall + maxGap;
+      player.potentialRating = newPotential;
+      player.potential_rating = newPotential;
+    }
+  }
 
   return player;
 }
@@ -1365,6 +1399,13 @@ export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro', 
     player.minutesPlayedThisSeason = 0;
     player.recent_performances = [];
     player.recentPerformances = [];
+
+    // Reset per-season regression caps
+    for (const key of Object.keys(player)) {
+      if (key.startsWith('_seasonDrop_')) {
+        delete player[key];
+      }
+    }
     player.streak_data = null;
     player.streakData = null;
 
