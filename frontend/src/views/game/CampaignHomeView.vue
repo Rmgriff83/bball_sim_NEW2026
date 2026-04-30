@@ -12,6 +12,7 @@ import { useTradeStore } from '@/stores/trade'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { useFinanceStore } from '@/stores/finance'
 import { useAuthStore } from '@/stores/auth'
+import { useSyncStore } from '@/stores/sync'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { LoadingSpinner, BaseModal } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
@@ -41,6 +42,7 @@ const tradeStore = useTradeStore()
 const breakingNewsStore = useBreakingNewsStore()
 const financeStore = useFinanceStore()
 const authStore = useAuthStore()
+const syncStore = useSyncStore()
 
 const showSimulateModal = ref(false)
 const simSeasonMode = ref(false)
@@ -1416,10 +1418,20 @@ function handleCloseSimulateModal() {
             Shop
           </router-link>
         </div>
+        <Transition name="card-loader-fade">
+          <div v-if="syncStore.isPulling" class="card-pull-loader" aria-label="Refreshing">
+            <LoadingSpinner size="sm" />
+          </div>
+        </Transition>
       </section>
 
       <!-- Last Sim Result Card (shown while background sim is running) -->
       <section v-if="lastSimResult && gameStore.backgroundSimulating" class="next-game-card glass-card-nebula">
+        <Transition name="card-loader-fade">
+          <div v-if="syncStore.isPulling" class="card-pull-loader" aria-label="Refreshing">
+            <LoadingSpinner size="sm" />
+          </div>
+        </Transition>
         <div class="next-game-header">
           <div class="next-game-label-row">
             <h3 class="next-game-label">LAST GAME</h3>
@@ -1465,6 +1477,11 @@ function handleCloseSimulateModal() {
 
       <!-- Next Game Card -->
       <section v-else-if="nextGame" class="next-game-card glass-card-nebula" :class="{ 'in-progress': isGameInProgress, 'is-playoff': nextGame.is_playoff }">
+        <Transition name="card-loader-fade">
+          <div v-if="syncStore.isPulling" class="card-pull-loader" aria-label="Refreshing">
+            <LoadingSpinner size="sm" />
+          </div>
+        </Transition>
         <div class="next-game-header">
           <div class="next-game-label-group">
             <h3 class="next-game-label" :class="{ 'live': isGameInProgress }">
@@ -1583,6 +1600,11 @@ function handleCloseSimulateModal() {
 
       <!-- Playoff Between-Rounds Card -->
       <section v-else-if="playoffStore.isInPlayoffs && !playoffStore.champion" class="next-game-card glass-card-nebula playoff-between-rounds">
+        <Transition name="card-loader-fade">
+          <div v-if="syncStore.isPulling" class="card-pull-loader" aria-label="Refreshing">
+            <LoadingSpinner size="sm" />
+          </div>
+        </Transition>
         <div class="next-game-header">
           <div class="next-game-label-row">
             <h3 class="next-game-label">{{ userEliminated ? 'SEASON OVER' : 'SERIES WON' }}</h3>
@@ -1613,6 +1635,11 @@ function handleCloseSimulateModal() {
 
       <!-- Offseason Hub (interactive offseason period) -->
       <section v-else-if="isOffseason" class="next-game-card glass-card-nebula offseason-card">
+        <Transition name="card-loader-fade">
+          <div v-if="syncStore.isPulling" class="card-pull-loader" aria-label="Refreshing">
+            <LoadingSpinner size="sm" />
+          </div>
+        </Transition>
         <div class="next-game-header">
           <div class="next-game-label-row">
             <h3 class="next-game-label">OFFSEASON</h3>
@@ -1722,6 +1749,11 @@ function handleCloseSimulateModal() {
 
       <!-- Champion Card (champion declared, enter offseason) -->
       <section v-else-if="playoffStore.champion" class="next-game-card glass-card-nebula offseason-card">
+        <Transition name="card-loader-fade">
+          <div v-if="syncStore.isPulling" class="card-pull-loader" aria-label="Refreshing">
+            <LoadingSpinner size="sm" />
+          </div>
+        </Transition>
         <div class="next-game-header">
           <div class="next-game-label-row">
             <h3 class="next-game-label">SEASON COMPLETE</h3>
@@ -1772,6 +1804,11 @@ function handleCloseSimulateModal() {
 
       <!-- Season Wrap-Up Card (user has no more games, league still playing) -->
       <section v-else class="next-game-card glass-card-nebula">
+        <Transition name="card-loader-fade">
+          <div v-if="syncStore.isPulling" class="card-pull-loader" aria-label="Refreshing">
+            <LoadingSpinner size="sm" />
+          </div>
+        </Transition>
         <div class="next-game-header">
           <h3 class="next-game-label">REGULAR SEASON COMPLETE</h3>
         </div>
@@ -2338,6 +2375,7 @@ function handleCloseSimulateModal() {
 .record-card {
   padding: 20px 24px;
   margin-bottom: 16px;
+  position: relative;
 }
 
 .record-content {
@@ -2833,6 +2871,37 @@ function handleCloseSimulateModal() {
   border-radius: var(--radius-2xl);
   padding: 16px;
   margin-bottom: 16px;
+  position: relative;
+}
+
+/* Pull-in-progress loader badge — shown on .record-card and .next-game-card
+   while syncStore.isPulling is true. Sits in the top-right corner without
+   covering the card content. */
+.card-pull-loader {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.card-loader-fade-enter-active,
+.card-loader-fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+
+.card-loader-fade-enter-from,
+.card-loader-fade-leave-to {
+  opacity: 0;
 }
 
 .next-game-card.in-progress {

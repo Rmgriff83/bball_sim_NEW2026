@@ -1596,15 +1596,26 @@ export const useGameStore = defineStore('game', () => {
         const teamsById = {}
         for (const t of (teams || [])) teamsById[t.id] = t
 
-        const game = preview.nextUserGame
-        game.isHome = game.homeTeamId === userTeamId
-
         const enrichTeam = (t, fallbackAbbr) => {
           if (!t) return { abbreviation: fallbackAbbr, name: fallbackAbbr, color: '#666' }
           return { ...t, color: t.primary_color || t.color || '#666' }
         }
-        game.homeTeam = enrichTeam(teamsById[game.homeTeamId], game.homeTeamAbbreviation)
-        game.awayTeam = enrichTeam(teamsById[game.awayTeamId], game.awayTeamAbbreviation)
+
+        const nextGame = preview.nextUserGame
+        nextGame.isHome = nextGame.homeTeamId === userTeamId
+        nextGame.homeTeam = enrichTeam(teamsById[nextGame.homeTeamId], nextGame.homeTeamAbbreviation)
+        nextGame.awayTeam = enrichTeam(teamsById[nextGame.awayTeamId], nextGame.awayTeamAbbreviation)
+
+        // Enrich each AI game in gamesByDate so the modal's expandable date
+        // sections can render team abbreviations and colors.
+        if (preview.gamesByDate) {
+          for (const dateGames of Object.values(preview.gamesByDate)) {
+            for (const g of dateGames) {
+              g.homeTeam = enrichTeam(teamsById[g.homeTeamId], g.homeTeamAbbreviation)
+              g.awayTeam = enrichTeam(teamsById[g.awayTeamId], g.awayTeamAbbreviation)
+            }
+          }
+        }
       }
 
       simulatePreview.value = preview

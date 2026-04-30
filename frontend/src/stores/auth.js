@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/composables/useApi'
 import { clearDatabase } from '@/engine/db/GameDatabase'
+import { useSyncStore } from '@/stores/sync'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
@@ -67,6 +68,17 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
+    // Flush any pending campaign changes to the cloud BEFORE clearing IndexedDB,
+    // otherwise unsynced gameplay (e.g. games played since the last sync) is lost.
+    try {
+      const syncStore = useSyncStore()
+      if (syncStore.activeCampaignId && syncStore.hasPendingChanges) {
+        await syncStore.syncNow()
+      }
+    } catch (e) {
+      console.warn('[Auth] Pre-logout sync failed:', e)
+    }
+
     try {
       if (token.value) {
         await api.post('/api/auth/logout')

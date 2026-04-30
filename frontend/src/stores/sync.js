@@ -13,6 +13,7 @@ const SYNC_COOLDOWN_MS = 300000 // 5 minutes — minimum time between event-driv
 export const useSyncStore = defineStore('sync', () => {
   // State
   const isSyncing = ref(false)
+  const isPulling = ref(false)  // true while pullChanges is in flight (used for UI loaders)
   const lastSyncAt = ref(null)
   const isDirty = ref(false)
   const syncError = ref(null)
@@ -85,10 +86,12 @@ export const useSyncStore = defineStore('sync', () => {
       }
     }, SYNC_INTERVAL_MS)
 
-    // Sync when tab becomes hidden (user switching away)
+    // Sync when tab becomes hidden (user switching away or closing).
+    // Bypasses the route-leave cooldown — closing a tab is a high-risk moment
+    // for losing unsynced data, so we always push if dirty.
     _visibilityHandler.value = () => {
-      if (document.hidden && activeCampaignId.value && hasPendingChanges.value) {
-        _eventDrivenSync()
+      if (document.hidden && activeCampaignId.value && hasPendingChanges.value && !isSyncing.value) {
+        syncNow()
       }
     }
     document.addEventListener('visibilitychange', _visibilityHandler.value)
@@ -222,14 +225,20 @@ export const useSyncStore = defineStore('sync', () => {
       // Completed season: drop entire schedule to save space
       delete slim.schedule
     } else if (Array.isArray(slim.schedule)) {
-      // Current season: compact schedule, strip box scores, evolution, saved game state
+      // Current season: compact completed games but PRESERVE savedGameState for
+      // games still in progress, so a user can start a game on one device and
+      // resume / sim-to-end on another.
       slim.schedule = slim.schedule.map(game => {
         const g = { ...game }
-        delete g.savedGameState
+        // Evolution is regenerated post-game (see simToEnd / continueGame flows)
         delete g.evolution
 
-        if (g.boxScore && g.isComplete) {
-          g.boxScore = _compactBoxScore(g.boxScore)
+        if (g.isComplete) {
+          // Game is finished — savedGameState is dead weight, drop it.
+          delete g.savedGameState
+          if (g.boxScore) {
+            g.boxScore = _compactBoxScore(g.boxScore)
+          }
         }
 
         return g
@@ -237,6 +246,35 @@ export const useSyncStore = defineStore('sync', () => {
     }
 
     return slim
+  }
+
+  /**
+   * Given a list of remote records and local records, return the subset of
+   * remote records that should overwrite their local counterparts:
+   *  - record exists remotely but not locally → take remote
+   *  - record exists in both AND remote.updatedAt > local.updatedAt → take remote
+   *  - otherwise → keep local (don't include in the result)
+   *
+   * This is the per-record analogue of the per-season comparison in pullChanges,
+   * so a partial sync that leaves stale entries in the cloud can't clobber newer
+   * local edits, but legitimate cross-device updates still flow through.
+   */
+  function _pickNewerRecords(remoteRecords, localRecords, getId) {
+    const localById = new Map((localRecords || []).map(r => [getId(r), r]))
+    const out = []
+    for (const remote of remoteRecords) {
+      const local = localById.get(getId(remote))
+      if (!local) {
+        out.push(remote)
+        continue
+      }
+      const remoteAt = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0
+      const localAt = local.updatedAt ? new Date(local.updatedAt).getTime() : 0
+      if (remoteAt > localAt) {
+        out.push(remote)
+      }
+    }
+    return out
   }
 
   function _compactBoxScore(boxScore) {
@@ -375,6 +413,15 @@ export const useSyncStore = defineStore('sync', () => {
    * Compares remote clientUpdatedAt vs local updatedAt — remote wins if newer.
    */
   async function pullChanges(campaignId) {
+    isPulling.value = true
+    try {
+      return await _pullChangesInner(campaignId)
+    } finally {
+      isPulling.value = false
+    }
+  }
+
+  async function _pullChangesInner(campaignId) {
     const response = await api.get(`/api/sync/${campaignId}/pull`)
     const data = response.data
 
@@ -401,24 +448,31 @@ export const useSyncStore = defineStore('sync', () => {
       }
     }
 
+    // Teams/players/seasons are pushed in independent chunks, so a partial sync
+    // can leave the server with a fresh meta `clientUpdatedAt` paired with stale
+    // teams/players/seasons. Compare each resource against its own local state
+    // rather than cascading from the campaign-level `usedRemote` flag.
+
     if (data.teams && Array.isArray(data.teams) && data.teams.length > 0) {
       const localTeams = await TeamRepository.getAllForCampaign(campaignId)
-      if (!localTeams || localTeams.length === 0 || usedRemote) {
-        await TeamRepository.saveBulk(data.teams)
-        console.log('[Sync] Using remote teams data')
+      const teamsToWrite = _pickNewerRecords(data.teams, localTeams, t => t.id)
+      if (teamsToWrite.length > 0) {
+        await TeamRepository.saveBulk(teamsToWrite)
+        console.log(`[Sync] Updating ${teamsToWrite.length} teams from remote`)
       } else {
-        console.log('[Sync] Local teams data is newer, keeping local')
+        console.log('[Sync] All local teams are up to date')
       }
     }
 
     if (data.players && Array.isArray(data.players) && data.players.length > 0) {
       const localPlayers = await PlayerRepository.getAllForCampaign(campaignId)
-      if (!localPlayers || localPlayers.length === 0 || usedRemote) {
-        const hydrated = data.players.map(_hydratePlayerKeys)
+      const playersToWrite = _pickNewerRecords(data.players, localPlayers, p => p.id)
+      if (playersToWrite.length > 0) {
+        const hydrated = playersToWrite.map(_hydratePlayerKeys)
         await PlayerRepository.saveBulk(hydrated)
-        console.log('[Sync] Using remote players data')
+        console.log(`[Sync] Updating ${playersToWrite.length} players from remote`)
       } else {
-        console.log('[Sync] Local players data is newer, keeping local')
+        console.log('[Sync] All local players are up to date')
       }
     }
 
@@ -427,11 +481,16 @@ export const useSyncStore = defineStore('sync', () => {
         const year = season.metadata?.year ?? season.year
         if (!year) continue
         const localSeason = await SeasonRepository.get(campaignId, year)
-        if (!localSeason || usedRemote) {
+        const remoteSeasonUpdatedAt = season.updatedAt ?? season.metadata?.updatedAt ?? null
+        const localSeasonUpdatedAt = localSeason?.updatedAt ?? localSeason?.metadata?.updatedAt ?? null
+        const remoteSeasonNewer = remoteSeasonUpdatedAt && localSeasonUpdatedAt
+          ? new Date(remoteSeasonUpdatedAt).getTime() > new Date(localSeasonUpdatedAt).getTime()
+          : false
+        if (!localSeason || remoteSeasonNewer) {
           await SeasonRepository.save(season)
           console.log(`[Sync] Using remote season ${year} data`)
         } else {
-          console.log(`[Sync] Local season ${year} data is newer, keeping local`)
+          console.log(`[Sync] Local season ${year} data is newer or equal, keeping local`)
         }
       }
     }
@@ -453,14 +512,17 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Fetch list of campaigns that exist on the server (for recovery).
+   * Fetch list of campaigns that exist on the server (for recovery + reconciliation).
+   * Returns the array on success, or `null` on failure so callers can distinguish
+   * "no campaigns" from "server unreachable" (important for not deleting local
+   * campaigns when we're just offline).
    */
   async function fetchServerCampaigns() {
     try {
       const response = await api.get('/api/sync/campaigns')
       return response.data?.campaigns ?? []
     } catch {
-      return []
+      return null
     }
   }
 
@@ -483,6 +545,7 @@ export const useSyncStore = defineStore('sync', () => {
   return {
     // State
     isSyncing,
+    isPulling,
     lastSyncAt,
     isDirty,
     syncError,

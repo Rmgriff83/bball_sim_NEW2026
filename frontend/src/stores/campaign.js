@@ -30,18 +30,45 @@ export const useCampaignStore = defineStore('campaign', () => {
     loading.value = true
     error.value = null
     try {
-      // Load campaigns from IndexedDB (local)
       const localCampaigns = await listCampaigns()
-
-      // Also check server for cloud-synced campaigns not in IndexedDB
       const syncStore = useSyncStore()
       const serverCampaigns = await syncStore.fetchServerCampaigns()
 
-      // Find campaigns that exist on server but not locally
+      // If the server is unreachable, don't reconcile — just show local data.
+      // (fetchServerCampaigns returns null on failure, [] on a successful
+      // empty list, so we can distinguish offline from "no campaigns".)
+      if (serverCampaigns === null) {
+        campaigns.value = localCampaigns
+        return campaigns.value
+      }
+
       const localIds = new Set(localCampaigns.map(c => c.id))
-      const cloudOnlyCampaigns = serverCampaigns.filter(sc => !localIds.has(sc.id))
+      const serverIds = new Set(serverCampaigns.map(c => c.id))
+
+      // Reconcile deletions: a campaign in the local cache but missing from the
+      // server's authoritative list was deleted on another device. Remove it
+      // locally — but skip campaigns that haven't been synced yet AND were
+      // created very recently, to avoid wiping a brand-new campaign whose
+      // initial push hasn't completed.
+      const RECENT_CREATE_GRACE_MS = 60_000
+      const now = Date.now()
+      for (const local of localCampaigns) {
+        if (serverIds.has(local.id)) continue
+        const createdMs = local.createdAt ? new Date(local.createdAt).getTime() : 0
+        const isRecent = createdMs && (now - createdMs) < RECENT_CREATE_GRACE_MS
+        const wasSynced = !!local.lastSyncedAt
+        if (isRecent && !wasSynced) continue
+
+        try {
+          await engineDeleteCampaign(local.id)
+          console.log(`[Campaign] Removed local campaign deleted on another device: ${local.name} (${local.id})`)
+        } catch (err) {
+          console.warn(`[Campaign] Failed to remove deleted campaign ${local.id}:`, err)
+        }
+      }
 
       // Pull any cloud-only campaigns into IndexedDB
+      const cloudOnlyCampaigns = serverCampaigns.filter(sc => !localIds.has(sc.id))
       for (const sc of cloudOnlyCampaigns) {
         try {
           await syncStore.pullChanges(sc.id)
@@ -51,13 +78,19 @@ export const useCampaignStore = defineStore('campaign', () => {
         }
       }
 
-      // Re-read from IndexedDB if we pulled anything
-      if (cloudOnlyCampaigns.length > 0) {
-        campaigns.value = await listCampaigns()
-      } else {
-        campaigns.value = localCampaigns
+      // Stamp `lastSyncedAt` on every campaign confirmed to exist on the server.
+      // This lets future fetchCampaigns reliably reconcile deletions even for
+      // campaigns that pre-date this code path.
+      const refreshed = await listCampaigns()
+      const nowIso = new Date().toISOString()
+      for (const local of refreshed) {
+        if (serverIds.has(local.id) && !local.lastSyncedAt) {
+          local.lastSyncedAt = nowIso
+          await CampaignRepository.save(local)
+        }
       }
 
+      campaigns.value = await listCampaigns()
       return campaigns.value
     } catch (err) {
       error.value = err.message || 'Failed to fetch campaigns'
