@@ -431,8 +431,8 @@ export const useGameStore = defineStore('game', () => {
           details: {
             teams: [trade.team1.id, trade.team2.id],
             team_names: {
-              [trade.team1.id]: `${trade.team1.city} ${trade.team1.name}`,
-              [trade.team2.id]: `${trade.team2.city} ${trade.team2.name}`,
+              [trade.team1.id]: trade.team1.name,
+              [trade.team2.id]: trade.team2.name,
             },
             assets,
           },
@@ -1541,6 +1541,7 @@ export const useGameStore = defineStore('game', () => {
         result,
         rewards,
         playoffUpdate,
+        is_user_home: isHome,
         upgrade_points_awarded: rewards?.tokens_awarded || null,
       }
     } catch (err) {

@@ -41,4 +41,19 @@ export const CampaignRepository = {
       return db.put('campaigns', campaign)
     })
   },
+
+  /**
+   * Stamp `lastSyncedAt` on a campaign WITHOUT bumping `updatedAt`.
+   * `updatedAt` must reflect user-content changes only — sync metadata
+   * shouldn't make the local copy look "newer" than what's on the server,
+   * or pullChanges will refuse to overwrite stale local data.
+   */
+  async markSyncedWithServer(id) {
+    return withDB(async db => {
+      const campaign = await db.get('campaigns', id)
+      if (!campaign) return
+      campaign.lastSyncedAt = new Date().toISOString()
+      return db.put('campaigns', campaign)
+    })
+  },
 }

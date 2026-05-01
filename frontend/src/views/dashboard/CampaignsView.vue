@@ -415,7 +415,7 @@ function getDifficultyLabel(value) {
                   {{ selectedTeam.abbreviation }}
                 </div>
                 <div class="preview-info">
-                  <h4 class="preview-name">{{ selectedTeam.city }} {{ selectedTeam.name }}</h4>
+                  <h4 class="preview-name">{{ selectedTeam.name }}</h4>
                   <p class="preview-meta">{{ selectedTeam.division }} Division</p>
                 </div>
               </div>

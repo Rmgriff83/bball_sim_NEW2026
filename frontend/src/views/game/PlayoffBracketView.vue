@@ -367,7 +367,7 @@ async function handleSimRemainingPlayoffs() {
       const year = campaignStore.currentCampaign?.season?.year || campaignStore.currentCampaign?.game_year || new Date().getFullYear()
       breakingNewsStore.enqueue(
         BreakingNewsService.winningFinals({
-          teamName: `${champion.city} ${champion.name}`,
+          teamName: champion.name,
           year,
           date: campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0],
         }),

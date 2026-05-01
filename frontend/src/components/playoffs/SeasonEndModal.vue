@@ -129,7 +129,7 @@ onUnmounted(() => {
                   {{ userTeam?.abbreviation }}
                 </div>
                 <div class="record-info">
-                  <span v-if="userTeam" class="team-name-label">{{ userTeam.city }} {{ userTeam.name }}</span>
+                  <span v-if="userTeam" class="team-name-label">{{ userTeam.name }}</span>
                   <span class="record-value">{{ record }}</span>
                   <span v-if="qualified" class="seed-info">{{ seedLabel }} seed · {{ conferenceLabel }}</span>
                   <span v-else class="seed-info">Did not qualify</span>
@@ -187,7 +187,7 @@ onUnmounted(() => {
                   {{ opponent.abbreviation }}
                 </div>
                 <div class="opponent-info">
-                  <span class="opponent-name">{{ opponent.city }} {{ opponent.name }}</span>
+                  <span class="opponent-name">{{ opponent.name }}</span>
                   <span class="opponent-meta">#{{ opponent.seed }} seed · {{ opponent.wins }}-{{ opponent.losses }}</span>
                 </div>
               </div>

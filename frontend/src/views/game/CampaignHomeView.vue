@@ -21,7 +21,6 @@ import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
-import WeeklySummaryModal from '@/components/game/WeeklySummaryModal.vue'
 import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
 import { enterOffseason, startNewSeason } from '@/engine/campaign/CampaignManager'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
@@ -57,8 +56,6 @@ const showRecoveryModal = ref(false)
 const recoveredPlayers = ref([])
 const showLineupWarningModal = ref(false)
 const pendingGameAction = ref(null) // 'simulate' or gameId for play
-const showWeeklySummaryModal = ref(false)
-const weeklySummary = ref(null)
 const showRosterWarningModal = ref(false)
 const rosterWarningMessage = ref('')
 const rosterWarningHint = ref('')
@@ -497,8 +494,10 @@ onMounted(async () => {
   startIdleDetection()
   // Check for pending weekly summary (e.g., from live game completion)
   if (gameStore.weeklySummaryData) {
-    weeklySummary.value = gameStore.weeklySummaryData
-    showWeeklySummaryModal.value = true
+    toastStore.showWeeklySummary({
+      scoutingPointsEarned: gameStore.weeklySummaryData.scoutingPointsEarned ?? 0,
+    })
+    gameStore.weeklySummaryData = null
   }
 
   // If we already have campaign data, refresh in background without blocking
@@ -918,8 +917,9 @@ async function handleConfirmSimulate() {
 
     // Show weekly summary if weeks passed
     if (response.weeklySummary) {
-      weeklySummary.value = response.weeklySummary
-      showWeeklySummaryModal.value = true
+      toastStore.showWeeklySummary({
+        scoutingPointsEarned: response.weeklySummary.scoutingPointsEarned ?? 0,
+      })
     }
   } catch (err) {
     // Remove loading toast and show error
@@ -1022,8 +1022,10 @@ async function handleSimToEnd() {
 
     // Show weekly summary if weeks passed
     if (gameStore.weeklySummaryData) {
-      weeklySummary.value = gameStore.weeklySummaryData
-      showWeeklySummaryModal.value = true
+      toastStore.showWeeklySummary({
+        scoutingPointsEarned: gameStore.weeklySummaryData.scoutingPointsEarned ?? 0,
+      })
+      gameStore.weeklySummaryData = null
     }
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
@@ -1340,7 +1342,7 @@ async function handleSimToNextPlayoffRound() {
       const year = campaign.value?.season?.year || campaign.value?.game_year || new Date().getFullYear()
       breakingNewsStore.enqueue(
         BreakingNewsService.winningFinals({
-          teamName: `${champion.city} ${champion.name}`,
+          teamName: champion.name,
           year,
           date: campaign.value?.settings?.currentDate || new Date().toISOString().split('T')[0],
         }),
@@ -1656,7 +1658,7 @@ function handleCloseSimulateModal() {
             <div v-if="lastSeasonChampion" class="offseason-champion-banner">
               <Trophy :size="20" class="offseason-champion-icon" />
               <span class="offseason-champion-text">
-                {{ lastSeasonChampion.city }} {{ lastSeasonChampion.name }} are NBA Champions
+                {{ lastSeasonChampion.name }} are NBA Champions
               </span>
             </div>
 
@@ -1770,7 +1772,7 @@ function handleCloseSimulateModal() {
             <div class="offseason-champion-banner">
               <Trophy :size="20" class="offseason-champion-icon" />
               <span class="offseason-champion-text">
-                {{ playoffStore.champion.city }} {{ playoffStore.champion.name }} are NBA Champions
+                {{ playoffStore.champion.name }} are NBA Champions
               </span>
             </div>
 
@@ -2060,13 +2062,6 @@ function handleCloseSimulateModal() {
       :rosters="allStarRosters"
       :user-team-id="team?.id"
       @close="handleCloseAllStarModal"
-    />
-
-    <!-- Weekly Summary Modal -->
-    <WeeklySummaryModal
-      :show="showWeeklySummaryModal"
-      :summary-data="weeklySummary"
-      @close="showWeeklySummaryModal = false; weeklySummary = null; gameStore.weeklySummaryData = null"
     />
 
     <!-- New Season Modal -->

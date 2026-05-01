@@ -112,7 +112,7 @@ onMounted(async () => {
       for (const pid of blockIds) {
         const player = allPlayers.find(p => p.id === pid)
         if (player) {
-          leaguePlayers.push({ ...player, _teamId: team.id, _teamName: `${team.city} ${team.name}`, _teamAbbr: team.abbreviation })
+          leaguePlayers.push({ ...player, _teamId: team.id, _teamName: team.name, _teamAbbr: team.abbreviation })
         }
       }
     }

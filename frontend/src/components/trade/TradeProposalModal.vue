@@ -15,8 +15,7 @@ const tradeStore = useTradeStore()
 
 const teamName = computed(() => {
   if (!props.proposal?.proposing_team) return ''
-  const t = props.proposal.proposing_team
-  return `${t.city} ${t.name}`
+  return props.proposal.proposing_team.name || ''
 })
 
 const teamColor = computed(() => props.proposal?.proposing_team?.primary_color || '#E85A4F')

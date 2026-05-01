@@ -415,7 +415,7 @@ function handleSeriesClick(series) {
         <Trophy :size="32" class="champion-trophy" />
         <div class="champion-info">
           <span class="champion-label">NBA Champions</span>
-          <span class="champion-name">{{ champion.city }} {{ champion.name }}</span>
+          <span class="champion-name">{{ champion.name }}</span>
         </div>
       </div>
     </div>

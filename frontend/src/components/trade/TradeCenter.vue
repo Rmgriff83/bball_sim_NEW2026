@@ -753,7 +753,7 @@ function formatAge(age) {
                 <span class="wizard-team-abbr">{{ team.abbreviation }}</span>
                 <Check v-if="selectedTeam?.id === team.id" :size="18" class="wizard-team-check" />
               </div>
-              <span class="wizard-team-city">{{ team.city }} {{ team.name }}</span>
+              <span class="wizard-team-city">{{ team.name }}</span>
               <div class="wizard-team-meta">
                 <span class="wizard-team-record">{{ team.record.wins }}-{{ team.record.losses }}</span>
                 <span class="wizard-team-direction" :style="{ color: tradeStore.getDirectionColor(team.direction) }">
@@ -766,7 +766,7 @@ function formatAge(age) {
 
           <!-- Selected Team Details -->
           <div v-if="selectedTeam" class="wizard-selected-team-details">
-            <h4>{{ selectedTeam.city }} {{ selectedTeam.name }}</h4>
+            <h4>{{ selectedTeam.name }}</h4>
             <div class="wizard-team-stats">
               <div class="wizard-stat">
                 <span class="wizard-stat-label">Record</span>
@@ -901,7 +901,7 @@ function formatAge(age) {
 
           <!-- Confirm State -->
           <template v-else-if="confirmModalState === 'confirm'">
-            <p class="wizard-step-description">Review the trade details before proposing to {{ selectedTeam?.city }} {{ selectedTeam?.name }}.</p>
+            <p class="wizard-step-description">Review the trade details before proposing to {{ selectedTeam?.name }}.</p>
 
             <div class="modal-trade-slots">
               <!-- YOUR TEAM SIDE -->

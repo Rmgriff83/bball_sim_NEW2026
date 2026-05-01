@@ -51,14 +51,17 @@ api.interceptors.response.use(
 
       error.message = message;
 
-      // Show error toast (skip 401s since we handle those with redirect)
-      if (toastStore && error.response.status !== 401) {
+      // Show error toast (skip 401s since we handle those with redirect,
+      // and skip when the caller opted out via `config.skipErrorToast`).
+      const skipToast = error.config?.skipErrorToast === true;
+      if (toastStore && error.response.status !== 401 && !skipToast) {
         toastStore.showError(message);
       }
     } else if (error.request) {
       // Network error
       error.message = "Network error. Please check your connection.";
-      if (toastStore) {
+      const skipToast = error.config?.skipErrorToast === true;
+      if (toastStore && !skipToast) {
         toastStore.showError(error.message);
       }
     }

@@ -422,7 +422,10 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   async function _pullChangesInner(campaignId) {
-    const response = await api.get(`/api/sync/${campaignId}/pull`)
+    // Suppress the global error toast — callers already handle pull failures
+    // gracefully (e.g. a freshly-created campaign 404s here until its first
+    // push lands), so the user shouldn't see a "Campaign not found" toast.
+    const response = await api.get(`/api/sync/${campaignId}/pull`, { skipErrorToast: true })
     const data = response.data
 
     const remoteUpdatedAt = data.clientUpdatedAt ? new Date(data.clientUpdatedAt).getTime() : 0

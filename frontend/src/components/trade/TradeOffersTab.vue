@@ -117,7 +117,7 @@ function formatExpiration(expiresAt) {
           </div>
           <div class="proposal-info">
             <div class="proposal-team-name">
-              {{ proposal.proposing_team?.city }} {{ proposal.proposing_team?.name }}
+              {{ proposal.proposing_team?.name }}
             </div>
             <div class="proposal-summary">
               <span class="asset-label">Offering:</span>

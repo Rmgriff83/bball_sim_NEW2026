@@ -80,13 +80,14 @@ export const useCampaignStore = defineStore('campaign', () => {
 
       // Stamp `lastSyncedAt` on every campaign confirmed to exist on the server.
       // This lets future fetchCampaigns reliably reconcile deletions even for
-      // campaigns that pre-date this code path.
+      // campaigns that pre-date this code path. We use markSyncedWithServer
+      // (not save) so we don't bump `updatedAt` — bumping it would make local
+      // appear newer than the cloud, and pullChanges would then refuse to apply
+      // remote campaign updates (e.g. scouting progress from another device).
       const refreshed = await listCampaigns()
-      const nowIso = new Date().toISOString()
       for (const local of refreshed) {
         if (serverIds.has(local.id) && !local.lastSyncedAt) {
-          local.lastSyncedAt = nowIso
-          await CampaignRepository.save(local)
+          await CampaignRepository.markSyncedWithServer(local.id)
         }
       }
 

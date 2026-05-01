@@ -46,6 +46,15 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
+  function showWeeklySummary({ scoutingPointsEarned = 0 } = {}) {
+    if (scoutingPointsEarned <= 0) return null
+    return addToast({
+      type: 'weekly-summary',
+      scoutingPointsEarned,
+      duration: 6000
+    })
+  }
+
   function showDraftPick({ pickNumber, teamAbbr, teamColor, playerName, position, overallRating, isUserTeam }) {
     return addToast({
       type: 'draft-pick',
@@ -135,6 +144,7 @@ export const useToastStore = defineStore('toast', () => {
     addToast,
     removeToast,
     showGameResult,
+    showWeeklySummary,
     showDraftPick,
     addMinimalToast,
     removeMinimalToast,

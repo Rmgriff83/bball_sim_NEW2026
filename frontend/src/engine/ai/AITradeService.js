@@ -1295,7 +1295,7 @@ export function generateWeeklyProposals({
     const proposal = {
       proposing_team_id: aiTeam.id,
       proposing_team_abbreviation: aiTeam.abbreviation,
-      proposing_team_name: `${aiTeam.city} ${aiTeam.name}`,
+      proposing_team_name: aiTeam.name,
       status: 'pending',
       proposal: {
         aiGives: aiOffer.assets,
@@ -1799,7 +1799,7 @@ export function processAiToAiTrades({
       newsEvents.push({
         event_type: 'trade',
         headline: `${headlineTeam.name} acquire ${receivedName} from ${otherTeam.name}`,
-        body: `The ${headlineTeam.city} ${headlineTeam.name} have traded ${sentList} to the ${otherTeam.city} ${otherTeam.name} in exchange for ${receivedList}.`,
+        body: `The ${headlineTeam.name} have traded ${sentList} to the ${otherTeam.name} in exchange for ${receivedList}.`,
         date: currentDate,
       });
     }

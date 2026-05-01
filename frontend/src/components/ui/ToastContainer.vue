@@ -1,7 +1,7 @@
 <script setup>
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
-import { X, ExternalLink, Trophy, XCircle } from 'lucide-vue-next'
+import { X, ExternalLink, Trophy, XCircle, Binoculars } from 'lucide-vue-next'
 
 const toastStore = useToastStore()
 const router = useRouter()
@@ -70,6 +70,25 @@ function isWin(toast) {
                   <XCircle v-else :size="14" class="result-icon" />
                   <span class="result-letter">{{ isWin(toast) ? 'W' : 'L' }}</span>
                 </div>
+              </div>
+            </div>
+            <button class="toast-close" @click="toastStore.removeToast(toast.id)">
+              <X :size="16" />
+            </button>
+          </template>
+
+          <!-- Weekly Summary Toast -->
+          <template v-if="toast.type === 'weekly-summary'">
+            <div class="weekly-summary-icon">
+              <Binoculars :size="20" />
+            </div>
+            <div class="toast-content">
+              <div class="game-result-header">WEEKLY REPORT</div>
+              <div class="weekly-summary-body">
+                <span class="weekly-summary-value">+{{ toast.scoutingPointsEarned }}</span>
+                <span class="weekly-summary-label">
+                  scouting point{{ toast.scoutingPointsEarned !== 1 ? 's' : '' }} earned
+                </span>
               </div>
             </div>
             <button class="toast-close" @click="toastStore.removeToast(toast.id)">
@@ -266,6 +285,45 @@ function isWin(toast) {
 .toast-close:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
+}
+
+/* Weekly Summary Toast */
+.toast-weekly-summary {
+  border-left: 3px solid var(--color-primary);
+}
+
+.weekly-summary-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(232, 90, 79, 0.15);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.weekly-summary-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.weekly-summary-value {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.4rem;
+  font-weight: 700;
+  background: var(--gradient-cosmic);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+}
+
+.weekly-summary-label {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
 }
 
 /* Draft Pick Toast */
