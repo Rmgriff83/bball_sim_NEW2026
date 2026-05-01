@@ -1000,6 +1000,11 @@ function processTeamPostGame(
       const microDev = calculateMicroDevelopment(player, stats, difficulty, { growthBoost: options.growthBoost || 0 });
       if (microDev && microDev.attributeChanges && Object.keys(microDev.attributeChanges).length > 0) {
         player = applyAttributeChanges(player, microDev.attributeChanges, gameDate);
+        // Keep stored overallRating in sync with attributes after each game.
+        // Without this, regression silently lowers attributes while overallRating
+        // stays at the generation value — and then snaps down all at once the next
+        // time anything else recalculates (e.g. when the user spends an upgrade point).
+        player = recalculateOverall(player);
 
         // Add to development or regression summary
         if (microDev.type === 'development') {

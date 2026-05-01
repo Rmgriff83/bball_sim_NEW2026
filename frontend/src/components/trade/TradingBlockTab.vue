@@ -55,8 +55,56 @@ function getStatLine(playerId) {
   }
 }
 
+// Build a per-game season_stats object the PlayerDetailModal can render.
+// Matches the shape produced by team store's _attachSeasonStats.
+function buildSeasonStats(playerId) {
+  const raw = playerStatsMap.value[playerId]
+  if (!raw || !raw.gamesPlayed) return null
+  const gp = raw.gamesPlayed
+  const fgPct = raw.fieldGoalsAttempted > 0
+    ? Math.round((raw.fieldGoalsMade / raw.fieldGoalsAttempted) * 1000) / 10
+    : 0
+  const threePct = raw.threePointersAttempted > 0
+    ? Math.round((raw.threePointersMade / raw.threePointersAttempted) * 1000) / 10
+    : 0
+  const ftPct = raw.freeThrowsAttempted > 0
+    ? Math.round((raw.freeThrowsMade / raw.freeThrowsAttempted) * 1000) / 10
+    : 0
+  return {
+    games_played: gp,
+    gamesPlayed: gp,
+    ppg: Math.round((raw.points / gp) * 10) / 10,
+    rpg: Math.round((raw.rebounds / gp) * 10) / 10,
+    apg: Math.round((raw.assists / gp) * 10) / 10,
+    spg: Math.round((raw.steals / gp) * 10) / 10,
+    bpg: Math.round((raw.blocks / gp) * 10) / 10,
+    mpg: Math.round((raw.minutesPlayed / gp) * 10) / 10,
+    fg_pct: fgPct, fgPct,
+    three_pct: threePct, threePct,
+    ft_pct: ftPct, ftPct,
+    points: raw.points,
+    rebounds: raw.rebounds,
+    assists: raw.assists,
+    steals: raw.steals,
+    blocks: raw.blocks,
+    turnovers: raw.turnovers,
+    minutesPlayed: raw.minutesPlayed,
+    fgm: raw.fieldGoalsMade,
+    fga: raw.fieldGoalsAttempted,
+    fg3m: raw.threePointersMade,
+    fg3a: raw.threePointersAttempted,
+    ftm: raw.freeThrowsMade,
+    fta: raw.freeThrowsAttempted,
+  }
+}
+
 function openPlayer(player) {
-  selectedPlayer.value = player
+  // Clone before attaching season_stats so we don't mutate the underlying
+  // PlayerRepository record (which other tabs/store code may reference).
+  selectedPlayer.value = {
+    ...player,
+    season_stats: buildSeasonStats(player.id),
+  }
   showPlayerModal.value = true
 }
 
