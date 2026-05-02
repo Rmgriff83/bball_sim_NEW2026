@@ -339,6 +339,24 @@ function generateUniqueName(isInternational, usedNames) {
 }
 
 /**
+ * Repair any rookie whose stored overallRating exceeds potentialRating.
+ * Returns the count of fixes applied. Mutates the input array in place.
+ */
+function repairRookiePotentials(rookies) {
+  let fixed = 0
+  for (const r of rookies) {
+    const ovr = r.overallRating ?? r.overall_rating ?? 0
+    const pot = r.potentialRating ?? r.potential_rating ?? 0
+    if (ovr > pot) {
+      r.potentialRating = ovr
+      r.potential_rating = ovr
+      fixed++
+    }
+  }
+  return fixed
+}
+
+/**
  * Generate rookie class and save to PlayerRepository.
  *
  * @param {string} campaignId
@@ -355,10 +373,17 @@ export async function generateAndSaveRookieClass(campaignId, gameYear) {
     p => p.isDraftProspect && p.draftYear === gameYear
   )
   if (existingProspects.length > 0) {
+    // Repair any pre-existing rookies whose overall exceeds their potential
+    // (defensive — the generator guards against this, but stale data can drift).
+    const fixed = repairRookiePotentials(existingProspects)
+    if (fixed > 0) {
+      await PlayerRepository.saveBulk(existingProspects.map(p => ({ ...p, campaignId })))
+    }
     return existingProspects
   }
 
   const rookies = generateRookieClass(campaignId, gameYear, existingNames)
+  repairRookiePotentials(rookies)
   await PlayerRepository.saveBulk(rookies)
   return rookies
 }

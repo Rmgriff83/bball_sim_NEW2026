@@ -46,12 +46,25 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
-  function showWeeklySummary({ scoutingPointsEarned = 0 } = {}) {
+  function showWeeklySummary({ scoutingPointsEarned = 0, campaignId = null } = {}) {
     if (scoutingPointsEarned <= 0) return null
     return addToast({
       type: 'weekly-summary',
       scoutingPointsEarned,
+      campaignId,
       duration: 6000
+    })
+  }
+
+  function showRegularSeasonComplete({ campaignId = null, remainingGames = 0 } = {}) {
+    if (!campaignId) return null
+    return addToast({
+      type: 'regular-season-complete',
+      campaignId,
+      remainingGames,
+      // Sticky — dismiss only via the close X or the action button. The user
+      // needs to make a decision to advance, so don't time it out.
+      duration: 0
     })
   }
 
@@ -145,6 +158,7 @@ export const useToastStore = defineStore('toast', () => {
     removeToast,
     showGameResult,
     showWeeklySummary,
+    showRegularSeasonComplete,
     showDraftPick,
     addMinimalToast,
     removeMinimalToast,

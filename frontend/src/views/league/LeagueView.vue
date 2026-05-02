@@ -5,6 +5,7 @@ import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
 import { useGameStore } from '@/stores/game'
+import { usePlayoffStore } from '@/stores/playoff'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { X, ChevronLeft } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -17,6 +18,7 @@ const leagueStore = useLeagueStore()
 const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
 const gameStore = useGameStore()
+const playoffStore = usePlayoffStore()
 
 const loading = ref(true)
 const activeTab = ref('standings')
@@ -572,15 +574,23 @@ function formatSalary(salary) {
 
         <!-- Right Column: Season Card -->
         <div class="season-card">
-          <div class="season-card-header">Regular Season</div>
+          <div class="season-card-header">
+            {{ playoffStore.isInPlayoffs ? 'Playoffs' : 'Regular Season' }}
+          </div>
           <div class="season-year">{{ formattedSeasonYear }}</div>
-          <div class="season-progress">
-            <div class="season-progress-bar" :style="{ width: `${seasonProgressPercent}%` }"></div>
-          </div>
-          <div class="season-stats">
-            <span>{{ userGamesPlayed }} played</span>
-            <span>{{ totalSeasonGames - userGamesPlayed }} left</span>
-          </div>
+          <!-- Hide regular-season progress + games-played/left during the
+               playoffs. The "games left" calculation is regular-season-only —
+               once playoffs start, totalSeasonGames - userGamesPlayed goes
+               negative (e.g. "-16 games left") which is meaningless. -->
+          <template v-if="!playoffStore.isInPlayoffs">
+            <div class="season-progress">
+              <div class="season-progress-bar" :style="{ width: `${seasonProgressPercent}%` }"></div>
+            </div>
+            <div class="season-stats">
+              <span>{{ userGamesPlayed }} played</span>
+              <span>{{ totalSeasonGames - userGamesPlayed }} left</span>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -1384,6 +1394,7 @@ function formatSalary(salary) {
 
 .league-title {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  /* Match the home view header sizing: 2.25rem by default, 3rem on desktop. */
   font-size: 2.25rem;
   font-weight: 400;
   color: var(--color-text-primary);
@@ -1391,6 +1402,12 @@ function formatSalary(salary) {
   line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+}
+
+@media (min-width: 1024px) {
+  .league-title {
+    font-size: 3rem;
+  }
 }
 
 /* Header Row: Controls + Games Remaining */
@@ -1514,7 +1531,8 @@ function formatSalary(salary) {
   }
 
   .league-title {
-    font-size: 1.75rem;
+    /* Keep mobile title at the home-view default 2.25rem instead of shrinking. */
+    font-size: 2.25rem;
   }
 
   .league-subtitle {

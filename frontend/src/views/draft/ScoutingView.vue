@@ -704,13 +704,20 @@ onMounted(async () => {
 
 .page-title {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 1.8rem;
+  /* Match the home view header sizing: 2.25rem by default, 3rem on desktop. */
+  font-size: 2.25rem;
   font-weight: 400;
   letter-spacing: 0.04em;
   background: var(--gradient-cosmic);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+@media (min-width: 1024px) {
+  .page-title {
+    font-size: 3rem;
+  }
 }
 
 .draft-year {
@@ -1324,7 +1331,8 @@ onMounted(async () => {
   }
 
   .page-title {
-    font-size: 1.4rem;
+    /* Keep mobile title at the home-view default 2.25rem instead of shrinking. */
+    font-size: 2.25rem;
   }
 
   .draft-year {

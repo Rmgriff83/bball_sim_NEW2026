@@ -7,6 +7,7 @@ import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { LoadingSpinner } from '@/components/ui'
 import DraftCompleteModal from '@/components/draft/DraftCompleteModal.vue'
+import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import { Search, ChevronUp, ChevronDown, FastForward, SkipForward, SkipBack, Users, X } from 'lucide-vue-next'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
@@ -33,6 +34,18 @@ const showMobileRoster = ref(false)
 // Scouting state — hide unscouted attributes during rookie draft
 const scoutedPlayers = ref({})
 
+// Player detail modal state
+const selectedPlayer = ref(null)
+const showPlayerModal = ref(false)
+
+const ALL_ATTRIBUTES = [
+  'overallRating', 'potentialRating',
+  'threePoint', 'midRange', 'postScoring', 'layup', 'dunk', 'ballHandling', 'passing', 'speedWithBall',
+  'perimeterD', 'interiorD', 'steal', 'block', 'defensiveIQ',
+  'speed', 'acceleration', 'strength', 'vertical', 'stamina',
+  'basketballIQ', 'consistency', 'clutch', 'workEthic',
+]
+
 function isAttributeRevealed(playerId, attr) {
   if (!isRookieMode.value) return true
   const revealed = scoutedPlayers.value[playerId]?.revealedAttributes
@@ -42,6 +55,20 @@ function isAttributeRevealed(playerId, attr) {
 function getScoutedDisplay(player, attr) {
   if (isAttributeRevealed(player.id, attr)) return player[attr]
   return '?'
+}
+
+function getRevealedAttributes(playerId) {
+  const raw = scoutedPlayers.value[playerId]?.revealedAttributes || []
+  return raw.filter(a => ALL_ATTRIBUTES.includes(a))
+}
+
+function isFullyScouted(playerId) {
+  return getRevealedAttributes(playerId).length >= ALL_ATTRIBUTES.length
+}
+
+function openPlayerModal(player) {
+  selectedPlayer.value = player
+  showPlayerModal.value = true
 }
 
 // Computed
@@ -253,9 +280,11 @@ onMounted(async () => {
       const restored = await draftStore.loadDraftFromCache(campaignId.value, cacheMode)
 
       if (restored && draftStore.draftOrder.length > 0) {
-        // Reload rookies (draft prospects for this year)
+        // Reload rookies (draft prospects for this year). Funnel through
+        // generateAndSaveRookieClass so its repair pass fixes any rookie
+        // with overall > potential before the draft list renders.
         const gameYear = campaign.gameYear ?? 1
-        const rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === gameYear)
+        const rookies = await generateAndSaveRookieClass(campaignId.value, gameYear)
         draftStore.allPlayers = rookies
         draftStore.teams = teamsList
 
@@ -268,11 +297,8 @@ onMounted(async () => {
         // Fresh rookie draft
         const gameYear = campaign.gameYear ?? 1
 
-        // Get or generate rookies
-        let rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === gameYear)
-        if (rookies.length === 0) {
-          rookies = await generateAndSaveRookieClass(campaignId.value, gameYear)
-        }
+        // Get or generate rookies (also repairs OVR>POT in pre-existing data)
+        const rookies = await generateAndSaveRookieClass(campaignId.value, gameYear)
 
         // Load standings for draft order
         const seasonYear = campaign.currentSeasonYear ?? 2025
@@ -560,6 +586,7 @@ onUnmounted(() => {
                     v-for="player in draftStore.filteredPlayers.slice(0, 100)"
                     :key="player.id"
                     class="player-row"
+                    @click="openPlayerModal(player)"
                   >
                     <td class="col-name">
                       <span class="player-name">{{ player.firstName }} {{ player.lastName }}</span>
@@ -567,15 +594,15 @@ onUnmounted(() => {
                     <td class="col-pos">
                       <span class="pos-badge">{{ player.position }}</span>
                     </td>
-                    <td class="col-num ovr-cell" :class="{ hidden: !isAttributeRevealed(player.id, 'overallRating') }">{{ getScoutedDisplay(player, 'overallRating') }}</td>
-                    <td class="col-num pot-cell" :class="{ hidden: !isAttributeRevealed(player.id, 'potentialRating') }">{{ getScoutedDisplay(player, 'potentialRating') }}</td>
+                    <td class="col-num ovr-cell" :class="{ unrevealed: !isAttributeRevealed(player.id, 'overallRating') }">{{ getScoutedDisplay(player, 'overallRating') }}</td>
+                    <td class="col-num pot-cell" :class="{ unrevealed: !isAttributeRevealed(player.id, 'potentialRating') }">{{ getScoutedDisplay(player, 'potentialRating') }}</td>
                     <td class="col-num">{{ getPlayerAge(player.birthDate) }}</td>
                     <td class="col-ht">{{ formatHeight(player.heightInches) }}</td>
                     <td class="col-action">
                       <button
                         v-if="draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete"
                         class="btn-draft"
-                        @click="draftStore.makeUserPick(player.id)"
+                        @click.stop="draftStore.makeUserPick(player.id)"
                       >
                         Draft
                       </button>
@@ -676,6 +703,23 @@ onUnmounted(() => {
       :draft-mode="draftStore.draftMode"
       @continue="handleFinalize"
       @close="showCompleteModal = false"
+    />
+
+    <!-- Prospect Detail Modal (read-only scouting view) -->
+    <PlayerDetailModal
+      v-if="isRookieMode"
+      :show="showPlayerModal"
+      :player="selectedPlayer"
+      :show-growth="false"
+      :show-history="false"
+      :scouting-mode="true"
+      :revealed-attributes="selectedPlayer ? getRevealedAttributes(selectedPlayer.id) : []"
+      :is-fully-scouted="selectedPlayer ? isFullyScouted(selectedPlayer.id) : false"
+      :scouting-points="0"
+      :scouting-in-progress="false"
+      :badges-revealed="selectedPlayer ? (scoutedPlayers[selectedPlayer.id]?.badgesRevealed || false) : false"
+      :morale-revealed="selectedPlayer ? (scoutedPlayers[selectedPlayer.id]?.moraleRevealed || false) : false"
+      @close="showPlayerModal = false"
     />
   </div>
 </template>
@@ -1221,6 +1265,7 @@ onUnmounted(() => {
 
 .player-row {
   transition: background 0.15s ease;
+  cursor: pointer;
 }
 
 .player-row:hover {
@@ -1269,7 +1314,7 @@ onUnmounted(() => {
   color: var(--color-text-secondary);
 }
 
-.hidden {
+.unrevealed {
   color: var(--color-text-tertiary) !important;
   font-style: italic;
   font-weight: 400 !important;

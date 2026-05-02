@@ -225,6 +225,7 @@ const normalizedPlayer = computed(() => {
     all_nba_first_team: p.all_nba_first_team || p.allNbaFirstTeam || 0,
     all_rookie_team: p.all_rookie_team || p.allRookieTeam || 0,
     all_defensive_team: p.all_defensive_team || p.allDefensiveTeam || 0,
+    awards: p.awards || {},
     // Draft info
     draftInfo: p.draftInfo || null,
     // Fatigue
@@ -386,6 +387,31 @@ const hasAwards = computed(() => {
          p.all_nba_selections > 0 || p.all_rookie_team > 0 ||
          p.all_defensive_team > 0
 })
+
+// Award history helpers — format year(s) + tier metadata for award cards.
+// Reads from `player.awards = { mvp: [year], all_nba_first: [year], ... }`.
+function _formatYears(years) {
+  if (!Array.isArray(years) || !years.length) return ''
+  const sorted = [...years].sort((a, b) => a - b)
+  return sorted.map(y => `'${String(y).slice(-2)}`).join(', ')
+}
+
+function getAwardYears(key) {
+  const arr = normalizedPlayer.value?.awards?.[key]
+  return _formatYears(arr)
+}
+
+function getTieredAwardSummary(prefix, tiers) {
+  const awards = normalizedPlayer.value?.awards || {}
+  const lines = []
+  for (const tier of tiers) {
+    const years = awards[`${prefix}_${tier}`]
+    if (Array.isArray(years) && years.length) {
+      lines.push(`${tier === 'first' ? '1st' : tier === 'second' ? '2nd' : '3rd'} Team: ${_formatYears(years)}`)
+    }
+  }
+  return lines
+}
 
 const hasNews = computed(() => props.playerNews && props.playerNews.length > 0)
 
@@ -1327,6 +1353,7 @@ function formatChange(change) {
                       <Trophy :size="32" />
                       <span class="award-count">{{ normalizedPlayer.championships }}x</span>
                       <span class="award-label">NBA Champion</span>
+                      <span v-if="getAwardYears('championship')" class="award-years">{{ getAwardYears('championship') }}</span>
                     </div>
 
                     <!-- Finals MVP -->
@@ -1334,6 +1361,7 @@ function formatChange(change) {
                       <Award :size="32" />
                       <span class="award-count">{{ normalizedPlayer.finals_mvp_awards }}x</span>
                       <span class="award-label">Finals MVP</span>
+                      <span v-if="getAwardYears('finals_mvp')" class="award-years">{{ getAwardYears('finals_mvp') }}</span>
                     </div>
 
                     <!-- Conference Finals MVP -->
@@ -1341,6 +1369,7 @@ function formatChange(change) {
                       <Medal :size="32" />
                       <span class="award-count">{{ normalizedPlayer.conference_finals_mvp_awards }}x</span>
                       <span class="award-label">Conf Finals MVP</span>
+                      <span v-if="getAwardYears('conference_finals_mvp')" class="award-years">{{ getAwardYears('conference_finals_mvp') }}</span>
                     </div>
 
                     <!-- League MVP -->
@@ -1348,6 +1377,7 @@ function formatChange(change) {
                       <Star :size="32" />
                       <span class="award-count">{{ normalizedPlayer.mvp_awards }}x</span>
                       <span class="award-label">League MVP</span>
+                      <span v-if="getAwardYears('mvp')" class="award-years">{{ getAwardYears('mvp') }}</span>
                     </div>
 
                     <!-- All-Star -->
@@ -1355,6 +1385,7 @@ function formatChange(change) {
                       <Users :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_star_selections }}x</span>
                       <span class="award-label">All-Star</span>
+                      <span v-if="getAwardYears('all_star')" class="award-years">{{ getAwardYears('all_star') }}</span>
                     </div>
 
                     <!-- Rookie of the Year -->
@@ -1362,6 +1393,7 @@ function formatChange(change) {
                       <Award :size="32" />
                       <span class="award-count">{{ normalizedPlayer.rookie_of_the_year }}x</span>
                       <span class="award-label">Rookie of the Year</span>
+                      <span v-if="getAwardYears('rookie_of_the_year')" class="award-years">{{ getAwardYears('rookie_of_the_year') }}</span>
                     </div>
 
                     <!-- All-NBA -->
@@ -1369,6 +1401,9 @@ function formatChange(change) {
                       <Star :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_nba_selections }}x</span>
                       <span class="award-label">All-NBA</span>
+                      <div v-if="getTieredAwardSummary('all_nba', ['first','second','third']).length" class="award-tiers">
+                        <span v-for="line in getTieredAwardSummary('all_nba', ['first','second','third'])" :key="line" class="award-tier-line">{{ line }}</span>
+                      </div>
                     </div>
 
                     <!-- All-Defense -->
@@ -1376,6 +1411,9 @@ function formatChange(change) {
                       <Shield :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_defensive_team }}x</span>
                       <span class="award-label">All-Defense</span>
+                      <div v-if="getTieredAwardSummary('all_defense', ['first','second']).length" class="award-tiers">
+                        <span v-for="line in getTieredAwardSummary('all_defense', ['first','second'])" :key="line" class="award-tier-line">{{ line }}</span>
+                      </div>
                     </div>
 
                     <!-- All-Rookie -->
@@ -1383,6 +1421,9 @@ function formatChange(change) {
                       <Zap :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_rookie_team }}x</span>
                       <span class="award-label">All-Rookie</span>
+                      <div v-if="getTieredAwardSummary('all_rookie', ['first','second']).length" class="award-tiers">
+                        <span v-for="line in getTieredAwardSummary('all_rookie', ['first','second'])" :key="line" class="award-tier-line">{{ line }}</span>
+                      </div>
                     </div>
                   </div>
                   <div v-else class="empty-state-inline">
@@ -2328,6 +2369,29 @@ function formatChange(change) {
 .award-label {
   font-size: 0.75rem;
   color: var(--color-text-secondary);
+}
+
+.award-years {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.award-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.award-tier-line {
+  font-size: 0.65rem;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-align: center;
 }
 
 /* Contract Footer */

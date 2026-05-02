@@ -109,12 +109,19 @@ export const useTeamStore = defineStore('team', () => {
     })
   })
 
-  // Get bench players (not in lineup)
+  // Get bench players (not in lineup). Sort by rating desc with a stable
+  // id-based tiebreaker so two players with the same rating don't flip-flop
+  // across re-renders/navigations.
   const benchPlayers = computed(() => {
     const lineupIds = new Set(lineup.value.filter(id => id !== null))
     return roster.value
       .filter(p => p && !lineupIds.has(p.id))
-      .sort((a, b) => b.overall_rating - a.overall_rating)
+      .sort((a, b) => {
+        const ar = a.overallRating ?? a.overall_rating ?? 0
+        const br = b.overallRating ?? b.overall_rating ?? 0
+        if (br !== ar) return br - ar
+        return String(a.id).localeCompare(String(b.id))
+      })
   })
 
   // Check if lineup has all 5 positions filled
@@ -232,7 +239,12 @@ export const useTeamStore = defineStore('team', () => {
         const starterObjs = savedLineup.map(id => roster.value.find(p => p && p.id === id)).filter(Boolean)
         const benchObjs = roster.value
           .filter(p => p && !starterSet.has(p.id))
-          .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+          .sort((a, b) => {
+            const ar = a.overallRating ?? a.overall_rating ?? 0
+            const br = b.overallRating ?? b.overall_rating ?? 0
+            if (br !== ar) return br - ar
+            return String(a.id).localeCompare(String(b.id))
+          })
         roster.value = [...starterObjs, ...benchObjs]
       } else if (rosterData && rosterData.length >= 5) {
         // Default: first 5 players in roster order

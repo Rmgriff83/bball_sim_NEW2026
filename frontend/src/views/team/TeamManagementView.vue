@@ -20,6 +20,7 @@ import HireTrainerModal from '@/components/team/HireTrainerModal.vue'
 import HireStaffTrainerModal from '@/components/team/HireStaffTrainerModal.vue'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { useSyncStore } from '@/stores/sync'
+import { isPastTradeDeadline } from '@/engine/season/SeasonDeadlines'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,7 +37,27 @@ const validTabs = ['team', 'personnel', 'finances', 'trades', 'facilities', 'sch
 const queryTab = route.query?.tab
 const hashTab = route.hash?.slice(1)
 const initialTab = queryTab || hashTab
-const activeTab = ref(validTabs.includes(initialTab) ? initialTab : 'team')
+
+// Trades tab is hidden once the in-season trade deadline passes (Dec 15) — the
+// trade UI would just toast "deadline passed" on every action otherwise. Same
+// flag drives the AI proposal generation gate in CampaignHomeView, so the
+// rest of the app stays consistent.
+const tradeDeadlinePassed = computed(() => isPastTradeDeadline(campaignStore.currentCampaign))
+
+// Resolve the active tab, accounting for the deadline gate (a stale URL hash
+// like `#trades` after the deadline lands the user on the team tab instead).
+const requestedTab = validTabs.includes(initialTab) ? initialTab : 'team'
+const activeTab = ref(
+  requestedTab === 'trades' && tradeDeadlinePassed.value ? 'team' : requestedTab
+)
+
+// If the deadline flips while the user is sitting on the trades tab (e.g. they
+// just simulated through Dec 15), kick them back to the team tab.
+watch(tradeDeadlinePassed, (passed) => {
+  if (passed && activeTab.value === 'trades') {
+    activeTab.value = 'team'
+  }
+})
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 
@@ -183,7 +204,11 @@ const starterSlots = computed(() => {
 // Drag state (declared early so bench watch can reference it)
 const draggingPlayerId = ref(null)
 
-// Bench players sorted by target minutes (highest to lowest), injured players at end
+// Bench players sorted by target minutes (highest to lowest), injured players at end.
+// Final tiebreaker is the player id so two players with identical injured/minutes/rating
+// don't flip-flop between renders. Without it, sort comparator returns 0 for the equal-rated
+// pair and the displayed order then depends on whatever order the upstream array happens
+// to land in — which can shift across navigations.
 const benchPlayers = computed(() => {
   return [...teamStore.benchPlayers]
     .filter(p => p !== null)
@@ -194,19 +219,21 @@ const benchPlayers = computed(() => {
       const aMins = playerMinutes.value[a.id] ?? 0
       const bMins = playerMinutes.value[b.id] ?? 0
       if (bMins !== aMins) return bMins - aMins
-      return b.overall_rating - a.overall_rating
+      const ar = a.overallRating ?? a.overall_rating ?? 0
+      const br = b.overallRating ?? b.overall_rating ?? 0
+      if (br !== ar) return br - ar
+      return String(a.id).localeCompare(String(b.id))
     })
 })
 
-// Display list for bench — defers re-sort by 500ms after drag ends for smooth animation
+// Display list for bench — defers re-sort by 500ms after drag ends for smooth animation.
+// Note: this watch is registered AFTER the watch on `roster` below, so on mount the
+// `initPlayerMinutes` watcher fires before this one. That ordering matters: the bench
+// sort consumes `playerMinutes.value`, so seeding it first prevents a transient render
+// where minutes are all 0 and the sort falls back to rating-only order — which the
+// TransitionGroup would then animate to the real order on the next tick.
 const displayBenchPlayers = ref([])
 let benchSortTimer = null
-
-watch(benchPlayers, (newVal) => {
-  if (!draggingPlayerId.value && !benchSortTimer) {
-    displayBenchPlayers.value = [...newVal]
-  }
-}, { immediate: true })
 
 // Available roster slots (max 15 players) - exclude nulls from count
 const availableRosterSlots = computed(() => {
@@ -344,9 +371,20 @@ function initPlayerMinutes() {
   }
 }
 
-// Watch roster changes to reinitialize minutes
+// Watch roster changes to reinitialize minutes.
+// Registered BEFORE the displayBenchPlayers watcher so playerMinutes.value is
+// populated before the bench sort first reads it.
 watch(roster, () => {
   initPlayerMinutes()
+}, { immediate: true })
+
+// Now mirror benchPlayers into the display list. By this point initPlayerMinutes
+// has already populated playerMinutes.value, so the first immediate fire produces
+// the same order subsequent fires will.
+watch(benchPlayers, (newVal) => {
+  if (!draggingPlayerId.value && !benchSortTimer) {
+    displayBenchPlayers.value = [...newVal]
+  }
 }, { immediate: true })
 
 // Total minutes computed
@@ -1106,6 +1144,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           <span v-if="expiringContractsCount > 0" class="tab-badge">{{ expiringContractsCount }}</span>
         </button>
         <button
+          v-if="!tradeDeadlinePassed"
           class="tab-btn"
           :class="{ active: activeTab === 'trades' }"
           @click="activeTab = 'trades'"
@@ -2131,8 +2170,8 @@ const STAFF_TRAINER_PERK_LABELS = {
         <FinancesTab :campaign-id="campaignId" />
       </div>
 
-      <!-- Trades View -->
-      <div v-else-if="activeTab === 'trades'" class="trades-content">
+      <!-- Trades View — hidden after the in-season trade deadline -->
+      <div v-else-if="activeTab === 'trades' && !tradeDeadlinePassed" class="trades-content">
         <TradesTab :campaign-id="campaignId" @trade-completed="activeTab = 'team'" />
       </div>
 

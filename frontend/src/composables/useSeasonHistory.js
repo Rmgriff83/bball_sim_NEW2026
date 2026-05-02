@@ -38,6 +38,7 @@ export function formatSeasonHistoryRow(entry) {
  */
 export function buildSeasonStatsTable(seasonHistory, currentSeasonStats, currentYear, currentTeamAbbr) {
   const rows = []
+  const yearsSeen = new Set()
 
   // Past seasons from seasonHistory
   if (Array.isArray(seasonHistory)) {
@@ -46,12 +47,16 @@ export function buildSeasonStatsTable(seasonHistory, currentSeasonStats, current
       if (row) {
         row.isCurrent = false
         rows.push(row)
+        yearsSeen.add(row.year)
       }
     }
   }
 
-  // Current season from season_stats (already per-game averages)
-  if (currentSeasonStats && currentYear) {
+  // Current season from season_stats (already per-game averages).
+  // Skip if seasonHistory already contains an entry for this year — happens
+  // during offseason when the just-ended season has been archived but
+  // season_stats hasn't been reset yet.
+  if (currentSeasonStats && currentYear && !yearsSeen.has(currentYear)) {
     const cs = currentSeasonStats
     rows.push({
       year: currentYear,

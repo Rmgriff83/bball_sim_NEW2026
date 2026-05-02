@@ -611,14 +611,12 @@ function findSeriesById(seriesId) {
 
 <style scoped>
 .playoff-bracket-view {
+  /* Match the campaign-home wrapper so padding + content width are consistent
+     across the home, league, scouting, and playoff sub-routes. */
   padding: 8px 16px;
   padding-bottom: 100px;
-}
-
-@media (min-width: 1024px) {
-  .playoff-bracket-view {
-    
-  }
+  max-width: 1024px;
+  margin: 0 auto;
 }
 
 /* Team Header */
@@ -664,6 +662,7 @@ function findSeriesById(seriesId) {
 
 .team-name {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  /* Match the home view header sizing: 2.25rem by default, 3rem on desktop. */
   font-size: 2.25rem;
   font-weight: 400;
   color: var(--color-text-primary);
@@ -671,6 +670,12 @@ function findSeriesById(seriesId) {
   line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+}
+
+@media (min-width: 1024px) {
+  .team-name {
+    font-size: 3rem;
+  }
 }
 
 /* Playoffs Banner */

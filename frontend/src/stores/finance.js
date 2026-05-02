@@ -16,6 +16,8 @@ import {
 } from '@/engine/finance/FinanceManager'
 import { useTeamStore } from '@/stores/team'
 import { useSyncStore } from '@/stores/sync'
+import { useToastStore } from '@/stores/toast'
+import { isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
 
 export const useFinanceStore = defineStore('finance', () => {
   // State
@@ -203,9 +205,19 @@ export const useFinanceStore = defineStore('finance', () => {
       const player = rosterWithContracts.value.find(p => p.id === playerId)
       if (!player) throw new Error('Player not found in roster')
 
-      // Use FinanceManager to compute the re-sign result
-      const result = financeResignPlayer({ player, years, salary })
-      if (!result.success) throw new Error(result.error || 'Failed to re-sign player')
+      // Re-sign deadline gate. The campaign flag is flipped by
+      // _processMidSeasonEvents on Dec 15 alongside trade_deadline_passed.
+      const campaign = await CampaignRepository.get(campaignId)
+      const resignDeadlinePassed = isPastResignDeadline(campaign)
+      if (resignDeadlinePassed) {
+        useToastStore().showError('Re-signing is closed — the deadline has passed for this season.')
+        throw new Error('Re-sign deadline has passed')
+      }
+
+      // Use FinanceManager to compute the re-sign result. Pass the flag so the
+      // engine layer also short-circuits as defense in depth.
+      const result = financeResignPlayer({ player, years, salary, resignDeadlinePassed })
+      if (!result.success) throw new Error(result.message || result.error || 'Failed to re-sign player')
 
       const newSalary = result.player.contractSalary ?? salary ?? player.contractSalary
 

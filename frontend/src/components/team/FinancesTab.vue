@@ -12,6 +12,7 @@ import ResignModal from './ResignModal.vue'
 import SignFreeAgentModal from './SignFreeAgentModal.vue'
 import DropPlayerModal from './DropPlayerModal.vue'
 import PlayerDetailModal from './PlayerDetailModal.vue'
+import { isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
 
 const props = defineProps({
   campaignId: {
@@ -58,6 +59,11 @@ const sortedRoster = computed(() => {
 const expiringContracts = computed(() => {
   return roster.value.filter(p => p.contractYearsRemaining === 1)
 })
+
+// Re-sign deadline gate. Flipped by _processMidSeasonEvents on Dec 15 alongside
+// trade_deadline_passed. When true, ContractCard hides the Re-sign button and
+// FinancesTab shows a "Re-signing closed" banner above the expiring list.
+const resignDeadlinePassed = computed(() => isPastResignDeadline(campaignStore.currentCampaign))
 
 // Calculate contract years for visualization table
 const currentYear = computed(() => {
@@ -298,6 +304,11 @@ onMounted(() => {
 
       <!-- Team Contracts View -->
       <div v-if="activeSubTab === 'team'" class="contracts-section">
+        <!-- Re-sign deadline banner — shown after the in-season deadline passes (Dec 15) -->
+        <div v-if="resignDeadlinePassed" class="resign-closed-banner">
+          <Calendar :size="16" />
+          <span>Re-signing is closed for this season — the deadline has passed. Expiring players will hit free agency at season end.</span>
+        </div>
         <!-- Expiring Contracts -->
         <GlassCard v-if="expiringContracts.length > 0" padding="md" :hoverable="false" class="expiring-card">
           <h4 class="section-title">
@@ -334,6 +345,7 @@ onMounted(() => {
               :key="player.id"
               :player="player"
               :show-stats="true"
+              :resign-disabled="resignDeadlinePassed"
               @resign="handleResign"
               @drop="handleDrop"
               @info="handleInfo"
@@ -517,6 +529,20 @@ onMounted(() => {
   color: var(--color-warning);
   font-size: 0.9rem;
   font-weight: 500;
+}
+
+.resign-closed-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 8px;
+  color: #ef4444;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 /* Sub-Tab Navigation */

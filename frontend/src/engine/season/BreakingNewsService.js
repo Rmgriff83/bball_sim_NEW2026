@@ -21,8 +21,8 @@ export const BreakingNewsService = {
 
   tradeDeadlinePassed({ date }) {
     return {
-      headline: 'TRADE DEADLINE HAS PASSED',
-      body: 'The trade window has officially closed. Teams must now rely on their current rosters for the remainder of the season and any playoff push.',
+      headline: 'TRADE & RE-SIGN DEADLINES HAVE PASSED',
+      body: 'The trade window has officially closed and the in-season re-signing deadline has passed. Teams must rely on their current rosters for the remainder of the season, and any unsigned players in their contract year will reach free agency at season end.',
       category: 'DEADLINE',
       icon: 'Clock',
       date,

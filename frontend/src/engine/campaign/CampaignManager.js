@@ -1449,6 +1449,79 @@ export async function advanceToNextSeason(campaignId) {
 }
 
 /**
+ * Reconstruct `player.awards` per-year arrays from persisted seasonData.
+ * Idempotent — only runs once per campaign (gated by a settings flag) and
+ * dedupes years if called again.
+ *
+ * Needed for campaigns that entered the offseason before per-year award
+ * history was being recorded. Reads each archived season's `seasonAwards`
+ * and `allStarRosters` and writes the years onto the corresponding players.
+ */
+export async function backfillPlayerAwards(campaignId) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) return
+  if (campaign.settings?.awardsHistoryBackfilled) return
+
+  const seasons = await SeasonRepository.getAllForCampaign(campaignId)
+  if (!seasons || !seasons.length) return
+
+  const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+  const playerMap = Object.fromEntries(allPlayers.map(p => [String(p.id), p]))
+
+  const pushYear = (p, key, year) => {
+    if (year == null) return
+    if (!p.awards) p.awards = {}
+    if (!Array.isArray(p.awards[key])) p.awards[key] = []
+    if (!p.awards[key].includes(year)) p.awards[key].push(year)
+  }
+
+  for (const season of seasons) {
+    const year = season.year
+    if (!year) continue
+    const awards = season.seasonAwards
+    if (awards) {
+      if (awards.mvp?.playerId) {
+        const p = playerMap[String(awards.mvp.playerId)]
+        if (p) pushYear(p, 'mvp', year)
+      }
+      if (awards.rookieOfTheYear?.playerId) {
+        const p = playerMap[String(awards.rookieOfTheYear.playerId)]
+        if (p) pushYear(p, 'rookie_of_the_year', year)
+      }
+      for (const tier of ['first', 'second', 'third']) {
+        for (const e of (awards.allNba?.[tier] || [])) {
+          const p = playerMap[String(e.playerId)]
+          if (p) pushYear(p, `all_nba_${tier}`, year)
+        }
+      }
+      for (const tier of ['first', 'second']) {
+        for (const e of (awards.allDefense?.[tier] || [])) {
+          const p = playerMap[String(e.playerId)]
+          if (p) pushYear(p, `all_defense_${tier}`, year)
+        }
+        for (const e of (awards.allRookie?.[tier] || [])) {
+          const p = playerMap[String(e.playerId)]
+          if (p) pushYear(p, `all_rookie_${tier}`, year)
+        }
+      }
+    }
+    const allStarRosters = season?.allStarRosters?.allStars
+    if (allStarRosters) {
+      const ids = AllStarService._collectSelectedPlayerIds(allStarRosters)
+      for (const pid of ids) {
+        const p = playerMap[String(pid)]
+        if (p) pushYear(p, 'all_star', year)
+      }
+    }
+  }
+
+  await PlayerRepository.saveBulk(allPlayers.map(p => ({ ...p, campaignId })))
+  if (!campaign.settings) campaign.settings = {}
+  campaign.settings.awardsHistoryBackfilled = true
+  await CampaignRepository.save(campaign)
+}
+
+/**
  * Enter the offseason phase: archive data, process season end, run AI contracts.
  * Does NOT start the new season — the user gets an interactive offseason period first.
  *
@@ -1473,7 +1546,7 @@ export async function enterOffseason(campaignId) {
     const awardResults = AwardService.processSeasonAwards({
       seasonData, year: currentYear, allPlayers, teams, userTeamId: campaign.teamId,
     })
-    AwardService.applyAwardsToPlayers(allPlayers, awardResults)
+    AwardService.applyAwardsToPlayers(allPlayers, awardResults, currentYear)
     seasonAwards = awardResults
 
     // Also fix: increment allStarSelections (currently never done)
@@ -1486,6 +1559,9 @@ export async function enterOffseason(campaignId) {
         if (p) {
           p.allStarSelections = (p.allStarSelections ?? 0) + 1
           p.all_star_selections = p.allStarSelections
+          if (!p.awards) p.awards = {}
+          if (!Array.isArray(p.awards.all_star)) p.awards.all_star = []
+          p.awards.all_star.push(currentYear)
         }
       }
     }
@@ -1608,9 +1684,11 @@ export async function enterOffseason(campaignId) {
 
   // 5. Update campaign phase
   campaign.phase = 'offseason'
-  // Reset trade deadline for next season
+  // Reset in-season deadlines for next season
   if (campaign.settings) {
     delete campaign.settings.trade_deadline_passed
+    delete campaign.settings.resign_deadline_passed
+    delete campaign.settings.trade_deadline_news_shown
   }
   await CampaignRepository.save(campaign)
 

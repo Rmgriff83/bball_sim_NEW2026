@@ -24,6 +24,13 @@ const props = defineProps({
   isFreeAgent: {
     type: Boolean,
     default: false
+  },
+  // When true (e.g. after the in-season re-sign deadline passes) the Re-sign
+  // button is hidden. The team store / FinanceManager already enforce this at
+  // the action layer; hiding the button avoids a confusing dead click.
+  resignDisabled: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -110,7 +117,7 @@ function handleInfo() {
         <!-- Action Buttons for Team Players -->
         <div v-if="showActions && !isFreeAgent" class="action-buttons">
           <button
-            v-if="isExpiringContract"
+            v-if="isExpiringContract && !resignDisabled"
             class="action-btn resign-btn"
             @click.stop="handleResign"
             title="Re-sign player"

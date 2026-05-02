@@ -217,6 +217,74 @@ function viewFullGame() {
   close()
 }
 
+// Whether this game is eligible for "Sim to This Game" (the new fast-forward action).
+// Excludes the next user game (existing "Simulate Game" handles that), in-progress
+// games, completed games, and playoff games (v1 — see SeasonDeadlines / simulateToGame).
+const canSimToThisGame = computed(() => {
+  if (!props.game) return false
+  if (props.game.is_complete) return false
+  if (isGameInProgress.value) return false
+  if (props.isNextGame) return false
+  if (props.game.is_playoff) return false
+  return true
+})
+
+// Sim through to this future user game. Reuses the validation pattern of the
+// existing simulateToGame() action below; surfaces toasts the same way. The
+// store may pause partway through (trade deadline / All-Star / user injury);
+// SimPauseModal in CampaignHomeView handles the pause UI from there.
+async function simulateToThisGame() {
+  if (!canSimToThisGame.value || simulating.value) return
+  if (!validateRoster()) return
+
+  simulating.value = true
+  const loadingToastId = toastStore.showLoading('Simulating to game...')
+
+  try {
+    const response = await gameStore.simulateToGame(props.campaignId, props.game.id)
+    toastStore.removeMinimalToast(loadingToastId)
+
+    // If the run paused mid-flight, leave the calendar modal open and let the
+    // SimPauseModal take focus. Don't refresh stores yet — resume will finish.
+    if (response?.paused) {
+      simulating.value = false
+      return
+    }
+
+    if (response?.userGameResult) {
+      toastStore.showGameResult({
+        homeTeam: response.userGameResult.home_team?.abbreviation || response.userGameResult.home_team?.name || 'HOME',
+        awayTeam: response.userGameResult.away_team?.abbreviation || response.userGameResult.away_team?.name || 'AWAY',
+        homeScore: response.userGameResult.home_score,
+        awayScore: response.userGameResult.away_score,
+        gameId: response.userGameResult.game_id,
+        campaignId: props.campaignId,
+        isUserHome: response.userGameResult.is_user_home,
+      })
+    }
+
+    if (response?.userGameResult?.playoffUpdate) {
+      playoffStore.handlePlayoffUpdate(response.userGameResult.playoffUpdate)
+    }
+
+    await Promise.all([
+      campaignStore.fetchCampaign(props.campaignId, true),
+      teamStore.fetchTeam(props.campaignId, { force: true }),
+      leagueStore.fetchStandings(props.campaignId, { force: true }),
+      gameStore.fetchGames(props.campaignId, { force: true }),
+    ])
+
+    emit('simulated')
+    close()
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError('Simulation failed. Please try again.')
+    console.error('Failed to sim to this game:', err)
+  } finally {
+    simulating.value = false
+  }
+}
+
 // Simulate through this game
 async function simulateToGame() {
   if (!props.isNextGame || simulating.value) return
@@ -481,9 +549,13 @@ onUnmounted(() => {
 
           <!-- Upcoming Game Info -->
           <div v-else-if="!isGameInProgress" class="upcoming-section">
-            <p v-if="!isNextGame" class="order-notice">
+            <p v-if="!isNextGame && !canSimToThisGame" class="order-notice">
               <Lock :size="16" />
               Games must be played in order. This is not your next scheduled game.
+            </p>
+            <p v-else-if="!isNextGame" class="order-notice">
+              <Lock :size="16" />
+              Games must be played in order — but you can fast-forward to this one.
             </p>
           </div>
 
@@ -516,15 +588,30 @@ onUnmounted(() => {
                 <Play :size="18" />
                 Play Game
               </button>
+              <!-- Next user game: Simulate Game (uses simulateToNextGame) -->
               <button
+                v-if="isNextGame"
                 class="btn btn-secondary"
-                :disabled="!isNextGame || simulating"
-                :title="!isNextGame ? 'You must play games in order' : 'Simulate this game'"
+                :disabled="simulating"
+                title="Simulate this game"
                 @click="simulateToGame"
               >
                 <LoadingSpinner v-if="simulating" size="sm" />
                 <FastForward v-else :size="18" />
                 {{ simulating ? 'Simulating...' : 'Simulate Game' }}
+              </button>
+              <!-- Future user game (not the next one): Sim to This Game.
+                   Pauses on trade-deadline / All-Star / user injury along the way. -->
+              <button
+                v-else-if="canSimToThisGame"
+                class="btn btn-secondary"
+                :disabled="simulating"
+                title="Sim every game between now and this one"
+                @click="simulateToThisGame"
+              >
+                <LoadingSpinner v-if="simulating" size="sm" />
+                <FastForward v-else :size="18" />
+                {{ simulating ? 'Simulating...' : 'Sim to This Game' }}
               </button>
             </template>
           </footer>
