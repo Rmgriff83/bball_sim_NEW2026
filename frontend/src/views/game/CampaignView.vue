@@ -193,16 +193,18 @@ async function handleSimPauseCpuLineup() {
       gameStore.cancelSimulation()
       return
     }
-    const result = selectBestLineup(roster)
-    if (!result) {
+    // selectBestLineup returns an array of 5 player IDs (PG..C order), or
+    // entries may be null if a position can't be filled.
+    const newLineup = selectBestLineup(roster)
+    if (!Array.isArray(newLineup) || newLineup.length !== 5) {
       toastStore.showError('CPU could not pick a lineup')
       gameStore.cancelSimulation()
       return
     }
-    await teamStore.updateLineup(campaignId.value, result.starters, [])
+    await teamStore.updateLineup(campaignId.value, newLineup, [])
     // Recompute target minutes around the new starters (160 min split equally,
     // bench top-4 share the remaining 40 in [16,12,8,4]).
-    const newStarterIds = result.starters.filter(id => id !== null)
+    const newStarterIds = newLineup.filter(id => id !== null)
     const newMinutes = {}
     const starterShare = newStarterIds.length > 0 ? Math.floor(160 / newStarterIds.length) : 0
     for (const id of newStarterIds) newMinutes[id] = Math.min(starterShare, 40)

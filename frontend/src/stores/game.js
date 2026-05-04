@@ -700,6 +700,12 @@ export const useGameStore = defineStore('game', () => {
     // Update player stats
     _updatePlayerStatsFromBoxScore(seasonData, result.box_score, game?.homeTeamId, game?.awayTeamId)
 
+    // Update each team's coach career record (regular-season W/L or playoff
+    // W/L). Persists immediately so sync's normal team push picks it up.
+    if (game) {
+      await _updateCoachCareerStatsAfterGame(campaignId, game, result)
+    }
+
     // Generate and persist news
     _generateNews(seasonData, game, result)
 
@@ -723,6 +729,71 @@ export const useGameStore = defineStore('game', () => {
     useSyncStore().markDirty()
 
     return { playoffUpdate }
+  }
+
+  /**
+   * Bump the coach's career record on each team for a finished game.
+   * Regular-season games go to wins/losses; playoff games go to playoff_wins
+   * /playoff_losses. Saves both teams to IndexedDB so the sync push picks the
+   * change up. Tolerates legacy coaches that still carry flat fields
+   * (`career_wins`, etc.) by migrating them into the nested `career_stats`
+   * shape on first touch.
+   */
+  async function _updateCoachCareerStatsAfterGame(campaignId, game, result) {
+    const homeWon = result.home_score > result.away_score
+    const isPlayoff = !!(game.isPlayoff || game.is_playoff)
+
+    const [homeTeam, awayTeam] = await Promise.all([
+      TeamRepository.get(campaignId, game.homeTeamId),
+      TeamRepository.get(campaignId, game.awayTeamId),
+    ])
+
+    const dirty = []
+    const updates = [
+      { team: homeTeam, won: homeWon },
+      { team: awayTeam, won: !homeWon },
+    ]
+
+    for (const { team, won } of updates) {
+      if (!team || !team.coach) continue
+
+      // Migrate the flat starter fields into a nested career_stats object
+      // on first touch. Subsequent updates always use the nested shape so
+      // archiveSeasonData and the UI consume one canonical structure.
+      if (!team.coach.career_stats) {
+        team.coach.career_stats = {
+          wins: team.coach.career_wins ?? 0,
+          losses: team.coach.career_losses ?? 0,
+          playoff_wins: team.coach.playoff_wins ?? 0,
+          playoff_losses: team.coach.playoff_losses ?? 0,
+          championships: team.coach.championships ?? 0,
+          seasons_coached: team.coach.seasons_coached ?? 0,
+        }
+      }
+
+      const cs = team.coach.career_stats
+      if (isPlayoff) {
+        if (won) cs.playoff_wins = (cs.playoff_wins ?? 0) + 1
+        else cs.playoff_losses = (cs.playoff_losses ?? 0) + 1
+        const tot = (cs.playoff_wins ?? 0) + (cs.playoff_losses ?? 0)
+        cs.playoff_win_pct = tot > 0
+          ? Math.round((cs.playoff_wins / tot) * 1000) / 1000
+          : 0
+      } else {
+        if (won) cs.wins = (cs.wins ?? 0) + 1
+        else cs.losses = (cs.losses ?? 0) + 1
+        const tot = (cs.wins ?? 0) + (cs.losses ?? 0)
+        cs.win_pct = tot > 0
+          ? Math.round((cs.wins / tot) * 1000) / 1000
+          : 0
+      }
+
+      dirty.push(team)
+    }
+
+    if (dirty.length > 0) {
+      await TeamRepository.saveBulk(dirty)
+    }
   }
 
   /**
@@ -1996,13 +2067,10 @@ export const useGameStore = defineStore('game', () => {
       animationData: result.animation_data || { possessions: [] },
       isHome, didWin, synergiesActivated: synCount,
     })
-    // Simmed user games: 10% of synergy tokens, full win bonus
-    const synergyTokens = rewards.tokens_awarded - (rewards.win_bonus || 0)
-    const reducedSynergy = synergyTokens > 0 ? Math.max(1, Math.round(synergyTokens * 0.1)) : 0
-    rewards.tokens_awarded = reducedSynergy + (rewards.win_bonus || 0)
+    // Bulk-sim path: no tokens awarded. Tokens only come from live-played games
+    // or a single-game sim via simulateToNextGame.
+    rewards.tokens_awarded = 0
     result.rewards = rewards
-
-    await _accumulateAwardTokens(campaignId, rewards)
     const { playoffUpdate } = await _persistGameResult(campaignId, year, seasonData, game.id, result, true)
     await _applyEvolutionToPlayers(evolution, game)
 

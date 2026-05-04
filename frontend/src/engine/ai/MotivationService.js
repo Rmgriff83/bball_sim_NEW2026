@@ -6,6 +6,8 @@
 // trade risk assessment, and re-sign negotiations.
 // =============================================================================
 
+import { strictnessSatisfactionDelta } from '@/engine/coaching/CoachStrictnessService';
+
 // =============================================================================
 // MARKET SIZE MAP
 // =============================================================================
@@ -219,6 +221,7 @@ export function recalculateSatisfaction(player, context) {
     teamMarketSize = 'medium',
     yearsWithTeam = 1,
     coachStability = true,
+    coach = null,
     hasChampionship = false,
     contractSalary = 0,
     expectedSalary = 0,
@@ -264,9 +267,13 @@ export function recalculateSatisfaction(player, context) {
     else player.motivations.starPairing.satisfaction = 0.2;
   }
 
-  // coaching: stability
+  // coaching: stability + strictness fit. Stability is the base ceiling
+  // (continuity feels safe / instability feels disruptive). Strictness
+  // delta is asymmetric — see CoachStrictnessService for the full rule.
   if (player.motivations.coaching) {
-    player.motivations.coaching.satisfaction = coachStability ? 0.7 : 0.4;
+    const baseSat = coachStability ? 0.65 : 0.45;
+    const strictDelta = coach ? strictnessSatisfactionDelta(player, coach) : 0;
+    player.motivations.coaching.satisfaction = Math.max(0, Math.min(1, baseSat + strictDelta));
   }
 
   // market: city size

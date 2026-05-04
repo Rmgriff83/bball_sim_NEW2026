@@ -23,6 +23,7 @@ import { updateAfterGame, updateWeekly } from './MoraleService';
 import PersonalityEffects from './PersonalityEffects';
 import BadgeSynergyService from './BadgeSynergyService';
 import EvolutionNewsService from './EvolutionNewsService';
+import { getCoachPerks, getEffectiveCoachAttribute } from '@/engine/coaching/CoachPerks';
 import * as Config from '../config/GameConfig';
 import {
   generateMotivations,
@@ -506,25 +507,48 @@ function recalculateOverall(player) {
     categoryAverages[category] = values.reduce((sum, v) => sum + v, 0) / values.length;
   }
 
-  let overall = 0;
+  // Run the category-weighted average formula. NOTE: this number is NOT the
+  // player's actual overall rating — it's a derivable signal the master file
+  // wasn't calibrated against. Veterans loaded from `engine/data/players.js`
+  // have hand-tuned overalls (e.g. Giannis 97, LeBron 99) that the formula
+  // alone produces ~10-15 points lower for. We use this calculated value
+  // only as an ANCHOR to compute deltas across calls.
+  let calculated = 0;
   for (const [category, weight] of Object.entries(weights)) {
-    overall += (categoryAverages[category] ?? 75) * weight;
+    calculated += (categoryAverages[category] ?? 75) * weight;
   }
 
-  overall = Math.round(Math.min(99, Math.max(40, overall)));
+  const previousAnchor = player._overallCalcAnchor;
+  let newOverall;
+  if (typeof previousAnchor === 'number' && typeof player.overallRating === 'number') {
+    // Subsequent call: shift the existing overall by the delta in the
+    // calculated value since the last anchor. Preserves master ratings
+    // while still letting evolution / regression move the rating.
+    const delta = calculated - previousAnchor;
+    newOverall = Math.round(Math.min(99, Math.max(40, player.overallRating + delta)));
+  } else if (typeof player.overallRating === 'number') {
+    // First call on a player that already has an overall (master file or
+    // pre-set elsewhere): keep the existing rating and just record the
+    // anchor. Don't overwrite with the formula's value.
+    newOverall = player.overallRating;
+  } else {
+    // Bootstrap path for players generated without a baseline overall.
+    newOverall = Math.round(Math.min(99, Math.max(40, calculated)));
+  }
 
-  player.overallRating = overall;
-  player.overall_rating = overall;
+  player._overallCalcAnchor = calculated;
+  player.overallRating = newOverall;
+  player.overall_rating = newOverall;
 
   // When a player regresses, drag potential down so it doesn't stay artificially high.
   // Only applies to players past their development years (age 28+) to protect young prospects.
   const currentPotential = player.potentialRating ?? player.potential_rating ?? 75;
   const age = player.age ?? 25;
-  if (age >= 28 && overall < currentPotential) {
+  if (age >= 28 && newOverall < currentPotential) {
     // Potential tracks overall, keeping at most a small gap
     const maxGap = 2;
-    if (currentPotential - overall > maxGap) {
-      const newPotential = overall + maxGap;
+    if (currentPotential - newOverall > maxGap) {
+      const newPotential = newOverall + maxGap;
       player.potentialRating = newPotential;
       player.potential_rating = newPotential;
     }
@@ -1278,8 +1302,17 @@ export function processWeeklyEvolution(players, gameResults = {}, difficulty = '
  * @returns {{ players: Array, news: Array }}
  */
 export function processMonthlyDevelopment(players, difficulty = 'pro', options = {}) {
-  const { fullRoster = null } = options;
+  const { fullRoster = null, teams = null } = options;
   const newsEvents = [];
+
+  // Build a teamId → coach map once if teams were passed in. Lets the per-player
+  // loop pull the team's head coach to feed into the development multiplier.
+  const coachByTeamId = {};
+  if (Array.isArray(teams)) {
+    for (const team of teams) {
+      if (team?.id && team.coach) coachByTeamId[team.id] = team.coach;
+    }
+  }
 
   const updatedPlayers = players.map(rawPlayer => {
     let player = clonePlayer(rawPlayer);
@@ -1306,11 +1339,25 @@ export function processMonthlyDevelopment(players, difficulty = 'pro', options =
     // Calculate Dynamic Duo boost
     const duoBoost = badgeSynergyService.getDynamicDuoBoost(player, roster);
 
+    // Coach development context — head coach's `playerDevelopment` rating plus
+    // any coach-badge developmentBonus perks. DevelopmentCalculator uses these
+    // to scale monthly growth. Falls back to neutral defaults when absent.
+    const teamId = player.teamId ?? player.team_id ?? null;
+    const coach = teamId ? coachByTeamId[teamId] : null;
+    const coachDevelopmentRating = coach
+      ? getEffectiveCoachAttribute(coach, 'playerDevelopment')
+      : 75;
+    const coachDevelopmentBadgeBonus = coach
+      ? (getCoachPerks(coach).developmentBonus ?? 0)
+      : 0;
+
     const context = {
       avgMinutesPerGame: avgMinutes,
       hasMentor,
       badgeSynergyBoost: synergyBoost,
       dynamicDuoBoost: duoBoost,
+      coachDevelopmentRating,
+      coachDevelopmentBadgeBonus,
     };
 
     // Calculate development and regression

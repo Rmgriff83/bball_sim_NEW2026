@@ -354,6 +354,12 @@ class GameSimulator {
     this.awayOffensiveScheme = awayScheme.offensive || 'balanced'
     this.awayDefensiveScheme = awayScheme.defensive || 'man'
 
+    // Coach references — used by CoachingEngine to scale scheme modifiers by
+    // offensiveIQ / defensiveIQ, and by PlayExecutionEngine for clutch-time
+    // gameManagement bias. Null-safe everywhere downstream.
+    this.homeCoach = homeTeam.coach || null
+    this.awayCoach = awayTeam.coach || null
+
     // Record starter IDs
     this.homeStarterIds = this.homeLineup.map(p => p.id)
     this.awayStarterIds = this.awayLineup.map(p => p.id)
@@ -635,6 +641,8 @@ class GameSimulator {
     const defense = isHome ? this.awayLineup : this.homeLineup
     const offensiveScheme = isHome ? this.homeOffensiveScheme : this.awayOffensiveScheme
     const defensiveScheme = isHome ? this.awayDefensiveScheme : this.homeDefensiveScheme
+    const offensiveCoach = isHome ? this.homeCoach : this.awayCoach
+    const defensiveCoach = isHome ? this.awayCoach : this.homeCoach
 
     // Update minutes for active players
     for (const player of offense) {
@@ -678,11 +686,21 @@ class GameSimulator {
 
     const play = selectPlay(offense, defense, offensiveScheme, context)
 
-    // Calculate defensive modifiers based on scheme and play
-    const defensiveModifiers = coachingEngine.calculateDefensiveModifiers(defensiveScheme, play)
+    // Calculate scheme modifiers, scaled by each coach's IQ + any badge boosts.
+    const defensiveModifiers = coachingEngine.calculateDefensiveModifiers(defensiveScheme, play, defensiveCoach)
+    const offensiveModifiers = coachingEngine.calculateOffensiveModifiers(offensiveScheme, offensiveCoach)
+
+    // Detect clutch time BEFORE the play resolves so PlayExecutionEngine can
+    // apply the offensive coach's gameManagement bias to the shot probability.
+    const clutchTime = this.timeRemaining < 2.0 && this.currentQuarter >= 4
+    const playOptions = {
+      offensiveModifiers,
+      offensiveCoach,
+      clutchTime,
+    }
 
     // Execute the play with defensive context
-    const playResult = this.playEngine.executePlay(play, offense, defense, defensiveScheme, defensiveModifiers)
+    const playResult = this.playEngine.executePlay(play, offense, defense, defensiveScheme, defensiveModifiers, playOptions)
 
     // Calculate synergies for this possession
     let activatedSynergies = []
@@ -862,9 +880,9 @@ class GameSimulator {
       }
     }
 
-    // Process free throws
+    // Process free throws (team score already updated above via playResult.points)
     if (freeThrows) {
-      const shooterId = shotAttempt ? shotAttempt.shooter : null
+      const shooterId = freeThrows.shooterId ?? (shotAttempt ? shotAttempt.shooter : null)
       let boxScore = isHome ? this.homeBoxScore : this.awayBoxScore
 
       if (shooterId && boxScore[shooterId]) {
@@ -873,10 +891,8 @@ class GameSimulator {
         boxScore[shooterId].points += freeThrows.made
 
         if (isHome) {
-          this.homeScore += freeThrows.made
           this.homeBoxScore = boxScore
         } else {
-          this.awayScore += freeThrows.made
           this.awayBoxScore = boxScore
         }
       }

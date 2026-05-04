@@ -9,7 +9,19 @@
  * All game logic and math preserved exactly from the PHP source.
  */
 
-// import { } from '../config/GameConfig.js'
+import { getEffectiveCoachAttribute } from '@/engine/coaching/CoachPerks'
+
+/**
+ * Convert a coach IQ rating into a scheme-effectiveness multiplier.
+ * Centered at 75 (neutral). High-IQ coaches squeeze more out of their scheme;
+ * low-IQ coaches dilute it. Defaults to 1.0 when coach is null.
+ */
+function iqEffectivenessMultiplier(coach, attr) {
+  if (!coach) return 1.0
+  const iq = getEffectiveCoachAttribute(coach, attr)
+  const mult = 0.7 + (iq / 75) * 0.3
+  return Math.max(0.7, Math.min(1.3, mult))
+}
 
 // ---------------------------------------------------------------------------
 // Offensive Schemes
@@ -345,9 +357,10 @@ export class CoachingEngine {
    *
    * @param {string} scheme  - defensive scheme ID
    * @param {Object} play    - the offensive play object (needs at least `category`)
+   * @param {Object|null} coach - the defensive team's coach (for IQ scaling)
    * @returns {{ shotModifier: number, turnoverModifier: number, blockModifier: number, stealModifier: number }}
    */
-  calculateDefensiveModifiers(scheme, play) {
+  calculateDefensiveModifiers(scheme, play, coach = null) {
     const schemeData = DEFENSIVE_SCHEMES[scheme] ?? DEFENSIVE_SCHEMES.man
     const playCategory = play.category ?? 'motion'
 
@@ -420,7 +433,38 @@ export class CoachingEngine {
       modifiers.shotModifier -= sm.contest_boost
     }
 
+    // Scale every modifier by the defensive coach's IQ. A high-IQ coach
+    // realizes the FULL scheme bonus; low IQ dilutes it. Neutral at IQ 75.
+    const iqMult = iqEffectivenessMultiplier(coach, 'defensiveIQ')
+    modifiers.shotModifier *= iqMult
+    modifiers.turnoverModifier *= iqMult
+    modifiers.blockModifier *= iqMult
+    modifiers.stealModifier *= iqMult
+
     return modifiers
+  }
+
+  /**
+   * Compute offensive scheme modifiers, scaled by the offensive coach's IQ.
+   * Returns an additive shot-quality bonus and a turnover-rate penalty
+   * (negative = fewer turnovers) consumed by PlayExecutionEngine.
+   *
+   * @param {string} scheme  - offensive scheme ID
+   * @param {Object|null} coach - the offensive team's coach
+   * @returns {{ shotQualityBonus: number, turnoverPenalty: number }}
+   */
+  calculateOffensiveModifiers(scheme, coach = null) {
+    const baseShot = 0.0
+    const baseTo = 0.0
+    if (!coach) return { shotQualityBonus: baseShot, turnoverPenalty: baseTo }
+
+    const iq = getEffectiveCoachAttribute(coach, 'offensiveIQ')
+    // Centered at 75 → 0%. Linear ±~3.2% at the extremes (IQ 25 → -2%, IQ 99 → +3.2%).
+    const offset = (iq - 75) / 100
+    return {
+      shotQualityBonus: offset * 0.04,
+      turnoverPenalty: -offset * 0.025,
+    }
   }
 
   // -----------------------------------------------------------------------

@@ -6,6 +6,7 @@
  */
 
 import { MORALE, PERSONALITY_TRAITS } from '../config/GameConfig.js';
+import { strictnessWeeklyMoraleShift } from '@/engine/coaching/CoachStrictnessService';
 
 const moraleConfig = MORALE;
 
@@ -107,9 +108,10 @@ function updateAfterGame(player, gameResult, boxScore, difficulty = 'pro') {
  *
  * @param {object} player - Player data object
  * @param {object} teamRecord - { wins: number, losses: number }
+ * @param {object|null} coach - Head coach (for strictness fit). Optional.
  * @returns {object} Updated player object
  */
-function updateWeekly(player, teamRecord) {
+function updateWeekly(player, teamRecord, coach = null) {
   // Clone to avoid mutation
   player = { ...player, personality: { ...player.personality } };
 
@@ -136,6 +138,13 @@ function updateWeekly(player, teamRecord) {
     // More stable morale
     const target = moraleConfig.starting;
     morale = morale + (target - morale) * 0.1;
+  }
+
+  // Coach strictness fit — small weekly shift that compounds over a season.
+  // High-impact stars with low work ethic drift down under a strict coach;
+  // high-WE / winning-motivated grinders drift up.
+  if (coach) {
+    morale += strictnessWeeklyMoraleShift(player, coach);
   }
 
   player.personality.morale = clamp(morale);

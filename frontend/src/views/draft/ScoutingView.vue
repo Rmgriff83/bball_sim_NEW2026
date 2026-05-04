@@ -52,25 +52,36 @@ const campaign = computed(() => campaignStore.currentCampaign)
 const isOffseason = computed(() => campaign.value?.phase === 'offseason')
 
 // All attributes in the scouting pool — must match the generated player schema
-// (see CampaignManager.js generateAttributes / generatePlayer)
+// (see CampaignManager.js generateAttributes / generatePlayer) AND the canonical
+// shape used by master veterans in engine/data/players.js.
 const ALL_ATTRIBUTES = [
   'overallRating', 'potentialRating',
-  // Offense (8)
-  'threePoint', 'midRange', 'postScoring', 'layup', 'dunk', 'ballHandling', 'passing', 'speedWithBall',
-  // Defense (5)
-  'perimeterD', 'interiorD', 'steal', 'block', 'defensiveIQ',
-  // Physical (5)
-  'speed', 'acceleration', 'strength', 'vertical', 'stamina',
-  // Mental (4)
-  'basketballIQ', 'consistency', 'clutch', 'workEthic',
+  // Offense (16)
+  'threePoint', 'midRange', 'closeShot', 'freeThrow', 'shotIQ', 'offensiveConsistency',
+  'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl',
+  'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ',
+  // Defense (9)
+  'perimeterDefense', 'interiorDefense', 'steal', 'block', 'helpDefenseIQ',
+  'passPerception', 'defensiveConsistency', 'offensiveRebound', 'defensiveRebound',
+  // Physical (7)
+  'speed', 'acceleration', 'strength', 'vertical', 'stamina', 'hustle', 'durability',
+  // Mental (5)
+  'basketballIQ', 'clutch', 'workEthic', 'coachability', 'intangibles',
 ]
 
 const ATTRIBUTE_CATEGORIES = {
   'Ratings': ['overallRating', 'potentialRating'],
-  'Offense': ['threePoint', 'midRange', 'postScoring', 'layup', 'dunk', 'ballHandling', 'passing', 'speedWithBall'],
-  'Defense': ['perimeterD', 'interiorD', 'steal', 'block', 'defensiveIQ'],
-  'Physical': ['speed', 'acceleration', 'strength', 'vertical', 'stamina'],
-  'Mental': ['basketballIQ', 'consistency', 'clutch', 'workEthic'],
+  'Offense': [
+    'threePoint', 'midRange', 'closeShot', 'freeThrow', 'shotIQ', 'offensiveConsistency',
+    'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl',
+    'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ',
+  ],
+  'Defense': [
+    'perimeterDefense', 'interiorDefense', 'steal', 'block', 'helpDefenseIQ',
+    'passPerception', 'defensiveConsistency', 'offensiveRebound', 'defensiveRebound',
+  ],
+  'Physical': ['speed', 'acceleration', 'strength', 'vertical', 'stamina', 'hustle', 'durability'],
+  'Mental': ['basketballIQ', 'clutch', 'workEthic', 'coachability', 'intangibles'],
 }
 
 const TOTAL_SCOUT_ACTIONS = 4 // 4 scout actions to fully reveal a player
@@ -111,6 +122,25 @@ function getScoutPercent(playerId) {
   return Math.min(100, Math.round((revealed / ALL_ATTRIBUTES.length) * 100))
 }
 
+// Map canonical attr keys to their legacy short-form equivalents — used when
+// looking up values on prospects generated BEFORE the canonical-schema fix in
+// generateAttributes. Pre-fix rookies only carry the short form, so without
+// this fallback they'd show '?' for every new attribute even at 100% scouted.
+const LEGACY_ATTR_FALLBACK = {
+  closeShot: 'layup',
+  standingDunk: 'dunk',
+  drivingDunk: 'dunk',
+  postHook: 'postScoring',
+  postFade: 'postScoring',
+  postControl: 'postScoring',
+  passAccuracy: 'passing',
+  passVision: 'passing',
+  passIQ: 'passing',
+  perimeterDefense: 'perimeterD',
+  interiorDefense: 'interiorD',
+  helpDefenseIQ: 'defensiveIQ',
+}
+
 function getPlayerAttributeValue(player, attr) {
   // Rating attributes are top-level
   if (attr === 'overallRating') return player.overallRating
@@ -121,6 +151,16 @@ function getPlayerAttributeValue(player, attr) {
   for (const category of ['offense', 'defense', 'physical', 'mental']) {
     if (attrs[category] && attrs[category][attr] !== undefined) {
       return attrs[category][attr]
+    }
+  }
+
+  // Legacy fallback for pre-fix prospects (e.g. closeShot → layup)
+  const legacyKey = LEGACY_ATTR_FALLBACK[attr]
+  if (legacyKey) {
+    for (const category of ['offense', 'defense', 'physical', 'mental']) {
+      if (attrs[category] && attrs[category][legacyKey] !== undefined) {
+        return attrs[category][legacyKey]
+      }
     }
   }
 
@@ -343,8 +383,13 @@ onMounted(async () => {
     const gameYear = camp?.gameYear ?? 1
     const allPlayers = await PlayerRepository.getAllForCampaign(campaignId.value)
 
-    // Filter draft prospects for this year
-    const prospects = allPlayers.filter(p => p.isDraftProspect && p.draftYear === gameYear)
+    // Filter draft prospects for this year. draftYear = the season they'll
+    // first play (currentSeasonYear + 1), since they're drafted in the offseason
+    // at the end of the current season.
+    const prospectDraftYear = (camp?.currentSeasonYear ?? 2025) + 1
+    const prospects = allPlayers.filter(p =>
+      p.isDraftProspect && (p.draftYear === prospectDraftYear || p.draftYear === gameYear)
+    )
 
     // Patch headshots onto rookies that are missing them (older campaigns)
     const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
@@ -462,13 +507,16 @@ onMounted(async () => {
             <div class="card-header">
               <div class="avatar-column">
                 <div class="player-avatar">
-                  <PlayerAvatar :player="player" :size="42" class="avatar-icon" />
+                  <PlayerAvatar :player="player" :size="78" class="avatar-icon" />
                 </div>
-                <span class="slot-position-label" :style="{ backgroundColor: getPositionColor(player.position) }">{{ player.position }}</span>
               </div>
               <div class="player-main-info">
                 <h4 class="player-name">{{ player.firstName }} {{ player.lastName }}</h4>
                 <div class="player-meta">
+                  <div class="vitals-row">
+                    {{ formatHeight(player.heightInches) }} · {{ player.age }} yrs
+                    <span v-if="player.college" class="college-label">· {{ player.college }}</span>
+                  </div>
                   <div class="position-badges">
                     <span
                       class="position-badge"
@@ -484,10 +532,6 @@ onMounted(async () => {
                       {{ player.secondaryPosition }}
                     </span>
                   </div>
-                </div>
-                <div class="vitals-row">
-                  {{ formatHeight(player.heightInches) }} · {{ player.age }} yrs
-                  <span v-if="player.college" class="college-label">· {{ player.college }}</span>
                 </div>
                 <!-- Scout Progress Bar -->
                 <div class="scout-progress-row">
@@ -842,19 +886,13 @@ onMounted(async () => {
 /* Player Card Grid */
 .players-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 12px;
 }
 
-@media (min-width: 768px) {
+@media (max-width: 415px) {
   .players-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (min-width: 1024px) {
-  .players-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: 1fr;
   }
 }
 
@@ -902,6 +940,13 @@ onMounted(async () => {
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
+  min-width: 360px;
+}
+
+@media (max-width: 415px) {
+  .player-card {
+    min-width: 0;
+  }
 }
 
 .player-card::before {
@@ -928,7 +973,7 @@ onMounted(async () => {
 
 .card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 12px;
   background: rgba(0, 0, 0, 0.1);
@@ -943,20 +988,23 @@ onMounted(async () => {
 }
 
 .slot-position-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   font-weight: 400;
   letter-spacing: 0.04em;
   color: white;
-  padding: 2px 8px;
+  padding: 1px 6px;
   border-radius: var(--radius-md);
   line-height: 1.3;
   text-align: center;
 }
 
 .player-avatar {
-  width: 54px;
-  height: 54px;
+  width: 80px;
+  height: 80px;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 50%;
   display: flex;
@@ -964,6 +1012,7 @@ onMounted(async () => {
   justify-content: center;
   color: var(--color-text-tertiary);
   flex-shrink: 0;
+  position: relative;
 }
 
 .avatar-icon {
@@ -1013,7 +1062,6 @@ onMounted(async () => {
 .vitals-row {
   font-size: 0.75rem;
   color: var(--color-text-primary);
-  margin-top: 6px;
 }
 
 .college-label {

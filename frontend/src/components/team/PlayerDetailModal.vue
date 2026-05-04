@@ -278,6 +278,12 @@ const hasDefenseUpgradePoints = computed(() =>
 // Legacy compat
 const hasUpgradePoints = computed(() => hasOffenseUpgradePoints.value || hasDefenseUpgradePoints.value)
 const upgradePoints = computed(() => offenseUpgradePoints.value + defenseUpgradePoints.value)
+// Whole points actually spendable — fractional points across pools don't combine
+const spendableUpgradePoints = computed(() =>
+  props.canUpgrade
+    ? Math.floor(offenseUpgradePoints.value) + Math.floor(defenseUpgradePoints.value)
+    : 0
+)
 
 // Handle upgrade button click
 function handleUpgrade(category, attrKey) {
@@ -732,6 +738,7 @@ function formatChange(change) {
                 @click="activeTab = 'attributes'"
               >
                 Attributes
+                <span v-if="spendableUpgradePoints > 0" class="tab-badge">{{ spendableUpgradePoints }}</span>
               </button>
               <button
                 class="tab-btn"
@@ -2017,6 +2024,7 @@ function formatChange(change) {
 }
 
 .tab-btn {
+  position: relative;
   padding: 0.5rem 1rem;
   border-radius: var(--radius-lg);
   background: var(--glass-bg);
@@ -2028,6 +2036,27 @@ function formatChange(change) {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   font-size: 0.875rem;
+}
+
+.tab-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #E85A4F;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.tab-btn.active .tab-badge {
+  background: #E85A4F;
+  color: white;
 }
 
 .tab-btn:hover {

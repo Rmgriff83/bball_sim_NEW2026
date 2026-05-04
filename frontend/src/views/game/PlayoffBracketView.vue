@@ -9,11 +9,11 @@ import { useLeagueStore } from '@/stores/league'
 import { useToastStore } from '@/stores/toast'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
-import { LoadingSpinner } from '@/components/ui'
+import { LoadingSpinner, StandardModal } from '@/components/ui'
 import PlayoffBracket from '@/components/playoffs/PlayoffBracket.vue'
 import GameDayModal from '@/components/calendar/GameDayModal.vue'
 import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
-import { Trophy, X, Play, FastForward, AlertTriangle } from 'lucide-vue-next'
+import { Trophy, X, Play, FastForward, AlertTriangle, Cpu, Users } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -90,6 +90,52 @@ function goToTeamTab() {
   showWarning.value = false
   router.push(`/campaign/${campaignId.value}/team?tab=team`)
   closeSeriesDetail()
+}
+
+async function handleCpuSetLineup() {
+  try {
+    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const roster = teamStore.roster
+    if (!roster || roster.length < 5) {
+      toastStore.showError('Not enough players to set lineup')
+      return
+    }
+    const newLineup = selectBestLineup(roster)
+    await teamStore.updateLineup(campaignId.value, newLineup)
+
+    const starterSet = new Set(newLineup.filter(id => id !== null))
+    const newMinutes = {}
+    const healthyStarters = newLineup.filter(id => id !== null)
+    const starterMins = healthyStarters.length > 0 ? Math.min(Math.floor(160 / healthyStarters.length), 40) : 0
+    let starterTotal = 0
+    for (const id of healthyStarters) {
+      newMinutes[id] = starterMins
+      starterTotal += starterMins
+    }
+    const benchPlayers = roster
+      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
+      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+    let benchBudget = 200 - starterTotal
+    const benchSlots = [16, 12, 8, 4]
+    for (let i = 0; i < benchPlayers.length; i++) {
+      if (i < benchSlots.length && benchBudget > 0) {
+        const mins = Math.min(benchSlots[i], benchBudget)
+        newMinutes[benchPlayers[i].id] = mins
+        benchBudget -= mins
+      } else {
+        newMinutes[benchPlayers[i].id] = 0
+      }
+    }
+    for (const p of roster) {
+      if (p && !(p.id in newMinutes)) newMinutes[p.id] = 0
+    }
+    await teamStore.updateTargetMinutes(campaignId.value, newMinutes)
+
+    showWarning.value = false
+    toastStore.showSuccess('CPU adjusted your lineup')
+  } catch (err) {
+    toastStore.showError('Failed to auto-set lineup')
+  }
 }
 
 // Parse date string to local Date
@@ -465,16 +511,7 @@ function findSeriesById(seriesId) {
 
             <!-- Content -->
             <main class="modal-content" v-if="selectedSeries">
-              <!-- Warning State -->
-              <div v-if="showWarning" class="warning-state">
-                <AlertTriangle :size="40" class="warning-icon" />
-                <p class="warning-message">{{ warningMessage }}</p>
-                <span class="warning-hint">{{ warningHint }}</span>
-                <button class="btn-go-team" @click="goToTeamTab">Go to Team</button>
-              </div>
-
-              <template v-else>
-                <!-- Series Score Header -->
+              <!-- Series Score Header -->
                 <div class="series-score-header">
                   <div class="series-team">
                     <div
@@ -540,12 +577,11 @@ function findSeriesById(seriesId) {
                     <span class="game-status tbd">—</span>
                   </div>
                 </div>
-              </template>
             </main>
 
             <!-- Footer -->
             <footer class="modal-footer">
-              <template v-if="isUserSeries && nextGameInSeries && !showWarning">
+              <template v-if="isUserSeries && nextGameInSeries">
                 <button
                   class="btn-cancel hide-narrow"
                   :disabled="simulating"
@@ -606,6 +642,33 @@ function findSeriesById(seriesId) {
       @sim-next-series="handleSimNextSeries"
       @sim-remaining-playoffs="handleSimRemainingPlayoffs"
     />
+
+    <!-- Roster Warning Modal -->
+    <StandardModal
+      :show="showWarning"
+      title="Lineup Issue"
+      size="sm"
+      @close="showWarning = false"
+    >
+      <div class="warning-body">
+        <div class="warning-icon-wrap">
+          <AlertTriangle :size="40" class="warning-icon-svg" />
+        </div>
+        <p class="warning-msg">{{ warningMessage }}</p>
+        <p class="warning-hint">{{ warningHint }}</p>
+      </div>
+      <template #footer>
+        <button class="warning-btn-cancel" @click="showWarning = false">Cancel</button>
+        <button class="warning-btn-cpu" @click="handleCpuSetLineup">
+          <Cpu :size="16" />
+          CPU Adjust
+        </button>
+        <button class="warning-btn-confirm" @click="goToTeamTab">
+          <Users :size="16" />
+          View Lineup
+        </button>
+      </template>
+    </StandardModal>
   </div>
 </template>
 
@@ -821,48 +884,84 @@ function findSeriesById(seriesId) {
   gap: 20px;
 }
 
-/* Warning State */
-.warning-state {
+/* Roster Warning Modal body styles (modal shell from StandardModal) */
+.warning-body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 32px 16px;
   text-align: center;
 }
 
-.warning-icon {
-  color: var(--color-warning, #F59E0B);
+.warning-icon-wrap {
+  margin-bottom: 16px;
 }
 
-.warning-message {
+.warning-icon-svg {
+  color: var(--color-warning);
+}
+
+.warning-msg {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--color-text-primary);
-  margin: 0;
+  margin: 0 0 8px;
+  line-height: 1.4;
 }
 
 .warning-hint {
-  font-size: 0.8rem;
+  font-size: 0.825rem;
   color: var(--color-text-secondary);
+  margin: 0;
 }
 
-.btn-go-team {
-  margin-top: 8px;
-  padding: 8px 20px;
+.warning-btn-cancel,
+.warning-btn-cpu,
+.warning-btn-confirm {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
   border-radius: var(--radius-xl);
-  background: var(--color-primary);
-  border: none;
-  color: white;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   font-weight: 600;
   text-transform: uppercase;
+  letter-spacing: 0.03em;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
-.btn-go-team:hover {
+.warning-btn-cancel {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.warning-btn-cancel:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+.warning-btn-cpu {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+}
+
+.warning-btn-cpu:hover {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.warning-btn-confirm {
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.warning-btn-confirm:hover {
   background: var(--color-primary-dark);
+  transform: translateY(-1px);
 }
 
 .series-score-header {

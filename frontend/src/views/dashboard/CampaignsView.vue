@@ -473,7 +473,7 @@ function getDifficultyLabel(value) {
   font-size: 1.5rem;
   font-weight: 400;
   letter-spacing: 0.02em;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-tertiary));
+  background: linear-gradient(135deg, var(--color-primary), #F4A259);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

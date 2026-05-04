@@ -109,6 +109,12 @@ watch(activeTab, async (newTab) => {
     } catch (err) {
       console.error('Failed to fetch league leaders:', err)
     }
+  } else if (newTab === 'rookies') {
+    try {
+      await leagueStore.fetchRookieLeaders(campaignId.value)
+    } catch (err) {
+      console.error('Failed to fetch rookie rankings:', err)
+    }
   }
 })
 
@@ -544,6 +550,13 @@ function formatSalary(salary) {
             >
               League Leaders
             </button>
+            <button
+              class="tab-btn"
+              :class="{ active: activeTab === 'rookies' }"
+              @click="activeTab = 'rookies'"
+            >
+              Rookie Rankings
+            </button>
           </div>
 
           <!-- Conference Toggle (shown for standings & leaders) -->
@@ -822,6 +835,79 @@ function formatSalary(salary) {
             <div v-if="sortedLeaders.length === 0 && !leagueStore.loadingLeaders" class="empty-state">
               <p>No stats available yet.</p>
               <p class="text-sm text-secondary">Play some games to see league leaders.</p>
+            </div>
+          </div>
+        </GlassCard>
+      </template>
+
+      <!-- Rookie Rankings View -->
+      <template v-else-if="activeTab === 'rookies'">
+        <GlassCard padding="none" :hoverable="false">
+          <div class="leaders-header">
+            <h3 class="h4">Top 10 Rookies</h3>
+            <p class="text-secondary text-sm">Ranked by overall performance score</p>
+          </div>
+
+          <div v-if="leagueStore.loadingRookies" class="loading-state opacity-60">
+            <LoadingSpinner size="md" />
+          </div>
+
+          <div v-else class="table-container">
+            <table class="leaders-table">
+              <thead>
+                <tr>
+                  <th class="rank-col">#</th>
+                  <th class="player-col">Player</th>
+                  <th class="team-col-sm">Team</th>
+                  <th class="stat-col">GP</th>
+                  <th class="stat-col">PPG</th>
+                  <th class="stat-col">RPG</th>
+                  <th class="stat-col">APG</th>
+                  <th class="stat-col">SPG</th>
+                  <th class="stat-col">BPG</th>
+                  <th class="stat-col">FG%</th>
+                  <th class="stat-col">SCORE</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(player, index) in leagueStore.rookieLeaders"
+                  :key="player.playerId"
+                  class="leader-row-table clickable"
+                  :class="{ 'user-team': isUserTeam(player.teamId) }"
+                  @click="openPlayerFromLeaders(player)"
+                >
+                  <td class="rank-col">{{ index + 1 }}</td>
+                  <td class="player-col">
+                    <div class="player-info-cell">
+                      <span class="player-name">{{ player.name }}</span>
+                    </div>
+                  </td>
+                  <td class="team-col-sm">
+                    <div class="team-cell">
+                      <div
+                        class="team-logo-mini"
+                        :style="{ backgroundColor: player.teamColor || '#6B7280' }"
+                      >
+                        {{ player.teamAbbreviation }}
+                      </div>
+                    </div>
+                  </td>
+                  <td class="stat-col">{{ player.gamesPlayed || 0 }}</td>
+                  <td class="stat-col highlight">{{ player.ppg?.toFixed(1) || '0.0' }}</td>
+                  <td class="stat-col">{{ player.rpg?.toFixed(1) || '0.0' }}</td>
+                  <td class="stat-col">{{ player.apg?.toFixed(1) || '0.0' }}</td>
+                  <td class="stat-col">{{ player.spg?.toFixed(1) || '0.0' }}</td>
+                  <td class="stat-col">{{ player.bpg?.toFixed(1) || '0.0' }}</td>
+                  <td class="stat-col">{{ player.fgPct?.toFixed(1) || '0.0' }}%</td>
+                  <td class="stat-col highlight">{{ player.score?.toFixed(1) || '0.0' }}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div v-if="leagueStore.rookieLeaders.length === 0 && !leagueStore.loadingRookies" class="empty-state">
+              <p>No rookie stats available yet.</p>
+              <p class="text-sm text-secondary">Rookies will appear here once they've played at least one game.</p>
             </div>
           </div>
         </GlassCard>

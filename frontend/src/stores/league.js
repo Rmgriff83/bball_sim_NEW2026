@@ -3,14 +3,17 @@ import { ref, computed } from 'vue'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
+import { PlayerRepository } from '@/engine/db/PlayerRepository'
 
 export const useLeagueStore = defineStore('league', () => {
   // State
   const standings = ref({ east: [], west: [] })
   const playerLeaders = ref([])
+  const rookieLeaders = ref([])
   const schedule = ref([])
   const loading = ref(false)
   const loadingLeaders = ref(false)
+  const loadingRookies = ref(false)
   const error = ref(null)
 
   // Cache tracking
@@ -226,6 +229,96 @@ export const useLeagueStore = defineStore('league', () => {
     _leadersCampaignId.value = null
   }
 
+  async function fetchRookieLeaders(campaignId) {
+    loadingRookies.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+
+      const seasonYear = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? new Date().getFullYear()
+
+      const [playerStats, teams, players] = await Promise.all([
+        SeasonRepository.getPlayerStats(campaignId, seasonYear),
+        TeamRepository.getAllForCampaign(campaignId),
+        PlayerRepository.getAllForCampaign(campaignId),
+      ])
+
+      if (!playerStats || typeof playerStats !== 'object') {
+        rookieLeaders.value = []
+        return rookieLeaders.value
+      }
+
+      const teamsById = {}
+      for (const t of (teams || [])) teamsById[t.id] = t
+
+      const playersById = {}
+      for (const p of (players || [])) playersById[String(p.id)] = p
+
+      const rookies = []
+      for (const [playerId, stats] of Object.entries(playerStats)) {
+        const gp = stats.gamesPlayed ?? stats.games_played ?? 0
+        if (gp <= 0) continue
+
+        const playerInfo = playersById[String(playerId)]
+        const draftYear = playerInfo?.draftYear ?? playerInfo?.draft_year ?? null
+        if (draftYear == null || draftYear !== seasonYear) continue
+
+        const ppg = (stats.points ?? 0) / gp
+        const rpg = (stats.rebounds ?? 0) / gp
+        const apg = (stats.assists ?? 0) / gp
+        const spg = (stats.steals ?? 0) / gp
+        const bpg = (stats.blocks ?? 0) / gp
+        const tovpg = (stats.turnovers ?? 0) / gp
+        const fga = stats.fga ?? stats.fieldGoalsAttempted ?? 0
+        const fgPct = fga > 0
+          ? ((stats.fgm ?? stats.fieldGoalsMade ?? 0) / fga) * 100
+          : 0
+
+        // ROTY-style score (mirrors AwardService._scoreROTY without team win pct,
+        // since this ranking is about individual production, not awards races)
+        const score = (ppg * 3) + (rpg * 2) + (apg * 2.5) + (spg * 2) + (bpg * 1.5) - (tovpg * 0.5)
+
+        const team = teamsById[stats.teamId] || null
+        const teamAbbreviation = team?.abbreviation ?? stats.teamAbbreviation ?? stats.team_abbreviation ?? ''
+
+        const fallbackName = playerInfo
+          ? `${playerInfo.firstName ?? ''} ${playerInfo.lastName ?? ''}`.trim()
+          : ''
+
+        rookies.push({
+          playerId,
+          name: stats.playerName ?? stats.player_name ?? (fallbackName || 'Unknown'),
+          teamId: stats.teamId ?? null,
+          teamAbbreviation,
+          teamColor: team?.primary_color ?? '#6B7280',
+          position: stats.position ?? playerInfo?.position ?? '',
+          gamesPlayed: gp,
+          ppg: Math.round(ppg * 10) / 10,
+          rpg: Math.round(rpg * 10) / 10,
+          apg: Math.round(apg * 10) / 10,
+          spg: Math.round(spg * 10) / 10,
+          bpg: Math.round(bpg * 10) / 10,
+          fgPct: Math.round(fgPct * 10) / 10,
+          score: Math.round(score * 10) / 10,
+        })
+      }
+
+      rookies.sort((a, b) => b.score - a.score)
+      rookieLeaders.value = rookies.slice(0, 10)
+      return rookieLeaders.value
+    } catch (err) {
+      error.value = err.message || 'Failed to fetch rookie rankings'
+      throw err
+    } finally {
+      loadingRookies.value = false
+    }
+  }
+
+  function clearRookieLeaders() {
+    rookieLeaders.value = []
+  }
+
   function invalidate() {
     _standingsCampaignId.value = null
     _leadersCampaignId.value = null
@@ -235,9 +328,11 @@ export const useLeagueStore = defineStore('league', () => {
     // State
     standings,
     playerLeaders,
+    rookieLeaders,
     schedule,
     loading,
     loadingLeaders,
+    loadingRookies,
     error,
     // Getters
     eastStandings,
@@ -249,12 +344,14 @@ export const useLeagueStore = defineStore('league', () => {
     // Actions
     fetchStandings,
     fetchPlayerLeaders,
+    fetchRookieLeaders,
     updateStandings,
     getTeamRank,
     getWinPercentage,
     getGamesBehind,
     clearStandings,
     clearPlayerLeaders,
+    clearRookieLeaders,
     invalidate,
   }
 })

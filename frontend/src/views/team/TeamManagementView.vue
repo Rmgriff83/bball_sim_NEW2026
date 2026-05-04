@@ -8,8 +8,9 @@ import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
-import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity } from 'lucide-vue-next'
+import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import TradesTab from '@/components/trade/TradesTab.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
 import FacilitiesTab from '@/components/team/FacilitiesTab.vue'
@@ -18,6 +19,8 @@ import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import HireScoutModal from '@/components/team/HireScoutModal.vue'
 import HireTrainerModal from '@/components/team/HireTrainerModal.vue'
 import HireStaffTrainerModal from '@/components/team/HireStaffTrainerModal.vue'
+import CoachBadgeStoreModal from '@/components/coach/CoachBadgeStoreModal.vue'
+import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { useSyncStore } from '@/stores/sync'
 import { isPastTradeDeadline } from '@/engine/season/SeasonDeadlines'
@@ -81,6 +84,15 @@ const showHireTrainerModal = ref(false)
 const firingTrainer = ref(false)
 const showHireStaffTrainerModal = ref(false)
 const firingStaffTrainer = ref(false)
+const showCoachBadgeStore = ref(false)
+
+// Coach badge tier colors for the chip display
+const COACH_BADGE_TIER_COLORS = {
+  bronze: '#CD7F32',
+  silver: '#C0C0C0',
+  gold: '#FFD700',
+  hof: '#9333EA',
+}
 
 // Scout computed
 const scoutingFacilityLevel = computed(() => teamStore.team?.facilities?.scouting ?? 1)
@@ -160,6 +172,26 @@ const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => teamStore.team)
 const roster = computed(() => teamStore.roster)
 const coach = computed(() => teamStore.coach)
+
+// Owned coach badges enriched with their definitions (name/description) and
+// merged with the per-entry level + source for the chip display.
+const ownedCoachBadges = computed(() => {
+  const owned = coach.value?.badges ?? []
+  return owned
+    .map(entry => {
+      const def = COACH_BADGE_DEFS.find(b => b.id === entry?.id)
+      if (!def) return null
+      return {
+        id: def.id,
+        name: def.name,
+        description: def.description,
+        category: def.category,
+        level: entry.level ?? 'bronze',
+        source: entry.source,
+      }
+    })
+    .filter(Boolean)
+})
 // Normalize career stats — supports both nested career_stats object (post-season-archive)
 // and flat fields (career_wins, career_losses, etc.) from initial coach generation
 const coachCareerStats = computed(() => {
@@ -411,6 +443,11 @@ function setPlayerMinutes(playerId, desired) {
   debouncedSaveMinutes()
 }
 
+function isPlayerInjured(playerId) {
+  const p = roster.value.find(rp => rp.id === playerId)
+  return !!(p?.is_injured || p?.isInjured)
+}
+
 function getMinutesMeterColor(mins) {
   if (mins <= 0) return '#6b7280'
   if (mins <= 20) return '#22c55e'
@@ -429,6 +466,7 @@ function calcMinutesFromEvent(e, bar) {
 }
 
 function startMinutesDrag(e, playerId, minFloor) {
+  if (isPlayerInjured(playerId)) return
   e.preventDefault()
   draggingPlayerId.value = playerId
   draggingMinFloor.value = minFloor
@@ -937,10 +975,13 @@ function formatChange(change) {
   return change > 0 ? `+${rounded}` : `${rounded}`
 }
 
-// Mock player news - in production this would come from backend
 const playerNews = computed(() => {
   if (!selectedPlayer.value) return []
-  return []
+  const allNews = campaignStore.currentCampaign?.news ?? []
+  return allNews
+    .filter(n => n.player_id === selectedPlayer.value.id)
+    .slice()
+    .reverse()
 })
 
 // Handle attribute upgrade from PlayerDetailModal
@@ -992,6 +1033,16 @@ async function onScoutHired() {
     await campaignStore.fetchCampaign(campaignId.value)
   } catch (err) {
     console.error('Failed to refresh campaign after hiring scout:', err)
+  }
+}
+
+// Refresh team store after a coach badge purchase so the coach card chip row
+// and the badge store's "Owned" state both reflect the new badge immediately.
+async function onCoachBadgePurchased() {
+  try {
+    await teamStore.fetchTeam(campaignId.value, { force: true })
+  } catch (err) {
+    console.error('Failed to refresh team after coach badge purchase:', err)
   }
 }
 
@@ -1123,7 +1174,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           :class="{ active: activeTab === 'team' }"
           @click="activeTab = 'team'"
         >
-          Team
+          Lineup
         </button>
         <button
           class="tab-btn"
@@ -1140,7 +1191,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           :class="{ active: activeTab === 'finances' }"
           @click="activeTab = 'finances'"
         >
-          Finances
+          Roster
           <span v-if="expiringContractsCount > 0" class="tab-badge">{{ expiringContractsCount }}</span>
         </button>
         <button
@@ -1217,7 +1268,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     >
                       <ArrowUpDown :size="14" class="dropdown-move-icon" />
                       <div class="dropdown-avatar">
-                        <PlayerAvatar :player="candidate" :size="16" />
+                        <PlayerAvatar :player="candidate" :size="24" />
                       </div>
                       <span class="dropdown-name">{{ candidate.name }}</span>
                       <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
@@ -1250,15 +1301,16 @@ const STAFF_TRAINER_PERK_LABELS = {
               <div class="card-header">
                 <div class="avatar-column">
                   <div class="player-avatar">
-                    <PlayerAvatar :player="slot.player" :size="42" class="avatar-icon" />
+                    <PlayerAvatar :player="slot.player" :size="78" class="avatar-icon" />
+                    <span class="slot-position-label card-cosmic">{{ slot.position }}</span>
                   </div>
-                  <span class="slot-position-label card-cosmic">{{ slot.position }}</span>
                 </div>
                 <div class="player-main-info">
                   <h4 class="player-name" :class="{ 'text-injured': slot.player.is_injured || slot.player.isInjured }">
                     {{ slot.player.name }}
                   </h4>
                   <div class="player-meta">
+                    <div class="vitals-row">{{ slot.player.height || "6'6\"" }} · {{ formatWeight(slot.player.weight) }} lbs · {{ slot.player.age || 25 }} yrs</div>
                     <div class="position-badges">
                       <span
                         class="position-badge"
@@ -1278,11 +1330,11 @@ const STAFF_TRAINER_PERK_LABELS = {
                       Injured - {{ (slot.player.injury_details?.games_remaining || slot.player.injuryDetails?.games_remaining || 0) }} {{ (slot.player.injury_details?.games_remaining || slot.player.injuryDetails?.games_remaining || 0) === 1 ? 'game' : 'games' }}
                     </span>
                   </div>
-                  <div class="vitals-row">{{ slot.player.height || "6'6\"" }} · {{ formatWeight(slot.player.weight) }} lbs · {{ slot.player.age || 25 }} yrs</div>
                   <!-- Minutes Meter -->
                   <div class="minutes-meter-row" @click.stop>
                     <label class="meter-label">MIN</label>
                     <div class="minutes-meter-bar"
+                      :class="{ disabled: slot.player.is_injured || slot.player.isInjured }"
                       @mousedown="(e) => startMinutesDrag(e, slot.player.id, 8)"
                       @touchstart="(e) => startMinutesDrag(e, slot.player.id, 8)"
                     >
@@ -1346,7 +1398,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     >
                       <ArrowUpDown :size="14" class="dropdown-move-icon" />
                       <div class="dropdown-avatar">
-                        <PlayerAvatar :player="candidate" :size="16" />
+                        <PlayerAvatar :player="candidate" :size="24" />
                       </div>
                       <div class="dropdown-name-row">
                         <span class="dropdown-name">{{ candidate.name }}</span>
@@ -1422,15 +1474,16 @@ const STAFF_TRAINER_PERK_LABELS = {
             <div class="card-header">
               <div class="avatar-column">
                 <div class="player-avatar">
-                  <PlayerAvatar :player="player" :size="42" class="avatar-icon" />
+                  <PlayerAvatar :player="player" :size="78" class="avatar-icon" />
+                  <span class="slot-position-label bench-label">BENCH</span>
                 </div>
-                <span class="slot-position-label bench-label">BENCH</span>
               </div>
               <div class="player-main-info">
                 <h4 class="player-name" :class="{ 'text-injured': player.is_injured || player.isInjured }">
                   {{ player.name }}
                 </h4>
                 <div class="player-meta">
+                  <div class="vitals-row">{{ player.height || "6'6\"" }} · {{ formatWeight(player.weight) }} lbs · {{ player.age || 25 }} yrs</div>
                   <div class="position-badges">
                     <span class="position-badge" :style="{ backgroundColor: getPositionColor(player.position) }">
                       {{ player.position }}
@@ -1443,11 +1496,11 @@ const STAFF_TRAINER_PERK_LABELS = {
                     Injured - {{ (player.injury_details?.games_remaining || player.injuryDetails?.games_remaining || 0) }} {{ (player.injury_details?.games_remaining || player.injuryDetails?.games_remaining || 0) === 1 ? 'game' : 'games' }}
                   </span>
                 </div>
-                <div class="vitals-row">{{ player.height || "6'6\"" }} · {{ formatWeight(player.weight) }} lbs · {{ player.age || 25 }} yrs</div>
                 <!-- Minutes Meter -->
                 <div class="minutes-meter-row" @click.stop>
                   <label class="meter-label">MIN</label>
                   <div class="minutes-meter-bar"
+                    :class="{ disabled: player.is_injured || player.isInjured }"
                     @mousedown="(e) => startMinutesDrag(e, player.id, 0)"
                     @touchstart="(e) => startMinutesDrag(e, player.id, 0)"
                   >
@@ -1518,7 +1571,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                   >
                     <ArrowUpDown :size="14" class="dropdown-move-icon" />
                     <div class="dropdown-avatar">
-                      <PlayerAvatar :player="candidate" :size="16" />
+                      <PlayerAvatar :player="candidate" :size="24" />
                     </div>
                     <div class="dropdown-name-row">
                       <span class="dropdown-name">{{ candidate.name }}</span>
@@ -1639,14 +1692,34 @@ const STAFF_TRAINER_PERK_LABELS = {
         <GlassCard v-if="coach" padding="lg" :hoverable="false">
           <h3 class="h4 mb-4">Head Coach</h3>
           <div class="coach-header">
-            <div class="coach-avatar">
-              {{ coach.name?.charAt(0) || 'C' }}
+            <div class="coach-avatar-wrap">
+              <CoachAvatar :coach="coach" :size="64" />
             </div>
             <div class="coach-info">
               <p class="coach-name">{{ coach.name }}</p>
               <div class="coach-rating">
                 <StatBadge :value="coach.overall_rating" size="sm" />
                 <span class="rating-label">Overall Rating</span>
+              </div>
+            </div>
+            <button class="coach-badge-store-btn" @click="showCoachBadgeStore = true">
+              <Star :size="14" />
+              Badge Store
+            </button>
+          </div>
+
+          <!-- Coach Badges -->
+          <div v-if="ownedCoachBadges.length > 0" class="coach-badges-section mt-4">
+            <h4 class="section-title">Coach Badges</h4>
+            <div class="coach-badges-row">
+              <div
+                v-for="badge in ownedCoachBadges"
+                :key="badge.id"
+                class="coach-badge-chip"
+                :title="`${badge.description} (${badge.level.toUpperCase()})`"
+              >
+                <Star :size="12" :style="{ color: COACH_BADGE_TIER_COLORS[badge.level] || 'var(--color-text-secondary)' }" :fill="COACH_BADGE_TIER_COLORS[badge.level] || 'transparent'" />
+                <span class="coach-badge-chip-name">{{ badge.name }}</span>
               </div>
             </div>
           </div>
@@ -2163,6 +2236,15 @@ const STAFF_TRAINER_PERK_LABELS = {
           @close="showHireStaffTrainerModal = false"
           @hired="onStaffTrainerHired"
         />
+
+        <!-- Coach Badge Store Modal -->
+        <CoachBadgeStoreModal
+          :show="showCoachBadgeStore"
+          :campaign-id="campaignId"
+          :team="team"
+          @close="showCoachBadgeStore = false"
+          @purchased="onCoachBadgePurchased"
+        />
       </div>
 
       <!-- Finances View -->
@@ -2408,19 +2490,13 @@ const STAFF_TRAINER_PERK_LABELS = {
 
 .players-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 12px;
 }
 
-@media (min-width: 768px) {
+@media (max-width: 415px) {
   .players-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (min-width: 1024px) {
-  .players-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: 1fr;
   }
 }
 
@@ -2433,6 +2509,13 @@ const STAFF_TRAINER_PERK_LABELS = {
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
+  min-width: 360px;
+}
+
+@media (max-width: 415px) {
+  .player-card {
+    min-width: 0;
+  }
 }
 
 .player-card::before {
@@ -2770,7 +2853,7 @@ const STAFF_TRAINER_PERK_LABELS = {
 
 .card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 12px;
   background: rgba(0, 0, 0, 0.1);
@@ -2785,12 +2868,15 @@ const STAFF_TRAINER_PERK_LABELS = {
 }
 
 .slot-position-label {
+  position: absolute;
+  bottom: -10px;
+  left: 5px;
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 1.2rem;
+  font-size: 0.95rem;
   font-weight: 400;
   letter-spacing: 0.04em;
   color: #1a1520;
-  padding: 2px 12px;
+  padding: 1px 8px;
   border-radius: var(--radius-md);
   line-height: 1.3;
   text-align: center;
@@ -2800,14 +2886,14 @@ const STAFF_TRAINER_PERK_LABELS = {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: var(--color-text-secondary);
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   letter-spacing: 0.06em;
-  padding: 2px 8px;
+  padding: 1px 6px;
 }
 
 .player-avatar {
-  width: 54px;
-  height: 54px;
+  width: 80px;
+  height: 80px;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 50%;
   display: flex;
@@ -2815,6 +2901,7 @@ const STAFF_TRAINER_PERK_LABELS = {
   justify-content: center;
   color: var(--color-text-tertiary);
   flex-shrink: 0;
+  position: relative;
 }
 
 .avatar-icon {
@@ -2833,7 +2920,7 @@ const STAFF_TRAINER_PERK_LABELS = {
 }
 
 .player-name {
-  font-size: 0.95rem;
+  font-size: 0.985rem;
   font-weight: 600;
   margin: 0;
   white-space: nowrap;
@@ -2897,7 +2984,6 @@ const STAFF_TRAINER_PERK_LABELS = {
 .vitals-row {
   font-size: 0.75rem;
   color: var(--color-text-primary);
-  margin-top: 6px;
 }
 
 /* Shared meter label (MIN / FATIGUE) */
@@ -2915,7 +3001,7 @@ const STAFF_TRAINER_PERK_LABELS = {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
 .fatigue-meter-bar {
@@ -3082,18 +3168,20 @@ const STAFF_TRAINER_PERK_LABELS = {
   align-items: center;
   flex: 1;
   padding: 2px 0;
-  gap: 1px;
+  gap: 3px;
 }
 
 .stat-inline .stat-label {
   display: block;
-  font-size: 0.5rem;
+  font-size: 0.475rem;
   font-weight: 600;
   color: var(--color-text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   margin-bottom: 0;
   line-height: 1;
+  padding-bottom:1px;
+  border-bottom:1px solid var(--color-text-tertiary);
 }
 
 .stat-inline .stat-val {
@@ -3113,6 +3201,7 @@ const STAFF_TRAINER_PERK_LABELS = {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 2px;
   padding-left: 10px;
 }
 
@@ -3250,6 +3339,67 @@ const STAFF_TRAINER_PERK_LABELS = {
   font-size: 1.5rem;
   font-weight: 700;
   color: white;
+}
+
+.coach-avatar-wrap {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.coach-badge-store-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.coach-badge-store-btn:hover {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.coach-badges-section {
+  /* Reuses .section-title and .mt-4 from elsewhere in this file */
+}
+
+.coach-badges-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.coach-badge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  color: var(--color-text-primary);
+}
+
+.coach-badge-chip-name {
+  font-weight: 500;
 }
 
 .coach-info {
@@ -4724,14 +4874,14 @@ const STAFF_TRAINER_PERK_LABELS = {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
+  margin-top: 10px;
 }
 
 .minutes-meter-bar {
   flex: 1;
-  height: 10px;
+  height: 15px;
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 5px;
+  border-radius: 12px;
   overflow: visible;
   cursor: pointer;
   position: relative;
@@ -4739,7 +4889,7 @@ const STAFF_TRAINER_PERK_LABELS = {
 
 .minutes-meter-fill {
   height: 100%;
-  border-radius: 5px;
+  border-radius: 12px;
   transition: width 0.2s ease, background-color 0.2s ease;
   position: relative;
 }
@@ -4748,13 +4898,19 @@ const STAFF_TRAINER_PERK_LABELS = {
   transition: none;
 }
 
+.minutes-meter-bar.disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 .minutes-thumb {
   position: absolute;
   right: -7px;
   top: 50%;
   transform: translateY(-50%);
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.5);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
@@ -4771,7 +4927,7 @@ const STAFF_TRAINER_PERK_LABELS = {
   font-weight: 700;
   font-family: var(--font-mono, monospace);
   min-width: 30px;
-  text-align: right;
+  text-align: left;
   flex-shrink: 0;
 }
 

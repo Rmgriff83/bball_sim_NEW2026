@@ -40,10 +40,17 @@ const showPlayerModal = ref(false)
 
 const ALL_ATTRIBUTES = [
   'overallRating', 'potentialRating',
-  'threePoint', 'midRange', 'postScoring', 'layup', 'dunk', 'ballHandling', 'passing', 'speedWithBall',
-  'perimeterD', 'interiorD', 'steal', 'block', 'defensiveIQ',
-  'speed', 'acceleration', 'strength', 'vertical', 'stamina',
-  'basketballIQ', 'consistency', 'clutch', 'workEthic',
+  // Offense
+  'threePoint', 'midRange', 'closeShot', 'freeThrow', 'shotIQ', 'offensiveConsistency',
+  'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl',
+  'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ',
+  // Defense
+  'perimeterDefense', 'interiorDefense', 'steal', 'block', 'helpDefenseIQ',
+  'passPerception', 'defensiveConsistency', 'offensiveRebound', 'defensiveRebound',
+  // Physical
+  'speed', 'acceleration', 'strength', 'vertical', 'stamina', 'hustle', 'durability',
+  // Mental
+  'basketballIQ', 'clutch', 'workEthic', 'coachability', 'intangibles',
 ]
 
 function isAttributeRevealed(playerId, attr) {
@@ -283,8 +290,9 @@ onMounted(async () => {
         // Reload rookies (draft prospects for this year). Funnel through
         // generateAndSaveRookieClass so its repair pass fixes any rookie
         // with overall > potential before the draft list renders.
-        const gameYear = campaign.gameYear ?? 1
-        const rookies = await generateAndSaveRookieClass(campaignId.value, gameYear)
+        // draftYear = season year the rookies will first play (currentSeasonYear + 1).
+        const seasonYearForDraft = (campaign.currentSeasonYear ?? 2025) + 1
+        const rookies = await generateAndSaveRookieClass(campaignId.value, seasonYearForDraft)
         draftStore.allPlayers = rookies
         draftStore.teams = teamsList
 
@@ -296,9 +304,10 @@ onMounted(async () => {
       } else {
         // Fresh rookie draft
         const gameYear = campaign.gameYear ?? 1
+        const seasonYearForDraft = (campaign.currentSeasonYear ?? 2025) + 1
 
         // Get or generate rookies (also repairs OVR>POT in pre-existing data)
-        const rookies = await generateAndSaveRookieClass(campaignId.value, gameYear)
+        const rookies = await generateAndSaveRookieClass(campaignId.value, seasonYearForDraft)
 
         // Load standings for draft order
         const seasonYear = campaign.currentSeasonYear ?? 2025

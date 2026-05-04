@@ -176,6 +176,9 @@ function close() {
                       </span>
                       <span class="chip-player-name">{{ p.playerName }}</span>
                       <span class="chip-position">{{ p.position }}</span>
+                      <span v-if="p.stats" class="chip-stats">
+                        {{ p.stats.ppg }}/{{ p.stats.rpg }}/{{ p.stats.apg }}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -211,6 +214,9 @@ function close() {
                       </span>
                       <span class="chip-player-name">{{ p.playerName }}</span>
                       <span class="chip-position">{{ p.position }}</span>
+                      <span v-if="p.stats" class="chip-stats">
+                        {{ p.stats.spg }} SPG &middot; {{ p.stats.bpg }} BPG
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -246,6 +252,9 @@ function close() {
                       </span>
                       <span class="chip-player-name">{{ p.playerName }}</span>
                       <span class="chip-position">{{ p.position }}</span>
+                      <span v-if="p.stats" class="chip-stats">
+                        {{ p.stats.ppg }}/{{ p.stats.rpg }}/{{ p.stats.apg }}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -568,6 +577,15 @@ function close() {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-tertiary);
+}
+
+.chip-stats {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  margin-left: auto;
 }
 
 /* Footer */

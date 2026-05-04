@@ -7,9 +7,9 @@ import { useTeamStore } from '@/stores/team'
 import { useLeagueStore } from '@/stores/league'
 import { usePlayoffStore } from '@/stores/playoff'
 import { useToastStore } from '@/stores/toast'
-import { LoadingSpinner } from '@/components/ui'
+import { LoadingSpinner, StandardModal } from '@/components/ui'
 import BoxScore from '@/components/game/BoxScore.vue'
-import { X, Play, FastForward, Eye, Lock, AlertTriangle, Trophy } from 'lucide-vue-next'
+import { X, Play, FastForward, Eye, Lock, AlertTriangle, Trophy, Cpu, Users } from 'lucide-vue-next'
 
 const props = defineProps({
   show: {
@@ -80,6 +80,55 @@ function goToTeamTab() {
   showWarning.value = false
   router.push(`/campaign/${props.campaignId}/team?tab=team`)
   close()
+}
+
+async function handleCpuSetLineup() {
+  try {
+    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const roster = teamStore.roster
+    if (!roster || roster.length < 5) {
+      toastStore.showError('Not enough players to set lineup')
+      return
+    }
+    const newLineup = selectBestLineup(roster)
+    await teamStore.updateLineup(props.campaignId, newLineup)
+
+    // Recompute target minutes so the rotation totals 200 again. Mirrors the
+    // distribution used in CampaignHomeView's handler: starters split 160 mins
+    // (max 40 each), top healthy bench players get [16,12,8,4], everyone else 0.
+    const starterSet = new Set(newLineup.filter(id => id !== null))
+    const newMinutes = {}
+    const healthyStarters = newLineup.filter(id => id !== null)
+    const starterMins = healthyStarters.length > 0 ? Math.min(Math.floor(160 / healthyStarters.length), 40) : 0
+    let starterTotal = 0
+    for (const id of healthyStarters) {
+      newMinutes[id] = starterMins
+      starterTotal += starterMins
+    }
+    const benchPlayers = roster
+      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
+      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+    let benchBudget = 200 - starterTotal
+    const benchSlots = [16, 12, 8, 4]
+    for (let i = 0; i < benchPlayers.length; i++) {
+      if (i < benchSlots.length && benchBudget > 0) {
+        const mins = Math.min(benchSlots[i], benchBudget)
+        newMinutes[benchPlayers[i].id] = mins
+        benchBudget -= mins
+      } else {
+        newMinutes[benchPlayers[i].id] = 0
+      }
+    }
+    for (const p of roster) {
+      if (p && !(p.id in newMinutes)) newMinutes[p.id] = 0
+    }
+    await teamStore.updateTargetMinutes(props.campaignId, newMinutes)
+
+    showWarning.value = false
+    toastStore.showSuccess('CPU adjusted your lineup')
+  } catch (err) {
+    toastStore.showError('Failed to auto-set lineup')
+  }
 }
 
 // Determine if user is home or away
@@ -238,6 +287,9 @@ async function simulateToThisGame() {
   if (!validateRoster()) return
 
   simulating.value = true
+  // Close the modal immediately on selection so the user isn't stuck staring
+  // at the calendar modal while the multi-game sim runs in the background.
+  close()
   const loadingToastId = toastStore.showLoading('Simulating to game...')
 
   try {
@@ -275,7 +327,6 @@ async function simulateToThisGame() {
     ])
 
     emit('simulated')
-    close()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Simulation failed. Please try again.')
@@ -291,6 +342,8 @@ async function simulateToGame() {
   if (!validateRoster()) return
 
   simulating.value = true
+  // Close on selection so the modal doesn't linger over the loading toast.
+  close()
   const loadingToastId = toastStore.showLoading('Simulating games...')
 
   try {
@@ -339,9 +392,6 @@ async function simulateToGame() {
 
     // Emit event so parent can update
     emit('simulated')
-
-    // Close modal
-    close()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Simulation failed. Please try again.')
@@ -554,8 +604,8 @@ onUnmounted(() => {
               Games must be played in order. This is not your next scheduled game.
             </p>
             <p v-else-if="!isNextGame" class="order-notice">
-              <Lock :size="16" />
-              Games must be played in order — but you can fast-forward to this one.
+              <FastForward :size="16" />
+              Sim through this game
             </p>
           </div>
 
@@ -611,7 +661,7 @@ onUnmounted(() => {
               >
                 <LoadingSpinner v-if="simulating" size="sm" />
                 <FastForward v-else :size="18" />
-                {{ simulating ? 'Simulating...' : 'Sim to This Game' }}
+                {{ simulating ? 'Simulating...' : 'Sim Through This Game' }}
               </button>
             </template>
           </footer>
@@ -621,23 +671,31 @@ onUnmounted(() => {
   </Teleport>
 
   <!-- Roster Warning Modal -->
-  <Teleport to="body">
-    <Transition name="modal">
-      <div v-if="showWarning" class="warning-overlay" @click.self="showWarning = false">
-        <div class="warning-modal">
-          <div class="warning-icon-wrap">
-            <AlertTriangle :size="40" class="warning-icon-svg" />
-          </div>
-          <p class="warning-msg">{{ warningMessage }}</p>
-          <p class="warning-hint">{{ warningHint }}</p>
-          <div class="warning-btns">
-            <button class="btn btn-secondary" @click="showWarning = false">Cancel</button>
-            <button class="btn btn-primary" @click="goToTeamTab">Go to Team Tab</button>
-          </div>
-        </div>
+  <StandardModal
+    :show="showWarning"
+    title="Lineup Issue"
+    size="sm"
+    @close="showWarning = false"
+  >
+    <div class="warning-body">
+      <div class="warning-icon-wrap">
+        <AlertTriangle :size="40" class="warning-icon-svg" />
       </div>
-    </Transition>
-  </Teleport>
+      <p class="warning-msg">{{ warningMessage }}</p>
+      <p class="warning-hint">{{ warningHint }}</p>
+    </div>
+    <template #footer>
+      <button class="warning-btn-cancel" @click="showWarning = false">Cancel</button>
+      <button class="warning-btn-cpu" @click="handleCpuSetLineup">
+        <Cpu :size="16" />
+        CPU Adjust
+      </button>
+      <button class="warning-btn-confirm" @click="goToTeamTab">
+        <Users :size="16" />
+        View Lineup
+      </button>
+    </template>
+  </StandardModal>
 </template>
 
 <style scoped>
@@ -1060,28 +1118,12 @@ onUnmounted(() => {
   }
 }
 
-/* Roster Warning Modal */
-.warning-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
+/* Roster Warning Modal body styles (modal shell comes from StandardModal) */
+.warning-body {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(8px);
-}
-
-.warning-modal {
-  width: 100%;
-  max-width: 400px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-2xl);
-  padding: 32px 24px 24px;
   text-align: center;
-  animation: scaleIn 0.2s ease-out;
 }
 
 .warning-icon-wrap {
@@ -1103,15 +1145,56 @@ onUnmounted(() => {
 .warning-hint {
   font-size: 0.825rem;
   color: var(--color-text-secondary);
-  margin: 0 0 24px;
+  margin: 0;
 }
 
-.warning-btns {
-  display: flex;
-  gap: 12px;
-}
-
-.warning-btns .btn {
+.warning-btn-cancel,
+.warning-btn-cpu,
+.warning-btn-confirm {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.warning-btn-cancel {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.warning-btn-cancel:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+.warning-btn-cpu {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+}
+
+.warning-btn-cpu:hover {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.warning-btn-confirm {
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.warning-btn-confirm:hover {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
 }
 </style>

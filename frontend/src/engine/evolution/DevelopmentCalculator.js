@@ -194,6 +194,14 @@ function calculateMonthlyDevelopment(player, context = {}, difficulty = 'pro') {
   let total = base + workEthicBonus + playingTimeBonus + mentorBonus + synergyBonus + duoBonus;
   total *= (1 + moraleModifier);
 
+  // Coach development multiplier — head coach's `playerDevelopment` rating
+  // (centered at 75 = neutral) plus any flat bonus from coach badges. Defaults
+  // to 1.0 when coach context is absent so legacy callers behave unchanged.
+  const coachDevRating = context.coachDevelopmentRating ?? 75;
+  const coachDevBadgeBonus = context.coachDevelopmentBadgeBonus ?? 0;
+  const coachDevMultiplier = 0.85 + (coachDevRating / 75) * 0.15 + coachDevBadgeBonus;
+  total *= Math.max(0.85, coachDevMultiplier);
+
   return Math.max(0, total);
 }
 
