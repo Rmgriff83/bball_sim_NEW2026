@@ -458,8 +458,15 @@ export class AwardService {
   // Apply Awards to Player Objects
   // -----------------------------------------------------------------------
 
-  static applyAwardsToPlayers(allPlayers, awardResults) {
+  static applyAwardsToPlayers(allPlayers, awardResults, year = null) {
     const playerMap = Object.fromEntries(allPlayers.map(p => [String(p.id), p]))
+
+    const pushAwardYear = (p, key, yr) => {
+      if (yr == null) return
+      if (!p.awards) p.awards = {}
+      if (!Array.isArray(p.awards[key])) p.awards[key] = []
+      p.awards[key].push(yr)
+    }
 
     // MVP
     if (awardResults.mvp) {
@@ -467,6 +474,7 @@ export class AwardService {
       if (p) {
         p.mvpAwards = (p.mvpAwards ?? p.mvp_awards ?? 0) + 1
         p.mvp_awards = p.mvpAwards
+        pushAwardYear(p, 'mvp', year)
       }
     }
 
@@ -476,6 +484,7 @@ export class AwardService {
       if (p) {
         p.rookieOfTheYear = (p.rookieOfTheYear ?? p.rookie_of_the_year ?? 0) + 1
         p.rookie_of_the_year = p.rookieOfTheYear
+        pushAwardYear(p, 'rookie_of_the_year', year)
       }
     }
 
@@ -491,6 +500,7 @@ export class AwardService {
               p.allNbaFirstTeam = (p.allNbaFirstTeam ?? p.all_nba_first_team ?? 0) + 1
               p.all_nba_first_team = p.allNbaFirstTeam
             }
+            pushAwardYear(p, `all_nba_${tier}`, year)
           }
         }
       }
@@ -504,6 +514,7 @@ export class AwardService {
           if (p) {
             p.allRookieTeam = (p.allRookieTeam ?? p.all_rookie_team ?? 0) + 1
             p.all_rookie_team = p.allRookieTeam
+            pushAwardYear(p, `all_rookie_${tier}`, year)
           }
         }
       }
@@ -517,6 +528,7 @@ export class AwardService {
           if (p) {
             p.allDefensiveTeam = (p.allDefensiveTeam ?? p.all_defensive_team ?? 0) + 1
             p.all_defensive_team = p.allDefensiveTeam
+            pushAwardYear(p, `all_defense_${tier}`, year)
           }
         }
       }

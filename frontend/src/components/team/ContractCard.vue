@@ -24,6 +24,13 @@ const props = defineProps({
   isFreeAgent: {
     type: Boolean,
     default: false
+  },
+  // When true (e.g. after the in-season re-sign deadline passes) the Re-sign
+  // button is hidden. The team store / FinanceManager already enforce this at
+  // the action layer; hiding the button avoids a confusing dead click.
+  resignDisabled: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -101,7 +108,7 @@ function handleInfo() {
       <!-- Left Column: Avatar + Buttons -->
       <div class="left-column">
         <div class="player-avatar">
-          <PlayerAvatar :player="player" :size="42" />
+          <PlayerAvatar :player="player" :size="78" />
           <div v-if="isExpiringContract && !isFreeAgent" class="expiring-indicator" title="Expiring contract">
             <AlertTriangle :size="12" />
           </div>
@@ -110,7 +117,7 @@ function handleInfo() {
         <!-- Action Buttons for Team Players -->
         <div v-if="showActions && !isFreeAgent" class="action-buttons">
           <button
-            v-if="isExpiringContract"
+            v-if="isExpiringContract && !resignDisabled"
             class="action-btn resign-btn"
             @click.stop="handleResign"
             title="Re-sign player"
@@ -143,9 +150,15 @@ function handleInfo() {
 
       <!-- Player Info -->
       <div class="player-info">
-        <div class="player-header">
-          <span class="player-name">{{ player.firstName }} {{ player.lastName }}</span>
-          <div class="player-badges">
+        <h4 class="player-name">{{ player.firstName }} {{ player.lastName }}</h4>
+        <div class="player-meta">
+          <div class="vitals-row">
+            {{ player.height || "6'6\"" }} · {{ player.age }} yrs
+            <span v-if="player.potentialRating && player.potentialRating > player.overallRating" class="player-potential">
+              · {{ player.potentialRating }} pot
+            </span>
+          </div>
+          <div class="position-badges">
             <span
               class="position-badge"
               :style="{ backgroundColor: getPositionColor(player.position) }"
@@ -160,14 +173,6 @@ function handleInfo() {
               {{ player.secondaryPosition }}
             </span>
           </div>
-        </div>
-
-        <div class="player-meta">
-          <StatBadge :value="player.overallRating" size="xs" />
-          <span class="player-age">{{ player.age }} yrs</span>
-          <span v-if="player.potentialRating && player.potentialRating > player.overallRating" class="player-potential">
-            ({{ player.potentialRating }} pot)
-          </span>
         </div>
 
         <!-- Contract Details (for team players) -->
@@ -229,6 +234,11 @@ function handleInfo() {
         </div>
       </div>
 
+      <!-- Right Column: Rating -->
+      <div class="rating-container">
+        <StatBadge :value="player.overallRating" size="md" />
+      </div>
+
     </div>
   </div>
 </template>
@@ -242,6 +252,13 @@ function handleInfo() {
   position: relative;
   overflow: hidden;
   cursor: pointer;
+  min-width: 360px;
+}
+
+@media (max-width: 415px) {
+  .contract-card {
+    min-width: 0;
+  }
 }
 
 .contract-card:hover {
@@ -260,6 +277,14 @@ function handleInfo() {
   gap: 0.875rem;
 }
 
+.rating-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 /* Left Column with Avatar and Buttons */
 .left-column {
   display: flex;
@@ -271,14 +296,15 @@ function handleInfo() {
 
 .player-avatar {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 80px;
+  height: 80px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(255, 255, 255, 0.08);
   border-radius: 50%;
   color: var(--color-text-secondary);
+  flex-shrink: 0;
 }
 
 /* Action Buttons */
@@ -342,21 +368,17 @@ function handleInfo() {
   min-width: 0;
 }
 
-.player-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.25rem;
-  flex-wrap: wrap;
-}
-
 .player-name {
   font-weight: 600;
   font-size: 0.95rem;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--color-text-primary);
 }
 
-.player-badges {
+.position-badges {
   display: flex;
   gap: 0.25rem;
 }
@@ -378,16 +400,17 @@ function handleInfo() {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  margin-top: 0.25rem;
   margin-bottom: 0.5rem;
+  flex-wrap: wrap;
 }
 
-.player-age {
-  font-size: 0.8rem;
-  color: var(--color-text-secondary);
+.vitals-row {
+  font-size: 0.75rem;
+  color: var(--color-text-primary);
 }
 
 .player-potential {
-  font-size: 0.75rem;
   color: var(--color-tertiary);
 }
 

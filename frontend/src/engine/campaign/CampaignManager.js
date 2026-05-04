@@ -18,6 +18,7 @@ import {
   COACH_TIER_RANGES,
   generateCoachAttributes,
   calculateCoachSalary,
+  findCoachForTeam,
 } from '../data/coaches'
 import { BADGES } from '../data/badges'
 import { playersMaster } from '../data/players'
@@ -722,48 +723,102 @@ const PHYSICAL_MODS = {
   C:  { speed: -12, acceleration: -12, strength: 15, vertical: -3, stamina: -3 },
 }
 
+// Position bias for the additional canonical fields. Bigs have more interior
+// scoring / rebounding; perimeter players have more handles / passing / steals.
+const POST_MODS = {
+  PG: -20, SG: -15, SF: -5, PF: 8, C: 12,
+}
+const REBOUND_MODS = {
+  PG: -18, SG: -13, SF: -3, PF: 8, C: 14,
+}
+const STANDING_DUNK_MODS = {
+  PG: -15, SG: -8, SF: 0, PF: 8, C: 12,
+}
+const DRIVING_DUNK_MODS = {
+  PG: -8, SG: 3, SF: 5, PF: 5, C: 0,
+}
+
 function generateOffenseAttributes(position, base, variance) {
   const mods = OFFENSE_MODS[position] ?? OFFENSE_MODS.SF
+  const post = POST_MODS[position] ?? 0
+  const stand = STANDING_DUNK_MODS[position] ?? 0
+  const drive = DRIVING_DUNK_MODS[position] ?? 0
+  const v = (m = 0) => clampRating(base + m + randInt(-variance, variance))
   return {
-    threePoint:   clampRating(base + mods.threePoint   + randInt(-variance, variance)),
-    midRange:     clampRating(base + mods.midRange     + randInt(-variance, variance)),
-    postScoring:  clampRating(base + mods.postScoring  + randInt(-variance, variance)),
-    layup:        clampRating(base + mods.layup        + randInt(-variance, variance)),
-    dunk:         clampRating(base + mods.dunk         + randInt(-variance, variance)),
-    ballHandling: clampRating(base + mods.ballHandling + randInt(-variance, variance)),
-    passing:      clampRating(base + mods.passing      + randInt(-variance, variance)),
-    speedWithBall:clampRating(base + mods.speedWithBall+ randInt(-variance, variance)),
+    // Legacy short-form (kept for backward compat with UIs/engine paths
+    // that still reference them — ScoutingView, DraftRoomView, GameSimulator).
+    threePoint:   v(mods.threePoint),
+    midRange:     v(mods.midRange),
+    postScoring:  v(mods.postScoring),
+    layup:        v(mods.layup),
+    dunk:         v(mods.dunk),
+    ballHandling: v(mods.ballHandling),
+    passing:      v(mods.passing),
+    speedWithBall: v(mods.speedWithBall),
+    // Canonical schema (matches master players.js + plays.js attribute references).
+    closeShot:           v(mods.layup),
+    freeThrow:           v(0),
+    shotIQ:              v(0),
+    offensiveConsistency: v(0),
+    standingDunk:        v(stand),
+    drivingDunk:         v(drive),
+    postHook:            v(post),
+    postFade:            v(post),
+    postControl:         v(post),
+    drawFoul:            v(0),
+    hands:               v(0),
+    passAccuracy:        v(mods.passing),
+    passVision:          v(mods.passing),
+    passIQ:              v(mods.passing),
   }
 }
 
 function generateDefenseAttributes(position, base, variance) {
   const mods = DEFENSE_MODS[position] ?? DEFENSE_MODS.SF
+  const orb = (REBOUND_MODS[position] ?? 0) - 4 // ORebs slightly rarer than DRebs
+  const drb = REBOUND_MODS[position] ?? 0
+  const v = (m = 0) => clampRating(base + m + randInt(-variance, variance))
   return {
-    perimeterD:  clampRating(base + mods.perimeterD  + randInt(-variance, variance)),
-    interiorD:   clampRating(base + mods.interiorD   + randInt(-variance, variance)),
-    steal:       clampRating(base + mods.steal       + randInt(-variance, variance)),
-    block:       clampRating(base + mods.block       + randInt(-variance, variance)),
-    defensiveIQ: clampRating(base + mods.defensiveIQ + randInt(-variance, variance)),
+    // Legacy short-form
+    perimeterD:  v(mods.perimeterD),
+    interiorD:   v(mods.interiorD),
+    steal:       v(mods.steal),
+    block:       v(mods.block),
+    defensiveIQ: v(mods.defensiveIQ),
+    // Canonical schema
+    perimeterDefense:    v(mods.perimeterD),
+    interiorDefense:     v(mods.interiorD),
+    helpDefenseIQ:       v(mods.defensiveIQ),
+    passPerception:      v(0),
+    defensiveConsistency: v(0),
+    offensiveRebound:    v(orb),
+    defensiveRebound:    v(drb),
   }
 }
 
 function generatePhysicalAttributes(position, base, variance) {
   const mods = PHYSICAL_MODS[position] ?? PHYSICAL_MODS.SF
+  const v = (m = 0) => clampRating(base + m + randInt(-variance, variance))
   return {
-    speed:        clampRating(base + mods.speed        + randInt(-variance, variance)),
-    acceleration: clampRating(base + mods.acceleration + randInt(-variance, variance)),
-    strength:     clampRating(base + mods.strength     + randInt(-variance, variance)),
-    vertical:     clampRating(base + mods.vertical     + randInt(-variance, variance)),
-    stamina:      clampRating(base + mods.stamina      + randInt(-variance, variance)),
+    speed:        v(mods.speed),
+    acceleration: v(mods.acceleration),
+    strength:     v(mods.strength),
+    vertical:     v(mods.vertical),
+    stamina:      v(mods.stamina),
+    hustle:       v(0),
+    durability:   v(0),
   }
 }
 
 function generateMentalAttributes(base, variance) {
+  const v = (m = 0) => clampRating(base + m + randInt(-variance, variance))
   return {
-    basketballIQ: clampRating(base + randInt(-variance, variance)),
-    consistency:  clampRating(base + randInt(-variance, variance)),
-    clutch:       clampRating(base + randInt(-variance, variance)),
+    basketballIQ: v(0),
+    consistency:  v(0),
+    clutch:       v(0),
     workEthic:    clampRating(randInt(60, 95)),
+    coachability: v(0),
+    intangibles:  v(0),
   }
 }
 
@@ -1110,8 +1165,11 @@ export async function createCampaign(options) {
 
   // -------------------------------------------------------------------------
   // 9. Generate Year 1 rookie draft class (visible on Scouting page from day 1)
+  //    draftYear = season year the rookie will FIRST PLAY (after being drafted
+  //    at the end of the current season). This is the value AwardService /
+  //    AllStarService / fetchRookieLeaders compare against currentSeasonYear.
   // -------------------------------------------------------------------------
-  await generateAndSaveRookieClass(campaignId, 1)
+  await generateAndSaveRookieClass(campaignId, startYear + 1)
 
   // -------------------------------------------------------------------------
   // 10. Save final campaign state
@@ -1154,6 +1212,11 @@ export async function loadCampaign(campaignId) {
   const year = campaign.currentSeasonYear ?? 2025
   const seasonData = await SeasonRepository.get(campaignId, year)
 
+  // One-time migration: pre-existing campaigns predate the
+  // motivation→strictness rename and the badges/headshot fields. Backfill
+  // each coach in place so engine code can rely on the new shape.
+  await migrateCoachesIfNeeded(teams)
+
   // Find user's team
   const userTeam = teams.find(t => t.id === campaign.teamId) ?? null
 
@@ -1163,6 +1226,48 @@ export async function loadCampaign(campaignId) {
     userTeam,
     seasonData,
     year,
+  }
+}
+
+/**
+ * Migrate coach records on existing campaigns to the current schema:
+ *  - rename `attributes.motivation` → `attributes.strictness`
+ *  - default `badges = []` if missing
+ *  - default `headshot = null` if missing
+ *
+ * Idempotent — only writes back teams that actually changed.
+ */
+async function migrateCoachesIfNeeded(teams) {
+  const dirty = []
+  for (const team of teams ?? []) {
+    if (!team?.coach) continue
+    let changed = false
+
+    // Rename motivation → strictness
+    if (team.coach.attributes && Object.prototype.hasOwnProperty.call(team.coach.attributes, 'motivation')) {
+      if (!Object.prototype.hasOwnProperty.call(team.coach.attributes, 'strictness')) {
+        team.coach.attributes.strictness = team.coach.attributes.motivation
+      }
+      delete team.coach.attributes.motivation
+      changed = true
+    }
+
+    // Default badges
+    if (!Array.isArray(team.coach.badges)) {
+      team.coach.badges = []
+      changed = true
+    }
+
+    // Default headshot
+    if (typeof team.coach.headshot === 'undefined') {
+      team.coach.headshot = null
+      changed = true
+    }
+
+    if (changed) dirty.push(team)
+  }
+  if (dirty.length > 0) {
+    await TeamRepository.saveBulk(dirty)
   }
 }
 
@@ -1312,28 +1417,78 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers) {
     )
     if (!standing) continue
 
-    const cs = team.coach.career_stats || {}
-    cs.seasons_coached = (cs.seasons_coached ?? 0) + 1
-    cs.wins = (cs.wins ?? 0) + (standing.wins ?? 0)
-    cs.losses = (cs.losses ?? 0) + (standing.losses ?? 0)
-    const totalGames = cs.wins + cs.losses
-    cs.win_pct = totalGames > 0 ? Math.round((cs.wins / totalGames) * 1000) / 1000 : 0
-
-    // Playoff record
-    const pr = playoffRecord[team.id]
-    if (pr) {
-      cs.playoff_wins = (cs.playoff_wins ?? 0) + pr.wins
-      cs.playoff_losses = (cs.playoff_losses ?? 0) + pr.losses
+    // career_stats is the canonical nested shape. Wins / losses (regular and
+    // playoff) are accumulated per game by `_updateCoachCareerStatsAfterGame`
+    // in stores/game.js — we DON'T re-add the season's totals here or we'd
+    // double-count. We only do the season-bounded bookkeeping below, plus
+    // a reconciliation pass for legacy campaigns where some games may not
+    // have been tracked per-game.
+    const cs = team.coach.career_stats || {
+      wins: team.coach.career_wins ?? 0,
+      losses: team.coach.career_losses ?? 0,
+      playoff_wins: team.coach.playoff_wins ?? 0,
+      playoff_losses: team.coach.playoff_losses ?? 0,
+      championships: team.coach.championships ?? 0,
+      seasons_coached: team.coach.seasons_coached ?? 0,
     }
+
+    // Reconciliation: ensure this season's W/L (per the standings + playoff
+    // bracket) is fully reflected in the running tally. Catches games that
+    // pre-date the per-game increment hook in `stores/game.js` (e.g. the
+    // transition season after this code first ships). `_at_last_archive`
+    // snapshots the cumulative totals at the END of each archive, so the
+    // delta from the snapshot to now is "this season's tracked games".
+    const baselineWins = cs.career_wins_at_last_archive ?? 0
+    const baselineLosses = cs.career_losses_at_last_archive ?? 0
+    const baselinePWins = cs.career_playoff_wins_at_last_archive ?? 0
+    const baselinePLosses = cs.career_playoff_losses_at_last_archive ?? 0
+
+    const trackedSeasonWins = (cs.wins ?? 0) - baselineWins
+    const trackedSeasonLosses = (cs.losses ?? 0) - baselineLosses
+    const expectedSeasonWins = standing.wins ?? 0
+    const expectedSeasonLosses = standing.losses ?? 0
+    if (trackedSeasonWins < expectedSeasonWins) {
+      cs.wins = (cs.wins ?? 0) + (expectedSeasonWins - trackedSeasonWins)
+    }
+    if (trackedSeasonLosses < expectedSeasonLosses) {
+      cs.losses = (cs.losses ?? 0) + (expectedSeasonLosses - trackedSeasonLosses)
+    }
+
+    const pr = playoffRecord[team.id]
+    const expectedPlayoffWins = pr?.wins ?? 0
+    const expectedPlayoffLosses = pr?.losses ?? 0
+    const trackedPlayoffWins = (cs.playoff_wins ?? 0) - baselinePWins
+    const trackedPlayoffLosses = (cs.playoff_losses ?? 0) - baselinePLosses
+    if (trackedPlayoffWins < expectedPlayoffWins) {
+      cs.playoff_wins = (cs.playoff_wins ?? 0) + (expectedPlayoffWins - trackedPlayoffWins)
+    }
+    if (trackedPlayoffLosses < expectedPlayoffLosses) {
+      cs.playoff_losses = (cs.playoff_losses ?? 0) + (expectedPlayoffLosses - trackedPlayoffLosses)
+    }
+
+    cs.seasons_coached = (cs.seasons_coached ?? 0) + 1
+
+    // Refresh percentages
+    const totalGames = (cs.wins ?? 0) + (cs.losses ?? 0)
+    cs.win_pct = totalGames > 0
+      ? Math.round((cs.wins / totalGames) * 1000) / 1000
+      : 0
     const totalPlayoffGames = (cs.playoff_wins ?? 0) + (cs.playoff_losses ?? 0)
     cs.playoff_win_pct = totalPlayoffGames > 0
-      ? Math.round(((cs.playoff_wins ?? 0) / totalPlayoffGames) * 1000) / 1000
+      ? Math.round((cs.playoff_wins / totalPlayoffGames) * 1000) / 1000
       : 0
 
     const isChampion = bracket?.champion?.teamId === team.id
     if (isChampion) {
       cs.championships = (cs.championships ?? 0) + 1
     }
+
+    // Snapshot the post-archive totals so next season's reconciliation
+    // knows what "this season" started from.
+    cs.career_wins_at_last_archive = cs.wins ?? 0
+    cs.career_losses_at_last_archive = cs.losses ?? 0
+    cs.career_playoff_wins_at_last_archive = cs.playoff_wins ?? 0
+    cs.career_playoff_losses_at_last_archive = cs.playoff_losses ?? 0
 
     team.coach.career_stats = cs
   }
@@ -1449,6 +1604,79 @@ export async function advanceToNextSeason(campaignId) {
 }
 
 /**
+ * Reconstruct `player.awards` per-year arrays from persisted seasonData.
+ * Idempotent — only runs once per campaign (gated by a settings flag) and
+ * dedupes years if called again.
+ *
+ * Needed for campaigns that entered the offseason before per-year award
+ * history was being recorded. Reads each archived season's `seasonAwards`
+ * and `allStarRosters` and writes the years onto the corresponding players.
+ */
+export async function backfillPlayerAwards(campaignId) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) return
+  if (campaign.settings?.awardsHistoryBackfilled) return
+
+  const seasons = await SeasonRepository.getAllForCampaign(campaignId)
+  if (!seasons || !seasons.length) return
+
+  const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+  const playerMap = Object.fromEntries(allPlayers.map(p => [String(p.id), p]))
+
+  const pushYear = (p, key, year) => {
+    if (year == null) return
+    if (!p.awards) p.awards = {}
+    if (!Array.isArray(p.awards[key])) p.awards[key] = []
+    if (!p.awards[key].includes(year)) p.awards[key].push(year)
+  }
+
+  for (const season of seasons) {
+    const year = season.year
+    if (!year) continue
+    const awards = season.seasonAwards
+    if (awards) {
+      if (awards.mvp?.playerId) {
+        const p = playerMap[String(awards.mvp.playerId)]
+        if (p) pushYear(p, 'mvp', year)
+      }
+      if (awards.rookieOfTheYear?.playerId) {
+        const p = playerMap[String(awards.rookieOfTheYear.playerId)]
+        if (p) pushYear(p, 'rookie_of_the_year', year)
+      }
+      for (const tier of ['first', 'second', 'third']) {
+        for (const e of (awards.allNba?.[tier] || [])) {
+          const p = playerMap[String(e.playerId)]
+          if (p) pushYear(p, `all_nba_${tier}`, year)
+        }
+      }
+      for (const tier of ['first', 'second']) {
+        for (const e of (awards.allDefense?.[tier] || [])) {
+          const p = playerMap[String(e.playerId)]
+          if (p) pushYear(p, `all_defense_${tier}`, year)
+        }
+        for (const e of (awards.allRookie?.[tier] || [])) {
+          const p = playerMap[String(e.playerId)]
+          if (p) pushYear(p, `all_rookie_${tier}`, year)
+        }
+      }
+    }
+    const allStarRosters = season?.allStarRosters?.allStars
+    if (allStarRosters) {
+      const ids = AllStarService._collectSelectedPlayerIds(allStarRosters)
+      for (const pid of ids) {
+        const p = playerMap[String(pid)]
+        if (p) pushYear(p, 'all_star', year)
+      }
+    }
+  }
+
+  await PlayerRepository.saveBulk(allPlayers.map(p => ({ ...p, campaignId })))
+  if (!campaign.settings) campaign.settings = {}
+  campaign.settings.awardsHistoryBackfilled = true
+  await CampaignRepository.save(campaign)
+}
+
+/**
  * Enter the offseason phase: archive data, process season end, run AI contracts.
  * Does NOT start the new season — the user gets an interactive offseason period first.
  *
@@ -1473,7 +1701,7 @@ export async function enterOffseason(campaignId) {
     const awardResults = AwardService.processSeasonAwards({
       seasonData, year: currentYear, allPlayers, teams, userTeamId: campaign.teamId,
     })
-    AwardService.applyAwardsToPlayers(allPlayers, awardResults)
+    AwardService.applyAwardsToPlayers(allPlayers, awardResults, currentYear)
     seasonAwards = awardResults
 
     // Also fix: increment allStarSelections (currently never done)
@@ -1486,6 +1714,9 @@ export async function enterOffseason(campaignId) {
         if (p) {
           p.allStarSelections = (p.allStarSelections ?? 0) + 1
           p.all_star_selections = p.allStarSelections
+          if (!p.awards) p.awards = {}
+          if (!Array.isArray(p.awards.all_star)) p.awards.all_star = []
+          p.awards.all_star.push(currentYear)
         }
       }
     }
@@ -1608,9 +1839,11 @@ export async function enterOffseason(campaignId) {
 
   // 5. Update campaign phase
   campaign.phase = 'offseason'
-  // Reset trade deadline for next season
+  // Reset in-season deadlines for next season
   if (campaign.settings) {
     delete campaign.settings.trade_deadline_passed
+    delete campaign.settings.resign_deadline_passed
+    delete campaign.settings.trade_deadline_news_shown
   }
   await CampaignRepository.save(campaign)
 
@@ -1738,9 +1971,10 @@ export async function startNewSeason(campaignId) {
     ...seasonData,
   })
 
-  // 5. Generate next year's rookie class (viewable on Scouting page throughout the season)
-  const newGameYear = campaign.gameYear
-  await generateAndSaveRookieClass(campaignId, newGameYear)
+  // 5. Generate next year's rookie class (viewable on Scouting page throughout
+  //    the season). draftYear = season year they'll first play (nextYear + 1),
+  //    since they're drafted at the end of nextYear's season.
+  await generateAndSaveRookieClass(campaignId, nextYear + 1)
 
   // 6. Re-initialize all team lineups + target minutes
   for (const team of teams) {
@@ -1800,8 +2034,11 @@ export function generateTeams(campaignId) {
     const teamId = generateUUID()
     const tier = getTeamTier(template.abbreviation)
 
-    // Generate coach for this team
-    const coach = generateCoach(tier, index, usedCoachNames)
+    // Generate coach for this team. Pass the team's abbreviation so the coach
+    // generator can look up a master-defined coach in coaches.js (carries
+    // identity fields like name, headshot, starter badges). Teams with no
+    // master entry fall back to a randomly-named coach.
+    const coach = generateCoach(tier, index, usedCoachNames, template?.abbreviation)
 
     return {
       campaignId,
@@ -1840,7 +2077,7 @@ export function generateTeams(campaignId) {
  * @param {Set} usedNames - Set of already-used "first last" name strings
  * @returns {Object} Coach object
  */
-function generateCoach(tier, index, usedNames) {
+function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
   const range = COACH_TIER_RANGES[tier] ?? COACH_TIER_RANGES[3]
   const overall = randInt(range[0], range[1])
   const attributes = generateCoachAttributes(overall)
@@ -1848,20 +2085,52 @@ function generateCoach(tier, index, usedNames) {
   const offensiveScheme = pickRandom(Object.keys(OFFENSIVE_SCHEMES))
   const defensiveScheme = pickRandom(Object.keys(DEFENSIVE_SCHEMES))
 
-  // Generate unique name
+  // If a master coach is defined for this team in coaches.js, use their
+  // identity (name, headshot, starter badges). Otherwise fall back to a
+  // randomly-generated unique name from the COACH_*_NAMES pools.
+  const masterCoach = findCoachForTeam(teamAbbreviation)
+
   let firstName, lastName, fullName
-  let attempts = 0
-  do {
-    firstName = COACH_FIRST_NAMES[
-      (index + attempts) % COACH_FIRST_NAMES.length
-    ]
-    lastName = COACH_LAST_NAMES[
-      (index + attempts) % COACH_LAST_NAMES.length
-    ]
+  if (masterCoach) {
+    firstName = masterCoach.firstName
+    lastName = masterCoach.lastName
     fullName = `${firstName} ${lastName}`
-    attempts++
-  } while (usedNames.has(fullName) && attempts < 100)
-  usedNames.add(fullName)
+    usedNames.add(fullName)
+  } else {
+    let attempts = 0
+    do {
+      firstName = COACH_FIRST_NAMES[
+        (index + attempts) % COACH_FIRST_NAMES.length
+      ]
+      lastName = COACH_LAST_NAMES[
+        (index + attempts) % COACH_LAST_NAMES.length
+      ]
+      fullName = `${firstName} ${lastName}`
+      attempts++
+    } while (usedNames.has(fullName) && attempts < 100)
+    usedNames.add(fullName)
+  }
+
+  // Master-seeded badges. Master entries carry `{ id, level }` (matching the
+  // player-badge shape). Bare strings are accepted as a shorthand and default
+  // to 'bronze'. Each is tagged source: 'master' so we can distinguish them
+  // from purchased badges later.
+  const masterBadgeEntries = Array.isArray(masterCoach?.badges) ? masterCoach.badges : []
+  const seededBadges = masterBadgeEntries.map(entry => {
+    if (typeof entry === 'string') {
+      return { id: entry, level: 'bronze', source: 'master' }
+    }
+    return {
+      id: entry.id,
+      level: entry.level ?? 'bronze',
+      source: 'master',
+    }
+  })
+
+  // Master-seeded headshot filename (e.g. 'gregg_popovich.png'). Maps to a
+  // file dropped into frontend/src/assets/coach-headshots/. CoachAvatar falls
+  // back to the UserCog icon when the file isn't present.
+  const headshot = masterCoach?.headshot ?? null
 
   return {
     id: generateUUID(),
@@ -1879,6 +2148,8 @@ function generateCoach(tier, index, usedNames) {
     contract_years_remaining: randInt(1, 4),
     contractSalary: salary,
     contract_salary: salary,
+    headshot,
+    badges: seededBadges,
     // Career stats start at zero
     career_wins: 0,
     career_losses: 0,

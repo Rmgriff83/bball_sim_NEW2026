@@ -9,6 +9,11 @@ import { useToastStore } from '@/stores/toast'
 import { LoadingSpinner } from '@/components/ui'
 import GameDayModal from '@/components/calendar/GameDayModal.vue'
 import SimulateConfirmModal from '@/components/game/SimulateConfirmModal.vue'
+import AllStarModal from '@/components/game/AllStarModal.vue'
+import { useBreakingNewsStore } from '@/stores/breakingNews'
+import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
+import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, FastForward } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -25,9 +30,16 @@ const playoffStore = usePlayoffStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
 
+const breakingNewsStore = useBreakingNewsStore()
+
 const campaign = computed(() => campaignStore.currentCampaign)
 const userTeam = computed(() => campaign.value?.team)
 const loading = ref(true)
+
+// All-Star modal state — populated from seasonData when crossing the Jan 13 deadline
+const showAllStarModal = ref(false)
+const allStarRosters = ref(null)
+const tradeDeadlineAlerted = ref(false)
 const isExpanded = ref(false)
 
 // Current viewing month (Date object set to first of month)
@@ -320,8 +332,74 @@ function closeGameModal() {
 
 // Handle simulation complete - refresh data
 async function handleSimulated() {
-  // Data is already refreshed by the modal, just close it
   closeGameModal()
+  // Surface any deadline / All-Star modals that fired during the sim. The
+  // CampaignHomeView watcher only runs when that view is mounted, so we run
+  // the same checks locally here for users who sim from the schedule tab.
+  await checkTradeDeadline()
+  await checkAllStarSelections()
+}
+
+async function checkTradeDeadline() {
+  if (tradeDeadlineAlerted.value) return
+  const camp = campaignStore.currentCampaign
+  if (!camp) return
+  const settings = camp.settings || {}
+  if (!settings.trade_deadline_passed) return
+  if (settings.trade_deadline_news_shown) {
+    tradeDeadlineAlerted.value = true
+    return
+  }
+  tradeDeadlineAlerted.value = true
+
+  const year = camp.currentSeasonYear ?? camp.game_year ?? new Date().getFullYear()
+  const deadlineDate = `${year}-12-15`
+  breakingNewsStore.enqueue(
+    BreakingNewsService.tradeDeadlinePassed({ date: deadlineDate }),
+    props.campaignId
+  )
+
+  try {
+    await CampaignRepository.updateSettings(props.campaignId, {
+      trade_deadline_news_shown: true,
+    })
+    if (campaignStore.currentCampaign?.id === props.campaignId) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        trade_deadline_news_shown: true,
+      }
+    }
+  } catch (err) {
+    console.warn('[ScheduleTab] Failed to persist trade_deadline_news_shown:', err)
+  }
+}
+
+async function checkAllStarSelections() {
+  const camp = campaignStore.currentCampaign
+  if (!camp) return
+  const year = camp.currentSeasonYear ?? camp.game_year ?? new Date().getFullYear()
+  const seasonData = await SeasonRepository.get(props.campaignId, year)
+  if (!seasonData) return
+  if (seasonData.allStarRosters && !seasonData.allStarViewed) {
+    allStarRosters.value = seasonData.allStarRosters
+    showAllStarModal.value = true
+  }
+}
+
+async function handleCloseAllStarModal() {
+  showAllStarModal.value = false
+  // Mark viewed so it doesn't re-trigger across navigations
+  try {
+    const camp = campaignStore.currentCampaign
+    const year = camp?.currentSeasonYear ?? camp?.game_year ?? new Date().getFullYear()
+    const seasonData = await SeasonRepository.get(props.campaignId, year)
+    if (seasonData) {
+      seasonData.allStarViewed = true
+      await SeasonRepository.save(seasonData)
+    }
+  } catch (err) {
+    console.warn('[ScheduleTab] Failed to mark allStarViewed:', err)
+  }
 }
 
 // Get teams info for a game
@@ -652,6 +730,14 @@ async function handleSimSeason() {
       :background-progress="gameStore.simulationProgress"
       @close="showSimSeasonModal = false"
       @sim-season="handleSimSeason"
+    />
+
+    <!-- All-Star Modal — surfaces when sim crosses Jan 13 from this view -->
+    <AllStarModal
+      :show="showAllStarModal"
+      :rosters="allStarRosters"
+      :user-team-id="userTeam?.id"
+      @close="handleCloseAllStarModal"
     />
   </div>
 </template>

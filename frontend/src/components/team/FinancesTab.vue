@@ -12,6 +12,7 @@ import ResignModal from './ResignModal.vue'
 import SignFreeAgentModal from './SignFreeAgentModal.vue'
 import DropPlayerModal from './DropPlayerModal.vue'
 import PlayerDetailModal from './PlayerDetailModal.vue'
+import { isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
 
 const props = defineProps({
   campaignId: {
@@ -26,7 +27,7 @@ const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
 
 const loading = ref(true)
-const activeSubTab = ref('team') // 'team' | 'free-agents'
+const activeSubTab = ref('team') // 'team' | 'expiring' | 'free-agents'
 const resignLoading = ref(false)
 const signLoading = ref(false)
 const dropLoading = ref(false)
@@ -49,6 +50,22 @@ const totalPayroll = computed(() => summary.value?.total_payroll || financeStore
 const capSpace = computed(() => salaryCap.value - totalPayroll.value)
 const rosterCount = computed(() => roster.value.length)
 
+const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C']
+
+const positionCounts = computed(() => {
+  const counts = { PG: 0, SG: 0, SF: 0, PF: 0, C: 0 }
+  for (const p of roster.value) {
+    const pos = p?.position
+    if (pos && counts[pos] !== undefined) counts[pos]++
+  }
+  return counts
+})
+
+function getPositionColor(pos) {
+  const colors = { PG: '#3B82F6', SG: '#10B981', SF: '#F59E0B', PF: '#EF4444', C: '#8B5CF6' }
+  return colors[pos] || '#6B7280'
+}
+
 // Sorted roster for display
 const sortedRoster = computed(() => {
   return [...roster.value].sort((a, b) => b.contractSalary - a.contractSalary)
@@ -58,6 +75,11 @@ const sortedRoster = computed(() => {
 const expiringContracts = computed(() => {
   return roster.value.filter(p => p.contractYearsRemaining === 1)
 })
+
+// Re-sign deadline gate. Flipped by _processMidSeasonEvents on Dec 15 alongside
+// trade_deadline_passed. When true, ContractCard hides the Re-sign button and
+// FinancesTab shows a "Re-signing closed" banner above the expiring list.
+const resignDeadlinePassed = computed(() => isPastResignDeadline(campaignStore.currentCampaign))
 
 // Calculate contract years for visualization table
 const currentYear = computed(() => {
@@ -271,6 +293,21 @@ onMounted(() => {
           </div>
         </div>
 
+        <!-- Roster Position Breakdown -->
+        <div class="position-counts">
+          <div
+            v-for="pos in POSITIONS"
+            :key="pos"
+            class="position-count-item"
+          >
+            <span
+              class="position-count-pill"
+              :style="{ backgroundColor: getPositionColor(pos) }"
+            >{{ pos }}</span>
+            <span class="position-count-value">{{ positionCounts[pos] }}</span>
+          </div>
+        </div>
+
         <!-- Expiring Contracts Alert -->
         <div v-if="expiringContracts.length > 0" class="expiring-alert">
           <Calendar :size="18" />
@@ -289,6 +326,14 @@ onMounted(() => {
         </button>
         <button
           class="sub-tab-btn"
+          :class="{ active: activeSubTab === 'expiring' }"
+          @click="activeSubTab = 'expiring'"
+        >
+          Expiring
+          <span v-if="expiringContracts.length > 0" class="sub-tab-badge">{{ expiringContracts.length }}</span>
+        </button>
+        <button
+          class="sub-tab-btn"
           :class="{ active: activeSubTab === 'free-agents' }"
           @click="activeSubTab = 'free-agents'"
         >
@@ -298,33 +343,6 @@ onMounted(() => {
 
       <!-- Team Contracts View -->
       <div v-if="activeSubTab === 'team'" class="contracts-section">
-        <!-- Expiring Contracts -->
-        <GlassCard v-if="expiringContracts.length > 0" padding="md" :hoverable="false" class="expiring-card">
-          <h4 class="section-title">
-            <Calendar :size="16" />
-            Expiring Contracts
-          </h4>
-          <div class="expiring-list">
-            <div
-              v-for="player in expiringContracts"
-              :key="player.id"
-              class="expiring-row"
-              @click="handleInfo(player)"
-            >
-              <div class="expiring-player-info">
-                <PlayerAvatar :player="player" :size="32" />
-                <div class="expiring-player-details">
-                  <span class="expiring-player-name">{{ player.firstName }} {{ player.lastName }}</span>
-                  <span class="expiring-player-meta">
-                    <span class="pos-badge">{{ player.position }}</span>
-                    <span class="expiring-salary">{{ formatSalary(player.contractSalary) }}</span>
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </GlassCard>
-
         <!-- Player Cards Grid -->
         <div class="player-cards-section">
           <h4 class="section-title">Team Roster</h4>
@@ -334,6 +352,41 @@ onMounted(() => {
               :key="player.id"
               :player="player"
               :show-stats="true"
+              :resign-disabled="resignDeadlinePassed"
+              @resign="handleResign"
+              @drop="handleDrop"
+              @info="handleInfo"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Expiring Contracts View -->
+      <div v-else-if="activeSubTab === 'expiring'" class="expiring-section">
+        <!-- Re-sign deadline banner — shown after the in-season deadline passes (Dec 15) -->
+        <div v-if="resignDeadlinePassed" class="resign-closed-banner">
+          <Calendar :size="16" />
+          <span>Re-signing is closed for this season — the deadline has passed. Expiring players will hit free agency at season end.</span>
+        </div>
+
+        <div v-if="expiringContracts.length === 0" class="empty-state">
+          <Calendar :size="48" />
+          <h4>No Expiring Contracts</h4>
+          <p>None of your players have contracts ending this season.</p>
+        </div>
+
+        <div v-else class="player-cards-section">
+          <h4 class="section-title">
+            <Calendar :size="16" />
+            Expiring Contracts
+          </h4>
+          <div class="player-cards-grid">
+            <ContractCard
+              v-for="player in expiringContracts"
+              :key="player.id"
+              :player="player"
+              :show-stats="true"
+              :resign-disabled="resignDeadlinePassed"
               @resign="handleResign"
               @drop="handleDrop"
               @info="handleInfo"
@@ -504,6 +557,50 @@ onMounted(() => {
   color: var(--color-error);
 }
 
+/* Roster Position Breakdown */
+.position-counts {
+  display: flex;
+  justify-content: space-around;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.6rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+}
+
+.position-count-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  justify-content: center;
+}
+
+.position-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.position-count-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .position-counts {
+  background: rgba(0, 0, 0, 0.03);
+}
+
 /* Expiring Alert */
 .expiring-alert {
   display: flex;
@@ -519,6 +616,20 @@ onMounted(() => {
   font-weight: 500;
 }
 
+.resign-closed-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 8px;
+  color: #ef4444;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 /* Sub-Tab Navigation */
 .sub-tab-nav {
   display: flex;
@@ -527,6 +638,9 @@ onMounted(() => {
 }
 
 .sub-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 14px;
   border-radius: var(--radius-lg);
   background: rgba(255, 255, 255, 0.03);
@@ -538,6 +652,27 @@ onMounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   font-size: 0.8rem;
+}
+
+.sub-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: rgba(245, 158, 11, 0.85);
+  color: black;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.sub-tab-btn.active .sub-tab-badge {
+  background: black;
+  color: #fff;
 }
 
 .sub-tab-btn:hover {
@@ -640,8 +775,14 @@ onMounted(() => {
 
 .player-cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 1rem;
+}
+
+@media (max-width: 415px) {
+  .player-cards-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Free Agents Section */

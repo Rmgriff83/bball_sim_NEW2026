@@ -201,7 +201,56 @@ export const useSyncStore = defineStore('sync', () => {
       slim.recent_performances = slim.recent_performances.slice(-5)
     }
 
+    // Compact seasonHistory entries from cumulative totals to averaged per-game
+    // stats — by season 3+ the raw form (530 players × ~350B × N seasons)
+    // dominated the players chunk and pushed sync past PHP's post_max_size.
+    if (Array.isArray(slim.seasonHistory)) {
+      slim.seasonHistory = slim.seasonHistory.map(_compactSeasonHistoryEntry)
+    }
+
     return slim
+  }
+
+  function _compactSeasonHistoryEntry(entry) {
+    if (!entry) return entry
+    if (entry._compact) return entry  // already compacted from a prior sync cycle
+    const stats = entry.stats || {}
+    const gp = stats.gamesPlayed ?? 0
+    if (gp <= 0) {
+      return {
+        _compact: true,
+        year: entry.year,
+        teamId: entry.teamId,
+        teamAbbreviation: entry.teamAbbreviation,
+        gamesPlayed: 0,
+      }
+    }
+
+    const fga = stats.fieldGoalsAttempted ?? 0
+    const fgm = stats.fieldGoalsMade ?? 0
+    const tpa = stats.threePointersAttempted ?? 0
+    const tpm = stats.threePointersMade ?? 0
+    const fta = stats.freeThrowsAttempted ?? 0
+    const ftm = stats.freeThrowsMade ?? 0
+    const round1 = (n) => Math.round(n * 10) / 10
+
+    return {
+      _compact: true,
+      year: entry.year,
+      teamId: entry.teamId,
+      teamAbbreviation: entry.teamAbbreviation,
+      gamesPlayed: gp,
+      ppg: round1((stats.points ?? 0) / gp),
+      rpg: round1((stats.rebounds ?? 0) / gp),
+      apg: round1((stats.assists ?? 0) / gp),
+      spg: round1((stats.steals ?? 0) / gp),
+      bpg: round1((stats.blocks ?? 0) / gp),
+      topg: round1((stats.turnovers ?? 0) / gp),
+      mpg: round1((stats.minutesPlayed ?? 0) / gp),
+      fgPct: fga > 0 ? round1((fgm / fga) * 100) : 0,
+      threePct: tpa > 0 ? round1((tpm / tpa) * 100) : 0,
+      ftPct: fta > 0 ? round1((ftm / fta) * 100) : 0,
+    }
   }
 
   function _stripTeamForSync(team) {
@@ -212,19 +261,72 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
+   * Convert a season's `playerStats` map from cumulative totals into per-game
+   * averages + shooting percentages. Used only for completed seasons in the
+   * sync payload — the current season keeps raw totals so live UIs that divide
+   * by gamesPlayed continue to work without a code path change.
+   */
+  function _compactPlayerStats(playerStats) {
+    const compact = {}
+    for (const [pid, stats] of Object.entries(playerStats)) {
+      const gp = stats.gamesPlayed ?? stats.games_played ?? 0
+      if (gp <= 0) continue
+
+      const fga = stats.fga ?? stats.fieldGoalsAttempted ?? 0
+      const fgm = stats.fgm ?? stats.fieldGoalsMade ?? 0
+      const tpa = stats.tpa ?? stats.fg3a ?? stats.threePointersAttempted ?? 0
+      const tpm = stats.tpm ?? stats.fg3m ?? stats.threePointersMade ?? 0
+      const fta = stats.fta ?? stats.freeThrowsAttempted ?? 0
+      const ftm = stats.ftm ?? stats.freeThrowsMade ?? 0
+
+      const round1 = (n) => Math.round(n * 10) / 10
+
+      compact[pid] = {
+        _compact: true,
+        playerId: stats.playerId ?? pid,
+        playerName: stats.playerName ?? stats.player_name ?? '',
+        teamId: stats.teamId ?? null,
+        teamAbbreviation: stats.teamAbbreviation ?? stats.team_abbreviation ?? '',
+        position: stats.position ?? '',
+        gamesPlayed: gp,
+        ppg: round1((stats.points ?? 0) / gp),
+        rpg: round1((stats.rebounds ?? 0) / gp),
+        apg: round1((stats.assists ?? 0) / gp),
+        spg: round1((stats.steals ?? 0) / gp),
+        bpg: round1((stats.blocks ?? 0) / gp),
+        topg: round1((stats.turnovers ?? 0) / gp),
+        mpg: round1((stats.minutesPlayed ?? 0) / gp),
+        fgPct: fga > 0 ? round1((fgm / fga) * 100) : 0,
+        threePct: tpa > 0 ? round1((tpm / tpa) * 100) : 0,
+        ftPct: fta > 0 ? round1((ftm / fta) * 100) : 0,
+      }
+    }
+    return compact
+  }
+
+  /**
    * Strip season data for sync.
-   * Completed (past) seasons: only keep metadata + final standings + aggregate player stats;
-   * drop the entire schedule array (individual game results/box scores).
-   * Current season: keep stripped schedule (compact box scores, no savedGameState/evolution).
+   * Completed (past) seasons: drop the schedule, and compact the per-player
+   * `playerStats` map from raw cumulative totals to averaged per-game stats
+   * (PPG/RPG/APG/SPG/BPG/MPG + shooting percentages). Roughly 5x smaller per
+   * entry — by season 3 the raw totals form pushed the JSON past PHP's default
+   * `post_max_size` and sync 413'd. Compact form preserves historical leader
+   * displays cross-device.
+   * Current season: keep raw `playerStats` + stripped schedule so live league-
+   * leader / rookie-ranking UIs (which divide totals by gamesPlayed) still work.
+   * Compact entries carry `_compact: true` so consumers can branch on shape.
    */
   function _stripSeasonForSync(season) {
     const slim = { ...season }
     const isCompleted = slim.phase === 'offseason' || slim.isComplete || slim.is_complete
 
-    if (isCompleted && Array.isArray(slim.schedule)) {
-      // Completed season: drop entire schedule to save space
+    if (isCompleted) {
       delete slim.schedule
-    } else if (Array.isArray(slim.schedule)) {
+      if (slim.playerStats && typeof slim.playerStats === 'object') {
+        slim.playerStats = _compactPlayerStats(slim.playerStats)
+      }
+    }
+    if (!isCompleted && Array.isArray(slim.schedule)) {
       // Current season: compact completed games but PRESERVE savedGameState for
       // games still in progress, so a user can start a game on one device and
       // resume / sim-to-end on another.

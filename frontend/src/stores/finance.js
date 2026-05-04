@@ -16,6 +16,8 @@ import {
 } from '@/engine/finance/FinanceManager'
 import { useTeamStore } from '@/stores/team'
 import { useSyncStore } from '@/stores/sync'
+import { useToastStore } from '@/stores/toast'
+import { isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
 
 export const useFinanceStore = defineStore('finance', () => {
   // State
@@ -203,28 +205,42 @@ export const useFinanceStore = defineStore('finance', () => {
       const player = rosterWithContracts.value.find(p => p.id === playerId)
       if (!player) throw new Error('Player not found in roster')
 
-      // Use FinanceManager to compute the re-sign result
-      const result = financeResignPlayer({ player, years, salary })
-      if (!result.success) throw new Error(result.error || 'Failed to re-sign player')
+      // Re-sign deadline gate. The campaign flag is flipped by
+      // _processMidSeasonEvents on Dec 15 alongside trade_deadline_passed.
+      const campaign = await CampaignRepository.get(campaignId)
+      const resignDeadlinePassed = isPastResignDeadline(campaign)
+      if (resignDeadlinePassed) {
+        useToastStore().showError('Re-signing is closed — the deadline has passed for this season.')
+        throw new Error('Re-sign deadline has passed')
+      }
+
+      // Use FinanceManager to compute the re-sign result. Pass the flag so the
+      // engine layer also short-circuits as defense in depth.
+      const result = financeResignPlayer({ player, years, salary, resignDeadlinePassed })
+      if (!result.success) throw new Error(result.message || result.error || 'Failed to re-sign player')
 
       const newSalary = result.player.contractSalary ?? salary ?? player.contractSalary
 
-      // Persist to IndexedDB -- update the player's contract
+      // Persist to IndexedDB -- update the player's contract. Match
+      // signFreeAgent's behavior: throw if the player record is missing so a
+      // silent skip can't masquerade as success in the UI toast.
       const dbPlayer = await PlayerRepository.get(campaignId, playerId)
-      if (dbPlayer) {
-        dbPlayer.contractYearsRemaining = years
-        dbPlayer.contract_years_remaining = years
-        dbPlayer.contractSalary = newSalary
-        dbPlayer.contract_salary = newSalary
-        await PlayerRepository.save(dbPlayer)
-      }
+      if (!dbPlayer) throw new Error('Player not found in database')
+      dbPlayer.contractYearsRemaining = years
+      dbPlayer.contract_years_remaining = years
+      dbPlayer.contractSalary = newSalary
+      dbPlayer.contract_salary = newSalary
+      await PlayerRepository.save(dbPlayer)
 
-      // Update the player in the local roster
+      // Update the player in the local roster — keep both casings in sync so
+      // any UI reading the snake_case form (e.g. contract_years_remaining)
+      // doesn't display stale data until the next fetchTeam round-trip.
       const playerIndex = rosterWithContracts.value.findIndex(p => p.id === playerId)
       if (playerIndex !== -1) {
         rosterWithContracts.value[playerIndex] = {
           ...rosterWithContracts.value[playerIndex],
           contractYearsRemaining: years,
+          contract_years_remaining: years,
           contractSalary: newSalary,
           contract_salary: newSalary,
         }
@@ -271,9 +287,21 @@ export const useFinanceStore = defineStore('finance', () => {
 
       if (!result.success) throw new Error(result.error || 'Failed to sign free agent')
 
+      // Look up the signing team so we can stamp its abbreviation on the
+      // player record. Without this the player stays labeled 'FA' in their
+      // stats row and anywhere else that reads teamAbbreviation directly.
+      const teamData = await TeamRepository.get(campaignId, userTeamId)
+      const teamAbbr = teamData?.abbreviation ?? teamData?.abbr ?? null
+
       // Persist to IndexedDB -- update player's team assignment and contract
       dbPlayer.teamId = userTeamId
+      dbPlayer.team_id = userTeamId
+      if (teamAbbr) {
+        dbPlayer.teamAbbreviation = teamAbbr
+        dbPlayer.team_abbreviation = teamAbbr
+      }
       dbPlayer.isFreeAgent = 0
+      dbPlayer.is_free_agent = 0
       dbPlayer.contractSalary = result.player.contractSalary ?? 0
       dbPlayer.contract_salary = result.player.contractSalary ?? 0
       dbPlayer.contractYearsRemaining = result.player.contractYearsRemaining ?? 0
@@ -288,7 +316,6 @@ export const useFinanceStore = defineStore('finance', () => {
       rosterWithContracts.value.push(enrichedPlayer)
 
       // Update summary
-      const teamData = await TeamRepository.get(campaignId, userTeamId)
       const teamSalaryCap = teamData?.salary_cap ?? teamData?.salaryCap ?? DEFAULT_SALARY_CAP
       const players = await PlayerRepository.getByTeam(campaignId, userTeamId)
       const seasonYear = campaign.currentSeasonYear ?? new Date().getFullYear()

@@ -436,13 +436,26 @@ export function signFreeAgent({ playerId, leaguePlayers, currentRoster, capMode 
  * @param {object} params
  * @param {object} params.player - Player object
  * @param {number} params.years - Number of years
- * @returns {{ success: boolean, player: object, transaction: object, message: string }}
+ * @param {boolean} [params.resignDeadlinePassed] - When true, refuses to mutate the
+ *   contract and returns a failure result. The store layer should already gate
+ *   this, but we double-check at the engine layer as defense in depth.
+ * @returns {{ success: boolean, player: object|null, transaction: object|null, message: string }}
  */
-export function resignPlayer({ player, years, salary: salaryOverride }) {
+export function resignPlayer({ player, years, salary: salaryOverride, resignDeadlinePassed = false }) {
+  const playerName = `${player.firstName ?? player.first_name ?? ''} ${player.lastName ?? player.last_name ?? ''}`.trim();
+
+  if (resignDeadlinePassed) {
+    return {
+      success: false,
+      player: null,
+      transaction: null,
+      message: 'Re-sign deadline has passed for this season',
+    };
+  }
+
   const salary = salaryOverride != null
     ? parseFloat(salaryOverride)
     : parseFloat(player.contractSalary ?? player.contract_salary ?? 0);
-  const playerName = `${player.firstName ?? player.first_name ?? ''} ${player.lastName ?? player.last_name ?? ''}`.trim();
 
   const updatedPlayer = {
     ...player,

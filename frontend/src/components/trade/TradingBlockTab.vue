@@ -7,7 +7,19 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { GlassCard, StatBadge, LoadingSpinner } from '@/components/ui'
 import { Repeat, Users, ArrowRightLeft } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
+
+function getPositionColor(position) {
+  const colors = {
+    PG: '#3B82F6',
+    SG: '#10B981',
+    SF: '#F59E0B',
+    PF: '#EF4444',
+    C: '#8B5CF6',
+  }
+  return colors[position] || '#6B7280'
+}
 
 const props = defineProps({
   campaignId: {
@@ -191,26 +203,42 @@ onMounted(async () => {
             <p>No players on your trading block. Open a player's detail modal and tap the trade block toggle to add them.</p>
           </div>
         </GlassCard>
-        <div v-else class="player-list">
+        <div v-else class="players-grid">
           <div
             v-for="player in userBlockPlayers"
             :key="player.id"
-            class="player-row"
+            class="player-card"
             @click="openPlayer(player)"
           >
-            <div class="player-pos-badge" :class="getPlayerPosition(player).toLowerCase()">
-              {{ getPlayerPosition(player) }}
+            <div class="card-header">
+              <div class="avatar-column">
+                <div class="player-avatar">
+                  <PlayerAvatar :player="player" :size="78" class="avatar-icon" />
+                </div>
+              </div>
+              <div class="player-main-info">
+                <h4 class="player-name">{{ getPlayerName(player) }}</h4>
+                <div class="player-meta">
+                  <div class="vitals-row">
+                    {{ player.height || "6'6\"" }} · {{ player.age || 25 }} yrs
+                  </div>
+                  <div class="position-badges">
+                    <span class="position-badge" :style="{ backgroundColor: getPositionColor(getPlayerPosition(player)) }">
+                      {{ getPlayerPosition(player) }}
+                    </span>
+                  </div>
+                  <span class="team-tag">Your Team</span>
+                </div>
+                <div v-if="getStatLine(player.id)" class="stats-inline">
+                  <span class="stat-inline"><span class="stat-label">PPG</span><span class="stat-val">{{ getStatLine(player.id).ppg }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">RPG</span><span class="stat-val">{{ getStatLine(player.id).rpg }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">APG</span><span class="stat-val">{{ getStatLine(player.id).apg }}</span></span>
+                </div>
+              </div>
+              <div class="rating-container">
+                <StatBadge :value="getPlayerRating(player)" size="md" />
+              </div>
             </div>
-            <div class="player-info">
-              <span class="player-name">{{ getPlayerName(player) }}</span>
-              <span class="player-team">Your Team</span>
-            </div>
-            <div class="player-stats" v-if="getStatLine(player.id)">
-              <span>{{ getStatLine(player.id).ppg }} PPG</span>
-              <span>{{ getStatLine(player.id).rpg }} RPG</span>
-              <span>{{ getStatLine(player.id).apg }} APG</span>
-            </div>
-            <StatBadge :value="getPlayerRating(player)" size="md" />
           </div>
         </div>
       </div>
@@ -226,29 +254,45 @@ onMounted(async () => {
             <p>No AI teams have players on the trading block yet.</p>
           </div>
         </GlassCard>
-        <div v-else class="player-list">
+        <div v-else class="players-grid">
           <div
             v-for="player in leagueBlockPlayers"
             :key="player.id"
-            class="player-row"
+            class="player-card"
             @click="openPlayer(player)"
           >
-            <div class="player-pos-badge" :class="getPlayerPosition(player).toLowerCase()">
-              {{ getPlayerPosition(player) }}
+            <div class="card-header">
+              <div class="avatar-column">
+                <div class="player-avatar">
+                  <PlayerAvatar :player="player" :size="78" class="avatar-icon" />
+                </div>
+              </div>
+              <div class="player-main-info">
+                <h4 class="player-name">{{ getPlayerName(player) }}</h4>
+                <div class="player-meta">
+                  <div class="vitals-row">
+                    {{ player.height || "6'6\"" }} · {{ player.age || 25 }} yrs
+                  </div>
+                  <div class="position-badges">
+                    <span class="position-badge" :style="{ backgroundColor: getPositionColor(getPlayerPosition(player)) }">
+                      {{ getPlayerPosition(player) }}
+                    </span>
+                  </div>
+                  <span class="team-tag">{{ player._teamAbbr || getTeamAbbr(player) }}</span>
+                </div>
+                <div v-if="getStatLine(player.id)" class="stats-inline">
+                  <span class="stat-inline"><span class="stat-label">PPG</span><span class="stat-val">{{ getStatLine(player.id).ppg }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">RPG</span><span class="stat-val">{{ getStatLine(player.id).rpg }}</span></span>
+                  <span class="stat-inline"><span class="stat-label">APG</span><span class="stat-val">{{ getStatLine(player.id).apg }}</span></span>
+                </div>
+              </div>
+              <div class="rating-container">
+                <StatBadge :value="getPlayerRating(player)" size="md" />
+                <button class="trade-btn" @click="startTrade(player, $event)" title="Start trade">
+                  <ArrowRightLeft :size="14" />
+                </button>
+              </div>
             </div>
-            <div class="player-info">
-              <span class="player-name">{{ getPlayerName(player) }}</span>
-              <span class="player-team">{{ player._teamAbbr || getTeamAbbr(player) }}</span>
-            </div>
-            <div class="player-stats" v-if="getStatLine(player.id)">
-              <span>{{ getStatLine(player.id).ppg }} PPG</span>
-              <span>{{ getStatLine(player.id).rpg }} RPG</span>
-              <span>{{ getStatLine(player.id).apg }} APG</span>
-            </div>
-            <StatBadge :value="getPlayerRating(player)" size="md" />
-            <button class="trade-btn" @click="startTrade(player, $event)" title="Start trade">
-              <ArrowRightLeft :size="14" />
-            </button>
           </div>
         </div>
       </div>
@@ -314,78 +358,155 @@ onMounted(async () => {
   margin: 0;
 }
 
-.player-list {
+.players-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 415px) {
+  .players-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.player-card {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  min-width: 360px;
+}
+
+@media (max-width: 415px) {
+  .player-card {
+    min-width: 0;
+  }
+}
+
+.player-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: rgba(232, 90, 79, 0.3);
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.avatar-column {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-}
-
-.player-row {
-  display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.65rem 0.85rem;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.15s ease;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
-.player-row:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-.player-pos-badge {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+.player-avatar {
+  width: 80px;
+  height: 80px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 0.7rem;
-  color: white;
-  text-transform: uppercase;
+  color: var(--color-text-tertiary);
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.1);
+  position: relative;
 }
 
-.player-pos-badge.pg { background: #3B82F6; }
-.player-pos-badge.sg { background: #10B981; }
-.player-pos-badge.sf { background: #F59E0B; }
-.player-pos-badge.pf { background: #EF4444; }
-.player-pos-badge.c { background: #8B5CF6; }
+.avatar-icon {
+  stroke-width: 1.5;
+}
 
-.player-info {
+.position-badges {
+  display: flex;
+  gap: 4px;
+}
+
+.position-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: white;
+}
+
+.player-main-info {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 .player-name {
+  font-size: 0.95rem;
   font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--color-text-primary);
+  margin: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--color-text-primary);
 }
 
-.player-team {
+.player-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.vitals-row {
   font-size: 0.75rem;
+  color: var(--color-text-primary);
+}
+
+.team-tag {
+  font-size: 0.7rem;
   color: var(--color-text-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
 }
 
-.player-stats {
+.stats-inline {
   display: flex;
   gap: 0.75rem;
+  margin-top: 6px;
+}
+
+.stat-inline {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
   font-size: 0.75rem;
-  color: var(--color-text-secondary);
+}
+
+.stat-label {
+  color: var(--color-text-tertiary);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stat-val {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.rating-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -400,18 +521,11 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  flex-shrink: 0;
   transition: all 0.15s ease;
 }
 
 .trade-btn:hover {
   background: rgba(232, 90, 79, 0.25);
   border-color: #E85A4F;
-}
-
-@media (max-width: 600px) {
-  .player-stats {
-    display: none;
-  }
 }
 </style>

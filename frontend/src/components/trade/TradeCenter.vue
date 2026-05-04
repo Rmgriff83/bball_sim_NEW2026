@@ -271,11 +271,14 @@ function addPlayerToOffer(player) {
     firstName: player.firstName,
     lastName: player.lastName,
     position: player.position,
+    secondaryPosition: player.secondaryPosition,
     overallRating: player.overallRating,
     contractSalary: player.contractSalary,
     contractYearsRemaining: player.contractYearsRemaining,
     tradeValue: player.tradeValue,
     age: player.age,
+    height: player.height,
+    headshot: player.headshot,
   })
 }
 
@@ -299,11 +302,14 @@ function addPlayerToRequest(player) {
     firstName: player.firstName,
     lastName: player.lastName,
     position: player.position,
+    secondaryPosition: player.secondaryPosition,
     overallRating: player.overallRating,
     contractSalary: player.contractSalary,
     contractYearsRemaining: player.contractYearsRemaining,
     tradeValue: player.tradeValue,
     age: player.age,
+    height: player.height,
+    headshot: player.headshot,
   })
 }
 
@@ -470,8 +476,8 @@ function getDirectionIcon(direction) {
 
 // Convert trade value to star rating (1-5)
 function getAssetStars(asset) {
-  if (asset.type === 'player') {
-    // For players, use overall rating to determine stars
+  const isPlayer = asset.type === 'player' || asset.overallRating != null
+  if (isPlayer) {
     const rating = asset.overallRating || 75
     if (rating >= 88) return 5
     if (rating >= 82) return 4
@@ -479,7 +485,6 @@ function getAssetStars(asset) {
     if (rating >= 70) return 2
     return 1
   } else {
-    // For picks, use trade value or projected position
     const projected = asset.projectedPosition || 30
     if (projected <= 5) return 5
     if (projected <= 14) return 4
@@ -572,6 +577,10 @@ function formatAge(age) {
                       <span class="wizard-slot-pick-badge">{{ formatPickYear(asset.year) }}</span>
                       <span class="wizard-slot-name">R{{ asset.round }}</span>
                     </template>
+                    <span class="wizard-slot-stars">
+                      <Star v-for="s in getAssetStars(asset)" :key="`ss-${s}`" :size="10" class="star filled" />
+                      <Star v-for="s in (5 - getAssetStars(asset))" :key="`se-${s}`" :size="10" class="star empty" />
+                    </span>
                   </div>
                 </div>
                 <div v-else class="wizard-slot-empty">
@@ -600,6 +609,10 @@ function formatAge(age) {
                       <span class="wizard-slot-pick-badge">{{ formatPickYear(asset.year) }}</span>
                       <span class="wizard-slot-name">R{{ asset.round }}</span>
                     </template>
+                    <span class="wizard-slot-stars">
+                      <Star v-for="s in getAssetStars(asset)" :key="`rss-${s}`" :size="10" class="star filled" />
+                      <Star v-for="s in (5 - getAssetStars(asset))" :key="`rse-${s}`" :size="10" class="star empty" />
+                    </span>
                   </div>
                 </div>
                 <div v-else class="wizard-slot-empty">
@@ -682,24 +695,35 @@ function formatAge(age) {
             >
               <div class="wizard-asset-card-content">
                 <div class="wizard-asset-avatar">
-                  <PlayerAvatar :player="player" :size="24" />
+                  <PlayerAvatar :player="player" :size="58" />
                 </div>
                 <div class="wizard-asset-info">
                   <span class="wizard-asset-name">{{ player.firstName }} {{ player.lastName }}</span>
                   <div class="wizard-asset-meta">
-                    <span class="wizard-asset-position" :style="{ backgroundColor: getPositionColor(player.position) }">
+                    <span class="wizard-asset-vitals">{{ player.height || "6'6\"" }} · {{ formatAge(player.age) }} yrs</span>
+                    <span class="wizard-asset-position-badge" :style="{ backgroundColor: getPositionColor(player.position) }">
                       {{ player.position }}
                     </span>
-                    <StatBadge :value="player.overallRating" size="xs" />
-                    <span class="wizard-asset-age">{{ formatAge(player.age) }} yrs</span>
+                    <span
+                      v-if="player.secondaryPosition"
+                      class="wizard-asset-position-badge secondary"
+                      :style="{ backgroundColor: getPositionColor(player.secondaryPosition) }"
+                    >
+                      {{ player.secondaryPosition }}
+                    </span>
                   </div>
                   <div class="wizard-asset-contract">
                     <span class="wizard-asset-salary">{{ formatSalary(player.contractSalary) }}</span>
                     <span class="wizard-asset-years">{{ formatContractYears(player.contractYearsRemaining) }}</span>
                   </div>
+                  <div class="wizard-asset-stars">
+                    <Star v-for="s in getAssetStars(player)" :key="`s-${s}`" :size="11" class="star filled" />
+                    <Star v-for="s in (5 - getAssetStars(player))" :key="`e-${s}`" :size="11" class="star empty" />
+                  </div>
                 </div>
-                <div class="wizard-asset-check">
-                  <Check v-if="isPlayerSelected(player.id)" :size="20" />
+                <div class="wizard-asset-rating">
+                  <StatBadge :value="player.overallRating" size="sm" />
+                  <Check v-if="isPlayerSelected(player.id)" :size="18" class="wizard-asset-check-icon" />
                 </div>
               </div>
             </div>
@@ -835,24 +859,35 @@ function formatAge(age) {
             >
               <div class="wizard-asset-card-content">
                 <div class="wizard-asset-avatar">
-                  <PlayerAvatar :player="player" :size="24" />
+                  <PlayerAvatar :player="player" :size="58" />
                 </div>
                 <div class="wizard-asset-info">
                   <span class="wizard-asset-name">{{ player.firstName }} {{ player.lastName }}</span>
                   <div class="wizard-asset-meta">
-                    <span class="wizard-asset-position" :style="{ backgroundColor: getPositionColor(player.position) }">
+                    <span class="wizard-asset-vitals">{{ player.height || "6'6\"" }} · {{ formatAge(player.age) }} yrs</span>
+                    <span class="wizard-asset-position-badge" :style="{ backgroundColor: getPositionColor(player.position) }">
                       {{ player.position }}
                     </span>
-                    <StatBadge :value="player.overallRating" size="xs" />
-                    <span class="wizard-asset-age">{{ formatAge(player.age) }} yrs</span>
+                    <span
+                      v-if="player.secondaryPosition"
+                      class="wizard-asset-position-badge secondary"
+                      :style="{ backgroundColor: getPositionColor(player.secondaryPosition) }"
+                    >
+                      {{ player.secondaryPosition }}
+                    </span>
                   </div>
                   <div class="wizard-asset-contract">
                     <span class="wizard-asset-salary">{{ formatSalary(player.contractSalary) }}</span>
                     <span class="wizard-asset-years">{{ formatContractYears(player.contractYearsRemaining) }}</span>
                   </div>
+                  <div class="wizard-asset-stars">
+                    <Star v-for="s in getAssetStars(player)" :key="`s-${s}`" :size="11" class="star filled" />
+                    <Star v-for="s in (5 - getAssetStars(player))" :key="`e-${s}`" :size="11" class="star empty" />
+                  </div>
                 </div>
-                <div class="wizard-asset-check">
-                  <Check v-if="isPlayerSelected(player.id)" :size="20" />
+                <div class="wizard-asset-rating">
+                  <StatBadge :value="player.overallRating" size="sm" />
+                  <Check v-if="isPlayerSelected(player.id)" :size="18" class="wizard-asset-check-icon" />
                 </div>
               </div>
             </div>
@@ -919,15 +954,22 @@ function formatAge(age) {
                     <template v-if="asset.type === 'player'">
                       <div class="modal-player-card">
                         <div class="modal-player-avatar">
-                          <PlayerAvatar :player="asset" :size="24" />
+                          <PlayerAvatar :player="asset" :size="58" />
                         </div>
                         <div class="modal-player-info">
                           <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>
                           <div class="modal-player-meta">
+                            <span class="modal-player-vitals">{{ asset.height || "6'6\"" }} · {{ formatAge(asset.age) }} yrs</span>
                             <span class="modal-position-badge" :style="{ backgroundColor: getPositionColor(asset.position) }">
                               {{ asset.position }}
                             </span>
-                            <span class="modal-player-age">{{ formatAge(asset.age) }} yrs</span>
+                            <span
+                              v-if="asset.secondaryPosition"
+                              class="modal-position-badge secondary"
+                              :style="{ backgroundColor: getPositionColor(asset.secondaryPosition) }"
+                            >
+                              {{ asset.secondaryPosition }}
+                            </span>
                           </div>
                           <div class="modal-player-contract">
                             <span class="modal-contract-salary">{{ formatSalary(asset.contractSalary) }}</span>
@@ -937,6 +979,9 @@ function formatAge(age) {
                             <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
                             <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
                           </div>
+                        </div>
+                        <div class="modal-player-rating">
+                          <StatBadge :value="asset.overallRating" size="sm" />
                         </div>
                       </div>
                     </template>
@@ -980,15 +1025,22 @@ function formatAge(age) {
                     <template v-if="asset.type === 'player'">
                       <div class="modal-player-card">
                         <div class="modal-player-avatar">
-                          <PlayerAvatar :player="asset" :size="24" />
+                          <PlayerAvatar :player="asset" :size="58" />
                         </div>
                         <div class="modal-player-info">
                           <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>
                           <div class="modal-player-meta">
+                            <span class="modal-player-vitals">{{ asset.height || "6'6\"" }} · {{ formatAge(asset.age) }} yrs</span>
                             <span class="modal-position-badge" :style="{ backgroundColor: getPositionColor(asset.position) }">
                               {{ asset.position }}
                             </span>
-                            <span class="modal-player-age">{{ formatAge(asset.age) }} yrs</span>
+                            <span
+                              v-if="asset.secondaryPosition"
+                              class="modal-position-badge secondary"
+                              :style="{ backgroundColor: getPositionColor(asset.secondaryPosition) }"
+                            >
+                              {{ asset.secondaryPosition }}
+                            </span>
                           </div>
                           <div class="modal-player-contract">
                             <span class="modal-contract-salary">{{ formatSalary(asset.contractSalary) }}</span>
@@ -998,6 +1050,9 @@ function formatAge(age) {
                             <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
                             <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
                           </div>
+                        </div>
+                        <div class="modal-player-rating">
+                          <StatBadge :value="asset.overallRating" size="sm" />
                         </div>
                       </div>
                     </template>
@@ -2392,13 +2447,22 @@ function formatAge(age) {
 /* Modal Player Card */
 .modal-player-card {
   display: flex;
+  align-items: flex-start;
   gap: 0.75rem;
   padding: 0.75rem;
 }
 
+.modal-player-rating {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .modal-player-avatar {
-  width: 44px;
-  height: 44px;
+  width: 60px;
+  height: 60px;
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.2));
   border-radius: 50%;
   display: flex;
@@ -2429,16 +2493,21 @@ function formatAge(age) {
 }
 
 .modal-position-badge {
-  font-size: 0.6rem;
+  font-size: 0.65rem;
   font-weight: 700;
-  padding: 2px 5px;
-  border-radius: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
   color: white;
+  text-transform: uppercase;
 }
 
-.modal-player-age {
+.modal-position-badge.secondary {
+  opacity: 0.7;
+}
+
+.modal-player-vitals {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .modal-player-contract {
@@ -3331,10 +3400,28 @@ function formatAge(age) {
 }
 
 .wizard-slot-name {
+  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 500;
+}
+
+.wizard-slot-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.wizard-slot-stars .star.filled {
+  color: #FBBF24;
+  fill: #FBBF24;
+}
+
+.wizard-slot-stars .star.empty {
+  color: rgba(255, 255, 255, 0.2);
 }
 
 .wizard-slot-empty {
@@ -3464,9 +3551,15 @@ function formatAge(age) {
 /* Wizard Asset Grid */
 .wizard-asset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 0.75rem;
   padding: 0.25rem;
+}
+
+@media (max-width: 415px) {
+  .wizard-asset-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .wizard-asset-grid.picks {
@@ -3503,14 +3596,14 @@ function formatAge(age) {
 
 .wizard-asset-card-content {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   padding: 0.875rem;
   gap: 0.75rem;
 }
 
 .wizard-asset-avatar {
-  width: 48px;
-  height: 48px;
+  width: 60px;
+  height: 60px;
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.2));
   border-radius: 50%;
   display: flex;
@@ -3554,17 +3647,50 @@ function formatAge(age) {
   margin-bottom: 0.25rem;
 }
 
-.wizard-asset-position {
-  font-size: 0.6rem;
+.wizard-asset-position-badge {
+  font-size: 0.65rem;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
   color: white;
+  text-transform: uppercase;
 }
 
-.wizard-asset-age {
+.wizard-asset-position-badge.secondary {
+  opacity: 0.7;
+}
+
+.wizard-asset-vitals {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.wizard-asset-rating {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.wizard-asset-check-icon {
+  color: var(--color-primary);
+}
+
+.wizard-asset-stars {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-top: 4px;
+}
+
+.wizard-asset-stars .star.filled {
+  color: #FBBF24;
+  fill: #FBBF24;
+}
+
+.wizard-asset-stars .star.empty {
+  color: rgba(255, 255, 255, 0.2);
 }
 
 .wizard-asset-contract {

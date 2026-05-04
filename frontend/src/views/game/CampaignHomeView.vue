@@ -14,19 +14,21 @@ import { useFinanceStore } from '@/stores/finance'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
-import { LoadingSpinner, BaseModal } from '@/components/ui'
+import { LoadingSpinner, BaseModal, StandardModal } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
 import SeasonEndModal from '@/components/playoffs/SeasonEndModal.vue'
 import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
+import SeasonAwardsModal from '@/components/playoffs/SeasonAwardsModal.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
 import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
-import { enterOffseason, startNewSeason } from '@/engine/campaign/CampaignManager'
+import { enterOffseason, startNewSeason, backfillPlayerAwards } from '@/engine/campaign/CampaignManager'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag } from 'lucide-vue-next'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 
 const route = useRoute()
@@ -63,6 +65,13 @@ const advancingToNextSeason = ref(false)
 const showNewSeasonModal = ref(false)
 const newSeasonData = ref(null)
 const offseasonData = ref(null) // Stores AI contract results + expiring players after entering offseason
+
+// Season awards announcement state. Set when enterOffseason returns awards;
+// cleared when the user dismisses the modal. The seasonData.seasonAwardsViewed
+// flag persists the dismissal across navigations / reloads.
+const showSeasonAwardsModal = ref(false)
+const seasonAwardsForModal = ref(null)
+const seasonAwardsYear = ref(null)
 
 // Only show loading if we don't have cached campaign data
 const loading = ref(!campaignStore.currentCampaign)
@@ -152,6 +161,43 @@ const userSeasonHistory = computed(() => {
   const userTeam = campaign.value?.allTeams?.find(t => t.id === campaign.value?.teamId)
   if (!userTeam?.seasonHistory?.length) return null
   return userTeam.seasonHistory[userTeam.seasonHistory.length - 1]
+})
+
+const champBannerExpanded = ref(false)
+const persistedSeasonAwards = ref(null)
+const persistedChampion = ref(null)
+
+const displayedSeasonAwards = computed(() => offseasonData.value?.seasonAwards || persistedSeasonAwards.value)
+
+// Unified champion source for the offseason banner. Prefers the team object
+// found via seasonHistory (so we get the full team payload), falls back to
+// the playoffBracket.champion record persisted on seasonData (which is the
+// authoritative source even when seasonHistory is stale or missing).
+const displayedChampion = computed(() => {
+  if (lastSeasonChampion.value) return lastSeasonChampion.value
+  const c = persistedChampion.value
+  if (!c) return null
+  // Try resolving against allTeams to get the full record.
+  const resolved = campaign.value?.allTeams?.find(t => t.id === c.teamId)
+  if (resolved) return resolved
+  return {
+    id: c.teamId,
+    name: c.name || `${c.city ?? ''} ${c.abbreviation ?? ''}`.trim(),
+    abbreviation: c.abbreviation,
+    primary_color: c.primaryColor,
+  }
+})
+
+function formatSeasonLabel(year) {
+  if (!year) return ''
+  const start = ((year - 1) % 100 + 100) % 100
+  const end = ((year % 100) + 100) % 100
+  return `${start.toString().padStart(2, '0')}/${end.toString().padStart(2, '0')}`
+}
+
+const championSeasonLabel = computed(() => {
+  const year = campaign.value?.currentSeasonYear ?? campaign.value?.game_year
+  return formatSeasonLabel(year)
 })
 
 const releasedUserPlayers = computed(() => offseasonData.value?.releasedUserPlayers || [])
@@ -369,16 +415,27 @@ const userTopStarters = computed(() => {
 
 const opponentTopStarters = ref([])
 
-// Load opponent starters when next game changes
-watch(() => nextGame.value?.id, async () => {
-  if (!nextGame.value || !campaignId.value) {
+// Load opponent starters when next game OR user team changes.
+//
+// The `team.value?.id` dep is critical: on a fresh mount this watch fires with
+// `{ immediate: true }` before teamStore.fetchTeam resolves. Without team.id,
+// the home/away identity check below evaluates `homeTeam?.id === undefined`,
+// the user-is-home branch never wins, and we end up fetching the home team's
+// roster as "opponent." When the user IS the home team (e.g., Round 2 Game 1
+// as the higher seed), that means the opponent slot gets the user's own
+// players — duplicate headshots in the matchup card. Re-running once team.id
+// is available fixes the assignment.
+watch(() => [nextGame.value?.id, team.value?.id], async () => {
+  if (!nextGame.value || !campaignId.value || !team.value?.id) {
     opponentTopStarters.value = []
     return
   }
   const homeTeam = nextGame.value.home_team
   const awayTeam = nextGame.value.away_team
-  const isHome = homeTeam?.id === team.value?.id
-  const oppTeam = isHome ? awayTeam : homeTeam
+  const userId = team.value.id
+  const homeIsUser = homeTeam?.id != null && String(homeTeam.id) === String(userId)
+  const awayIsUser = awayTeam?.id != null && String(awayTeam.id) === String(userId)
+  const oppTeam = homeIsUser ? awayTeam : (awayIsUser ? homeTeam : null)
   if (!oppTeam?.id) {
     opponentTopStarters.value = []
     return
@@ -492,10 +549,18 @@ const recentLeagueGames = computed(() => {
 
 onMounted(async () => {
   startIdleDetection()
+  // One-time backfill: reconstruct player.awards per-year history from
+  // archived seasonData for campaigns that entered offseason before the
+  // history was being recorded. Gated by a settings flag, so subsequent
+  // mounts no-op.
+  backfillPlayerAwards(campaignId.value).then(async () => {
+    await teamStore.fetchTeam(campaignId.value, { force: true })
+  }).catch(err => console.warn('[CampaignHome] award backfill failed:', err))
   // Check for pending weekly summary (e.g., from live game completion)
   if (gameStore.weeklySummaryData) {
     toastStore.showWeeklySummary({
       scoutingPointsEarned: gameStore.weeklySummaryData.scoutingPointsEarned ?? 0,
+      campaignId: campaignId.value,
     })
     gameStore.weeklySummaryData = null
   }
@@ -522,6 +587,8 @@ onMounted(async () => {
       checkPendingTradeProposals()
       // Check for All-Star selections
       checkAllStarSelections()
+      // Surface the regular-season-complete toast if the user has no games left
+      maybeShowRegularSeasonCompleteToast()
     }).catch(err => console.error('Failed to refresh campaign:', err))
     // Also check playoff status in background
     checkPlayoffStatus()
@@ -540,6 +607,8 @@ onMounted(async () => {
       await checkPendingTradeProposals()
       // Check for All-Star selections
       await checkAllStarSelections()
+      // Surface the regular-season-complete toast if the user has no games left
+      maybeShowRegularSeasonCompleteToast()
     } catch (err) {
       console.error('Failed to load campaign:', err)
     } finally {
@@ -552,6 +621,35 @@ onUnmounted(() => {
   stopIdleDetection()
 })
 
+// Hydrate persisted season awards + champion when in offseason so the
+// banner & dropdown still work after a page reload (offseasonData is
+// in-memory only and lastSeasonChampion can be stale across some flows).
+watch(
+  [isOffseason, () => campaign.value?.currentSeasonYear],
+  async ([off, year]) => {
+    if (!off || !year || !campaignId.value) {
+      persistedSeasonAwards.value = null
+      persistedChampion.value = null
+      return
+    }
+    try {
+      const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+      const seasonData = await SeasonRepository.get(campaignId.value, year)
+      if (!offseasonData.value?.seasonAwards) {
+        persistedSeasonAwards.value = seasonData?.seasonAwards || null
+      } else {
+        persistedSeasonAwards.value = null
+      }
+      persistedChampion.value = seasonData?.playoffBracket?.champion || null
+    } catch (err) {
+      console.warn('[CampaignHome] failed to hydrate offseason data:', err)
+      persistedSeasonAwards.value = null
+      persistedChampion.value = null
+    }
+  },
+  { immediate: true }
+)
+
 // Watch for date changes to trigger mid-season events (trade deadline, All-Star, etc.)
 watch(currentDate, async (newDate, oldDate) => {
   if (!newDate || newDate === oldDate) return
@@ -560,6 +658,26 @@ watch(currentDate, async (newDate, oldDate) => {
   await checkTradeDeadline()
   await checkAllStarSelections()
 })
+
+// Surface a "Regular Season Complete" toast when the user has finished all of
+// their own games but the league still has AI games to simulate. Idempotent —
+// won't re-fire if the toast is already in the queue, so tab navigations don't
+// spam the user.
+function maybeShowRegularSeasonCompleteToast() {
+  if (!nextGame.value &&
+      !playoffStore.isInPlayoffs &&
+      !playoffStore.champion &&
+      !isOffseason.value &&
+      remainingSeasonGames.value.aiGames > 0
+  ) {
+    const already = (toastStore.toasts || []).some(t => t.type === 'regular-season-complete')
+    if (already) return
+    toastStore.showRegularSeasonComplete({
+      campaignId: campaignId.value,
+      remainingGames: remainingSeasonGames.value.aiGames,
+    })
+  }
+}
 
 // Check if regular season ended and handle playoffs
 async function checkPlayoffStatus() {
@@ -583,6 +701,13 @@ async function handleSeasonEndContinue() {
     const loadingToastId = toastStore.showLoading('Generating playoff bracket...')
     try {
       await playoffStore.generateBracket(campaignId.value)
+
+      // Reload the games list so it includes the newly-generated Round 1 schedule.
+      // Without this, gameStore.games still holds only the (now-completed) regular
+      // season — gameStore.nextUserGame returns undefined, and the home view's
+      // v-if chain falls through to "SERIES WON" instead of showing the user's
+      // first playoff matchup.
+      await gameStore.fetchGames(campaignId.value, { force: true })
 
       // Breaking news: top seed
       if (playoffStore.userSeed === 1) {
@@ -611,6 +736,28 @@ async function handleSeasonEndContinue() {
   } else {
     // Team didn't qualify - enter offseason
     await handleEnterOffseason()
+  }
+}
+
+// Tracks the in-flight sim spawned from the SeriesResultModal so the modal
+// disables its button while the run is going.
+const seriesResultSimulating = ref(false)
+
+// Click handler for both "Sim to Next Series" (user advanced) and "Sim Playoffs"
+// (user eliminated) buttons inside SeriesResultModal. Closes the modal first,
+// then defers to handleSimToNextPlayoffRound, which already branches between
+// "sim one round" and "sim everything" via userEliminated. Without this the
+// modal's emits had no listener and clicking either button was a no-op.
+async function handleSeriesResultSimNext() {
+  if (seriesResultSimulating.value) return
+  seriesResultSimulating.value = true
+  // Run the standard close path (refreshes bracket + games + breaking news for
+  // making the finals) so the post-sim state is consistent.
+  await handleSeriesResultClose()
+  try {
+    await handleSimToNextPlayoffRound()
+  } finally {
+    seriesResultSimulating.value = false
   }
 }
 
@@ -697,6 +844,11 @@ async function handleEnterOffseason() {
 
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showSuccess('Welcome to the offseason!')
+
+    // Surface MVP / All-NBA / All-Defense / All-Rookie selections in a popup
+    // modal, mirroring the championship/series-result flow. Skipped if the
+    // user already dismissed the awards modal for this season.
+    await maybeShowSeasonAwardsModal(result.seasonAwards)
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Failed to enter offseason')
@@ -704,6 +856,51 @@ async function handleEnterOffseason() {
   } finally {
     advancingToNextSeason.value = false
   }
+}
+
+// Open the season-awards modal if we have awards to announce and the user
+// hasn't already dismissed them for this season. Persists a viewed flag onto
+// seasonData so a refresh / nav doesn't re-pop the modal.
+async function maybeShowSeasonAwardsModal(awards) {
+  if (!awards) return
+  const hasAny = awards.mvp || awards.rookieOfTheYear || awards.allNba || awards.allDefense || awards.allRookie
+  if (!hasAny) return
+
+  try {
+    const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+    const camp = campaignStore.currentCampaign
+    const year = camp?.currentSeasonYear ?? camp?.game_year ?? new Date().getFullYear()
+    const seasonData = await SeasonRepository.get(campaignId.value, year)
+    if (seasonData?.seasonAwardsViewed) return
+    seasonAwardsYear.value = year
+  } catch (err) {
+    console.warn('[CampaignHome] season awards lookup failed:', err)
+    seasonAwardsYear.value = campaignStore.currentCampaign?.currentSeasonYear ?? null
+  }
+
+  seasonAwardsForModal.value = awards
+  showSeasonAwardsModal.value = true
+}
+
+async function handleCloseSeasonAwardsModal() {
+  showSeasonAwardsModal.value = false
+  // Persist the dismissal so navigating away and back doesn't re-show it.
+  try {
+    const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+    const year = seasonAwardsYear.value
+      ?? campaignStore.currentCampaign?.currentSeasonYear
+      ?? campaignStore.currentCampaign?.game_year
+    if (year) {
+      const seasonData = await SeasonRepository.get(campaignId.value, year)
+      if (seasonData) {
+        seasonData.seasonAwardsViewed = true
+        await SeasonRepository.save(seasonData)
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to persist seasonAwardsViewed:', err)
+  }
+  seasonAwardsForModal.value = null
 }
 
 // Handle starting a new season from offseason hub
@@ -913,12 +1110,19 @@ async function handleConfirmSimulate() {
       // Check for trade proposals after user game sim
       await checkTradeDeadline()
       await checkPendingTradeProposals()
+      // Check for All-Star selections — _processMidSeasonEvents may have just
+      // populated seasonData.allStarRosters during the sim. The currentDate
+      // watcher bails out when backgroundSimulating flips true mid-sim, so
+      // run the check explicitly here.
+      await checkAllStarSelections()
+      maybeShowRegularSeasonCompleteToast()
     }
 
     // Show weekly summary if weeks passed
     if (response.weeklySummary) {
       toastStore.showWeeklySummary({
         scoutingPointsEarned: response.weeklySummary.scoutingPointsEarned ?? 0,
+        campaignId: campaignId.value,
       })
     }
   } catch (err) {
@@ -1018,12 +1222,14 @@ async function handleSimToEnd() {
     if (!gameStore.backgroundSimulating) {
       lastSimResult.value = null
       await checkPlayoffStatus()
+      maybeShowRegularSeasonCompleteToast()
     }
 
     // Show weekly summary if weeks passed
     if (gameStore.weeklySummaryData) {
       toastStore.showWeeklySummary({
         scoutingPointsEarned: gameStore.weeklySummaryData.scoutingPointsEarned ?? 0,
+        campaignId: campaignId.value,
       })
       gameStore.weeklySummaryData = null
     }
@@ -1066,22 +1272,49 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
   }
 })
 
-// Trade deadline check
+// Trade deadline check.
+// `_processMidSeasonEvents` in game.js enqueues the breaking news at the moment
+// the flag flips (Dec 15) AND sets a persistent `trade_deadline_news_shown`
+// flag. This fallback runs after sim flows for older campaigns that flipped
+// `trade_deadline_passed` before the news-shown flag existed (or for AI-trade
+// paths in `AITradeService` that auto-flip the deadline without enqueuing
+// news). The flag is what we check — NOT seasonData.news, which gets trimmed
+// to the last 50 entries and loses the deadline record by playoff time.
 const tradeDeadlineAlerted = ref(false)
 async function checkTradeDeadline() {
   if (tradeDeadlineAlerted.value) return
   const camp = campaignStore.currentCampaign
   if (!camp) return
   const settings = camp.settings || {}
-  // Flag is now set by game.js _processMidSeasonEvents during date advancement
-  if (settings.trade_deadline_passed) {
+  if (!settings.trade_deadline_passed) return
+  // Already announced — never re-fire across navigations / playoffs / future seasons.
+  if (settings.trade_deadline_news_shown) {
     tradeDeadlineAlerted.value = true
-    const year = camp.currentSeasonYear ?? camp.game_year ?? new Date().getFullYear()
-    const deadlineDate = `${year + 1}-01-06`
-    breakingNewsStore.enqueue(
-      BreakingNewsService.tradeDeadlinePassed({ date: deadlineDate }),
-      campaignId.value
-    )
+    return
+  }
+  tradeDeadlineAlerted.value = true
+
+  const year = camp.currentSeasonYear ?? camp.game_year ?? new Date().getFullYear()
+  const deadlineDate = `${year}-12-15`
+  breakingNewsStore.enqueue(
+    BreakingNewsService.tradeDeadlinePassed({ date: deadlineDate }),
+    campaignId.value
+  )
+
+  // Persist the news-shown flag so this never fires again, even after the news
+  // ticker entry gets trimmed out of seasonData.news.
+  try {
+    await CampaignRepository.updateSettings(campaignId.value, {
+      trade_deadline_news_shown: true,
+    })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        trade_deadline_news_shown: true,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] Failed to persist trade_deadline_news_shown:', err)
   }
 }
 
@@ -1250,6 +1483,7 @@ async function handleCpuSetLineup() {
 
     showInjuryModal.value = false
     showRecoveryModal.value = false
+    showRosterWarningModal.value = false
     toastStore.showSuccess('CPU adjusted your lineup')
   } catch (err) {
     toastStore.showError('Failed to auto-set lineup')
@@ -1489,18 +1723,20 @@ function handleCloseSimulateModal() {
             <h3 class="next-game-label" :class="{ 'live': isGameInProgress }">
               {{ isGameInProgress ? 'GAME IN PROGRESS' : 'NEXT GAME' }}
             </h3>
-            <span v-if="isGameInProgress && inProgressScores" class="live-quarter">Q{{ inProgressScores.quarter }}</span>
-            <span v-else class="next-game-date">{{ nextGame?.game_date ? formatGameDate(nextGame.game_date) : '' }}</span>
+            <div class="next-game-meta-row">
+              <span v-if="isGameInProgress && inProgressScores" class="live-quarter">Q{{ inProgressScores.quarter }}</span>
+              <span v-else class="next-game-date">{{ nextGame?.game_date ? formatGameDate(nextGame.game_date) : '' }}</span>
+              <!-- Playoff Info Banner — sits inline with the date for playoff games -->
+              <div v-if="nextGame.is_playoff" class="playoff-info-banner">
+                <Trophy :size="14" class="playoff-info-icon" />
+                <span class="playoff-round-label">{{ playoffStore.getPlayoffRoundLabel(nextGame.playoff_round) }}</span>
+                <span v-if="nextGameSeriesInfo" class="playoff-series-record">
+                  {{ nextGameSeriesInfo.gameLabel }} &middot; Series {{ nextGameSeriesInfo.team1Wins }}-{{ nextGameSeriesInfo.team2Wins }}
+                </span>
+              </div>
+            </div>
           </div>
           <span class="next-game-location">{{ nextGameOpponent?.isHome ? 'HOME' : 'AWAY' }}</span>
-        </div>
-        <!-- Playoff Info Banner -->
-        <div v-if="nextGame.is_playoff" class="playoff-info-banner">
-          <Trophy :size="14" class="playoff-info-icon" />
-          <span class="playoff-round-label">{{ playoffStore.getPlayoffRoundLabel(nextGame.playoff_round) }}</span>
-          <span v-if="nextGameSeriesInfo" class="playoff-series-record">
-            {{ nextGameSeriesInfo.gameLabel }} &middot; Series {{ nextGameSeriesInfo.team1Wins }}-{{ nextGameSeriesInfo.team2Wins }}
-          </span>
         </div>
         <div class="next-game-content">
           <!-- Loading state while simulating -->
@@ -1528,8 +1764,11 @@ function handleCloseSimulateModal() {
                     :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
                   >
                     <span class="badge-abbr">{{ team?.abbreviation }}</span>
+                    <!-- nextGameOpponent.isHome is set to whether the USER is home
+                         (see nextGameOpponent computed). User score = home if user
+                         is home, otherwise away. -->
                     <span v-if="isGameInProgress && inProgressScores" class="badge-score">
-                      {{ nextGameOpponent?.isHome ? inProgressScores.awayScore : inProgressScores.homeScore }}
+                      {{ nextGameOpponent?.isHome ? inProgressScores.homeScore : inProgressScores.awayScore }}
                     </span>
                     <span v-else class="badge-record">{{ wins }}-{{ losses }}</span>
                   </div>
@@ -1549,8 +1788,9 @@ function handleCloseSimulateModal() {
                     :style="{ backgroundColor: nextGameOpponent?.color || '#666' }"
                   >
                     <span class="badge-abbr">{{ nextGameOpponent?.abbreviation }}</span>
+                    <!-- Opponent score = the side opposite the user. -->
                     <span v-if="isGameInProgress && inProgressScores" class="badge-score">
-                      {{ nextGameOpponent?.isHome ? inProgressScores.homeScore : inProgressScores.awayScore }}
+                      {{ nextGameOpponent?.isHome ? inProgressScores.awayScore : inProgressScores.homeScore }}
                     </span>
                     <span v-else class="badge-record">{{ nextGameOpponent?.wins }}-{{ nextGameOpponent?.losses }}</span>
                   </div>
@@ -1654,27 +1894,47 @@ function handleCloseSimulateModal() {
             <span class="next-game-loading-text">Starting new season...</span>
           </div>
           <template v-else>
-            <!-- Champion Banner -->
-            <div v-if="lastSeasonChampion" class="offseason-champion-banner">
-              <Trophy :size="20" class="offseason-champion-icon" />
-              <span class="offseason-champion-text">
-                {{ lastSeasonChampion.name }} are NBA Champions
-              </span>
-            </div>
-
-            <!-- Season Awards Summary -->
-            <div v-if="offseasonData?.seasonAwards" class="offseason-awards">
-              <div v-if="offseasonData.seasonAwards.mvp" class="offseason-award-line">
-                <Star :size="14" class="offseason-award-icon gold" />
-                <span class="offseason-award-text">MVP: <strong>{{ offseasonData.seasonAwards.mvp.playerName }}</strong> ({{ offseasonData.seasonAwards.mvp.teamAbbr }})</span>
-              </div>
-              <div v-if="offseasonData.seasonAwards.rookieOfTheYear" class="offseason-award-line">
-                <Award :size="14" class="offseason-award-icon gold" />
-                <span class="offseason-award-text">ROTY: <strong>{{ offseasonData.seasonAwards.rookieOfTheYear.playerName }}</strong> ({{ offseasonData.seasonAwards.rookieOfTheYear.teamAbbr }})</span>
-              </div>
-              <div v-if="offseasonData.seasonAwards.allNba?.first?.length" class="offseason-award-line">
-                <Trophy :size="14" class="offseason-award-icon" />
-                <span class="offseason-award-text">All-NBA 1st: {{ offseasonData.seasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
+            <!-- Champion Banner (with collapsible awards) -->
+            <div v-if="displayedChampion" class="offseason-champion-banner" :class="{ expanded: champBannerExpanded }">
+              <button
+                type="button"
+                class="offseason-champion-header"
+                :class="{ clickable: !!displayedSeasonAwards }"
+                :disabled="!displayedSeasonAwards"
+                @click="champBannerExpanded = !champBannerExpanded"
+              >
+                <Trophy :size="20" class="offseason-champion-icon" />
+                <span class="offseason-champion-text">
+                  {{ displayedChampion.name }} are the champions for the {{ championSeasonLabel }} season
+                </span>
+                <ChevronDown
+                  v-if="displayedSeasonAwards"
+                  :size="18"
+                  class="offseason-champion-chevron"
+                  :class="{ rotated: champBannerExpanded }"
+                />
+              </button>
+              <div v-if="champBannerExpanded && displayedSeasonAwards" class="offseason-champion-awards">
+                <div v-if="displayedSeasonAwards.mvp" class="offseason-award-line">
+                  <Star :size="14" class="offseason-award-icon gold" />
+                  <span class="offseason-award-text">MVP: <strong>{{ displayedSeasonAwards.mvp.playerName }}</strong> ({{ displayedSeasonAwards.mvp.teamAbbr }})</span>
+                </div>
+                <div v-if="displayedSeasonAwards.rookieOfTheYear" class="offseason-award-line">
+                  <Award :size="14" class="offseason-award-icon gold" />
+                  <span class="offseason-award-text">ROTY: <strong>{{ displayedSeasonAwards.rookieOfTheYear.playerName }}</strong> ({{ displayedSeasonAwards.rookieOfTheYear.teamAbbr }})</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allNba?.first?.length" class="offseason-award-line">
+                  <Trophy :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-NBA 1st: {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allNba?.second?.length" class="offseason-award-line">
+                  <Trophy :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-NBA 2nd: {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allNba?.third?.length" class="offseason-award-line">
+                  <Trophy :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-NBA 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
+                </div>
               </div>
             </div>
 
@@ -1768,12 +2028,48 @@ function handleCloseSimulateModal() {
             <span class="next-game-loading-text">Processing offseason...</span>
           </div>
           <template v-else>
-            <!-- Champion Banner -->
-            <div class="offseason-champion-banner">
-              <Trophy :size="20" class="offseason-champion-icon" />
-              <span class="offseason-champion-text">
-                {{ playoffStore.champion.name }} are NBA Champions
-              </span>
+            <!-- Champion Banner (with collapsible awards if available) -->
+            <div class="offseason-champion-banner" :class="{ expanded: champBannerExpanded }">
+              <button
+                type="button"
+                class="offseason-champion-header"
+                :class="{ clickable: !!displayedSeasonAwards }"
+                :disabled="!displayedSeasonAwards"
+                @click="champBannerExpanded = !champBannerExpanded"
+              >
+                <Trophy :size="20" class="offseason-champion-icon" />
+                <span class="offseason-champion-text">
+                  {{ playoffStore.champion.name }} are the champions for the {{ championSeasonLabel }} season
+                </span>
+                <ChevronDown
+                  v-if="displayedSeasonAwards"
+                  :size="18"
+                  class="offseason-champion-chevron"
+                  :class="{ rotated: champBannerExpanded }"
+                />
+              </button>
+              <div v-if="champBannerExpanded && displayedSeasonAwards" class="offseason-champion-awards">
+                <div v-if="displayedSeasonAwards.mvp" class="offseason-award-line">
+                  <Star :size="14" class="offseason-award-icon gold" />
+                  <span class="offseason-award-text">MVP: <strong>{{ displayedSeasonAwards.mvp.playerName }}</strong> ({{ displayedSeasonAwards.mvp.teamAbbr }})</span>
+                </div>
+                <div v-if="displayedSeasonAwards.rookieOfTheYear" class="offseason-award-line">
+                  <Award :size="14" class="offseason-award-icon gold" />
+                  <span class="offseason-award-text">ROTY: <strong>{{ displayedSeasonAwards.rookieOfTheYear.playerName }}</strong> ({{ displayedSeasonAwards.rookieOfTheYear.teamAbbr }})</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allNba?.first?.length" class="offseason-award-line">
+                  <Trophy :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-NBA 1st: {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allNba?.second?.length" class="offseason-award-line">
+                  <Trophy :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-NBA 2nd: {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allNba?.third?.length" class="offseason-award-line">
+                  <Trophy :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-NBA 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
+                </div>
+              </div>
             </div>
 
             <!-- User Season Summary -->
@@ -1883,7 +2179,19 @@ function handleCloseSimulateModal() {
             </div>
             <span class="action-label">Standings</span>
           </button>
-          <button class="action-box" @click="router.push(`/campaign/${campaignId}/team#schedule`)">
+          <!-- Playoffs replaces Schedule once the bracket is live, since the
+               regular-season calendar is no longer the relevant context. -->
+          <button
+            v-if="playoffStore.isInPlayoffs && !playoffStore.champion"
+            class="action-box"
+            @click="router.push(`/campaign/${campaignId}/playoffs`)"
+          >
+            <div class="action-icon">
+              <Trophy :size="24" />
+            </div>
+            <span class="action-label">Playoffs</span>
+          </button>
+          <button v-else class="action-box" @click="router.push(`/campaign/${campaignId}/team#schedule`)">
             <div class="action-icon">
               <Calendar :size="24" />
             </div>
@@ -1999,9 +2307,10 @@ function handleCloseSimulateModal() {
     </BaseModal>
 
     <!-- Roster Warning Modal (minutes / injured starters) -->
-    <BaseModal
+    <StandardModal
       :show="showRosterWarningModal"
-      title="Roster Issue"
+      title="Lineup Issue"
+      size="sm"
       @close="showRosterWarningModal = false"
     >
       <div class="lineup-warning-content">
@@ -2010,15 +2319,19 @@ function handleCloseSimulateModal() {
         </div>
         <p class="warning-message">{{ rosterWarningMessage }}</p>
         <p class="warning-hint">{{ rosterWarningHint }}</p>
-        <div class="warning-actions">
-          <button class="btn-secondary" @click="showRosterWarningModal = false">Cancel</button>
-          <button class="btn-primary" @click="goToTeamTabFromWarning">
-            <Users :size="16" />
-            Go to Team Tab
-          </button>
-        </div>
       </div>
-    </BaseModal>
+      <template #footer>
+        <button class="warning-btn-cancel" @click="showRosterWarningModal = false">Cancel</button>
+        <button class="warning-btn-cpu" @click="handleCpuSetLineup">
+          <Cpu :size="16" />
+          CPU Adjust
+        </button>
+        <button class="warning-btn-confirm" @click="goToTeamTabFromWarning">
+          <Users :size="16" />
+          View Lineup
+        </button>
+      </template>
+    </StandardModal>
 
     <!-- Season End Modal -->
     <SeasonEndModal
@@ -2035,7 +2348,10 @@ function handleCloseSimulateModal() {
       :show="playoffStore.showSeriesResultModal"
       :series-result="playoffStore.seriesResult"
       :user-team-id="team?.id"
+      :simulating="seriesResultSimulating"
       @close="handleSeriesResultClose"
+      @sim-next-series="handleSeriesResultSimNext"
+      @sim-remaining-playoffs="handleSeriesResultSimNext"
     />
 
     <!-- Championship Modal -->
@@ -2045,6 +2361,15 @@ function handleCloseSimulateModal() {
       :year="campaign?.current_season?.year"
       :user-team-id="team?.id"
       @close="handleChampionshipClose"
+    />
+
+    <!-- Season Awards Modal — fires once per season after entering offseason -->
+    <SeasonAwardsModal
+      :show="showSeasonAwardsModal"
+      :awards="seasonAwardsForModal"
+      :year="seasonAwardsYear"
+      :user-team-abbr="team?.abbreviation"
+      @close="handleCloseSeasonAwardsModal"
     />
 
     <!-- Trade Proposal Modal -->
@@ -2914,7 +3239,16 @@ function handleCloseSimulateModal() {
 .next-game-label-group {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+}
+
+/* Row that holds the date (or live-quarter) and, on playoff games, the
+   playoff-info-banner inline. Wraps if the card is narrow. */
+.next-game-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .next-game-label {
@@ -2996,14 +3330,13 @@ function handleCloseSimulateModal() {
 }
 
 .playoff-info-banner {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 4px 10px;
   background: rgba(255, 215, 0, 0.08);
   border: 1px solid rgba(255, 215, 0, 0.2);
   border-radius: var(--radius-md);
-  margin-bottom: 4px;
 }
 
 .playoff-info-icon {
@@ -3052,16 +3385,6 @@ function handleCloseSimulateModal() {
   border-color: rgba(0, 0, 0, 0.06);
 }
 
-.offseason-awards {
-  padding: 10px 12px;
-  background: rgba(255, 200, 50, 0.06);
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(255, 200, 50, 0.15);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
 .offseason-award-line {
   display: flex;
   align-items: center;
@@ -3085,11 +3408,6 @@ function handleCloseSimulateModal() {
 .offseason-award-text strong {
   color: var(--color-text-primary);
   font-weight: 600;
-}
-
-[data-theme="light"] .offseason-awards {
-  background: rgba(255, 200, 50, 0.08);
-  border-color: rgba(200, 150, 0, 0.2);
 }
 
 .offseason-expiring {
@@ -3196,12 +3514,34 @@ function handleCloseSimulateModal() {
 
 .offseason-champion-banner {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
+  flex-direction: column;
   background: linear-gradient(135deg, rgba(255, 215, 0, 0.12), rgba(255, 140, 0, 0.08));
   border: 1px solid rgba(255, 215, 0, 0.25);
   border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.offseason-champion-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.offseason-champion-header.clickable {
+  cursor: pointer;
+}
+
+.offseason-champion-header.clickable:hover {
+  background: rgba(255, 215, 0, 0.06);
 }
 
 .offseason-champion-icon {
@@ -3213,6 +3553,25 @@ function handleCloseSimulateModal() {
   font-size: 0.9rem;
   font-weight: 700;
   color: var(--color-text-primary);
+  flex: 1;
+}
+
+.offseason-champion-chevron {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.offseason-champion-chevron.rotated {
+  transform: rotate(180deg);
+}
+
+.offseason-champion-awards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid rgba(255, 215, 0, 0.2);
 }
 
 .offseason-summary {
@@ -3627,7 +3986,7 @@ function handleCloseSimulateModal() {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 8px 0 16px;
+  padding: 8px 0 8px;
 }
 
 .warning-icon {
@@ -3653,56 +4012,57 @@ function handleCloseSimulateModal() {
 .warning-hint {
   font-size: 0.875rem;
   color: var(--color-text-secondary);
-  margin: 0 0 24px 0;
+  margin: 0;
 }
 
-.warning-actions {
-  display: flex;
-  gap: 12px;
-  width: 100%;
-}
-
-.warning-actions .btn-secondary {
+.warning-btn-cancel,
+.warning-btn-cpu,
+.warning-btn-confirm {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   padding: 12px 20px;
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
-  color: var(--color-text-secondary);
-  font-size: 0.875rem;
+  font-size: 0.85rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
-.warning-actions .btn-secondary:hover {
-  background: var(--color-bg-elevated);
+.warning-btn-cancel {
+  background: transparent;
+  border: 1px solid var(--glass-border);
   color: var(--color-text-primary);
 }
 
-.warning-actions .btn-primary {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 20px;
-  background: var(--color-primary);
-  border: none;
-  border-radius: var(--radius-xl);
-  color: white;
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
+.warning-btn-cancel:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
 }
 
-.warning-actions .btn-primary:hover {
+.warning-btn-cpu {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+}
+
+.warning-btn-cpu:hover {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.warning-btn-confirm {
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.warning-btn-confirm:hover {
   background: var(--color-primary-dark);
+  transform: translateY(-1px);
 }
 
 /* Background Simulation Progress */

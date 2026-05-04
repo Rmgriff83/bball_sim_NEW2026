@@ -49,13 +49,30 @@ export async function simFullOffseason(campaignId) {
   const teams = await TeamRepository.getAllForCampaign(campaignId)
   let allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
 
-  // 1. Generate rookies if not already generated
-  let rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === gameYear)
+  // 1. Generate rookies if not already generated.
+  //    Prospects' draftYear = season year they'll first play (currentSeasonYear + 1).
+  //    Migration: older campaigns generated rookies with draftYear set to the
+  //    `gameYear` counter (1, 2, 3...). Detect those and rewrite to the proper
+  //    season year so the upcoming draft still finds them.
+  const currentSeasonYear = campaign.currentSeasonYear ?? 2025
+  const rookieDraftYear = currentSeasonYear + 1
+  const stalePropsects = allPlayers.filter(p =>
+    p.isDraftProspect && typeof p.draftYear === 'number' && p.draftYear < 2000
+  )
+  if (stalePropsects.length > 0) {
+    for (const p of stalePropsects) {
+      p.draftYear = rookieDraftYear
+    }
+    await PlayerRepository.saveBulk(stalePropsects.map(p => ({ ...p, campaignId })))
+    allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+  }
+
+  let rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === rookieDraftYear)
   if (rookies.length === 0) {
-    rookies = await generateAndSaveRookieClass(campaignId, gameYear)
+    rookies = await generateAndSaveRookieClass(campaignId, rookieDraftYear)
     // Re-load all players to include new rookies
     allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
-    rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === gameYear)
+    rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === rookieDraftYear)
   }
 
   // 2. Load standings and build draft order

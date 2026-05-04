@@ -199,6 +199,7 @@ function formatAttribute(attr) {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  overflow: auto;
 }
 
 .evolution-item {

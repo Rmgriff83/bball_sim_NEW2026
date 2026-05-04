@@ -6,6 +6,8 @@
  * player attributes, badges, and defensive schemes.
  */
 
+import { getCoachPerks, getEffectiveCoachAttribute } from '@/engine/coaching/CoachPerks';
+
 class PlayExecutionEngine {
   constructor() {
     this.roleAssignments = {};
@@ -18,6 +20,9 @@ class PlayExecutionEngine {
     this.activatedBadges = [];
     this.defensiveScheme = 'man';
     this.defensiveModifiers = {};
+    this.offensiveModifiers = {};
+    this.offensiveCoach = null;
+    this.clutchTime = false;
   }
 
   /**
@@ -28,12 +33,17 @@ class PlayExecutionEngine {
    * @param {Array} defensiveLineup - The defensive team's lineup
    * @param {string} defensiveScheme - The defensive scheme being used (man, zone_2_3, etc.)
    * @param {Object} defensiveModifiers - Pre-calculated defensive modifiers
+   * @param {Object} options - Additional context: { offensiveModifiers, offensiveCoach, clutchTime }
    * @returns {Object} Play result with stats, outcome, and animation keyframes
    */
-  executePlay(play, offensiveLineup, defensiveLineup, defensiveScheme = 'man', defensiveModifiers = {}) {
+  executePlay(play, offensiveLineup, defensiveLineup, defensiveScheme = 'man', defensiveModifiers = {}, options = {}) {
     // Store defensive context
     this.defensiveScheme = defensiveScheme;
     this.defensiveModifiers = defensiveModifiers;
+    // Offensive context (coach IQ + game-management clutch bias)
+    this.offensiveModifiers = options.offensiveModifiers ?? {};
+    this.offensiveCoach = options.offensiveCoach ?? null;
+    this.clutchTime = !!options.clutchTime;
 
     // Reset state
     this.resetState();
@@ -171,6 +181,24 @@ class PlayExecutionEngine {
     const blockMod = this.defensiveModifiers.blockModifier ?? 0;
     const stealMod = this.defensiveModifiers.stealModifier ?? 0;
 
+    // Offensive coach scheme effectiveness (offensiveIQ-driven shot quality bonus
+    // and turnover dampener) + late-game `gameManagement` clutch bias.
+    const offShotBonus = this.offensiveModifiers.shotQualityBonus ?? 0;
+    const offTurnoverPenalty = this.offensiveModifiers.turnoverPenalty ?? 0;
+
+    let clutchShotBias = 0;
+    let clutchTurnoverBias = 0;
+    if (this.clutchTime && this.offensiveCoach) {
+      const gm = getEffectiveCoachAttribute(this.offensiveCoach, 'gameManagement');
+      // Centered at 75. Range roughly -2% .. +2.4% on shot probability.
+      const gmBias = ((gm - 75) / 100) * 0.04;
+      const perks = getCoachPerks(this.offensiveCoach);
+      const clutchPerk = perks.clutchShotBonus ?? 0;
+      clutchShotBias = gmBias + clutchPerk;
+      // High game-management teams turn it over less under pressure.
+      clutchTurnoverBias = -gmBias * 0.5;
+    }
+
     const positiveOutcomes = ['success', 'made', 'finish', 'open', 'beat_defender', 'drive', 'shooter_open', 'cutter_open'];
     const negativeOutcomes = ['stolen', 'turnover', 'blocked', 'deflected', 'covered'];
 
@@ -184,9 +212,11 @@ class PlayExecutionEngine {
       // Positive outcomes boosted by positive advantage
       if (positiveOutcomes.includes(key)) {
         adjustedProbability = baseProbability + (advantage / 200);
-        // Apply shot modifier from defensive scheme
+        // Apply shot modifier from defensive scheme + offensive coach bonuses
         if (key === 'made') {
           adjustedProbability += shotMod;
+          adjustedProbability += offShotBonus;
+          adjustedProbability += clutchShotBias;
         }
       }
       // Negative outcomes reduced by positive advantage
@@ -202,6 +232,8 @@ class PlayExecutionEngine {
         }
         if (key === 'turnover') {
           adjustedProbability += turnoverMod;
+          adjustedProbability += offTurnoverPenalty;
+          adjustedProbability += clutchTurnoverBias;
         }
       }
 
@@ -965,7 +997,7 @@ class PlayExecutionEngine {
 
     this.playResult.outcome = 'free_throws';
     this.playResult.points = made;
-    this.playResult.freeThrows = { made: made, attempted: 2 };
+    this.playResult.freeThrows = { made: made, attempted: 2, shooterId: shooter.id ?? null };
 
     this.keyframes.push({
       time: this.elapsedTime + 1.0,

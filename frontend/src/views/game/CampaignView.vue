@@ -7,7 +7,12 @@ import { useAuthStore } from '@/stores/auth'
 import { useEngineStore } from '@/stores/engine'
 import { useSyncStore } from '@/stores/sync'
 import { usePlayoffStore } from '@/stores/playoff'
+import { useTeamStore } from '@/stores/team'
+import { useToastStore } from '@/stores/toast'
 import { BottomNav } from '@/components/ui'
+import SimPauseModal from '@/components/calendar/SimPauseModal.vue'
+import AllStarModal from '@/components/game/AllStarModal.vue'
+import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { ArrowLeft, Play, User, FolderOpen, LogOut, ShoppingBag } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -18,6 +23,8 @@ const authStore = useAuthStore()
 const engineStore = useEngineStore()
 const syncStore = useSyncStore()
 const playoffStore = usePlayoffStore()
+const teamStore = useTeamStore()
+const toastStore = useToastStore()
 
 const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
@@ -117,6 +124,117 @@ onUnmounted(() => {
 async function handleLogout() {
   await authStore.logout()
   router.push('/login')
+}
+
+// ---------------------------------------------------------------------------
+// Sim Pause Modal handlers
+// ---------------------------------------------------------------------------
+// SimPauseModal is mounted at the campaign-layout level (here) so it surfaces
+// during simulateToGame regardless of which child route the user is on. The
+// "View All-Stars" path opens AllStarModal directly from this component (its
+// own mount, separate from CampaignHomeView's post-game AllStar mount).
+
+const showAllStarModalFromPause = ref(false)
+const allStarRostersFromPause = ref(null)
+
+async function handleSimPauseContinue() {
+  try {
+    await gameStore.resumeSimulation()
+  } catch (err) {
+    console.error('Failed to resume sim:', err)
+    toastStore.showError('Failed to resume simulation')
+  }
+}
+
+function handleSimPausePause() {
+  gameStore.cancelSimulation()
+}
+
+function handleSimPauseViewAllStar() {
+  // Pull rosters from the pause payload, open the local AllStarModal. The
+  // close handler below marks allStarViewed and resumes the sim.
+  const rosters = gameStore.pauseState?.payload?.allStarRosters
+  if (rosters) {
+    allStarRostersFromPause.value = rosters
+    showAllStarModalFromPause.value = true
+  }
+}
+
+async function handleCloseAllStarModalFromPause() {
+  showAllStarModalFromPause.value = false
+  // Mark allStarViewed so CampaignHomeView's post-game AllStar check doesn't
+  // re-pop the same modal next time the user lands on home.
+  try {
+    const camp = campaignStore.currentCampaign
+    const year = camp?.currentSeasonYear ?? camp?.game_year ?? 2025
+    const seasonData = await SeasonRepository.get(campaignId.value, year)
+    if (seasonData) {
+      seasonData.allStarViewed = true
+      await SeasonRepository.save(seasonData)
+    }
+  } catch (err) {
+    console.error('Failed to mark All-Star as viewed:', err)
+  }
+  // Resume the paused sim. (gameStore.simulationPaused / pauseResumeContext
+  // are still set because we didn't call cancelSimulation.)
+  try {
+    await gameStore.resumeSimulation()
+  } catch (err) {
+    console.error('Failed to resume sim after All-Star modal:', err)
+  }
+}
+
+async function handleSimPauseCpuLineup() {
+  try {
+    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const roster = teamStore.roster
+    if (!roster || roster.length < 5) {
+      toastStore.showError('Roster too small to set lineup')
+      gameStore.cancelSimulation()
+      return
+    }
+    // selectBestLineup returns an array of 5 player IDs (PG..C order), or
+    // entries may be null if a position can't be filled.
+    const newLineup = selectBestLineup(roster)
+    if (!Array.isArray(newLineup) || newLineup.length !== 5) {
+      toastStore.showError('CPU could not pick a lineup')
+      gameStore.cancelSimulation()
+      return
+    }
+    await teamStore.updateLineup(campaignId.value, newLineup, [])
+    // Recompute target minutes around the new starters (160 min split equally,
+    // bench top-4 share the remaining 40 in [16,12,8,4]).
+    const newStarterIds = newLineup.filter(id => id !== null)
+    const newMinutes = {}
+    const starterShare = newStarterIds.length > 0 ? Math.floor(160 / newStarterIds.length) : 0
+    for (const id of newStarterIds) newMinutes[id] = Math.min(starterShare, 40)
+    const benchSlots = [16, 12, 8, 4]
+    const starterSet = new Set(newStarterIds)
+    const benchByRating = roster
+      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
+      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+    for (let i = 0; i < benchByRating.length; i++) {
+      newMinutes[benchByRating[i].id] = i < benchSlots.length ? benchSlots[i] : 0
+    }
+    await teamStore.updateTargetMinutes(campaignId.value, newMinutes)
+    toastStore.showSuccess('Lineup updated by CPU')
+  } catch (err) {
+    console.error('CPU lineup pick failed:', err)
+    toastStore.showError('Failed to set CPU lineup')
+  }
+  // Resume the sim regardless of CPU result — user already chose to keep going.
+  try {
+    await gameStore.resumeSimulation()
+  } catch (err) {
+    console.error('Failed to resume sim after CPU lineup:', err)
+  }
+}
+
+function handleSimPauseGoToLineup() {
+  // Send the user to the GM tab to fix the lineup; cancel the run so they can
+  // re-launch Sim to This Game whenever they're ready.
+  gameStore.cancelSimulation()
+  router.push(`/campaign/${campaignId.value}/team`)
 }
 
 function toggleMobileMenu() {
@@ -266,6 +384,30 @@ function closeMobileMenu() {
 
     <!-- Bottom Nav - Mobile/Tablet only -->
     <BottomNav v-if="isMobile" :campaign-id="campaignId" />
+
+    <!-- Sim Pause Modal — global across all campaign sub-routes. Shown whenever
+         simulateToGame halts (trade-deadline, All-Star, user injury). -->
+    <SimPauseModal
+      :show="gameStore.simulationPaused && !showAllStarModalFromPause"
+      :reason="gameStore.pauseState?.reason || ''"
+      :payload="gameStore.pauseState?.payload || {}"
+      @continue="handleSimPauseContinue"
+      @pause="handleSimPausePause"
+      @close="handleSimPausePause"
+      @view-all-star="handleSimPauseViewAllStar"
+      @cpu-set-lineup="handleSimPauseCpuLineup"
+      @go-to-lineup="handleSimPauseGoToLineup"
+    />
+
+    <!-- All-Star Modal opened from the SimPauseModal "View All-Stars" path.
+         Separate from CampaignHomeView's post-game AllStarModal — they coordinate
+         via seasonData.allStarViewed. -->
+    <AllStarModal
+      :show="showAllStarModalFromPause"
+      :rosters="allStarRostersFromPause"
+      :user-team-id="team?.id"
+      @close="handleCloseAllStarModalFromPause"
+    />
   </div>
 </template>
 

@@ -71,6 +71,25 @@ const courtRef = ref(null)
 
 // Live simulation state
 const isLiveMode = ref(false)
+
+// Pre-game snapshots of the team records, captured the moment we enter the
+// live broadcast flow. Once Q4 sims, the store updates standings (regular
+// season W/L) and the playoff bracket (series wins) BEFORE the canvas plays
+// the final quarter — so reading the live records during animation would
+// reveal the outcome ("2-0 → 3-0" the moment Q4 begins to sim). The broadcast
+// header reads from these frozen refs instead, falling back to the live
+// computeds when no snapshot exists (e.g. opening a long-completed game).
+const frozenAwayTeamRecord = ref(null)
+const frozenHomeTeamRecord = ref(null)
+const frozenAwaySeriesRecord = ref(null)
+const frozenHomeSeriesRecord = ref(null)
+
+function snapshotTeamRecords() {
+  frozenAwayTeamRecord.value = awayTeamRecord.value
+  frozenHomeTeamRecord.value = homeTeamRecord.value
+  frozenAwaySeriesRecord.value = awaySeriesRecord.value
+  frozenHomeSeriesRecord.value = homeSeriesRecord.value
+}
 const gameJustCompleted = ref(false)  // True when final quarter just finished
 
 // Live stats animation state
@@ -181,14 +200,52 @@ const playoffSeriesInfo = computed(() => {
   return { ...series, label }
 })
 
-// Scores: use game store values when game is complete (simToEnd skips animation),
-// otherwise use the animation composable's running scores
-const displayHomeScore = computed(() =>
-  game.value?.is_complete ? (game.value.home_score ?? currentHomeScore.value) : currentHomeScore.value
-)
-const displayAwayScore = computed(() =>
-  game.value?.is_complete ? (game.value.away_score ?? currentAwayScore.value) : currentAwayScore.value
-)
+// Per-team series record (wins-losses from that team's POV). The series stores
+// team1Wins/team2Wins where team1 is the higher seed. We map back to home/away
+// using whichever side matches each team's id.
+function teamSeriesRecord(teamId) {
+  const series = playoffSeriesInfo.value
+  if (!series || teamId == null) return ''
+  const isTeam1 = String(series.team1?.teamId) === String(teamId)
+  const isTeam2 = String(series.team2?.teamId) === String(teamId)
+  if (!isTeam1 && !isTeam2) return ''
+  return isTeam1
+    ? `${series.team1Wins}-${series.team2Wins}`
+    : `${series.team2Wins}-${series.team1Wins}`
+}
+
+const homeSeriesRecord = computed(() => teamSeriesRecord(homeTeam.value?.id))
+const awaySeriesRecord = computed(() => teamSeriesRecord(awayTeam.value?.id))
+
+// Round label for the broadcast header banner.
+const playoffRoundLabel = computed(() => {
+  if (!game.value?.is_playoff) return ''
+  return playoffStore.getPlayoffRoundLabel(game.value.playoff_round)
+})
+
+// Scores: while the live animation flow is active (a quarter just simulated,
+// the canvas is about to or is currently rendering possessions, or we're at a
+// quarter break) we always use the animation composable's running score.
+//
+// The store flips `game.home_score` / `game.away_score` to the post-simulated
+// values inside `gameStore.continueGame` BEFORE the next quarter's animation
+// loads, so reading those fields directly causes the score in the header /
+// quarter-break modal to flash the post-quarter result for one frame before
+// the canvas catches up. Falling back to `currentHomeScore` (which the
+// composable holds at the previous quarter's end until the new animation data
+// is loaded with explicit starting scores) avoids that spoiler.
+//
+// Once we're firmly out of animation mode (postgame view, simToEnd skipped
+// animation entirely, or the user navigated to a finished game), `is_complete`
+// is the right fallback so the box-score header reads the persisted final.
+const displayHomeScore = computed(() => {
+  if (showAnimationMode.value || isLiveMode.value) return currentHomeScore.value
+  return game.value?.is_complete ? (game.value.home_score ?? currentHomeScore.value) : currentHomeScore.value
+})
+const displayAwayScore = computed(() => {
+  if (showAnimationMode.value || isLiveMode.value) return currentAwayScore.value
+  return game.value?.is_complete ? (game.value.away_score ?? currentAwayScore.value) : currentAwayScore.value
+})
 
 // Determine if user is home or away
 const userIsHome = computed(() =>
@@ -908,6 +965,19 @@ onMounted(async () => {
       await gameStore.fetchGame(campaignId.value, gameId.value)
     }
 
+    // If this is a playoff game, make sure the bracket is loaded so the
+    // per-team series record (e.g. "2-1") and the round label can resolve.
+    // Without this, `playoffStore.getSeriesFromBracket(...)` returns null on
+    // direct-load (or hard reload) of the postgame URL and the series record
+    // shows as blank under the team logos.
+    if (gameStore.currentGame?.is_playoff) {
+      try {
+        await playoffStore.fetchBracket(campaignId.value)
+      } catch (err) {
+        console.error('Failed to fetch playoff bracket:', err)
+      }
+    }
+
     // Load coaching styles from user's team coaching_scheme
     // Prefer teamStore (single source of truth, updated in-memory), fall back to game's team object
     const coachingScheme = teamStore.team?.coaching_scheme
@@ -1027,6 +1097,11 @@ async function handleConfirmSimulate() {
  * If game is already in progress, continues from saved state.
  */
 async function startGame() {
+  // Capture pre-game records BEFORE entering live mode so the broadcast header
+  // shows the going-in records throughout the run. The store mutates standings
+  // / bracket as soon as the final quarter sims, which would otherwise spoil
+  // the result before the canvas plays Q4.
+  snapshotTeamRecords()
   simulating.value = true
   isLiveMode.value = true
   showAnimationMode.value = true
@@ -1885,7 +1960,9 @@ onUnmounted(() => {
                   :style="{ backgroundColor: awayTeam?.primary_color || '#6B7280' }"
                 >
                   <span class="badge-abbr">{{ awayTeam?.abbreviation }}</span>
-                  <span class="badge-record">{{ awayTeamRecord }}</span>
+                  <span class="badge-record">
+                    {{ game.is_playoff ? awaySeriesRecord : awayTeamRecord }}
+                  </span>
                 </div>
                 <div class="team-info">
                   <span v-if="awayTeam?.overall_rating" class="team-rating">{{ awayTeam.overall_rating }} OVR</span>
@@ -1894,7 +1971,7 @@ onUnmounted(() => {
               </div>
             </div>
             <div v-if="isComplete || isInProgress" class="team-score-lg">
-              {{ game.away_score || 0 }}
+              {{ displayAwayScore || 0 }}
             </div>
           </div>
 
@@ -1917,7 +1994,7 @@ onUnmounted(() => {
           <!-- Home Team -->
           <div class="team-side home" :class="{ winner: winner === 'home' }">
             <div v-if="isComplete || isInProgress" class="team-score-lg">
-              {{ game.home_score || 0 }}
+              {{ displayHomeScore || 0 }}
             </div>
             <div class="team-side-column">
               <span class="team-location-label">HOME</span>
@@ -1927,7 +2004,9 @@ onUnmounted(() => {
                   :style="{ backgroundColor: homeTeam?.primary_color || '#6B7280' }"
                 >
                   <span class="badge-abbr">{{ homeTeam?.abbreviation }}</span>
-                  <span class="badge-record">{{ homeTeamRecord }}</span>
+                  <span class="badge-record">
+                    {{ game.is_playoff ? homeSeriesRecord : homeTeamRecord }}
+                  </span>
                 </div>
                 <div class="team-info">
                   <span v-if="homeTeam?.overall_rating" class="team-rating">{{ homeTeam.overall_rating }} OVR</span>
@@ -1961,7 +2040,11 @@ onUnmounted(() => {
                   >
                     {{ awayTeam?.abbreviation }}
                   </div>
-                  <span class="broadcast-record">{{ awayTeamRecord }}</span>
+                  <span class="broadcast-record">
+                    {{ game.is_playoff
+                      ? (frozenAwaySeriesRecord ?? awaySeriesRecord)
+                      : (frozenAwayTeamRecord ?? awayTeamRecord) }}
+                  </span>
                 </div>
                 <div class="broadcast-score-container">
                   <TransitionGroup name="score-slide" tag="div" class="score-slot">
@@ -1994,12 +2077,28 @@ onUnmounted(() => {
                   >
                     {{ homeTeam?.abbreviation }}
                   </div>
-                  <span class="broadcast-record">{{ homeTeamRecord }}</span>
+                  <span class="broadcast-record">
+                    {{ game.is_playoff
+                      ? (frozenHomeSeriesRecord ?? homeSeriesRecord)
+                      : (frozenHomeTeamRecord ?? homeTeamRecord) }}
+                  </span>
                 </div>
               </div>
               </div>
-              <!-- Game Date -->
-              <div class="broadcast-date">{{ formatDate(game.game_date) }}</div>
+              <!-- Game Date + (for playoff games) round indicator -->
+              <div class="broadcast-date">
+                <template v-if="game.is_playoff && playoffRoundLabel">
+                  <span class="broadcast-playoff-pill">
+                    <Trophy :size="11" class="broadcast-playoff-icon" />
+                    <span class="broadcast-playoff-label">{{ playoffRoundLabel }}</span>
+                    <span v-if="game.playoff_game_number" class="broadcast-playoff-game">
+                      &middot; Game {{ game.playoff_game_number }}
+                    </span>
+                  </span>
+                  <span class="broadcast-date-sep">&middot;</span>
+                </template>
+                <span>{{ formatDate(game.game_date) }}</span>
+              </div>
             </div>
 
             <!-- Court and Live Stats Row -->
@@ -2088,7 +2187,9 @@ onUnmounted(() => {
                               :style="{ backgroundColor: awayTeam?.primary_color || '#666' }"
                             >
                               <span class="qb-badge-abbr">{{ awayTeam?.abbreviation }}</span>
-                              <span class="qb-badge-record">{{ awayTeamRecord }}</span>
+                              <span class="qb-badge-record">
+                                {{ game.is_playoff ? awaySeriesRecord : awayTeamRecord }}
+                              </span>
                             </div>
                             <span class="qb-team-name">{{ awayTeam?.name }}</span>
                           </div>
@@ -2109,7 +2210,9 @@ onUnmounted(() => {
                               :style="{ backgroundColor: homeTeam?.primary_color || '#666' }"
                             >
                               <span class="qb-badge-abbr">{{ homeTeam?.abbreviation }}</span>
-                              <span class="qb-badge-record">{{ homeTeamRecord }}</span>
+                              <span class="qb-badge-record">
+                                {{ game.is_playoff ? homeSeriesRecord : homeTeamRecord }}
+                              </span>
                             </div>
                             <span class="qb-team-name">{{ homeTeam?.name }}</span>
                           </div>
@@ -3785,6 +3888,29 @@ onUnmounted(() => {
   color: var(--color-text-primary);
 }
 
+/* Cosmic-gradient backdrop washes out the default tertiary/gold text on these
+   labels — give them a dark pill so they read clearly. Scoped to the header
+   card so other surfaces using these classes (e.g. neutral-bg lists) keep
+   their existing styling. */
+.game-header-card .game-type-label {
+  display: inline-block;
+  padding: 3px 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius-full);
+  letter-spacing: 0.06em;
+}
+
+.game-header-card .game-type-label.playoff {
+  color: #ffd700;
+}
+
+.game-header-card .series-record-badge {
+  background: rgba(0, 0, 0, 0.55);
+  border-color: rgba(255, 215, 0, 0.45);
+  color: #ffd700;
+}
+
 .game-header-card .team-score-lg {
   color: #000000;
   text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3);
@@ -3810,6 +3936,21 @@ onUnmounted(() => {
 [data-theme="light"] .game-header-card .user-game-badge {
   background: rgba(255, 255, 255, 0.25);
   color: black;
+}
+
+[data-theme="light"] .game-header-card .game-type-label {
+  background: rgba(0, 0, 0, 0.65);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+[data-theme="light"] .game-header-card .game-type-label.playoff {
+  color: #ffd700;
+}
+
+[data-theme="light"] .game-header-card .series-record-badge {
+  background: rgba(0, 0, 0, 0.65);
+  border-color: rgba(255, 215, 0, 0.5);
+  color: #ffd700;
 }
 
 [data-theme="light"] .game-header-card .team-name-text {
@@ -5533,6 +5674,43 @@ onUnmounted(() => {
   padding: 12px 20px 8px;
 }
 
+/* Playoff round chip embedded inline with the broadcast date footer. Dark pill
+   so the gold text reads cleanly against the cosmic gradient. */
+.broadcast-playoff-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 215, 0, 0.45);
+  border-radius: var(--radius-full);
+}
+
+.broadcast-playoff-icon {
+  color: #ffd700;
+  flex-shrink: 0;
+}
+
+.broadcast-playoff-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #ffd700;
+}
+
+.broadcast-playoff-game {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.04em;
+}
+
+.broadcast-date-sep {
+  color: rgba(0, 0, 0, 0.45);
+  font-weight: 600;
+}
+
 .broadcast-scoreboard {
   display: flex;
   align-items: center;
@@ -5541,6 +5719,11 @@ onUnmounted(() => {
 }
 
 .broadcast-date {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
   text-align: center;
   font-size: 0.7rem;
   color: #000;

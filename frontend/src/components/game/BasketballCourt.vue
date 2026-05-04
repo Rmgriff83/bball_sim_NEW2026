@@ -5,22 +5,76 @@ import { NBA_COURT, COURT_CANVAS } from '@/config/courtConfig'
 // Pre-load all headshot images for canvas rendering
 const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
 const headshotImageCache = {}
+// Tracks the in-flight load promise per filename so multiple callers (mount +
+// roster watch) don't race against each other. Each entry resolves once the
+// Image has either loaded or failed — never rejects, so Promise.all is safe.
+const headshotLoadPromises = {}
 
-function getHeadshotImage(filename) {
+function resolveHeadshotUrl(filename) {
   if (!filename) return null
-  if (headshotImageCache[filename]) return headshotImageCache[filename]
-
   const filenameLower = filename.toLowerCase()
   const match = Object.entries(headshotModules).find(([k]) => {
     const parts = k.split('/')
     return parts[parts.length - 1].toLowerCase() === filenameLower
   })
-  if (!match) return null
+  return match ? match[1].default : null
+}
+
+function getHeadshotImage(filename) {
+  if (!filename) return null
+  if (headshotImageCache[filename]) return headshotImageCache[filename]
+
+  const url = resolveHeadshotUrl(filename)
+  if (!url) return null
 
   const img = new Image()
-  img.src = match[1].default
+  img.src = url
   headshotImageCache[filename] = img
   return img
+}
+
+/**
+ * Preload every headshot referenced by the supplied players. Returns a Promise
+ * that resolves once each image has either loaded or errored — never rejects
+ * (a 404 on one headshot shouldn't block the rest of the canvas from rendering).
+ */
+function preloadHeadshots(players) {
+  if (!Array.isArray(players) || players.length === 0) return Promise.resolve()
+  const filenames = new Set()
+  for (const p of players) {
+    if (p?.headshot) filenames.add(p.headshot)
+  }
+  const promises = []
+  for (const filename of filenames) {
+    if (headshotLoadPromises[filename]) {
+      promises.push(headshotLoadPromises[filename])
+      continue
+    }
+    const url = resolveHeadshotUrl(filename)
+    if (!url) continue
+
+    let img = headshotImageCache[filename]
+    if (!img) {
+      img = new Image()
+      img.src = url
+      headshotImageCache[filename] = img
+    }
+
+    let promise
+    if (img.complete && img.naturalWidth > 0) {
+      // Already cached by a prior call (or hot module reload)
+      promise = Promise.resolve()
+    } else {
+      promise = new Promise(resolve => {
+        const done = () => resolve()
+        img.addEventListener('load', done, { once: true })
+        img.addEventListener('error', done, { once: true })
+      })
+    }
+    headshotLoadPromises[filename] = promise
+    promises.push(promise)
+  }
+  return Promise.all(promises)
 }
 
 const MOBILE_BREAKPOINT = 620
@@ -112,6 +166,11 @@ const positionHistory = ref({})
 const canvas = ref(null)
 const ctx = ref(null)
 const isMobile = ref(window.innerWidth <= MOBILE_BREAKPOINT)
+
+// Flips to true once every roster headshot has finished loading (or errored
+// out). Reactive watchers that drive the canvas redraw skip while this is
+// false, so the first paint always has the headshots it needs in cache.
+const headshotsReady = ref(false)
 
 // Score animation state
 const scoreAnimation = ref(null)  // { points: 2|3, progress: 0-1, startTime: timestamp }
@@ -1542,8 +1601,15 @@ function getDefaultPositions() {
   ]
 }
 
-onMounted(() => {
+onMounted(async () => {
   ctx.value = canvas.value.getContext('2d')
+  // Wait for every headshot referenced by the supplied rosters to load before
+  // the first paint, so we never flash colored placeholder circles before the
+  // images settle in.
+  try {
+    await preloadHeadshots([...(props.homeRoster || []), ...(props.awayRoster || [])])
+  } catch (_) { /* preloadHeadshots never rejects, but be safe */ }
+  headshotsReady.value = true
   drawCourt()
   window.addEventListener('resize', handleResize)
 })
@@ -1551,6 +1617,18 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
 })
+
+// If the rosters change after mount (e.g. the parent loads them async or swaps
+// in subs), preload any new headshots before we redraw. While preload is in
+// flight we hold the canvas in its current state; once ready we draw.
+watch(() => [props.homeRoster, props.awayRoster], async ([newHome, newAway]) => {
+  headshotsReady.value = false
+  try {
+    await preloadHeadshots([...(newHome || []), ...(newAway || [])])
+  } catch (_) { /* noop */ }
+  headshotsReady.value = true
+  drawCourt()
+}, { deep: true })
 
 watch(() => [
   props.ballPosition,
@@ -1562,6 +1640,7 @@ watch(() => [
   props.interpolatedBallPosition,
   isMobile.value
 ], () => {
+  if (!headshotsReady.value) return
   drawCourt()
 }, { deep: true })
 

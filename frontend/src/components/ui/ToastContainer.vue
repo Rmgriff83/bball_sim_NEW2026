@@ -1,14 +1,45 @@
 <script setup>
+import { ref } from 'vue'
 import { useToastStore } from '@/stores/toast'
+import { useGameStore } from '@/stores/game'
 import { useRouter } from 'vue-router'
-import { X, ExternalLink, Trophy, XCircle, Binoculars } from 'lucide-vue-next'
+import { X, ExternalLink, Trophy, XCircle, Binoculars, Calendar, FastForward } from 'lucide-vue-next'
 
 const toastStore = useToastStore()
+const gameStore = useGameStore()
 const router = useRouter()
 
 function goToBoxScore(toast) {
   router.push(`/campaign/${toast.campaignId}/game/${toast.gameId}`)
   toastStore.removeToast(toast.id)
+}
+
+function goToScouting(toast) {
+  if (!toast.campaignId) return
+  router.push(`/campaign/${toast.campaignId}/scouting`)
+  toastStore.removeToast(toast.id)
+}
+
+// Tracks per-toast loading state for the "Finish Season" action so the button
+// shows feedback during the (potentially long) simulateRemainingSeason call.
+const finishingSeason = ref({})
+
+async function finishRegularSeason(toast) {
+  if (!toast.campaignId || finishingSeason.value[toast.id]) return
+  // Navigate the user to the home view so they see the existing background
+  // simulation progress UI, then kick off the run.
+  if (router.currentRoute.value.path !== `/campaign/${toast.campaignId}`) {
+    router.push(`/campaign/${toast.campaignId}`)
+  }
+  finishingSeason.value[toast.id] = true
+  try {
+    await gameStore.simulateRemainingSeason(toast.campaignId)
+  } catch (err) {
+    console.error('Failed to simulate remaining season:', err)
+  } finally {
+    delete finishingSeason.value[toast.id]
+    toastStore.removeToast(toast.id)
+  }
 }
 
 function isWin(toast) {
@@ -89,6 +120,40 @@ function isWin(toast) {
                 <span class="weekly-summary-label">
                   scouting point{{ toast.scoutingPointsEarned !== 1 ? 's' : '' }} earned
                 </span>
+              </div>
+              <div v-if="toast.campaignId" class="toast-footer">
+                <button class="box-score-link" @click="goToScouting(toast)">
+                  <span>Go to Scouting</span>
+                  <ExternalLink :size="14" />
+                </button>
+              </div>
+            </div>
+            <button class="toast-close" @click="toastStore.removeToast(toast.id)">
+              <X :size="16" />
+            </button>
+          </template>
+
+          <!-- Regular Season Complete Toast -->
+          <template v-if="toast.type === 'regular-season-complete'">
+            <div class="rsc-icon">
+              <Calendar :size="20" />
+            </div>
+            <div class="toast-content">
+              <div class="game-result-header">REGULAR SEASON COMPLETE</div>
+              <div class="rsc-body">
+                You've finished all your games. Sim the league's remaining
+                <template v-if="toast.remainingGames > 0"> {{ toast.remainingGames }} </template>
+                games to head into the playoffs.
+              </div>
+              <div class="toast-footer">
+                <button
+                  class="rsc-finish-btn"
+                  :disabled="!!finishingSeason[toast.id]"
+                  @click="finishRegularSeason(toast)"
+                >
+                  <FastForward :size="14" />
+                  <span>{{ finishingSeason[toast.id] ? 'Simulating…' : 'Finish Season' }}</span>
+                </button>
               </div>
             </div>
             <button class="toast-close" @click="toastStore.removeToast(toast.id)">
@@ -308,6 +373,7 @@ function isWin(toast) {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  margin-bottom: 10px;
 }
 
 .weekly-summary-value {
@@ -324,6 +390,57 @@ function isWin(toast) {
 .weekly-summary-label {
   font-size: 0.8rem;
   color: var(--color-text-secondary);
+}
+
+/* Regular Season Complete Toast */
+.toast-regular-season-complete {
+  border-left: 3px solid var(--color-primary);
+}
+
+.rsc-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(232, 90, 79, 0.15);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.rsc-body {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
+}
+
+.rsc-finish-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-md);
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.rsc-finish-btn:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.rsc-finish-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Draft Pick Toast */

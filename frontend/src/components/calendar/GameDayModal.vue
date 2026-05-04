@@ -7,9 +7,9 @@ import { useTeamStore } from '@/stores/team'
 import { useLeagueStore } from '@/stores/league'
 import { usePlayoffStore } from '@/stores/playoff'
 import { useToastStore } from '@/stores/toast'
-import { LoadingSpinner } from '@/components/ui'
+import { LoadingSpinner, StandardModal } from '@/components/ui'
 import BoxScore from '@/components/game/BoxScore.vue'
-import { X, Play, FastForward, Eye, Lock, AlertTriangle, Trophy } from 'lucide-vue-next'
+import { X, Play, FastForward, Eye, Lock, AlertTriangle, Trophy, Cpu, Users } from 'lucide-vue-next'
 
 const props = defineProps({
   show: {
@@ -80,6 +80,55 @@ function goToTeamTab() {
   showWarning.value = false
   router.push(`/campaign/${props.campaignId}/team?tab=team`)
   close()
+}
+
+async function handleCpuSetLineup() {
+  try {
+    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const roster = teamStore.roster
+    if (!roster || roster.length < 5) {
+      toastStore.showError('Not enough players to set lineup')
+      return
+    }
+    const newLineup = selectBestLineup(roster)
+    await teamStore.updateLineup(props.campaignId, newLineup)
+
+    // Recompute target minutes so the rotation totals 200 again. Mirrors the
+    // distribution used in CampaignHomeView's handler: starters split 160 mins
+    // (max 40 each), top healthy bench players get [16,12,8,4], everyone else 0.
+    const starterSet = new Set(newLineup.filter(id => id !== null))
+    const newMinutes = {}
+    const healthyStarters = newLineup.filter(id => id !== null)
+    const starterMins = healthyStarters.length > 0 ? Math.min(Math.floor(160 / healthyStarters.length), 40) : 0
+    let starterTotal = 0
+    for (const id of healthyStarters) {
+      newMinutes[id] = starterMins
+      starterTotal += starterMins
+    }
+    const benchPlayers = roster
+      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
+      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+    let benchBudget = 200 - starterTotal
+    const benchSlots = [16, 12, 8, 4]
+    for (let i = 0; i < benchPlayers.length; i++) {
+      if (i < benchSlots.length && benchBudget > 0) {
+        const mins = Math.min(benchSlots[i], benchBudget)
+        newMinutes[benchPlayers[i].id] = mins
+        benchBudget -= mins
+      } else {
+        newMinutes[benchPlayers[i].id] = 0
+      }
+    }
+    for (const p of roster) {
+      if (p && !(p.id in newMinutes)) newMinutes[p.id] = 0
+    }
+    await teamStore.updateTargetMinutes(props.campaignId, newMinutes)
+
+    showWarning.value = false
+    toastStore.showSuccess('CPU adjusted your lineup')
+  } catch (err) {
+    toastStore.showError('Failed to auto-set lineup')
+  }
 }
 
 // Determine if user is home or away
@@ -217,12 +266,84 @@ function viewFullGame() {
   close()
 }
 
+// Whether this game is eligible for "Sim to This Game" (the new fast-forward action).
+// Excludes the next user game (existing "Simulate Game" handles that), in-progress
+// games, completed games, and playoff games (v1 — see SeasonDeadlines / simulateToGame).
+const canSimToThisGame = computed(() => {
+  if (!props.game) return false
+  if (props.game.is_complete) return false
+  if (isGameInProgress.value) return false
+  if (props.isNextGame) return false
+  if (props.game.is_playoff) return false
+  return true
+})
+
+// Sim through to this future user game. Reuses the validation pattern of the
+// existing simulateToGame() action below; surfaces toasts the same way. The
+// store may pause partway through (trade deadline / All-Star / user injury);
+// SimPauseModal in CampaignHomeView handles the pause UI from there.
+async function simulateToThisGame() {
+  if (!canSimToThisGame.value || simulating.value) return
+  if (!validateRoster()) return
+
+  simulating.value = true
+  // Close the modal immediately on selection so the user isn't stuck staring
+  // at the calendar modal while the multi-game sim runs in the background.
+  close()
+  const loadingToastId = toastStore.showLoading('Simulating to game...')
+
+  try {
+    const response = await gameStore.simulateToGame(props.campaignId, props.game.id)
+    toastStore.removeMinimalToast(loadingToastId)
+
+    // If the run paused mid-flight, leave the calendar modal open and let the
+    // SimPauseModal take focus. Don't refresh stores yet — resume will finish.
+    if (response?.paused) {
+      simulating.value = false
+      return
+    }
+
+    if (response?.userGameResult) {
+      toastStore.showGameResult({
+        homeTeam: response.userGameResult.home_team?.abbreviation || response.userGameResult.home_team?.name || 'HOME',
+        awayTeam: response.userGameResult.away_team?.abbreviation || response.userGameResult.away_team?.name || 'AWAY',
+        homeScore: response.userGameResult.home_score,
+        awayScore: response.userGameResult.away_score,
+        gameId: response.userGameResult.game_id,
+        campaignId: props.campaignId,
+        isUserHome: response.userGameResult.is_user_home,
+      })
+    }
+
+    if (response?.userGameResult?.playoffUpdate) {
+      playoffStore.handlePlayoffUpdate(response.userGameResult.playoffUpdate)
+    }
+
+    await Promise.all([
+      campaignStore.fetchCampaign(props.campaignId, true),
+      teamStore.fetchTeam(props.campaignId, { force: true }),
+      leagueStore.fetchStandings(props.campaignId, { force: true }),
+      gameStore.fetchGames(props.campaignId, { force: true }),
+    ])
+
+    emit('simulated')
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError('Simulation failed. Please try again.')
+    console.error('Failed to sim to this game:', err)
+  } finally {
+    simulating.value = false
+  }
+}
+
 // Simulate through this game
 async function simulateToGame() {
   if (!props.isNextGame || simulating.value) return
   if (!validateRoster()) return
 
   simulating.value = true
+  // Close on selection so the modal doesn't linger over the loading toast.
+  close()
   const loadingToastId = toastStore.showLoading('Simulating games...')
 
   try {
@@ -271,9 +392,6 @@ async function simulateToGame() {
 
     // Emit event so parent can update
     emit('simulated')
-
-    // Close modal
-    close()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Simulation failed. Please try again.')
@@ -481,9 +599,13 @@ onUnmounted(() => {
 
           <!-- Upcoming Game Info -->
           <div v-else-if="!isGameInProgress" class="upcoming-section">
-            <p v-if="!isNextGame" class="order-notice">
+            <p v-if="!isNextGame && !canSimToThisGame" class="order-notice">
               <Lock :size="16" />
               Games must be played in order. This is not your next scheduled game.
+            </p>
+            <p v-else-if="!isNextGame" class="order-notice">
+              <FastForward :size="16" />
+              Sim through this game
             </p>
           </div>
 
@@ -516,15 +638,30 @@ onUnmounted(() => {
                 <Play :size="18" />
                 Play Game
               </button>
+              <!-- Next user game: Simulate Game (uses simulateToNextGame) -->
               <button
+                v-if="isNextGame"
                 class="btn btn-secondary"
-                :disabled="!isNextGame || simulating"
-                :title="!isNextGame ? 'You must play games in order' : 'Simulate this game'"
+                :disabled="simulating"
+                title="Simulate this game"
                 @click="simulateToGame"
               >
                 <LoadingSpinner v-if="simulating" size="sm" />
                 <FastForward v-else :size="18" />
                 {{ simulating ? 'Simulating...' : 'Simulate Game' }}
+              </button>
+              <!-- Future user game (not the next one): Sim to This Game.
+                   Pauses on trade-deadline / All-Star / user injury along the way. -->
+              <button
+                v-else-if="canSimToThisGame"
+                class="btn btn-secondary"
+                :disabled="simulating"
+                title="Sim every game between now and this one"
+                @click="simulateToThisGame"
+              >
+                <LoadingSpinner v-if="simulating" size="sm" />
+                <FastForward v-else :size="18" />
+                {{ simulating ? 'Simulating...' : 'Sim Through This Game' }}
               </button>
             </template>
           </footer>
@@ -534,23 +671,31 @@ onUnmounted(() => {
   </Teleport>
 
   <!-- Roster Warning Modal -->
-  <Teleport to="body">
-    <Transition name="modal">
-      <div v-if="showWarning" class="warning-overlay" @click.self="showWarning = false">
-        <div class="warning-modal">
-          <div class="warning-icon-wrap">
-            <AlertTriangle :size="40" class="warning-icon-svg" />
-          </div>
-          <p class="warning-msg">{{ warningMessage }}</p>
-          <p class="warning-hint">{{ warningHint }}</p>
-          <div class="warning-btns">
-            <button class="btn btn-secondary" @click="showWarning = false">Cancel</button>
-            <button class="btn btn-primary" @click="goToTeamTab">Go to Team Tab</button>
-          </div>
-        </div>
+  <StandardModal
+    :show="showWarning"
+    title="Lineup Issue"
+    size="sm"
+    @close="showWarning = false"
+  >
+    <div class="warning-body">
+      <div class="warning-icon-wrap">
+        <AlertTriangle :size="40" class="warning-icon-svg" />
       </div>
-    </Transition>
-  </Teleport>
+      <p class="warning-msg">{{ warningMessage }}</p>
+      <p class="warning-hint">{{ warningHint }}</p>
+    </div>
+    <template #footer>
+      <button class="warning-btn-cancel" @click="showWarning = false">Cancel</button>
+      <button class="warning-btn-cpu" @click="handleCpuSetLineup">
+        <Cpu :size="16" />
+        CPU Adjust
+      </button>
+      <button class="warning-btn-confirm" @click="goToTeamTab">
+        <Users :size="16" />
+        View Lineup
+      </button>
+    </template>
+  </StandardModal>
 </template>
 
 <style scoped>
@@ -973,28 +1118,12 @@ onUnmounted(() => {
   }
 }
 
-/* Roster Warning Modal */
-.warning-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
+/* Roster Warning Modal body styles (modal shell comes from StandardModal) */
+.warning-body {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(8px);
-}
-
-.warning-modal {
-  width: 100%;
-  max-width: 400px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-2xl);
-  padding: 32px 24px 24px;
   text-align: center;
-  animation: scaleIn 0.2s ease-out;
 }
 
 .warning-icon-wrap {
@@ -1016,15 +1145,56 @@ onUnmounted(() => {
 .warning-hint {
   font-size: 0.825rem;
   color: var(--color-text-secondary);
-  margin: 0 0 24px;
+  margin: 0;
 }
 
-.warning-btns {
-  display: flex;
-  gap: 12px;
-}
-
-.warning-btns .btn {
+.warning-btn-cancel,
+.warning-btn-cpu,
+.warning-btn-confirm {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.warning-btn-cancel {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.warning-btn-cancel:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+.warning-btn-cpu {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+}
+
+.warning-btn-cpu:hover {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.warning-btn-confirm {
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.warning-btn-confirm:hover {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
 }
 </style>
