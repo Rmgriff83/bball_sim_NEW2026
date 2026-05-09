@@ -15,6 +15,7 @@ import { LoadingSpinner, StatBadge } from '@/components/ui'
 import { Search, Binoculars, User } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
+import { SCOUTABLE_ATTRIBUTES, SCOUTABLE_ATTRIBUTE_CATEGORIES } from '@/engine/data/attributeSchema'
 
 const route = useRoute()
 const campaignStore = useCampaignStore()
@@ -49,40 +50,16 @@ const mockDraftOrder = ref([])
 const userTeamId = ref(null)
 
 const campaign = computed(() => campaignStore.currentCampaign)
-const isOffseason = computed(() => campaign.value?.phase === 'offseason')
+const isOffseason = computed(() => {
+  const phase = campaign.value?.phase
+  return phase === 'offseason' || phase === 'offseason_free_agency' || phase === 'offseason_draft'
+})
 
-// All attributes in the scouting pool — must match the generated player schema
-// (see CampaignManager.js generateAttributes / generatePlayer) AND the canonical
-// shape used by master veterans in engine/data/players.js.
-const ALL_ATTRIBUTES = [
-  'overallRating', 'potentialRating',
-  // Offense (16)
-  'threePoint', 'midRange', 'closeShot', 'freeThrow', 'shotIQ', 'offensiveConsistency',
-  'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl',
-  'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ',
-  // Defense (9)
-  'perimeterDefense', 'interiorDefense', 'steal', 'block', 'helpDefenseIQ',
-  'passPerception', 'defensiveConsistency', 'offensiveRebound', 'defensiveRebound',
-  // Physical (7)
-  'speed', 'acceleration', 'strength', 'vertical', 'stamina', 'hustle', 'durability',
-  // Mental (5)
-  'basketballIQ', 'clutch', 'workEthic', 'coachability', 'intangibles',
-]
-
-const ATTRIBUTE_CATEGORIES = {
-  'Ratings': ['overallRating', 'potentialRating'],
-  'Offense': [
-    'threePoint', 'midRange', 'closeShot', 'freeThrow', 'shotIQ', 'offensiveConsistency',
-    'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl',
-    'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ',
-  ],
-  'Defense': [
-    'perimeterDefense', 'interiorDefense', 'steal', 'block', 'helpDefenseIQ',
-    'passPerception', 'defensiveConsistency', 'offensiveRebound', 'defensiveRebound',
-  ],
-  'Physical': ['speed', 'acceleration', 'strength', 'vertical', 'stamina', 'hustle', 'durability'],
-  'Mental': ['basketballIQ', 'clutch', 'workEthic', 'coachability', 'intangibles'],
-}
+// Imported from the canonical attribute schema so this view, DraftRoomView,
+// CampaignManager rookie generation, and master veterans all stay in lock-step.
+// Renamed locally to keep the rest of this file unchanged.
+const ALL_ATTRIBUTES = SCOUTABLE_ATTRIBUTES
+const ATTRIBUTE_CATEGORIES = SCOUTABLE_ATTRIBUTE_CATEGORIES
 
 const TOTAL_SCOUT_ACTIONS = 4 // 4 scout actions to fully reveal a player
 const BASE_REVEAL_COUNT = Math.ceil(ALL_ATTRIBUTES.length / TOTAL_SCOUT_ACTIONS) // attrs per action (base)

@@ -201,7 +201,7 @@ export class AwardService {
       const d = attributes.defense
       const vals = [d.perimeterDefense ?? d.perimeter_defense ?? 70,
                     d.interiorDefense ?? d.interior_defense ?? 70,
-                    d.defensiveIQ ?? d.defensive_iq ?? 70]
+                    d.helpDefenseIQ ?? d.defensiveIQ ?? d.defensive_iq ?? 70]
       defAttrAvg = vals.reduce((a, b) => a + b, 0) / vals.length
     }
 

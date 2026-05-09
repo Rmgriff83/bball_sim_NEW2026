@@ -59,6 +59,7 @@ const {
   setSpeed,
   seekTo,
   continueAfterQuarterBreak,
+  setDisplayedScores,
   cleanup
 } = usePlayAnimation()
 
@@ -1287,6 +1288,15 @@ async function handleSimToEnd() {
     showAnimationMode.value = true
     completedQuarter.value = 4
     isQuarterBreak.value = true
+
+    // The end-game modal pulls displayed scores from the animation composable,
+    // which hasn't played the simmed-over quarters — so without this it
+    // shows the score at the start of the sim-to-end (= last quarter break).
+    // Sync to the final result before the user sees the modal.
+    const finalGame = gameStore.currentGame
+    if (finalGame?.is_complete) {
+      setDisplayedScores(finalGame.home_score, finalGame.away_score, finalGame.box_score)
+    }
 
     if (response.batchId) {
       gameStore.startPollingSimulationStatus(campaignId.value, response.batchId)

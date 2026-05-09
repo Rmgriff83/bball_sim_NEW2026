@@ -1252,10 +1252,10 @@ class GameSimulator {
     switch (playType) {
       case 'three_pointer':
       case 'mid_range':
-        defenseRating = defenseAttr.perimeterD || 70
+        defenseRating = defenseAttr.perimeterDefense ?? defenseAttr.perimeterD ?? 70
         break
       case 'paint':
-        defenseRating = defenseAttr.interiorD || 70
+        defenseRating = defenseAttr.interiorDefense ?? defenseAttr.interiorD ?? 70
         break
       default:
         defenseRating = 70
@@ -1277,36 +1277,38 @@ class GameSimulator {
    */
   calculateBadgeBoostWithActivations(shooter, playType, teammates) {
     const badges = shooter.badges || []
-    let boost = 0
     const activatedBadges = []
     let activatedSynergies = []
 
+    // Effect keys that apply to this playType. When a player has multiple
+    // badges granting the same key (e.g. Deep Threes + Limitless Range both
+    // grant deepRangeBoost), we take the MAX rather than summing — otherwise
+    // stacked badges produce unrealistic 30%+ boosts.
+    const relevantKeys = playType === 'three_pointer'
+      ? ['catchShootBoost', 'cornerThreeBoost', 'deepRangeBoost', 'contestReduction']
+      : playType === 'mid_range'
+        ? ['movingShotBoost', 'contestReduction']
+        : playType === 'paint'
+          ? ['contestedLayupBoost', 'contactFinishBoost', 'floaterBoost', 'giantSlayerBoost']
+          : []
+
+    const maxEffects = {}
     for (const badge of badges) {
       const badgeId = badge.id
       const level = badge.level
-
       if (!this.badgeDefinitions[badgeId]) continue
 
-      const effects = (this.badgeDefinitions[badgeId].effects && this.badgeDefinitions[badgeId].effects[level]) || {}
-      let badgeBoost = 0
-
-      if (playType === 'three_pointer') {
-        badgeBoost += effects.catchShootBoost || 0
-        badgeBoost += effects.cornerThreeBoost || 0
-        badgeBoost += effects.deepRangeBoost || 0
-        badgeBoost += effects.contestReduction || 0
-      } else if (playType === 'mid_range') {
-        badgeBoost += effects.movingShotBoost || 0
-        badgeBoost += effects.contestReduction || 0
-      } else if (playType === 'paint') {
-        badgeBoost += effects.contestedLayupBoost || 0
-        badgeBoost += effects.contactFinishBoost || 0
-        badgeBoost += effects.floaterBoost || 0
-        badgeBoost += effects.giantSlayerBoost || 0
+      const effects = this.badgeDefinitions[badgeId].effects?.[level] || {}
+      let touchedRelevantKey = false
+      for (const key of relevantKeys) {
+        const value = effects[key]
+        if (value && value > 0) {
+          maxEffects[key] = Math.max(maxEffects[key] || 0, value)
+          touchedRelevantKey = true
+        }
       }
 
-      if (badgeBoost > 0) {
-        boost += badgeBoost
+      if (touchedRelevantKey) {
         const badgeDef = this.badgeDefinitions[badgeId]
         activatedBadges.push({
           id: badgeId,
@@ -1316,6 +1318,11 @@ class GameSimulator {
           playerName: (shooter.firstName || shooter.first_name || '') + ' ' + (shooter.lastName || shooter.last_name || ''),
         })
       }
+    }
+
+    let boost = 0
+    for (const key of relevantKeys) {
+      boost += maxEffects[key] || 0
     }
 
     // Check for badge synergies with teammates

@@ -1,8 +1,9 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import PlayerBadgeStoreModal from '@/components/team/PlayerBadgeStoreModal.vue'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
@@ -128,6 +129,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'upgrade-attribute', 'resign-player', 'drop-player', 'scout-player'])
 
 const activeTab = ref('stats')
+const showPlayerBadgeStore = ref(false)
 
 // Evolution display state
 const showAllRecentEvolution = ref(false)
@@ -355,6 +357,14 @@ function getMoraleColor(morale) {
   if (morale >= 50) return '#f59e0b'
   if (morale >= 25) return '#f97316'
   return '#ef4444'
+}
+
+// Face icon matching the morale color band — smile for green, meh for the
+// amber/orange middle, frown for the red critical bucket.
+function getMoraleIcon(morale) {
+  if (morale >= 80) return Smile
+  if (morale >= 25) return Meh
+  return Frown
 }
 
 function formatTraitName(trait) {
@@ -1073,7 +1083,14 @@ function formatChange(change) {
                   <p>Badge data is hidden for draft prospects</p>
                   <span class="locked-hint">Hire a 4-Star Scout with Scouting Facility Lv 3 to unlock</span>
                 </div>
-                <div v-else-if="normalizedPlayer.badges?.length > 0" class="badges-tab-content">
+                <template v-else>
+                  <div v-if="isUserPlayer && !scoutingMode && campaignId" class="badges-store-row">
+                    <button class="badges-store-btn" @click="showPlayerBadgeStore = true">
+                      <ShoppingBag :size="14" />
+                      <span>Badge Store</span>
+                    </button>
+                  </div>
+                  <div v-if="normalizedPlayer.badges?.length > 0" class="badges-tab-content">
                   <!-- HOF Badges -->
                   <div v-if="normalizedPlayer.badges.filter(b => b.level === 'hof').length > 0" class="badge-level-section">
                     <h4 class="badge-level-title hof">Hall of Fame</h4>
@@ -1146,10 +1163,14 @@ function formatChange(change) {
                     </div>
                   </div>
                 </div>
-                <div v-else class="empty-state-modal">
-                  <p>No badges earned yet.</p>
-                  <p class="text-sm text-secondary">Badges are earned through gameplay performance.</p>
-                </div>
+                  <div v-else class="empty-state-modal">
+                    <p>No badges earned yet.</p>
+                    <p class="text-sm text-secondary">
+                      <template v-if="isUserPlayer && !scoutingMode">Use the Badge Store above to purchase eligible badges.</template>
+                      <template v-else>Badges are earned through gameplay performance.</template>
+                    </p>
+                  </div>
+                </template>
               </div>
 
               <!-- Growth Tab (Season Evolution) -->
@@ -1234,6 +1255,14 @@ function formatChange(change) {
                 <!-- Current Morale -->
                 <div class="morale-current-section">
                   <div class="morale-header-row">
+                    <component
+                      :is="getMoraleIcon(moraleValue)"
+                      :size="32"
+                      :stroke-width="2"
+                      class="morale-face-icon"
+                      :style="{ color: getMoraleColor(moraleValue) }"
+                      :aria-label="getMoraleLabel(moraleValue)"
+                    />
                     <div class="morale-big-number" :style="{ color: getMoraleColor(moraleValue) }">
                       {{ moraleValue }}
                     </div>
@@ -1475,6 +1504,13 @@ function formatChange(change) {
       </div>
     </Transition>
   </Teleport>
+
+  <PlayerBadgeStoreModal
+    :show="showPlayerBadgeStore"
+    :campaign-id="campaignId"
+    :player="normalizedPlayer"
+    @close="showPlayerBadgeStore = false"
+  />
 </template>
 
 <style scoped>
@@ -2271,6 +2307,33 @@ function formatChange(change) {
 }
 
 /* Badges Section */
+.badges-store-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.badges-store-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.badges-store-btn:hover {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
 .badges-tab-content {
   display: flex;
   flex-direction: column;
@@ -2626,8 +2689,13 @@ function formatChange(change) {
 .morale-header-row {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
   margin-bottom: 0.75rem;
+}
+
+.morale-face-icon {
+  flex-shrink: 0;
+  transition: color 0.2s ease;
 }
 
 .morale-big-number {

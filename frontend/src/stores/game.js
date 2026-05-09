@@ -490,9 +490,38 @@ export const useGameStore = defineStore('game', () => {
       const deadlines = getSeasonDeadlines(year)
       const deadlineDate = deadlines.tradeDeadline
       const allStarDate = deadlines.allStarDate
+      const warningDate = deadlines.tradeDeadlineWarning
 
       let seasonData = null
       let dirty = false
+
+      // --- Pre-deadline warning (1 week before trade/re-sign deadline) ---
+      // Surface the warning modal in single-shot paths (live play, single sim,
+      // simulateRemainingSeason). The day-by-day multi-sim path has its own
+      // pre-day check in simulateToGame; this block won't fire there because
+      // that path sets the flag before _advanceDateIfNeeded runs.
+      if (
+        previousDate &&
+        previousDate < warningDate &&
+        newDate >= warningDate &&
+        !campaign.settings?.deadline_warning_shown &&
+        !campaign.settings?.trade_deadline_passed
+      ) {
+        if (!campaign.settings) campaign.settings = {}
+        campaign.settings.deadline_warning_shown = true
+        // Set pause state directly (don't use _enterPause, which kills the
+        // simulating flags — single-shot paths are still mid-flight). No
+        // resume context: the modal is informational here, not a halt point.
+        pauseState.value = {
+          reason: 'trade_deadline',
+          payload: {
+            deadlineDate,
+            warningDate,
+          },
+        }
+        pauseResumeContext.value = null
+        simulationPaused.value = true
+      }
 
       // --- Trade & re-sign deadlines (Dec 15) ---
       if (previousDate < deadlineDate && newDate >= deadlineDate && !campaign.settings?.trade_deadline_passed) {
@@ -1881,14 +1910,18 @@ export const useGameStore = defineStore('game', () => {
       }
 
       // Build weekly summary — prefer pre-game boundary (shows report before the game),
-      // fall back to post-game boundary (e.g., user plays Sunday, date advances to Monday)
+      // fall back to post-game boundary (e.g., user plays Sunday, date advances to Monday).
+      // IMPORTANT: only return + assign when a week ACTUALLY crossed in THIS run.
+      // Previously we returned weeklySummaryData.value unconditionally, which leaked
+      // stale data from prior sims and made the toast re-fire every click.
       const weeklyResult = (preGameAdvanceResult.currentWeek > preGameAdvanceResult.previousWeek)
         ? preGameAdvanceResult
         : (postGameAdvanceResult.currentWeek > postGameAdvanceResult.previousWeek)
           ? postGameAdvanceResult
           : null
+      let summaryData = null
       if (weeklyResult) {
-        const summaryData = {
+        summaryData = {
           scoutingPointsEarned: weeklyResult.scoutingPointsEarned || 0,
           previousWeek: weeklyResult.previousWeek,
           currentWeek: weeklyResult.currentWeek,
@@ -1916,7 +1949,7 @@ export const useGameStore = defineStore('game', () => {
       }
 
       simulating.value = false
-      return { userGameResult, weeklySummary: weeklySummaryData.value }
+      return { userGameResult, weeklySummary: summaryData }
     } catch (err) {
       error.value = err.message || 'Failed to simulate to next game'
       simulating.value = false
@@ -2197,9 +2230,10 @@ export const useGameStore = defineStore('game', () => {
       progressToastId = toastStore.showProgress('Simulating', 0, totalRemaining)
 
       while (cursorDate <= target.gameDate) {
-        // 1. PRE-DAY pause: trade/re-sign deadline warning (Dec 14)
+        // 1. PRE-DAY pause: trade/re-sign deadline warning (one week before Dec 15)
         if (
           cursorDate === deadlines.tradeDeadlineWarning &&
+          !campaign.settings?.deadline_warning_shown &&
           !campaign.settings?.trade_deadline_passed &&
           lastFiredPause !== 'trade_deadline'
         ) {
@@ -2207,6 +2241,12 @@ export const useGameStore = defineStore('game', () => {
             try { toastStore.removeMinimalToast(progressToastId) } catch (_) { /* noop */ }
             progressToastId = null
           }
+          // Persist the flag so single-shot paths (live play, single sim) won't
+          // re-fire the warning when the date later crosses the warning date in
+          // _processMidSeasonEvents.
+          if (!campaign.settings) campaign.settings = {}
+          campaign.settings.deadline_warning_shown = true
+          await CampaignRepository.save(campaign)
           return _enterPause('trade_deadline', {
             deadlineDate: deadlines.tradeDeadline,
             warningDate: cursorDate,
@@ -2344,9 +2384,18 @@ export const useGameStore = defineStore('game', () => {
   /**
    * Resume a paused sim. Re-enters simulateToGame with { resume: true } so the
    * lastFiredPause suppression skips the immediate same-boundary trigger.
+   *
+   * For pauses raised by single-shot paths (live play, single sim,
+   * simulateRemainingSeason) there's no sim loop to resume — the pause is
+   * informational and pauseResumeContext is null. In that case just clear the
+   * pause state so the modal closes.
    */
   async function resumeSimulation() {
-    if (!pauseResumeContext.value) return null
+    if (!pauseResumeContext.value) {
+      pauseState.value = null
+      simulationPaused.value = false
+      return null
+    }
     const ctx = pauseResumeContext.value
     return await simulateToGame(ctx.campaignId, ctx.targetGameId, { resume: true })
   }

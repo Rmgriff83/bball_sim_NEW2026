@@ -20,7 +20,7 @@ const emit = defineEmits([
 ])
 
 const titleByReason = {
-  trade_deadline: 'Trade Deadline Tomorrow',
+  trade_deadline: 'Deadlines in One Week',
   all_star: 'All-Star Selections',
   user_injury: 'Player Injured',
 }
@@ -89,15 +89,15 @@ onUnmounted(() => {
             <!-- Trade Deadline variant -->
             <template v-if="reason === 'trade_deadline'">
               <p class="body-text">
-                The <strong>trade deadline</strong> closes tomorrow. After it passes, no
-                more trades can be proposed for the rest of the season.
+                The <strong>trade deadline</strong> closes in one week. After it passes,
+                no more trades can be proposed for the rest of the season.
               </p>
               <p class="body-text">
-                The <strong>re-signing deadline</strong> also closes tomorrow — any
-                player on the final year of their contract must be re-signed before then,
+                The <strong>contract extension deadline</strong> also closes in one week —
+                any player on the final year of their contract must be re-signed before then,
                 or they'll hit free agency at season end.
               </p>
-              <p class="body-hint">Pause now to make trades or re-sign players, or continue simming and skip the deadline.</p>
+              <p class="body-hint">Pause now to plan trades or re-sign players, or continue simming.</p>
             </template>
 
             <!-- All-Star variant -->

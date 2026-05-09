@@ -15,6 +15,7 @@ import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { generateAndSaveRookieClass } from '@/engine/draft/RookieGenerationService'
 import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
 import { analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
+import { SCOUTABLE_ATTRIBUTES } from '@/engine/data/attributeSchema'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,20 +39,7 @@ const scoutedPlayers = ref({})
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 
-const ALL_ATTRIBUTES = [
-  'overallRating', 'potentialRating',
-  // Offense
-  'threePoint', 'midRange', 'closeShot', 'freeThrow', 'shotIQ', 'offensiveConsistency',
-  'layup', 'standingDunk', 'drivingDunk', 'postHook', 'postFade', 'postControl',
-  'drawFoul', 'hands', 'ballHandling', 'speedWithBall', 'passAccuracy', 'passVision', 'passIQ',
-  // Defense
-  'perimeterDefense', 'interiorDefense', 'steal', 'block', 'helpDefenseIQ',
-  'passPerception', 'defensiveConsistency', 'offensiveRebound', 'defensiveRebound',
-  // Physical
-  'speed', 'acceleration', 'strength', 'vertical', 'stamina', 'hustle', 'durability',
-  // Mental
-  'basketballIQ', 'clutch', 'workEthic', 'coachability', 'intangibles',
-]
+const ALL_ATTRIBUTES = SCOUTABLE_ATTRIBUTES
 
 function isAttributeRevealed(playerId, attr) {
   if (!isRookieMode.value) return true

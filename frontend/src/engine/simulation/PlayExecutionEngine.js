@@ -7,6 +7,53 @@
  */
 
 import { getCoachPerks, getEffectiveCoachAttribute } from '@/engine/coaching/CoachPerks';
+import { BADGES } from '@/engine/data/badges';
+import { ACTION_EFFECT_KEYS, aggregateBadgeEffects, sumActionBoost } from '@/engine/data/badgeKeysByAction';
+
+// Module-level lookup so we don't rebuild this map per call.
+const BADGE_DEFINITIONS = Object.fromEntries(BADGES.map(b => [b.id, b]));
+
+// Always-on attribute contributors per action type. These layer on top of the
+// explicit `attributes.offense` / `attributes.defense` arrays in plays.js so
+// every defined attribute appears in at least one rating computation. Because
+// `calculateAttributeRating` averages across the full list, adding an extra
+// contributor tempers the average rather than dominating it — exactly the
+// behavior we want for "consistency", "hustle", "vertical" etc.
+const AMBIENT_OFFENSE = {
+  shot: ['offensiveConsistency'],
+  drive: ['offensiveConsistency', 'hustle'],
+  pass: ['passVision', 'passIQ'],
+  dribble: ['ballHandling'],
+  rebound: ['hustle', 'vertical'],
+  screen: ['strength'],
+  cut: ['hustle'],
+};
+const AMBIENT_DEFENSE = {
+  shot: ['defensiveConsistency'],
+  drive: ['defensiveConsistency', 'hustle'],
+  pass: ['passPerception'],
+  dribble: ['perimeterDefense'],
+  rebound: ['hustle', 'vertical'],
+  screen: ['helpDefenseIQ'],
+  cut: ['helpDefenseIQ'],
+  block: ['vertical', 'helpDefenseIQ'],
+};
+
+// Layer dunk/block-specific attrs on top of `shot` shots that target the rim.
+function augmentAttrs(action, side, base) {
+  const map = side === 'offense' ? AMBIENT_OFFENSE : AMBIENT_DEFENSE;
+  const ambient = map[action.type] || [];
+  // Avoid duplicates so calculateAttributeRating's average isn't double-weighted.
+  const merged = [...base];
+  for (const a of ambient) if (!merged.includes(a)) merged.push(a);
+  // Rim-attacking shots also pull `vertical` on offense and on defense (the
+  // shot-blocker's hops). Heuristic: shotType paint OR explicit dunk action.
+  if (action.type === 'shot' && (action.shotType === 'paint' || /dunk/i.test(action.id))) {
+    if (side === 'offense' && !merged.includes('vertical')) merged.push('vertical');
+    if (side === 'defense' && !merged.includes('vertical')) merged.push('vertical');
+  }
+  return merged;
+}
 
 class PlayExecutionEngine {
   constructor() {
@@ -123,6 +170,11 @@ class PlayExecutionEngine {
       this.applyMovement(action.movement, offensiveLineup);
     }
 
+    // Accumulate fatigue per action. Cost defaults to 0.5 — heavier actions
+    // can override via `action.fatigueCost`. Tireless badges and high
+    // `durability` reduce the increment.
+    this.accumulateFatigue(action, actor, defender);
+
     // Calculate outcome probabilities based on attributes
     const modifiedOutcomes = this.calculateModifiedOutcomes(
       action,
@@ -155,9 +207,15 @@ class PlayExecutionEngine {
     const outcomes = action.outcomes;
     const modified = {};
 
-    // Get relevant attributes
-    const offenseAttrs = action.attributes?.offense ?? [];
-    const defenseAttrs = action.attributes?.defense ?? [];
+    // Get relevant attributes — augment with always-on contributors so that
+    // every defined attribute touches at least one slot in the per-possession
+    // math. `offensiveConsistency` and `defensiveConsistency` ride along on
+    // every shot. `vertical` matters on dunks and on block-eligible defenses.
+    // `hustle` matters on rebounds, drives, and putbacks. These are always
+    // averaged into the offense/defense rating, never replacing the action's
+    // explicit attributes — see `calculateAttributeRating`'s averaging.
+    const offenseAttrs = augmentAttrs(action, 'offense', action.attributes?.offense ?? []);
+    const defenseAttrs = augmentAttrs(action, 'defense', action.attributes?.defense ?? []);
 
     // Calculate offensive rating for this action
     const offenseRating = this.calculateAttributeRating(actor, offenseAttrs);
@@ -172,8 +230,12 @@ class PlayExecutionEngine {
     let advantage = (offenseRating - defenseRating) / 2;
 
     // Apply badge effects
-    const badgeBoost = this.calculateBadgeBoost(action, actor, play);
-    advantage += badgeBoost * 10;
+    const badgeBoost = this.calculateBadgeBoost(action, actor, defender, play);
+    // Effect-key magnitudes already match the per-percentage scale used by
+    // shot resolution (e.g. assistBoost: 0.15 HOF). Multiply by 100 to land
+    // on the same advantage-units scale as offense/defense ratings (where a
+    // 50-point swing = ±25 advantage = ±0.125 probability shift).
+    advantage += badgeBoost * 100;
 
     // Apply defensive scheme modifiers
     const shotMod = this.defensiveModifiers.shotModifier ?? 0;
@@ -197,6 +259,17 @@ class PlayExecutionEngine {
       clutchShotBias = gmBias + clutchPerk;
       // High game-management teams turn it over less under pressure.
       clutchTurnoverBias = -gmBias * 0.5;
+    }
+
+    // Player-level clutch + intangibles bias on the shooter when it's clutch
+    // time. Centered at 50 to leave average players neutral. `clutch` swings
+    // ±2%, `intangibles` adds another ±1% — flavorful nudge for cold-blooded
+    // veterans without overshadowing skill ratings.
+    if (this.clutchTime && action.type === 'shot') {
+      const clutchAttr = this.getPlayerAttribute(actor, 'clutch') ?? 50;
+      const intangiblesAttr = this.getPlayerAttribute(actor, 'intangibles') ?? 50;
+      clutchShotBias += ((clutchAttr - 50) / 100) * 0.04;
+      clutchShotBias += ((intangiblesAttr - 50) / 100) * 0.02;
     }
 
     const positiveOutcomes = ['success', 'made', 'finish', 'open', 'beat_defender', 'drive', 'shooter_open', 'cutter_open'];
@@ -234,6 +307,22 @@ class PlayExecutionEngine {
           adjustedProbability += turnoverMod;
           adjustedProbability += offTurnoverPenalty;
           adjustedProbability += clutchTurnoverBias;
+        }
+      }
+      // Foul drawing — neither purely positive nor negative, so it gets its
+      // own track. Centered at 50: high `drawFoul` shooters draw more
+      // contact; defenders' clean-contest badge effects (Challenger,
+      // Intimidator) reduce the chance.
+      else if (key === 'fouled') {
+        adjustedProbability = baseProbability;
+        if (action.type === 'shot' || action.type === 'drive') {
+          const drawFoul = this.getPlayerAttribute(actor, 'drawFoul') ?? 50;
+          adjustedProbability += ((drawFoul - 50) / 200);
+          if (defender) {
+            const defEffects = aggregateBadgeEffects(defender, BADGE_DEFINITIONS);
+            const cleanContest = defEffects.contestBoost || 0;
+            adjustedProbability -= cleanContest * 0.5;
+          }
         }
       }
 
@@ -299,42 +388,125 @@ class PlayExecutionEngine {
 
   /**
    * Calculate badge boost for an action.
+   *
+   * Two pathways combined:
+   *
+   *  1. Effect-key pathway (the meaningful one) — the actor's badges contribute
+   *     the action-relevant offense effect keys (e.g. `assistBoost` for a pass)
+   *     and the defender's badges subtract action-relevant defense effect keys.
+   *     Multiple badges granting the same key take the MAX, never sum.
+   *
+   *  2. Legacy `play.badgeEffects[actionId]` pathway — small flat tier bonus
+   *     for any badge tagged on this action. Kept so animation tracking on
+   *     existing plays still fires while we migrate.
+   *
+   * Returns a small numeric "boost" that's multiplied by 100 by the caller to
+   * land on the same scale as offense/defense ratings.
    */
-  calculateBadgeBoost(action, actor, play) {
-    let boost = 0;
+  calculateBadgeBoost(action, actor, defender, play) {
     const actionId = action.id;
+    const actionType = action.type;
+    let boost = 0;
 
-    // Get relevant badges for this action
-    const relevantBadges = play.badgeEffects?.[actionId] ?? [];
+    // Animations should appear when the action RESOLVES, not at the start of
+    // its movement. We schedule activations at the end of the action so they
+    // stagger with the rest of the play animation.
+    const activationTime = this.elapsedTime + (action.duration ?? 0);
 
-    const playerBadges = actor.badges ?? [];
-    for (const badge of playerBadges) {
-      if (relevantBadges.includes(badge.id)) {
-        let badgeBoost = 0;
-        switch (badge.level) {
-          case 'hof': badgeBoost = 0.08; break;
-          case 'gold': badgeBoost = 0.05; break;
-          case 'silver': badgeBoost = 0.03; break;
-          case 'bronze': badgeBoost = 0.01; break;
-          default: badgeBoost = 0; break;
-        }
+    // Helper: dedupe per (badgeId, playerId) within a play. Keep the LATEST
+    // activation so the badge fires when its effect actually mattered most
+    // (e.g. on the shot, not on the upstream pass).
+    const recordActivation = (badge, owner) => {
+      const key = `${badge.id}-${owner.id ?? 'unknown'}`;
+      const entry = {
+        badgeId: badge.id,
+        level: badge.level,
+        playerId: owner.id ?? 'unknown',
+        playerName: (owner.first_name ?? owner.firstName ?? '') + ' ' + (owner.last_name ?? owner.lastName ?? ''),
+        actionId,
+        time: activationTime,
+      };
+      const existingIdx = this._activationIndex?.get(key);
+      if (existingIdx !== undefined) {
+        this.activatedBadges[existingIdx] = entry;
+      } else {
+        if (!this._activationIndex) this._activationIndex = new Map();
+        this._activationIndex.set(key, this.activatedBadges.length);
+        this.activatedBadges.push(entry);
+      }
+    };
 
-        if (badgeBoost > 0) {
-          boost += badgeBoost;
-          // Track badge activation for animation
-          this.activatedBadges.push({
-            badgeId: badge.id,
-            level: badge.level,
-            playerId: actor.id ?? 'unknown',
-            playerName: (actor.first_name ?? actor.firstName ?? '') + ' ' + (actor.last_name ?? actor.lastName ?? ''),
-            actionId: actionId,
-            time: this.elapsedTime,
-          });
-        }
+    // ---------------- Effect-key pathway ----------------
+    if (ACTION_EFFECT_KEYS[actionType]) {
+      const offEffects = aggregateBadgeEffects(actor, BADGE_DEFINITIONS);
+      boost += sumActionBoost(offEffects, actionType, 'offense');
+
+      if (defender) {
+        const defEffects = aggregateBadgeEffects(defender, BADGE_DEFINITIONS);
+        boost -= sumActionBoost(defEffects, actionType, 'defense');
+      }
+
+      // Track activation for any badge whose tier effects intersect this
+      // action's offense keys (used for animation overlays).
+      const relevantOffKeys = new Set(ACTION_EFFECT_KEYS[actionType].offense || []);
+      const playerBadges = actor.badges ?? [];
+      for (const badge of playerBadges) {
+        const def = BADGE_DEFINITIONS[badge.id];
+        if (!def) continue;
+        const tierEffects = def.effects?.[badge.level] || {};
+        const consumed = Object.keys(tierEffects).some(k => relevantOffKeys.has(k));
+        if (consumed) recordActivation(badge, actor);
+      }
+    }
+
+    // ---------------- Legacy badge-effects-by-action-id pathway ----------------
+    const taggedBadgeIds = play.badgeEffects?.[actionId] ?? [];
+    if (taggedBadgeIds.length > 0) {
+      const TIER_FLAT = { bronze: 0.01, silver: 0.03, gold: 0.05, hof: 0.08 };
+      const playerBadges = actor.badges ?? [];
+      for (const badge of playerBadges) {
+        if (!taggedBadgeIds.includes(badge.id)) continue;
+        const flat = TIER_FLAT[badge.level] || 0;
+        if (flat <= 0) continue;
+        boost += flat;
+        recordActivation(badge, actor);
       }
     }
 
     return boost;
+  }
+
+  /**
+   * Accumulate fatigue on the actor and primary defender as actions resolve.
+   *
+   * - Default cost 0.5 per action; heavy actions (drives, shots, screens) can
+   *   override via `action.fatigueCost`.
+   * - Tireless badges (offense fatigue keys / defense fatigue keys) reduce
+   *   the increment by their max-merged effect value (0..0.6).
+   * - High `durability` cuts a small additional slice on top, so iron-man
+   *   physical types decline more slowly across a long game.
+   *
+   * Fatigue is read by `GameSimulator.calculateFatigueModifier` to dampen
+   * shot accuracy and by `SubstitutionEngine` as a sub trigger.
+   */
+  accumulateFatigue(action, actor, defender) {
+    const baseCost = typeof action.fatigueCost === 'number' ? action.fatigueCost : 0.5;
+    if (baseCost <= 0) return;
+
+    const incrementFor = (player, sideKeys) => {
+      if (!player) return;
+      const effects = aggregateBadgeEffects(player, BADGE_DEFINITIONS);
+      let badgeReduction = 0;
+      for (const key of sideKeys) badgeReduction = Math.max(badgeReduction, effects[key] || 0);
+      const durability = this.getPlayerAttribute(player, 'durability') ?? 70;
+      const durabilityReduction = Math.max(0, (durability - 50) / 500); // up to 0.10
+      const reduction = Math.min(0.85, badgeReduction + durabilityReduction);
+      const delta = baseCost * (1 - reduction);
+      player.fatigue = Math.min(100, (player.fatigue ?? 0) + delta);
+    };
+
+    incrementFor(actor, ACTION_EFFECT_KEYS.fatigue.offenseReduction);
+    incrementFor(defender, ACTION_EFFECT_KEYS.fatigue.defenseReduction);
   }
 
   /**
@@ -1040,6 +1212,7 @@ class PlayExecutionEngine {
     this.elapsedTime = 0;
     this.playResult = {};
     this.activatedBadges = [];
+    this._activationIndex = new Map();
     // Note: defensiveScheme and defensiveModifiers are set at start of executePlay
   }
 

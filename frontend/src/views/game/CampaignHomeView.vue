@@ -28,8 +28,10 @@ import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu } from 'lucide-vue-next'
+import { FREE_AGENCY_DURATION_DAYS } from '@/engine/season/SeasonDeadlines'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import EndOfFreeAgencyModal from '@/components/team/EndOfFreeAgencyModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -50,6 +52,10 @@ const simSeasonMode = ref(false)
 const lastSimResult = ref(null) // Last simulated user game result shown during background sim
 const showTradeProposalModal = ref(false)
 const currentProposal = ref(null)
+// Proposal IDs the user dismissed via the modal X this session. Skipped when
+// auto-popping the next proposal so we don't re-show the same offer after
+// every sim, but the offer stays in pendingProposals (visible in Offers tab).
+const dismissedProposalIds = ref(new Set())
 const showAllStarModal = ref(false)
 const allStarRosters = ref(null)
 const showInjuryModal = ref(false)
@@ -144,7 +150,33 @@ const conferenceLabel = computed(() => {
 })
 
 // Offseason state
-const isOffseason = computed(() => campaign.value?.phase === 'offseason')
+// `isOffseason` covers all offseason sub-phases (the legacy 'offseason' marker,
+// the 2-week free-agency window, and the post-FA pre-draft window) so the
+// offseason hub UI stays mounted across the whole offseason.
+const isOffseason = computed(() => {
+  const phase = campaign.value?.phase
+  return phase === 'offseason' || phase === 'offseason_free_agency' || phase === 'offseason_draft'
+})
+
+const isFreeAgencyActive = computed(() => campaign.value?.phase === 'offseason_free_agency')
+
+const freeAgencyDay = computed(() => campaign.value?.settings?.freeAgencyDay ?? 0)
+
+const freeAgencyCompleted = computed(() => {
+  const year = campaign.value?.gameYear ?? 1
+  return campaign.value?.[`freeAgencyCompleted_${year}`] === true
+})
+
+// Pre-FA: in offseason but free agency hasn't been opened yet
+const freeAgencyNotStarted = computed(() => {
+  return campaign.value?.phase === 'offseason' && !freeAgencyCompleted.value
+})
+
+// End-of-FA wrap-up modal state
+const showEndOfFreeAgencyModal = ref(false)
+const endOfFreeAgencyResults = ref(null)
+const enteringFreeAgency = ref(false)
+const simmingFAday = ref(false)
 
 const lastSeasonChampion = computed(() => {
   const teams = campaign.value?.allTeams
@@ -166,6 +198,78 @@ const userSeasonHistory = computed(() => {
 const champBannerExpanded = ref(false)
 const persistedSeasonAwards = ref(null)
 const persistedChampion = ref(null)
+const persistedBracket = ref(null)
+
+const PLAYOFF_ROUND_LABELS = {
+  round1: 'First Round',
+  round2: 'Conference Semifinals',
+  confFinals: 'Conference Finals',
+  finals: 'NBA Finals',
+}
+
+// Where the user finished last season — drives the offseason summary line.
+// Returns one of:
+//   { kind: 'champion' }
+//   { kind: 'missed_playoffs' }
+//   { kind: 'lost', roundLabel, opponentName }
+//   null (data not yet hydrated)
+//
+// "Made the playoffs" is detected by scanning the bracket for the user's
+// team id, NOT by reading seasonHistory.playoffSeed — that field is
+// initialized in SeasonManager but never populated by bracket generation,
+// so it's always null.
+const previousSeasonFinish = computed(() => {
+  const hist = userSeasonHistory.value
+  if (!hist) return null
+  if (hist.champion) return { kind: 'champion' }
+
+  const bracket = persistedBracket.value
+  const userTeamId = team.value?.id ?? campaign.value?.teamId
+  if (!bracket || !userTeamId) {
+    // No bracket loaded yet — can't tell. Stay quiet rather than mislabeling.
+    return null
+  }
+  const idStr = String(userTeamId)
+
+  // Build the round-ordered series list (latest round first).
+  const ordered = []
+  if (bracket.finals) ordered.push({ series: bracket.finals, round: 'finals' })
+  for (const conf of ['east', 'west']) {
+    const c = bracket[conf]
+    if (!c) continue
+    if (c.confFinals) ordered.push({ series: c.confFinals, round: 'confFinals' })
+    for (const s of c.round2 || []) ordered.push({ series: s, round: 'round2' })
+    for (const s of c.round1 || []) ordered.push({ series: s, round: 'round1' })
+  }
+
+  const userParticipated = ordered.some(({ series }) =>
+    String(series?.team1?.teamId) === idStr || String(series?.team2?.teamId) === idStr
+  )
+  if (!userParticipated) return { kind: 'missed_playoffs' }
+
+  // Find the latest series the user lost in.
+  for (const { series, round } of ordered) {
+    if (!series || series.status !== 'complete') continue
+    const t1 = series.team1
+    const t2 = series.team2
+    const isT1 = String(t1?.teamId) === idStr
+    const isT2 = String(t2?.teamId) === idStr
+    if (!isT1 && !isT2) continue
+    const winnerId = String(series.winner?.teamId)
+    if (winnerId === idStr) continue
+    const opp = isT1 ? t2 : t1
+    const oppName = opp ? (
+      [opp.city, opp.name].filter(Boolean).join(' ') || opp.abbreviation || 'their opponent'
+    ) : 'their opponent'
+    return {
+      kind: 'lost',
+      roundLabel: PLAYOFF_ROUND_LABELS[round] ?? 'the Playoffs',
+      opponentName: oppName,
+    }
+  }
+  // In the bracket but no completed losing series found — defensive fallback.
+  return { kind: 'lost', roundLabel: 'the Playoffs', opponentName: null }
+})
 
 const displayedSeasonAwards = computed(() => offseasonData.value?.seasonAwards || persistedSeasonAwards.value)
 
@@ -345,9 +449,19 @@ const nextGameSeriesInfo = computed(() => {
   const series = playoffStore.getSeriesFromBracket(nextGame.value.playoff_series_id)
   if (!series) return null
   const gameNum = nextGame.value.playoff_game_number
+  // Reorder so the user's wins are always shown first in the series record.
+  // The bracket's team1/team2 ordering is seed-based — for a user who is the
+  // lower seed it would show the opponent's wins first ("Series 3-2" when the
+  // user is actually down 2-3). Detect the user's side and swap if needed.
+  const userTeamId = team.value?.id
+  const isUserTeam1 = userTeamId != null && (series.team1?.teamId === userTeamId)
+  const userWins = isUserTeam1 ? (series.team1Wins ?? 0) : (series.team2Wins ?? 0)
+  const opponentWins = isUserTeam1 ? (series.team2Wins ?? 0) : (series.team1Wins ?? 0)
   return {
     ...series,
-    gameLabel: gameNum ? `Game ${gameNum}` : ''
+    gameLabel: gameNum ? `Game ${gameNum}` : '',
+    userWins,
+    opponentWins,
   }
 })
 
@@ -630,6 +744,7 @@ watch(
     if (!off || !year || !campaignId.value) {
       persistedSeasonAwards.value = null
       persistedChampion.value = null
+      persistedBracket.value = null
       return
     }
     try {
@@ -641,10 +756,14 @@ watch(
         persistedSeasonAwards.value = null
       }
       persistedChampion.value = seasonData?.playoffBracket?.champion || null
+      // Cache the full bracket so previousSeasonFinish can derive the user's
+      // round-by-round finish + the team that knocked them out.
+      persistedBracket.value = seasonData?.playoffBracket || null
     } catch (err) {
       console.warn('[CampaignHome] failed to hydrate offseason data:', err)
       persistedSeasonAwards.value = null
       persistedChampion.value = null
+      persistedBracket.value = null
     }
   },
   { immediate: true }
@@ -984,6 +1103,83 @@ function navigateToScout() {
   router.push(`/campaign/${campaignId.value}/scouting`)
 }
 
+function navigateToFreeAgency() {
+  router.push({
+    path: `/campaign/${campaignId.value}/team`,
+    query: { tab: 'finances', sub: 'free-agents' },
+  })
+}
+
+async function handleEnterFreeAgency() {
+  enteringFreeAgency.value = true
+  const loadingToastId = toastStore.showLoading('Opening free agency...')
+  try {
+    await financeStore.startFreeAgencyPeriod(campaignId.value)
+    await campaignStore.fetchCampaign(campaignId.value, true)
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showSuccess('Free agency is open. Make offers from the Free Agents tab.')
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError(err.message || 'Failed to open free agency')
+    console.error('Failed to start free agency:', err)
+  } finally {
+    enteringFreeAgency.value = false
+  }
+}
+
+async function handleSimFreeAgencyDay() {
+  simmingFAday.value = true
+  const loadingToastId = toastStore.showLoading('Simulating free-agency day...')
+  try {
+    const result = await financeStore.simFreeAgencyDay(campaignId.value)
+    await campaignStore.fetchCampaign(campaignId.value, true)
+    toastStore.removeMinimalToast(loadingToastId)
+    if (result.resolved) {
+      const fas = await financeStore.consumeFreeAgencyResults(campaignId.value)
+      if (fas) {
+        endOfFreeAgencyResults.value = fas
+        showEndOfFreeAgencyModal.value = true
+      }
+      toastStore.showSuccess('Free agency complete!')
+    } else {
+      toastStore.showSuccess(`Day ${result.day}/${FREE_AGENCY_DURATION_DAYS} simulated`)
+    }
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError(err.message || 'Failed to simulate day')
+    console.error('Failed to sim FA day:', err)
+  } finally {
+    simmingFAday.value = false
+  }
+}
+
+async function handleSimRestOfFreeAgency() {
+  simmingFAday.value = true
+  const loadingToastId = toastStore.showLoading('Simulating remainder of free agency...')
+  try {
+    await financeStore.simRestOfFreeAgency(campaignId.value)
+    await campaignStore.fetchCampaign(campaignId.value, true)
+    toastStore.removeMinimalToast(loadingToastId)
+    const fas = await financeStore.consumeFreeAgencyResults(campaignId.value)
+    if (fas) {
+      endOfFreeAgencyResults.value = fas
+      showEndOfFreeAgencyModal.value = true
+    }
+    toastStore.showSuccess('Free agency complete!')
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError(err.message || 'Failed to simulate free agency')
+    console.error('Failed to sim rest of FA:', err)
+  } finally {
+    simmingFAday.value = false
+  }
+}
+
+function closeEndOfFreeAgencyModal() {
+  showEndOfFreeAgencyModal.value = false
+  endOfFreeAgencyResults.value = null
+}
+
 function openPlayerDetails() {
   router.push(`/campaign/${campaignId.value}/team`)
 }
@@ -1118,12 +1314,15 @@ async function handleConfirmSimulate() {
       maybeShowRegularSeasonCompleteToast()
     }
 
-    // Show weekly summary if weeks passed
+    // Show weekly summary if weeks passed. Clear the gameStore ref afterwards
+    // so a later mount of this view doesn't re-fire the same toast — onMounted
+    // and handleSimToEnd both read this same ref.
     if (response.weeklySummary) {
       toastStore.showWeeklySummary({
         scoutingPointsEarned: response.weeklySummary.scoutingPointsEarned ?? 0,
         campaignId: campaignId.value,
       })
+      gameStore.weeklySummaryData = null
     }
   } catch (err) {
     // Remove loading toast and show error
@@ -1324,13 +1523,14 @@ async function checkPendingTradeProposals() {
   if (!camp) return
 
   // Only generate proposals during regular season, before trade deadline
-  if (camp.phase === 'offseason' || camp.phase === 'playoffs') return
+  if (camp.phase === 'offseason' || camp.phase === 'offseason_free_agency' || camp.phase === 'offseason_draft' || camp.phase === 'playoffs') return
   if (camp.settings?.trade_deadline_passed) return
 
   try {
     const proposals = await tradeStore.fetchPendingProposals(campaignId.value)
-    if (proposals.length > 0) {
-      currentProposal.value = proposals[0]
+    const next = proposals.find(p => !dismissedProposalIds.value.has(p.id))
+    if (next) {
+      currentProposal.value = next
       showTradeProposalModal.value = true
     }
   } catch (err) {
@@ -1361,8 +1561,9 @@ async function handleAcceptProposal(proposal) {
       teamStore.fetchTeam(campaignId.value, { force: true }),
     ])
     // Show next proposal if any
-    if (tradeStore.pendingProposals.length > 0) {
-      currentProposal.value = tradeStore.pendingProposals[0]
+    const next = tradeStore.pendingProposals.find(p => !dismissedProposalIds.value.has(p.id))
+    if (next) {
+      currentProposal.value = next
       showTradeProposalModal.value = true
     }
   } catch (err) {
@@ -1377,8 +1578,9 @@ async function handleRejectProposal(proposal) {
     showTradeProposalModal.value = false
     currentProposal.value = null
     // Show next proposal if any
-    if (tradeStore.pendingProposals.length > 0) {
-      currentProposal.value = tradeStore.pendingProposals[0]
+    const next = tradeStore.pendingProposals.find(p => !dismissedProposalIds.value.has(p.id))
+    if (next) {
+      currentProposal.value = next
       showTradeProposalModal.value = true
     }
   } catch (err) {
@@ -1387,10 +1589,11 @@ async function handleRejectProposal(proposal) {
 }
 
 function handleCloseProposalModal() {
-  // Closing the modal without explicitly accepting counts as a rejection
-  // so the user doesn't keep seeing the same proposal repeatedly
+  // Dismiss the popup only — keep the offer pending so it remains visible in
+  // the Trades > Offers tab. Track the ID so checkPendingTradeProposals doesn't
+  // re-pop this same proposal after every sim.
   if (currentProposal.value) {
-    tradeStore.rejectProposal(campaignId.value, currentProposal.value.id).catch(() => {})
+    dismissedProposalIds.value.add(currentProposal.value.id)
   }
   showTradeProposalModal.value = false
   currentProposal.value = null
@@ -1530,6 +1733,19 @@ async function handleFinishSeason() {
     await gameStore.simulateRemainingSeason(campaignId.value)
   } catch (err) {
     toastStore.showError('Failed to simulate remaining games')
+  }
+}
+
+// User dismissed the SeasonEndModal without clicking "Continue to Playoffs",
+// then got stuck on the wrap-up card. Re-running checkRegularSeasonEnd flips
+// the modal back open (it gates on `regularSeasonComplete && !bracketGenerated
+// && phase !== 'offseason'`) so they can pick up the playoff transition.
+async function handleContinueToPlayoffs() {
+  try {
+    await playoffStore.checkRegularSeasonEnd(campaignId.value)
+  } catch (err) {
+    console.error('Failed to re-open season-end modal:', err)
+    toastStore.showError('Failed to advance to playoffs')
   }
 }
 
@@ -1731,7 +1947,7 @@ function handleCloseSimulateModal() {
                 <Trophy :size="14" class="playoff-info-icon" />
                 <span class="playoff-round-label">{{ playoffStore.getPlayoffRoundLabel(nextGame.playoff_round) }}</span>
                 <span v-if="nextGameSeriesInfo" class="playoff-series-record">
-                  {{ nextGameSeriesInfo.gameLabel }} &middot; Series {{ nextGameSeriesInfo.team1Wins }}-{{ nextGameSeriesInfo.team2Wins }}
+                  {{ nextGameSeriesInfo.gameLabel }} &middot; Series {{ nextGameSeriesInfo.userWins }}-{{ nextGameSeriesInfo.opponentWins }}
                 </span>
               </div>
             </div>
@@ -1954,6 +2170,21 @@ function handleCloseSimulateModal() {
                 <span class="offseason-stat-label">Conference Rank</span>
                 <span class="offseason-stat-value">#{{ userSeasonHistory?.conferenceRank || teamRank }} {{ conferenceLabel }}</span>
               </div>
+              <div v-if="previousSeasonFinish" class="offseason-stat offseason-stat-finish">
+                <span class="offseason-stat-label">Postseason Finish</span>
+                <span class="offseason-stat-value" :class="`finish-${previousSeasonFinish.kind}`">
+                  <template v-if="previousSeasonFinish.kind === 'champion'">
+                    <Trophy :size="14" class="finish-icon" />
+                    Won the Championship
+                  </template>
+                  <template v-else-if="previousSeasonFinish.kind === 'missed_playoffs'">
+                    Missed the Playoffs
+                  </template>
+                  <template v-else>
+                    Lost in the {{ previousSeasonFinish.roundLabel }}<template v-if="previousSeasonFinish.opponentName"> to {{ previousSeasonFinish.opponentName }}</template>
+                  </template>
+                </span>
+              </div>
             </div>
 
             <!-- AI Transactions Summary -->
@@ -1983,27 +2214,99 @@ function handleCloseSimulateModal() {
               </div>
             </div>
 
+            <!-- Free Agency status / controls -->
+            <div v-if="isFreeAgencyActive" class="offseason-fa-banner">
+              <div class="offseason-fa-header">
+                <Briefcase :size="18" class="offseason-fa-icon" />
+                <span class="offseason-fa-title">FREE AGENCY · DAY {{ freeAgencyDay }} / {{ FREE_AGENCY_DURATION_DAYS }}</span>
+              </div>
+              <p class="offseason-fa-hint">
+                Make offers from the Free Agents tab. Players evaluate every offer at the end of the period.
+              </p>
+              <div class="offseason-fa-progress">
+                <div class="offseason-fa-progress-bar" :style="{ width: (freeAgencyDay / FREE_AGENCY_DURATION_DAYS * 100) + '%' }"></div>
+              </div>
+            </div>
+
             <div class="next-game-buttons offseason-buttons">
               <button class="btn-simulate-game" @click="router.push(`/campaign/${campaignId}/team`)">
                 <Users class="btn-icon" :size="16" />
                 MANAGE ROSTER
               </button>
-              <button v-if="!rookieDraftCompleted" class="btn-simulate-game" @click="router.push(`/campaign/${campaignId}/scouting`)">
+
+              <!-- Free Agents shortcut while the window is open -->
+              <button
+                v-if="isFreeAgencyActive"
+                class="btn-simulate-game"
+                @click="navigateToFreeAgency"
+              >
+                <Briefcase class="btn-icon" :size="16" />
+                FREE AGENTS
+              </button>
+              <button
+                v-if="isFreeAgencyActive"
+                class="btn-simulate-game"
+                @click="handleSimFreeAgencyDay"
+                :disabled="simmingFAday"
+              >
+                <FastForward class="btn-icon" :size="16" />
+                SIM FA DAY
+              </button>
+              <button
+                v-if="isFreeAgencyActive"
+                class="btn-play-game"
+                @click="handleSimRestOfFreeAgency"
+                :disabled="simmingFAday"
+              >
+                <FastForward class="btn-icon" :size="16" />
+                SIM REST OF FA
+              </button>
+
+              <button v-if="!rookieDraftCompleted && !isFreeAgencyActive" class="btn-simulate-game" @click="router.push(`/campaign/${campaignId}/scouting`)">
                 <Binoculars class="btn-icon" :size="16" />
                 SCOUTING
               </button>
-              <button v-if="!rookieDraftCompleted" class="btn-play-game" @click="router.push(`/campaign/${campaignId}/draft?mode=rookie`)">
+              <!-- Enter Free Agency takes Begin Draft's slot until FA resolves; once
+                   resolved (`freeAgencyCompleted`) it flips back to Begin Draft. -->
+              <button
+                v-if="freeAgencyNotStarted"
+                class="btn-play-game"
+                @click="handleEnterFreeAgency"
+                :disabled="enteringFreeAgency"
+              >
+                <Briefcase class="btn-icon" :size="16" />
+                ENTER FREE AGENCY
+              </button>
+              <button
+                v-else-if="!rookieDraftCompleted && !isFreeAgencyActive"
+                class="btn-play-game"
+                @click="router.push(`/campaign/${campaignId}/draft?mode=rookie`)"
+              >
                 <Star class="btn-icon" :size="16" />
                 BEGIN DRAFT
               </button>
-              <button class="btn-simulate-game" @click="handleSimOffseason" :disabled="advancingToNextSeason">
+              <button
+                v-if="!isFreeAgencyActive"
+                class="btn-simulate-game"
+                @click="handleSimOffseason"
+                :disabled="advancingToNextSeason"
+              >
                 <FastForward class="btn-icon" :size="16" />
                 SIM OFFSEASON
               </button>
-              <button v-if="rookieDraftCompleted" class="btn-play-game" @click="handleStartNewSeason" :disabled="advancingToNextSeason">
+              <button
+                v-if="rookieDraftCompleted"
+                class="btn-play-game"
+                @click="handleStartNewSeason"
+                :disabled="advancingToNextSeason || !teamStore.coach"
+                :title="!teamStore.coach ? 'Sign a head coach in the Personnel tab to start a new season' : ''"
+              >
                 <FastForward class="btn-icon" :size="16" />
                 START SEASON
               </button>
+              <p v-if="rookieDraftCompleted && !teamStore.coach" class="start-season-coach-hint">
+                Sign a head coach in the Personnel tab to start the new season.
+              </p>
             </div>
           </template>
         </div>
@@ -2115,6 +2418,19 @@ function handleCloseSimulateModal() {
             <LoadingSpinner size="md" />
             <span class="next-game-loading-text">Simulating...</span>
           </div>
+          <!-- Regular season fully done, bracket not yet generated — user dismissed
+               the SeasonEndModal and is now stuck. Surface a direct path back. -->
+          <template v-else-if="playoffStore.regularSeasonComplete && !playoffStore.bracketGenerated">
+            <p class="season-wrap-text">
+              The regular season is over. Continue to the playoffs to generate the bracket and start the postseason.
+            </p>
+            <div class="next-game-buttons">
+              <button class="btn-play-game" @click="handleContinueToPlayoffs">
+                <Trophy class="btn-icon" :size="16" />
+                CONTINUE TO PLAYOFFS
+              </button>
+            </div>
+          </template>
           <template v-else>
             <p class="season-wrap-text">
               You've played all your regular season games. Finish the remaining league games to see final standings and enter the playoffs.
@@ -2179,10 +2495,21 @@ function handleCloseSimulateModal() {
             </div>
             <span class="action-label">Standings</span>
           </button>
-          <!-- Playoffs replaces Schedule once the bracket is live, since the
-               regular-season calendar is no longer the relevant context. -->
+          <!-- Free Agency replaces Schedule during the offseason FA window;
+               Playoffs replaces it once the bracket is live; otherwise the
+               default regular-season Schedule link shows. -->
           <button
-            v-if="playoffStore.isInPlayoffs && !playoffStore.champion"
+            v-if="isFreeAgencyActive"
+            class="action-box"
+            @click="navigateToFreeAgency"
+          >
+            <div class="action-icon">
+              <Briefcase :size="24" />
+            </div>
+            <span class="action-label">Free Agency</span>
+          </button>
+          <button
+            v-else-if="playoffStore.isInPlayoffs && !playoffStore.champion"
             class="action-box"
             @click="router.push(`/campaign/${campaignId}/playoffs`)"
           >
@@ -2396,6 +2723,13 @@ function handleCloseSimulateModal() {
       :facilities-before="newSeasonData?.facilitiesBefore"
       :facilities-after="newSeasonData?.facilitiesAfter"
       @close="showNewSeasonModal = false; newSeasonData = null"
+    />
+
+    <!-- Free Agency Wrap-Up Modal -->
+    <EndOfFreeAgencyModal
+      :show="showEndOfFreeAgencyModal"
+      :results="endOfFreeAgencyResults"
+      @close="closeEndOfFreeAgencyModal"
     />
 
     <!-- Injury Notification Modal -->
@@ -3410,6 +3744,55 @@ function handleCloseSimulateModal() {
   font-weight: 600;
 }
 
+.offseason-fa-banner {
+  padding: 12px 14px;
+  background: rgba(168, 85, 247, 0.10);
+  border: 1px solid rgba(168, 85, 247, 0.28);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.offseason-fa-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.offseason-fa-icon {
+  color: #c084fc;
+  flex-shrink: 0;
+}
+
+.offseason-fa-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-text-primary);
+}
+
+.offseason-fa-hint {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.offseason-fa-progress {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.offseason-fa-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #a855f7, #ec4899);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
 .offseason-expiring {
   padding: 12px;
   background: rgba(251, 191, 36, 0.08);
@@ -3577,10 +3960,12 @@ function handleCloseSimulateModal() {
 .offseason-summary {
   display: flex;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
 .offseason-stat {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3588,6 +3973,36 @@ function handleCloseSimulateModal() {
   padding: 12px;
   background: rgba(0, 0, 0, 0.15);
   border-radius: var(--radius-md);
+}
+
+/* Finish line gets its own full-width row so the (sometimes long) "Lost in
+   the Conference Finals to Boston Celtics" text doesn't crush the other two
+   summary stats. */
+.offseason-stat-finish {
+  flex-basis: 100%;
+  align-items: center;
+  text-align: center;
+}
+
+.offseason-stat-finish .offseason-stat-value {
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.offseason-stat-finish .offseason-stat-value.finish-champion {
+  color: #ffd700;
+}
+
+.offseason-stat-finish .offseason-stat-value.finish-missed_playoffs {
+  color: #f87171;
+}
+
+.offseason-stat-finish .finish-icon {
+  color: #ffd700;
 }
 
 [data-theme="light"] .offseason-stat {
@@ -3838,10 +4253,21 @@ function handleCloseSimulateModal() {
 }
 
 .btn-play-game .btn-icon {
+  /* Reset the global .btn-icon padding (8px) — it's intended for icon-only
+     buttons but cascades into the lucide SVG inside, collapsing the 16x16
+     content box to 0 and rendering an empty element. */
+  padding: 0;
   width: 16px;
   height: 16px;
   stroke-width: 2.5;
   fill: currentColor;
+}
+
+.start-season-coach-hint {
+  margin: 8px 0 0 0;
+  font-size: 0.75rem;
+  color: #F59E0B;
+  text-align: center;
 }
 
 .btn-play-game.continue {
@@ -3887,6 +4313,8 @@ function handleCloseSimulateModal() {
 }
 
 .btn-simulate-game .btn-icon {
+  /* See note on .btn-play-game .btn-icon — same global-padding fix. */
+  padding: 0;
   width: 16px;
   height: 16px;
   stroke-width: 2;
@@ -3920,6 +4348,7 @@ function handleCloseSimulateModal() {
 }
 
 .btn-sim-season .btn-icon {
+  padding: 0;
   width: 16px;
   height: 16px;
   stroke-width: 2;
@@ -3950,6 +4379,7 @@ function handleCloseSimulateModal() {
 }
 
 .btn-box-score .btn-icon {
+  padding: 0;
   width: 16px;
   height: 16px;
   stroke-width: 2;

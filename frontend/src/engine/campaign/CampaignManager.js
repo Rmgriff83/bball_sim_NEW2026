@@ -16,11 +16,15 @@ import {
   OFFENSIVE_SCHEMES,
   DEFENSIVE_SCHEMES,
   COACH_TIER_RANGES,
+  COACHES,
+  FREE_AGENT_COACH_TIERS,
+  masterCoachTier,
   generateCoachAttributes,
   calculateCoachSalary,
   findCoachForTeam,
 } from '../data/coaches'
-import { BADGES } from '../data/badges'
+import { coachBadges } from '../data/coachBadges'
+import { BADGES, BADGES_BY_POSITION } from '../data/badges'
 import { playersMaster } from '../data/players'
 import { CampaignRepository } from '../db/CampaignRepository'
 import { TeamRepository } from '../db/TeamRepository'
@@ -611,14 +615,6 @@ const LAST_NAMES = [
   'Turner', 'Mathurin', 'Nesmith', 'McConnell', 'Nembhard', 'Duarte', 'Okeke',
 ]
 
-const BADGES_BY_POSITION = {
-  PG: ['dimer', 'floor_general', 'pick_and_roll_maestro', 'ankle_breaker', 'quick_first_step', 'tight_handles', 'needle_threader', 'handles_for_days', 'space_creator', 'clamps'],
-  SG: ['catch_and_shoot', 'deadeye', 'corner_specialist', 'clutch_shooter', 'difficult_shots', 'green_machine', 'clamps', 'interceptor', 'tireless_shooter', 'ankle_breaker'],
-  SF: ['catch_and_shoot', 'slithery_finisher', 'contact_finisher', 'clamps', 'interceptor', 'rebound_chaser', 'corner_specialist', 'deadeye', 'pro_touch', 'chase_down_artist'],
-  PF: ['contact_finisher', 'putback_boss', 'rim_protector', 'box', 'rebound_chaser', 'brick_wall', 'post_lockdown', 'intimidator', 'catch_and_shoot', 'pick_and_roll_maestro'],
-  C: ['rim_protector', 'intimidator', 'box', 'rebound_chaser', 'post_lockdown', 'brick_wall', 'worm', 'pogo_stick', 'lob_city_finisher', 'putback_boss'],
-}
-
 const PERSONALITY_TRAITS = ['team_player', 'ball_hog', 'mentor', 'hot_head', 'media_darling', 'quiet', 'leader', 'joker', 'competitor']
 const MEDIA_PROFILES = ['low_key', 'normal', 'high_profile']
 
@@ -738,6 +734,12 @@ const DRIVING_DUNK_MODS = {
   PG: -8, SG: 3, SF: 5, PF: 5, C: 0,
 }
 
+// All four generate*Attributes functions emit ONLY canonical keys (defined in
+// engine/data/attributeSchema.js). Legacy short-form keys (`dunk`, `passing`,
+// `perimeterD`, `defensiveIQ`, `consistency`) are intentionally absent so
+// generated players match the canonical shape used by master veterans —
+// otherwise the scouting UI shows '?' for legacy duplicates that scout reveal
+// never touches.
 function generateOffenseAttributes(position, base, variance) {
   const mods = OFFENSE_MODS[position] ?? OFFENSE_MODS.SF
   const post = POST_MODS[position] ?? 0
@@ -745,31 +747,25 @@ function generateOffenseAttributes(position, base, variance) {
   const drive = DRIVING_DUNK_MODS[position] ?? 0
   const v = (m = 0) => clampRating(base + m + randInt(-variance, variance))
   return {
-    // Legacy short-form (kept for backward compat with UIs/engine paths
-    // that still reference them — ScoutingView, DraftRoomView, GameSimulator).
-    threePoint:   v(mods.threePoint),
-    midRange:     v(mods.midRange),
-    postScoring:  v(mods.postScoring),
-    layup:        v(mods.layup),
-    dunk:         v(mods.dunk),
-    ballHandling: v(mods.ballHandling),
-    passing:      v(mods.passing),
-    speedWithBall: v(mods.speedWithBall),
-    // Canonical schema (matches master players.js + plays.js attribute references).
-    closeShot:           v(mods.layup),
-    freeThrow:           v(0),
-    shotIQ:              v(0),
+    closeShot:            v(mods.layup),
+    midRange:             v(mods.midRange),
+    threePoint:           v(mods.threePoint),
+    freeThrow:            v(0),
+    shotIQ:               v(0),
     offensiveConsistency: v(0),
-    standingDunk:        v(stand),
-    drivingDunk:         v(drive),
-    postHook:            v(post),
-    postFade:            v(post),
-    postControl:         v(post),
-    drawFoul:            v(0),
-    hands:               v(0),
-    passAccuracy:        v(mods.passing),
-    passVision:          v(mods.passing),
-    passIQ:              v(mods.passing),
+    layup:                v(mods.layup),
+    standingDunk:         v(stand),
+    drivingDunk:          v(drive),
+    postHook:             v(post),
+    postFade:             v(post),
+    postControl:          v(post),
+    drawFoul:             v(0),
+    hands:                v(0),
+    ballHandling:         v(mods.ballHandling),
+    speedWithBall:        v(mods.speedWithBall),
+    passAccuracy:         v(mods.passing),
+    passVision:           v(mods.passing),
+    passIQ:               v(mods.passing),
   }
 }
 
@@ -779,20 +775,15 @@ function generateDefenseAttributes(position, base, variance) {
   const drb = REBOUND_MODS[position] ?? 0
   const v = (m = 0) => clampRating(base + m + randInt(-variance, variance))
   return {
-    // Legacy short-form
-    perimeterD:  v(mods.perimeterD),
-    interiorD:   v(mods.interiorD),
-    steal:       v(mods.steal),
-    block:       v(mods.block),
-    defensiveIQ: v(mods.defensiveIQ),
-    // Canonical schema
-    perimeterDefense:    v(mods.perimeterD),
-    interiorDefense:     v(mods.interiorD),
-    helpDefenseIQ:       v(mods.defensiveIQ),
-    passPerception:      v(0),
+    interiorDefense:      v(mods.interiorD),
+    perimeterDefense:     v(mods.perimeterD),
+    steal:                v(mods.steal),
+    block:                v(mods.block),
+    offensiveRebound:     v(orb),
+    defensiveRebound:     v(drb),
+    helpDefenseIQ:        v(mods.defensiveIQ),
+    passPerception:       v(0),
     defensiveConsistency: v(0),
-    offensiveRebound:    v(orb),
-    defensiveRebound:    v(drb),
   }
 }
 
@@ -814,7 +805,6 @@ function generateMentalAttributes(base, variance) {
   const v = (m = 0) => clampRating(base + m + randInt(-variance, variance))
   return {
     basketballIQ: v(0),
-    consistency:  v(0),
     clutch:       v(0),
     workEthic:    clampRating(randInt(60, 95)),
     coachability: v(0),
@@ -1016,12 +1006,26 @@ export async function createCampaign(options) {
   const teams = generateTeams(campaignId)
   await TeamRepository.saveBulk(teams)
 
+  // Seed the user-facing free-agent coach pool (8 candidates across 3 tiers)
+  campaign.settings.availableCoaches = generateCoachPool(teams)
+  await CampaignRepository.save(campaign)
+
   // -------------------------------------------------------------------------
   // 3. Find user's team
   // -------------------------------------------------------------------------
   const userTeam = teams.find(t => t.abbreviation === teamAbbreviation)
   if (!userTeam) {
     throw new Error(`Selected team "${teamAbbreviation}" not found`)
+  }
+
+  // The auto-generated coach is given a fixed 2-season contract for the user
+  // team (AI teams keep the random 1-4 from generateCoach since their coach
+  // contracts don't decrement). hiredSeason matches the current year so the
+  // "Hired Season YYYY" line in the UI reads correctly from day one.
+  if (userTeam.coach) {
+    userTeam.coach.contractYearsRemaining = 2
+    userTeam.coach.contract_years_remaining = 2
+    userTeam.coach.hiredSeason = startYear
   }
 
   // -------------------------------------------------------------------------
@@ -1429,6 +1433,7 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers) {
       playoff_wins: team.coach.playoff_wins ?? 0,
       playoff_losses: team.coach.playoff_losses ?? 0,
       championships: team.coach.championships ?? 0,
+      conference_titles: team.coach.conference_titles ?? 0,
       seasons_coached: team.coach.seasons_coached ?? 0,
     }
 
@@ -1483,6 +1488,15 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers) {
       cs.championships = (cs.championships ?? 0) + 1
     }
 
+    // Conference title — coach earns this when their team wins their
+    // conference finals series. Mirrors the franchise-history conf-titles
+    // increment below; both share the same bracket source of truth.
+    const coachConf = team.conference
+    const coachConfWinnerId = bracket?.[coachConf]?.confFinals?.winner?.teamId ?? null
+    if (coachConfWinnerId && coachConfWinnerId === team.id) {
+      cs.conference_titles = (cs.conference_titles ?? 0) + 1
+    }
+
     // Snapshot the post-archive totals so next season's reconciliation
     // knows what "this season" started from.
     cs.career_wins_at_last_archive = cs.wins ?? 0
@@ -1491,6 +1505,46 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers) {
     cs.career_playoff_losses_at_last_archive = cs.playoff_losses ?? 0
 
     team.coach.career_stats = cs
+  }
+
+  // 2D. Franchise history — persistent per-team aggregates that survive coach
+  // changes. Lazy-init to match how `team.seasonHistory` is handled above; no
+  // backfill for existing campaigns. Increments by this season's totals only,
+  // so callers must not run archiveSeasonData twice for the same year.
+  for (const team of teams) {
+    const standing = allStandings.find(s =>
+      (s.teamId ?? s.team_id) === team.id ||
+      s.teamAbbreviation === team.abbreviation
+    )
+    if (!standing) continue
+
+    const fh = team.franchise_history || {
+      championships: 0,
+      conference_titles: 0,
+      regular_season: { wins: 0, losses: 0 },
+      playoffs: { wins: 0, losses: 0 },
+    }
+    if (!fh.regular_season) fh.regular_season = { wins: 0, losses: 0 }
+    if (!fh.playoffs) fh.playoffs = { wins: 0, losses: 0 }
+
+    fh.regular_season.wins = (fh.regular_season.wins ?? 0) + (standing.wins ?? 0)
+    fh.regular_season.losses = (fh.regular_season.losses ?? 0) + (standing.losses ?? 0)
+
+    const pr = playoffRecord[team.id]
+    fh.playoffs.wins = (fh.playoffs.wins ?? 0) + (pr?.wins ?? 0)
+    fh.playoffs.losses = (fh.playoffs.losses ?? 0) + (pr?.losses ?? 0)
+
+    if (bracket?.champion?.teamId === team.id) {
+      fh.championships = (fh.championships ?? 0) + 1
+    }
+
+    const conf = team.conference
+    const confFinalsWinnerId = bracket?.[conf]?.confFinals?.winner?.teamId ?? null
+    if (confFinalsWinnerId && confFinalsWinnerId === team.id) {
+      fh.conference_titles = (fh.conference_titles ?? 0) + 1
+    }
+
+    team.franchise_history = fh
   }
 
   // Persist archived data
@@ -1796,6 +1850,10 @@ export async function enterOffseason(campaignId) {
     allTeams: teams,
     seasonPhase: 'offseason',
     gameYear: campaign.gameYear ?? 1,
+    // Offseason FA window handles re-signings & FA signings; only run cuts here.
+    skipExtensions: true,
+    skipSignings: true,
+    skipBackfill: true,
   })
 
   // 4. All players with contract_years_remaining === 0 (not re-signed) → free agent
@@ -1818,6 +1876,8 @@ export async function enterOffseason(campaignId) {
         updatedPlayers[i] = {
           ...p,
           isFreeAgent: 1,
+          previousTeamId: p.teamId,
+          previousTeamAbbreviation: p.teamAbbreviation,
           teamId: null,
           teamAbbreviation: 'FA',
         }
@@ -1825,13 +1885,9 @@ export async function enterOffseason(campaignId) {
     }
   }
 
-  // 4b. Backfill AI teams to 14 players after expired-contract releases
-  const backfillResult = ensureMinimumRosters({
-    aiTeams,
-    leaguePlayers: updatedPlayers,
-  })
-  updatedPlayers = backfillResult.updatedPlayers
-  aiContractResults.signings.push(...backfillResult.signings)
+  // 4b. Backfill is intentionally NOT run here — the offseason free-agency
+  // window owns AI signings, and any team still short on bodies after the
+  // window resolves will be filled in startNewSeason()'s safety-net backfill.
 
   await PlayerRepository.saveBulk(
     updatedPlayers.map(p => ({ ...p, campaignId }))
@@ -1844,6 +1900,7 @@ export async function enterOffseason(campaignId) {
     delete campaign.settings.trade_deadline_passed
     delete campaign.settings.resign_deadline_passed
     delete campaign.settings.trade_deadline_news_shown
+    delete campaign.settings.deadline_warning_shown
   }
   await CampaignRepository.save(campaign)
 
@@ -1872,8 +1929,20 @@ export async function startNewSeason(campaignId) {
   const campaign = await CampaignRepository.get(campaignId)
   if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
 
-  if (campaign.phase !== 'offseason') {
+  // Accept the legacy 'offseason' marker plus the new sub-phases
+  // ('offseason_free_agency', 'offseason_draft') so a manual draft completion
+  // doesn't strand the campaign in 'offseason_draft'.
+  const allowedPhases = new Set(['offseason', 'offseason_free_agency', 'offseason_draft'])
+  if (!allowedPhases.has(campaign.phase)) {
     throw new Error('Campaign must be in offseason phase to start a new season')
+  }
+
+  // Required-coach gate: the user must have a head coach signed before any
+  // new season can begin. The button in CampaignHomeView is also disabled in
+  // this state; this throw is the backstop.
+  const userTeamForCoachCheck = await TeamRepository.get(campaignId, campaign.teamId)
+  if (!userTeamForCoachCheck?.coach) {
+    throw new Error('You must sign a head coach before starting a new season.')
   }
 
   const currentYear = campaign.currentSeasonYear ?? 2025
@@ -1957,6 +2026,28 @@ export async function startNewSeason(campaignId) {
       delete campaign.settings.scout
     }
   }
+
+  // 3e. Decrement user-team coach contract. AI team coach contracts are NOT
+  //     decremented (frozen by design; only the user's coach uses the
+  //     hire/fire system). When a contract hits 0 the coach is cleared and
+  //     the user must hire a replacement before the next season can start.
+  const userTeamForCoach = teams.find(t => t.id === campaign.teamId)
+  if (userTeamForCoach?.coach) {
+    const remaining = (userTeamForCoach.coach.contractYearsRemaining ?? userTeamForCoach.coach.contract_years_remaining ?? 0) - 1
+    if (remaining <= 0) {
+      userTeamForCoach.coach = null
+    } else {
+      userTeamForCoach.coach.contractYearsRemaining = remaining
+      userTeamForCoach.coach.contract_years_remaining = remaining
+    }
+    await TeamRepository.save(userTeamForCoach)
+  }
+
+  // 3f. Top up the free-agent coach pool back to its tier targets.
+  campaign.settings.availableCoaches = topUpCoachPool(
+    campaign.settings.availableCoaches ?? [],
+    teams
+  )
 
   // 4. Initialize new season (schedule + standings)
   const seasonData = SeasonManager.initializeSeason(teams, nextYear, campaignId)
@@ -2156,8 +2247,185 @@ function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
     playoff_wins: 0,
     playoff_losses: 0,
     championships: 0,
+    conference_titles: 0,
     seasons_coached: 0,
   }
+}
+
+// =============================================================================
+// FREE-AGENT COACH POOL
+// =============================================================================
+
+/**
+ * Generate a single free-agent coach for the user-facing hire pool. Mirrors
+ * generateCoach but draws OVR / badge counts from the tier config in
+ * coaches.js and stamps a `hireCost` so the modal can paywall premium tiers.
+ *
+ * @param {string} tierKey   - 'free' | 'good' | 'really_good'
+ * @param {Set} usedNames    - mutated with the chosen "First Last"
+ * @param {Object|null} masterCandidate - optional master-list entry whose
+ *   identity (name, headshot, badges) should override random gen
+ * @returns {Object} coach object with hireCost
+ */
+function generateFreeAgentCoach(tierKey, usedNames, masterCandidate = null) {
+  const tierConfig = FREE_AGENT_COACH_TIERS[tierKey]
+  if (!tierConfig) throw new Error(`Unknown free-agent coach tier: ${tierKey}`)
+
+  const overall = randInt(tierConfig.overallRange[0], tierConfig.overallRange[1])
+  const attributes = generateCoachAttributes(overall)
+  const salary = calculateCoachSalary(overall)
+  const offensiveScheme = pickRandom(Object.keys(OFFENSIVE_SCHEMES))
+  const defensiveScheme = pickRandom(Object.keys(DEFENSIVE_SCHEMES))
+
+  let firstName, lastName, fullName
+  let seededBadges = []
+  let headshot = null
+
+  if (masterCandidate) {
+    firstName = masterCandidate.firstName
+    lastName = masterCandidate.lastName
+    fullName = `${firstName} ${lastName}`
+    headshot = masterCandidate.headshot ?? null
+    const masterBadgeEntries = Array.isArray(masterCandidate.badges) ? masterCandidate.badges : []
+    seededBadges = masterBadgeEntries.map(entry => {
+      if (typeof entry === 'string') {
+        return { id: entry, level: 'bronze', source: 'master' }
+      }
+      return { id: entry.id, level: entry.level ?? 'bronze', source: 'master' }
+    })
+    usedNames.add(fullName)
+  } else {
+    let attempts = 0
+    do {
+      firstName = pickRandom(COACH_FIRST_NAMES)
+      lastName = pickRandom(COACH_LAST_NAMES)
+      fullName = `${firstName} ${lastName}`
+      attempts++
+    } while (usedNames.has(fullName) && attempts < 100)
+    usedNames.add(fullName)
+
+    // Random badge generation per tier
+    const badgeCount = randInt(tierConfig.minBadges, tierConfig.maxBadges)
+    if (badgeCount > 0 && tierConfig.badgeLevels.length > 0) {
+      const badgeOptions = [...coachBadges].sort(() => Math.random() - 0.5)
+      for (let i = 0; i < badgeCount && i < badgeOptions.length; i++) {
+        seededBadges.push({
+          id: badgeOptions[i].id,
+          level: pickRandom(tierConfig.badgeLevels),
+          source: 'generated',
+        })
+      }
+    }
+  }
+
+  return {
+    id: generateUUID(),
+    firstName,
+    lastName,
+    name: fullName,
+    overallRating: overall,
+    overall_rating: overall,
+    attributes,
+    offensiveScheme,
+    offensive_scheme: offensiveScheme,
+    defensiveScheme,
+    defensive_scheme: defensiveScheme,
+    contractSalary: salary,
+    contract_salary: salary,
+    headshot,
+    badges: seededBadges,
+    hireCost: tierConfig.hireCost,
+    career_stats: {
+      wins: 0,
+      losses: 0,
+      playoff_wins: 0,
+      playoff_losses: 0,
+      championships: 0,
+      conference_titles: 0,
+      seasons_coached: 0,
+    },
+  }
+}
+
+/**
+ * Build the initial free-agent coach pool. Master-list coaches whose `team`
+ * abbreviation isn't currently assigned to any team are inserted into the tier
+ * matching their badge count first; remaining slots are random-generated.
+ *
+ * @param {Array} teams - generated team list (post-generateTeams)
+ * @returns {Array} pool of FREE_AGENT_POOL_SIZE coach objects
+ */
+function generateCoachPool(teams) {
+  const usedNames = new Set()
+  for (const team of teams) {
+    if (team.coach?.name) usedNames.add(team.coach.name)
+  }
+
+  const assignedAbbreviations = new Set(teams.map(t => t.abbreviation))
+  const unassignedMasters = COACHES.filter(c => !assignedAbbreviations.has(c.team))
+
+  // Bucket unassigned masters by their natural tier (badge count)
+  const masterByTier = { free: [], good: [], really_good: [] }
+  for (const m of unassignedMasters) {
+    masterByTier[masterCoachTier(m)].push(m)
+  }
+
+  const pool = []
+  for (const tierKey of ['free', 'good', 'really_good']) {
+    const tierConfig = FREE_AGENT_COACH_TIERS[tierKey]
+    for (let i = 0; i < tierConfig.count; i++) {
+      const master = masterByTier[tierKey].shift() ?? null
+      pool.push(generateFreeAgentCoach(tierKey, usedNames, master))
+    }
+  }
+  return pool
+}
+
+/**
+ * Refill an existing pool back to the per-tier counts. Existing entries are
+ * preserved (so users see a stable list); only missing slots are generated.
+ * Called from enterOffseason after coaches have been hired or expired.
+ *
+ * @param {Array} existingPool - current campaign.settings.availableCoaches
+ * @param {Array} teams        - all teams (for name-collision avoidance)
+ * @returns {Array} updated pool padded to FREE_AGENT_POOL_SIZE entries
+ */
+function topUpCoachPool(existingPool, teams) {
+  const counts = { free: 0, good: 0, really_good: 0 }
+  for (const c of existingPool || []) {
+    if (c.hireCost === 0) counts.free++
+    else if (c.hireCost === FREE_AGENT_COACH_TIERS.good.hireCost) counts.good++
+    else if (c.hireCost === FREE_AGENT_COACH_TIERS.really_good.hireCost) counts.really_good++
+  }
+
+  const usedNames = new Set()
+  for (const team of teams) {
+    if (team.coach?.name) usedNames.add(team.coach.name)
+  }
+  for (const c of existingPool || []) {
+    if (c.name) usedNames.add(c.name)
+  }
+
+  const assignedAbbreviations = new Set(teams.map(t => t.abbreviation))
+  const unassignedMasters = COACHES.filter(
+    c => !assignedAbbreviations.has(c.team) && !usedNames.has(`${c.firstName} ${c.lastName}`)
+  )
+  const masterByTier = { free: [], good: [], really_good: [] }
+  for (const m of unassignedMasters) {
+    masterByTier[masterCoachTier(m)].push(m)
+  }
+
+  const additions = []
+  for (const tierKey of ['free', 'good', 'really_good']) {
+    const tierConfig = FREE_AGENT_COACH_TIERS[tierKey]
+    const needed = Math.max(0, tierConfig.count - counts[tierKey])
+    for (let i = 0; i < needed; i++) {
+      const master = masterByTier[tierKey].shift() ?? null
+      additions.push(generateFreeAgentCoach(tierKey, usedNames, master))
+    }
+  }
+
+  return [...(existingPool || []), ...additions]
 }
 
 // =============================================================================

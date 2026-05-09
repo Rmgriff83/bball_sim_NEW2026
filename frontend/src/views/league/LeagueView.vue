@@ -7,10 +7,19 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useGameStore } from '@/stores/game'
 import { usePlayoffStore } from '@/stores/playoff'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
-import { X, ChevronLeft } from 'lucide-vue-next'
+import { X, ChevronLeft, Star } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import TeamLogo from '@/components/common/TeamLogo.vue'
+import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
+import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
+
+const COACH_BADGE_TIER_COLORS = {
+  bronze: '#CD7F32',
+  silver: '#C0C0C0',
+  gold: '#FFD700',
+  hof: '#9333EA',
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -123,6 +132,98 @@ const showTeamModal = ref(false)
 const selectedTeam = ref(null)
 const selectedTeamRoster = ref([])
 const loadingTeamRoster = ref(false)
+const teamModalTab = ref('roster')
+
+const selectedTeamCoach = computed(() => selectedTeam.value?.team?.coach || null)
+
+const ownedTeamCoachBadges = computed(() => {
+  const owned = selectedTeamCoach.value?.badges ?? []
+  return owned
+    .map(entry => {
+      const def = COACH_BADGE_DEFS.find(b => b.id === entry?.id)
+      if (!def) return null
+      return {
+        id: def.id,
+        name: def.name,
+        description: def.description,
+        category: def.category,
+        level: entry.level ?? 'bronze',
+        source: entry.source,
+      }
+    })
+    .filter(Boolean)
+})
+
+const selectedTeamCoachCareerStats = computed(() => {
+  const c = selectedTeamCoach.value
+  if (!c) return null
+  if (c.career_stats) return c.career_stats
+  const wins = c.career_wins ?? 0
+  const losses = c.career_losses ?? 0
+  const totalGames = wins + losses
+  const playoffWins = c.playoff_wins ?? 0
+  const playoffLosses = c.playoff_losses ?? 0
+  const totalPlayoff = playoffWins + playoffLosses
+  return {
+    wins,
+    losses,
+    win_pct: totalGames > 0 ? Math.round((wins / totalGames) * 1000) / 1000 : 0,
+    playoff_wins: playoffWins,
+    playoff_losses: playoffLosses,
+    playoff_win_pct: totalPlayoff > 0 ? Math.round((playoffWins / totalPlayoff) * 1000) / 1000 : 0,
+    championships: c.championships ?? 0,
+    seasons_coached: c.seasons_coached ?? 0,
+    conference_titles: c.conference_titles ?? 0,
+    coach_of_year_awards: c.coach_of_year_awards ?? 0,
+  }
+})
+
+function formatCoachAttrName(key) {
+  if (!key) return ''
+  return key
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, str => str.toUpperCase())
+    .trim()
+}
+
+function getCoachAttrColor(value) {
+  if (value >= 90) return 'var(--color-success)'
+  if (value >= 80) return '#22D3EE'
+  if (value >= 70) return 'var(--color-primary)'
+  if (value >= 60) return 'var(--color-warning)'
+  return 'var(--color-error)'
+}
+
+const selectedTeamFranchiseHistory = computed(() => selectedTeam.value?.team?.franchise_history || null)
+
+const selectedTeamSeasonHistory = computed(() => {
+  const list = selectedTeam.value?.team?.seasonHistory || []
+  return [...list].sort((a, b) => (b.year ?? 0) - (a.year ?? 0))
+})
+
+function franchiseRegularSeasonPct(fh) {
+  const w = fh?.regular_season?.wins ?? 0
+  const l = fh?.regular_season?.losses ?? 0
+  const total = w + l
+  if (total <= 0) return 0
+  return Math.round((w / total) * 1000) / 10
+}
+
+function franchisePlayoffPct(fh) {
+  const w = fh?.playoffs?.wins ?? 0
+  const l = fh?.playoffs?.losses ?? 0
+  const total = w + l
+  if (total <= 0) return 0
+  return Math.round((w / total) * 1000) / 10
+}
+
+function formatSeasonResult(entry) {
+  if (!entry) return '—'
+  if (entry.champion) return 'Champion'
+  if (entry.playoffResult) return entry.playoffResult
+  if (entry.playoffSeed) return `Playoffs · #${entry.playoffSeed} seed`
+  return 'Missed playoffs'
+}
 
 // Player modal state (nested within team modal)
 const showPlayerModal = ref(false)
@@ -177,16 +278,28 @@ const activeStandings = computed(() => {
   return sortByWinPct(conf)
 })
 
-// Recent games across the league
+// Filter a games array to only matchups involving a team in the active
+// conference. Inter-conference games are included when ANY participating team
+// is in the selected conference — the user's perspective of "Eastern games"
+// includes East-vs-West matchups for their own conference.
+function filterGamesByConference(games) {
+  if (!activeConference.value) return games
+  const ids = activeConference.value === 'east' ? eastTeamIds.value : westTeamIds.value
+  if (!ids.length) return games
+  const idSet = new Set(ids)
+  return games.filter(g => idSet.has(g.home_team_id) || idSet.has(g.away_team_id))
+}
+
+// Recent games across the league (filtered by active conference if set)
 const recentGames = computed(() => {
-  return gameStore.completedGames
+  return filterGamesByConference(gameStore.completedGames)
     .slice(-10)
     .reverse()
 })
 
-// Upcoming games
+// Upcoming games (filtered by active conference if set)
 const upcomingGames = computed(() => {
-  return gameStore.upcomingGames.slice(0, 10)
+  return filterGamesByConference(gameStore.upcomingGames).slice(0, 10)
 })
 
 // User team's games remaining in regular season (82 game season)
@@ -267,6 +380,7 @@ function navigateToGame(gameId) {
 // Team modal handlers
 async function openTeamModal(teamStanding) {
   selectedTeam.value = teamStanding
+  teamModalTab.value = 'roster'
   showTeamModal.value = true
   loadingTeamRoster.value = true
 
@@ -559,8 +673,8 @@ function formatSalary(salary) {
             </button>
           </div>
 
-          <!-- Conference Toggle (shown for standings & leaders) -->
-          <div v-if="activeTab === 'standings' || activeTab === 'leaders'" class="league-conf-filters">
+          <!-- Conference Toggle (shown for standings, games & leaders) -->
+          <div v-if="activeTab === 'standings' || activeTab === 'leaders' || activeTab === 'games'" class="league-conf-filters">
             <button
               class="conf-btn"
               :class="{ active: activeConference === null }"
@@ -964,51 +1078,237 @@ function formatSalary(salary) {
                 </div>
               </div>
 
-              <!-- Roster Section -->
-              <div class="roster-section-new">
-                <h4 class="roster-section-header">ROSTER</h4>
+              <!-- Tab Navigation -->
+              <div class="player-tabs">
+                <button
+                  class="player-tab"
+                  :class="{ active: teamModalTab === 'roster' }"
+                  @click="teamModalTab = 'roster'"
+                >
+                  Roster
+                </button>
+                <button
+                  class="player-tab"
+                  :class="{ active: teamModalTab === 'coach' }"
+                  @click="teamModalTab = 'coach'"
+                >
+                  Coach
+                </button>
+                <button
+                  class="player-tab"
+                  :class="{ active: teamModalTab === 'history' }"
+                  @click="teamModalTab = 'history'"
+                >
+                  History
+                </button>
+              </div>
 
-                <div v-if="loadingTeamRoster" class="modal-loading-state">
-                  <LoadingSpinner size="md" />
-                  <span>Loading roster...</span>
+              <!-- Tab Content -->
+              <div class="player-tab-content">
+                <!-- Roster Tab -->
+                <div v-if="teamModalTab === 'roster'" class="player-tab-panel">
+                  <div class="roster-section-new">
+                    <div v-if="loadingTeamRoster" class="modal-loading-state">
+                      <LoadingSpinner size="md" />
+                      <span>Loading roster...</span>
+                    </div>
+
+                    <div v-else class="roster-list-new">
+                      <div
+                        v-for="player in selectedTeamRoster"
+                        :key="player.id"
+                        class="roster-player-row"
+                        :class="{ injured: player.is_injured || player.isInjured }"
+                        @click="openPlayerFromTeam(player)"
+                      >
+                        <div class="roster-player-main">
+                          <PlayerAvatar :player="player" :size="32" />
+                          <div class="roster-player-rating">
+                            <StatBadge :value="player.overall_rating" size="sm" />
+                            <span v-if="player.is_injured || player.isInjured" class="roster-injury-badge">INJ</span>
+                          </div>
+                          <div class="roster-player-info">
+                            <span class="roster-player-name" :class="{ 'injured-text': player.is_injured || player.isInjured }">
+                              {{ player.name }}
+                            </span>
+                            <div class="roster-player-meta">
+                              <span class="roster-position-tag" :style="{ backgroundColor: getPositionColor(player.position) }">
+                                {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
+                              </span>
+                              <span class="roster-jersey">#{{ player.jersey_number || '00' }}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="roster-player-stats">
+                          <template v-if="player.season_stats && !(player.is_injured || player.isInjured)">
+                            <span class="roster-stat">{{ player.season_stats.ppg }} <small>PPG</small></span>
+                            <span class="roster-stat">{{ player.season_stats.rpg }} <small>RPG</small></span>
+                            <span class="roster-stat">{{ player.season_stats.apg }} <small>APG</small></span>
+                          </template>
+                          <span v-else-if="player.is_injured || player.isInjured" class="roster-injury-text">Injured</span>
+                          <span v-else class="roster-no-stats">-</span>
+                        </div>
+                        <div class="roster-chevron">&rsaquo;</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
-                <div v-else class="roster-list-new">
-                  <div
-                    v-for="player in selectedTeamRoster"
-                    :key="player.id"
-                    class="roster-player-row"
-                    :class="{ injured: player.is_injured || player.isInjured }"
-                    @click="openPlayerFromTeam(player)"
-                  >
-                    <div class="roster-player-main">
-                      <PlayerAvatar :player="player" :size="32" />
-                      <div class="roster-player-rating">
-                        <StatBadge :value="player.overall_rating" size="sm" />
-                        <span v-if="player.is_injured || player.isInjured" class="roster-injury-badge">INJ</span>
+                <!-- Coach Tab -->
+                <div v-if="teamModalTab === 'coach'" class="player-tab-panel">
+                  <div v-if="!selectedTeamCoach" class="empty-tab-state">
+                    No coach data available for this team.
+                  </div>
+                  <template v-else>
+                    <!-- Coach Header -->
+                    <div class="team-coach-header">
+                      <div class="team-coach-avatar-wrap">
+                        <CoachAvatar :coach="selectedTeamCoach" :size="64" />
                       </div>
-                      <div class="roster-player-info">
-                        <span class="roster-player-name" :class="{ 'injured-text': player.is_injured || player.isInjured }">
-                          {{ player.name }}
-                        </span>
-                        <div class="roster-player-meta">
-                          <span class="roster-position-tag" :style="{ backgroundColor: getPositionColor(player.position) }">
-                            {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
-                          </span>
-                          <span class="roster-jersey">#{{ player.jersey_number || '00' }}</span>
+                      <div class="team-coach-info">
+                        <p class="team-coach-name">{{ selectedTeamCoach.name }}</p>
+                        <div class="team-coach-rating">
+                          <StatBadge :value="selectedTeamCoach.overall_rating || selectedTeamCoach.overallRating" size="sm" />
+                          <span class="team-coach-rating-label">Overall Rating</span>
                         </div>
                       </div>
                     </div>
-                    <div class="roster-player-stats">
-                      <template v-if="player.season_stats && !(player.is_injured || player.isInjured)">
-                        <span class="roster-stat">{{ player.season_stats.ppg }} <small>PPG</small></span>
-                        <span class="roster-stat">{{ player.season_stats.rpg }} <small>RPG</small></span>
-                        <span class="roster-stat">{{ player.season_stats.apg }} <small>APG</small></span>
-                      </template>
-                      <span v-else-if="player.is_injured || player.isInjured" class="roster-injury-text">Injured</span>
-                      <span v-else class="roster-no-stats">-</span>
+
+                    <!-- Coach Badges -->
+                    <div v-if="ownedTeamCoachBadges.length > 0" class="team-coach-section">
+                      <h4 class="team-coach-section-title">Coach Badges</h4>
+                      <div class="team-coach-badges-row">
+                        <div
+                          v-for="badge in ownedTeamCoachBadges"
+                          :key="badge.id"
+                          class="team-coach-badge-chip"
+                          :title="`${badge.description} (${badge.level.toUpperCase()})`"
+                        >
+                          <Star
+                            :size="12"
+                            :style="{ color: COACH_BADGE_TIER_COLORS[badge.level] || 'var(--color-text-secondary)' }"
+                            :fill="COACH_BADGE_TIER_COLORS[badge.level] || 'transparent'"
+                          />
+                          <span class="team-coach-badge-chip-name">{{ badge.name }}</span>
+                        </div>
+                      </div>
                     </div>
-                    <div class="roster-chevron">&rsaquo;</div>
+
+                    <!-- Career Record -->
+                    <div v-if="selectedTeamCoachCareerStats" class="team-coach-section team-coach-section-divided">
+                      <h4 class="team-coach-section-title">Career Record</h4>
+                      <div class="team-coach-career-grid">
+                        <div class="team-coach-career-box">
+                          <span class="team-coach-career-value">{{ selectedTeamCoachCareerStats.wins }}-{{ selectedTeamCoachCareerStats.losses }}</span>
+                          <span class="team-coach-career-label">Regular Season</span>
+                          <span class="team-coach-career-pct">{{ Math.round(selectedTeamCoachCareerStats.win_pct * 1000) / 10 }}%</span>
+                        </div>
+                        <div class="team-coach-career-box">
+                          <span class="team-coach-career-value">{{ selectedTeamCoachCareerStats.playoff_wins }}-{{ selectedTeamCoachCareerStats.playoff_losses }}</span>
+                          <span class="team-coach-career-label">Playoffs</span>
+                          <span class="team-coach-career-pct">{{ Math.round(selectedTeamCoachCareerStats.playoff_win_pct * 1000) / 10 }}%</span>
+                        </div>
+                        <div class="team-coach-career-box highlight">
+                          <span class="team-coach-career-value">{{ selectedTeamCoachCareerStats.championships }}</span>
+                          <span class="team-coach-career-label">Championships</span>
+                        </div>
+                        <div class="team-coach-career-box">
+                          <span class="team-coach-career-value">{{ selectedTeamCoachCareerStats.seasons_coached }}</span>
+                          <span class="team-coach-career-label">Seasons</span>
+                        </div>
+                      </div>
+
+                      <div
+                        v-if="selectedTeamCoachCareerStats.conference_titles > 0 || selectedTeamCoachCareerStats.coach_of_year_awards > 0"
+                        class="team-coach-awards-row"
+                      >
+                        <span v-if="selectedTeamCoachCareerStats.conference_titles > 0" class="team-coach-award-badge">
+                          {{ selectedTeamCoachCareerStats.conference_titles }}x Conference Champion
+                        </span>
+                        <span v-if="selectedTeamCoachCareerStats.coach_of_year_awards > 0" class="team-coach-award-badge gold">
+                          {{ selectedTeamCoachCareerStats.coach_of_year_awards }}x Coach of the Year
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Coach Attributes -->
+                    <div v-if="selectedTeamCoach.attributes" class="team-coach-section team-coach-section-divided">
+                      <h4 class="team-coach-section-title">Coaching Skills</h4>
+                      <div class="team-coach-attr-grid">
+                        <div
+                          v-for="(value, key) in selectedTeamCoach.attributes"
+                          :key="key"
+                          class="team-coach-attr-item"
+                        >
+                          <span class="team-coach-attr-label">{{ formatCoachAttrName(key) }}</span>
+                          <div class="team-coach-attr-bar">
+                            <div
+                              class="team-coach-attr-fill"
+                              :style="{ width: `${value}%`, backgroundColor: getCoachAttrColor(value) }"
+                            />
+                          </div>
+                          <span class="team-coach-attr-val" :style="{ color: getCoachAttrColor(value) }">{{ value }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- History Tab -->
+                <div v-if="teamModalTab === 'history'" class="player-tab-panel">
+                  <!-- Franchise Totals -->
+                  <div class="team-coach-section">
+                    <h4 class="team-coach-section-title">Franchise Totals</h4>
+                    <div v-if="selectedTeamFranchiseHistory" class="team-coach-career-grid">
+                      <div class="team-coach-career-box highlight">
+                        <span class="team-coach-career-value">{{ selectedTeamFranchiseHistory.championships ?? 0 }}</span>
+                        <span class="team-coach-career-label">Championships</span>
+                      </div>
+                      <div class="team-coach-career-box">
+                        <span class="team-coach-career-value">{{ selectedTeamFranchiseHistory.conference_titles ?? 0 }}</span>
+                        <span class="team-coach-career-label">Conf Titles</span>
+                      </div>
+                      <div class="team-coach-career-box">
+                        <span class="team-coach-career-value">{{ selectedTeamFranchiseHistory.regular_season?.wins ?? 0 }}-{{ selectedTeamFranchiseHistory.regular_season?.losses ?? 0 }}</span>
+                        <span class="team-coach-career-label">Regular Season</span>
+                        <span class="team-coach-career-pct">{{ franchiseRegularSeasonPct(selectedTeamFranchiseHistory) }}%</span>
+                      </div>
+                      <div class="team-coach-career-box">
+                        <span class="team-coach-career-value">{{ selectedTeamFranchiseHistory.playoffs?.wins ?? 0 }}-{{ selectedTeamFranchiseHistory.playoffs?.losses ?? 0 }}</span>
+                        <span class="team-coach-career-label">Playoffs</span>
+                        <span class="team-coach-career-pct">{{ franchisePlayoffPct(selectedTeamFranchiseHistory) }}%</span>
+                      </div>
+                    </div>
+                    <div v-else class="franchise-history-empty">No completed seasons yet.</div>
+                  </div>
+
+                  <!-- Season-by-Season -->
+                  <div class="team-coach-section">
+                    <h4 class="team-coach-section-title">Season History</h4>
+                    <div v-if="selectedTeamSeasonHistory.length === 0" class="franchise-history-empty">
+                      No seasons completed yet.
+                    </div>
+                    <div v-else class="franchise-season-list">
+                      <div class="franchise-season-row franchise-season-row--head">
+                        <span class="franchise-season-year">Year</span>
+                        <span class="franchise-season-record">Record</span>
+                        <span class="franchise-season-result">Result</span>
+                        <span class="franchise-season-trophy" aria-hidden="true"></span>
+                      </div>
+                      <div
+                        v-for="entry in selectedTeamSeasonHistory"
+                        :key="entry.year"
+                        class="franchise-season-row"
+                        :class="{ 'is-champion': entry.champion }"
+                      >
+                        <span class="franchise-season-year">{{ entry.year }}</span>
+                        <span class="franchise-season-record">{{ entry.wins ?? 0 }}-{{ entry.losses ?? 0 }}</span>
+                        <span class="franchise-season-result">{{ formatSeasonResult(entry) }}</span>
+                        <span class="franchise-season-trophy" :title="entry.champion ? 'Champion' : ''">
+                          <template v-if="entry.champion">🏆</template>
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2919,7 +3219,7 @@ function formatSalary(salary) {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 20px;
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -3465,39 +3765,40 @@ function formatSalary(salary) {
   color: white;
 }
 
-/* Player Tabs */
+/* Player Tabs — mirrors PlayerDetailModal .modal-tabs / .tab-btn for visual
+   consistency between user and AI team/player detail modals. */
 .player-tabs {
   display: flex;
-  gap: 4px;
-  background: var(--color-bg-tertiary);
-  padding: 4px;
-  border-radius: var(--radius-lg);
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 12px 0;
 }
 
 .player-tab {
-  flex: 1;
-  padding: 10px 16px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
+  position: relative;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
   cursor: pointer;
   transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .player-tab:hover {
+  background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
-  background: var(--color-bg-elevated);
 }
 
 .player-tab.active {
   background: var(--gradient-cosmic);
+  border-color: rgba(255, 255, 255, 0.2);
   color: #1a1520;
-  box-shadow: 0 2px 6px rgba(232, 90, 79, 0.3);
+  font-weight: 700;
 }
 
 /* Player Tab Content */
@@ -3509,6 +3810,289 @@ function formatSalary(salary) {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* Empty Tab State (e.g. History placeholder, missing coach) */
+.empty-tab-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px 16px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-secondary);
+  gap: 6px;
+}
+
+.empty-tab-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.empty-tab-subtitle {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+  max-width: 320px;
+}
+
+/* Team Coach Tab */
+.team-coach-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+}
+
+.team-coach-avatar-wrap {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--color-bg-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.team-coach-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.team-coach-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.team-coach-rating {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-coach-rating-label {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.team-coach-section {
+  padding: 12px 16px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+}
+
+.team-coach-section-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 10px 0;
+}
+
+.team-coach-badges-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.team-coach-badge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  color: var(--color-text-primary);
+}
+
+.team-coach-badge-chip-name {
+  font-weight: 500;
+}
+
+.team-coach-career-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.team-coach-career-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 10px 6px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+}
+
+.team-coach-career-box.highlight {
+  border-color: rgba(232, 90, 79, 0.4);
+}
+
+.team-coach-career-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.team-coach-career-label {
+  font-size: 0.65rem;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 4px;
+}
+
+.team-coach-career-pct {
+  font-size: 0.75rem;
+  color: var(--color-success);
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.team-coach-awards-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.team-coach-award-badge {
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+}
+
+.team-coach-award-badge.gold {
+  background: rgba(255, 215, 0, 0.12);
+  border-color: rgba(255, 215, 0, 0.3);
+  color: #FFD700;
+}
+
+.team-coach-attr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.team-coach-attr-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-coach-attr-label {
+  width: 110px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.team-coach-attr-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.team-coach-attr-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
+.team-coach-attr-val {
+  width: 30px;
+  text-align: right;
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+/* Franchise History (History tab) */
+.franchise-history-empty {
+  padding: 12px 4px;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.franchise-season-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.franchise-season-row {
+  display: grid;
+  grid-template-columns: 64px 80px 1fr 24px;
+  gap: 12px;
+  padding: 8px 12px;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.franchise-season-row:last-child {
+  border-bottom: none;
+}
+
+.franchise-season-row--head {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+
+.franchise-season-row.is-champion {
+  background: rgba(255, 215, 0, 0.08);
+}
+
+.franchise-season-year {
+  font-weight: 600;
+}
+
+.franchise-season-record {
+  font-variant-numeric: tabular-nums;
+}
+
+.franchise-season-result {
+  color: var(--color-text-secondary);
+}
+
+.franchise-season-row.is-champion .franchise-season-result {
+  color: #FFD700;
+  font-weight: 600;
+}
+
+.franchise-season-trophy {
+  text-align: right;
 }
 
 /* Player Stats Card */
@@ -3860,6 +4444,14 @@ function formatSalary(salary) {
     font-size: 0.7rem;
   }
 
+  .team-coach-career-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .team-coach-attr-grid {
+    grid-template-columns: 1fr;
+  }
+
   .player-stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -3905,10 +4497,6 @@ function formatSalary(salary) {
 
 [data-theme="light"] .roster-player-row:hover {
   background: rgba(0, 0, 0, 0.06);
-}
-
-[data-theme="light"] .player-tabs {
-  background: rgba(0, 0, 0, 0.04);
 }
 
 [data-theme="light"] .player-tab {

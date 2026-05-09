@@ -9,7 +9,18 @@ import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from '@/engine/simulation/Coachi
 import { getStrategyDisplayInfo, getDefaultTargetMinutes } from '@/engine/simulation/SubstitutionEngine'
 import { SUBSTITUTION_STRATEGIES } from '@/engine/config/GameConfig'
 import { useSyncStore } from '@/stores/sync'
+import { useAuthStore } from '@/stores/auth'
+import { useCampaignStore } from '@/stores/campaign'
 import { recalculateOverall } from '@/engine/evolution/PlayerEvolution'
+import { applyCoachChangePenalty } from '@/engine/evolution/MoraleService'
+import { BADGES } from '@/engine/data/badges'
+import {
+  PLAYER_BADGE_COSTS,
+  getMaxBadgeLevel,
+  nextPlayerBadgeLevel,
+  compareBadgeLevels,
+} from '@/engine/data/playerBadgeStore'
+import api from '@/composables/useApi'
 
 /**
  * Attach season_stats (per-game averages) to each player in an array.
@@ -30,6 +41,15 @@ async function _attachSeasonStats(players, campaignId) {
     const raw = allPlayerStats[player.id]
     if (raw && raw.gamesPlayed > 0) {
       const gp = raw.gamesPlayed
+      const fgm = raw.fieldGoalsMade ?? raw.fgm ?? 0
+      const fga = raw.fieldGoalsAttempted ?? raw.fga ?? 0
+      const fg3m = raw.threePointersMade ?? raw.fg3m ?? 0
+      const fg3a = raw.threePointersAttempted ?? raw.fg3a ?? 0
+      const ftm = raw.freeThrowsMade ?? raw.ftm ?? 0
+      const fta = raw.freeThrowsAttempted ?? raw.fta ?? 0
+      const fgPctVal = fga > 0 ? Math.round((fgm / fga) * 1000) / 10 : 0
+      const threePctVal = fg3a > 0 ? Math.round((fg3m / fg3a) * 1000) / 10 : 0
+      const ftPctVal = fta > 0 ? Math.round((ftm / fta) * 1000) / 10 : 0
       player.season_stats = {
         games_played: gp,
         gamesPlayed: gp,
@@ -39,24 +59,12 @@ async function _attachSeasonStats(players, campaignId) {
         spg: Math.round((raw.steals / gp) * 10) / 10,
         bpg: Math.round((raw.blocks / gp) * 10) / 10,
         mpg: Math.round((raw.minutesPlayed / gp) * 10) / 10,
-        fg_pct: raw.fieldGoalsAttempted > 0
-          ? Math.round((raw.fieldGoalsMade / raw.fieldGoalsAttempted) * 1000) / 10
-          : 0,
-        fgPct: raw.fieldGoalsAttempted > 0
-          ? Math.round((raw.fieldGoalsMade / raw.fieldGoalsAttempted) * 1000) / 10
-          : 0,
-        three_pct: raw.threePointersAttempted > 0
-          ? Math.round((raw.threePointersMade / raw.threePointersAttempted) * 1000) / 10
-          : 0,
-        threePct: raw.threePointersAttempted > 0
-          ? Math.round((raw.threePointersMade / raw.threePointersAttempted) * 1000) / 10
-          : 0,
-        ft_pct: raw.freeThrowsAttempted > 0
-          ? Math.round((raw.freeThrowsMade / raw.freeThrowsAttempted) * 1000) / 10
-          : 0,
-        ftPct: raw.freeThrowsAttempted > 0
-          ? Math.round((raw.freeThrowsMade / raw.freeThrowsAttempted) * 1000) / 10
-          : 0,
+        fg_pct: fgPctVal,
+        fgPct: fgPctVal,
+        three_pct: threePctVal,
+        threePct: threePctVal,
+        ft_pct: ftPctVal,
+        ftPct: ftPctVal,
         // Raw totals for detail views
         points: raw.points,
         rebounds: raw.rebounds,
@@ -65,12 +73,12 @@ async function _attachSeasonStats(players, campaignId) {
         blocks: raw.blocks,
         turnovers: raw.turnovers,
         minutesPlayed: raw.minutesPlayed,
-        fgm: raw.fieldGoalsMade,
-        fga: raw.fieldGoalsAttempted,
-        fg3m: raw.threePointersMade,
-        fg3a: raw.threePointersAttempted,
-        ftm: raw.freeThrowsMade,
-        fta: raw.freeThrowsAttempted,
+        fgm,
+        fga,
+        fg3m,
+        fg3a,
+        ftm,
+        fta,
       }
     } else {
       player.season_stats = null
@@ -471,16 +479,29 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
-      // Build schemes from engine config -- no API call needed
+      // Build schemes from engine config and attach a per-scheme `effectiveness`
+      // value computed against the current roster. The Fit % shown on the
+      // scheme cards reads this field.
+      const r = roster.value
+      const withEffectiveness = (configs, kind) => {
+        const out = {}
+        for (const [id, scheme] of Object.entries(configs)) {
+          const eff = kind === 'offensive'
+            ? coachingEngine.calculateSchemeEffectiveness(id, r)
+            : coachingEngine.calculateDefensiveSchemeEffectiveness(id, r)
+          out[id] = { ...scheme, effectiveness: Math.round(eff) }
+        }
+        return out
+      }
       const schemes = {
-        offensive: OFFENSIVE_SCHEMES,
-        defensive: DEFENSIVE_SCHEMES,
+        offensive: withEffectiveness(OFFENSIVE_SCHEMES, 'offensive'),
+        defensive: withEffectiveness(DEFENSIVE_SCHEMES, 'defensive'),
       }
       coachingSchemes.value = schemes
 
       // Recommend a scheme based on current roster
-      if (roster.value.length > 0) {
-        recommendedScheme.value = coachingEngine.recommendScheme(roster.value)
+      if (r.length > 0) {
+        recommendedScheme.value = coachingEngine.recommendScheme(r)
       } else {
         recommendedScheme.value = 'balanced'
       }
@@ -687,6 +708,272 @@ export const useTeamStore = defineStore('team', () => {
     return `$${(salary / 1000).toFixed(0)}K`
   }
 
+  // ---------------------------------------------------------------------------
+  // Player badge store
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Purchase or upgrade a badge for one of the user's players. Validates
+   * eligibility (position + attribute fit + potential cap), debits tokens
+   * via the auth API, mutates `player.badges` (level up or insert as bronze),
+   * and persists. Mirrors the coach badge store flow but routed through the
+   * store so the modal stays thin.
+   *
+   * @returns {{ player, level }} the updated player + the level just purchased
+   */
+  async function purchasePlayerBadge(campaignId, playerId, badgeId) {
+    loading.value = true
+    error.value = null
+    try {
+      // Prefer the in-memory roster entry — any open PlayerDetailModal is
+      // bound to THIS object reference (parent views like
+      // TeamManagementView pass `selectedPlayer.value` which points at a
+      // roster entry). Mutating the same object in place lets the modal's
+      // `normalizedPlayer` computed re-evaluate without a parent re-render.
+      // Fall back to a fresh IDB load only if the player isn't on the
+      // currently-loaded roster (defensive).
+      const player = roster.value.find(p => p?.id === playerId)
+        ?? await PlayerRepository.get(campaignId, playerId)
+      if (!player) throw new Error('Player not found')
+
+      const badge = BADGES.find(b => b.id === badgeId)
+      if (!badge) throw new Error('Badge not found')
+
+      const maxLevel = getMaxBadgeLevel(player, badge)
+      if (!maxLevel) throw new Error('This badge is not available for this player')
+
+      const ownedEntry = (player.badges ?? []).find(b => b?.id === badgeId)
+      const currentLevel = ownedEntry?.level ?? null
+      if (compareBadgeLevels(currentLevel, maxLevel) >= 0) {
+        throw new Error(`Already at this player's max level (${maxLevel.toUpperCase()})`)
+      }
+      const next = nextPlayerBadgeLevel(currentLevel)
+      if (!next || compareBadgeLevels(next, maxLevel) > 0) {
+        throw new Error('No further upgrade available')
+      }
+
+      const cost = PLAYER_BADGE_COSTS[next]
+      if (cost == null) throw new Error('Cost not found for this level')
+      const authStore = useAuthStore()
+      const tokens = authStore.profile?.tokens ?? 0
+      if (tokens < cost) throw new Error('Insufficient tokens')
+
+      // Deduct via backend (single source of truth for token balance)
+      const response = await api.post('/api/user/tokens', { amount: -cost })
+      if (authStore.profile) {
+        authStore.profile.tokens = response.data.tokens
+      }
+
+      // Update or insert badge entry. Preserve `source: 'master'` when a
+      // master-seeded badge is being upgraded — useful for future UI
+      // distinctions.
+      const existing = Array.isArray(player.badges) ? [...player.badges] : []
+      const idx = existing.findIndex(b => b?.id === badgeId)
+      const newEntry = {
+        id: badgeId,
+        level: next,
+        source: 'purchased',
+        purchasedAt: new Date().toISOString(),
+      }
+      if (idx >= 0) {
+        const prev = existing[idx]
+        existing[idx] = {
+          ...newEntry,
+          source: prev.source === 'master' ? 'master' : 'purchased',
+        }
+      } else {
+        existing.push(newEntry)
+      }
+      // Direct property assignment on the existing player object — Vue's
+      // deep reactivity picks this up because `roster.value` is a Pinia ref
+      // wrapping the array, and `player` is one of its tracked entries.
+      player.badges = existing
+
+      // IndexedDB's structured clone can't serialize Vue's reactive proxies
+      // (DataCloneError). Pass a plain deep clone to the repo so persistence
+      // succeeds without disturbing the in-memory reactive entry.
+      await PlayerRepository.save(JSON.parse(JSON.stringify(player)))
+
+      useSyncStore().markDirty()
+      return { player, level: next }
+    } catch (err) {
+      error.value = err.message || 'Failed to purchase player badge'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Coach hire / fire
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Sign a coach from the campaign's free-agent pool. Deducts tokens (if the
+   * coach has a hireCost > 0), promotes the candidate onto team.coach with a
+   * fresh 2-season contract, and removes the candidate from
+   * campaign.settings.availableCoaches. Mirrors the scout/trainer hire flow.
+   */
+  async function hireCoach(campaignId, coachId) {
+    loading.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+
+      const pool = Array.isArray(campaign.settings?.availableCoaches)
+        ? campaign.settings.availableCoaches
+        : []
+      const candidate = pool.find(c => c.id === coachId)
+      if (!candidate) throw new Error('Coach is no longer available')
+
+      const authStore = useAuthStore()
+      const tokens = authStore.profile?.tokens ?? 0
+      const cost = candidate.hireCost ?? 0
+      if (cost > tokens) throw new Error('Insufficient tokens')
+
+      // Deduct tokens (skip API round-trip when the hire is free)
+      if (cost > 0) {
+        const response = await api.post('/api/user/tokens', { amount: -cost })
+        if (authStore.profile) {
+          authStore.profile.tokens = response.data.tokens
+        }
+      }
+
+      // Build the team-coach object: drop hireCost, add contract fields
+      const userTeamId = campaign.teamId ?? campaign.userTeamId ?? campaign.user_team_id
+      if (!userTeamId) throw new Error('No user team found')
+      const teamData = await TeamRepository.get(campaignId, userTeamId)
+      if (!teamData) throw new Error('Team not found')
+
+      const currentSeason = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? 2025
+      const { hireCost: _drop, ...coachWithoutCost } = candidate
+      const newCoach = {
+        ...coachWithoutCost,
+        hiredSeason: currentSeason,
+        contractYearsRemaining: 2,
+        contract_years_remaining: 2,
+      }
+
+      // Mid-season coach replacement → small morale hit per player, scaled by
+      // coachability/workEthic/personality. Skipped during offseason and when
+      // team morale is already below 50 (firing is welcomed).
+      const isReplacement = !!teamData.coach
+      if (isReplacement) {
+        const { updated } = applyCoachChangePenalty(roster.value, { phase: campaign.phase })
+        if (updated.length > 0) {
+          await PlayerRepository.saveBulk(updated)
+        }
+      }
+
+      teamData.coach = newCoach
+      await TeamRepository.save(teamData)
+
+      // Remove from pool & save campaign
+      campaign.settings = campaign.settings ?? {}
+      campaign.settings.availableCoaches = pool.filter(c => c.id !== coachId)
+      await CampaignRepository.save(campaign)
+
+      // Update local refs so UI reacts immediately
+      coach.value = newCoach
+      if (team.value) team.value.coach = newCoach
+
+      const campaignStore = useCampaignStore()
+      if (campaignStore.currentCampaign?.id === campaignId) {
+        campaignStore.currentCampaign.settings = {
+          ...campaignStore.currentCampaign.settings,
+          availableCoaches: campaign.settings.availableCoaches,
+        }
+      }
+
+      useSyncStore().markDirty()
+      return { coach: newCoach }
+    } catch (err) {
+      error.value = err.message || 'Failed to hire coach'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * Re-sign the user team's current head coach for another 2 seasons. Resets
+   * `contractYearsRemaining` to 2 and stamps a fresh `hiredSeason`. Free —
+   * keeps the surrounding flow (cap-hold style) light. Surfaced as a button on
+   * the coach card during the final year of the contract.
+   */
+  async function resignCoach(campaignId) {
+    loading.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+      const userTeamId = campaign.teamId ?? campaign.userTeamId ?? campaign.user_team_id
+      if (!userTeamId) throw new Error('No user team found')
+      const teamData = await TeamRepository.get(campaignId, userTeamId)
+      if (!teamData) throw new Error('Team not found')
+      if (!teamData.coach) throw new Error('No coach to re-sign')
+
+      const currentSeason = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? 2025
+      teamData.coach.contractYearsRemaining = 2
+      teamData.coach.contract_years_remaining = 2
+      teamData.coach.hiredSeason = currentSeason
+
+      await TeamRepository.save(teamData)
+
+      coach.value = teamData.coach
+      if (team.value) team.value.coach = teamData.coach
+
+      useSyncStore().markDirty()
+      return { coach: teamData.coach }
+    } catch (err) {
+      error.value = err.message || 'Failed to re-sign coach'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * Release the user team's current head coach. Mirrors the scout fire flow —
+   * the coach is simply discarded (no buyout, no return-to-pool). The user
+   * must hire a replacement from the pool before the next season can start.
+   */
+  async function fireCoach(campaignId) {
+    loading.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+      const userTeamId = campaign.teamId ?? campaign.userTeamId ?? campaign.user_team_id
+      if (!userTeamId) throw new Error('No user team found')
+      const teamData = await TeamRepository.get(campaignId, userTeamId)
+      if (!teamData) throw new Error('Team not found')
+
+      // Mid-season firing → mild morale hit per player (skipped if team morale
+      // already below 50, or during offseason).
+      if (teamData.coach) {
+        const { updated } = applyCoachChangePenalty(roster.value, { phase: campaign.phase })
+        if (updated.length > 0) {
+          await PlayerRepository.saveBulk(updated)
+        }
+      }
+
+      teamData.coach = null
+      await TeamRepository.save(teamData)
+
+      coach.value = null
+      if (team.value) team.value.coach = null
+
+      useSyncStore().markDirty()
+    } catch (err) {
+      error.value = err.message || 'Failed to release coach'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     // State
     team,
@@ -728,6 +1015,10 @@ export const useTeamStore = defineStore('team', () => {
     fetchCoachingSchemes,
     updateCoachingScheme,
     upgradePlayerAttribute,
+    purchasePlayerBadge,
+    hireCoach,
+    resignCoach,
+    fireCoach,
     clearSelectedPlayer,
     clearTeam,
     invalidate,

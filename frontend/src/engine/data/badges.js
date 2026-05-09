@@ -57,7 +57,7 @@ export const BADGES = [
   // DEFENSE BADGES
   { id: 'clamps', name: 'Clamps', category: 'defense', description: 'Improves ability to stay in front of ball handlers on the perimeter.', effects: { bronze: { perimeterDefBoost: 0.04 }, silver: { perimeterDefBoost: 0.08 }, gold: { perimeterDefBoost: 0.12 }, hof: { perimeterDefBoost: 0.18 } } },
   { id: 'chase_down_artist', name: 'Chase Down Artist', category: 'defense', description: 'Improves ability to block shots from behind on fast breaks.', effects: { bronze: { chaseDownBlockBoost: 0.10 }, silver: { chaseDownBlockBoost: 0.20 }, gold: { chaseDownBlockBoost: 0.30 }, hof: { chaseDownBlockBoost: 0.45 } } },
-  { id: 'heart_crusher', name: 'Heart Crusher', category: 'defense', description: 'Blocks and steals have a demoralizing effect on opponents.', effects: { bronze: { moraleImpact: 0.02 }, silver: { moraleImpact: 0.04 }, gold: { moraleImpact: 0.06 }, hof: { moraleImpact: 0.10 } } },
+  { id: 'heart_crusher', name: 'Heart Crusher', category: 'defense', description: 'Blocks and steals have a demoralizing effect on opponents — also intimidates the next shot.', effects: { bronze: { moraleImpact: 0.02, contestBoost: 0.02 }, silver: { moraleImpact: 0.04, contestBoost: 0.04 }, gold: { moraleImpact: 0.06, contestBoost: 0.06 }, hof: { moraleImpact: 0.10, contestBoost: 0.08 } } },
   { id: 'interceptor', name: 'Interceptor', category: 'defense', description: 'Improves ability to intercept passes in the passing lane.', effects: { bronze: { stealChanceBoost: 0.05 }, silver: { stealChanceBoost: 0.10 }, gold: { stealChanceBoost: 0.15 }, hof: { stealChanceBoost: 0.22 } } },
   { id: 'intimidator', name: 'Intimidator', category: 'defense', description: 'Reduces the shot percentage of opponents in close proximity.', effects: { bronze: { contestBoost: 0.04 }, silver: { contestBoost: 0.08 }, gold: { contestBoost: 0.12 }, hof: { contestBoost: 0.18 } } },
   { id: 'pick_dodger', name: 'Pick Dodger', category: 'defense', description: 'Improves ability to navigate around and through screens.', effects: { bronze: { screenNavBoost: 0.08 }, silver: { screenNavBoost: 0.15 }, gold: { screenNavBoost: 0.22 }, hof: { screenNavBoost: 0.30 } } },
@@ -85,3 +85,15 @@ export const BADGES = [
   { id: 'tireless_defender', name: 'Tireless Defender', category: 'physical', description: 'Reduces energy lost when playing on-ball defense.', effects: { bronze: { defenseStaminaReduction: 0.15 }, silver: { defenseStaminaReduction: 0.30 }, gold: { defenseStaminaReduction: 0.45 }, hof: { defenseStaminaReduction: 0.60 } } },
   { id: 'slippery_off_ball', name: 'Slippery Off Ball', category: 'physical', description: 'Improves ability to get open by navigating through traffic off ball.', effects: { bronze: { offBallMovementBoost: 0.05 }, silver: { offBallMovementBoost: 0.10 }, gold: { offBallMovementBoost: 0.15 }, hof: { offBallMovementBoost: 0.22 } } },
 ]
+
+// Per-position badge pools — used by both the rookie/player generator
+// (CampaignManager.generateBadges) AND the player badge store to gate which
+// badges appear for which player. Lives here in the data file so consumers
+// don't have to import from CampaignManager.
+export const BADGES_BY_POSITION = {
+  PG: ['dimer', 'floor_general', 'pick_and_roll_maestro', 'ankle_breaker', 'quick_first_step', 'tight_handles', 'needle_threader', 'handles_for_days', 'space_creator', 'clamps'],
+  SG: ['catch_and_shoot', 'deadeye', 'corner_specialist', 'clutch_shooter', 'difficult_shots', 'green_machine', 'clamps', 'interceptor', 'tireless_shooter', 'ankle_breaker'],
+  SF: ['catch_and_shoot', 'slithery_finisher', 'contact_finisher', 'clamps', 'interceptor', 'rebound_chaser', 'corner_specialist', 'deadeye', 'pro_touch', 'chase_down_artist'],
+  PF: ['contact_finisher', 'putback_boss', 'rim_protector', 'box', 'rebound_chaser', 'brick_wall', 'post_lockdown', 'intimidator', 'catch_and_shoot', 'pick_and_roll_maestro'],
+  C:  ['rim_protector', 'intimidator', 'box', 'rebound_chaser', 'post_lockdown', 'brick_wall', 'worm', 'pogo_stick', 'lob_city_finisher', 'putback_boss'],
+}

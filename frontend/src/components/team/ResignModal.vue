@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { User, DollarSign, AlertTriangle, Check, X } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
-import { BaseModal, BaseButton, StatBadge, LoadingSpinner } from '@/components/ui'
+import { StatBadge, LoadingSpinner } from '@/components/ui'
 import { calculateRetentionScore, getMotivationLabel, getArchetypeLabel } from '@/engine/ai/MotivationService'
 import { calculateExpectedSalary } from '@/engine/ai/AITradeService'
 
@@ -60,16 +60,10 @@ const expectedSalaryValue = computed(() => {
   return calculateExpectedSalary(null, rating)
 })
 
-// Total contract value
 const totalContractValue = computed(() => offeredSalary.value * selectedYears.value)
-
-// Salary premium display
 const salaryPremium = computed(() => offeredSalary.value - baseSalary.value)
-
-// Has motivations?
 const hasMotivations = computed(() => !!props.player?.motivations)
 
-// Top motivations (sorted by weight, top 4)
 const topMotivations = computed(() => {
   if (!props.player?.motivations) return []
   return Object.entries(props.player.motivations)
@@ -78,9 +72,8 @@ const topMotivations = computed(() => {
     .slice(0, 4)
 })
 
-// Dynamic retention % that recalculates as salary slider moves
 const retentionPct = computed(() => {
-  if (!props.player?.motivations) return 65 // Default if no motivations
+  if (!props.player?.motivations) return 65
   const context = {
     ...(props.teamContext || {}),
     contractSalary: baseSalary.value,
@@ -102,13 +95,7 @@ const retentionLabel = computed(() => {
 })
 
 function getPositionColor(position) {
-  const colors = {
-    PG: '#3B82F6',
-    SG: '#10B981',
-    SF: '#F59E0B',
-    PF: '#EF4444',
-    C: '#8B5CF6',
-  }
+  const colors = { PG: '#3B82F6', SG: '#10B981', SF: '#F59E0B', PF: '#EF4444', C: '#8B5CF6' }
   return colors[position] || '#6B7280'
 }
 
@@ -120,28 +107,25 @@ function getMotivationBarColor(weight) {
 
 function formatSalary(salary) {
   if (!salary) return '$0'
-  if (salary >= 1000000) {
-    return `$${(salary / 1000000).toFixed(1)}M`
-  }
+  if (salary >= 1_000_000) return `$${(salary / 1_000_000).toFixed(1)}M`
   return `$${(salary / 1000).toFixed(0)}K`
 }
 
 function handleClose() {
+  if (props.loading) return
   negotiationResult.value = null
   emit('close')
 }
 
 function handleResign() {
-  // Roll against retention percentage for success/fail
   const roll = Math.random() * 100
   if (roll < retentionPct.value) {
     negotiationResult.value = 'success'
-    // Auto-confirm after brief delay to show success state
     setTimeout(() => {
       emit('confirm', {
         playerId: props.player.id,
         years: selectedYears.value,
-        salary: offeredSalary.value
+        salary: offeredSalary.value,
       })
       negotiationResult.value = null
     }, 1200)
@@ -156,172 +140,249 @@ function handleTryAgain() {
 </script>
 
 <template>
-  <BaseModal
-    :show="show"
-    title="Re-sign Player"
-    size="md"
-    :closable="!loading"
-    @close="handleClose"
-  >
-    <div v-if="loading" class="loading-state">
-      <LoadingSpinner size="lg" />
-      <p>Processing contract extension...</p>
-    </div>
-
-    <div v-else-if="player" class="resign-content">
-      <!-- Player Header Card -->
-      <div class="player-card">
-        <div class="player-avatar">
-          <PlayerAvatar :player="player" :size="32" />
-        </div>
-        <div class="player-details">
-          <h3 class="player-name">{{ player.firstName }} {{ player.lastName }}</h3>
-          <div class="player-meta">
-            <span
-              class="position-badge"
-              :style="{ backgroundColor: getPositionColor(player.position) }"
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="show" class="modal-overlay" @click.self="handleClose">
+        <div class="modal-container">
+          <header class="modal-header">
+            <h2 class="modal-title">Re-sign Player</h2>
+            <button
+              v-if="!loading"
+              class="btn-close"
+              aria-label="Close"
+              @click="handleClose"
             >
-              {{ player.position }}
-            </span>
-            <StatBadge :value="player.overallRating" size="sm" />
-            <span class="player-age">{{ player.age }} yrs</span>
-            <span v-if="hasMotivations" class="archetype-tag">{{ getArchetypeLabel(player) }}</span>
-          </div>
-        </div>
-      </div>
+              <X :size="20" />
+            </button>
+          </header>
 
-      <!-- Motivation Bars (compact, top 4) -->
-      <div v-if="hasMotivations" class="motivation-section">
-        <h4 class="section-title">Key Motivations</h4>
-        <div class="motivation-bars">
-          <div
-            v-for="m in topMotivations"
-            :key="m.key"
-            class="motivation-row"
-          >
-            <span class="motivation-label">{{ getMotivationLabel(m.key) }}</span>
-            <div class="motivation-bar-track">
-              <div
-                class="motivation-bar-fill"
-                :style="{ width: (m.weight * 100) + '%', backgroundColor: getMotivationBarColor(m.weight) }"
-              />
+          <main class="modal-content">
+            <div v-if="loading" class="loading-state">
+              <LoadingSpinner size="lg" />
+              <p>Processing contract extension...</p>
             </div>
-            <span class="motivation-value">{{ Math.round(m.weight * 100) }}</span>
-          </div>
-        </div>
-      </div>
 
-      <!-- Salary Offer Slider -->
-      <div v-if="!negotiationResult" class="salary-slider-section">
-        <h4 class="section-title">Annual Salary Offer</h4>
-        <input
-          type="range"
-          class="salary-slider"
-          :min="baseSalary"
-          :max="maxOffer"
-          :step="salaryStep"
-          v-model.number="offeredSalary"
-        />
-        <div class="salary-display">
-          <span class="salary-amount">{{ formatSalary(offeredSalary) }} / year</span>
-          <span v-if="salaryPremium > 0" class="salary-premium">
-            +{{ formatSalary(salaryPremium) }} premium
-          </span>
-        </div>
-      </div>
+            <div v-else-if="player" class="resign-content">
+              <!-- Player Header Card -->
+              <div class="player-card">
+                <div class="player-avatar">
+                  <PlayerAvatar :player="player" :size="32" />
+                </div>
+                <div class="player-details">
+                  <h3 class="player-name">{{ player.firstName }} {{ player.lastName }}</h3>
+                  <div class="player-meta">
+                    <span
+                      class="position-badge"
+                      :style="{ backgroundColor: getPositionColor(player.position) }"
+                    >
+                      {{ player.position }}
+                    </span>
+                    <StatBadge :value="player.overallRating" size="sm" />
+                    <span class="player-age">{{ player.age }} yrs</span>
+                    <span v-if="hasMotivations" class="archetype-tag">{{ getArchetypeLabel(player) }}</span>
+                  </div>
+                </div>
+              </div>
 
-      <!-- Dynamic Retention Bar -->
-      <div v-if="!negotiationResult" class="retention-section">
-        <div class="retention-header">
-          <h4 class="section-title">Re-sign Likelihood</h4>
-          <span class="retention-label" :style="{ color: retentionColor }">{{ retentionLabel }}</span>
-        </div>
-        <div class="retention-bar-container">
-          <div
-            class="retention-bar-fill"
-            :style="{ width: retentionPct + '%', backgroundColor: retentionColor }"
-          />
-        </div>
-        <span class="retention-pct" :style="{ color: retentionColor }">{{ retentionPct }}%</span>
-      </div>
+              <!-- Motivation Bars -->
+              <div v-if="hasMotivations" class="motivation-section">
+                <h4 class="section-title">Key Motivations</h4>
+                <div class="motivation-bars">
+                  <div v-for="m in topMotivations" :key="m.key" class="motivation-row">
+                    <span class="motivation-label">{{ getMotivationLabel(m.key) }}</span>
+                    <div class="motivation-bar-track">
+                      <div
+                        class="motivation-bar-fill"
+                        :style="{ width: (m.weight * 100) + '%', backgroundColor: getMotivationBarColor(m.weight) }"
+                      />
+                    </div>
+                    <span class="motivation-value">{{ Math.round(m.weight * 100) }}</span>
+                  </div>
+                </div>
+              </div>
 
-      <!-- Year Selector -->
-      <div v-if="!negotiationResult" class="extension-options">
-        <h4 class="section-title">Contract Length</h4>
-        <div class="years-selector">
-          <button
-            v-for="year in yearOptions"
-            :key="year"
-            class="year-option"
-            :class="{ selected: selectedYears === year }"
-            @click="selectedYears = year"
-          >
-            {{ year }} {{ year === 1 ? 'Yr' : 'Yrs' }}
-          </button>
-        </div>
-      </div>
+              <!-- Salary Slider -->
+              <div v-if="!negotiationResult" class="salary-slider-section">
+                <h4 class="section-title">Annual Salary Offer</h4>
+                <input
+                  v-model.number="offeredSalary"
+                  type="range"
+                  class="salary-slider"
+                  :min="baseSalary"
+                  :max="maxOffer"
+                  :step="salaryStep"
+                />
+                <div class="salary-display">
+                  <span class="salary-amount">{{ formatSalary(offeredSalary) }} / year</span>
+                  <span v-if="salaryPremium > 0" class="salary-premium">
+                    +{{ formatSalary(salaryPremium) }} premium
+                  </span>
+                </div>
+              </div>
 
-      <!-- Contract Summary -->
-      <div v-if="!negotiationResult" class="contract-summary">
-        <div class="summary-row">
-          <span class="summary-label">Annual Salary:</span>
-          <span class="summary-value">{{ formatSalary(offeredSalary) }}</span>
-        </div>
-        <div class="summary-row">
-          <span class="summary-label">Contract Length:</span>
-          <span class="summary-value">{{ selectedYears }} {{ selectedYears === 1 ? 'year' : 'years' }}</span>
-        </div>
-        <div class="summary-row total">
-          <span class="summary-label">Total Value:</span>
-          <span class="summary-value">{{ formatSalary(totalContractValue) }}</span>
-        </div>
-      </div>
+              <!-- Retention -->
+              <div v-if="!negotiationResult" class="retention-section">
+                <div class="retention-header">
+                  <h4 class="section-title">Re-sign Likelihood</h4>
+                  <span class="retention-label" :style="{ color: retentionColor }">{{ retentionLabel }}</span>
+                </div>
+                <div class="retention-bar-container">
+                  <div
+                    class="retention-bar-fill"
+                    :style="{ width: retentionPct + '%', backgroundColor: retentionColor }"
+                  />
+                </div>
+                <span class="retention-pct" :style="{ color: retentionColor }">{{ retentionPct }}%</span>
+              </div>
 
-      <!-- Negotiation Result -->
-      <div v-if="negotiationResult === 'success'" class="result-banner success">
-        <Check :size="24" />
-        <div class="result-text">
-          <strong>Deal Accepted!</strong>
-          <p>{{ player.firstName }} {{ player.lastName }} has agreed to a {{ selectedYears }}-year, {{ formatSalary(totalContractValue) }} contract.</p>
+              <!-- Year Selector -->
+              <div v-if="!negotiationResult" class="extension-options">
+                <h4 class="section-title">Contract Length</h4>
+                <div class="years-selector">
+                  <button
+                    v-for="year in yearOptions"
+                    :key="year"
+                    class="year-option"
+                    :class="{ selected: selectedYears === year }"
+                    type="button"
+                    @click="selectedYears = year"
+                  >
+                    {{ year }} {{ year === 1 ? 'Yr' : 'Yrs' }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- Contract Summary -->
+              <div v-if="!negotiationResult" class="contract-summary">
+                <div class="summary-row">
+                  <span class="summary-label">Annual Salary:</span>
+                  <span class="summary-value">{{ formatSalary(offeredSalary) }}</span>
+                </div>
+                <div class="summary-row">
+                  <span class="summary-label">Contract Length:</span>
+                  <span class="summary-value">{{ selectedYears }} {{ selectedYears === 1 ? 'year' : 'years' }}</span>
+                </div>
+                <div class="summary-row total">
+                  <span class="summary-label">Total Value:</span>
+                  <span class="summary-value">{{ formatSalary(totalContractValue) }}</span>
+                </div>
+              </div>
+
+              <!-- Result Banners -->
+              <div v-if="negotiationResult === 'success'" class="result-banner success">
+                <Check :size="24" />
+                <div class="result-text">
+                  <strong>Deal Accepted!</strong>
+                  <p>{{ player.firstName }} {{ player.lastName }} has agreed to a {{ selectedYears }}-year, {{ formatSalary(totalContractValue) }} contract.</p>
+                </div>
+              </div>
+
+              <div v-if="negotiationResult === 'declined'" class="result-banner declined">
+                <X :size="24" />
+                <div class="result-text">
+                  <strong>Offer Declined</strong>
+                  <p>{{ player.firstName }} {{ player.lastName }} has turned down the offer. Try adjusting the terms.</p>
+                </div>
+              </div>
+            </div>
+          </main>
+
+          <footer class="modal-footer">
+            <button class="btn-cancel" :disabled="loading" @click="handleClose">
+              {{ negotiationResult ? 'Close' : 'Cancel' }}
+            </button>
+            <button
+              v-if="!negotiationResult"
+              class="btn-confirm"
+              :disabled="loading"
+              @click="handleResign"
+            >
+              <Check :size="16" class="btn-icon" />
+              Offer Contract
+            </button>
+            <button
+              v-if="negotiationResult === 'declined'"
+              class="btn-confirm"
+              @click="handleTryAgain"
+            >
+              Adjust Offer
+            </button>
+          </footer>
         </div>
       </div>
-
-      <div v-if="negotiationResult === 'declined'" class="result-banner declined">
-        <X :size="24" />
-        <div class="result-text">
-          <strong>Offer Declined</strong>
-          <p>{{ player.firstName }} {{ player.lastName }} has turned down the offer. Try adjusting the terms.</p>
-        </div>
-      </div>
-    </div>
-
-    <template #footer>
-      <div class="modal-footer-buttons">
-        <button class="btn-cancel" :disabled="loading" @click="handleClose">
-          {{ negotiationResult ? 'Close' : 'Cancel' }}
-        </button>
-        <button
-          v-if="!negotiationResult"
-          class="btn-confirm"
-          :disabled="loading"
-          @click="handleResign"
-        >
-          <Check :size="16" />
-          Offer Contract
-        </button>
-        <button
-          v-if="negotiationResult === 'declined'"
-          class="btn-confirm"
-          @click="handleTryAgain"
-        >
-          Adjust Offer
-        </button>
-      </div>
-    </template>
-  </BaseModal>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
+/* Modal scaffolding (matches SimulateConfirmModal global standard) */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+.modal-container {
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.modal-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.btn-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
 .loading-state {
   display: flex;
   flex-direction: column;
@@ -370,9 +431,7 @@ function handleTryAgain() {
   color: var(--color-text-secondary);
 }
 
-.player-details {
-  flex: 1;
-}
+.player-details { flex: 1; }
 
 .player-name {
   font-size: 1.125rem;
@@ -559,11 +618,6 @@ function handleTryAgain() {
   font-weight: 700;
 }
 
-/* Extension Options */
-.extension-options {
-  /* no extra padding — sits inline */
-}
-
 .years-selector {
   display: flex;
   gap: 0.5rem;
@@ -593,7 +647,6 @@ function handleTryAgain() {
   color: var(--color-primary);
 }
 
-/* Contract Summary */
 .contract-summary {
   padding: 1rem;
   background: rgba(255, 255, 255, 0.03);
@@ -608,9 +661,7 @@ function handleTryAgain() {
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.summary-row:last-child {
-  border-bottom: none;
-}
+.summary-row:last-child { border-bottom: none; }
 
 .summary-row.total {
   margin-top: 0.5rem;
@@ -673,10 +724,12 @@ function handleTryAgain() {
   margin: 0;
 }
 
-/* Footer Buttons */
-.modal-footer-buttons {
+/* Footer (global standard: direct button children, flex:1, uppercase 0.85rem 600) */
+.modal-footer {
   display: flex;
   gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--glass-border);
 }
 
 .btn-cancel,
@@ -723,4 +776,25 @@ function handleTryAgain() {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+.btn-icon {
+  fill: currentColor;
+}
+
+/* Modal transition */
+.modal-enter-active { transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1); }
+.modal-leave-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes scaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+
+.modal-enter-active .modal-container { animation: scaleIn 0.3s cubic-bezier(0, 0, 0.2, 1); }
+.modal-leave-active .modal-container { animation: scaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards; }
 </style>

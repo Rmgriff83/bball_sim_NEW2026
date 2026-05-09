@@ -58,7 +58,7 @@ function handleClose() {
 </script>
 
 <template>
-  <BaseModal :show="show" :closable="false" size="lg">
+  <BaseModal :show="show" title="Championship" size="lg" @close="handleClose">
     <div class="championship-content">
       <!-- Confetti Animation -->
       <div class="confetti-layer">
@@ -74,7 +74,6 @@ function handleClose() {
       <div class="trophy-section">
         <div class="trophy-glow" />
         <Trophy :size="80" class="trophy-icon" />
-        <div class="trophy-shine" />
       </div>
 
       <!-- Title -->
@@ -126,15 +125,14 @@ function handleClose() {
         <Star :size="16" />
         <span>{{ winner.championships + 1 }}x Champions</span>
       </div>
-
-      <!-- Action Button -->
-      <div class="action-buttons">
-        <button class="btn-championship" @click="handleClose">
-          <Trophy :size="20" />
-          Continue to Offseason
-        </button>
-      </div>
     </div>
+
+    <template #footer>
+      <button class="btn-championship" @click="handleClose">
+        <Trophy :size="18" />
+        <span>Continue to Offseason</span>
+      </button>
+    </template>
   </BaseModal>
 </template>
 
@@ -193,6 +191,11 @@ function handleClose() {
 .trophy-section {
   position: relative;
   padding: 2rem;
+  width: 200px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .trophy-glow {
@@ -200,6 +203,7 @@ function handleClose() {
   inset: 0;
   background: radial-gradient(circle, rgba(255, 215, 0, 0.4) 0%, transparent 70%);
   animation: pulse-glow 2s ease-in-out infinite;
+  pointer-events: none;
 }
 
 @keyframes pulse-glow {
@@ -209,7 +213,7 @@ function handleClose() {
 
 .trophy-icon {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   color: #ffd700;
   filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.5));
   animation: trophy-bounce 1.5s ease-in-out infinite;
@@ -218,22 +222,6 @@ function handleClose() {
 @keyframes trophy-bounce {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-10px); }
-}
-
-.trophy-shine {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 200%;
-  height: 200%;
-  transform: translate(-50%, -50%);
-  background: conic-gradient(from 0deg, transparent, rgba(255, 255, 255, 0.3), transparent 30%);
-  animation: shine-rotate 3s linear infinite;
-}
-
-@keyframes shine-rotate {
-  from { transform: translate(-50%, -50%) rotate(0deg); }
-  to { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
 /* Title */
@@ -391,28 +379,30 @@ function handleClose() {
   color: #ffd700;
 }
 
-/* Action Button */
-.action-buttons {
-  margin-top: 1rem;
-}
-
+/* Footer action button — matches the modal-design standard (flex:1, uppercase,
+   0.85rem, font-weight 600) but keeps the championship gold gradient since the
+   modal is a victory celebration. */
 .btn-championship {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 1rem 2rem;
-  font-size: 1rem;
-  font-weight: 700;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 12px 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   background: linear-gradient(135deg, #ffd700, #ff8c00);
   color: #000;
   border: none;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-xl);
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .btn-championship:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
   box-shadow: 0 10px 30px rgba(255, 215, 0, 0.4);
 }
 </style>

@@ -17,7 +17,11 @@ import {
 import { useTeamStore } from '@/stores/team'
 import { useSyncStore } from '@/stores/sync'
 import { useToastStore } from '@/stores/toast'
-import { isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
+import { isPastResignDeadline, isInFreeAgencyPeriod } from '@/engine/season/SeasonDeadlines'
+import {
+  startFreeAgency as engineStartFreeAgency,
+  simFreeAgencyDay as engineSimFreeAgencyDay,
+} from '@/engine/draft/OffseasonOrchestrator'
 
 export const useFinanceStore = defineStore('finance', () => {
   // State
@@ -163,8 +167,22 @@ export const useFinanceStore = defineStore('finance', () => {
       // Filter out draft prospects — they belong on the scouting page, not free agency
       const agents = (allAgents || []).filter(p => !p.isDraftProspect && !p.rookieTier)
 
-      // Enrich each free agent with composite scores
-      const enrichedAgents = agents.map(player => enrichPlayerData(player))
+      // During the offseason FA window, enrich each player with offer state so
+      // ContractCard can render the offers-count badge / "Offered" chip.
+      const campaign = await CampaignRepository.get(campaignId)
+      const offersMap = isInFreeAgencyPeriod(campaign)
+        ? (campaign?.settings?.freeAgencyOffers || {})
+        : {}
+
+      const enrichedAgents = agents.map(player => {
+        const enriched = enrichPlayerData(player)
+        const offers = offersMap[player.id] || []
+        return {
+          ...enriched,
+          pendingOfferCount: offers.length,
+          userOffer: offers.find(o => o.isUserOffer) || null,
+        }
+      })
       freeAgents.value = enrichedAgents
       _freeAgentsCampaignId.value = campaignId
       return { free_agents: enrichedAgents }
@@ -339,6 +357,191 @@ export const useFinanceStore = defineStore('finance', () => {
     }
   }
 
+  // ===========================================================================
+  // OFFSEASON FREE AGENCY: PENDING OFFERS
+  // ===========================================================================
+
+  async function makeFreeAgentOffer(campaignId, playerId, { years, salary }) {
+    loading.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+      if (!isInFreeAgencyPeriod(campaign)) {
+        throw new Error('Free agency is not active.')
+      }
+      if (!years || years < 1 || years > 5) throw new Error('Years must be 1–5')
+      if (!salary || salary <= 0) throw new Error('Invalid salary')
+
+      const userTeamId = campaign.teamId
+      if (!userTeamId) throw new Error('No user team found')
+      const teamData = await TeamRepository.get(campaignId, userTeamId)
+      const teamAbbr = teamData?.abbreviation ?? teamData?.abbr ?? null
+
+      if (!campaign.settings) campaign.settings = {}
+      if (!campaign.settings.freeAgencyOffers) campaign.settings.freeAgencyOffers = {}
+
+      // Validate cap: outstanding user offers + this offer <= cap space.
+      const outstandingUserOffers = []
+      for (const [pid, offers] of Object.entries(campaign.settings.freeAgencyOffers)) {
+        const userOffer = offers.find(o => o.isUserOffer)
+        if (userOffer && pid !== String(playerId)) outstandingUserOffers.push(userOffer)
+      }
+      const outstandingTotal = outstandingUserOffers.reduce((s, o) => s + (o.salary || 0), 0)
+      const room = capSpace.value
+      if (outstandingTotal + salary > room) {
+        throw new Error(`Not enough cap space — your pending offers would total ${formatSalary(outstandingTotal + salary)} of ${formatSalary(room)}.`)
+      }
+
+      const offerList = campaign.settings.freeAgencyOffers[playerId] || []
+      const existingIdx = offerList.findIndex(o => o.isUserOffer)
+      const newOffer = {
+        teamId: userTeamId,
+        teamAbbr,
+        salary: Math.floor(salary),
+        years,
+        dayOffered: campaign.settings.freeAgencyDay ?? 0,
+        isUserOffer: true,
+      }
+      if (existingIdx >= 0) {
+        offerList[existingIdx] = newOffer
+      } else {
+        offerList.push(newOffer)
+      }
+      campaign.settings.freeAgencyOffers[playerId] = offerList
+
+      await CampaignRepository.save(campaign)
+
+      // Update local FA cache so ContractCard immediately reflects the offer.
+      const idx = freeAgents.value.findIndex(p => String(p.id) === String(playerId))
+      if (idx >= 0) {
+        freeAgents.value[idx] = {
+          ...freeAgents.value[idx],
+          pendingOfferCount: offerList.length,
+          userOffer: newOffer,
+        }
+      }
+
+      closeSignModal()
+      return newOffer
+    } catch (err) {
+      error.value = err.message || 'Failed to submit offer'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function withdrawFreeAgentOffer(campaignId, playerId) {
+    loading.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+      if (!isInFreeAgencyPeriod(campaign)) {
+        throw new Error('Free agency is not active.')
+      }
+      if (!campaign.settings?.freeAgencyOffers?.[playerId]) return
+
+      const filtered = campaign.settings.freeAgencyOffers[playerId].filter(o => !o.isUserOffer)
+      if (filtered.length === 0) {
+        delete campaign.settings.freeAgencyOffers[playerId]
+      } else {
+        campaign.settings.freeAgencyOffers[playerId] = filtered
+      }
+      await CampaignRepository.save(campaign)
+
+      const idx = freeAgents.value.findIndex(p => String(p.id) === String(playerId))
+      if (idx >= 0) {
+        freeAgents.value[idx] = {
+          ...freeAgents.value[idx],
+          pendingOfferCount: filtered.length,
+          userOffer: null,
+        }
+      }
+    } catch (err) {
+      error.value = err.message || 'Failed to withdraw offer'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function startFreeAgencyPeriod(campaignId) {
+    loading.value = true
+    error.value = null
+    try {
+      const campaign = await engineStartFreeAgency(campaignId)
+      _freeAgentsCampaignId.value = null // force refresh
+      await fetchFreeAgents(campaignId, { force: true })
+      return campaign
+    } catch (err) {
+      error.value = err.message || 'Failed to start free agency'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function simFreeAgencyDay(campaignId) {
+    loading.value = true
+    error.value = null
+    try {
+      const result = await engineSimFreeAgencyDay(campaignId)
+      _freeAgentsCampaignId.value = null
+      await fetchFreeAgents(campaignId, { force: true })
+      // If resolution happened, also refresh roster/team for newly-signed players.
+      if (result.resolved) {
+        await useTeamStore().fetchTeam(campaignId, { force: true })
+      }
+      useSyncStore().markDirty()
+      return result
+    } catch (err) {
+      error.value = err.message || 'Failed to sim free-agency day'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // Loop the engine day-sim until resolution. Only refreshes the FA cache /
+  // team store ONCE at the end so we don't thrash IndexedDB or re-render the
+  // UI 14 times.
+  async function simRestOfFreeAgency(campaignId) {
+    loading.value = true
+    error.value = null
+    try {
+      let last
+      // Hard cap at FREE_AGENCY_DURATION_DAYS iterations as a safety belt.
+      for (let i = 0; i < 30; i++) {
+        last = await engineSimFreeAgencyDay(campaignId)
+        if (last?.resolved) break
+      }
+      _freeAgentsCampaignId.value = null
+      await fetchFreeAgents(campaignId, { force: true })
+      if (last?.resolved) {
+        await useTeamStore().fetchTeam(campaignId, { force: true })
+      }
+      useSyncStore().markDirty()
+      return last
+    } catch (err) {
+      error.value = err.message || 'Failed to sim free agency'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function consumeFreeAgencyResults(campaignId) {
+    const campaign = await CampaignRepository.get(campaignId)
+    const results = campaign?.settings?.freeAgencyResults || null
+    if (results && campaign?.settings) {
+      campaign.settings.freeAgencyResults = null
+      await CampaignRepository.save(campaign)
+    }
+    return results
+  }
+
   async function dropPlayer(campaignId, playerId) {
     loading.value = true
     error.value = null
@@ -495,6 +698,12 @@ export const useFinanceStore = defineStore('finance', () => {
     fetchTransactions,
     resignPlayer,
     signFreeAgent,
+    makeFreeAgentOffer,
+    withdrawFreeAgentOffer,
+    startFreeAgencyPeriod,
+    simFreeAgencyDay,
+    simRestOfFreeAgency,
+    consumeFreeAgencyResults,
     dropPlayer,
     openResignModal,
     closeResignModal,

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "audit:gameplay": "node scripts/audit-gameplay-coverage.js",
+    "prebuild": "node scripts/audit-gameplay-coverage.js"
   },
   "dependencies": {
     "@vuelidate/core": "^2.0.3",

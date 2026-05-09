@@ -77,6 +77,22 @@ export function usePlayAnimation() {
   const currentHomeScore = computed(() => displayedHomeScore.value)
   const currentAwayScore = computed(() => displayedAwayScore.value)
 
+  /**
+   * Force the displayed scores to a specific value. Used after a sim-to-end
+   * jump from quarter break — the animation hasn't played the rest of the
+   * game, so the displayed scores still reflect the previous quarter. The
+   * caller passes the final scores from the simulation result.
+   */
+  function setDisplayedScores(home, away, boxScore = null) {
+    if (scoreUpdateTimeout) {
+      clearTimeout(scoreUpdateTimeout)
+      scoreUpdateTimeout = null
+    }
+    if (typeof home === 'number') displayedHomeScore.value = home
+    if (typeof away === 'number') displayedAwayScore.value = away
+    if (boxScore) displayedBoxScore.value = boxScore
+  }
+
   // Watch for possession changes and update scores with delay to sync with +2/+3 animation
   watch(currentPossessionIndex, (newIndex, oldIndex) => {
     // Clear any pending score update
@@ -137,9 +153,17 @@ export function usePlayAnimation() {
 
   /**
    * Activated badges from current possession (for canvas animations).
+   *
+   * Live-filtered by `elapsedTime` so badges only enter the list when their
+   * action has reached its end-of-action timestamp. The list grows as the
+   * possession plays out — BasketballCourt's watcher dedupes per-badge so
+   * each fires its animation exactly once.
    */
   const currentActivatedBadges = computed(() => {
-    return currentPossession.value?.activated_badges || []
+    const all = currentPossession.value?.activated_badges || []
+    if (all.length === 0) return all
+    const cutoff = elapsedTime.value
+    return all.filter(b => (b.time ?? 0) <= cutoff)
   })
 
   /**
@@ -590,6 +614,7 @@ export function usePlayAnimation() {
     setSpeed,
     seekTo,
     continueAfterQuarterBreak,
+    setDisplayedScores,
     cleanup
   }
 }

@@ -81,6 +81,29 @@ export const useTradeStore = defineStore('trade', () => {
     return (playerId) => map[String(playerId)] || null
   }
 
+  // Helper: build a draft-pick display function across every team's pick
+  // pool. Without this, breaking-news / display strings fall back to the
+  // raw "Pick #<uuid>" default in `buildTradeDetails` — which produces the
+  // ugly headline the user reported. Format example: "2026 R1 Pick (PHI)".
+  function _buildPickDisplayFn(allTeams) {
+    const byId = new Map()
+    for (const team of allTeams || []) {
+      for (const pick of team.draftPicks || []) {
+        if (pick?.id) byId.set(String(pick.id), pick)
+      }
+    }
+    return (pickId) => {
+      const pick = byId.get(String(pickId))
+      if (!pick) return 'Draft Pick'
+      const year = pick.year || ''
+      const round = pick.round ? `R${pick.round}` : ''
+      const orig = pick.original_team_abbreviation || pick.originalTeamAbbreviation || ''
+      const parts = [year, round, 'Pick']
+      const main = parts.filter(Boolean).join(' ').trim()
+      return orig ? `${main} (${orig})` : main || 'Draft Pick'
+    }
+  }
+
   // Helper: get campaign year
   async function _getCampaignYear(campaignId) {
     const campaign = await CampaignRepository.get(campaignId)
@@ -246,7 +269,9 @@ export const useTradeStore = defineStore('trade', () => {
       const userTeamId = campaign?.team_id ?? campaign?.teamId
       const userTeam = await TeamRepository.get(campaignId, userTeamId)
       const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+      const allTeams = await TeamRepository.getAllForCampaign(campaignId)
       const getPlayerFn = _buildPlayerLookup(allPlayers)
+      const getPickDisplayFn = _buildPickDisplayFn(allTeams)
 
       // Build trade details
       const details = buildTradeDetails({
@@ -255,6 +280,7 @@ export const useTradeStore = defineStore('trade', () => {
         userGives: userOffering.value.map(formatAssetForApi),
         userReceives: userRequesting.value.map(formatAssetForApi),
         getPlayerFn,
+        getPickDisplayFn,
       })
 
       // Separate players into user roster vs league players
@@ -573,7 +599,9 @@ export const useTradeStore = defineStore('trade', () => {
       const userTeamId = campaign?.team_id ?? campaign?.teamId
       const userTeam = await TeamRepository.get(campaignId, userTeamId)
       const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+      const allTeams = await TeamRepository.getAllForCampaign(campaignId)
       const getPlayerFn = _buildPlayerLookup(allPlayers)
+      const getPickDisplayFn = _buildPickDisplayFn(allTeams)
 
       // Build trade details from the proposal
       const aiTeam = {
@@ -588,6 +616,7 @@ export const useTradeStore = defineStore('trade', () => {
         userGives: proposal.proposal.aiReceives,   // AI receives = user gives
         userReceives: proposal.proposal.aiGives,    // AI gives = user receives
         getPlayerFn,
+        getPickDisplayFn,
       })
 
       const userRoster = allPlayers.filter(p => {

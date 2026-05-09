@@ -178,6 +178,7 @@ const scoreAnimation = ref(null)  // { points: 2|3, progress: 0-1, startTime: ti
 // Badge animation state
 const badgeAnimations = ref([])  // Array of { badgeId, level, playerName, x, y, progress, startTime }
 const lastAnimatedBadges = ref('')  // Track last animated badges to prevent duplicates
+const animatedBadgeKeys = ref(new Set()) // Per-badge dedupe within a possession; reset when the list shrinks (= new possession)
 
 // Crowd celebration animation state
 const crowdCelebrations = ref([])  // Array of { emoji, x, y, progress, startTime }
@@ -1649,30 +1650,34 @@ watch(() => isMobile.value, () => {
   stableAwayFanIndices.value = new Set()
 })
 
-// Watch for activated badges and trigger animations
-watch(() => props.activatedBadges, (newBadges) => {
+// Watch for activated badges and trigger animations as they become due.
+// usePlayAnimation live-filters this list by elapsedTime so badges grow
+// progressively across a play. We dedupe per (badgeId, playerId, time) so
+// each animation fires exactly once even if the list updates many times.
+watch(() => props.activatedBadges, (newBadges, oldBadges) => {
+  // Detect a possession reset: list shrunk to zero or shorter than before.
+  // Reset the animated-keys set so the next possession's badges fire fresh.
   if (!newBadges || newBadges.length === 0) {
+    animatedBadgeKeys.value = new Set()
     lastAnimatedBadges.value = ''
     return
   }
+  if (oldBadges && newBadges.length < oldBadges.length) {
+    animatedBadgeKeys.value = new Set()
+  }
 
-  // Create a unique key for this set of badges to prevent duplicate animations
-  const badgeKey = newBadges.map(b => `${b.badgeId}-${b.playerId}-${b.time || 0}`).join('|')
-  if (badgeKey === lastAnimatedBadges.value) return
-  lastAnimatedBadges.value = badgeKey
+  for (const badge of newBadges) {
+    const key = `${badge.badgeId}-${badge.playerId}-${badge.time || 0}`
+    if (animatedBadgeKeys.value.has(key)) continue
+    animatedBadgeKeys.value.add(key)
 
-  newBadges.forEach(badge => {
-    // Find player position from interpolatedPositions
-    const playerId = badge.playerId
-    const playerPos = props.interpolatedPositions[playerId]
-
+    const playerPos = props.interpolatedPositions[badge.playerId]
     if (playerPos) {
       triggerBadgeAnimation(badge, playerPos.x, playerPos.y)
     } else {
-      // Default to center if player position not found
       triggerBadgeAnimation(badge, 0.5, 0.4)
     }
-  })
+  }
 }, { deep: true })
 
 defineExpose({

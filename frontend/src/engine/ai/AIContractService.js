@@ -699,6 +699,9 @@ export function runAIRosterManagement({
   seasonPhase = 'offseason',
   getPlayerStatsFn = () => null,
   gameYear = 1,
+  skipExtensions = false,
+  skipSignings = false,
+  skipBackfill = false,
 }) {
   const results = {
     cuts: [],
@@ -731,24 +734,28 @@ export function runAIRosterManagement({
     const rosterAfterCuts = getTeamRoster(currentPlayers, team.abbreviation);
     const capAfterCuts = getCapSituation(rosterAfterCuts);
 
-    // Step 2: Re-sign expiring players (cap-aware)
-    const extensionResults = processTeamExtensions({
-      roster: rosterAfterCuts,
-      direction,
-      leaguePlayers: currentPlayers,
-      teamAbbreviation: team.abbreviation,
-      getPlayerStatsFn,
-      capSituation: capAfterCuts,
-      draftCapital,
-    });
-    results.extensions.push(...extensionResults.extensions);
-    currentPlayers = extensionResults.updatedPlayers;
+    // Step 2: Re-sign expiring players (cap-aware) — skipped when the offseason
+    // FA window will handle these signings instead.
+    if (!skipExtensions) {
+      const extensionResults = processTeamExtensions({
+        roster: rosterAfterCuts,
+        direction,
+        leaguePlayers: currentPlayers,
+        teamAbbreviation: team.abbreviation,
+        getPlayerStatsFn,
+        capSituation: capAfterCuts,
+        draftCapital,
+      });
+      results.extensions.push(...extensionResults.extensions);
+      currentPlayers = extensionResults.updatedPlayers;
+    }
 
-    // Step 3: Sign free agents (cap-aware, target 13)
+    // Step 3: Sign free agents (cap-aware, target 13) — skipped during offseason
+    // entry so the FA window has a real pool to bid on.
     const rosterAfterExtensions = getTeamRoster(currentPlayers, team.abbreviation);
     const capAfterExtensions = getCapSituation(rosterAfterExtensions);
 
-    if (rosterAfterExtensions.length < TARGET_ROSTER_SIZE) {
+    if (!skipSignings && rosterAfterExtensions.length < TARGET_ROSTER_SIZE) {
       const signingResults = processTeamSignings({
         direction,
         leaguePlayers: currentPlayers,
@@ -763,7 +770,7 @@ export function runAIRosterManagement({
 
     // Step 4: Backfill if roster below 14 players (retirement + cuts + releases)
     const rosterAfterSignings = getTeamRoster(currentPlayers, team.abbreviation);
-    if (rosterAfterSignings.length < MINIMUM_SEASON_ROSTER) {
+    if (!skipBackfill && rosterAfterSignings.length < MINIMUM_SEASON_ROSTER) {
       const backfillResults = backfillRoster({
         leaguePlayers: currentPlayers,
         teamAbbreviation: team.abbreviation,
@@ -859,3 +866,184 @@ export function ensureMinimumRosters({ aiTeams, leaguePlayers }) {
 
 // Backward compatibility alias
 export const runAIContractDecisions = runAIRosterManagement;
+
+// =============================================================================
+// FREE AGENCY: AI OFFER GENERATION
+// =============================================================================
+//
+// Daily pass that lets every AI team add pending offers to the FA pool. The
+// pool lives at `campaign.settings.freeAgencyOffers` keyed by playerId; each
+// entry is an array of Offer objects: { teamId, teamAbbr, salary, years,
+// dayOffered, isUserOffer }. We mutate the offers map in-place and return a
+// summary of new offers placed today.
+
+const MAX_OFFERS_PER_TEAM_PER_WINDOW = 6;
+const MAX_OFFERS_PER_TEAM_PER_DAY = 2;
+
+function hashSeed(...parts) {
+  let h = 2166136261;
+  for (const part of parts) {
+    const s = String(part);
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+  }
+  return (h >>> 0) / 4294967296;
+}
+
+function teamPendingOffersTotal(offersMap, teamId) {
+  let count = 0;
+  for (const offers of Object.values(offersMap || {})) {
+    for (const offer of offers) {
+      if (offer.teamId === teamId && !offer.isUserOffer) count++;
+    }
+  }
+  return count;
+}
+
+function teamPendingSalaryCommitment(offersMap, teamId) {
+  let total = 0;
+  for (const offers of Object.values(offersMap || {})) {
+    for (const offer of offers) {
+      if (offer.teamId === teamId && !offer.isUserOffer) total += offer.salary || 0;
+    }
+  }
+  return total;
+}
+
+function existingTeamOfferForPlayer(offersMap, playerId, teamId) {
+  return (offersMap[playerId] || []).find(o => o.teamId === teamId && !o.isUserOffer) || null;
+}
+
+/**
+ * Generate one day of AI free-agency offers, mutating `offersMap` in place.
+ *
+ * @param {object} args
+ * @param {Array} args.aiTeams - non-user team objects
+ * @param {Array} args.leaguePlayers - all players (FAs already released)
+ * @param {Array} args.standings
+ * @param {Array} args.allTeams
+ * @param {object} args.offersMap - campaign.settings.freeAgencyOffers (mutated)
+ * @param {number} args.day - current FA day (1-indexed)
+ * @param {string} args.campaignId - for deterministic seeding
+ * @param {number} args.gameYear
+ * @returns {Array} summary of offers placed today
+ */
+export function generateAIFreeAgencyOffers({
+  aiTeams,
+  leaguePlayers,
+  standings,
+  allTeams,
+  offersMap,
+  day,
+  campaignId,
+  gameYear = 1,
+}) {
+  const placed = [];
+  if (!offersMap) return placed;
+
+  const context = buildContext({ standings, teams: allTeams, seasonPhase: 'offseason' });
+
+  // Get free agents (non-prospects)
+  const freeAgents = leaguePlayers.filter(p => {
+    if (p.isDraftProspect) return false;
+    if (p.isFreeAgent === 1 || p.is_free_agent === 1) return true;
+    const teamAbbr = p.teamAbbreviation ?? p.team_abbreviation ?? null;
+    return !teamAbbr || teamAbbr === 'FA';
+  });
+
+  // Sort by rating descending so top FAs see action first each day
+  freeAgents.sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
+
+  for (const team of aiTeams) {
+    const teamRoster = getTeamRoster(leaguePlayers, team.abbreviation);
+    if (teamRoster.length >= MAX_ROSTER_SIZE) continue;
+
+    const direction = analyzeTeamDirection(team, teamRoster, context);
+    const draftCapital = assessDraftCapital(team, gameYear);
+    const baseCap = getCapSituation(teamRoster);
+
+    const pendingForTeam = teamPendingOffersTotal(offersMap, team.id);
+    if (pendingForTeam >= MAX_OFFERS_PER_TEAM_PER_WINDOW) continue;
+
+    let offersToday = 0;
+    let pendingCommitment = teamPendingSalaryCommitment(offersMap, team.id);
+
+    for (const player of freeAgents) {
+      if (offersToday >= MAX_OFFERS_PER_TEAM_PER_DAY) break;
+      if (pendingForTeam + offersToday >= MAX_OFFERS_PER_TEAM_PER_WINDOW) break;
+
+      // Deterministic per-team-per-day-per-player chance the team is "interested today"
+      const interestRoll = hashSeed(campaignId, team.id, player.id, day);
+      // Top FAs draw earlier interest, bench guys later in the window
+      const rating = getPlayerRating(player);
+      const earlyWindow = day <= 4;
+      const lateWindow = day >= 9;
+      let interestThreshold = 0.55;
+      if (rating >= 80 && earlyWindow) interestThreshold = 0.35;
+      else if (rating < 70 && earlyWindow) interestThreshold = 0.85;
+      else if (rating < 70 && lateWindow) interestThreshold = 0.50;
+      if (interestRoll < interestThreshold) continue;
+
+      // Roster fit (positional need, direction, etc.)
+      const adjustedCap = { ...baseCap, capSpace: baseCap.capSpace - pendingCommitment };
+      const wantsPlayer = evaluateFreeAgentSigning(player, direction, teamRoster, adjustedCap);
+      if (!wantsPlayer) continue;
+
+      const offer = calculateContractOffer(player, direction, adjustedCap);
+
+      // Cap-aware budgeting: don't exceed available room (with luxury-tax leeway for contenders)
+      const isContending = direction === 'contending' || direction === 'title_contender' || direction === 'win_now';
+      const projectedCommitment = pendingCommitment + offer.salary;
+      if (!isContending && projectedCommitment > Math.max(0, adjustedCap.capRoom)) continue;
+      if (isContending) {
+        // Contenders can dip into tax but cap each pending offer at $20M to avoid wild deals
+        if (offer.salary > 20_000_000 && pendingCommitment > 0) continue;
+      }
+
+      // Dedup: if team already has an offer to this player, only re-offer mid-window with a salary bump
+      const existing = existingTeamOfferForPlayer(offersMap, player.id, team.id);
+      if (existing) {
+        const competing = (offersMap[player.id] || []).filter(o => o.teamId !== team.id);
+        if (day < 7 || competing.length === 0) continue;
+        const bumped = Math.floor(existing.salary * 1.10);
+        if (bumped <= existing.salary) continue;
+        existing.salary = bumped;
+        existing.dayOffered = day;
+        placed.push({ teamId: team.id, teamAbbr: team.abbreviation, playerId: player.id, salary: bumped, years: existing.years, kind: 'bumped' });
+        offersToday++;
+        continue;
+      }
+
+      const draftRichBonus = draftCapital.draftRichness > 0.6 && direction === 'rebuilding' ? 0.95 : 1.0;
+      const finalSalary = Math.floor(offer.salary * draftRichBonus);
+
+      const newOffer = {
+        teamId: team.id,
+        teamAbbr: team.abbreviation,
+        salary: finalSalary,
+        years: offer.years,
+        dayOffered: day,
+        isUserOffer: false,
+      };
+
+      if (!offersMap[player.id]) offersMap[player.id] = [];
+      offersMap[player.id].push(newOffer);
+      pendingCommitment += finalSalary;
+      offersToday++;
+
+      placed.push({
+        teamId: team.id,
+        teamAbbr: team.abbreviation,
+        playerId: player.id,
+        salary: finalSalary,
+        years: offer.years,
+        kind: 'new',
+      });
+    }
+  }
+
+  return placed;
+}
+

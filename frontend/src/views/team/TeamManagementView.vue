@@ -8,7 +8,7 @@ import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
-import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star } from 'lucide-vue-next'
+import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import TradesTab from '@/components/trade/TradesTab.vue'
@@ -19,6 +19,7 @@ import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import HireScoutModal from '@/components/team/HireScoutModal.vue'
 import HireTrainerModal from '@/components/team/HireTrainerModal.vue'
 import HireStaffTrainerModal from '@/components/team/HireStaffTrainerModal.vue'
+import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import CoachBadgeStoreModal from '@/components/coach/CoachBadgeStoreModal.vue'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
@@ -84,6 +85,7 @@ const showHireTrainerModal = ref(false)
 const firingTrainer = ref(false)
 const showHireStaffTrainerModal = ref(false)
 const firingStaffTrainer = ref(false)
+const showHireCoachModal = ref(false)
 const showCoachBadgeStore = ref(false)
 
 // Coach badge tier colors for the chip display
@@ -219,7 +221,20 @@ const coachCareerStats = computed(() => {
   }
 })
 const teamChemistry = computed(() => teamStore.teamChemistry)
-const chemistryColor = computed(() => teamChemistry.value >= 70 ? '#22c55e' : '#ef4444')
+// 3-band signal: green (happy) / amber (meh) / red (frown). Matches the
+// face icon next to the % so users can read the locker-room mood at a glance.
+const chemistryColor = computed(() => {
+  const v = teamChemistry.value
+  if (v >= 70) return '#22c55e'
+  if (v >= 50) return '#f59e0b'
+  return '#ef4444'
+})
+const chemistryIcon = computed(() => {
+  const v = teamChemistry.value
+  if (v >= 70) return Smile
+  if (v >= 50) return Meh
+  return Frown
+})
 const expiringContractsCount = computed(() => roster.value.filter(p => p.contractYearsRemaining === 1).length)
 
 // Starters in position order (PG, SG, SF, PF, C) - may contain nulls for empty slots
@@ -768,6 +783,55 @@ async function promoteToStarter(benchPlayer, targetPosition) {
   }
 }
 
+// CPU-driven lineup auto-fill. Mirrors the SimPauseModal's CPU lineup handler:
+// pick the best 5 via AILineupService, then split 200 minutes around the new
+// starters (160 to starters, 40 spread across top-4 bench by rating).
+const cpuAdjusting = ref(false)
+async function cpuAdjustLineup() {
+  if (cpuAdjusting.value || swappingLineup.value) return
+  const rosterArr = teamStore.roster
+  if (!rosterArr || rosterArr.length < 5) {
+    toastStore.showError('Roster too small for a CPU lineup')
+    return
+  }
+  cpuAdjusting.value = true
+  if (minutesSaveTimeout) { clearTimeout(minutesSaveTimeout); minutesSaveTimeout = null }
+
+  try {
+    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const newLineup = selectBestLineup(rosterArr)
+    if (!Array.isArray(newLineup) || newLineup.length !== 5) {
+      toastStore.showError('CPU could not pick a lineup')
+      return
+    }
+    closeMoveDropdown()
+    await teamStore.updateLineup(campaignId.value, newLineup, [])
+
+    // Distribute 200 minutes — 160 across starters, 40 across top-4 healthy
+    // bench by rating (16/12/8/4). Same shape as the SimPauseModal handler.
+    const newStarterIds = newLineup.filter(id => id !== null)
+    const newMinutes = {}
+    const starterShare = newStarterIds.length > 0 ? Math.floor(160 / newStarterIds.length) : 0
+    for (const id of newStarterIds) newMinutes[id] = Math.min(starterShare, 40)
+    const benchSlots = [16, 12, 8, 4]
+    const starterSet = new Set(newStarterIds)
+    const benchByRating = rosterArr
+      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
+      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+    for (let i = 0; i < benchByRating.length; i++) {
+      newMinutes[benchByRating[i].id] = i < benchSlots.length ? benchSlots[i] : 0
+    }
+    await teamStore.updateTargetMinutes(campaignId.value, newMinutes)
+    await teamStore.fetchTeam(campaignId.value, { force: true })
+    toastStore.showSuccess('Lineup auto-set by CPU')
+  } catch (err) {
+    console.error('Failed to CPU-adjust lineup:', err)
+    toastStore.showError('Failed to auto-adjust lineup')
+  } finally {
+    cpuAdjusting.value = false
+  }
+}
+
 function formatSalary(salary) {
   if (!salary) return '-'
   if (salary >= 1000000) {
@@ -813,6 +877,16 @@ function getFatigueColor(fatigue) {
 
 function isOverFatigued(fatigue) {
   return fatigue >= 70
+}
+
+// True when a player has at least one upgrade point available to spend on
+// either the offensive or defensive attribute pool. Drives the double-chevron
+// indicator on the lineup card OVR badges.
+function hasUpgradePoints(player) {
+  if (!player) return false
+  const off = player.offense_upgrade_points ?? player.offenseUpgradePoints ?? 0
+  const def = player.defense_upgrade_points ?? player.defenseUpgradePoints ?? 0
+  return (Number(off) || 0) >= 1 || (Number(def) || 0) >= 1
 }
 
 function formatBadgeName(badge) {
@@ -1000,6 +1074,30 @@ async function handleUpgradeAttribute({ playerId, category, attribute, pool }) {
   } catch (err) {
     toastStore.showError(err.response?.data?.message || 'Upgrade failed')
   }
+}
+
+// Coach functions
+const resigningCoach = ref(false)
+
+async function resignCoach() {
+  if (resigningCoach.value) return
+  resigningCoach.value = true
+  try {
+    await teamStore.resignCoach(campaignId.value)
+    toastStore.showSuccess('Head coach re-signed for 2 more seasons')
+  } catch (err) {
+    console.error('Failed to re-sign coach:', err)
+    toastStore.showError(err.message || 'Failed to re-sign coach')
+  } finally {
+    resigningCoach.value = false
+  }
+}
+
+function onCoachHired() {
+  // teamStore.hireCoach already updated coach.value, team.coach, and
+  // campaignStore.currentCampaign.settings.availableCoaches optimistically,
+  // so no refetch needed — the modal's `candidates` computed re-reads the
+  // updated pool on the next render.
 }
 
 // Scout functions
@@ -1225,9 +1323,26 @@ const STAFF_TRAINER_PERK_LABELS = {
         <div class="roster-list-header card-cosmic">
           <h3 class="list-header-text">STARTERS</h3>
           <div class="header-metrics">
+            <component
+              :is="chemistryIcon"
+              :size="14"
+              :stroke-width="2.25"
+              class="chemistry-face-icon"
+              :style="{ color: chemistryColor }"
+              aria-hidden="true"
+            />
             <span class="team-chemistry-value" :style="{ color: chemistryColor }">{{ teamChemistry }}%</span>
             <span class="header-metrics-divider">&middot;</span>
             <span class="total-minutes-value">{{ totalMinutes }} / 200 MIN</span>
+            <button
+              class="cpu-adjust-btn"
+              :disabled="cpuAdjusting || swappingLineup"
+              :title="'Let the CPU pick the best 5 + spread minutes'"
+              @click="cpuAdjustLineup"
+            >
+              <Zap :size="12" />
+              <span>{{ cpuAdjusting ? 'Adjusting…' : 'Auto' }}</span>
+            </button>
           </div>
         </div>
         <div class="players-grid">
@@ -1367,7 +1482,15 @@ const STAFF_TRAINER_PERK_LABELS = {
                   </div>
                 </div>
                 <div class="rating-container">
-                  <StatBadge :value="slot.player.overall_rating" size="md" />
+                  <div class="ovr-badge-wrap">
+                    <StatBadge :value="slot.player.overall_rating" size="md" />
+                    <ChevronsUp
+                      v-if="hasUpgradePoints(slot.player)"
+                      :size="14"
+                      class="ovr-upgrade-indicator"
+                      title="Upgrade points available"
+                    />
+                  </div>
                   <button class="move-btn" :class="{ active: expandedMovePlayer === `starter-${slot.player.id}` }" @click.stop="toggleMoveDropdown(`starter-${slot.player.id}`)" title="Adjust lineup">
                     <ArrowUpDown :size="14" />
                   </button>
@@ -1533,7 +1656,15 @@ const STAFF_TRAINER_PERK_LABELS = {
                 </div>
               </div>
               <div class="rating-container">
-                <StatBadge :value="player.overall_rating" size="md" />
+                <div class="ovr-badge-wrap">
+                  <StatBadge :value="player.overall_rating" size="md" />
+                  <ChevronsUp
+                    v-if="hasUpgradePoints(player)"
+                    :size="14"
+                    class="ovr-upgrade-indicator"
+                    title="Upgrade points available"
+                  />
+                </div>
                 <button class="move-btn" :class="{ active: expandedMovePlayer === `bench-${player.id}` }" @click.stop="toggleMoveDropdown(`bench-${player.id}`)" title="Adjust lineup">
                   <ArrowUpDown :size="14" />
                 </button>
@@ -1688,8 +1819,24 @@ const STAFF_TRAINER_PERK_LABELS = {
         <!-- Coach Sub-tab -->
         <div v-if="activePersonnelTab === 'coach'">
 
+        <!-- No coach signed: empty state -->
+        <GlassCard v-if="!coach" padding="lg" :hoverable="false">
+          <div class="coach-empty-state">
+            <div class="coach-empty-icon">
+              <User :size="40" />
+            </div>
+            <h3 class="empty-title">No Head Coach Signed</h3>
+            <p class="empty-desc">
+              Hire a head coach from the free-agent pool. Coaches affect scheme effectiveness, player development, and clutch-time decisions. A signed coach is required before you can start a new season.
+            </p>
+            <button class="btn-browse-coaches" @click="showHireCoachModal = true">
+              Browse Coaches
+            </button>
+          </div>
+        </GlassCard>
+
         <!-- Coach Info Card -->
-        <GlassCard v-if="coach" padding="lg" :hoverable="false">
+        <GlassCard v-else padding="lg" :hoverable="false">
           <h3 class="h4 mb-4">Head Coach</h3>
           <div class="coach-header">
             <div class="coach-avatar-wrap">
@@ -1697,21 +1844,31 @@ const STAFF_TRAINER_PERK_LABELS = {
             </div>
             <div class="coach-info">
               <p class="coach-name">{{ coach.name }}</p>
-              <div class="coach-rating">
-                <StatBadge :value="coach.overall_rating" size="sm" />
-                <span class="rating-label">Overall Rating</span>
+              <span class="rating-label">Overall Rating</span>
+              <div v-if="coach.contractYearsRemaining != null" class="coach-contract-line">
+                {{ coach.contractYearsRemaining }} Season{{ coach.contractYearsRemaining !== 1 ? 's' : '' }} Remaining<template v-if="coach.hiredSeason"> · Hired Season {{ coach.hiredSeason }}</template>
               </div>
             </div>
-            <button class="coach-badge-store-btn" @click="showCoachBadgeStore = true">
-              <Star :size="14" />
-              Badge Store
-            </button>
+            <div class="coach-header-actions">
+              <StatBadge :value="coach.overall_rating" size="lg" />
+              <button
+                v-if="(coach.contractYearsRemaining ?? coach.contract_years_remaining ?? 0) <= 1"
+                class="btn-resign-coach"
+                :disabled="resigningCoach"
+                @click="resignCoach"
+              >
+                {{ resigningCoach ? 'Re-signing...' : 'Re-sign (2 yrs)' }}
+              </button>
+              <button class="btn-view-candidates" @click="showHireCoachModal = true">
+                View Candidates
+              </button>
+            </div>
           </div>
 
           <!-- Coach Badges -->
-          <div v-if="ownedCoachBadges.length > 0" class="coach-badges-section mt-4">
+          <div class="coach-badges-section mt-4">
             <h4 class="section-title">Coach Badges</h4>
-            <div class="coach-badges-row">
+            <div v-if="ownedCoachBadges.length > 0" class="coach-badges-row">
               <div
                 v-for="badge in ownedCoachBadges"
                 :key="badge.id"
@@ -1722,6 +1879,10 @@ const STAFF_TRAINER_PERK_LABELS = {
                 <span class="coach-badge-chip-name">{{ badge.name }}</span>
               </div>
             </div>
+            <button class="coach-badge-store-btn" @click="showCoachBadgeStore = true">
+              <Star :size="14" />
+              Shop Badges
+            </button>
           </div>
 
           <!-- Career Stats -->
@@ -1837,7 +1998,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                   <div class="scheme-effectiveness">
                     <span class="detail-label">Fit</span>
                     <span class="detail-value" :class="getEffectivenessClass(scheme.effectiveness)">
-                      {{ scheme.effectiveness }}%
+                      {{ scheme.effectiveness ?? '—' }}%
                     </span>
                   </div>
                 </div>
@@ -1894,6 +2055,15 @@ const STAFF_TRAINER_PERK_LABELS = {
                 </div>
 
                 <p class="scheme-desc">{{ scheme.description }}</p>
+
+                <div class="scheme-details">
+                  <div class="scheme-effectiveness">
+                    <span class="detail-label">Fit</span>
+                    <span class="detail-value" :class="getEffectivenessClass(teamStore.coachingSchemes?.defensive?.[schemeId]?.effectiveness)">
+                      {{ teamStore.coachingSchemes?.defensive?.[schemeId]?.effectiveness ?? '—' }}%
+                    </span>
+                  </div>
+                </div>
 
                 <div class="scheme-traits">
                   <div class="trait-section">
@@ -2209,6 +2379,14 @@ const STAFF_TRAINER_PERK_LABELS = {
             </div>
           </GlassCard>
         </div><!-- /Staff Trainer Sub-tab -->
+
+        <!-- Hire Coach Modal -->
+        <HireCoachModal
+          :show="showHireCoachModal"
+          :campaign-id="campaignId"
+          @close="showHireCoachModal = false"
+          @hired="onCoachHired"
+        />
 
         <!-- Hire Scout Modal -->
         <HireScoutModal
@@ -3063,6 +3241,35 @@ const STAFF_TRAINER_PERK_LABELS = {
   flex-shrink: 0;
 }
 
+/* Wrapper around the OVR StatBadge + upgrade-indicator overlay. The badge
+   itself doesn't expose a slot, so we wrap it and absolute-position the
+   chevron icon over its top-right corner. Use display: inline-block (not
+   inline-flex) and avoid line-height tricks — the StatBadge's inner element
+   is a <div> with its own intrinsic sizing, and any flex/line-height on the
+   wrap was squashing it vertically. */
+.ovr-badge-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.ovr-upgrade-indicator {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  color: #22c55e;
+  background: var(--color-bg-elevated, #1a1a1a);
+  border-radius: 50%;
+  padding: 1px;
+  box-shadow: 0 0 0 1.5px #22c55e, 0 2px 4px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: ovr-upgrade-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes ovr-upgrade-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.12); }
+}
+
 .move-btn {
   display: flex;
   align-items: center;
@@ -3355,9 +3562,10 @@ const STAFF_TRAINER_PERK_LABELS = {
 }
 
 .coach-badge-store-btn {
-  margin-left: auto;
+  margin-top: 12px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 8px 14px;
   background: var(--color-bg-tertiary);
@@ -3370,6 +3578,13 @@ const STAFF_TRAINER_PERK_LABELS = {
   letter-spacing: 0.04em;
   cursor: pointer;
   transition: background 0.2s ease;
+}
+
+@media (max-width: 640px) {
+  .coach-badge-store-btn {
+    width: 100%;
+    display: flex;
+  }
 }
 
 .coach-badge-store-btn:hover {
@@ -3767,6 +3982,120 @@ const STAFF_TRAINER_PERK_LABELS = {
 .btn-browse-scouts:hover {
   background: var(--color-primary-dark);
   transform: translateY(-1px);
+}
+
+/* Coach hire/fire UI */
+.coach-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 16px;
+}
+
+.coach-empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--color-bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  opacity: 0.6;
+  margin-bottom: 16px;
+}
+
+.coach-empty-state .empty-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  color: var(--color-text-primary);
+  margin: 0 0 8px 0;
+}
+
+.coach-empty-state .empty-desc {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 20px 0;
+  line-height: 1.5;
+  max-width: 380px;
+}
+
+.btn-browse-coaches {
+  padding: 12px 24px;
+  border-radius: var(--radius-xl);
+  background: var(--color-primary);
+  border: none;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-browse-coaches:hover {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.coach-contract-line {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  opacity: 0.85;
+}
+
+.coach-header-actions {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.btn-view-candidates {
+  padding: 6px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-view-candidates:hover {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.btn-resign-coach {
+  padding: 6px 12px;
+  border-radius: var(--radius-lg);
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.5);
+  color: #22c55e;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-resign-coach:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.2);
+}
+
+.btn-resign-coach:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .recommended-badge {
@@ -4854,6 +5183,13 @@ const STAFF_TRAINER_PERK_LABELS = {
   font-family: var(--font-mono, monospace);
 }
 
+.chemistry-face-icon {
+  flex-shrink: 0;
+  transition: color 0.2s ease;
+  position: relative;
+  z-index: 1;
+}
+
 .header-metrics-divider {
   color: rgba(0, 0, 0, 0.3);
   font-weight: 700;
@@ -4867,6 +5203,36 @@ const STAFF_TRAINER_PERK_LABELS = {
   color: var(--color-primary);
   position: relative;
   z-index: 1;
+}
+
+.cpu-adjust-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  color: rgba(0, 0, 0, 0.85);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+  position: relative;
+  z-index: 1;
+}
+
+.cpu-adjust-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
+}
+
+.cpu-adjust-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Player Minutes Meter */

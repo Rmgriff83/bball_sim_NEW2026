@@ -21,6 +21,9 @@ import {
 } from '../ai/AILineupService'
 import { generateAITargetMinutes } from '../simulation/SubstitutionEngine'
 import { startNewSeason } from '../campaign/CampaignManager'
+import { generateAIFreeAgencyOffers } from '../ai/AIContractService'
+import { pickBestOffer } from '../ai/FreeAgentDecisionService'
+import { FREE_AGENCY_DURATION_DAYS } from '../season/SeasonDeadlines'
 
 /**
  * Run the entire offseason in one shot:
@@ -41,8 +44,18 @@ export async function simFullOffseason(campaignId) {
 
   const gameYear = campaign.gameYear ?? 1
 
+  if (campaign.phase === 'offseason_free_agency') {
+    throw new Error('Free agency must be resolved before the rookie draft.')
+  }
+
   // Skip if rookie draft already completed for this year
   if (campaign[`rookieDraftCompleted_${gameYear}`]) {
+    // Phase may be 'offseason_draft' after FA resolution; startNewSeason
+    // expects 'offseason'. Normalize before delegating.
+    if (campaign.phase === 'offseason_draft') {
+      campaign.phase = 'offseason'
+      await CampaignRepository.save(campaign)
+    }
     return startNewSeason(campaignId)
   }
 
@@ -190,8 +203,256 @@ export async function simFullOffseason(campaignId) {
 
   // 8. Mark draft completed
   campaign[`rookieDraftCompleted_${gameYear}`] = true
+  // Phase normalization: after FA we're in 'offseason_draft'. startNewSeason
+  // requires 'offseason'.
+  if (campaign.phase === 'offseason_draft') {
+    campaign.phase = 'offseason'
+  }
   await CampaignRepository.save(campaign)
 
   // 9. Start new season
   return startNewSeason(campaignId)
+}
+
+// =============================================================================
+// FREE AGENCY PHASE
+// =============================================================================
+//
+// `enterOffseason()` already releases every expiring contract and sets
+// campaign.phase = 'offseason'. From there the user explicitly enters the
+// 2-week free-agency window via `startFreeAgency()`, advances days with
+// `simFreeAgencyDay()`, and on day 14 the engine resolves all pending offers
+// and flips the phase to 'offseason_draft' so the rookie draft can run.
+
+function teamFromAbbr(teams, abbr) {
+  return teams.find(t => t.abbreviation === abbr) || null
+}
+
+function teamFromId(teams, id) {
+  return teams.find(t => t.id === id) || null
+}
+
+function rosterByTeamAbbr(allPlayers, abbr) {
+  return allPlayers.filter(p => (p.teamAbbreviation ?? p.team_abbreviation ?? null) === abbr)
+}
+
+function buildTeamLookup(teams, allPlayers, standings, championTeamId) {
+  return (teamId) => {
+    const team = teamFromId(teams, teamId)
+    if (!team) return null
+    const teamRoster = rosterByTeamAbbr(allPlayers, team.abbreviation)
+    const eastEntry = standings?.east?.find(e => e.teamId === team.id)
+    const westEntry = standings?.west?.find(e => e.teamId === team.id)
+    const standingsEntry = eastEntry || westEntry || {}
+    return {
+      team: {
+        ...team,
+        wins: standingsEntry.wins ?? team.wins ?? 0,
+        losses: standingsEntry.losses ?? team.losses ?? 0,
+        madePlayoffs: !!standingsEntry.madePlayoffs,
+      },
+      teamRoster,
+      coach: team.coach || null,
+      hasChampionship: championTeamId && team.id === championTeamId,
+    }
+  }
+}
+
+/**
+ * Begin the 2-week free agency window.
+ */
+export async function startFreeAgency(campaignId) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
+
+  if (campaign.phase === 'offseason_free_agency') return campaign
+  if (campaign.phase !== 'offseason') {
+    throw new Error(`Cannot enter free agency from phase '${campaign.phase}'`)
+  }
+
+  const gameYear = campaign.gameYear ?? 1
+  if (campaign[`freeAgencyCompleted_${gameYear}`]) {
+    // Already resolved this year — skip straight to draft phase
+    campaign.phase = 'offseason_draft'
+    await CampaignRepository.save(campaign)
+    return campaign
+  }
+
+  campaign.phase = 'offseason_free_agency'
+  if (!campaign.settings) campaign.settings = {}
+  campaign.settings.freeAgencyDay = 0
+  campaign.settings.freeAgencyStartDate = new Date().toISOString()
+  campaign.settings.freeAgencyOffers = {}
+  campaign.settings.freeAgencyResults = null
+
+  await CampaignRepository.save(campaign)
+  return campaign
+}
+
+/**
+ * Advance one in-game day of free agency. AI teams add pending offers; on the
+ * final day, run resolution and flip phase to 'offseason_draft'.
+ */
+export async function simFreeAgencyDay(campaignId) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
+  if (campaign.phase !== 'offseason_free_agency') {
+    throw new Error(`Free agency is not active (phase=${campaign.phase})`)
+  }
+
+  if (!campaign.settings) campaign.settings = {}
+  if (!campaign.settings.freeAgencyOffers) campaign.settings.freeAgencyOffers = {}
+
+  const day = (campaign.settings.freeAgencyDay ?? 0) + 1
+  const gameYear = campaign.gameYear ?? 1
+  const seasonYear = campaign.currentSeasonYear ?? 2025
+
+  const teams = await TeamRepository.getAllForCampaign(campaignId)
+  const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+  const seasonData = await SeasonRepository.get(campaignId, seasonYear)
+  const standings = seasonData?.standings || { east: [], west: [] }
+
+  const aiTeams = teams.filter(t => t.id !== campaign.teamId)
+
+  const placedToday = generateAIFreeAgencyOffers({
+    aiTeams,
+    leaguePlayers: allPlayers,
+    standings,
+    allTeams: teams,
+    offersMap: campaign.settings.freeAgencyOffers,
+    day,
+    campaignId,
+    gameYear,
+  })
+
+  campaign.settings.freeAgencyDay = day
+
+  if (day >= FREE_AGENCY_DURATION_DAYS) {
+    await resolveFreeAgency(campaign, { teams, allPlayers, standings })
+  } else {
+    await CampaignRepository.save(campaign)
+  }
+
+  return {
+    campaign,
+    day,
+    placedToday,
+    resolved: day >= FREE_AGENCY_DURATION_DAYS,
+  }
+}
+
+/**
+ * Score every offer for every FA, sign each player to their best offer,
+ * persist roster changes, and fill `freeAgencyResults` for the wrap-up modal.
+ *
+ * Mutates the passed-in campaign object and saves it. Does NOT call
+ * startNewSeason — leaves the user at phase='offseason_draft' so they can run
+ * the rookie draft.
+ */
+export async function resolveFreeAgency(campaign, preloaded = {}) {
+  const campaignId = campaign.id
+  const gameYear = campaign.gameYear ?? 1
+  const seasonYear = campaign.currentSeasonYear ?? 2025
+
+  const teams = preloaded.teams || (await TeamRepository.getAllForCampaign(campaignId))
+  const allPlayers = preloaded.allPlayers || (await PlayerRepository.getAllForCampaign(campaignId))
+  const seasonData = preloaded.seasonData || (await SeasonRepository.get(campaignId, seasonYear))
+  const standings = preloaded.standings || seasonData?.standings || { east: [], west: [] }
+
+  const championTeamId = seasonData?.playoffs?.championTeamId || null
+  const offersMap = campaign.settings?.freeAgencyOffers || {}
+  const userTeamId = campaign.teamId
+
+  const resolveCtx = buildTeamLookup(teams, allPlayers, standings, championTeamId)
+  const accepted = []
+  const declined = []
+  const playerUpdates = []
+
+  for (const [playerId, offers] of Object.entries(offersMap)) {
+    if (!offers || offers.length === 0) continue
+    const player = allPlayers.find(p => String(p.id) === String(playerId))
+    if (!player) continue
+
+    const userOffer = offers.find(o => o.isUserOffer) || null
+
+    const result = pickBestOffer(player, offers, (teamId, offer) => {
+      const ctx = resolveCtx(teamId === 'user' ? userTeamId : teamId) || {}
+      const previousTeamId = player.previousTeamId ?? null
+      ctx.isIncumbent = previousTeamId && (teamId === previousTeamId || (teamId === 'user' && userTeamId === previousTeamId))
+      return ctx
+    })
+
+    if (!result || !result.offer) {
+      // Player went unsigned — leave as FA
+      if (userOffer) {
+        declined.push({
+          playerId: player.id,
+          playerName: player.name || `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim(),
+          signedWith: 'unsigned',
+          signedWithAbbr: null,
+          userOffer,
+          winningOffer: null,
+          reason: 'No offer reached the minimum fit threshold.',
+        })
+      }
+      continue
+    }
+
+    const winningOffer = result.offer
+    const isUserWinner = winningOffer.isUserOffer === true
+    const targetTeamId = isUserWinner ? userTeamId : winningOffer.teamId
+    const targetTeam = teamFromId(teams, targetTeamId)
+    if (!targetTeam) continue
+
+    playerUpdates.push({
+      ...player,
+      teamId: targetTeam.id,
+      teamAbbreviation: targetTeam.abbreviation,
+      team_abbreviation: targetTeam.abbreviation,
+      isFreeAgent: 0,
+      contractYearsRemaining: winningOffer.years,
+      contract_years_remaining: winningOffer.years,
+      contractSalary: winningOffer.salary,
+      contract_salary: winningOffer.salary,
+      previousTeamId: undefined,
+      previousTeamAbbreviation: undefined,
+      campaignId,
+    })
+
+    if (userOffer) {
+      const playerName = player.name || `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim()
+      if (isUserWinner) {
+        accepted.push({
+          playerId: player.id,
+          playerName,
+          years: userOffer.years,
+          salary: userOffer.salary,
+        })
+      } else {
+        declined.push({
+          playerId: player.id,
+          playerName,
+          signedWith: targetTeam.abbreviation,
+          signedWithAbbr: targetTeam.abbreviation,
+          userOffer,
+          winningOffer,
+          reason: result.reason,
+        })
+      }
+    }
+  }
+
+  if (playerUpdates.length > 0) {
+    await PlayerRepository.saveBulk(playerUpdates)
+  }
+
+  campaign[`freeAgencyCompleted_${gameYear}`] = true
+  campaign.phase = 'offseason_draft'
+  if (!campaign.settings) campaign.settings = {}
+  campaign.settings.freeAgencyOffers = {}
+  campaign.settings.freeAgencyResults = { accepted, declined }
+  campaign.settings.freeAgencyDay = FREE_AGENCY_DURATION_DAYS
+
+  await CampaignRepository.save(campaign)
+  return campaign
 }

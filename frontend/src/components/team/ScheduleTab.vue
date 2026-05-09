@@ -209,19 +209,32 @@ const isViewingFocusMonth = computed(() => {
     currentMonth.value.getMonth() === focusDate.value.getMonth()
 })
 
-// The 7 days (Sun-Sat) of the week containing the focus date (next/current game)
+// The 14 days (Sun → second Saturday) starting from the week containing the
+// focus date (next/current game). Default view shows two weeks of upcoming
+// schedule rather than one — gives the user better planning context.
+//
+// Built directly from gamesGroupedByDate (not the month-bound calendarDays)
+// so the second week renders correctly when the window spans a month
+// boundary — calendarDays' next-month padding cells carry empty games arrays.
 const focusWeekDays = computed(() => {
   const date = focusDate.value || campaignDate.value || new Date()
   const dayOfWeek = date.getDay() // 0=Sun
-  const sunday = new Date(date)
-  sunday.setDate(date.getDate() - dayOfWeek)
-  const saturday = new Date(sunday)
-  saturday.setDate(sunday.getDate() + 6)
+  const windowStart = new Date(date.getFullYear(), date.getMonth(), date.getDate() - dayOfWeek)
 
-  const sunKey = formatDateKey(sunday)
-  const satKey = formatDateKey(saturday)
-
-  return calendarDays.value.filter(d => d.dateKey >= sunKey && d.dateKey <= satKey)
+  const focusMonth = currentMonth.value
+  const days = []
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(windowStart.getFullYear(), windowStart.getMonth(), windowStart.getDate() + i)
+    const dateKey = formatDateKey(d)
+    days.push({
+      date: d,
+      day: d.getDate(),
+      isCurrentMonth: d.getFullYear() === focusMonth.getFullYear() && d.getMonth() === focusMonth.getMonth(),
+      dateKey,
+      games: gamesGroupedByDate.value[dateKey] || [],
+    })
+  }
+  return days
 })
 
 // What days to actually render in the grid
@@ -566,7 +579,7 @@ async function handleSimSeason() {
         <!-- Expand/Collapse Toggle -->
         <div v-if="isViewingFocusMonth" class="expand-toggle-row">
           <button class="expand-toggle-btn" @click="toggleExpand">
-            <span>{{ isExpanded ? 'Show This Week' : 'See Full Month' }}</span>
+            <span>{{ isExpanded ? 'Show Next Two Weeks' : 'See Full Month' }}</span>
             <component :is="isExpanded ? ChevronUp : ChevronDown" :size="16" />
           </button>
         </div>

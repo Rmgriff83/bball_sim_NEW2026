@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { User, AlertTriangle, RefreshCw, UserMinus } from 'lucide-vue-next'
+import { User, AlertTriangle, RefreshCw, UserMinus, FileSignature } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { StatBadge } from '@/components/ui'
 
@@ -39,6 +39,10 @@ const emit = defineEmits(['resign', 'drop', 'sign', 'info'])
 const isExpiringContract = computed(() => {
   return props.player.contractYearsRemaining === 1
 })
+
+const pendingOfferCount = computed(() => props.player.pendingOfferCount ?? 0)
+const userOffer = computed(() => props.player.userOffer || null)
+const hasUserOffer = computed(() => !!userOffer.value)
 
 function getPositionColor(position) {
   const colors = {
@@ -135,9 +139,19 @@ function handleInfo() {
           </button>
         </div>
 
-        <!-- Sign Button for Free Agents -->
+        <!-- Sign / Offered Button for Free Agents -->
         <div v-if="showActions && isFreeAgent" class="action-buttons">
           <button
+            v-if="hasUserOffer"
+            class="action-btn offered-btn"
+            @click.stop="handleSign"
+            title="You have an offer pending — click to edit"
+          >
+            <FileSignature :size="14" />
+            <span>Offered</span>
+          </button>
+          <button
+            v-else
             class="action-btn sign-btn"
             @click.stop="handleSign"
             title="Sign player"
@@ -171,6 +185,14 @@ function handleInfo() {
               :style="{ backgroundColor: getPositionColor(player.secondaryPosition) }"
             >
               {{ player.secondaryPosition }}
+            </span>
+            <span
+              v-if="isFreeAgent && pendingOfferCount > 0"
+              class="offer-count-badge"
+              :class="{ mine: hasUserOffer }"
+              :title="hasUserOffer ? 'You have a pending offer to this player' : 'Pending offers from other teams'"
+            >
+              {{ pendingOfferCount }} {{ pendingOfferCount === 1 ? 'OFFER' : 'OFFERS' }}
             </span>
           </div>
         </div>
@@ -361,6 +383,35 @@ function handleInfo() {
 .sign-btn:hover {
   background: rgba(34, 197, 94, 0.3);
   border-color: var(--color-success);
+}
+
+.offered-btn {
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+}
+
+.offered-btn:hover {
+  background: rgba(168, 85, 247, 0.28);
+  border-color: #c084fc;
+}
+
+.offer-count-badge {
+  padding: 0.125rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  text-transform: uppercase;
+}
+
+.offer-count-badge.mine {
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+  border-color: rgba(168, 85, 247, 0.4);
 }
 
 .player-info {

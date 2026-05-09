@@ -1,24 +1,43 @@
 import { withDB } from './GameDatabase'
+import { normalizePlayerAttributes } from '../data/attributeSchema'
+
+// Defensive read-side migration. Older saves carry hybrid legacy + canonical
+// attribute keys on rookies (`dunk`, `passing`, `perimeterD`, etc.); the
+// scouting UI iterates whatever keys are present and never reveals the
+// legacy duplicates, leaving '?' visible at 100% scouted. Normalizing on
+// read converges every player onto the canonical schema in-memory; the next
+// save flushes the migration to IndexedDB.
+function _normalize(player) {
+  if (player) normalizePlayerAttributes(player)
+  return player
+}
+
+function _normalizeAll(players) {
+  if (Array.isArray(players)) {
+    for (const p of players) _normalize(p)
+  }
+  return players
+}
 
 export const PlayerRepository = {
   async get(campaignId, playerId) {
-    return withDB(db => db.get('players', [campaignId, playerId]))
+    return withDB(async db => _normalize(await db.get('players', [campaignId, playerId])))
   },
 
   async getAllForCampaign(campaignId) {
-    return withDB(db => db.getAllFromIndex('players', 'campaignId', campaignId))
+    return withDB(async db => _normalizeAll(await db.getAllFromIndex('players', 'campaignId', campaignId)))
   },
 
   async getByTeam(campaignId, teamId) {
-    return withDB(db => db.getAllFromIndex('players', 'teamId', [campaignId, teamId]))
+    return withDB(async db => _normalizeAll(await db.getAllFromIndex('players', 'teamId', [campaignId, teamId])))
   },
 
   async getFreeAgents(campaignId) {
-    return withDB(db => db.getAllFromIndex('players', 'freeAgent', [campaignId, 1]))
+    return withDB(async db => _normalizeAll(await db.getAllFromIndex('players', 'freeAgent', [campaignId, 1])))
   },
 
   async getByPosition(campaignId, position) {
-    return withDB(db => db.getAllFromIndex('players', 'position', [campaignId, position]))
+    return withDB(async db => _normalizeAll(await db.getAllFromIndex('players', 'position', [campaignId, position])))
   },
 
   async save(player) {

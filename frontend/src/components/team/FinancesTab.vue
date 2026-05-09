@@ -1,18 +1,19 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useFinanceStore } from '@/stores/finance'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, LoadingSpinner } from '@/components/ui'
-import { DollarSign, Users, TrendingUp, Calendar, FileText } from 'lucide-vue-next'
+import { DollarSign, Users, TrendingUp, Calendar, FileText, ArrowDown, ArrowUp } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import ContractCard from './ContractCard.vue'
 import ResignModal from './ResignModal.vue'
 import SignFreeAgentModal from './SignFreeAgentModal.vue'
 import DropPlayerModal from './DropPlayerModal.vue'
 import PlayerDetailModal from './PlayerDetailModal.vue'
-import { isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
+import { isPastResignDeadline, isInFreeAgencyPeriod } from '@/engine/season/SeasonDeadlines'
 
 const props = defineProps({
   campaignId: {
@@ -25,9 +26,29 @@ const financeStore = useFinanceStore()
 const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
+const route = useRoute()
 
 const loading = ref(true)
-const activeSubTab = ref('team') // 'team' | 'expiring' | 'free-agents'
+const VALID_SUB_TABS = ['team', 'expiring', 'free-agents']
+const requestedSubTab = route.query?.sub
+const activeSubTab = ref(VALID_SUB_TABS.includes(requestedSubTab) ? requestedSubTab : 'team')
+
+const inFreeAgencyPeriod = computed(() => isInFreeAgencyPeriod(campaignStore.currentCampaign))
+const signModalMode = computed(() => inFreeAgencyPeriod.value ? 'offer' : 'instant')
+
+// Free-agents filters (sub-tab on roster page). Position narrows the pool;
+// OVR sort orders the results.
+const FA_POSITION_OPTIONS = ['ALL', 'PG', 'SG', 'SF', 'PF', 'C']
+const faPositionFilter = ref('ALL')
+const faOvrSortDir = ref('desc') // 'desc' | 'asc'
+
+function getOverall(p) {
+  return p?.overallRating ?? p?.overall_rating ?? 0
+}
+
+function toggleFaOvrSort() {
+  faOvrSortDir.value = faOvrSortDir.value === 'desc' ? 'asc' : 'desc'
+}
 const resignLoading = ref(false)
 const signLoading = ref(false)
 const dropLoading = ref(false)
@@ -69,6 +90,22 @@ function getPositionColor(pos) {
 // Sorted roster for display
 const sortedRoster = computed(() => {
   return [...roster.value].sort((a, b) => b.contractSalary - a.contractSalary)
+})
+
+const filteredFreeAgents = computed(() => {
+  let list = freeAgents.value
+  if (faPositionFilter.value !== 'ALL') {
+    list = list.filter(p => {
+      const primary = p.position
+      const secondary = p.secondaryPosition ?? p.secondary_position
+      return primary === faPositionFilter.value || secondary === faPositionFilter.value
+    })
+  }
+  const sorted = [...list].sort((a, b) => {
+    const diff = getOverall(b) - getOverall(a)
+    return faOvrSortDir.value === 'desc' ? diff : -diff
+  })
+  return sorted
 })
 
 // Expiring contracts
@@ -196,6 +233,14 @@ async function handleResignConfirm(data) {
 async function handleSignConfirm(data) {
   signLoading.value = true
   try {
+    if (data.mode === 'offer') {
+      await financeStore.makeFreeAgentOffer(props.campaignId, data.playerId, {
+        years: data.years,
+        salary: data.salary,
+      })
+      toastStore.showSuccess('Offer submitted')
+      return
+    }
     await financeStore.signFreeAgent(props.campaignId, data.playerId)
     // Refresh data
     await Promise.all([
@@ -205,7 +250,21 @@ async function handleSignConfirm(data) {
     toastStore.showSuccess('Player signed')
   } catch (err) {
     console.error('Failed to sign free agent:', err)
-    toastStore.showError('Failed to sign player')
+    toastStore.showError(err.message || 'Failed to sign player')
+  } finally {
+    signLoading.value = false
+  }
+}
+
+async function handleSignWithdraw(data) {
+  signLoading.value = true
+  try {
+    await financeStore.withdrawFreeAgentOffer(props.campaignId, data.playerId)
+    financeStore.closeSignModal()
+    toastStore.showSuccess('Offer withdrawn')
+  } catch (err) {
+    console.error('Failed to withdraw offer:', err)
+    toastStore.showError(err.message || 'Failed to withdraw offer')
   } finally {
     signLoading.value = false
   }
@@ -235,6 +294,11 @@ watch(activeSubTab, async (newTab) => {
 
 onMounted(() => {
   loadData()
+  // Deep-link case: activeSubTab can start as 'free-agents' (from ?sub=...),
+  // so the watch above never fires. Kick the FA load here too.
+  if (activeSubTab.value === 'free-agents') {
+    loadFreeAgents()
+  }
 })
 </script>
 
@@ -404,10 +468,49 @@ onMounted(() => {
         </div>
 
         <div v-else class="player-cards-section">
-          <h4 class="section-title">Available Free Agents</h4>
-          <div class="player-cards-grid">
+          <div class="fa-filters">
+            <div class="fa-filter-group">
+              <span class="fa-filter-label">Position</span>
+              <div class="fa-filter-chips">
+                <button
+                  v-for="pos in FA_POSITION_OPTIONS"
+                  :key="pos"
+                  class="fa-chip"
+                  :class="{ active: faPositionFilter === pos }"
+                  type="button"
+                  @click="faPositionFilter = pos"
+                >
+                  {{ pos }}
+                </button>
+              </div>
+            </div>
+            <div class="fa-filter-group">
+              <span class="fa-filter-label">Overall</span>
+              <button
+                class="fa-chip fa-sort-chip active"
+                type="button"
+                :title="faOvrSortDir === 'desc' ? 'Highest first — click to reverse' : 'Lowest first — click to reverse'"
+                @click="toggleFaOvrSort"
+              >
+                <component :is="faOvrSortDir === 'desc' ? ArrowDown : ArrowUp" :size="13" />
+                <span>OVR {{ faOvrSortDir === 'desc' ? 'High → Low' : 'Low → High' }}</span>
+              </button>
+            </div>
+          </div>
+
+          <h4 class="section-title">
+            Available Free Agents
+            <span v-if="filteredFreeAgents.length !== freeAgents.length" class="fa-filter-count">
+              {{ filteredFreeAgents.length }} of {{ freeAgents.length }}
+            </span>
+          </h4>
+
+          <div v-if="filteredFreeAgents.length === 0" class="empty-state empty-state-inline">
+            <p>No free agents match these filters.</p>
+          </div>
+          <div v-else class="player-cards-grid">
             <ContractCard
-              v-for="player in freeAgents"
+              v-for="player in filteredFreeAgents"
               :key="player.id"
               :player="player"
               :show-attributes="true"
@@ -437,8 +540,10 @@ onMounted(() => {
       :cap-space="capSpace"
       :roster-count="rosterCount"
       :loading="signLoading"
+      :mode="signModalMode"
       @close="financeStore.closeSignModal()"
       @confirm="handleSignConfirm"
+      @withdraw="handleSignWithdraw"
     />
 
     <!-- Drop Player Modal -->
@@ -511,28 +616,11 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
-  color: white;
-}
-
-.overview-icon.cap {
-  background: linear-gradient(135deg, #3B82F6, #1D4ED8);
-}
-
-.overview-icon.payroll {
-  background: linear-gradient(135deg, #8B5CF6, #6D28D9);
-}
-
-.overview-icon.space {
-  background: linear-gradient(135deg, #10B981, #059669);
+  color: var(--color-text-primary);
 }
 
 .overview-icon.over {
-  background: linear-gradient(135deg, #EF4444, #DC2626);
-}
-
-.overview-icon.roster {
-  background: linear-gradient(135deg, #F59E0B, #D97706);
+  color: var(--color-error);
 }
 
 .overview-content {
@@ -685,6 +773,86 @@ onMounted(() => {
   border-color: transparent;
   color: black;
   box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
+}
+
+/* Free-agents filters */
+.fa-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  align-items: center;
+  margin-bottom: 0.85rem;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-lg);
+}
+
+.fa-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fa-filter-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.fa-filter-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.fa-chip:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--color-text-primary);
+}
+
+.fa-chip.active {
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.25);
+}
+
+.fa-sort-chip {
+  padding-left: 9px;
+}
+
+.fa-filter-count {
+  margin-left: 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.empty-state-inline {
+  padding: 24px 12px;
 }
 
 /* Contracts Section */

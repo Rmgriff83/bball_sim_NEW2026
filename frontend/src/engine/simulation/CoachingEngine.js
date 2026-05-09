@@ -547,6 +547,11 @@ export class CoachingEngine {
     // Base effectiveness from talent
     effectiveness += (avgRating - 70) * 0.5
 
+    // Scheme buy-in: high-coachability rosters execute the playbook better.
+    // Centered at 60 → ±0.2 multiplier on the talent term. Caps the impact.
+    const avgCoachability = this._getRosterAverage(roster, 'mental', 'coachability')
+    effectiveness += (avgCoachability - 60) * 0.1
+
     // Scheme-specific adjustments
     switch (scheme) {
       case 'three_point': {
@@ -578,6 +583,71 @@ export class CoachingEngine {
         break
       }
       // 'balanced' and any unknown scheme: no extra adjustment
+    }
+
+    return Math.max(30, Math.min(100, effectiveness))
+  }
+
+  /**
+   * Calculate how effective a defensive scheme is for a given roster (30-100).
+   * Mirrors calculateSchemeEffectiveness but keys off defensive attributes.
+   *
+   * @param {string} scheme  - defensive scheme ID
+   * @param {Array}  roster  - array of player objects
+   * @returns {number} effectiveness rating 30-100
+   */
+  calculateDefensiveSchemeEffectiveness(scheme, roster) {
+    let effectiveness = 50.0
+
+    let avgRating = 0
+    let count = 0
+    for (const player of roster) {
+      avgRating += player.overallRating ?? 70
+      count++
+    }
+    avgRating = count > 0 ? avgRating / count : 70
+
+    // Base effectiveness from talent
+    effectiveness += (avgRating - 70) * 0.5
+
+    switch (scheme) {
+      case 'man': {
+        const perim = this._getRosterAverage(roster, 'defense', 'perimeterDefense')
+        const interior = this._getRosterAverage(roster, 'defense', 'interiorDefense')
+        effectiveness += ((perim + interior) / 2 - 60) * 0.3
+        break
+      }
+      case 'zone_2_3': {
+        const interior = this._getRosterAverage(roster, 'defense', 'interiorDefense')
+        const block = this._getRosterAverage(roster, 'defense', 'block')
+        effectiveness += ((interior + block) / 2 - 60) * 0.3
+        break
+      }
+      case 'zone_3_2': {
+        const perim = this._getRosterAverage(roster, 'defense', 'perimeterDefense')
+        const help = this._getRosterAverage(roster, 'defense', 'helpDefenseIQ')
+        effectiveness += ((perim + help) / 2 - 60) * 0.3
+        break
+      }
+      case 'zone_1_3_1':
+      case 'trap': {
+        // `steal` is also read per-defender in PlayExecutionEngine via the
+        // dribble/pass action defense attribute lists, so we dampen its
+        // scheme-level contribution to avoid double-counting (was 0.3).
+        const steal = this._getRosterAverage(roster, 'defense', 'steal')
+        const pass = this._getRosterAverage(roster, 'defense', 'passPerception')
+        effectiveness += ((steal + pass) / 2 - 60) * 0.15
+        break
+      }
+      case 'press': {
+        const steal = this._getRosterAverage(roster, 'defense', 'steal')
+        const speed = this._getRosterAverage(roster, 'physical', 'speed')
+        const stamina = this._getRosterAverage(roster, 'physical', 'stamina')
+        // Same dampening rationale: per-defender steal is already in the
+        // per-possession math; speed + stamina remain at the standard weight.
+        effectiveness += ((steal * 0.5 + speed + stamina) / 2.5 - 60) * 0.3
+        break
+      }
     }
 
     return Math.max(30, Math.min(100, effectiveness))

@@ -365,9 +365,9 @@ export const PLAYS = [
       },
     ],
     badgeEffects: {
-      post_moves: ['post_spin_technician', 'backdown_punisher'],
+      post_moves: ['post_up_poet', 'post_powerhouse'],
       post_hook: ['hook_specialist'],
-      post_fade: ['fade_ace'],
+      post_fade: ['post_fade_phenom'],
       post_dunk: ['posterizer', 'rise_up'],
     },
   },
@@ -717,7 +717,7 @@ export const PLAYS = [
     ],
     badgeEffects: {
       corner_three: ['corner_specialist', 'catch_and_shoot'],
-      floater: ['floater_specialist', 'tear_dropper'],
+      floater: ['floater_specialist', 'float_game'],
     },
   },
   {

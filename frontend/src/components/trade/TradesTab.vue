@@ -215,28 +215,11 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
-  color: white;
-}
-
-.overview-icon.cap {
-  background: linear-gradient(135deg, #3B82F6, #1D4ED8);
-}
-
-.overview-icon.payroll {
-  background: linear-gradient(135deg, #8B5CF6, #6D28D9);
-}
-
-.overview-icon.space {
-  background: linear-gradient(135deg, #10B981, #059669);
+  color: var(--color-text-primary);
 }
 
 .overview-icon.over {
-  background: linear-gradient(135deg, #EF4444, #DC2626);
-}
-
-.overview-icon.roster {
-  background: linear-gradient(135deg, #F59E0B, #D97706);
+  color: var(--color-error);
 }
 
 .overview-content {

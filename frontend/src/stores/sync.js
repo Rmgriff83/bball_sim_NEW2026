@@ -318,7 +318,11 @@ export const useSyncStore = defineStore('sync', () => {
    */
   function _stripSeasonForSync(season) {
     const slim = { ...season }
-    const isCompleted = slim.phase === 'offseason' || slim.isComplete || slim.is_complete
+    const isCompleted = slim.phase === 'offseason'
+      || slim.phase === 'offseason_free_agency'
+      || slim.phase === 'offseason_draft'
+      || slim.isComplete
+      || slim.is_complete
 
     if (isCompleted) {
       delete slim.schedule

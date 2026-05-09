@@ -140,6 +140,26 @@ export const COACHES = [
     headshot: "taylor_jenkins.png",
     badges: [{ id: "defensive_mastermind", level: "silver" }],
   },
+  {
+    firstName: "J.B.",
+    lastName: "Bickerstaff",
+    team: "DET",
+    headshot: "jb_bickerstaff.png",
+    badges: [
+      { id: "defensive_mastermind", level: "bronze" },
+      { id: "player_whisperer", level: "gold" },
+    ],
+  },
+  {
+    firstName: "Nick",
+    lastName: "Nurse",
+    team: "PHI",
+    headshot: "nick_nurse.png",
+    badges: [
+      { id: "offensive_mastermind", level: "bronze" },
+      { id: "player_whisperer", level: "bronze" },
+    ],
+  },
 ];
 
 /**
@@ -175,4 +195,54 @@ export function calculateCoachSalary(overall) {
   if (overall >= 70) return randInt(...COACH_SALARY_RANGES.good);
   if (overall >= 62) return randInt(...COACH_SALARY_RANGES.average);
   return randInt(...COACH_SALARY_RANGES.below);
+}
+
+/**
+ * Free-agent coach pool tier configuration. Used by generateCoachPool /
+ * generateFreeAgentCoach in CampaignManager.js to assemble the user-facing
+ * `campaign.settings.availableCoaches` array.
+ *
+ * - free: cheap-and-cheerful options, no badges, no token cost.
+ * - good: mid-tier with a couple bronze/silver badges, modest token cost.
+ * - really_good: premium hires with multiple silver/gold badges, premium cost.
+ *
+ * `count` slots per tier sum to FREE_AGENT_POOL_SIZE.
+ */
+export const FREE_AGENT_COACH_TIERS = {
+  free: {
+    overallRange: [60, 72],
+    minBadges: 0,
+    maxBadges: 0,
+    badgeLevels: [],
+    hireCost: 0,
+    count: 3,
+  },
+  good: {
+    overallRange: [73, 82],
+    minBadges: 1,
+    maxBadges: 2,
+    badgeLevels: ["bronze", "silver"],
+    hireCost: 1500,
+    count: 3,
+  },
+  really_good: {
+    overallRange: [83, 92],
+    minBadges: 2,
+    maxBadges: 3,
+    badgeLevels: ["silver", "gold"],
+    hireCost: 3500,
+    count: 2,
+  },
+};
+
+export const FREE_AGENT_POOL_SIZE = 8; // 3 + 3 + 2
+
+/** Map a master coach's badge count to a free-agent tier key. */
+export function masterCoachTier(masterCoach) {
+  const badgeCount = Array.isArray(masterCoach?.badges)
+    ? masterCoach.badges.length
+    : 0;
+  if (badgeCount === 0) return "free";
+  if (badgeCount <= 2) return "good";
+  return "really_good";
 }

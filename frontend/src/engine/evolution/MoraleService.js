@@ -258,6 +258,79 @@ function getDevelopmentModifier(morale) {
   return moraleConfig.effects[level]?.development_modifier ?? 0.0;
 }
 
+/**
+ * Compute the morale penalty a single player takes when their head coach is
+ * fired or replaced mid-season. Returns a NEGATIVE integer (or 0).
+ *
+ * Scaling — base is -5 ("mild"), then:
+ *   - bonded vs resilient: (coachability - workEthic) on a ±0.3 axis. High
+ *     coachability and low workEthic = player took the firing harder; the
+ *     opposite = shrugs it off.
+ *   - personality stability: team_player / quiet players hold steady (×0.5);
+ *     leaders are stoic (×0.7); hot_heads erupt (×1.6). Mirrors the
+ *     `morale_stability` / `morale_volatility` weights used elsewhere in
+ *     this file.
+ *
+ * The result is clamped to [-12, -1] so even a hot-head superfan of the old
+ * coach can't lose more than a dozen morale points from a single firing.
+ *
+ * @param {object} player - Player object (expects player.attributes.mental.* and player.personality.traits[])
+ * @returns {number} integer in [-12, -1] (or 0 if the player has no mental block)
+ */
+function computeCoachChangeMoralePenalty(player) {
+  if (!player || !player.attributes?.mental) return 0
+  const base = -5
+  const coachability = player.attributes.mental.coachability ?? 70
+  const workEthic = player.attributes.mental.workEthic ?? 70
+
+  // Bond vs resilience: centered at 0 when both equal. ±30pt swing → ±0.3 scale.
+  const bondVsResilience = (coachability - workEthic) / 100
+  const attrScale = 1 + bondVsResilience  // typical 0.7 .. 1.3
+
+  const traits = player.personality?.traits ?? []
+  let traitMult = 1
+  if (traits.includes('team_player') || traits.includes('quiet')) traitMult = 0.5
+  else if (traits.includes('leader')) traitMult = 0.7
+  if (traits.includes('hot_head')) traitMult *= 1.6
+
+  const raw = Math.round(base * attrScale * traitMult)
+  return Math.max(-12, Math.min(-1, raw))
+}
+
+/**
+ * Apply a coach-change morale penalty across a roster. Mutates each player's
+ * `personality.morale` in place AND returns the list of mutated players (so
+ * the caller can persist them via PlayerRepository.saveBulk).
+ *
+ * Skipped entirely when the average roster morale is already below 50 — the
+ * firing is welcomed, no further hit. Also skipped when `phase` indicates
+ * offseason; coach contract expiry is expected and there's a buffer.
+ *
+ * @param {Array} roster - array of player objects
+ * @param {{ phase?: string }} options
+ * @returns {{ updated: Array, skippedReason?: string }}
+ */
+function applyCoachChangePenalty(roster, { phase = 'regular_season' } = {}) {
+  if (phase === 'offseason') return { updated: [], skippedReason: 'offseason' }
+  const players = (roster || []).filter(p => p)
+  if (players.length === 0) return { updated: [], skippedReason: 'empty_roster' }
+
+  const total = players.reduce((s, p) => s + (p.personality?.morale ?? 80), 0)
+  const avg = total / players.length
+  if (avg < 50) return { updated: [], skippedReason: 'team_morale_below_50' }
+
+  const updated = []
+  for (const player of players) {
+    const penalty = computeCoachChangeMoralePenalty(player)
+    if (penalty === 0) continue
+    if (!player.personality) player.personality = { morale: 80 }
+    const current = player.personality.morale ?? 80
+    player.personality.morale = clamp(current + penalty)
+    updated.push(player)
+  }
+  return { updated }
+}
+
 export {
   updateAfterGame,
   updateWeekly,
@@ -266,4 +339,6 @@ export {
   getMoraleLevel,
   getPerformanceModifier,
   getDevelopmentModifier,
+  computeCoachChangeMoralePenalty,
+  applyCoachChangePenalty,
 };
