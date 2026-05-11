@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
+import { useAuthStore } from '@/stores/auth'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
 import { usePositionValidation } from '@/composables/usePositionValidation'
@@ -30,6 +31,7 @@ const route = useRoute()
 const router = useRouter()
 const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
+const authStore = useAuthStore()
 const tradeStore = useTradeStore()
 const toastStore = useToastStore()
 const syncStore = useSyncStore()
@@ -916,6 +918,14 @@ function formatAttrName(attrKey) {
     .trim()
 }
 
+// Read injury days remaining (with `games_remaining` legacy fallback for
+// players injured before the games→days migration).
+function injuryDaysLabel(player) {
+  const injury = player?.injury_details || player?.injuryDetails || {}
+  const days = Math.ceil(injury.days_remaining ?? injury.games_remaining ?? 0)
+  return `${days} ${days === 1 ? 'day' : 'days'}`
+}
+
 function formatWeight(weight) {
   if (!weight) return '210'
   const w = parseInt(weight)
@@ -1073,6 +1083,18 @@ async function handleUpgradeAttribute({ playerId, category, attribute, pool }) {
     selectedPlayer.value = roster.value.find(p => p.id === playerId)
   } catch (err) {
     toastStore.showError(err.response?.data?.message || 'Upgrade failed')
+  }
+}
+
+// Handle upgrade-point purchase from PlayerDetailModal (tokens → +1 to pool)
+async function handlePurchaseUpgradePoint({ playerId, pool, price }) {
+  try {
+    const result = await teamStore.purchaseUpgradePoint(campaignId.value, playerId, pool)
+    const label = pool === 'defense' ? 'defensive' : 'offensive'
+    toastStore.showSuccess(`+1 ${label} upgrade point purchased for ${price.toLocaleString()} tokens`)
+    selectedPlayer.value = roster.value.find(p => p.id === playerId)
+  } catch (err) {
+    toastStore.showError(err.response?.data?.message || err.message || 'Purchase failed')
   }
 }
 
@@ -1442,7 +1464,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                       </span>
                     </div>
                     <span v-if="slot.player.is_injured || slot.player.isInjured" class="injury-tag">
-                      Injured - {{ (slot.player.injury_details?.games_remaining || slot.player.injuryDetails?.games_remaining || 0) }} {{ (slot.player.injury_details?.games_remaining || slot.player.injuryDetails?.games_remaining || 0) === 1 ? 'game' : 'games' }}
+                      Injured - {{ injuryDaysLabel(slot.player) }}
                     </span>
                   </div>
                   <!-- Minutes Meter -->
@@ -1616,7 +1638,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     </span>
                   </div>
                   <span v-if="player.is_injured || player.isInjured" class="injury-tag">
-                    Injured - {{ (player.injury_details?.games_remaining || player.injuryDetails?.games_remaining || 0) }} {{ (player.injury_details?.games_remaining || player.injuryDetails?.games_remaining || 0) === 1 ? 'game' : 'games' }}
+                    Injured - {{ injuryDaysLabel(player) }}
                   </span>
                 </div>
                 <!-- Minutes Meter -->
@@ -2460,8 +2482,10 @@ const STAFF_TRAINER_PERK_LABELS = {
       :campaign-id="campaignId"
       :current-season-year="campaignStore.currentCampaign?.currentSeasonYear"
       :lineup-players="teamStore.starterPlayers?.filter(p => p != null) || []"
+      :user-tokens="authStore.profile?.tokens ?? 0"
       @close="closePlayerModal"
       @upgrade-attribute="handleUpgradeAttribute"
+      @purchase-upgrade-point="handlePurchaseUpgradePoint"
     />
   </div>
 </template>

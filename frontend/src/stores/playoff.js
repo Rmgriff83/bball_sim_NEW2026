@@ -4,6 +4,39 @@ import { PlayoffManager } from '@/engine/season/PlayoffManager'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toast'
+import api from '@/composables/useApi'
+
+// Postseason token payouts. Each tier is paid as an INCREMENT on top of the
+// previous tier so a champion ends up with the full 5,000:
+//   • Made the playoffs:                    750  (paid: 750)
+//   • Win R1 (lose in R2):                +250  (total 1,000)
+//   • Win R2 (lose in conference finals): +250  (total 1,250)
+//   • Win conference finals (lose finals): +250  (total 1,500)
+//   • Win the finals (champion):         +3,500 (total 5,000)
+const PLAYOFF_PAYOUTS = {
+  madePlayoffs: 750,
+  round1Won: 250,
+  round2Won: 250,
+  round3Won: 250,
+  championship: 3500,
+}
+
+const ROUND_TO_KEY = {
+  1: 'round1Won',
+  2: 'round2Won',
+  3: 'round3Won',
+  4: 'championship',
+}
+
+const PAYOUT_LABEL = {
+  madePlayoffs: 'Made the playoffs',
+  round1Won: 'Advanced past the first round',
+  round2Won: 'Reached the conference finals',
+  round3Won: 'Reached the NBA Finals',
+  championship: 'Won the championship',
+}
 
 export const usePlayoffStore = defineStore('playoff', () => {
   // State
@@ -114,9 +147,15 @@ export const usePlayoffStore = defineStore('playoff', () => {
         userStatus.value = PlayoffManager.getUserPlayoffStatus(seasonData, userTeamId, teams)
       }
 
-      // Show season end modal if regular season just completed and bracket not yet generated
-      // Don't show if already in offseason (user already handled this transition)
-      if (regularSeasonComplete.value && !bracketGenerated.value && campaign?.phase !== 'offseason') {
+      // Show season end modal if regular season just completed and bracket not yet generated.
+      // Don't show if already in any offseason sub-phase — the user has already
+      // handled the season-end transition (legacy 'offseason', the 2-week
+      // 'offseason_free_agency' window, or post-FA 'offseason_draft').
+      const phase = campaign?.phase
+      const inOffseason = phase === 'offseason'
+        || phase === 'offseason_free_agency'
+        || phase === 'offseason_draft'
+      if (regularSeasonComplete.value && !bracketGenerated.value && !inOffseason) {
         showSeasonEndModal.value = true
       }
 
@@ -149,6 +188,37 @@ export const usePlayoffStore = defineStore('playoff', () => {
     }
   }
 
+  /**
+   * Pay out a postseason bonus to the user. Idempotent per `(seasonData,
+   * tierKey)` — tracks already-paid tiers on the bracket itself so re-running
+   * the same hook (e.g. on game replays) doesn't double-grant.
+   */
+  async function _awardPlayoffTokens(seasonData, tierKey) {
+    if (!seasonData?.playoffBracket) return false
+    if (!PLAYOFF_PAYOUTS[tierKey]) return false
+
+    const bracketObj = seasonData.playoffBracket
+    if (!bracketObj.userPayouts) bracketObj.userPayouts = {}
+    if (bracketObj.userPayouts[tierKey]) return false // already paid this tier
+
+    const amount = PLAYOFF_PAYOUTS[tierKey]
+    const authStore = useAuthStore()
+    const toastStore = useToastStore()
+
+    try {
+      const response = await api.post('/api/user/tokens', { amount })
+      if (authStore.profile && typeof response.data?.tokens === 'number') {
+        authStore.profile.tokens = response.data.tokens
+      }
+      bracketObj.userPayouts[tierKey] = true
+      toastStore.showSuccess(`${PAYOUT_LABEL[tierKey]} — +${amount.toLocaleString()} tokens`)
+      return true
+    } catch (err) {
+      console.error('Failed to award playoff tokens:', err)
+      return false
+    }
+  }
+
   async function generateBracket(campaignId) {
     loading.value = true
     error.value = null
@@ -168,6 +238,12 @@ export const usePlayoffStore = defineStore('playoff', () => {
       userStatus.value = PlayoffManager.getUserPlayoffStatus(seasonData, userTeamId, teams)
 
       bracketGenerated.value = true
+
+      // Pay the "made the playoffs" bonus once when the bracket is generated
+      // and the user's team qualified.
+      if (userStatus.value?.qualified) {
+        await _awardPlayoffTokens(seasonData, 'madePlayoffs')
+      }
 
       // Persist updated season data with bracket and round 1 schedule
       await SeasonRepository.save(seasonData)
@@ -230,11 +306,22 @@ export const usePlayoffStore = defineStore('playoff', () => {
     if (seriesUpdate.seriesComplete) {
       PlayoffManager.advanceWinnerToNextRound(seasonData, seriesUpdate)
 
+      // Award the user any postseason tokens they unlocked by winning this
+      // series. Tier increments: 250 for R1/R2/R3 wins, 3,500 for the title.
+      const campaign = await CampaignRepository.get(campaignId)
+      const userTeamId = campaign?.team_id ?? campaign?.teamId
+      const winnerId = seriesUpdate.series?.winner ?? null
+      if (winnerId && userTeamId && winnerId === userTeamId) {
+        const tierKey = ROUND_TO_KEY[seriesUpdate.round]
+        if (tierKey) {
+          await _awardPlayoffTokens(seasonData, tierKey)
+        }
+      }
+
       // Generate schedule for the next round if new matchups were created
       const nextRound = seriesUpdate.round + 1
       if (nextRound <= 4) {
         const teams = await TeamRepository.getAllForCampaign(campaignId)
-        const campaign = await CampaignRepository.get(campaignId)
         const year = campaign?.currentSeasonYear ?? 2025
         PlayoffManager.generatePlayoffSchedule(seasonData, teams, nextRound, year)
       }

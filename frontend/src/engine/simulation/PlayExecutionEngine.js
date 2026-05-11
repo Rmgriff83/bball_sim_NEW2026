@@ -1039,9 +1039,13 @@ class PlayExecutionEngine {
    * Process action type for state updates.
    */
   processActionType(action, outcome, actor, lineup) {
-    // Handle pass - transfer ball carrier and track passer for assist attribution
+    // Handle pass - transfer ball carrier and track passer for assist
+    // attribution. Each successful pass / handoff resets the
+    // "dribbles-between-pass-and-shot" counter so a clean catch-and-shoot
+    // off this pass is recognised as an assist downstream.
     if (action.type === 'pass' && outcome.key !== 'stolen') {
       this.playResult.lastPasserId = actor.id ?? null;
+      this.playResult.dribblesSincePass = 0;
       const receiverRole = action.receiver ?? null;
       if (receiverRole && receiverRole in this.roleAssignments) {
         this.ballCarrierId = this.roleAssignments[receiverRole];
@@ -1051,10 +1055,19 @@ class PlayExecutionEngine {
     // Handle handoff - track passer for assist attribution
     if (action.type === 'handoff' && outcome.key !== 'turnover') {
       this.playResult.lastPasserId = actor.id ?? null;
+      this.playResult.dribblesSincePass = 0;
       const receiverRole = action.receiver ?? null;
       if (receiverRole && receiverRole in this.roleAssignments) {
         this.ballCarrierId = this.roleAssignments[receiverRole];
       }
+    }
+
+    // Drives count as ball-handling between a catch and a shot. Only count
+    // them once we've actually seen a pass (otherwise undefined → NaN-ish
+    // accumulation from a fresh play start). If `dribblesSincePass` is null
+    // there hasn't been a pass yet on this play, so don't track.
+    if (action.type === 'drive' && this.playResult.dribblesSincePass != null) {
+      this.playResult.dribblesSincePass += 1;
     }
 
     // Track shot attempts
@@ -1067,6 +1080,10 @@ class PlayExecutionEngine {
         fouled: outcome.key === 'fouled',
         blocked: outcome.key === 'blocked',
         points: outcome.points ?? 0,
+        // Number of drive (dribble) actions executed between the last pass
+        // and this shot. Used by the assist resolver: 0 → guaranteed assist,
+        // 1–2 → high probability, 3+ → standard probabilistic credit.
+        dribblesSincePass: this.playResult.dribblesSincePass,
       };
     }
   }

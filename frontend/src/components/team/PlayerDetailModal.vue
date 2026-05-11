@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerBadgeStoreModal from '@/components/team/PlayerBadgeStoreModal.vue'
 import { useTradeStore } from '@/stores/trade'
@@ -123,10 +123,16 @@ const props = defineProps({
   moraleRevealed: {
     type: Boolean,
     default: false
+  },
+  // Current user token balance — used by the Buy +1 buttons in the
+  // upgrade-points banner to disable when insufficient.
+  userTokens: {
+    type: Number,
+    default: 0
   }
 })
 
-const emit = defineEmits(['close', 'upgrade-attribute', 'resign-player', 'drop-player', 'scout-player'])
+const emit = defineEmits(['close', 'upgrade-attribute', 'purchase-upgrade-point', 'resign-player', 'drop-player', 'scout-player'])
 
 const activeTab = ref('stats')
 const showPlayerBadgeStore = ref(false)
@@ -296,6 +302,88 @@ function handleUpgrade(category, attrKey) {
     attribute: attrKey,
     pool
   })
+}
+
+// ----- Upgrade-point purchase (tokens → +1 to a pool) -----
+// Mirrors the team-store implementation. Keep in lockstep with
+// `MANUAL_UPGRADE_BUMP` / `UPGRADE_POINT_PRICES` in `frontend/src/stores/team.js`.
+const UPGRADE_POINT_PRICES = [3000, 4000, 5000]
+const UPGRADE_POINT_MAX_PER_POOL = 3
+const MANUAL_UPGRADE_BUMP = 0.4
+
+function _seasonPurchases(player, year) {
+  const existing = player?.seasonUpgradePurchases ?? player?.season_upgrade_purchases ?? null
+  if (existing && existing.year === year) return existing
+  return { year, offense: 0, defense: 0 }
+}
+
+function _headroom(player) {
+  // Same shape as `_getUpgradeHeadroom` in stores/team.js: each spent point
+  // bumps the unrounded overall by MANUAL_UPGRADE_BUMP, so the number of
+  // additional points the player can absorb is
+  // floor((potential − exact − pending × bump) / bump).
+  if (!player) return 0
+  const exact = typeof player._overallExact === 'number'
+    ? player._overallExact
+    : (player.overall_rating ?? player.overallRating ?? 0)
+  const potential = player.potential_rating ?? player.potentialRating ?? 99
+  const pending = (player.offense_upgrade_points ?? player.offenseUpgradePoints ?? 0)
+                + (player.defense_upgrade_points ?? player.defenseUpgradePoints ?? 0)
+  const remainingOvr = Math.max(0, potential - exact - pending * MANUAL_UPGRADE_BUMP)
+  return Math.floor(remainingOvr / MANUAL_UPGRADE_BUMP)
+}
+
+function _purchaseInfo(player, pool, year, userTokens) {
+  if (!player) return null
+  const purchases = _seasonPurchases(player, year)
+  const purchasesInPool = purchases[pool] ?? 0
+  const remainingInPool = Math.max(0, UPGRADE_POINT_MAX_PER_POOL - purchasesInPool)
+  const headroom = _headroom(player)
+  const reachedSeasonCap = purchasesInPool >= UPGRADE_POINT_MAX_PER_POOL
+  const noHeadroom = headroom < 1
+  const price = reachedSeasonCap ? null : UPGRADE_POINT_PRICES[Math.min(purchasesInPool, UPGRADE_POINT_PRICES.length - 1)]
+  const insufficientTokens = price != null && userTokens < price
+  return {
+    price,
+    purchasesInPool,
+    remainingInPool,
+    headroom,
+    reachedSeasonCap,
+    noHeadroom,
+    insufficientTokens,
+    canPurchase: !reachedSeasonCap && !noHeadroom && !insufficientTokens,
+  }
+}
+
+const offensePurchaseInfo = computed(() =>
+  _purchaseInfo(normalizedPlayer.value, 'offense', props.currentSeasonYear, props.userTokens)
+)
+const defensePurchaseInfo = computed(() =>
+  _purchaseInfo(normalizedPlayer.value, 'defense', props.currentSeasonYear, props.userTokens)
+)
+
+function handlePurchaseUpgradePoint(pool) {
+  const info = pool === 'defense' ? defensePurchaseInfo.value : offensePurchaseInfo.value
+  if (!info?.canPurchase) return
+  emit('purchase-upgrade-point', {
+    playerId: props.player.id,
+    pool,
+    price: info.price,
+  })
+}
+
+function purchaseTooltip(info) {
+  if (!info) return ''
+  if (info.reachedSeasonCap) return 'Season cap reached (3/3 purchases)'
+  if (info.noHeadroom) return 'Overall is already at potential'
+  if (info.insufficientTokens) return `Need ${info.price.toLocaleString()} tokens`
+  return `Buy +1 for ${info.price.toLocaleString()} tokens`
+}
+
+function formatTokens(n) {
+  if (n == null) return ''
+  if (n >= 1000) return `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k`
+  return String(n)
 }
 
 // Season history stats table
@@ -905,11 +993,31 @@ function formatChange(change) {
                     <div class="pool-item offense-pool" :class="{ 'has-points': offenseUpgradePoints >= 1.0 }">
                       <span class="pool-value">{{ offenseUpgradePoints.toFixed(1) }}</span>
                       <span class="pool-label">Offense</span>
+                      <button
+                        v-if="isUserPlayer"
+                        class="pool-buy-btn"
+                        :disabled="!offensePurchaseInfo?.canPurchase"
+                        :title="purchaseTooltip(offensePurchaseInfo)"
+                        @click="handlePurchaseUpgradePoint('offense')"
+                      >
+                        <Coins :size="12" />
+                        <span>{{ offensePurchaseInfo?.price != null ? formatTokens(offensePurchaseInfo.price) : 'Max' }}</span>
+                      </button>
                     </div>
                     <div class="pool-divider"></div>
                     <div class="pool-item defense-pool" :class="{ 'has-points': defenseUpgradePoints >= 1.0 }">
                       <span class="pool-value">{{ defenseUpgradePoints.toFixed(1) }}</span>
                       <span class="pool-label">Defense</span>
+                      <button
+                        v-if="isUserPlayer"
+                        class="pool-buy-btn"
+                        :disabled="!defensePurchaseInfo?.canPurchase"
+                        :title="purchaseTooltip(defensePurchaseInfo)"
+                        @click="handlePurchaseUpgradePoint('defense')"
+                      >
+                        <Coins :size="12" />
+                        <span>{{ defensePurchaseInfo?.price != null ? formatTokens(defensePurchaseInfo.price) : 'Max' }}</span>
+                      </button>
                     </div>
                   </div>
                   <p class="upgrade-hint">
@@ -974,11 +1082,17 @@ function formatChange(change) {
                         :class="{ 'stat-pop': animatingAttributes[key] }"
                         :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
                       >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
+                      <span
+                        v-if="hasOffenseUpgradePoints && !scoutingMode && value >= (normalizedPlayer.potentialRating ?? 99)"
+                        class="upgrade-max"
+                        title="At potential cap"
+                      >
+                        MAX
+                      </span>
                       <button
-                        v-if="hasOffenseUpgradePoints && !scoutingMode"
+                        v-else-if="hasOffenseUpgradePoints && !scoutingMode"
                         class="upgrade-btn"
-                        :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
-                        :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
+                        title="Upgrade (+1)"
                         @click.stop="handleUpgrade('offense', key)"
                       >
                         +
@@ -1007,11 +1121,17 @@ function formatChange(change) {
                         :class="{ 'stat-pop': animatingAttributes[key] }"
                         :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
                       >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
+                      <span
+                        v-if="hasDefenseUpgradePoints && !scoutingMode && value >= (normalizedPlayer.potentialRating ?? 99)"
+                        class="upgrade-max"
+                        title="At potential cap"
+                      >
+                        MAX
+                      </span>
                       <button
-                        v-if="hasDefenseUpgradePoints && !scoutingMode"
+                        v-else-if="hasDefenseUpgradePoints && !scoutingMode"
                         class="upgrade-btn"
-                        :disabled="value >= (normalizedPlayer.potentialRating ?? 99)"
-                        :title="value >= (normalizedPlayer.potentialRating ?? 99) ? 'At potential cap' : 'Upgrade (+1)'"
+                        title="Upgrade (+1)"
                         @click.stop="handleUpgrade('defense', key)"
                       >
                         +
@@ -2296,6 +2416,57 @@ function formatChange(change) {
   background: var(--color-text-tertiary);
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Buy +1 upgrade-point button (in the dual-pool banner). Mirrors
+   `.badge-purchase-btn` from PlayerBadgeStoreModal. */
+.pool-buy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  border: none;
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.pool-buy-btn:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.pool-buy-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* "MAX" indicator shown in place of the + button when an attribute has hit
+   the player's potential cap. Sits in the same 32px column as the button
+   so the row layout stays consistent. */
+.upgrade-max {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-tertiary);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  user-select: none;
+  cursor: default;
 }
 
 .no-upgrade-hint {

@@ -29,7 +29,7 @@ const toastStore = useToastStore()
 const route = useRoute()
 
 const loading = ref(true)
-const VALID_SUB_TABS = ['team', 'expiring', 'free-agents']
+const VALID_SUB_TABS = ['team', 'expiring', 'free-agents', 'picks']
 const requestedSubTab = route.query?.sub
 const activeSubTab = ref(VALID_SUB_TABS.includes(requestedSubTab) ? requestedSubTab : 'team')
 
@@ -112,6 +112,23 @@ const filteredFreeAgents = computed(() => {
 const expiringContracts = computed(() => {
   return roster.value.filter(p => p.contractYearsRemaining === 1)
 })
+
+// Owned draft picks — same shape and source as the trade wizard reads from
+// (team.draftPicks). Sorted soonest year first, then round ascending.
+const userDraftPicks = computed(() => {
+  const picks = teamStore.team?.draftPicks ?? []
+  return [...picks].sort((a, b) => {
+    const ay = a.year ?? 0
+    const by = b.year ?? 0
+    if (ay !== by) return ay - by
+    return (a.round ?? 0) - (b.round ?? 0)
+  })
+})
+
+function formatPickYear(year) {
+  if (year == null) return ''
+  return year < 100 ? 2024 + year : year
+}
 
 // Re-sign deadline gate. Flipped by _processMidSeasonEvents on Dec 15 alongside
 // trade_deadline_passed. When true, ContractCard hides the Re-sign button and
@@ -403,6 +420,14 @@ onMounted(() => {
         >
           Free Agents
         </button>
+        <button
+          class="sub-tab-btn"
+          :class="{ active: activeSubTab === 'picks' }"
+          @click="activeSubTab = 'picks'"
+        >
+          Picks
+          <span v-if="userDraftPicks.length > 0" class="sub-tab-badge">{{ userDraftPicks.length }}</span>
+        </button>
       </div>
 
       <!-- Team Contracts View -->
@@ -518,6 +543,42 @@ onMounted(() => {
               @sign="handleSign"
               @info="handleInfo"
             />
+          </div>
+        </div>
+      </div>
+
+      <!-- Owned Draft Picks View -->
+      <div v-else-if="activeSubTab === 'picks'" class="picks-section">
+        <div v-if="userDraftPicks.length === 0" class="empty-state">
+          <FileText :size="48" />
+          <h4>No Draft Picks</h4>
+          <p>Your team doesn't currently own any future draft picks.</p>
+        </div>
+
+        <div v-else class="player-cards-section">
+          <h4 class="section-title">
+            <FileText :size="16" />
+            Owned Draft Picks
+            <span class="fa-filter-count">{{ userDraftPicks.length }}</span>
+          </h4>
+
+          <div class="picks-grid">
+            <div
+              v-for="pick in userDraftPicks"
+              :key="pick.id"
+              class="pick-asset-card"
+            >
+              <div class="pick-asset-content">
+                <div class="pick-asset-year">{{ formatPickYear(pick.year) }}</div>
+                <div class="pick-asset-info">
+                  <span class="pick-asset-name">Round {{ pick.round }}</span>
+                  <span v-if="pick.original_team_abbreviation" class="pick-asset-team">({{ pick.original_team_abbreviation }})</span>
+                  <div v-if="pick.projected_position" class="pick-asset-projection">
+                    Projected #{{ pick.projected_position }}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -956,6 +1017,99 @@ onMounted(() => {
 /* Free Agents Section */
 .free-agents-section {
   min-height: 300px;
+}
+
+/* Owned Draft Picks Section — mirrors the trade wizard's pick card style */
+.picks-section {
+  min-height: 300px;
+}
+
+.picks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+  padding: 0.25rem;
+}
+
+@media (max-width: 415px) {
+  .picks-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pick-asset-card {
+  background: rgba(30, 35, 45, 0.95);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.pick-asset-card:hover {
+  border-color: #8B5CF6;
+  transform: translateY(-2px);
+}
+
+.pick-asset-content {
+  display: flex;
+  align-items: flex-start;
+  padding: 0.875rem;
+  gap: 0.75rem;
+}
+
+.pick-asset-year {
+  width: 48px;
+  height: 42px;
+  background: linear-gradient(135deg, #6366F1, #8B5CF6);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+}
+
+.pick-asset-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.pick-asset-name {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #F3F4F6;
+  margin-bottom: 0.25rem;
+}
+
+.pick-asset-team {
+  display: block;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 0.15rem;
+}
+
+.pick-asset-projection {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+[data-theme="light"] .pick-asset-card {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .pick-asset-name {
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .pick-asset-team {
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .pick-asset-projection {
+  color: var(--color-text-secondary);
 }
 
 /* Empty State */

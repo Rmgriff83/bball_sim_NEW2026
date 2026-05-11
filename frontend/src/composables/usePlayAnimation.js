@@ -152,18 +152,49 @@ export function usePlayAnimation() {
   })
 
   /**
+   * Activated synergies from the current possession (for canvas animations).
+   * Live-filtered by `elapsedTime` so each synergy fires when the play
+   * actually completes (end-of-play, when the shot resolves).
+   */
+  const currentActivatedSynergies = computed(() => {
+    const all = currentPossession.value?.activated_synergies || []
+    if (all.length === 0) return all
+    const cutoff = elapsedTime.value
+    return all.filter(s => (s.time ?? 0) <= cutoff)
+  })
+
+  /**
+   * Player ids participating in any due synergy on this possession. Used to
+   * SUPPRESS those players' individual badge animations — a synergy hit takes
+   * precedence over the base badge animations for the players involved.
+   */
+  const synergySuppressedPlayerIds = computed(() => {
+    const set = new Set()
+    for (const s of currentActivatedSynergies.value) {
+      if (s.player1?.id) set.add(String(s.player1.id))
+      if (s.player2?.id) set.add(String(s.player2.id))
+    }
+    return set
+  })
+
+  /**
    * Activated badges from current possession (for canvas animations).
    *
    * Live-filtered by `elapsedTime` so badges only enter the list when their
-   * action has reached its end-of-action timestamp. The list grows as the
-   * possession plays out — BasketballCourt's watcher dedupes per-badge so
-   * each fires its animation exactly once.
+   * action has reached its end-of-action timestamp. Badges for players who
+   * are part of an active synergy are filtered out so the synergy animation
+   * is the sole effect shown for those players.
    */
   const currentActivatedBadges = computed(() => {
     const all = currentPossession.value?.activated_badges || []
     if (all.length === 0) return all
     const cutoff = elapsedTime.value
-    return all.filter(b => (b.time ?? 0) <= cutoff)
+    const suppressed = synergySuppressedPlayerIds.value
+    return all.filter(b => {
+      if ((b.time ?? 0) > cutoff) return false
+      if (suppressed.has(String(b.playerId))) return false
+      return true
+    })
   })
 
   /**
@@ -597,6 +628,7 @@ export function usePlayAnimation() {
     currentAwayScore,
     currentBoxScore,
     currentActivatedBadges,
+    currentActivatedSynergies,
     interpolatedPositions,
     interpolatedBallPosition,
     currentDescription,

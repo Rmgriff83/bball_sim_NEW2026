@@ -552,8 +552,9 @@ export function processTeamSignings({
 
   if (maxSignings <= 0) return { signings, updatedPlayers };
 
-  // Get free agents
+  // Get free agents (retirees excluded)
   let freeAgents = updatedPlayers.filter(player => {
+    if (player.isRetired || player.is_retired) return false;
     if (player.isFreeAgent === 1 || player.is_free_agent === 1) return true;
     const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
     return !teamAbbr || teamAbbr === 'FA';
@@ -633,9 +634,10 @@ function backfillRoster({
 
   if (slotsNeeded <= 0) return { signings, updatedPlayers };
 
-  // Get free agents, sorted by rating
+  // Get free agents, sorted by rating (retirees excluded)
   let freeAgents = updatedPlayers.filter(player => {
     if (player.isDraftProspect) return false;
+    if (player.isRetired || player.is_retired) return false;
     if (player.isFreeAgent === 1 || player.is_free_agent === 1) return true;
     const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
     return !teamAbbr || teamAbbr === 'FA';
@@ -811,9 +813,10 @@ export function ensureMinimumRosters({ aiTeams, leaguePlayers }) {
 
     if (slotsNeeded <= 0) continue;
 
-    // Get free agents, sorted by rating descending
+    // Get free agents, sorted by rating descending (retirees excluded)
     let freeAgents = currentPlayers.filter(player => {
       if (player.isDraftProspect) return false;
+      if (player.isRetired || player.is_retired) return false;
       if (player.isFreeAgent === 1 || player.is_free_agent === 1) return true;
       const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
       return !teamAbbr || teamAbbr === 'FA';
@@ -945,9 +948,10 @@ export function generateAIFreeAgencyOffers({
 
   const context = buildContext({ standings, teams: allTeams, seasonPhase: 'offseason' });
 
-  // Get free agents (non-prospects)
+  // Get free agents (non-prospects, non-retirees)
   const freeAgents = leaguePlayers.filter(p => {
     if (p.isDraftProspect) return false;
+    if (p.isRetired || p.is_retired) return false;
     if (p.isFreeAgent === 1 || p.is_free_agent === 1) return true;
     const teamAbbr = p.teamAbbreviation ?? p.team_abbreviation ?? null;
     return !teamAbbr || teamAbbr === 'FA';

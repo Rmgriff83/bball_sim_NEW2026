@@ -744,6 +744,15 @@ class GameSimulator {
       this.recordPlayByPlay(playResult, team)
 
       if (playResult.keyframes && playResult.keyframes.length > 0) {
+        // Synergies fire on the shot, which resolves at the end of the play —
+        // stamp them so the canvas can stagger them with the rest of the
+        // animation (mirrors the badge `time` field set in PlayExecutionEngine).
+        const synergyTime = Math.max(0, (playResult.duration ?? 0) - 0.05)
+        const stampedSynergies = (playResult.activatedSynergies || []).map(s => ({
+          ...s,
+          time: typeof s.time === 'number' ? s.time : synergyTime,
+        }))
+
         this.animationData.push({
           possession_id: this.possessionCount,
           team,
@@ -760,7 +769,7 @@ class GameSimulator {
             away: Object.values(this.awayBoxScore).map(s => this.formatBoxScoreStats(s)),
           },
           activated_badges: playResult.activatedBadges || [],
-          activated_synergies: playResult.activatedSynergies || [],
+          activated_synergies: stampedSynergies,
         })
       }
     }
@@ -852,23 +861,20 @@ class GameSimulator {
           }
         }
 
-        // Assign assist -- credit the last passer, chemistry boosts probability
-        const chemMod = isHome ? this.homeChemistryModifier : this.awayChemistryModifier
-        const assistPct = 65 * (1 + chemMod)
-        if (shotAttempt.made && Math.floor(Math.random() * 100) + 1 <= assistPct) {
-          const lastPasser = playResult.lastPasserId ?? null
-          if (lastPasser && lastPasser !== shooterId && boxScore[lastPasser]) {
-            boxScore[lastPasser].assists++
-          } else {
-            // Fallback: first non-shooter teammate
-            for (const player of offense) {
-              const playerId = player.id || null
-              if (playerId && playerId !== shooterId && boxScore[playerId]) {
-                boxScore[playerId].assists++
-                break
-              }
-            }
-          }
+        // Assign assist — standard basketball rule: the passer is credited
+        // if and only if the shooter takes fewer than 3 dribbles between
+        // catching the pass and the shot. 3+ dribbles breaks the assist
+        // link entirely; no pass on the play means no assist either way.
+        const lastPasser = playResult.lastPasserId ?? null
+        const dribbles = shotAttempt.dribblesSincePass
+        const isAssist = shotAttempt.made
+          && lastPasser
+          && lastPasser !== shooterId
+          && dribbles != null
+          && dribbles < 3
+          && boxScore[lastPasser]
+        if (isAssist) {
+          boxScore[lastPasser].assists++
         }
 
         // Save back

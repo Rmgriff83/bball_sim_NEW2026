@@ -1,8 +1,8 @@
 <script setup>
 import { computed } from 'vue'
-import { User, DollarSign, AlertTriangle, UserMinus } from 'lucide-vue-next'
+import { DollarSign, AlertTriangle, UserMinus, X } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
-import { BaseModal, BaseButton, StatBadge, LoadingSpinner } from '@/components/ui'
+import { StatBadge, LoadingSpinner } from '@/components/ui'
 import { getMotivationLabel, calculateRetentionScore } from '@/engine/ai/MotivationService'
 
 const props = defineProps({
@@ -78,6 +78,7 @@ function formatSalary(salary) {
 }
 
 function handleClose() {
+  if (props.loading) return
   emit('close')
 }
 
@@ -89,121 +90,201 @@ function handleConfirm() {
 </script>
 
 <template>
-  <BaseModal
-    :show="show"
-    title="Drop Player"
-    size="md"
-    :closable="!loading"
-    @close="handleClose"
-  >
-    <div v-if="loading" class="loading-state">
-      <LoadingSpinner size="lg" />
-      <p>Releasing player...</p>
-    </div>
-
-    <div v-else-if="player" class="drop-content">
-      <!-- Warning Banner -->
-      <div class="warning-banner">
-        <AlertTriangle :size="24" />
-        <div class="warning-text">
-          <strong>Are you sure you want to drop this player?</strong>
-          <p>This action cannot be undone. The player will become a free agent.</p>
-        </div>
-      </div>
-
-      <!-- Player Info -->
-      <div class="player-card">
-        <div class="player-avatar">
-          <PlayerAvatar :player="player" :size="32" />
-        </div>
-        <div class="player-details">
-          <h3 class="player-name">{{ player.firstName }} {{ player.lastName }}</h3>
-          <div class="player-meta">
-            <span
-              class="position-badge"
-              :style="{ backgroundColor: getPositionColor(player.position) }"
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="show" class="modal-overlay" @click.self="handleClose">
+        <div class="modal-container">
+          <header class="modal-header">
+            <h2 class="modal-title">Drop Player</h2>
+            <button
+              v-if="!loading"
+              class="btn-close"
+              aria-label="Close"
+              @click="handleClose"
             >
-              {{ player.position }}
-            </span>
-            <span
-              v-if="player.secondaryPosition"
-              class="position-badge secondary"
-              :style="{ backgroundColor: getPositionColor(player.secondaryPosition) }"
-            >
-              {{ player.secondaryPosition }}
-            </span>
-            <StatBadge :value="player.overallRating" size="sm" />
-            <span class="player-age">{{ player.age }} yrs</span>
-          </div>
-        </div>
-      </div>
+              <X :size="20" />
+            </button>
+          </header>
 
-      <!-- Motivations (compact, top 3) -->
-      <div v-if="topMotivations.length > 0" class="motivations-card">
-        <h4 class="card-title">Key Motivations</h4>
-        <div class="motivation-bars">
-          <div
-            v-for="m in topMotivations"
-            :key="m.key"
-            class="motivation-row"
-          >
-            <span class="motivation-label">{{ getMotivationLabel(m.key) }}</span>
-            <div class="motivation-bar-track">
-              <div
-                class="motivation-bar-fill"
-                :style="{ width: (m.weight * 100) + '%', backgroundColor: getMotivationBarColor(m.weight) }"
-              />
+          <main class="modal-content">
+            <div v-if="loading" class="loading-state">
+              <LoadingSpinner size="lg" />
+              <p>Releasing player...</p>
             </div>
-            <span class="motivation-value">{{ Math.round(m.weight * 100) }}</span>
-          </div>
-        </div>
-        <div v-if="isContractYear && retentionPct !== null" class="retention-note">
-          <span class="retention-label">Re-sign likelihood:</span>
-          <span class="retention-pct" :style="{ color: getRetentionColor(retentionPct) }">{{ retentionPct }}%</span>
-        </div>
-      </div>
 
-      <!-- Contract Details -->
-      <div class="contract-details">
-        <h4 class="card-title">Contract Being Terminated</h4>
-        <div class="contract-info">
-          <div class="contract-row">
-            <span class="contract-label">Annual Salary:</span>
-            <span class="contract-value">{{ formatSalary(player.contractSalary) }}</span>
-          </div>
-          <div class="contract-row">
-            <span class="contract-label">Years Remaining:</span>
-            <span class="contract-value">{{ player.contractYearsRemaining }} {{ player.contractYearsRemaining === 1 ? 'year' : 'years' }}</span>
-          </div>
-          <div class="contract-row total">
-            <span class="contract-label">Remaining Value:</span>
-            <span class="contract-value savings">{{ formatSalary(remainingContractValue) }}</span>
-          </div>
+            <div v-else-if="player" class="drop-content">
+              <!-- Warning Banner -->
+              <div class="warning-banner">
+                <AlertTriangle :size="24" />
+                <div class="warning-text">
+                  <strong>Are you sure you want to drop this player?</strong>
+                  <p>This action cannot be undone. The player will become a free agent.</p>
+                </div>
+              </div>
+
+              <!-- Player Info -->
+              <div class="player-card">
+                <div class="player-avatar">
+                  <PlayerAvatar :player="player" :size="32" />
+                </div>
+                <div class="player-details">
+                  <h3 class="player-name">{{ player.firstName }} {{ player.lastName }}</h3>
+                  <div class="player-meta">
+                    <span
+                      class="position-badge"
+                      :style="{ backgroundColor: getPositionColor(player.position) }"
+                    >
+                      {{ player.position }}
+                    </span>
+                    <span
+                      v-if="player.secondaryPosition"
+                      class="position-badge secondary"
+                      :style="{ backgroundColor: getPositionColor(player.secondaryPosition) }"
+                    >
+                      {{ player.secondaryPosition }}
+                    </span>
+                    <StatBadge :value="player.overallRating" size="sm" />
+                    <span class="player-age">{{ player.age }} yrs</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Motivations (compact, top 3) -->
+              <div v-if="topMotivations.length > 0" class="motivations-card">
+                <h4 class="card-title">Key Motivations</h4>
+                <div class="motivation-bars">
+                  <div
+                    v-for="m in topMotivations"
+                    :key="m.key"
+                    class="motivation-row"
+                  >
+                    <span class="motivation-label">{{ getMotivationLabel(m.key) }}</span>
+                    <div class="motivation-bar-track">
+                      <div
+                        class="motivation-bar-fill"
+                        :style="{ width: (m.weight * 100) + '%', backgroundColor: getMotivationBarColor(m.weight) }"
+                      />
+                    </div>
+                    <span class="motivation-value">{{ Math.round(m.weight * 100) }}</span>
+                  </div>
+                </div>
+                <div v-if="isContractYear && retentionPct !== null" class="retention-note">
+                  <span class="retention-label">Re-sign likelihood:</span>
+                  <span class="retention-pct" :style="{ color: getRetentionColor(retentionPct) }">{{ retentionPct }}%</span>
+                </div>
+              </div>
+
+              <!-- Contract Details -->
+              <div class="contract-details">
+                <h4 class="card-title">Contract Being Terminated</h4>
+                <div class="contract-info">
+                  <div class="contract-row">
+                    <span class="contract-label">Annual Salary:</span>
+                    <span class="contract-value">{{ formatSalary(player.contractSalary) }}</span>
+                  </div>
+                  <div class="contract-row">
+                    <span class="contract-label">Years Remaining:</span>
+                    <span class="contract-value">{{ player.contractYearsRemaining }} {{ player.contractYearsRemaining === 1 ? 'year' : 'years' }}</span>
+                  </div>
+                  <div class="contract-row total">
+                    <span class="contract-label">Remaining Value:</span>
+                    <span class="contract-value savings">{{ formatSalary(remainingContractValue) }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Cap Space Impact -->
+              <div class="impact-info">
+                <DollarSign :size="18" />
+                <span>Dropping this player will free up <strong>{{ formatSalary(player.contractSalary) }}</strong> in annual cap space.</span>
+              </div>
+            </div>
+          </main>
+
+          <footer class="modal-footer">
+            <button class="btn-cancel" :disabled="loading" @click="handleClose">
+              Cancel
+            </button>
+            <button class="btn-danger" :disabled="loading" @click="handleConfirm">
+              <UserMinus :size="16" class="btn-icon" />
+              Drop Player
+            </button>
+          </footer>
         </div>
       </div>
-
-      <!-- Cap Space Impact -->
-      <div class="impact-info">
-        <DollarSign :size="18" />
-        <span>Dropping this player will free up <strong>{{ formatSalary(player.contractSalary) }}</strong> in annual cap space.</span>
-      </div>
-    </div>
-
-    <template #footer>
-      <div class="modal-footer-buttons">
-        <button class="btn-cancel" :disabled="loading" @click="handleClose">
-          Cancel
-        </button>
-        <button class="btn-danger" :disabled="loading" @click="handleConfirm">
-          <UserMinus :size="16" />
-          Drop Player
-        </button>
-      </div>
-    </template>
-  </BaseModal>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
+/* Modal scaffolding (matches SimulateConfirmModal global standard) */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+.modal-container {
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.modal-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.btn-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
 .loading-state {
   display: flex;
   flex-direction: column;
@@ -281,9 +362,7 @@ function handleConfirm() {
   color: var(--color-text-secondary);
 }
 
-.player-details {
-  flex: 1;
-}
+.player-details { flex: 1; }
 
 .player-name {
   font-size: 1.125rem;
@@ -306,9 +385,7 @@ function handleConfirm() {
   color: white;
 }
 
-.position-badge.secondary {
-  opacity: 0.7;
-}
+.position-badge.secondary { opacity: 0.7; }
 
 .player-age {
   font-size: 0.85rem;
@@ -405,9 +482,7 @@ function handleConfirm() {
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.contract-row:last-child {
-  border-bottom: none;
-}
+.contract-row:last-child { border-bottom: none; }
 
 .contract-row.total {
   margin-top: 0.5rem;
@@ -427,9 +502,7 @@ function handleConfirm() {
   color: var(--color-text-primary);
 }
 
-.contract-value.savings {
-  color: var(--color-success);
-}
+.contract-value.savings { color: var(--color-success); }
 
 /* Impact Info */
 .impact-info {
@@ -444,14 +517,14 @@ function handleConfirm() {
   font-size: 0.85rem;
 }
 
-.impact-info strong {
-  font-weight: 700;
-}
+.impact-info strong { font-weight: 700; }
 
-/* Footer Buttons */
-.modal-footer-buttons {
+/* Footer (global standard: direct button children, flex:1, uppercase 0.85rem 600) */
+.modal-footer {
   display: flex;
   gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--glass-border);
 }
 
 .btn-cancel,
@@ -498,4 +571,25 @@ function handleConfirm() {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+.btn-icon {
+  fill: currentColor;
+}
+
+/* Modal transition */
+.modal-enter-active { transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1); }
+.modal-leave-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes scaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+
+.modal-enter-active .modal-container { animation: scaleIn 0.3s cubic-bezier(0, 0, 0.2, 1); }
+.modal-leave-active .modal-container { animation: scaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards; }
 </style>

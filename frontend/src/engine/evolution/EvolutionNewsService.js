@@ -21,13 +21,13 @@ export class EvolutionNewsService {
    * Create news event for player injury.
    * @param {Object} campaign - Campaign context with { id, current_date }
    * @param {Object} player
-   * @param {Object} injury - { name, games_remaining }
+   * @param {Object} injury - { name, days_remaining } (legacy: games_remaining)
    * @returns {Object} news event
    */
   createInjuryNews (campaign, player, injury) {
     const playerName = this._getPlayerName(player)
     const injuryName = injury.name ?? 'injury'
-    const estimate = this._getRecoveryEstimate(injury.games_remaining ?? 0)
+    const estimate = this._getRecoveryEstimate(injury.days_remaining ?? injury.games_remaining ?? 0)
 
     const headlines = [
       `${playerName} suffers ${injuryName}, out ${estimate}`,
@@ -319,17 +319,18 @@ export class EvolutionNewsService {
   }
 
   /**
-   * Get human-readable recovery estimate.
-   * @param {number} games
+   * Get human-readable recovery estimate. Input is days remaining (the
+   * canonical injury timer post games→days migration).
+   * @param {number} days
    * @returns {string}
    * @private
    */
-  _getRecoveryEstimate (games) {
-    if (games <= 5) return 'day-to-day'
-    if (games <= 14) return '1-2 weeks'
-    if (games <= 28) return '2-4 weeks'
-    if (games <= 42) return '4-6 weeks'
-    if (games <= 60) return '6-8 weeks'
+  _getRecoveryEstimate (days) {
+    if (days <= 7) return 'day-to-day'
+    if (days <= 21) return '1-3 weeks'
+    if (days <= 45) return '3-6 weeks'
+    if (days <= 90) return '6-13 weeks'
+    if (days <= 150) return '3-5 months'
     return 'for the season'
   }
 

@@ -36,7 +36,7 @@ import {
   initializeUserTeamLineup,
 } from '../ai/AILineupService'
 import { generateAITargetMinutes } from '../simulation/SubstitutionEngine'
-import { processSeasonEnd } from '../evolution/PlayerEvolution'
+import { processSeasonEnd, processRetirements } from '../evolution/PlayerEvolution'
 import { runAIRosterManagement, ensureMinimumRosters } from '../ai/AIContractService'
 import { generateMotivations, getMarketSize } from '../ai/MotivationService'
 import { generateAndSaveRookieClass } from '../draft/RookieGenerationService'
@@ -1741,6 +1741,27 @@ export async function enterOffseason(campaignId) {
   const campaign = await CampaignRepository.get(campaignId)
   if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
 
+  // Idempotency guard: if the campaign is already in any offseason sub-phase,
+  // return early WITHOUT re-archiving / re-releasing players. Without this,
+  // a UI re-trigger (e.g. the season-end modal popping up again because the
+  // home view didn't recognise the new 'offseason_free_agency' phase) would
+  // re-run the entire season-end flow and re-release every expiring contract.
+  if (
+    campaign.phase === 'offseason'
+    || campaign.phase === 'offseason_free_agency'
+    || campaign.phase === 'offseason_draft'
+  ) {
+    return {
+      campaign,
+      seasonEndResult: null,
+      news: [],
+      aiContractResults: { cuts: [], extensions: [], signings: [] },
+      releasedUserPlayers: [],
+      seasonAwards: null,
+      alreadyEntered: true,
+    }
+  }
+
   const currentYear = campaign.currentSeasonYear ?? 2025
   const teams = await TeamRepository.getAllForCampaign(campaignId)
   const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
@@ -1889,6 +1910,21 @@ export async function enterOffseason(campaignId) {
   // window owns AI signings, and any team still short on bodies after the
   // window resolves will be filled in startNewSeason()'s safety-net backfill.
 
+  // 4c. Retirement decisions — runs AFTER contract expiry/release so the
+  // unsigned-FA factor in shouldRetire() can see who actually didn't get a
+  // re-sign. Retirees are mutated in place (teamId cleared, contract zeroed,
+  // isRetired flagged) and saved via the saveBulk below alongside the rest
+  // of the league.
+  const { retirees } = processRetirements(updatedPlayers, currentYear)
+  if (retirees.length > 0) {
+    const retireeIds = new Set(retirees.map(r => r.id))
+    updatedPlayers = updatedPlayers.map(p => {
+      const retired = retirees.find(r => r.id === p.id)
+      return retired ? retired : p
+    })
+    void retireeIds // for readability — already used via .find above
+  }
+
   await PlayerRepository.saveBulk(
     updatedPlayers.map(p => ({ ...p, campaignId }))
   )
@@ -1902,6 +1938,24 @@ export async function enterOffseason(campaignId) {
     delete campaign.settings.trade_deadline_news_shown
     delete campaign.settings.deadline_warning_shown
   }
+
+  // Stash retirement summaries for the offseason RetirementModal. The modal
+  // reads from campaign.settings so the list survives a refresh. Cleared on
+  // dismiss (CampaignHomeView sets retirementsDismissedYear).
+  campaign.settings = campaign.settings ?? {}
+  campaign.settings.pendingRetirements = retirees.map(r => ({
+    id: r.id,
+    name: r.name || `${r.firstName ?? ''} ${r.lastName ?? ''}`.trim(),
+    position: r.position,
+    age: r.age,
+    overallRating: r.overallRating ?? r.overall_rating,
+    primaryTeamAbbreviation: r.previousTeamAbbreviation,
+    careerSeasons: r.retirementSummary?.careerSeasons ?? r.careerSeasons ?? r.career_seasons ?? 0,
+    careerHighOvr: r.retirementSummary?.careerHighOvr,
+    lastSeasonStats: r.retirementSummary?.lastSeasonStats,
+  }))
+  campaign.settings.pendingRetirementsYear = currentYear
+
   await CampaignRepository.save(campaign)
 
   return {
@@ -1915,6 +1969,7 @@ export async function enterOffseason(campaignId) {
     },
     releasedUserPlayers,
     seasonAwards,
+    retirees: campaign.settings.pendingRetirements,
   }
 }
 
@@ -2018,6 +2073,12 @@ export async function startNewSeason(campaignId) {
   campaign.settings.scoutingPoints = 0
   campaign.settings.lastScoutingWeek = 0
   campaign.settings.scoutedPlayers = {}
+
+  // 3c-bis. Clear any unviewed retirement list from the offseason that just
+  // ended. Belt-and-suspenders alongside the modal's own dismissal — if the
+  // user closed the tab without clicking Continue, the next regular season
+  // shouldn't re-pop last year's modal.
+  campaign.settings.pendingRetirements = []
 
   // 3d. Decrement scout contract (2-season contracts)
   if (campaign.settings.scout) {
@@ -2547,6 +2608,10 @@ export function generatePlayer(options) {
     birthDate,
     birth_date: birthDate,
     age,
+    // Stamp the season the player entered so the first birthday tick
+    // doesn't immediately re-age them. Uses 2025 as the league baseline
+    // (matches the birthYear math above).
+    _lastBirthdayYear: 2025,
 
     // Ratings
     overallRating: overall,

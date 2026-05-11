@@ -531,8 +531,8 @@ onUnmounted(() => {
               <!-- Away Team -->
               <div class="team-side away">
                 <div
-                  class="team-badge"
-                  :style="{ backgroundColor: awayTeam?.primary_color || '#3B82F6' }"
+                  class="team-badge away-team"
+                  :style="{ '--team-color': awayTeam?.primary_color || '#3B82F6' }"
                 >
                   {{ awayTeam?.abbreviation || 'AWY' }}
                 </div>
@@ -566,7 +566,7 @@ onUnmounted(() => {
               <div class="team-side home">
                 <div
                   class="team-badge"
-                  :style="{ backgroundColor: homeTeam?.primary_color || '#EF4444' }"
+                  :style="{ '--team-color': homeTeam?.primary_color || '#EF4444' }"
                 >
                   {{ homeTeam?.abbreviation || 'HME' }}
                 </div>
@@ -903,6 +903,14 @@ onUnmounted(() => {
   font-weight: 700;
   color: white;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  background: var(--team-color, #6B7280);
+}
+
+/* AWAY TEAM TREATMENT */
+.team-badge.away-team {
+  background: #FFFFFF;
+  color: var(--team-color, #1a1520);
+  border: 2px solid var(--team-color, #6B7280);
 }
 
 .team-name {

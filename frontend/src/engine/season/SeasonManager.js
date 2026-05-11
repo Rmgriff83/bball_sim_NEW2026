@@ -856,12 +856,13 @@ export class SeasonManager {
       if (game.isCancelled) continue
       if (game.gameDate > nextGameDate) continue
 
-      // Include AI playoff games from prior dates that were missed (e.g., if
-      // _simulateAiGamesForDay failed silently and the date advanced past them).
-      // For non-playoff games, skip anything before current date.
+      // Include any AI game from prior dates that was missed — e.g. if the
+      // background `_simulateAiGamesForDay` was interrupted by navigation /
+      // refresh and the campaign date later advanced past it. Without this
+      // catch-up, AI teams can fall behind the user's game count over a
+      // season. We never include the user's own past games (those are
+      // genuinely already finished or in-progress).
       if (game.gameDate < currentDateStr) {
-        if (!game.isPlayoff) continue
-        // Only include missed AI playoff games, not user's own
         if (game.homeTeamId === userTeamId || game.awayTeamId === userTeamId) continue
       }
 

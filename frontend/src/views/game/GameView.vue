@@ -49,6 +49,7 @@ const {
   currentAwayScore,
   currentBoxScore,
   currentActivatedBadges,
+  currentActivatedSynergies,
   loadAnimationData,
   play,
   pause,
@@ -241,11 +242,20 @@ const playoffRoundLabel = computed(() => {
 // is the right fallback so the box-score header reads the persisted final.
 const displayHomeScore = computed(() => {
   if (showAnimationMode.value || isLiveMode.value) return currentHomeScore.value
-  return game.value?.is_complete ? (game.value.home_score ?? currentHomeScore.value) : currentHomeScore.value
+  // For both completed AND in-progress games (e.g. user finished Q1 then
+  // navigated back to the preview), the persisted schedule entry's score is
+  // the source of truth. The animation composable resets to 0 on remount.
+  if (game.value?.is_complete || game.value?.is_in_progress) {
+    return game.value.home_score ?? currentHomeScore.value
+  }
+  return currentHomeScore.value
 })
 const displayAwayScore = computed(() => {
   if (showAnimationMode.value || isLiveMode.value) return currentAwayScore.value
-  return game.value?.is_complete ? (game.value.away_score ?? currentAwayScore.value) : currentAwayScore.value
+  if (game.value?.is_complete || game.value?.is_in_progress) {
+    return game.value.away_score ?? currentAwayScore.value
+  }
+  return currentAwayScore.value
 })
 
 // Determine if user is home or away
@@ -1966,8 +1976,8 @@ onUnmounted(() => {
               <span class="team-location-label">AWAY</span>
               <div class="team-badge-wrapper">
                 <div
-                  class="team-badge-game"
-                  :style="{ backgroundColor: awayTeam?.primary_color || '#6B7280' }"
+                  class="team-badge-game away-team"
+                  :style="{ '--team-color': awayTeam?.primary_color || '#6B7280' }"
                 >
                   <span class="badge-abbr">{{ awayTeam?.abbreviation }}</span>
                   <span class="badge-record">
@@ -2011,7 +2021,7 @@ onUnmounted(() => {
               <div class="team-badge-wrapper">
                 <div
                   class="team-badge-game"
-                  :style="{ backgroundColor: homeTeam?.primary_color || '#6B7280' }"
+                  :style="{ '--team-color': homeTeam?.primary_color || '#6B7280' }"
                 >
                   <span class="badge-abbr">{{ homeTeam?.abbreviation }}</span>
                   <span class="badge-record">
@@ -2045,8 +2055,8 @@ onUnmounted(() => {
               <div class="broadcast-team">
                 <div class="broadcast-team-column">
                   <div
-                    class="broadcast-team-logo"
-                    :style="{ backgroundColor: awayTeam?.primary_color || '#6B7280' }"
+                    class="broadcast-team-logo away-team"
+                    :style="{ '--team-color': awayTeam?.primary_color || '#6B7280' }"
                   >
                     {{ awayTeam?.abbreviation }}
                   </div>
@@ -2083,7 +2093,7 @@ onUnmounted(() => {
                 <div class="broadcast-team-column">
                   <div
                     class="broadcast-team-logo"
-                    :style="{ backgroundColor: homeTeam?.primary_color || '#6B7280' }"
+                    :style="{ '--team-color': homeTeam?.primary_color || '#6B7280' }"
                   >
                     {{ homeTeam?.abbreviation }}
                   </div>
@@ -2162,8 +2172,10 @@ onUnmounted(() => {
                 :play-description="hasAnimationData ? currentDescription : ''"
                 :play-team-abbreviation="currentTeam === 'home' ? homeTeam?.abbreviation : awayTeam?.abbreviation"
                 :play-team-color="currentTeam === 'home' ? homeTeam?.primary_color : awayTeam?.primary_color"
+                :play-team-is-away="currentTeam === 'away'"
                 :game-clock="gameClock"
                 :activated-badges="currentActivatedBadges"
+                :activated-synergies="currentActivatedSynergies"
               />
 
               <!-- Quarter Break / Game Complete Overlay -->
@@ -2193,8 +2205,8 @@ onUnmounted(() => {
                           <!-- Away Team -->
                           <div class="qb-matchup-team">
                             <div
-                              class="qb-team-badge"
-                              :style="{ backgroundColor: awayTeam?.primary_color || '#666' }"
+                              class="qb-team-badge away-team"
+                              :style="{ '--team-color': awayTeam?.primary_color || '#666' }"
                             >
                               <span class="qb-badge-abbr">{{ awayTeam?.abbreviation }}</span>
                               <span class="qb-badge-record">
@@ -2217,7 +2229,7 @@ onUnmounted(() => {
                           <div class="qb-matchup-team">
                             <div
                               class="qb-team-badge"
-                              :style="{ backgroundColor: homeTeam?.primary_color || '#666' }"
+                              :style="{ '--team-color': homeTeam?.primary_color || '#666' }"
                             >
                               <span class="qb-badge-abbr">{{ homeTeam?.abbreviation }}</span>
                               <span class="qb-badge-record">
@@ -3303,7 +3315,7 @@ onUnmounted(() => {
                 <div class="evolution-items">
                   <div v-for="injury in evolutionData.home.injuries" :key="injury.player_id" class="evolution-item injury">
                     <span class="player-name">{{ injury.name }}</span>
-                    <span class="injury-details">{{ injury.injury_type }} - Out {{ injury.games_out }} games</span>
+                    <span class="injury-details">{{ injury.injury_type }} - Out {{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
                     <span class="severity-badge" :class="injury.severity">{{ injury.severity }}</span>
                   </div>
                 </div>
@@ -3418,7 +3430,7 @@ onUnmounted(() => {
                 <div class="evolution-items">
                   <div v-for="injury in evolutionData.away.injuries" :key="injury.player_id" class="evolution-item injury">
                     <span class="player-name">{{ injury.name }}</span>
-                    <span class="injury-details">{{ injury.injury_type }} - Out {{ injury.games_out }} games</span>
+                    <span class="injury-details">{{ injury.injury_type }} - Out {{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
                     <span class="severity-badge" :class="injury.severity">{{ injury.severity }}</span>
                   </div>
                 </div>
@@ -3577,101 +3589,102 @@ onUnmounted(() => {
     </template>
 
     <!-- Player Performance Modal -->
-    <BaseModal
-      :show="showPlayerModal"
-      @close="closePlayerModal"
-      title=""
-      :show-header="false"
-      size="md"
-    >
-      <div v-if="selectedPlayer" class="player-modal-content">
-        <!-- Player Header -->
-        <div class="player-modal-header">
-          <div class="player-avatar-lg">
-            <PlayerAvatar :player="selectedPlayer" :size="64" class="avatar-icon" />
-          </div>
-          <div class="player-header-info">
-            <h2 class="player-modal-name">{{ selectedPlayer.name }}</h2>
-            <div class="player-header-meta">
-              <span
-                class="position-badge"
-                :style="{ backgroundColor: getPositionColor(selectedPlayer.position) }"
-              >
-                {{ selectedPlayer.position }}<template v-if="selectedPlayer.secondary_position">/{{ selectedPlayer.secondary_position }}</template>
-              </span>
-              <span v-if="selectedPlayer.overall_rating" class="ovr-badge" :class="getRatingClass(selectedPlayer.overall_rating)">
-                {{ selectedPlayer.overall_rating }} OVR
-              </span>
-            </div>
-          </div>
-          <button class="perf-modal-close" @click="closePlayerModal" aria-label="Close">
-            <X :size="20" />
-          </button>
-        </div>
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showPlayerModal" class="modal-overlay perf-modal-overlay" @click.self="closePlayerModal">
+          <div class="modal-container perf-modal-container">
+            <header class="modal-header">
+              <h2 class="modal-title">{{ selectedPlayer?.name || 'Player' }}</h2>
+              <button class="btn-close" aria-label="Close" @click="closePlayerModal">
+                <X :size="20" />
+              </button>
+            </header>
 
-        <!-- Game Stats -->
-        <div class="game-stats-section">
-          <h4 class="stats-section-title">Game Stats</h4>
-          <div class="game-stats-grid">
-            <div class="game-stat-cell">
-              <span class="game-stat-value highlight">{{ selectedPlayer.points || 0 }}</span>
-              <span class="game-stat-label">PTS</span>
-            </div>
-            <div class="game-stat-cell">
-              <span class="game-stat-value">{{ selectedPlayer.rebounds || 0 }}</span>
-              <span class="game-stat-label">REB</span>
-            </div>
-            <div class="game-stat-cell">
-              <span class="game-stat-value">{{ selectedPlayer.assists || 0 }}</span>
-              <span class="game-stat-label">AST</span>
-            </div>
-            <div class="game-stat-cell">
-              <span class="game-stat-value">{{ selectedPlayer.steals || 0 }}</span>
-              <span class="game-stat-label">STL</span>
-            </div>
-            <div class="game-stat-cell">
-              <span class="game-stat-value">{{ selectedPlayer.blocks || 0 }}</span>
-              <span class="game-stat-label">BLK</span>
-            </div>
-            <div class="game-stat-cell turnover">
-              <span class="game-stat-value">{{ selectedPlayer.turnovers || 0 }}</span>
-              <span class="game-stat-label">TO</span>
-            </div>
+            <main class="modal-content">
+              <div v-if="selectedPlayer" class="player-modal-content">
+                <!-- Player Identity Card -->
+                <div class="player-modal-identity">
+                  <div class="player-avatar-lg">
+                    <PlayerAvatar :player="selectedPlayer" :size="64" class="avatar-icon" />
+                  </div>
+                  <div class="player-identity-meta">
+                    <span
+                      class="position-badge"
+                      :style="{ backgroundColor: getPositionColor(selectedPlayer.position) }"
+                    >
+                      {{ selectedPlayer.position }}<template v-if="selectedPlayer.secondary_position">/{{ selectedPlayer.secondary_position }}</template>
+                    </span>
+                    <span v-if="selectedPlayer.overall_rating" class="ovr-badge" :class="getRatingClass(selectedPlayer.overall_rating)">
+                      {{ selectedPlayer.overall_rating }} OVR
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Game Stats -->
+                <div class="game-stats-section">
+                  <h4 class="stats-section-title">Game Stats</h4>
+                  <div class="game-stats-grid">
+                    <div class="game-stat-cell">
+                      <span class="game-stat-value highlight">{{ selectedPlayer.points || 0 }}</span>
+                      <span class="game-stat-label">PTS</span>
+                    </div>
+                    <div class="game-stat-cell">
+                      <span class="game-stat-value">{{ selectedPlayer.rebounds || 0 }}</span>
+                      <span class="game-stat-label">REB</span>
+                    </div>
+                    <div class="game-stat-cell">
+                      <span class="game-stat-value">{{ selectedPlayer.assists || 0 }}</span>
+                      <span class="game-stat-label">AST</span>
+                    </div>
+                    <div class="game-stat-cell">
+                      <span class="game-stat-value">{{ selectedPlayer.steals || 0 }}</span>
+                      <span class="game-stat-label">STL</span>
+                    </div>
+                    <div class="game-stat-cell">
+                      <span class="game-stat-value">{{ selectedPlayer.blocks || 0 }}</span>
+                      <span class="game-stat-label">BLK</span>
+                    </div>
+                    <div class="game-stat-cell turnover">
+                      <span class="game-stat-value">{{ selectedPlayer.turnovers || 0 }}</span>
+                      <span class="game-stat-label">TO</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Shooting Stats -->
+                <div class="shooting-stats-section">
+                  <h4 class="stats-section-title">Shooting</h4>
+                  <div class="shooting-stats-grid">
+                    <div class="shooting-stat-cell">
+                      <span class="shooting-stat-line">{{ selectedPlayer.fgm || 0 }}-{{ selectedPlayer.fga || 0 }}</span>
+                      <span class="shooting-stat-label">FG</span>
+                    </div>
+                    <div class="shooting-stat-cell">
+                      <span class="shooting-stat-line">{{ selectedPlayer.fg3m || 0 }}-{{ selectedPlayer.fg3a || 0 }}</span>
+                      <span class="shooting-stat-label">3PT</span>
+                    </div>
+                    <div class="shooting-stat-cell">
+                      <span class="shooting-stat-line">{{ selectedPlayer.ftm || 0 }}-{{ selectedPlayer.fta || 0 }}</span>
+                      <span class="shooting-stat-label">FT</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Minutes -->
+                <div class="minutes-row">
+                  <span class="minutes-label">Minutes Played</span>
+                  <span class="minutes-value">{{ selectedPlayer.minutes || 0 }}</span>
+                </div>
+              </div>
+            </main>
+
+            <footer class="modal-footer">
+              <button class="btn-cancel" @click="closePlayerModal">Close</button>
+            </footer>
           </div>
         </div>
-
-        <!-- Shooting Stats -->
-        <div class="shooting-stats-section">
-          <h4 class="stats-section-title">Shooting</h4>
-          <div class="shooting-stats-grid">
-            <div class="shooting-stat-cell">
-              <span class="shooting-stat-line">{{ selectedPlayer.fgm || 0 }}-{{ selectedPlayer.fga || 0 }}</span>
-              <span class="shooting-stat-label">FG</span>
-            </div>
-            <div class="shooting-stat-cell">
-              <span class="shooting-stat-line">{{ selectedPlayer.fg3m || 0 }}-{{ selectedPlayer.fg3a || 0 }}</span>
-              <span class="shooting-stat-label">3PT</span>
-            </div>
-            <div class="shooting-stat-cell">
-              <span class="shooting-stat-line">{{ selectedPlayer.ftm || 0 }}-{{ selectedPlayer.fta || 0 }}</span>
-              <span class="shooting-stat-label">FT</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Minutes -->
-        <div class="minutes-row">
-          <span class="minutes-label">Minutes Played</span>
-          <span class="minutes-value">{{ selectedPlayer.minutes || 0 }}</span>
-        </div>
-      </div>
-
-      <template #footer>
-        <div class="modal-footer-buttons">
-          <button class="btn-close-modal" @click="closePlayerModal">Close</button>
-        </div>
-      </template>
-    </BaseModal>
+      </Transition>
+    </Teleport>
 
     <!-- Simulate Games Modal -->
     <SimulateConfirmModal
@@ -3722,7 +3735,7 @@ onUnmounted(() => {
                     </div>
                     <div class="inj-detail-row">
                       <span class="inj-type">{{ injury.injury_type }}</span>
-                      <span class="inj-duration">{{ injury.games_out }} {{ injury.games_out === 1 ? 'game' : 'games' }}</span>
+                      <span class="inj-duration">{{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
                     </div>
                   </div>
                 </div>
@@ -4019,6 +4032,21 @@ onUnmounted(() => {
   gap: 2px;
   flex-shrink: 0;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  background: var(--team-color, #6B7280);
+}
+
+/* AWAY TEAM TREATMENT: invert so the home/away team logos are visually
+   distinct even when their primary colors are similar. Background flips
+   to white with the team color showing through the abbreviation/record. */
+.team-badge-game.away-team {
+  background: #FFFFFF;
+  border: 2px solid var(--team-color, #6B7280);
+}
+
+.team-badge-game.away-team .badge-abbr,
+.team-badge-game.away-team .badge-record {
+  color: var(--team-color, #1a1520);
+  text-shadow: none;
 }
 
 .badge-abbr {
@@ -4057,7 +4085,7 @@ onUnmounted(() => {
 .team-location-label {
   font-size: 0.6rem;
   font-weight: 700;
-  color: var(--color-text-tertiary);
+  color: rgba(0, 0, 0, 0.7);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   margin-bottom: 2px;
@@ -4485,6 +4513,18 @@ onUnmounted(() => {
   gap: 1px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   border: 3px solid rgba(255, 255, 255, 0.3);
+  background: var(--team-color, #6B7280);
+}
+
+.qb-team-badge.away-team {
+  background: #FFFFFF;
+  border-color: var(--team-color, #6B7280);
+}
+
+.qb-team-badge.away-team .qb-badge-abbr,
+.qb-team-badge.away-team .qb-badge-record {
+  color: var(--team-color, #1a1520);
+  text-shadow: none;
 }
 
 .qb-badge-abbr {
@@ -5405,65 +5445,120 @@ onUnmounted(() => {
   padding-left: 4px;
 }
 
-/* Player Modal Styles */
+/* Player Performance Modal — global modal standard (matches SimulateConfirmModal) */
+.perf-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+.perf-modal-container {
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.perf-modal-overlay .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.perf-modal-overlay .modal-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.perf-modal-overlay .btn-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.perf-modal-overlay .btn-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.perf-modal-overlay .modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.perf-modal-overlay .modal-footer {
+  display: flex;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.perf-modal-overlay .btn-cancel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.perf-modal-overlay .btn-cancel:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+/* Body content */
 .player-modal-content {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  flex: 1;
-  overflow-y: auto;
 }
 
-.modal-footer-buttons {
-  display: flex;
-  gap: 0.75rem;
-}
-
-.btn-close-modal {
-  flex: 1;
-  padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-primary);
-  font-size: 0.85rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.btn-close-modal:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.perf-modal-close {
-  margin-left: auto;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 50%;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
-}
-
-.perf-modal-close:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: var(--color-text-primary);
-}
-
-.player-modal-header {
+.player-modal-identity {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
 }
 
 .player-avatar-lg {
@@ -5481,22 +5576,29 @@ onUnmounted(() => {
   color: rgba(255, 255, 255, 0.9);
 }
 
-.player-header-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.player-modal-name {
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-
-.player-header-meta {
+.player-identity-meta {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
+
+/* Modal transition */
+.modal-enter-active { transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1); }
+.modal-leave-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+
+@keyframes perfScaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes perfScaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+
+.modal-enter-active .perf-modal-container { animation: perfScaleIn 0.3s cubic-bezier(0, 0, 0.2, 1); }
+.modal-leave-active .perf-modal-container { animation: perfScaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards; }
 
 .ovr-badge {
   padding: 2px 8px;
@@ -5884,6 +5986,15 @@ onUnmounted(() => {
   color: white;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  background: var(--team-color, #6B7280);
+}
+
+/* AWAY TEAM TREATMENT — same inversion rule as the postgame header. */
+.broadcast-team-logo.away-team {
+  background: #FFFFFF;
+  color: var(--team-color, #1a1520);
+  border: 2px solid var(--team-color, #6B7280);
+  text-shadow: none;
 }
 
 .broadcast-score-container {

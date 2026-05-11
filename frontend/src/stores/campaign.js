@@ -7,8 +7,15 @@ import {
   listCampaigns,
 } from '@/engine/campaign/CampaignManager'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { backfillBirthDates } from '@/engine/migrations/backfillBirthDates'
 import { TEAMS } from '@/engine/data/teams'
 import { useSyncStore } from '@/stores/sync'
+import { usePlayoffStore } from '@/stores/playoff'
+import { useTeamStore } from '@/stores/team'
+import { useGameStore } from '@/stores/game'
+import { useFinanceStore } from '@/stores/finance'
+import { useLeagueStore } from '@/stores/league'
+import { useBreakingNewsStore } from '@/stores/breakingNews'
 import api from '@/composables/useApi'
 
 export const useCampaignStore = defineStore('campaign', () => {
@@ -101,6 +108,26 @@ export const useCampaignStore = defineStore('campaign', () => {
     }
   }
 
+  /**
+   * Clear every per-campaign Pinia store so stale state from a previous
+   * campaign can't leak into a freshly-loaded one. Called whenever the
+   * loaded campaign id is about to change (including switching from one
+   * existing campaign to another, or loading a brand-new campaign).
+   * Without this, e.g. `playoffStore.bracket` from a campaign that was in
+   * the playoffs persists across navigations and the new campaign shows
+   * playoff buttons / brackets until a hard refresh.
+   */
+  function _resetCampaignScopedStores() {
+    try { usePlayoffStore().$reset() } catch (_) { /* noop */ }
+    try { useTeamStore().clearTeam() } catch (_) { /* noop */ }
+    try { useGameStore().invalidate() } catch (_) { /* noop */ }
+    try { useGameStore().clearCurrentGame() } catch (_) { /* noop */ }
+    try { useFinanceStore().clearFinanceState() } catch (_) { /* noop */ }
+    try { useLeagueStore().invalidate() } catch (_) { /* noop */ }
+    try { useLeagueStore().clearStandings() } catch (_) { /* noop */ }
+    try { useBreakingNewsStore().clear() } catch (_) { /* noop */ }
+  }
+
   async function fetchCampaign(id) {
     loading.value = true
     error.value = null
@@ -108,6 +135,19 @@ export const useCampaignStore = defineStore('campaign', () => {
       // Set active campaign for sync
       const syncStore = useSyncStore()
       syncStore.setActiveCampaign(id)
+
+      // When switching campaigns, blow away every per-campaign store so the
+      // previous campaign's state (bracket, roster, games, finances, news)
+      // can't leak into the new one. The cleared stores will repopulate
+      // below via `engineLoadCampaign` + the views' own fetch calls.
+      const previousId = currentCampaign.value?.id ?? null
+      if (previousId && previousId !== id) {
+        _resetCampaignScopedStores()
+      } else if (!previousId) {
+        // Fresh app load — clearing is also safe (no-op if everything is
+        // already empty) and protects against hot-reload state retention.
+        _resetCampaignScopedStores()
+      }
 
       let result
 
@@ -129,6 +169,16 @@ export const useCampaignStore = defineStore('campaign', () => {
 
       if (!result || !result.campaign) {
         throw new Error('Failed to load campaign')
+      }
+
+      // One-shot legacy migration: fill `birthDate` on any pre-existing
+      // players that were generated before the birthday-driven aging system,
+      // and stamp `_lastBirthdayYear` so the first tick doesn't re-age them.
+      // Guarded internally by campaign.settings.birthDateMigrationDone.
+      try {
+        await backfillBirthDates(id)
+      } catch (migrationErr) {
+        console.warn('[Campaign] birthDate backfill failed:', migrationErr)
       }
 
       const { campaign, teams, userTeam, seasonData, year } = result
@@ -164,6 +214,14 @@ export const useCampaignStore = defineStore('campaign', () => {
       const result = await engineCreateCampaign(data)
       const newCampaign = result.campaign
       campaigns.value.push(newCampaign)
+
+      // Wipe any per-campaign store state from the previous campaign before
+      // the user navigates into this fresh one. Without this, going from a
+      // campaign in the playoffs straight into a brand-new campaign leaves
+      // the playoffStore.bracket populated → the new campaign's home view
+      // renders playoff buttons / brackets until a hard refresh.
+      currentCampaign.value = null
+      _resetCampaignScopedStores()
 
       // Mark for cloud sync
       const syncStore = useSyncStore()

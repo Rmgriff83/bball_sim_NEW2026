@@ -226,11 +226,13 @@ const opponentTeamData = computed(() => {
               <div class="matchup-card card-cosmic">
                 <span class="game-date">{{ formatDate(nextGame.gameDate) }}</span>
                 <div class="matchup">
-                  <!-- User Team -->
+                  <!-- User Team. nextGame.isHome === true means the USER is home;
+                       so the user's badge inverts only when the user is the away team. -->
                   <div class="matchup-team">
                     <div
                       class="team-badge"
-                      :style="{ backgroundColor: userTeamData?.color || '#E85A4F' }"
+                      :class="{ 'away-team': nextGame && !nextGame.isHome }"
+                      :style="{ '--team-color': userTeamData?.color || '#E85A4F' }"
                     >
                       {{ userTeamData?.abbreviation }}
                     </div>
@@ -242,11 +244,12 @@ const opponentTeamData = computed(() => {
                     <span>VS</span>
                   </div>
 
-                  <!-- Opponent Team -->
+                  <!-- Opponent Team — opponent is away when user is home. -->
                   <div class="matchup-team">
                     <div
                       class="team-badge"
-                      :style="{ backgroundColor: opponentTeamData?.color || '#666' }"
+                      :class="{ 'away-team': nextGame && nextGame.isHome }"
+                      :style="{ '--team-color': opponentTeamData?.color || '#666' }"
                     >
                       {{ opponentTeamData?.abbreviation }}
                     </div>
@@ -648,6 +651,15 @@ const opponentTeamData = computed(() => {
   color: white;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   border: 3px solid rgba(255, 255, 255, 0.3);
+  background: var(--team-color, #6B7280);
+}
+
+/* AWAY TEAM TREATMENT: invert so home/away read clearly when both teams
+   have similar primary colors. */
+.team-badge.away-team {
+  background: #FFFFFF;
+  color: var(--team-color, #1a1520);
+  border-color: var(--team-color, #6B7280);
 }
 
 .team-name {

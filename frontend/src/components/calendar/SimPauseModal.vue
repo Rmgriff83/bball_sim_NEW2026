@@ -137,7 +137,7 @@ onUnmounted(() => {
                     </div>
                     <div class="inj-detail-row">
                       <span class="inj-type">{{ injury.injury_type }}</span>
-                      <span class="inj-duration">{{ injury.games_out }} {{ injury.games_out === 1 ? 'game' : 'games' }}</span>
+                      <span class="inj-duration">{{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
                     </div>
                   </div>
                 </div>

@@ -20,6 +20,7 @@ import SeasonEndModal from '@/components/playoffs/SeasonEndModal.vue'
 import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import SeasonAwardsModal from '@/components/playoffs/SeasonAwardsModal.vue'
+import RetirementModal from '@/components/team/RetirementModal.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
 import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
@@ -77,6 +78,7 @@ const offseasonData = ref(null) // Stores AI contract results + expiring players
 // flag persists the dismissal across navigations / reloads.
 const showSeasonAwardsModal = ref(false)
 const seasonAwardsForModal = ref(null)
+const showRetirementModal = ref(false)
 const seasonAwardsYear = ref(null)
 
 // Only show loading if we don't have cached campaign data
@@ -703,6 +705,9 @@ onMounted(async () => {
       checkAllStarSelections()
       // Surface the regular-season-complete toast if the user has no games left
       maybeShowRegularSeasonCompleteToast()
+      // Re-pop the retirement modal on mount if the user landed on the
+      // offseason hub via a refresh / cold load and hasn't dismissed it yet.
+      maybeShowRetirementModal()
     }).catch(err => console.error('Failed to refresh campaign:', err))
     // Also check playoff status in background
     checkPlayoffStatus()
@@ -723,6 +728,9 @@ onMounted(async () => {
       await checkAllStarSelections()
       // Surface the regular-season-complete toast if the user has no games left
       maybeShowRegularSeasonCompleteToast()
+      // Re-pop the retirement modal on first cold-load if we land on the
+      // offseason hub with un-dismissed retirees.
+      maybeShowRetirementModal()
     } catch (err) {
       console.error('Failed to load campaign:', err)
     } finally {
@@ -968,6 +976,12 @@ async function handleEnterOffseason() {
     // modal, mirroring the championship/series-result flow. Skipped if the
     // user already dismissed the awards modal for this season.
     await maybeShowSeasonAwardsModal(result.seasonAwards)
+    // If the awards modal didn't open (no awards or already dismissed),
+    // still attempt the retirement modal — handleCloseSeasonAwardsModal
+    // chains them when both fire, but this covers the no-awards path.
+    if (!showSeasonAwardsModal.value) {
+      await maybeShowRetirementModal()
+    }
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Failed to enter offseason')
@@ -1020,6 +1034,50 @@ async function handleCloseSeasonAwardsModal() {
     console.warn('[CampaignHome] failed to persist seasonAwardsViewed:', err)
   }
   seasonAwardsForModal.value = null
+
+  // After awards close, surface the retirement modal (if applicable). Awards
+  // and retirements both fire once per offseason, but retirements come second
+  // so the user reads the season's wrap-up before seeing who hung it up.
+  await maybeShowRetirementModal()
+}
+
+// Snapshot retirees + year at the moment we open the modal so dismissal can
+// safely clear settings.pendingRetirements without the modal blanking out
+// during its close transition.
+const retireesForModal = ref([])
+const pendingRetirementsYear = ref(null)
+
+async function maybeShowRetirementModal() {
+  const camp = campaignStore.currentCampaign
+  if (!camp) return
+  const list = camp.settings?.pendingRetirements ?? []
+  if (list.length === 0) return
+  const year = camp.settings?.pendingRetirementsYear
+  if (camp.settings?.retirementsDismissedYear === year) return
+  retireesForModal.value = list
+  pendingRetirementsYear.value = year
+  showRetirementModal.value = true
+}
+
+async function handleCloseRetirementModal() {
+  showRetirementModal.value = false
+  // Hard-clear `pendingRetirements` from settings (alongside stamping the
+  // dismissed year) so the modal cannot re-pop even if the year flag is
+  // somehow overwritten by another settings mutation downstream. The list
+  // is empty → the maybeShow guard returns early on every future call.
+  try {
+    const camp = campaignStore.currentCampaign
+    if (!camp) return
+    const year = camp.settings?.pendingRetirementsYear
+    const nextSettings = {
+      ...(camp.settings ?? {}),
+      pendingRetirements: [],
+      retirementsDismissedYear: year,
+    }
+    await campaignStore.updateCampaign(campaignId.value, { settings: nextSettings })
+  } catch (err) {
+    console.warn('[CampaignHome] failed to persist retirement dismissal:', err)
+  }
 }
 
 // Handle starting a new season from offseason hub
@@ -1894,9 +1952,10 @@ function handleCloseSimulateModal() {
         <div class="next-game-content">
           <div class="next-game-matchup">
             <div class="matchup-team" :class="{ 'user-team': !lastSimResult.isUserHome }">
+              <!-- Away team in this matchup → invert background to white -->
               <div
-                class="team-badge-game"
-                :style="{ backgroundColor: lastSimResult.awayTeamColor }"
+                class="team-badge-game away-team"
+                :style="{ '--team-color': lastSimResult.awayTeamColor }"
               >
                 <span class="badge-abbr">{{ lastSimResult.awayTeam }}</span>
                 <span class="badge-score">{{ lastSimResult.awayScore }}</span>
@@ -1908,7 +1967,7 @@ function handleCloseSimulateModal() {
             <div class="matchup-team" :class="{ 'user-team': lastSimResult.isUserHome }">
               <div
                 class="team-badge-game"
-                :style="{ backgroundColor: lastSimResult.homeTeamColor }"
+                :style="{ '--team-color': lastSimResult.homeTeamColor }"
               >
                 <span class="badge-abbr">{{ lastSimResult.homeTeam }}</span>
                 <span class="badge-score">{{ lastSimResult.homeScore }}</span>
@@ -1977,7 +2036,8 @@ function handleCloseSimulateModal() {
                 <div class="team-badge-group">
                   <div
                     class="team-badge-game"
-                    :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
+                    :class="{ 'away-team': nextGameOpponent && !nextGameOpponent.isHome }"
+                    :style="{ '--team-color': team?.primary_color || '#E85A4F' }"
                   >
                     <span class="badge-abbr">{{ team?.abbreviation }}</span>
                     <!-- nextGameOpponent.isHome is set to whether the USER is home
@@ -2001,7 +2061,8 @@ function handleCloseSimulateModal() {
                 <div class="team-badge-group">
                   <div
                     class="team-badge-game"
-                    :style="{ backgroundColor: nextGameOpponent?.color || '#666' }"
+                    :class="{ 'away-team': nextGameOpponent?.isHome }"
+                    :style="{ '--team-color': nextGameOpponent?.color || '#666' }"
                   >
                     <span class="badge-abbr">{{ nextGameOpponent?.abbreviation }}</span>
                     <!-- Opponent score = the side opposite the user. -->
@@ -2699,6 +2760,14 @@ function handleCloseSimulateModal() {
       @close="handleCloseSeasonAwardsModal"
     />
 
+    <!-- Retirement Modal — fires after the awards modal closes, before FA opens -->
+    <RetirementModal
+      :show="showRetirementModal"
+      :retirees="retireesForModal"
+      :season="pendingRetirementsYear"
+      @close="handleCloseRetirementModal"
+    />
+
     <!-- Trade Proposal Modal -->
     <TradeProposalModal
       :show="showTradeProposalModal"
@@ -2771,7 +2840,7 @@ function handleCloseSimulateModal() {
                     </div>
                     <div class="inj-detail-row">
                       <span class="inj-type">{{ injury.injury_type }}</span>
-                      <span class="inj-duration">{{ injury.games_out }} {{ injury.games_out === 1 ? 'game' : 'games' }}</span>
+                      <span class="inj-duration">{{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
                     </div>
                   </div>
                 </div>
@@ -4155,6 +4224,15 @@ function handleCloseSimulateModal() {
   color: white;
   box-shadow: var(--shadow-md);
   border: 3px solid var(--color-bg-tertiary);
+  background: var(--team-color, #6B7280);
+}
+
+/* AWAY TEAM TREATMENT: invert so away/home logos read clearly even when
+   their primary colors are similar. */
+.team-badge-game.away-team {
+  background: #FFFFFF;
+  color: var(--team-color, #1a1520);
+  border-color: var(--team-color, #6B7280);
 }
 
 .badge-abbr {

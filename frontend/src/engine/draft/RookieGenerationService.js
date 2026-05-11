@@ -245,6 +245,10 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
       const birthDay = String(randInt(1, 28)).padStart(2, '0')
       player.birthDate = `${birthYear}-${birthMonth}-${birthDay}`
       player.birth_date = player.birthDate
+      // Stamp the draft year so the next birthday tick (which compares to
+      // currentSeasonYear) doesn't immediately re-age the rookie before
+      // their actual birthday in their first NBA season.
+      player._lastBirthdayYear = gameYear
 
       // Rookie draft prospect flags
       player.isFreeAgent = 1

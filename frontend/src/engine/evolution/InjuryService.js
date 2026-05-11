@@ -121,13 +121,16 @@ function generateInjury(player) {
   const [injuryKey, injuryName] = injuryEntries[randomIndex];
 
   const [minDuration, maxDuration] = injuryTypeConfig.duration;
+  // Duration is now in DAYS (was games). Recovery decrements once per
+  // calendar day, not per game played.
   const duration = Math.floor(Math.random() * (maxDuration - minDuration + 1)) + minDuration;
 
   return {
     type: injuryKey,
     name: injuryName,
     severity: severity,
-    games_remaining: duration,
+    days_remaining: duration,
+    duration_days: duration,
     occurred_date: new Date().toISOString().split('T')[0],
     permanent_impact: injuryTypeConfig.permanent_impact ?? 0,
     permanent_impact_applied: false,
@@ -173,25 +176,40 @@ function isInjured(player) {
 }
 
 /**
- * Get games remaining for injury recovery.
+ * Get days remaining for injury recovery. Falls back to the legacy
+ * `games_remaining` field for already-injured players from before the
+ * games→days migration (those values are interpreted as days going forward).
  *
  * @param {object} player - Player data object
  * @returns {number}
  */
-function getGamesRemaining(player) {
+function getDaysRemaining(player) {
   const injury = player.injury_details ?? player.injuryDetails ?? null;
-  return injury?.games_remaining ?? 0;
+  return injury?.days_remaining ?? injury?.games_remaining ?? 0;
 }
 
+// Legacy alias — kept so any existing callers keep compiling.
+const getGamesRemaining = getDaysRemaining;
+
 /**
- * Process injury recovery (decrement games remaining).
- * Returns a new player object with updated injury state.
+ * Process injury recovery — decrement days remaining by `daysElapsed`
+ * (default 1). Returns a new player object with updated injury state.
+ *
+ * Called from the date-advance hook so an injury counts down across both
+ * game days AND off days (including the entire offseason). Previously the
+ * counter only moved when a game was simulated, which left injuries stuck
+ * across the offseason and into the next year.
  *
  * @param {object} player - Player data object
+ * @param {number} daysElapsed - Calendar days elapsed since last call (>=1)
+ * @param {object} options - { recoverySpeedBonus }
  * @returns {object} Updated player object
  */
-function processRecovery(player, options = {}) {
+function processRecovery(player, daysElapsed = 1, options = {}) {
   if (!isInjured(player)) {
+    return player;
+  }
+  if (!Number.isFinite(daysElapsed) || daysElapsed <= 0) {
     return player;
   }
 
@@ -204,16 +222,22 @@ function processRecovery(player, options = {}) {
   player = { ...player };
   injury = { ...injury };
 
-  // Base decrement is 1; with recovery speed bonus, probabilistically decrement by 2
-  let decrement = 1;
-  if (options.recoverySpeedBonus > 0 && Math.random() < options.recoverySpeedBonus) {
-    decrement = 2;
-  }
+  // Migration: legacy `games_remaining` is treated as `days_remaining`.
+  let remaining = injury.days_remaining ?? injury.games_remaining ?? 0;
 
-  injury.games_remaining = Math.max(0, (injury.games_remaining ?? 0) - decrement);
+  // Base decrement matches calendar days. The trainer recovery-speed bonus
+  // is applied as a fractional multiplier (each bonus point shaves a tiny
+  // bit off the total recovery time over the course of the injury).
+  const speedBonus = Math.max(0, options.recoverySpeedBonus || 0);
+  const decrement = daysElapsed * (1 + speedBonus);
+
+  remaining = Math.max(0, remaining - decrement);
+  injury.days_remaining = remaining;
+  // Drop the legacy field so we don't have two sources of truth lying around.
+  delete injury.games_remaining;
 
   // Check if recovered
-  if (injury.games_remaining <= 0) {
+  if (remaining <= 0) {
     player.is_injured = false;
     player.isInjured = false;
     player.injury_details = null;
@@ -273,18 +297,18 @@ function applyPermanentImpact(player, injury) {
  * @returns {string} Human-readable recovery estimate
  */
 function getRecoveryEstimate(injury) {
-  const games = injury.games_remaining ?? 0;
+  const days = injury?.days_remaining ?? injury?.games_remaining ?? 0;
 
-  if (games <= 5) {
+  if (days <= 7) {
     return 'day-to-day';
-  } else if (games <= 14) {
-    return '1-2 weeks';
-  } else if (games <= 28) {
-    return '2-4 weeks';
-  } else if (games <= 42) {
-    return '4-6 weeks';
-  } else if (games <= 60) {
-    return '6-8 weeks';
+  } else if (days <= 21) {
+    return '1-3 weeks';
+  } else if (days <= 45) {
+    return '3-6 weeks';
+  } else if (days <= 90) {
+    return '6-13 weeks';
+  } else if (days <= 150) {
+    return '3-5 months';
   } else {
     return 'out for season';
   }
@@ -298,6 +322,7 @@ export {
   processRecovery,
   applyPermanentImpact,
   isInjured,
+  getDaysRemaining,
   getGamesRemaining,
   getRecoveryEstimate,
 };

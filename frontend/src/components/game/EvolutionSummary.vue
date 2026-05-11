@@ -145,7 +145,7 @@ function formatAttribute(attr) {
 
         <!-- Content based on type -->
         <span v-if="item.type === 'injury'" class="injury-info">
-          {{ item.injury_type }} ({{ item.games_out }} games)
+          {{ item.injury_type }} ({{ item.days_out ?? item.games_out ?? 0 }} {{ (item.days_out ?? item.games_out ?? 0) === 1 ? 'day' : 'days' }})
         </span>
         <span v-else-if="item.type === 'development'" class="stat-badges">
           <span v-for="attr in item.attributes_improved" :key="attr" class="attr-badge positive">

@@ -519,24 +519,33 @@ function recalculateOverall(player) {
   }
 
   const previousAnchor = player._overallCalcAnchor;
-  let newOverall;
-  if (typeof previousAnchor === 'number' && typeof player.overallRating === 'number') {
-    // Subsequent call: shift the existing overall by the delta in the
-    // calculated value since the last anchor. Preserves master ratings
-    // while still letting evolution / regression move the rating.
+  // Track the UNROUNDED overall so fractional progress doesn't get clipped
+  // on every recalc. Each delta from the formula is small (~0.02 per +1
+  // attribute), and the old code rounded on every call AND re-anchored — so
+  // the fractional bumps were silently discarded. With `_overallExact` we
+  // accumulate the float value and only round when reading.
+  const prevExact = typeof player._overallExact === 'number'
+    ? player._overallExact
+    : (typeof player.overallRating === 'number' ? player.overallRating : null);
+
+  let newExact;
+  if (typeof previousAnchor === 'number' && typeof prevExact === 'number') {
     const delta = calculated - previousAnchor;
-    newOverall = Math.round(Math.min(99, Math.max(40, player.overallRating + delta)));
-  } else if (typeof player.overallRating === 'number') {
+    newExact = Math.min(99, Math.max(40, prevExact + delta));
+  } else if (typeof prevExact === 'number') {
     // First call on a player that already has an overall (master file or
     // pre-set elsewhere): keep the existing rating and just record the
     // anchor. Don't overwrite with the formula's value.
-    newOverall = player.overallRating;
+    newExact = prevExact;
   } else {
     // Bootstrap path for players generated without a baseline overall.
-    newOverall = Math.round(Math.min(99, Math.max(40, calculated)));
+    newExact = Math.min(99, Math.max(40, calculated));
   }
 
+  const newOverall = Math.round(newExact);
+
   player._overallCalcAnchor = calculated;
+  player._overallExact = newExact;
   player.overallRating = newOverall;
   player.overall_rating = newOverall;
 
@@ -677,24 +686,123 @@ function processStreaks(player) {
 // =============================================================================
 
 /**
- * Check if player should retire.
+ * Compute a retirement probability in [0, max_chance] from the player's
+ * overall age, rating, morale, career length, and contract status.
+ * Returns the raw chance (does NOT roll it).
+ */
+function calculateRetirementChance(player, age) {
+  const config = Config.RETIREMENT;
+  if (age <= config.ramp_start_age) return 0;
+
+  const ovr = player.overallRating ?? player.overall_rating ?? 70;
+  const morale = player.personality?.morale ?? player.morale ?? 80;
+  const careerSeasons = player.careerSeasons ?? player.career_seasons ?? 0;
+  const isFA = player.isFreeAgent === 1 || player.is_free_agent === 1;
+
+  const base = Math.max(0, (age - config.ramp_start_age) * config.age_per_year_factor);
+
+  const ovrGap = config.ovr_pivot - ovr;
+  const ovrFactor = Math.min(config.ovr_max_bonus, Math.max(0, ovrGap / 100));
+
+  const moraleGap = config.morale_pivot - morale;
+  const moraleFactor = Math.min(config.morale_max_bonus, Math.max(0, moraleGap / 200));
+
+  const careerExtra = Math.max(0, careerSeasons - config.career_seasons_pivot);
+  const careerFactor = Math.min(
+    config.career_seasons_max_bonus,
+    careerExtra * config.career_seasons_per_year_bonus
+  );
+
+  const faFactor = (isFA && age >= config.unsigned_fa_age_threshold)
+    ? config.unsigned_fa_bonus
+    : 0;
+
+  const hardFloor = age >= config.hard_floor_age ? config.hard_floor_chance : 0;
+
+  const chance = base + ovrFactor + moraleFactor + careerFactor + faFactor;
+  const final = Math.max(hardFloor, chance);
+  return Math.min(config.max_chance, final);
+}
+
+/**
+ * Roll the retirement check. Wraps `calculateRetirementChance`.
  */
 function shouldRetire(player, age) {
-  const config = Config.RETIREMENT;
+  const chance = calculateRetirementChance(player, age);
+  if (chance <= 0) return false;
+  return Math.random() < chance;
+}
 
-  if (age < config.min_age) {
-    return false;
+/**
+ * Run retirement decisions for the entire league after `processSeasonEnd`.
+ * Returns `{ retirees, remaining }` — both arrays of player objects, with
+ * retirees fully mutated (teamId cleared, contract zeroed, isRetired flagged)
+ * and ready for `PlayerRepository.saveBulk`. The caller is responsible for
+ * persistence and for stashing the modal-friendly summary on the campaign.
+ */
+function processRetirements(allPlayers, currentYear) {
+  const retirees = [];
+  const remaining = [];
+
+  for (const rawPlayer of allPlayers || []) {
+    if (!rawPlayer) continue;
+    if (rawPlayer.isRetired || rawPlayer.is_retired) {
+      remaining.push(rawPlayer);
+      continue;
+    }
+
+    const age = getPlayerAge(rawPlayer);
+    if (!shouldRetire(rawPlayer, age)) {
+      remaining.push(rawPlayer);
+      continue;
+    }
+
+    const player = clonePlayer(rawPlayer);
+    const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
+    const teamId = player.teamId ?? player.team_id ?? null;
+
+    const careerSeasons = player.careerSeasons ?? player.career_seasons ?? 0;
+    const ovr = player.overallRating ?? player.overall_rating ?? 0;
+    const careerHighOvr = Math.max(player.careerHighOvr ?? 0, ovr);
+    const lastSeasonStats = _summarizeLastSeasonStats(player);
+
+    player.isRetired = true;
+    player.is_retired = true;
+    player.previousTeamId = teamId;
+    player.previousTeamAbbreviation = teamAbbr;
+    player.previous_team_id = teamId;
+    player.previous_team_abbreviation = teamAbbr;
+    player.teamId = null;
+    player.team_id = null;
+    player.teamAbbreviation = 'RET';
+    player.team_abbreviation = 'RET';
+    player.isFreeAgent = 0;
+    player.is_free_agent = 0;
+    player.contractYearsRemaining = 0;
+    player.contract_years_remaining = 0;
+    player.contractSalary = 0;
+    player.contract_salary = 0;
+    player.retiredAt = currentYear;
+    player.retirementSummary = {
+      careerSeasons,
+      careerHighOvr,
+      lastSeasonStats,
+      age,
+      primaryTeamAbbreviation: teamAbbr,
+    };
+
+    retirees.push(player);
   }
 
-  let chance = config.base_chance;
-  chance += (age - config.min_age) * config.age_factor;
+  return { retirees, remaining };
+}
 
-  const overall = player.overallRating ?? player.overall_rating ?? 70;
-  if (overall < config.low_rating_threshold) {
-    chance += config.low_rating_bonus;
-  }
-
-  return (Math.floor(Math.random() * 100) + 1) / 100 <= chance;
+function _summarizeLastSeasonStats(player) {
+  const ssn = player.season_stats || player.seasonStats || {};
+  const ppg = ssn.ppg ?? ssn.points_per_game ?? null;
+  const rpg = ssn.rpg ?? ssn.rebounds_per_game ?? null;
+  const apg = ssn.apg ?? ssn.assists_per_game ?? null;
+  return { ppg, rpg, apg };
 }
 
 // =============================================================================
@@ -938,24 +1046,10 @@ function processTeamPostGame(
 
     const playerName = getPlayerName(player);
 
-    // Process injury recovery for already-injured players FIRST
-    if (checkIsInjured(player)) {
-      const existingInjury = player.injury_details ?? player.injuryDetails ?? null;
-      player = processRecovery(player, { recoverySpeedBonus: options.recoverySpeedBonus || 0 });
-
-      // Check if just recovered
-      const stillInjured = checkIsInjured(player);
-
-      if (existingInjury && !stillInjured) {
-        newsEvents.push(generateEvolutionNews('recovery', player, { injury: existingInjury, gameDate }));
-
-        evolutionSummary.recoveries.push({
-          player_id: playerId,
-          name: playerName,
-          injury_type: existingInjury.name ?? existingInjury.injury_type ?? 'Injury',
-        });
-      }
-    }
+    // Injury recovery is no longer decremented per-game — it now ticks down
+    // once per calendar day via `_advanceDateIfNeeded` in stores/game.js. That
+    // ensures injuries also recover during off-days and the offseason. This
+    // hook would double-decrement, so it's removed.
 
     const oldMorale = player.personality?.morale ?? 80;
 
@@ -991,12 +1085,16 @@ function processTeamPostGame(
       // Create injury news
       newsEvents.push(generateEvolutionNews('injury', player, { injury, gameDate }));
 
-      // Add to summary
+      // Add to summary. `days_out` is the canonical field post games→days
+      // migration; `games_out` is kept as an alias so any consumer still
+      // reading the old key gets the same number rather than 0.
+      const injuryDays = Math.ceil(injury.days_remaining ?? injury.games_remaining ?? injury.gamesRemaining ?? 0);
       evolutionSummary.injuries.push({
         player_id: playerId,
         name: playerName,
         injury_type: injury.name ?? 'Unknown',
-        games_out: injury.games_remaining ?? injury.gamesRemaining ?? 0,
+        days_out: injuryDays,
+        games_out: injuryDays, // legacy alias — consumers should prefer days_out
         severity: injury.severity ?? 'minor',
       });
     }
@@ -1426,23 +1524,14 @@ export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro', 
     player.career_seasons = (player.career_seasons ?? player.careerSeasons ?? 0) + 1;
     player.careerSeasons = player.career_seasons;
 
-    // Apply seasonal aging
+    // Aging now ticks on each player's actual birthday during the season
+    // (see stores/game.js → _tickPlayerBirthdays). Skip the season-end
+    // batch to avoid double-aging.
     const age = getPlayerAge(player);
-    if (player.attributes) {
-      player.attributes = applySeasonalAging(player.attributes, age);
-    }
 
-    // Check for retirement
-    if (shouldRetire(player, age)) {
-      player.is_retired = true;
-      player.isRetired = true;
-      results.retired.push(getPlayerName(player));
-      newsEvents.push(generateEvolutionNews('retirement', player, {
-        careerSeasons: player.career_seasons ?? 1,
-      }));
-      // Don't add retired players to active roster
-      continue;
-    }
+    // Retirement decisions are now extracted into `processRetirements()` and
+    // run by `enterOffseason` AFTER this function so contract status (just-
+    // released veterans) can feed into the decision. Skip here.
 
     // Reset season stats
     player.games_played_this_season = 0;
@@ -1614,6 +1703,8 @@ export {
   trackPerformance,
   processStreaks,
   shouldRetire,
+  calculateRetirementChance,
+  processRetirements,
   processAIUpgrades,
   selectAIUpgrade,
   getPositionAttributeWeights,

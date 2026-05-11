@@ -244,6 +244,7 @@ export function getRosterContracts({ roster, seasonStats = {} }) {
 export function getFreeAgents(leaguePlayers) {
   return leaguePlayers
     .filter(player => {
+      if (player.isRetired || player.is_retired) return false;
       const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
       return !teamAbbr || teamAbbr === 'FA';
     })

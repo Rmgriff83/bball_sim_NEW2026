@@ -255,8 +255,12 @@ export const useSyncStore = defineStore('sync', () => {
 
   function _stripTeamForSync(team) {
     const slim = { ...team }
-    // Remove draft picks detail (can be regenerated)
-    delete slim.draftPicks
+    // Note: draftPicks are KEPT in the sync payload. They were previously
+    // stripped here under the assumption they could be regenerated, but no
+    // pull-side regeneration ever existed — so any team that round-tripped
+    // through the cloud came back with `draftPicks: undefined` and the
+    // trade wizard saw zero picks for everyone. ~120KB across the league
+    // is well within the per-chunk size budget.
     return slim
   }
 
@@ -571,6 +575,50 @@ export const useSyncStore = defineStore('sync', () => {
       } else {
         console.log('[Sync] All local teams are up to date')
       }
+    }
+
+    // Recovery: campaigns synced before the strip-draftPicks fix have teams
+    // in IndexedDB with `draftPicks` undefined or empty. Regenerate the
+    // standard 5-year initial pick set (rounds 1 & 2) for any team that's
+    // missing them so the trade wizard, draft order, and AI evaluators all
+    // work. Picks already moved by trades aren't recoverable this way, but
+    // a campaign that's never run a draft yet recovers cleanly.
+    try {
+      const campaignAfter = data.campaign
+        ? data.campaign
+        : await CampaignRepository.get(campaignId)
+      const startGameYear = campaignAfter?.gameYear ?? 1
+      const teamsAfter = await TeamRepository.getAllForCampaign(campaignId)
+      const toRegenerate = teamsAfter.filter(t => !Array.isArray(t.draftPicks) || t.draftPicks.length === 0)
+      if (toRegenerate.length > 0) {
+        for (const team of toRegenerate) {
+          const picks = []
+          for (let yearOffset = 0; yearOffset < 5; yearOffset++) {
+            const draftYear = startGameYear + yearOffset
+            for (const round of [1, 2]) {
+              picks.push({
+                id: `${team.id}-${draftYear}-r${round}-recovered-${Math.random().toString(36).slice(2, 8)}`,
+                campaignId,
+                originalTeamId: team.id,
+                currentOwnerId: team.id,
+                original_team_abbreviation: team.abbreviation,
+                year: draftYear,
+                round,
+                pick_number: null,
+                projected_position: null,
+                isTraded: false,
+                display_name: `${draftYear} Round ${round} (${team.abbreviation})`,
+                trade_value: round === 1 ? 5 : 0.5,
+              })
+            }
+          }
+          team.draftPicks = picks
+        }
+        await TeamRepository.saveBulk(toRegenerate)
+        console.log(`[Sync] Regenerated draft picks for ${toRegenerate.length} teams (recovery)`)
+      }
+    } catch (regenErr) {
+      console.warn('[Sync] Draft-pick regeneration recovery failed:', regenErr)
     }
 
     if (data.players && Array.isArray(data.players) && data.players.length > 0) {

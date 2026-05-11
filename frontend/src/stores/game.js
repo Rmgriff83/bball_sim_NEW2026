@@ -21,6 +21,9 @@ import { AllStarService } from '@/engine/season/AllStarService'
 import { getSeasonDeadlines } from '@/engine/season/SeasonDeadlines'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
+import { processRecovery as processInjuryRecovery, isInjured as isPlayerInjured } from '@/engine/evolution/InjuryService'
+import { applySeasonalAging } from '@/engine/evolution/AttributeAging'
+import { recalculateOverall } from '@/engine/evolution/PlayerEvolution'
 
 export const useGameStore = defineStore('game', () => {
   // State
@@ -322,6 +325,83 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * Tick injury recovery for every injured player by `daysElapsed` calendar
+   * days. Called from `_advanceDateIfNeeded` so injuries count down on game
+   * days, off days, and across the entire offseason. Bulk-saves the
+   * resulting player updates in one IndexedDB write.
+   */
+  async function _tickInjuryRecovery(campaignId, daysElapsed) {
+    if (!Number.isFinite(daysElapsed) || daysElapsed <= 0) return
+    const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+    if (!allPlayers || allPlayers.length === 0) return
+
+    const updates = []
+    for (const player of allPlayers) {
+      if (!isPlayerInjured(player)) continue
+      const next = processInjuryRecovery(player, daysElapsed)
+      // processRecovery returns the same reference when no change occurred,
+      // so a strict ref check is enough to know we need to persist.
+      if (next !== player) {
+        updates.push({ ...next, campaignId })
+      }
+    }
+    if (updates.length > 0) {
+      await PlayerRepository.saveBulk(updates)
+    }
+  }
+
+  /**
+   * Birthday tick — for each player whose birthday falls in (prevDate, newDate],
+   * bump their `age` and apply one year's worth of attribute aging via
+   * `applySeasonalAging`. Idempotent within a season via `_lastBirthdayYear`.
+   * Skips retired players. Bulk-saves at the end.
+   *
+   * Replaces the old season-end aging batch — aging now happens staggered
+   * across the year on each player's actual birthday, matching real life.
+   */
+  async function _tickPlayerBirthdays(campaignId, prevDate, newDate) {
+    if (!prevDate || !newDate || newDate <= prevDate) return
+    const campaign = await CampaignRepository.get(campaignId)
+    if (!campaign) return
+    const currentSeasonYear = campaign.currentSeasonYear
+      ?? campaign.settings?.currentSeasonYear
+      ?? 2025
+
+    const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+    if (!allPlayers || allPlayers.length === 0) return
+
+    const updates = []
+    for (const player of allPlayers) {
+      if (player.isRetired || player.is_retired) continue
+      const birth = player.birthDate || player.birth_date
+      if (!birth || birth.length < 10) continue
+      const mmdd = birth.slice(5) // "MM-DD"
+      const birthdayThisYear = `${currentSeasonYear}-${mmdd}`
+      const lastAgedYear = player._lastBirthdayYear ?? 0
+      if (lastAgedYear >= currentSeasonYear) continue
+      if (birthdayThisYear <= prevDate) continue
+      if (birthdayThisYear > newDate) continue
+
+      const newAge = (player.age ?? 0) + 1
+      player.age = newAge
+      if (player.attributes) {
+        player.attributes = applySeasonalAging(player.attributes, newAge)
+      }
+      try {
+        recalculateOverall(player)
+      } catch (err) {
+        console.warn('[GameStore] recalculateOverall failed on birthday tick:', err)
+      }
+      player._lastBirthdayYear = currentSeasonYear
+      updates.push({ ...player, campaignId })
+    }
+
+    if (updates.length > 0) {
+      await PlayerRepository.saveBulk(updates)
+    }
+  }
+
+  /**
    * Process weekly AI-to-AI trades when a Monday boundary is crossed.
    * Moves players between AI teams, transfers pick ownership, and records news/history.
    */
@@ -591,6 +671,23 @@ export const useGameStore = defineStore('game', () => {
             dirty = true
           }
         }
+
+        // Raise the All-Star pause modal so it fires in single-shot paths
+        // (live play, single-game sim, sim-day) — not just from the multi-day
+        // simulateToGame loop, which has its own re-trigger via _enterPause.
+        // Set pauseState directly (informational, no resume context) so the
+        // SimPauseModal mounted in CampaignView surfaces immediately. The
+        // multi-day path will harmlessly overwrite this with a proper
+        // _enterPause(...) call (with resume context) when it reaches its
+        // post-day check.
+        if (seasonData?.allStarRosters && !seasonData?.allStarViewed) {
+          pauseState.value = {
+            reason: 'all_star',
+            payload: { allStarRosters: seasonData.allStarRosters },
+          }
+          pauseResumeContext.value = null
+          simulationPaused.value = true
+        }
       }
 
       // Save once if anything was processed
@@ -633,6 +730,24 @@ export const useGameStore = defineStore('game', () => {
 
       const newMs = new Date(newDate).getTime()
       currentWeek = _getMondayWeek(newMs)
+
+      // Tick injury recovery for every calendar day elapsed since the last
+      // advance. This is what lets injuries continue to recover during off
+      // days and across the entire offseason — previously they only ticked
+      // per game played, so a player injured during the playoffs stayed at
+      // the same game count through the offseason and into the next year.
+      const daysElapsed = Math.max(1, Math.round((newMs - prevMs) / (24 * 60 * 60 * 1000)))
+      try {
+        await _tickInjuryRecovery(campaignId, daysElapsed)
+      } catch (err) {
+        console.warn('[GameStore] Injury recovery tick failed:', err)
+      }
+
+      try {
+        await _tickPlayerBirthdays(campaignId, campaign.currentDate || '', newDate)
+      } catch (err) {
+        console.warn('[GameStore] Birthday tick failed:', err)
+      }
 
       // Award scouting points for any new weeks
       scoutingPointsEarned = await _awardScoutingPoints(campaign, newDate)
@@ -1328,8 +1443,12 @@ export const useGameStore = defineStore('game', () => {
         }
       }
 
-      // Simulate AI games for this day in background (non-blocking)
+      // Simulate AI games for this day in background (non-blocking).
+      // Also sweep up any AI games on dates ≤ this game's date that were
+      // missed (e.g. an earlier background sim aborted via navigation). This
+      // keeps AI team game counts in lockstep with the user's.
       _simulateAiGamesForDay(campaignId, year, game.gameDate, userTeamId)
+      _catchUpMissedAiGames(campaignId, year, game.gameDate, userTeamId)
 
       return quarterResult
     } catch (err) {
@@ -2579,6 +2698,24 @@ export const useGameStore = defineStore('game', () => {
 
     SeasonManager.bulkMergeResults(seasonData, results)
 
+    // Per-game coach career-stat updates for every AI-vs-AI game. The
+    // single-game path (_persistGameResult) already calls this, but bulk AI
+    // sims used to skip it — so coach career records for AI teams stayed at
+    // 0-0 through the entire regular season until the season-end archive
+    // reconciliation ran. Fire it here for parity.
+    for (const r of results) {
+      const game = aiGames.find(g => g.id === r.gameId)
+      if (!game) continue
+      try {
+        await _updateCoachCareerStatsAfterGame(campaignId, game, {
+          home_score: r.homeScore,
+          away_score: r.awayScore,
+        })
+      } catch (err) {
+        console.warn('[GameStore] Coach career stat update failed for bulk AI game:', err)
+      }
+    }
+
     // Update playoff series for any AI playoff games
     const playoffGames = aiGames.filter(g => g.isPlayoff && g.playoffSeriesId)
     if (playoffGames.length > 0) {
@@ -2640,6 +2777,48 @@ export const useGameStore = defineStore('game', () => {
           away_score: result.awayScore,
         }
       }
+    }
+  }
+
+  /**
+   * Catch up AI games on dates strictly BEFORE `cutoffDate` that were missed
+   * (e.g. a previous background sim was interrupted before completing).
+   * Fire-and-forget; runs in background so it doesn't block the live game.
+   * Does not touch the user's own games.
+   */
+  async function _catchUpMissedAiGames(campaignId, year, cutoffDate, userTeamId) {
+    try {
+      const seasonData = await SeasonRepository.get(campaignId, year)
+      if (!seasonData) return
+
+      const aiGames = seasonData.schedule.filter(
+        g => g.gameDate < cutoffDate && !g.isComplete && !g.isCancelled &&
+             g.homeTeamId !== userTeamId && g.awayTeamId !== userTeamId
+      )
+      if (aiGames.length === 0) return
+
+      const engineStore = useEngineStore()
+      const worker = engineStore.getWorker()
+      const toastStore = useToastStore()
+
+      backgroundSimulating.value = true
+      simulationProgress.value = { completed: 0, total: aiGames.length }
+      const progressToastId = toastStore.showProgress('Catching up league games', 0, aiGames.length)
+
+      try {
+        await _simulateAiGamesBulk(campaignId, year, seasonData, aiGames, worker, (progress) => {
+          simulationProgress.value = progress
+          toastStore.updateProgress(progressToastId, progress.completed, progress.total)
+        })
+      } finally {
+        toastStore.removeMinimalToast(progressToastId)
+        backgroundSimulating.value = false
+        simulationProgress.value = null
+      }
+    } catch (err) {
+      console.error('Failed to catch up missed AI games:', err)
+      backgroundSimulating.value = false
+      simulationProgress.value = null
     }
   }
 

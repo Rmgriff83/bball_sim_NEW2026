@@ -165,7 +165,11 @@ export const useFinanceStore = defineStore('finance', () => {
     try {
       const allAgents = await PlayerRepository.getFreeAgents(campaignId)
       // Filter out draft prospects — they belong on the scouting page, not free agency
-      const agents = (allAgents || []).filter(p => !p.isDraftProspect && !p.rookieTier)
+      // Filter out retirees defensively (PlayerRepository already filters but a
+      // race or stale index could still surface them).
+      const agents = (allAgents || []).filter(p =>
+        !p.isDraftProspect && !p.rookieTier && !p.isRetired && !p.is_retired
+      )
 
       // During the offseason FA window, enrich each player with offer state so
       // ContractCard can render the offers-count badge / "Offered" chip.
@@ -248,7 +252,37 @@ export const useFinanceStore = defineStore('finance', () => {
       dbPlayer.contract_years_remaining = years
       dbPlayer.contractSalary = newSalary
       dbPlayer.contract_salary = newSalary
+
+      // Rebuild contract_details.salaries to match the new term so any
+      // downstream code that reads the year-by-year breakdown sees the
+      // updated values rather than the stale pre-resign array.
+      const flatSalaries = Array.from({ length: years }, () => newSalary)
+      const newDetails = {
+        ...(dbPlayer.contract_details || dbPlayer.contractDetails || {}),
+        totalYears: years,
+        yearsRemaining: years,
+        salaries: flatSalaries,
+        currentYearSalary: newSalary,
+        totalValue: newSalary * years,
+      }
+      dbPlayer.contract_details = newDetails
+      dbPlayer.contractDetails = newDetails
+
       await PlayerRepository.save(dbPlayer)
+
+      // VERIFY: read the record back to make sure the write actually
+      // persisted (production has had reports of the resign appearing to
+      // succeed but the contract not updating). If the verify fails, throw
+      // so the parent handler shows an error toast instead of a misleading
+      // "Player re-signed" success message.
+      const verifyPlayer = await PlayerRepository.get(campaignId, playerId)
+      const verifyYears = verifyPlayer?.contract_years_remaining ?? verifyPlayer?.contractYearsRemaining
+      if (verifyYears !== years) {
+        console.error('[FinanceStore] Resign verify failed — IndexedDB read back', {
+          expected: years, got: verifyYears, player: verifyPlayer,
+        })
+        throw new Error('Re-sign did not persist — please try again')
+      }
 
       // Update the player in the local roster — keep both casings in sync so
       // any UI reading the snake_case form (e.g. contract_years_remaining)
@@ -261,12 +295,26 @@ export const useFinanceStore = defineStore('finance', () => {
           contract_years_remaining: years,
           contractSalary: newSalary,
           contract_salary: newSalary,
+          contractDetails: newDetails,
+          contract_details: newDetails,
         }
       }
 
       // Refresh team store so roster/lineup tabs reflect the change immediately
       await useTeamStore().fetchTeam(campaignId, { force: true })
-      useSyncStore().markDirty()
+      const syncStore = useSyncStore()
+      syncStore.markDirty()
+
+      // Push immediately to the cloud so a subsequent navigation that
+      // triggers `fetchCampaign → pullChanges` can't drag back the stale
+      // pre-resign state. Fire-and-forget — don't block the UI on it. In dev
+      // this is effectively a no-op; in prod it closes the push/pull race
+      // window where a slow cloud round-trip would let the pull win.
+      if (typeof syncStore.syncNow === 'function') {
+        syncStore.syncNow().catch(err => {
+          console.warn('[FinanceStore] Post-resign sync push failed:', err)
+        })
+      }
 
       closeResignModal()
       return result

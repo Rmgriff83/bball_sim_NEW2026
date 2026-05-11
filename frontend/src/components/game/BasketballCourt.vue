@@ -144,6 +144,10 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  playTeamIsAway: {
+    type: Boolean,
+    default: false
+  },
   playTeamAbbreviation: {
     type: String,
     default: ''
@@ -157,6 +161,10 @@ const props = defineProps({
     default: ''
   },
   activatedBadges: {
+    type: Array,
+    default: () => []
+  },
+  activatedSynergies: {
     type: Array,
     default: () => []
   }
@@ -179,6 +187,13 @@ const scoreAnimation = ref(null)  // { points: 2|3, progress: 0-1, startTime: ti
 const badgeAnimations = ref([])  // Array of { badgeId, level, playerName, x, y, progress, startTime }
 const lastAnimatedBadges = ref('')  // Track last animated badges to prevent duplicates
 const animatedBadgeKeys = ref(new Set()) // Per-badge dedupe within a possession; reset when the list shrinks (= new possession)
+
+// Synergy animation state — synergies take precedence over individual badge
+// animations for the players involved (handled in usePlayAnimation by
+// filtering out their badges). Renders in the cosmic purple used elsewhere
+// for synergy indicators.
+const synergyAnimations = ref([])
+const animatedSynergyKeys = ref(new Set())
 
 // Crowd celebration animation state
 const crowdCelebrations = ref([])  // Array of { emoji, x, y, progress, startTime }
@@ -313,6 +328,49 @@ function animateBadges() {
 
   if (badgeAnimations.value.length > 0) {
     requestAnimationFrame(animateBadges)
+  } else {
+    drawCourt()
+  }
+}
+
+/**
+ * Trigger a synergy activation animation — same shape as the regular badge
+ * pop, just colored in the cosmic purple used elsewhere for synergy
+ * indicators. The badge animations for the players involved are suppressed
+ * upstream (in `usePlayAnimation.currentActivatedBadges`) so this is the
+ * sole effect that fires for them.
+ *
+ * @param {Object} synergy - { synergy_name, badge1, badge2, player1, player2 }
+ * @param {number} x - anchor x (normalized 0-1) — defaults to the shooter
+ * @param {number} y - anchor y (normalized 0-1)
+ */
+function triggerSynergyAnimation(synergy, x = 0.5, y = 0.4) {
+  synergyAnimations.value.push({
+    ...synergy,
+    x,
+    y,
+    progress: 0,
+    startTime: performance.now(),
+  })
+  animateSynergies()
+}
+
+function animateSynergies() {
+  if (synergyAnimations.value.length === 0) return
+
+  const now = performance.now()
+  const duration = 1800  // 1.8 seconds — slightly longer than a badge
+
+  synergyAnimations.value = synergyAnimations.value.filter(anim => {
+    const elapsed = now - anim.startTime
+    anim.progress = Math.min(1, elapsed / duration)
+    return anim.progress < 1
+  })
+
+  drawCourt()
+
+  if (synergyAnimations.value.length > 0) {
+    requestAnimationFrame(animateSynergies)
   } else {
     drawCourt()
   }
@@ -622,6 +680,91 @@ function drawBadgeAnimations(c) {
   })
 }
 
+/**
+ * Render synergy activation pops. Same shape and animation curves as
+ * `drawBadgeAnimations`, just colored in the cosmic purple
+ * (#8B5CF6 / rgb(139,92,246)) used by the lineup tab's synergy indicators.
+ */
+function drawSynergyAnimations(c) {
+  const w = courtWidth.value
+  const h = courtHeight.value
+
+  synergyAnimations.value.forEach(anim => {
+    const { synergy_name, x, y, progress } = anim
+
+    const easeOutBack = (t) => {
+      const c1 = 1.70158
+      const c3 = c1 + 1
+      return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
+    }
+    const easeOutQuad = (t) => 1 - (1 - t) * (1 - t)
+
+    const scaleProgress = Math.min(1, progress * 2.5)
+    const fadeProgress = Math.max(0, (progress - 0.5) / 0.5)
+    const riseProgress = easeOutQuad(progress)
+
+    const scale = easeOutBack(scaleProgress) * 0.8
+    const riseAmount = 40 * riseProgress
+    const canvasX = x * w
+    const canvasY = (y * h) - riseAmount
+    const opacity = 1 - fadeProgress
+
+    const PURPLE_FILL = '#8B5CF6'
+    const PURPLE_LIGHT = '#C4B5FD'
+    const PURPLE_GLOW = 'rgba(139, 92, 246, 0.55)'
+
+    c.save()
+    c.translate(canvasX, canvasY)
+    if (isMobile.value) c.rotate(-Math.PI / 2)
+    c.scale(scale, scale)
+    c.globalAlpha = opacity
+
+    // Glow halo
+    const glowRadius = 30
+    const gradient = c.createRadialGradient(0, 0, 0, 0, 0, glowRadius)
+    gradient.addColorStop(0, PURPLE_GLOW)
+    gradient.addColorStop(1, 'transparent')
+    c.beginPath()
+    c.arc(0, 0, glowRadius, 0, Math.PI * 2)
+    c.fillStyle = gradient
+    c.fill()
+
+    // Shield (same path as the regular badge animation)
+    c.beginPath()
+    c.moveTo(0, -15)
+    c.lineTo(12, -8)
+    c.lineTo(12, 5)
+    c.lineTo(0, 15)
+    c.lineTo(-12, 5)
+    c.lineTo(-12, -8)
+    c.closePath()
+    c.fillStyle = PURPLE_FILL
+    c.fill()
+    c.strokeStyle = '#000'
+    c.lineWidth = 2
+    c.stroke()
+
+    // Center sparkle in light purple — mirrors the level letter slot on
+    // regular badges. "✦" reads as a synergy / link indicator.
+    c.font = 'bold 14px Arial'
+    c.fillStyle = PURPLE_LIGHT
+    c.textAlign = 'center'
+    c.textBaseline = 'middle'
+    c.fillText('✦', 0, 0)
+
+    // Synergy name below (same offset as badge name)
+    const displayName = (synergy_name || 'Synergy').toUpperCase()
+    c.font = 'bold 10px Arial'
+    c.fillStyle = '#FFFFFF'
+    c.strokeStyle = '#000'
+    c.lineWidth = 2
+    c.strokeText(displayName.substring(0, 14), 0, 28)
+    c.fillText(displayName.substring(0, 14), 0, 28)
+
+    c.restore()
+  })
+}
+
 function drawDefensiveAnimations(c) {
   const w = courtWidth.value
   const h = courtHeight.value
@@ -840,6 +983,12 @@ function drawCourt() {
   // Draw badge animations if active
   if (badgeAnimations.value.length > 0) {
     drawBadgeAnimations(c)
+  }
+
+  // Draw synergy animations on top so the cosmic-purple flare reads above
+  // the per-player badge effects.
+  if (synergyAnimations.value.length > 0) {
+    drawSynergyAnimations(c)
   }
 
   // Draw on-court defensive animations if active
@@ -1279,13 +1428,27 @@ function drawPlayers(c) {
       c.restore()
 
     } else {
+      // Fallback circle (no headshot). Away team inverts the colors so the
+      // home and away players are visually distinct even when their primary
+      // colors are similar — white fill, team-color stroke, team-color text.
+      const teamColor = isHome
+        ? (props.homeTeam?.primary_color || '#3B82F6')
+        : (props.awayTeam?.primary_color || '#EF4444')
       c.beginPath()
       c.arc(x, y, radius, 0, Math.PI * 2)
-      c.fillStyle = isHome ? (props.homeTeam?.primary_color || '#3B82F6') : (props.awayTeam?.primary_color || '#EF4444')
-      c.fill()
-      c.strokeStyle = '#FFFFFF'
-      c.lineWidth = 2
-      c.stroke()
+      if (isHome) {
+        c.fillStyle = teamColor
+        c.fill()
+        c.strokeStyle = '#FFFFFF'
+        c.lineWidth = 2
+        c.stroke()
+      } else {
+        c.fillStyle = '#FFFFFF'
+        c.fill()
+        c.strokeStyle = teamColor
+        c.lineWidth = 2.5
+        c.stroke()
+      }
     }
 
     // Draw position slot and last name (rotated on mobile to stay readable)
@@ -1298,9 +1461,13 @@ function drawPlayers(c) {
     c.textAlign = 'center'
     c.textBaseline = 'middle'
 
-    // Position slot (only show on fallback circles)
+    // Position slot (only show on fallback circles). Away players use the
+    // team's primary color for the slot text since the circle background is
+    // white; home players use white on the colored fill.
     if (!hasHeadshot) {
-      c.fillStyle = '#FFFFFF'
+      c.fillStyle = isHome
+        ? '#FFFFFF'
+        : (props.awayTeam?.primary_color || '#EF4444')
       c.font = 'bold 10px Arial'
       c.fillText(slot, 0, 0)
     }
@@ -1650,6 +1817,37 @@ watch(() => isMobile.value, () => {
   stableAwayFanIndices.value = new Set()
 })
 
+// Watch for activated synergies. Synergies suppress the individual badge
+// animations for participating players (handled upstream in
+// usePlayAnimation.currentActivatedBadges), so this watcher just needs to
+// fire the purple synergy flourish exactly once per (synergy, possession).
+watch(() => props.activatedSynergies, (newSynergies, oldSynergies) => {
+  if (!newSynergies || newSynergies.length === 0) {
+    animatedSynergyKeys.value = new Set()
+    return
+  }
+  if (oldSynergies && newSynergies.length < oldSynergies.length) {
+    animatedSynergyKeys.value = new Set()
+  }
+
+  for (const syn of newSynergies) {
+    const key = `${syn.synergy_name}-${syn.player1?.id}-${syn.player2?.id}-${syn.time || 0}`
+    if (animatedSynergyKeys.value.has(key)) continue
+    animatedSynergyKeys.value.add(key)
+
+    // Anchor the pop at whoever currently has the ball — that's the
+    // player whose action triggered the synergy (typically the shooter).
+    // Fall back to the synergy's nominal player1 lookup, then to the
+    // shooter id from props, then to a sensible default.
+    const ballHolderEntry = Object.entries(props.interpolatedPositions || {})
+      .find(([, pos]) => pos?.hasBall)
+    const ballPos = ballHolderEntry ? ballHolderEntry[1] : null
+    const p1Pos = props.interpolatedPositions?.[syn.player1?.id]
+    const anchor = ballPos || p1Pos || { x: 0.5, y: 0.4 }
+    triggerSynergyAnimation(syn, anchor.x, anchor.y)
+  }
+}, { deep: true })
+
 // Watch for activated badges and trigger animations as they become due.
 // usePlayAnimation live-filters this list by elapsedTime so badges grow
 // progressively across a play. We dedupe per (badgeId, playerId, time) so
@@ -1686,6 +1884,7 @@ defineExpose({
   clearTrails,
   triggerScoreAnimation,
   triggerBadgeAnimation,
+  triggerSynergyAnimation,
   triggerCrowdCelebration,
   triggerDefensiveCelebration,
   triggerDefensiveAnimationAtPosition
@@ -1719,7 +1918,8 @@ defineExpose({
       <div class="play-description-entry">
         <span
           class="play-team-badge"
-          :style="{ backgroundColor: playTeamColor }"
+          :class="{ 'away-team': playTeamIsAway }"
+          :style="{ '--team-color': playTeamColor }"
         >
           {{ playTeamAbbreviation }}
         </span>
@@ -1814,6 +2014,14 @@ defineExpose({
   border-radius: 2px;
   color: white;
   flex-shrink: 0;
+  background: var(--team-color, #6B7280);
+}
+
+/* AWAY TEAM TREATMENT — same inversion rule as the rest of the game logos. */
+.play-team-badge.away-team {
+  background: #FFFFFF;
+  color: var(--team-color, #1a1520);
+  border: 1px solid var(--team-color, #6B7280);
 }
 
 .play-description-text {

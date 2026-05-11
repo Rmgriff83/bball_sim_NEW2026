@@ -682,6 +682,16 @@ function findSeriesById(seriesId) {
   margin: 0 auto;
 }
 
+/* Desktop: match the 24px top padding the other pages use so the team header
+   doesn't sit flush against the campaign header. Mirrors `.campaign-home`
+   and `.roster-view` desktop overrides. */
+@media (min-width: 1024px) {
+  .playoff-bracket-view {
+    padding: 24px;
+    padding-bottom: 32px;
+  }
+}
+
 /* Team Header */
 .team-header {
   margin-bottom: 16px;

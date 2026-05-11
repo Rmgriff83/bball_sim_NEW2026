@@ -168,8 +168,11 @@ export async function simFullOffseason(campaignId) {
     const updated = {
       ...player,
       teamId: team.id,
+      team_id: team.id,
       teamAbbreviation: team.abbreviation,
+      team_abbreviation: team.abbreviation,
       isFreeAgent: 0,
+      is_free_agent: 0,
       isDraftProspect: false,
       campaignId,
       ...contract,
@@ -186,8 +189,11 @@ export async function simFullOffseason(campaignId) {
         ...rookie,
         isDraftProspect: false,
         isFreeAgent: 1,
+        is_free_agent: 1,
         teamId: null,
+        team_id: null,
         teamAbbreviation: 'FA',
+        team_abbreviation: 'FA',
         campaignId,
         ...contract,
       })
@@ -406,16 +412,24 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
 
     playerUpdates.push({
       ...player,
+      // BOTH casings are required: AI flows (ensureMinimumRosters,
+      // processTeamSignings, etc.) check `p.isFreeAgent === 1 || p.is_free_agent === 1`,
+      // so missing the snake_case duplicate leaves a stale FA flag and the
+      // signed player gets re-scooped onto an AI roster on the next backfill.
       teamId: targetTeam.id,
+      team_id: targetTeam.id,
       teamAbbreviation: targetTeam.abbreviation,
       team_abbreviation: targetTeam.abbreviation,
       isFreeAgent: 0,
+      is_free_agent: 0,
       contractYearsRemaining: winningOffer.years,
       contract_years_remaining: winningOffer.years,
       contractSalary: winningOffer.salary,
       contract_salary: winningOffer.salary,
       previousTeamId: undefined,
+      previous_team_id: undefined,
       previousTeamAbbreviation: undefined,
+      previous_team_abbreviation: undefined,
       campaignId,
     })
 

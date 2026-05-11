@@ -33,7 +33,13 @@ export const PlayerRepository = {
   },
 
   async getFreeAgents(campaignId) {
-    return withDB(async db => _normalizeAll(await db.getAllFromIndex('players', 'freeAgent', [campaignId, 1])))
+    return withDB(async db => {
+      const list = _normalizeAll(await db.getAllFromIndex('players', 'freeAgent', [campaignId, 1]))
+      // Defensive — retirees are explicitly stamped `isFreeAgent: 0` in
+      // processRetirements, but legacy rows or interrupted writes could
+      // leave a retiree on the FA index. Filter them out here.
+      return list.filter(p => !p.isRetired && !p.is_retired)
+    })
   },
 
   async getByPosition(campaignId, position) {

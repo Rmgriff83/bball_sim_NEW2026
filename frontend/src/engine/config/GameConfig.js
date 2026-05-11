@@ -123,9 +123,14 @@ export const ATTRIBUTE_PROFILES = {
 
 export const INJURY_BASE_CHANCE = 0.001; // 0.1% base chance per game
 
+// Injury durations are in DAYS (recovery decrements once per in-game day,
+// not per game). Roughly ~2.5× the old game counts so the calendar feels
+// realistic — an NBA team plays ~82 games over ~180 days, so each game ≈
+// 2.2 calendar days. Scaling up makes recoveries match real-life timelines
+// (sprained ankle = a few days, ACL = months).
 export const INJURY_TYPES = {
   minor: {
-    duration: [1, 5],
+    duration: [3, 12],
     weight: 60, // 60% of injuries are minor
     permanent_impact: 0,
     injuries: {
@@ -138,7 +143,7 @@ export const INJURY_TYPES = {
     },
   },
   moderate: {
-    duration: [6, 20],
+    duration: [14, 45],
     weight: 30, // 30% of injuries
     permanent_impact: 0,
     injuries: {
@@ -151,7 +156,7 @@ export const INJURY_TYPES = {
     },
   },
   severe: {
-    duration: [21, 60],
+    duration: [45, 130],
     weight: 8, // 8% of injuries
     permanent_impact: 1, // -1 to physical attributes permanently
     injuries: {
@@ -163,7 +168,7 @@ export const INJURY_TYPES = {
     },
   },
   season_ending: {
-    duration: [61, 82],
+    duration: [135, 220],
     weight: 2, // 2% of injuries
     permanent_impact: 3, // -3 to physical attributes permanently
     injuries: {
@@ -423,12 +428,27 @@ export const STREAKS = {
 // =============================================================================
 
 export const RETIREMENT = {
-  min_age: 35,
-  base_chance: 0.1, // 10% base chance at min_age
-  age_factor: 0.1, // Additional 10% per year over min_age
-  low_rating_threshold: 65,
-  low_rating_bonus: 0.15, // +15% retirement chance if below threshold
-  injury_history_factor: 0.05, // +5% per major injury in career
+  // Eligibility ramp begins gently at age 33
+  ramp_start_age: 32,
+  age_per_year_factor: 0.06, // +6% per year past ramp_start_age (so age 35 → +18%)
+  // Low-OVR vets retire faster
+  ovr_pivot: 68, // OVR below this contributes to retirement chance
+  ovr_max_bonus: 0.40,
+  // Unhappy old-timers retire
+  morale_pivot: 50,
+  morale_max_bonus: 0.15,
+  // Long careers naturally end
+  career_seasons_pivot: 12,
+  career_seasons_per_year_bonus: 0.03,
+  career_seasons_max_bonus: 0.20,
+  // Free agents not signed by a team — pump up retirement
+  unsigned_fa_age_threshold: 33,
+  unsigned_fa_bonus: 0.20,
+  // Hard floor for very old players
+  hard_floor_age: 40,
+  hard_floor_chance: 0.50,
+  // Cap any single retirement roll at this probability
+  max_chance: 0.95,
 };
 
 // =============================================================================

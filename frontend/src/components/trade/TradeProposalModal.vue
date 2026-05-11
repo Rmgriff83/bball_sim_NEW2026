@@ -1,7 +1,7 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useTradeStore } from '@/stores/trade'
-import { X, ArrowLeftRight, Check, XCircle } from 'lucide-vue-next'
+import { X, ArrowLeftRight, Check, XCircle, AlertTriangle } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 
 const props = defineProps({
@@ -12,6 +12,19 @@ const props = defineProps({
 const emit = defineEmits(['close', 'accept', 'reject'])
 
 const tradeStore = useTradeStore()
+
+// Two-step accept: clicking "Accept Trade" surfaces a confirmation row in
+// the footer. The actual emit('accept') only fires after the user confirms.
+const confirmingAccept = ref(false)
+
+// Reset the confirmation state whenever the modal hides or the proposal
+// changes, so a fresh open never inherits a stale "are you sure?" view.
+watch(() => props.show, (open) => {
+  if (!open) confirmingAccept.value = false
+})
+watch(() => props.proposal?.id, () => {
+  confirmingAccept.value = false
+})
 
 const teamName = computed(() => {
   if (!props.proposal?.proposing_team) return ''
@@ -40,7 +53,17 @@ function handleClose() {
 }
 
 function handleAccept() {
+  // First click → arm the confirmation prompt.
+  confirmingAccept.value = true
+}
+
+function handleConfirmAccept() {
+  // Second click → actually accept.
   emit('accept', props.proposal)
+}
+
+function handleCancelAccept() {
+  confirmingAccept.value = false
 }
 
 function handleReject() {
@@ -160,14 +183,33 @@ function handleKeydown(e) {
 
           <!-- Footer -->
           <div class="modal-footer">
-            <button class="btn-reject" @click="handleReject">
-              <XCircle :size="16" />
-              Reject
-            </button>
-            <button class="btn-accept" @click="handleAccept">
-              <Check :size="16" />
-              Accept Trade
-            </button>
+            <template v-if="!confirmingAccept">
+              <button class="btn-reject" @click="handleReject">
+                <XCircle :size="16" />
+                Reject
+              </button>
+              <button class="btn-accept" @click="handleAccept">
+                <Check :size="16" />
+                Accept Trade
+              </button>
+            </template>
+            <template v-else>
+              <div class="confirm-row">
+                <div class="confirm-prompt">
+                  <AlertTriangle :size="16" />
+                  <span>Accept this trade? This can't be undone.</span>
+                </div>
+                <div class="confirm-actions">
+                  <button class="btn-reject" @click="handleCancelAccept">
+                    Cancel
+                  </button>
+                  <button class="btn-accept" @click="handleConfirmAccept">
+                    <Check :size="16" />
+                    Yes, Accept
+                  </button>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -471,6 +513,37 @@ function handleKeydown(e) {
 .btn-accept:hover {
   background: #16a34a;
   transform: translateY(-1px);
+}
+
+/* Two-step accept confirmation */
+.confirm-row {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.confirm-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-md);
+  color: #f59e0b;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.confirm-actions .btn-reject,
+.confirm-actions .btn-accept {
+  flex: 1;
 }
 
 /* Transitions */

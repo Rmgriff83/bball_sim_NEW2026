@@ -160,6 +160,27 @@ export const COACHES = [
       { id: "player_whisperer", level: "bronze" },
     ],
   },
+  {
+    firstName: "Joe",
+    lastName: "Mazzula",
+    team: "BOS",
+    headshot: "joe_mazzula.png",
+    badges: [{ id: "player_whisperer", level: "silver" }],
+  },
+  {
+    firstName: "Jordi",
+    lastName: "Fernandez",
+    team: "BKN",
+    headshot: "jordi_fernandez.png",
+    badges: [{ id: "offensive_mastermind", level: "bronze" }],
+  },
+  {
+    firstName: "Mike",
+    lastName: "Brown",
+    team: "NYK",
+    headshot: "mike_brown.png",
+    badges: [{ id: "defensive_mastermind", level: "silver" }],
+  },
 ];
 
 /**

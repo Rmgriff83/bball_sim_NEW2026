@@ -411,9 +411,14 @@ export const useTeamStore = defineStore('team', () => {
       const userTeamId = campaign?.teamId ?? campaign?.userTeamId ?? campaign?.user_team_id
       if (!userTeamId) throw new Error('No user team found')
 
-      // Update player: assign to team with contract
+      // Update player: assign to team with contract. BOTH casings on team_id
+      // and is_free_agent are required — many AI flows OR-check both keys
+      // (e.g. ensureMinimumRosters), and a stale snake_case `is_free_agent: 1`
+      // would let an AI roster backfill scoop this player back.
       player.teamId = userTeamId
+      player.team_id = userTeamId
       player.isFreeAgent = 0
+      player.is_free_agent = 0
       player.contractSalary = salary
       player.contract_salary = salary
       player.contractYearsRemaining = years
@@ -444,9 +449,12 @@ export const useTeamStore = defineStore('team', () => {
       const player = await PlayerRepository.get(campaignId, playerId)
       if (!player) throw new Error('Player not found')
 
-      // Update player: clear team, mark as free agent
+      // Update player: clear team, mark as free agent. Set both casings so
+      // every AI/sim path agrees on the player's status.
       player.teamId = null
+      player.team_id = null
       player.isFreeAgent = 1
+      player.is_free_agent = 1
       player.contractSalary = 0
       player.contract_salary = 0
       player.contractYearsRemaining = 0
@@ -629,7 +637,18 @@ export const useTeamStore = defineStore('team', () => {
       player.offenseUpgradePoints = player.offense_upgrade_points ?? 0
       player.defenseUpgradePoints = player.defense_upgrade_points ?? 0
 
-      // Recalculate overall rating
+      // Manual upgrade bump: the formula's per-attribute sensitivity is too
+      // small (~0.02 per +1 attribute) for player-purchased upgrades to feel
+      // meaningful. We add a fixed bump (`MANUAL_UPGRADE_BUMP`, 0.4) to the
+      // unrounded overall on every spent upgrade point so ~2-3 upgrades
+      // reliably yields +1 OVR (capped by potential). Tracked via
+      // `_overallExact` so partial progress survives between recalcs.
+      const baseExact = typeof player._overallExact === 'number'
+        ? player._overallExact
+        : (player.overallRating ?? player.overall_rating ?? 70)
+      player._overallExact = Math.min(potential, baseExact + MANUAL_UPGRADE_BUMP)
+
+      // Recalculate overall rating (will preserve the bump via _overallExact)
       recalculateOverall(player)
 
       // Save to IndexedDB
@@ -656,6 +675,146 @@ export const useTeamStore = defineStore('team', () => {
       }
     } catch (err) {
       throw err
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Upgrade-point purchase
+  // ---------------------------------------------------------------------------
+  // Users can buy offensive or defensive upgrade points with tokens. Each
+  // pool is capped at 3 purchases per season (so 6 total per player, split
+  // 3/3). Pricing escalates within the pool: 3k / 4k / 5k. The counter resets
+  // every season — `seasonUpgradePurchases.year` is checked against the
+  // campaign's current season year on each purchase and zeroed if stale.
+
+  const UPGRADE_POINT_PRICES = [3000, 4000, 5000]
+  const UPGRADE_POINT_MAX_PER_POOL = 3
+
+  // Each spent upgrade point bumps the player's unrounded overall by this
+  // amount (see `upgradePlayerAttribute`). Hoisted here so the headroom /
+  // purchase-availability calc uses the SAME constant as the actual upgrade
+  // application — keeps the two layers in lockstep.
+  const MANUAL_UPGRADE_BUMP = 0.4
+
+  function _getSeasonPurchases(player, currentSeasonYear) {
+    const existing = player.seasonUpgradePurchases ?? player.season_upgrade_purchases ?? null
+    if (existing && existing.year === currentSeasonYear) {
+      return { ...existing }
+    }
+    return { year: currentSeasonYear, offense: 0, defense: 0 }
+  }
+
+  function _getUpgradePointPrice(purchasesSoFar) {
+    return UPGRADE_POINT_PRICES[Math.min(purchasesSoFar, UPGRADE_POINT_PRICES.length - 1)]
+  }
+
+  function _getUpgradeHeadroom(player) {
+    // Headroom = how many MORE upgrade points the player can absorb before
+    // their unrounded overall (`_overallExact`) hits potential. Each spent
+    // upgrade adds `MANUAL_UPGRADE_BUMP` (0.4) to the unrounded overall, and
+    // any unspent points already in the player's pool will eventually do the
+    // same — count those against the headroom too.
+    const exact = typeof player._overallExact === 'number'
+      ? player._overallExact
+      : (player.overall_rating ?? player.overallRating ?? 0)
+    const potential = player.potential_rating ?? player.potentialRating ?? 99
+    const pendingPoints = (player.offense_upgrade_points ?? player.offenseUpgradePoints ?? 0)
+                        + (player.defense_upgrade_points ?? player.defenseUpgradePoints ?? 0)
+    const remainingOvr = Math.max(0, potential - exact - pendingPoints * MANUAL_UPGRADE_BUMP)
+    return Math.floor(remainingOvr / MANUAL_UPGRADE_BUMP)
+  }
+
+  /**
+   * Purchase a single offense or defense upgrade point for the given player.
+   * Returns { tokens, points, purchasesThisSeason, nextPrice }.
+   */
+  async function purchaseUpgradePoint(campaignId, playerId, pool) {
+    if (pool !== 'offense' && pool !== 'defense') {
+      throw new Error('Invalid pool')
+    }
+    const player = await PlayerRepository.get(campaignId, playerId)
+    if (!player) throw new Error('Player not found')
+
+    const campaign = await CampaignRepository.get(campaignId)
+    const currentSeasonYear = campaign?.currentSeasonYear ?? new Date().getFullYear()
+
+    const purchases = _getSeasonPurchases(player, currentSeasonYear)
+    const purchasesInPool = purchases[pool] ?? 0
+    if (purchasesInPool >= UPGRADE_POINT_MAX_PER_POOL) {
+      throw new Error(`${pool === 'defense' ? 'Defense' : 'Offense'} purchase cap reached for this season`)
+    }
+
+    if (_getUpgradeHeadroom(player) < 1) {
+      throw new Error('No headroom — overall is already at potential')
+    }
+
+    const price = _getUpgradePointPrice(purchasesInPool)
+    const authStore = useAuthStore()
+    const currentTokens = authStore.profile?.tokens ?? 0
+    if (currentTokens < price) {
+      throw new Error('Not enough tokens')
+    }
+
+    // Deduct tokens via backend
+    const response = await api.post('/api/user/tokens', { amount: -price })
+    if (authStore.profile) {
+      authStore.profile.tokens = response.data.tokens
+    }
+
+    // Apply the point + record the purchase
+    const pointsField = pool === 'defense' ? 'defense_upgrade_points' : 'offense_upgrade_points'
+    const camelField = pool === 'defense' ? 'defenseUpgradePoints' : 'offenseUpgradePoints'
+    player[pointsField] = (player[pointsField] ?? 0) + 1
+    player[camelField] = player[pointsField]
+    purchases[pool] = purchasesInPool + 1
+    player.seasonUpgradePurchases = purchases
+    player.season_upgrade_purchases = purchases
+
+    await PlayerRepository.save(player)
+    useSyncStore().markDirty()
+
+    // Mirror into local roster cache
+    const idx = roster.value.findIndex(p => p.id === playerId)
+    if (idx !== -1) {
+      roster.value[idx][pointsField] = player[pointsField]
+      roster.value[idx][camelField] = player[camelField]
+      roster.value[idx].seasonUpgradePurchases = purchases
+      roster.value[idx].season_upgrade_purchases = purchases
+    }
+
+    return {
+      tokens: response.data.tokens,
+      points: player[pointsField],
+      purchasesThisSeason: purchases,
+      nextPrice: purchases[pool] >= UPGRADE_POINT_MAX_PER_POOL
+        ? null
+        : _getUpgradePointPrice(purchases[pool]),
+    }
+  }
+
+  /**
+   * Compute the read-only price/availability info for a pool, used by the UI
+   * to render the buy button label, disabled state, and tooltip.
+   */
+  function getUpgradePointPurchaseInfo(player, pool, currentSeasonYear, userTokens = 0) {
+    if (!player || (pool !== 'offense' && pool !== 'defense')) return null
+    const purchases = _getSeasonPurchases(player, currentSeasonYear)
+    const purchasesInPool = purchases[pool] ?? 0
+    const remainingInPool = Math.max(0, UPGRADE_POINT_MAX_PER_POOL - purchasesInPool)
+    const headroom = _getUpgradeHeadroom(player)
+    const reachedSeasonCap = purchasesInPool >= UPGRADE_POINT_MAX_PER_POOL
+    const noHeadroom = headroom < 1
+    const price = reachedSeasonCap ? null : _getUpgradePointPrice(purchasesInPool)
+    const insufficientTokens = price != null && userTokens < price
+    return {
+      price,
+      purchasesInPool,
+      remainingInPool,
+      headroom,
+      reachedSeasonCap,
+      noHeadroom,
+      insufficientTokens,
+      canPurchase: !reachedSeasonCap && !noHeadroom && !insufficientTokens,
     }
   }
 
@@ -862,7 +1021,10 @@ export const useTeamStore = defineStore('team', () => {
       if (isReplacement) {
         const { updated } = applyCoachChangePenalty(roster.value, { phase: campaign.phase })
         if (updated.length > 0) {
-          await PlayerRepository.saveBulk(updated)
+          // `roster.value` players are Vue reactive proxies; IDB can't
+          // structuredClone proxies → DataCloneError. Strip via JSON clone
+          // before persisting (player records are plain JSON-safe).
+          await PlayerRepository.saveBulk(JSON.parse(JSON.stringify(updated)))
         }
       }
 
@@ -955,7 +1117,9 @@ export const useTeamStore = defineStore('team', () => {
       if (teamData.coach) {
         const { updated } = applyCoachChangePenalty(roster.value, { phase: campaign.phase })
         if (updated.length > 0) {
-          await PlayerRepository.saveBulk(updated)
+          // Strip Vue reactive proxies before persisting — IDB structuredClone
+          // can't handle proxies (DataCloneError).
+          await PlayerRepository.saveBulk(JSON.parse(JSON.stringify(updated)))
         }
       }
 
@@ -1015,6 +1179,8 @@ export const useTeamStore = defineStore('team', () => {
     fetchCoachingSchemes,
     updateCoachingScheme,
     upgradePlayerAttribute,
+    purchaseUpgradePoint,
+    getUpgradePointPurchaseInfo,
     purchasePlayerBadge,
     hireCoach,
     resignCoach,
