@@ -5,15 +5,18 @@ import { useFinanceStore } from '@/stores/finance'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
+import { useAuthStore } from '@/stores/auth'
 import { GlassCard, LoadingSpinner } from '@/components/ui'
-import { DollarSign, Users, TrendingUp, Calendar, FileText, ArrowDown, ArrowUp } from 'lucide-vue-next'
+import { DollarSign, Users, TrendingUp, Calendar, FileText, ArrowDown, ArrowUp, FastForward } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import ContractCard from './ContractCard.vue'
 import ResignModal from './ResignModal.vue'
 import SignFreeAgentModal from './SignFreeAgentModal.vue'
 import DropPlayerModal from './DropPlayerModal.vue'
 import PlayerDetailModal from './PlayerDetailModal.vue'
-import { isPastResignDeadline, isInFreeAgencyPeriod } from '@/engine/season/SeasonDeadlines'
+import EndOfFreeAgencyModal from './EndOfFreeAgencyModal.vue'
+import UserFreeAgencyOffers from './UserFreeAgencyOffers.vue'
+import { isPastResignDeadline, isInFreeAgencyPeriod, FREE_AGENCY_DURATION_DAYS } from '@/engine/season/SeasonDeadlines'
 
 const props = defineProps({
   campaignId: {
@@ -26,6 +29,7 @@ const financeStore = useFinanceStore()
 const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
+const authStore = useAuthStore()
 const route = useRoute()
 
 const loading = ref(true)
@@ -35,6 +39,15 @@ const activeSubTab = ref(VALID_SUB_TABS.includes(requestedSubTab) ? requestedSub
 
 const inFreeAgencyPeriod = computed(() => isInFreeAgencyPeriod(campaignStore.currentCampaign))
 const signModalMode = computed(() => inFreeAgencyPeriod.value ? 'offer' : 'instant')
+
+// Drives the inline Sim Day / Sim Rest buttons that appear under the sub-tab
+// nav. Phase-based (not date-based) so it lines up with the offseason hub's
+// own gate on those same controls.
+const isFreeAgencyActive = computed(() => campaignStore.currentCampaign?.phase === 'offseason_free_agency')
+const freeAgencyDay = computed(() => campaignStore.currentCampaign?.settings?.freeAgencyDay ?? 0)
+const simmingFAday = ref(false)
+const showEndOfFreeAgencyModal = ref(false)
+const endOfFreeAgencyResults = ref(null)
 
 // Free-agents filters (sub-tab on roster page). Position narrows the pool;
 // OVR sort orders the results.
@@ -232,6 +245,23 @@ function handleDropFromDetail(player) {
   financeStore.openDropModal(player)
 }
 
+async function handleHoldCoachMeeting({ playerId, purchasedAction }) {
+  try {
+    const res = await teamStore.holdCoachMeeting(
+      props.campaignId, playerId, { purchasedAction }
+    )
+    const summary = purchasedAction
+      ? `Bought a coach meeting · morale +30 (now ${res.morale})`
+      : `Coach meeting held · morale +30 (now ${res.morale}) · ${res.actionsRemaining} actions left`
+    toastStore.showSuccess(summary)
+    // Refresh the modal's player object so morale + action counter update.
+    const updated = teamStore.roster?.find(p => p.id === playerId)
+    if (updated) detailPlayer.value = { ...detailPlayer.value, ...updated }
+  } catch (err) {
+    toastStore.showError(err.response?.data?.message || err.message || 'Failed to hold meeting')
+  }
+}
+
 async function handleResignConfirm(data) {
   resignLoading.value = true
   try {
@@ -299,6 +329,102 @@ async function handleDropConfirm(data) {
     toastStore.showError('Failed to release player')
   } finally {
     dropLoading.value = false
+  }
+}
+
+async function handleSimFreeAgencyDay() {
+  if (simmingFAday.value) return
+  simmingFAday.value = true
+  const loadingToastId = toastStore.showLoading('Simulating free-agency day...')
+  try {
+    const result = await financeStore.simFreeAgencyDay(props.campaignId)
+    await Promise.all([
+      campaignStore.fetchCampaign(props.campaignId, true),
+      financeStore.fetchRosterContracts(props.campaignId, { force: true }),
+      financeStore.fetchFreeAgents(props.campaignId, { force: true }),
+    ])
+    toastStore.removeMinimalToast(loadingToastId)
+    if (result.resolved) {
+      const fas = await financeStore.consumeFreeAgencyResults(props.campaignId)
+      if (fas) {
+        endOfFreeAgencyResults.value = fas
+        showEndOfFreeAgencyModal.value = true
+      }
+      toastStore.showSuccess('Free agency complete!')
+    } else {
+      toastStore.showSuccess(`Day ${result.day}/${FREE_AGENCY_DURATION_DAYS} simulated`)
+    }
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError(err.message || 'Failed to simulate day')
+    console.error('Failed to sim FA day:', err)
+  } finally {
+    simmingFAday.value = false
+  }
+}
+
+async function handleSimRestOfFreeAgency() {
+  if (simmingFAday.value) return
+  simmingFAday.value = true
+  const loadingToastId = toastStore.showLoading('Simulating remainder of free agency...')
+  try {
+    await financeStore.simRestOfFreeAgency(props.campaignId)
+    await Promise.all([
+      campaignStore.fetchCampaign(props.campaignId, true),
+      financeStore.fetchRosterContracts(props.campaignId, { force: true }),
+      financeStore.fetchFreeAgents(props.campaignId, { force: true }),
+    ])
+    toastStore.removeMinimalToast(loadingToastId)
+    const fas = await financeStore.consumeFreeAgencyResults(props.campaignId)
+    if (fas) {
+      endOfFreeAgencyResults.value = fas
+      showEndOfFreeAgencyModal.value = true
+    }
+    toastStore.showSuccess('Free agency complete!')
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError(err.message || 'Failed to simulate free agency')
+    console.error('Failed to sim rest of FA:', err)
+  } finally {
+    simmingFAday.value = false
+  }
+}
+
+function closeEndOfFreeAgencyModal() {
+  showEndOfFreeAgencyModal.value = false
+  endOfFreeAgencyResults.value = null
+}
+
+const finalizingChoices = ref(false)
+async function handleConfirmChoices(selectedIds) {
+  if (finalizingChoices.value) return
+  const pending = endOfFreeAgencyResults.value?.pendingChoice
+  if (!pending) return
+  finalizingChoices.value = true
+  try {
+    const { accepted: newAccepted, declined: newDeclined } =
+      await financeStore.finalizeFreeAgencyUserChoices(
+        props.campaignId,
+        pending.offers,
+        selectedIds
+      )
+    // Merge the freshly-decided rows into the existing wrap-up so the user
+    // sees their final outcome in the same modal, then clear pendingChoice.
+    endOfFreeAgencyResults.value = {
+      accepted: [...(endOfFreeAgencyResults.value?.accepted ?? []), ...newAccepted],
+      declined: [...(endOfFreeAgencyResults.value?.declined ?? []), ...newDeclined],
+      pendingChoice: null,
+    }
+    toastStore.showSuccess(
+      newAccepted.length === 1
+        ? `${newAccepted[0].playerName} signed!`
+        : `Signed ${newAccepted.length} free agent${newAccepted.length === 1 ? '' : 's'}`
+    )
+  } catch (err) {
+    console.error('Failed to finalize FA choices:', err)
+    toastStore.showError(err.message || 'Failed to finalize signings')
+  } finally {
+    finalizingChoices.value = false
   }
 }
 
@@ -429,6 +555,46 @@ onMounted(() => {
           <span v-if="userDraftPicks.length > 0" class="sub-tab-badge">{{ userDraftPicks.length }}</span>
         </button>
       </div>
+
+      <!-- Free Agency control strip — only while the FA window is open. -->
+      <div v-if="isFreeAgencyActive" class="fa-control-strip">
+        <div class="fa-control-meta">
+          <span class="fa-control-label">FREE AGENCY</span>
+          <span class="fa-control-day">Day {{ freeAgencyDay }} / {{ FREE_AGENCY_DURATION_DAYS }}</span>
+          <div class="fa-control-progress">
+            <div
+              class="fa-control-progress-bar"
+              :style="{ width: (freeAgencyDay / FREE_AGENCY_DURATION_DAYS * 100) + '%' }"
+            ></div>
+          </div>
+        </div>
+        <div class="fa-control-buttons">
+          <button
+            type="button"
+            class="fa-control-btn fa-control-btn-secondary"
+            :disabled="simmingFAday"
+            @click="handleSimFreeAgencyDay"
+          >
+            <FastForward :size="14" />
+            <span>{{ simmingFAday ? 'Simulating…' : 'Sim FA Day' }}</span>
+          </button>
+          <button
+            type="button"
+            class="fa-control-btn fa-control-btn-primary"
+            :disabled="simmingFAday"
+            @click="handleSimRestOfFreeAgency"
+          >
+            <FastForward :size="14" />
+            <span>Sim Rest of FA</span>
+          </button>
+        </div>
+      </div>
+
+      <UserFreeAgencyOffers
+        v-if="isFreeAgencyActive"
+        :campaign-id="campaignId"
+        variant="card"
+      />
 
       <!-- Team Contracts View -->
       <div v-if="activeSubTab === 'team'" class="contracts-section">
@@ -626,9 +792,20 @@ onMounted(() => {
       :current-season-year="campaignStore.currentCampaign?.currentSeasonYear"
       :show-contract-actions="true"
       :is-expiring-contract="detailPlayer?.contractYearsRemaining === 1"
+      :coach="teamStore.coach"
+      :user-tokens="authStore.profile?.tokens ?? 0"
       @close="closePlayerInfoModal"
       @resign-player="handleResignFromDetail"
       @drop-player="handleDropFromDetail"
+      @hold-coach-meeting="handleHoldCoachMeeting"
+    />
+
+    <EndOfFreeAgencyModal
+      :show="showEndOfFreeAgencyModal"
+      :results="endOfFreeAgencyResults"
+      :finalizing="finalizingChoices"
+      @close="closeEndOfFreeAgencyModal"
+      @confirm-choices="handleConfirmChoices"
     />
   </div>
 </template>
@@ -834,6 +1011,104 @@ onMounted(() => {
   border-color: transparent;
   color: black;
   box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
+}
+
+/* Free Agency control strip — sits between sub-tab nav and sub-tab content
+   whenever the FA window is open. Mirrors the offseason hub controls. */
+.fa-control-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  background: rgba(232, 90, 79, 0.08);
+  border: 1px solid rgba(232, 90, 79, 0.25);
+  border-radius: var(--radius-lg);
+  flex-wrap: wrap;
+}
+
+.fa-control-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 220px;
+  flex-wrap: wrap;
+}
+
+.fa-control-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+}
+
+.fa-control-day {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.fa-control-progress {
+  flex: 1;
+  min-width: 120px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.fa-control-progress-bar {
+  height: 100%;
+  background: var(--gradient-cosmic);
+  transition: width 0.3s ease;
+}
+
+.fa-control-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fa-control-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.fa-control-btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-primary);
+}
+
+.fa-control-btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.fa-control-btn-primary {
+  background: var(--color-primary);
+  color: white;
+  border-color: transparent;
+}
+
+.fa-control-btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.fa-control-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Free-agents filters */

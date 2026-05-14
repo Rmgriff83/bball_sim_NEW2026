@@ -1,8 +1,9 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { User, Calendar, DollarSign, AlertTriangle, Check, X, Users, Briefcase } from 'lucide-vue-next'
+import { User, Calendar, DollarSign, AlertTriangle, Check, X, Users, Briefcase, Heart } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { StatBadge, LoadingSpinner } from '@/components/ui'
+import { useFreeAgentInterest } from '@/composables/useFreeAgentInterest'
 
 const props = defineProps({
   show: {
@@ -102,10 +103,13 @@ const proposedSalary = computed(() => {
 const exceedsCap = computed(() => proposedSalary.value > props.capSpace)
 const rosterFull = computed(() => props.rosterCount >= 15)
 
-// In offer mode, roster fullness isn't a hard block (the slot is checked at
-// resolution time, after potential cuts and other expirings). We still warn.
+// In offer mode, neither cap nor roster fullness is a hard block — the user
+// is allowed to take swings at multiple stars even if their combined offers
+// exceed cap, and if more than the cap can fit ultimately accept, the
+// EndOfFreeAgencyModal will surface a "Decision Required" step. Cap and
+// roster overage still render as visual warnings below.
 const canConfirm = computed(() => {
-  if (props.mode === 'offer') return !exceedsCap.value
+  if (props.mode === 'offer') return true
   return !exceedsCap.value && !rosterFull.value
 })
 
@@ -153,6 +157,21 @@ function handleWithdraw() {
 const totalContractValue = computed(() => proposedSalary.value * (props.mode === 'offer' ? offerYears.value : FIXED_YEARS))
 const modalTitle = computed(() => props.mode === 'offer' ? (isUpdate.value ? 'Update Offer' : 'Make Offer') : 'Sign Free Agent')
 const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? 'Update Offer' : 'Submit Offer') : 'Sign Player')
+
+// Live "how does the player feel about your offer right now" meter. Reactive
+// to the salary/year sliders so the user can see their offer cross thresholds
+// as they tweak. Uses the same scoring fn the engine runs at resolution.
+const { score: scoreInterest, interestLevelForScore } = useFreeAgentInterest()
+const interestScore = computed(() => {
+  if (props.mode !== 'offer' || !props.player) return null
+  return scoreInterest(props.player, {
+    salary: offerSalary.value,
+    years: offerYears.value,
+  })
+})
+const interestLevel = computed(() =>
+  interestScore.value != null ? interestLevelForScore(interestScore.value) : null
+)
 </script>
 
 <template>
@@ -182,7 +201,7 @@ const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? '
       <!-- Player Info -->
       <div class="player-card">
         <div class="player-avatar">
-          <PlayerAvatar :player="player" :size="32" />
+          <PlayerAvatar :player="player" :size="72" />
         </div>
         <div class="player-details">
           <h3 class="player-name">{{ player.firstName }} {{ player.lastName }}</h3>
@@ -243,6 +262,26 @@ const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? '
         <span v-if="competingOfferCount === 0">No other teams have made offers yet.</span>
         <span v-else-if="competingOfferCount === 1">1 other team has made an offer.</span>
         <span v-else>{{ competingOfferCount }} other teams have made offers.</span>
+      </div>
+
+      <!-- Offer mode: how the player currently feels about THIS offer.
+           Updates live as the user drags the salary/year controls. -->
+      <div
+        v-if="mode === 'offer' && interestLevel"
+        class="interest-meter"
+        :style="{ '--interest-color': interestLevel.color }"
+      >
+        <div class="interest-header">
+          <Heart :size="14" class="interest-icon" />
+          <span class="interest-eyebrow">Player Interest</span>
+          <span class="interest-label">{{ interestLevel.label }}</span>
+          <span class="interest-score">{{ interestScore }}/100</span>
+        </div>
+        <div class="interest-bar">
+          <div class="interest-bar-fill" :style="{ width: interestScore + '%' }"></div>
+          <div class="interest-bar-threshold" title="Minimum needed to sign"></div>
+        </div>
+        <p class="interest-hint">{{ interestLevel.hint }}</p>
       </div>
 
       <!-- Offer mode: salary + years controls -->
@@ -340,9 +379,13 @@ const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? '
       </div>
 
       <!-- Warnings -->
-      <div v-if="exceedsCap" class="warning-box">
+      <div v-if="exceedsCap && mode === 'instant'" class="warning-box">
         <AlertTriangle :size="18" />
         <span>You don't have enough cap space (need {{ formatSalary(proposedSalary) }})</span>
+      </div>
+      <div v-else-if="exceedsCap && mode === 'offer'" class="warning-box warning-box-soft">
+        <AlertTriangle :size="18" />
+        <span>This offer would put you over the cap. You can still submit it — if more bids than your cap can fit ultimately accept, you'll pick which signings to keep at the end of free agency.</span>
       </div>
       <div v-else-if="mode === 'instant' && rosterFull" class="warning-box">
         <AlertTriangle :size="18" />
@@ -466,8 +509,8 @@ const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? '
 }
 
 .player-avatar {
-  width: 56px;
-  height: 56px;
+  width: 76px;
+  height: 76px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -557,6 +600,85 @@ const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? '
   border-radius: 8px;
   color: var(--color-text-secondary);
   font-size: 0.8rem;
+}
+
+/* Player interest meter — live preview of how the player feels about the
+   current offer terms. --interest-color is set inline based on the bucket. */
+.interest-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--interest-color) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--interest-color) 35%, transparent);
+  border-radius: 8px;
+}
+
+.interest-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.interest-icon {
+  color: var(--interest-color);
+}
+
+.interest-eyebrow {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.interest-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--interest-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--interest-color) 18%, transparent);
+}
+
+.interest-score {
+  margin-left: auto;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+}
+
+.interest-bar {
+  position: relative;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.interest-bar-fill {
+  height: 100%;
+  background: var(--interest-color);
+  transition: width 0.2s ease;
+}
+
+/* The 30 cutoff is where the engine refuses to sign — draw a tick mark so
+   the user can see when they cross the "will actually consider it" line. */
+.interest-bar-threshold {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 30%;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.interest-hint {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--color-text-secondary);
+  line-height: 1.35;
 }
 
 /* Offer controls */
@@ -776,6 +898,16 @@ const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? '
   color: var(--color-error);
   font-size: 0.85rem;
   font-weight: 500;
+}
+
+/* Soft variant — used when the cap overage is an informational nudge
+   (offer mode: user can still submit; the choice is deferred to resolution). */
+.warning-box-soft {
+  align-items: flex-start;
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.3);
+  color: var(--color-text-primary);
+  line-height: 1.4;
 }
 
 /* Footer (global standard: direct button children, flex:1, uppercase 0.85rem 600) */

@@ -54,9 +54,17 @@ syncStore.initFromCache().then(() => {
   syncStore.startAutoSync()
 })
 
-// Warn on close if there are unsaved changes
+// On close / refresh: fire a best-effort push if there are unsaved changes,
+// and show the browser's confirm-leave prompt. The prompt buys time for the
+// in-flight request to land; browsers won't await async work in `beforeunload`,
+// so this is intentionally fire-and-forget.
 window.addEventListener('beforeunload', (e) => {
-  if (syncStore.hasPendingChanges) {
+  if (syncStore.hasPendingChanges && syncStore.activeCampaignId) {
+    try {
+      syncStore.syncNow()
+    } catch {
+      // ignore — best effort
+    }
     e.preventDefault()
     e.returnValue = 'You have unsaved changes. Are you sure you want to leave?'
   }

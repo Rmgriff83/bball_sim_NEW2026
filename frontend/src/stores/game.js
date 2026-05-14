@@ -576,10 +576,15 @@ export const useGameStore = defineStore('game', () => {
       let dirty = false
 
       // --- Pre-deadline warning (1 week before trade/re-sign deadline) ---
-      // Surface the warning modal in single-shot paths (live play, single sim,
-      // simulateRemainingSeason). The day-by-day multi-sim path has its own
-      // pre-day check in simulateToGame; this block won't fire there because
-      // that path sets the flag before _advanceDateIfNeeded runs.
+      // Surface the warning to the user from any single-shot path (live play,
+      // single sim, simulateRemainingSeason). We route this through the
+      // BreakingNewsModal rather than SimPauseModal because (a) single-shot
+      // paths are mid-flight, so the modal would be informational only — there
+      // is no sim loop to pause/resume — and (b) the breaking-news queue is
+      // the reliable cross-route surface; the simulationPaused / pauseState
+      // pathway was previously inconsistent here. The day-by-day multi-sim
+      // path still uses _enterPause in simulateToGame because that path CAN
+      // actually halt and wait for user input.
       if (
         previousDate &&
         previousDate < warningDate &&
@@ -589,18 +594,14 @@ export const useGameStore = defineStore('game', () => {
       ) {
         if (!campaign.settings) campaign.settings = {}
         campaign.settings.deadline_warning_shown = true
-        // Set pause state directly (don't use _enterPause, which kills the
-        // simulating flags — single-shot paths are still mid-flight). No
-        // resume context: the modal is informational here, not a halt point.
-        pauseState.value = {
-          reason: 'trade_deadline',
-          payload: {
-            deadlineDate,
-            warningDate,
-          },
+        try {
+          useBreakingNewsStore().enqueue(
+            BreakingNewsService.tradeDeadlineWarning({ date: warningDate }),
+            campaignId
+          )
+        } catch (newsErr) {
+          console.warn('[GameStore] Failed to enqueue trade-deadline warning:', newsErr)
         }
-        pauseResumeContext.value = null
-        simulationPaused.value = true
       }
 
       // --- Trade & re-sign deadlines (Dec 15) ---
@@ -2430,6 +2431,30 @@ export const useGameStore = defineStore('game', () => {
 
         // 4. Advance the date — fires _processMidSeasonEvents (flag flips, news, All-Star roster gen)
         await _advanceDateIfNeeded(campaignId, cursorDate)
+
+        // _processMidSeasonEvents may set an inline pause (e.g. trade-deadline warning)
+        // when the advance crosses the boundary. Without this upgrade the modal surfaces
+        // but the loop keeps rolling, because the pre-day check on the next iteration
+        // sees the flag it just flipped and skips. Convert the inline pause to a proper
+        // halt with resume context so "Continue Sim" picks up where we left off.
+        // Target-reached takes precedence so the game-result toast still fires.
+        if (
+          simulationPaused.value &&
+          !pauseResumeContext.value &&
+          pauseState.value &&
+          !(userGameToday && userGameToday.id === targetGameId)
+        ) {
+          if (progressToastId != null) {
+            try { toastStore.removeMinimalToast(progressToastId) } catch (_) { /* noop */ }
+            progressToastId = null
+          }
+          return _enterPause(pauseState.value.reason, pauseState.value.payload, {
+            campaignId,
+            targetGameId,
+            cursorDate: _addOneDay(cursorDate),
+            lastFiredPause: pauseState.value.reason,
+          })
+        }
 
         // Reached the target user game → finish the run
         if (userGameToday && userGameToday.id === targetGameId) {

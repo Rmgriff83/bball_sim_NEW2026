@@ -656,6 +656,7 @@ onMounted(async () => {
     <PlayerDetailModal
       :show="showPlayerModal"
       :player="selectedPlayer"
+      :campaign-id="campaignId"
       :show-growth="false"
       :show-history="false"
       :scouting-mode="true"

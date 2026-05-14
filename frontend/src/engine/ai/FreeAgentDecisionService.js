@@ -146,6 +146,22 @@ export function pickBestOffer(player, offers, resolveTeamContext) {
 
   const best = scored[0]
   if (best.score < 30) {
+    // Settle-for-what's-available fallback. A top FA who didn't get the
+    // bidding war they wanted will still take a non-insulting deal — going
+    // unsigned for a full year is the worst alternative for any pro. We
+    // require the salary to be at least 25% of expected so genuinely
+    // insulting offers ($1M to a 90 OVR star) still get rejected; anything
+    // above that floor is a prove-it deal a real player would sign.
+    const expected = expectedSalary(getRating(player))
+    const salaryFloor = expected * 0.25
+    if ((best.offer?.salary ?? 0) >= salaryFloor) {
+      return {
+        offer: best.offer,
+        score: best.score,
+        reason: 'Settled below market — no competing bids cleared the threshold.',
+        shortlist: scored,
+      }
+    }
     return { offer: null, score: best.score, reason: 'unsigned_low_fit', shortlist: scored }
   }
 

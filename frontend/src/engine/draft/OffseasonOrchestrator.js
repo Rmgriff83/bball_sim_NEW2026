@@ -9,7 +9,7 @@ import { CampaignRepository } from '../db/CampaignRepository'
 import { TeamRepository } from '../db/TeamRepository'
 import { PlayerRepository } from '../db/PlayerRepository'
 import { SeasonRepository } from '../db/SeasonRepository'
-import { generateAndSaveRookieClass } from './RookieGenerationService'
+import { generateAndSaveRookieClass, shouldGenerateGenerational } from './RookieGenerationService'
 import { buildRookieDraftOrder } from './DraftOrderService'
 import { assignRookieContract, assignUndraftedContract } from './RookieContractService'
 import { rollDraftPicks } from './DraftPickService'
@@ -24,6 +24,7 @@ import { startNewSeason } from '../campaign/CampaignManager'
 import { generateAIFreeAgencyOffers } from '../ai/AIContractService'
 import { pickBestOffer } from '../ai/FreeAgentDecisionService'
 import { FREE_AGENCY_DURATION_DAYS } from '../season/SeasonDeadlines'
+import { SALARY_CAP } from '../data/teams'
 
 /**
  * Run the entire offseason in one shot:
@@ -82,7 +83,13 @@ export async function simFullOffseason(campaignId) {
 
   let rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === rookieDraftYear)
   if (rookies.length === 0) {
-    rookies = await generateAndSaveRookieClass(campaignId, rookieDraftYear)
+    const includeGenerational = shouldGenerateGenerational(campaign, rookieDraftYear)
+    rookies = await generateAndSaveRookieClass(campaignId, rookieDraftYear, { includeGenerational })
+    if (includeGenerational) {
+      campaign.settings = campaign.settings ?? {}
+      campaign.settings.lastGenerationalDraftYear = rookieDraftYear
+      await CampaignRepository.save(campaign)
+    }
     // Re-load all players to include new rookies
     allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
     rookies = allPlayers.filter(p => p.isDraftProspect && p.draftYear === rookieDraftYear)
@@ -373,6 +380,36 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
   const accepted = []
   const declined = []
   const playerUpdates = []
+  // Deferred user-winning signings. These are players who accepted the user's
+  // offer; we may have to ask the user to pick which to keep if accepting all
+  // of them would exceed the cap (the user is allowed to bid above cap on
+  // multiple players since signings only resolve at window end).
+  const pendingUserSignings = []
+
+  const userTeamRecord = teamFromId(teams, userTeamId)
+  const userTeamAbbr = userTeamRecord?.abbreviation || null
+
+  // Build a user-signing update payload from a (player, offer) pair. Used in
+  // two places: immediate auto-sign when cap fits, and deferred finalization
+  // when the user picks via the modal.
+  const buildUserSigningUpdate = (player, offer) => ({
+    ...player,
+    teamId: userTeamId,
+    team_id: userTeamId,
+    teamAbbreviation: userTeamAbbr,
+    team_abbreviation: userTeamAbbr,
+    isFreeAgent: 0,
+    is_free_agent: 0,
+    contractYearsRemaining: offer.years,
+    contract_years_remaining: offer.years,
+    contractSalary: offer.salary,
+    contract_salary: offer.salary,
+    previousTeamId: undefined,
+    previous_team_id: undefined,
+    previousTeamAbbreviation: undefined,
+    previous_team_abbreviation: undefined,
+    campaignId,
+  })
 
   for (const [playerId, offers] of Object.entries(offersMap)) {
     if (!offers || offers.length === 0) continue
@@ -406,8 +443,41 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
 
     const winningOffer = result.offer
     const isUserWinner = winningOffer.isUserOffer === true
-    const targetTeamId = isUserWinner ? userTeamId : winningOffer.teamId
-    const targetTeam = teamFromId(teams, targetTeamId)
+    const playerName = player.name || `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim()
+
+    if (isUserWinner) {
+      // Defer until we know whether all user-winning bids fit under cap.
+      // Pre-compute the runner-up AI offer now so we don't have to re-score
+      // later: if the user ultimately passes (or can't fit them all), the
+      // player auto-signs with whichever AI team was their second choice.
+      const aiOnlyOffers = offers.filter(o => !o.isUserOffer)
+      const fallbackResult = pickBestOffer(player, aiOnlyOffers, (teamId, offer) => {
+        const ctx = resolveCtx(teamId) || {}
+        const previousTeamId = player.previousTeamId ?? null
+        ctx.isIncumbent = previousTeamId && teamId === previousTeamId
+        return ctx
+      })
+      const fallbackOffer = fallbackResult?.offer || null
+      const fallbackTeam = fallbackOffer ? teamFromId(teams, fallbackOffer.teamId) : null
+      pendingUserSignings.push({
+        player,
+        offer: userOffer,
+        playerName,
+        fallback: fallbackOffer && fallbackTeam
+          ? {
+              teamId: fallbackTeam.id,
+              teamAbbr: fallbackTeam.abbreviation,
+              salary: fallbackOffer.salary,
+              years: fallbackOffer.years,
+              reason: fallbackResult?.reason || null,
+            }
+          : null,
+      })
+      continue
+    }
+
+    // AI team won — finalize immediately.
+    const targetTeam = teamFromId(teams, winningOffer.teamId)
     if (!targetTeam) continue
 
     playerUpdates.push({
@@ -434,24 +504,87 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
     })
 
     if (userOffer) {
-      const playerName = player.name || `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim()
-      if (isUserWinner) {
-        accepted.push({
+      declined.push({
+        playerId: player.id,
+        playerName,
+        signedWith: targetTeam.abbreviation,
+        signedWithAbbr: targetTeam.abbreviation,
+        userOffer,
+        winningOffer,
+        reason: result.reason,
+      })
+    }
+  }
+
+  // Compute the user's available cap room based on their current roster
+  // (excluding the player records about to be modified above — they're either
+  // already on the user team or about to join an AI team).
+  const userRosterPayroll = allPlayers
+    .filter(p => {
+      const tid = p.teamId ?? p.team_id
+      if (tid !== userTeamId) return false
+      if (p.isFreeAgent === 1 || p.is_free_agent === 1) return false
+      if (p.isRetired || p.is_retired) return false
+      return true
+    })
+    .reduce((sum, p) => sum + (p.contractSalary ?? p.contract_salary ?? 0), 0)
+  const userCapSpace = SALARY_CAP - userRosterPayroll
+  // Bird-rights signings (re-signing your own player from last season) don't
+  // count toward the cap-overflow check — real NBA teams can exceed the cap
+  // to retain their own free agents. Only the NEW outside signings need to
+  // fit in available room.
+  const isUserIncumbent = (player) => {
+    const prev = player?.previousTeamId ?? player?.previous_team_id ?? null
+    return prev != null && String(prev) === String(userTeamId)
+  }
+  const nonBirdSignings = pendingUserSignings.filter(x => !isUserIncumbent(x.player))
+  const pendingTotal = nonBirdSignings.reduce((s, x) => s + (x.offer?.salary || 0), 0)
+
+  let pendingChoice = null
+  if (pendingTotal <= userCapSpace) {
+    // All user-winning offers fit — finalize them all now (incumbents under
+    // Bird rights are always finalized regardless of cap math above).
+    for (const { player, offer } of pendingUserSignings) {
+      playerUpdates.push(buildUserSigningUpdate(player, offer))
+      accepted.push({
+        playerId: player.id,
+        playerName: player.name || `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim(),
+        years: offer.years,
+        salary: offer.salary,
+      })
+    }
+  } else if (pendingUserSignings.length > 0) {
+    // User won more than they can afford on outside signings — surface a
+    // choice in the modal for NON-Bird signings. Bird-rights incumbents
+    // auto-finalize since Bird rights bypass the cap; the user shouldn't
+    // be forced to "pick" between keeping their own player and a free
+    // agent that's competing for the same cap dollars.
+    for (const { player, offer } of pendingUserSignings.filter(x => isUserIncumbent(x.player))) {
+      playerUpdates.push(buildUserSigningUpdate(player, offer))
+      accepted.push({
+        playerId: player.id,
+        playerName: player.name || `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim(),
+        years: offer.years,
+        salary: offer.salary,
+      })
+    }
+    if (nonBirdSignings.length > 0) {
+      pendingChoice = {
+        capSpace: userCapSpace,
+        offers: nonBirdSignings.map(({ player, offer, playerName, fallback }) => ({
           playerId: player.id,
           playerName,
-          years: userOffer.years,
-          salary: userOffer.salary,
-        })
-      } else {
-        declined.push({
-          playerId: player.id,
-          playerName,
-          signedWith: targetTeam.abbreviation,
-          signedWithAbbr: targetTeam.abbreviation,
-          userOffer,
-          winningOffer,
-          reason: result.reason,
-        })
+          position: player.position ?? null,
+          overallRating: player.overallRating ?? player.overall_rating ?? null,
+          years: offer.years,
+          salary: offer.salary,
+          // Pre-computed runner-up AI offer. If the user passes on this
+          // player, they immediately sign with the fallback team — the
+          // players were willing to sign there anyway, so it would be
+          // unrealistic to leave them on the FA pile just because the user
+          // took a swing.
+          fallback,
+        })),
       }
     }
   }
@@ -464,7 +597,7 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
   campaign.phase = 'offseason_draft'
   if (!campaign.settings) campaign.settings = {}
   campaign.settings.freeAgencyOffers = {}
-  campaign.settings.freeAgencyResults = { accepted, declined }
+  campaign.settings.freeAgencyResults = { accepted, declined, pendingChoice }
   campaign.settings.freeAgencyDay = FREE_AGENCY_DURATION_DAYS
 
   await CampaignRepository.save(campaign)

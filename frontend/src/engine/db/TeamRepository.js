@@ -37,6 +37,19 @@ export const TeamRepository = {
     })
   },
 
+  async deleteAllForCampaign(campaignId) {
+    return withDB(async db => {
+      const tx = db.transaction('teams', 'readwrite')
+      const index = tx.store.index('campaignId')
+      let cursor = await index.openCursor(IDBKeyRange.only(campaignId))
+      while (cursor) {
+        await cursor.delete()
+        cursor = await cursor.continue()
+      }
+      await tx.done
+    })
+  },
+
   async updateLineup(campaignId, teamId, lineupSettings) {
     return withDB(async db => {
       const team = await db.get('teams', [campaignId, teamId])

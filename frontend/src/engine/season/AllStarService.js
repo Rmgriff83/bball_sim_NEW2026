@@ -8,8 +8,9 @@ import { SeasonManager } from './SeasonManager'
 // as plain objects — no file I/O or database access.
 // ---------------------------------------------------------------------------
 
-const ALL_STAR_MONTH = 1  // January
-const ALL_STAR_DAY = 13
+// All-Star date now flows from SeasonDeadlines (currently Dec 15 alongside the
+// trade deadline). Callers gate on the season-day crossing themselves, so this
+// service no longer hard-codes a trigger date.
 const ALL_STAR_MIN_GAMES_PCT = 0.60
 const RISING_STARS_MIN_GAMES_PCT = 0.40
 
@@ -46,10 +47,6 @@ export class AllStarService {
   }) {
     // Already processed this season
     if (alreadySelected) return null
-
-    // Check if current date >= Jan 13 of season+1 year
-    const triggerDate = `${year + 1}-${String(ALL_STAR_MONTH).padStart(2, '0')}-${String(ALL_STAR_DAY).padStart(2, '0')}`
-    if (currentDate < triggerDate) return null
 
     // Gather data
     const allStats = SeasonManager.getAllPlayerStats(seasonData)

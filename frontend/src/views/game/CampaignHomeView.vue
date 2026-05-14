@@ -24,7 +24,9 @@ import RetirementModal from '@/components/team/RetirementModal.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
 import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
+import StartSeasonBlockerModal from '@/components/game/StartSeasonBlockerModal.vue'
 import { enterOffseason, startNewSeason, backfillPlayerAwards } from '@/engine/campaign/CampaignManager'
+import { aiFinishUserTeamSetup } from '@/engine/campaign/UserTeamFinalizer'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
@@ -32,7 +34,11 @@ import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
 import { FREE_AGENCY_DURATION_DAYS } from '@/engine/season/SeasonDeadlines'
 import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
+import TeamHeader from '@/components/common/TeamHeader.vue'
+import { computeTeamOverall } from '@/utils/teamOverall'
 import EndOfFreeAgencyModal from '@/components/team/EndOfFreeAgencyModal.vue'
+import UserFreeAgencyOffers from '@/components/team/UserFreeAgencyOffers.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -71,6 +77,14 @@ const rosterWarningHint = ref('')
 const advancingToNextSeason = ref(false)
 const showNewSeasonModal = ref(false)
 const newSeasonData = ref(null)
+
+// Start-season prerequisites: need ≥ 12 rostered players + a head coach.
+// Clicking START SEASON pops a blocker modal when these aren't met; the
+// modal offers a one-click "let AI finish setup" path that hires a free
+// coach and signs FAs to fill the roster.
+const START_SEASON_ROSTER_MIN = 12
+const showStartSeasonBlockerModal = ref(false)
+const simmingStartSetup = ref(false)
 const offseasonData = ref(null) // Stores AI contract results + expiring players after entering offseason
 
 // Season awards announcement state. Set when enterOffseason returns awards;
@@ -89,6 +103,24 @@ const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => campaign.value?.team)
 // Use teamStore roster which includes season_stats
 const roster = computed(() => teamStore.roster || [])
+
+// Live team-overall (avg OVR of healthy, non-FA, non-retired players).
+// Derived from the reactive roster so it updates immediately after trades /
+// signings / injury state changes without re-fetching.
+const userTeamOverall = computed(() => computeTeamOverall(roster.value))
+
+// Count of players actually on the user team (excludes nulls from the slot
+// array + any FA / retired entries that may have leaked through). Drives the
+// start-season prerequisite check.
+const rosterCount = computed(() => roster.value.filter(p => {
+  if (!p) return false
+  if (p.isRetired || p.is_retired) return false
+  if (p.isFreeAgent === 1 || p.is_free_agent === 1) return false
+  return true
+}).length)
+const startSeasonRosterShort = computed(() => rosterCount.value < START_SEASON_ROSTER_MIN)
+const startSeasonNeedsCoach = computed(() => !teamStore.coach)
+const startSeasonBlocked = computed(() => startSeasonRosterShort.value || startSeasonNeedsCoach.value)
 const news = computed(() => (campaign.value?.news || []).slice().reverse())
 
 // Top player by overall rating
@@ -423,6 +455,15 @@ const formattedCurrentDate = computed(() => {
 // Next upcoming user game
 const nextGame = computed(() => gameStore.nextUserGame)
 
+// True while we don't yet know which variant the next-game box should show —
+// either the schedule is being fetched, or it hasn't populated yet for this
+// mount. Used to mask the "Regular Season Complete" fallback so it doesn't
+// briefly flash on warm navigation before fetchAll finishes.
+const nextGameBoxLoading = computed(() => {
+  if (!campaign.value) return false
+  return gameStore.loading || (gameStore.games?.length ?? 0) === 0
+})
+
 // Check if next game is in progress
 const isGameInProgress = computed(() => nextGame.value?.is_in_progress || false)
 
@@ -530,6 +571,7 @@ const userTopStarters = computed(() => {
 })
 
 const opponentTopStarters = ref([])
+const opponentTeamOverall = ref(null)
 
 // Load opponent starters when next game OR user team changes.
 //
@@ -544,6 +586,7 @@ const opponentTopStarters = ref([])
 watch(() => [nextGame.value?.id, team.value?.id], async () => {
   if (!nextGame.value || !campaignId.value || !team.value?.id) {
     opponentTopStarters.value = []
+    opponentTeamOverall.value = null
     return
   }
   const homeTeam = nextGame.value.home_team
@@ -554,6 +597,7 @@ watch(() => [nextGame.value?.id, team.value?.id], async () => {
   const oppTeam = homeIsUser ? awayTeam : (awayIsUser ? homeTeam : null)
   if (!oppTeam?.id) {
     opponentTopStarters.value = []
+    opponentTeamOverall.value = null
     return
   }
   try {
@@ -565,8 +609,13 @@ watch(() => [nextGame.value?.id, team.value?.id], async () => {
     opponentTopStarters.value = [...starters]
       .sort((a, b) => (b.overall_rating ?? b.overallRating ?? 0) - (a.overall_rating ?? a.overallRating ?? 0))
       .slice(0, 3)
+    // Compute opponent overall from the same fetch (free piggy-back).
+    // Other consumers (game preview / broadcast header) will fetch via
+    // the cached composable and reuse what's in IndexedDB.
+    opponentTeamOverall.value = computeTeamOverall(oppPlayers)
   } catch {
     opponentTopStarters.value = []
+    opponentTeamOverall.value = null
   }
 }, { immediate: true })
 
@@ -703,8 +752,8 @@ onMounted(async () => {
       checkPendingTradeProposals()
       // Check for All-Star selections
       checkAllStarSelections()
-      // Surface the regular-season-complete toast if the user has no games left
-      maybeShowRegularSeasonCompleteToast()
+      // Auto-finish the regular season if the user has no games left
+      maybeAutoFinishRegularSeason()
       // Re-pop the retirement modal on mount if the user landed on the
       // offseason hub via a refresh / cold load and hasn't dismissed it yet.
       maybeShowRetirementModal()
@@ -726,8 +775,8 @@ onMounted(async () => {
       await checkPendingTradeProposals()
       // Check for All-Star selections
       await checkAllStarSelections()
-      // Surface the regular-season-complete toast if the user has no games left
-      maybeShowRegularSeasonCompleteToast()
+      // Auto-finish the regular season if the user has no games left
+      await maybeAutoFinishRegularSeason()
       // Re-pop the retirement modal on first cold-load if we land on the
       // offseason hub with un-dismissed retirees.
       maybeShowRetirementModal()
@@ -746,6 +795,9 @@ onUnmounted(() => {
 // Hydrate persisted season awards + champion when in offseason so the
 // banner & dropdown still work after a page reload (offseasonData is
 // in-memory only and lastSeasonChampion can be stale across some flows).
+// Also backfills playoffs for campaigns that entered offseason without the
+// AI bracket ever being simulated (the pre-fix missed-playoffs path did
+// this) so the champion banner can populate retroactively.
 watch(
   [isOffseason, () => campaign.value?.currentSeasonYear],
   async ([off, year]) => {
@@ -757,7 +809,23 @@ watch(
     }
     try {
       const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
-      const seasonData = await SeasonRepository.get(campaignId.value, year)
+      let seasonData = await SeasonRepository.get(campaignId.value, year)
+
+      // Backfill: in offseason without a crowned champion → run the AI
+      // playoffs now so the offseason hub can show the championship banner.
+      if (seasonData && !seasonData.playoffBracket?.champion &&
+          !gameStore.simulating && !gameStore.backgroundSimulating) {
+        try {
+          if (!seasonData.playoffBracket) {
+            await playoffStore.generateBracket(campaignId.value)
+          }
+          await gameStore.simulateToNextPlayoffRound(campaignId.value, { simAll: true })
+          seasonData = await SeasonRepository.get(campaignId.value, year)
+        } catch (err) {
+          console.warn('[CampaignHome] playoff backfill failed:', err)
+        }
+      }
+
       if (!offseasonData.value?.seasonAwards) {
         persistedSeasonAwards.value = seasonData?.seasonAwards || null
       } else {
@@ -786,23 +854,25 @@ watch(currentDate, async (newDate, oldDate) => {
   await checkAllStarSelections()
 })
 
-// Surface a "Regular Season Complete" toast when the user has finished all of
-// their own games but the league still has AI games to simulate. Idempotent —
-// won't re-fire if the toast is already in the queue, so tab navigations don't
-// spam the user.
-function maybeShowRegularSeasonCompleteToast() {
+// Auto-finish the regular season once the user has played all of their own
+// games but the league still has AI games to simulate. The simulation itself
+// shows a progress toast, then checkPlayoffStatus surfaces the SeasonEndModal.
+// Guarded against re-entry via the gameStore sim flags.
+async function maybeAutoFinishRegularSeason() {
   if (!nextGame.value &&
       !playoffStore.isInPlayoffs &&
       !playoffStore.champion &&
       !isOffseason.value &&
-      remainingSeasonGames.value.aiGames > 0
+      remainingSeasonGames.value.aiGames > 0 &&
+      !gameStore.simulating &&
+      !gameStore.backgroundSimulating
   ) {
-    const already = (toastStore.toasts || []).some(t => t.type === 'regular-season-complete')
-    if (already) return
-    toastStore.showRegularSeasonComplete({
-      campaignId: campaignId.value,
-      remainingGames: remainingSeasonGames.value.aiGames,
-    })
+    try {
+      await gameStore.simulateRemainingSeason(campaignId.value)
+      await checkPlayoffStatus()
+    } catch (err) {
+      console.error('Failed to auto-finish regular season:', err)
+    }
   }
 }
 
@@ -861,7 +931,16 @@ async function handleSeasonEndContinue() {
       toastStore.showError('Failed to generate bracket')
     }
   } else {
-    // Team didn't qualify - enter offseason
+    // Team didn't qualify — generate the bracket and sim all AI playoff rounds
+    // before entering offseason so a champion is crowned. Without this step the
+    // offseason hub has no champion banner and the season looks unfinished.
+    try {
+      await playoffStore.generateBracket(campaignId.value)
+      await gameStore.simulateToNextPlayoffRound(campaignId.value, { simAll: true })
+    } catch (err) {
+      console.error('Failed to sim AI playoffs after missed playoffs:', err)
+      toastStore.showError('Failed to simulate playoffs')
+    }
     await handleEnterOffseason()
   }
 }
@@ -1057,6 +1136,24 @@ async function maybeShowRetirementModal() {
   retireesForModal.value = list
   pendingRetirementsYear.value = year
   showRetirementModal.value = true
+  // Persist the dismissal year immediately on show so the modal is fire-once
+  // even if the user leaves the page via navigation instead of clicking Close.
+  // updateSettings does a shallow merge on the IndexedDB-side plain object,
+  // so we don't risk feeding reactive-wrapped values from currentCampaign
+  // back into structuredClone (which was throwing DataCloneError before).
+  try {
+    await CampaignRepository.updateSettings(campaignId.value, {
+      retirementsDismissedYear: year,
+    })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        retirementsDismissedYear: year,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to stamp retirement dismissal on show:', err)
+  }
 }
 
 async function handleCloseRetirementModal() {
@@ -1065,16 +1162,23 @@ async function handleCloseRetirementModal() {
   // dismissed year) so the modal cannot re-pop even if the year flag is
   // somehow overwritten by another settings mutation downstream. The list
   // is empty → the maybeShow guard returns early on every future call.
+  // updateSettings does a shallow merge on the IndexedDB-side plain object
+  // so we skip the reactive-proxy cloning issue that updateCampaign hit.
   try {
     const camp = campaignStore.currentCampaign
     if (!camp) return
     const year = camp.settings?.pendingRetirementsYear
-    const nextSettings = {
-      ...(camp.settings ?? {}),
+    const patch = {
       pendingRetirements: [],
       retirementsDismissedYear: year,
     }
-    await campaignStore.updateCampaign(campaignId.value, { settings: nextSettings })
+    await CampaignRepository.updateSettings(campaignId.value, patch)
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        ...patch,
+      }
+    }
   } catch (err) {
     console.warn('[CampaignHome] failed to persist retirement dismissal:', err)
   }
@@ -1082,6 +1186,13 @@ async function handleCloseRetirementModal() {
 
 // Handle starting a new season from offseason hub
 async function handleStartNewSeason() {
+  // Gate: 12+ rostered players AND a head coach signed. If either is
+  // missing, surface the blocker modal instead of attempting the engine
+  // call (which would throw and just show a generic error toast).
+  if (startSeasonBlocked.value) {
+    showStartSeasonBlockerModal.value = true
+    return
+  }
   advancingToNextSeason.value = true
   const loadingToastId = toastStore.showLoading('Starting new season...')
   try {
@@ -1115,6 +1226,49 @@ async function handleStartNewSeason() {
     console.error('Failed to start new season:', err)
   } finally {
     advancingToNextSeason.value = false
+  }
+}
+
+// AI-driven "finish my offseason setup" — hires a free coach and signs
+// FAs to the roster floor. Wired to the StartSeasonBlockerModal so the
+// user can resolve both prereqs in one click, then we automatically chain
+// into handleStartNewSeason on success.
+async function handleAiFinishStartSetup() {
+  if (simmingStartSetup.value) return
+  simmingStartSetup.value = true
+  const loadingToastId = toastStore.showLoading('Front office is wrapping up your roster…')
+  try {
+    const result = await aiFinishUserTeamSetup(campaignId.value)
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value, true),
+      teamStore.fetchTeam(campaignId.value, { force: true }),
+    ])
+    toastStore.removeMinimalToast(loadingToastId)
+    const parts = []
+    if (result.coachHired) parts.push(`Hired ${result.coachHired.name}`)
+    if (result.playersSigned?.length) parts.push(`signed ${result.playersSigned.length} player${result.playersSigned.length === 1 ? '' : 's'}`)
+    // Defer a tick so the campaign / team refetch has settled before we
+    // re-evaluate `startSeasonBlocked`.
+    await new Promise(r => setTimeout(r, 50))
+    if (!startSeasonBlocked.value) {
+      // Prereqs satisfied — close the modal and chain into the actual start.
+      toastStore.showSuccess(parts.length ? parts.join(' · ') : 'Setup complete')
+      showStartSeasonBlockerModal.value = false
+      await handleStartNewSeason()
+    } else {
+      // Couldn't fully resolve (e.g., no free coach in the pool, FA pool
+      // too thin to fill the roster). Keep the modal open so the user sees
+      // the updated state and can either retry the AI fill or finish
+      // manually. Toast as a warning rather than a success.
+      const summary = parts.length ? parts.join(' · ') : 'Nothing to sign'
+      toastStore.showError(`AI couldn't fully finish setup — ${summary}. Resolve the remaining items below.`)
+    }
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError(err.message || 'Failed to finish setup')
+    console.error('Failed to AI-finish setup:', err)
+  } finally {
+    simmingStartSetup.value = false
   }
 }
 
@@ -1175,7 +1329,10 @@ async function handleEnterFreeAgency() {
     await financeStore.startFreeAgencyPeriod(campaignId.value)
     await campaignStore.fetchCampaign(campaignId.value, true)
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showSuccess('Free agency is open. Make offers from the Free Agents tab.')
+    toastStore.showSuccess('Free agency is open.')
+    // Drop the user directly onto the Free Agents sub-tab so they can start
+    // making offers without having to hunt for it.
+    navigateToFreeAgency()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError(err.message || 'Failed to open free agency')
@@ -1190,7 +1347,10 @@ async function handleSimFreeAgencyDay() {
   const loadingToastId = toastStore.showLoading('Simulating free-agency day...')
   try {
     const result = await financeStore.simFreeAgencyDay(campaignId.value)
-    await campaignStore.fetchCampaign(campaignId.value, true)
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value, true),
+      financeStore.fetchFreeAgents(campaignId.value, { force: true }),
+    ])
     toastStore.removeMinimalToast(loadingToastId)
     if (result.resolved) {
       const fas = await financeStore.consumeFreeAgencyResults(campaignId.value)
@@ -1216,7 +1376,10 @@ async function handleSimRestOfFreeAgency() {
   const loadingToastId = toastStore.showLoading('Simulating remainder of free agency...')
   try {
     await financeStore.simRestOfFreeAgency(campaignId.value)
-    await campaignStore.fetchCampaign(campaignId.value, true)
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value, true),
+      financeStore.fetchFreeAgents(campaignId.value, { force: true }),
+    ])
     toastStore.removeMinimalToast(loadingToastId)
     const fas = await financeStore.consumeFreeAgencyResults(campaignId.value)
     if (fas) {
@@ -1236,6 +1399,37 @@ async function handleSimRestOfFreeAgency() {
 function closeEndOfFreeAgencyModal() {
   showEndOfFreeAgencyModal.value = false
   endOfFreeAgencyResults.value = null
+}
+
+const finalizingChoices = ref(false)
+async function handleConfirmFreeAgencyChoices(selectedIds) {
+  if (finalizingChoices.value) return
+  const pending = endOfFreeAgencyResults.value?.pendingChoice
+  if (!pending) return
+  finalizingChoices.value = true
+  try {
+    const { accepted: newAccepted, declined: newDeclined } =
+      await financeStore.finalizeFreeAgencyUserChoices(
+        campaignId.value,
+        pending.offers,
+        selectedIds
+      )
+    endOfFreeAgencyResults.value = {
+      accepted: [...(endOfFreeAgencyResults.value?.accepted ?? []), ...newAccepted],
+      declined: [...(endOfFreeAgencyResults.value?.declined ?? []), ...newDeclined],
+      pendingChoice: null,
+    }
+    toastStore.showSuccess(
+      newAccepted.length === 1
+        ? `${newAccepted[0].playerName} signed!`
+        : `Signed ${newAccepted.length} free agent${newAccepted.length === 1 ? '' : 's'}`
+    )
+  } catch (err) {
+    console.error('Failed to finalize FA choices:', err)
+    toastStore.showError(err.message || 'Failed to finalize signings')
+  } finally {
+    finalizingChoices.value = false
+  }
 }
 
 function openPlayerDetails() {
@@ -1369,7 +1563,7 @@ async function handleConfirmSimulate() {
       // watcher bails out when backgroundSimulating flips true mid-sim, so
       // run the check explicitly here.
       await checkAllStarSelections()
-      maybeShowRegularSeasonCompleteToast()
+      await maybeAutoFinishRegularSeason()
     }
 
     // Show weekly summary if weeks passed. Clear the gameStore ref afterwards
@@ -1479,7 +1673,7 @@ async function handleSimToEnd() {
     if (!gameStore.backgroundSimulating) {
       lastSimResult.value = null
       await checkPlayoffStatus()
-      maybeShowRegularSeasonCompleteToast()
+      await maybeAutoFinishRegularSeason()
     }
 
     // Show weekly summary if weeks passed
@@ -1880,20 +2074,9 @@ function handleCloseSimulateModal() {
     </div>
 
     <template v-else-if="campaign">
-      <!-- Team Header - City stacked on top of Name -->
-      <section class="team-header">
-        <div class="team-header-row">
-          <div
-            class="team-logo-badge"
-            :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
-          >
-            {{ team?.abbreviation }}
-          </div>
-          <div class="team-header-text">
-            <p class="team-city">{{ team?.city }} · {{ conferenceLabel }}</p>
-            <h1 class="team-name">{{ team?.name }}</h1>
-          </div>
-          <!-- Current date only visible on desktop (mobile shows in header) -->
+      <!-- Team Header — shared component; date widget slots into the right -->
+      <TeamHeader :team="team" :team-overall="userTeamOverall">
+        <template #right>
           <div v-if="formattedCurrentDate" class="current-date">
             <span class="date-day">{{ formattedCurrentDate.day }}</span>
             <div class="date-details">
@@ -1901,8 +2084,8 @@ function handleCloseSimulateModal() {
               <span class="date-weekday">{{ formattedCurrentDate.weekday }}</span>
             </div>
           </div>
-        </div>
-      </section>
+        </template>
+      </TeamHeader>
 
       <!-- Record Card - Cosmic gradient -->
       <section class="record-card card-cosmic">
@@ -2047,6 +2230,7 @@ function handleCloseSimulateModal() {
                       {{ nextGameOpponent?.isHome ? inProgressScores.homeScore : inProgressScores.awayScore }}
                     </span>
                     <span v-else class="badge-record">{{ wins }}-{{ losses }}</span>
+                    <TeamOverallBadge :overall="userTeamOverall" />
                   </div>
                   <div class="team-info">
                     <span v-if="userTeamRating" class="team-rating">{{ userTeamRating }} OVR</span>
@@ -2070,6 +2254,7 @@ function handleCloseSimulateModal() {
                       {{ nextGameOpponent?.isHome ? inProgressScores.awayScore : inProgressScores.homeScore }}
                     </span>
                     <span v-else class="badge-record">{{ nextGameOpponent?.wins }}-{{ nextGameOpponent?.losses }}</span>
+                    <TeamOverallBadge :overall="opponentTeamOverall" />
                   </div>
                   <div class="team-info">
                     <span v-if="nextGameOpponent?.rating" class="team-rating">{{ nextGameOpponent.rating }} OVR</span>
@@ -2171,8 +2356,10 @@ function handleCloseSimulateModal() {
             <span class="next-game-loading-text">Starting new season...</span>
           </div>
           <template v-else>
-            <!-- Champion Banner (with collapsible awards) -->
-            <div v-if="displayedChampion" class="offseason-champion-banner" :class="{ expanded: champBannerExpanded }">
+            <!-- Champion Banner (with collapsible awards). Stays visible when
+                 awards are present even if the champion couldn't be resolved,
+                 so the MVP / All-NBA picks always surface. -->
+            <div v-if="displayedChampion || displayedSeasonAwards" class="offseason-champion-banner" :class="{ expanded: champBannerExpanded }">
               <button
                 type="button"
                 class="offseason-champion-header"
@@ -2182,7 +2369,12 @@ function handleCloseSimulateModal() {
               >
                 <Trophy :size="20" class="offseason-champion-icon" />
                 <span class="offseason-champion-text">
-                  {{ displayedChampion.name }} are the champions for the {{ championSeasonLabel }} season
+                  <template v-if="displayedChampion">
+                    {{ displayedChampion.name }} are the champions for the {{ championSeasonLabel }} season
+                  </template>
+                  <template v-else>
+                    {{ championSeasonLabel }} Season Awards
+                  </template>
                 </span>
                 <ChevronDown
                   v-if="displayedSeasonAwards"
@@ -2289,6 +2481,12 @@ function handleCloseSimulateModal() {
               </div>
             </div>
 
+            <UserFreeAgencyOffers
+              v-if="isFreeAgencyActive"
+              :campaign-id="campaignId"
+              variant="compact"
+            />
+
             <div class="next-game-buttons offseason-buttons">
               <button class="btn-simulate-game" @click="router.push(`/campaign/${campaignId}/team`)">
                 <Users class="btn-icon" :size="16" />
@@ -2359,15 +2557,12 @@ function handleCloseSimulateModal() {
                 v-if="rookieDraftCompleted"
                 class="btn-play-game"
                 @click="handleStartNewSeason"
-                :disabled="advancingToNextSeason || !teamStore.coach"
-                :title="!teamStore.coach ? 'Sign a head coach in the Personnel tab to start a new season' : ''"
+                :disabled="advancingToNextSeason"
+                :title="startSeasonBlocked ? 'Setup is incomplete — click for details' : ''"
               >
                 <FastForward class="btn-icon" :size="16" />
                 START SEASON
               </button>
-              <p v-if="rookieDraftCompleted && !teamStore.coach" class="start-season-coach-hint">
-                Sign a head coach in the Personnel tab to start the new season.
-              </p>
             </div>
           </template>
         </div>
@@ -2504,6 +2699,14 @@ function handleCloseSimulateModal() {
             </div>
           </template>
         </div>
+        <!-- Masks the wrap-up content while the schedule is still being
+             fetched; otherwise this fallback flashes for the warm-load
+             window before nextGame / isOffseason / playoff state populate. -->
+        <Transition name="next-game-box-overlay-fade">
+          <div v-if="nextGameBoxLoading" class="next-game-box-overlay" aria-label="Loading">
+            <LoadingSpinner size="md" />
+          </div>
+        </Transition>
       </section>
 
       <!-- Background Simulation Progress Bar -->
@@ -2794,11 +2997,24 @@ function handleCloseSimulateModal() {
       @close="showNewSeasonModal = false; newSeasonData = null"
     />
 
+    <!-- Start-of-season prerequisites gate -->
+    <StartSeasonBlockerModal
+      :show="showStartSeasonBlockerModal"
+      :roster-count="rosterCount"
+      :roster-minimum="START_SEASON_ROSTER_MIN"
+      :has-coach="!!teamStore.coach"
+      :simming="simmingStartSetup"
+      @close="showStartSeasonBlockerModal = false"
+      @sim="handleAiFinishStartSetup"
+    />
+
     <!-- Free Agency Wrap-Up Modal -->
     <EndOfFreeAgencyModal
       :show="showEndOfFreeAgencyModal"
       :results="endOfFreeAgencyResults"
+      :finalizing="finalizingChoices"
       @close="closeEndOfFreeAgencyModal"
+      @confirm-choices="handleConfirmFreeAgencyChoices"
     />
 
     <!-- Injury Notification Modal -->
@@ -2997,57 +3213,7 @@ function handleCloseSimulateModal() {
   }
 }
 
-/* Team Header */
-.team-header {
-  margin-bottom: 20px;
-}
-
-.team-header-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.team-logo-badge {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: white;
-  flex-shrink: 0;
-  border: 4px solid var(--color-bg-tertiary);
-  box-shadow: var(--shadow-md);
-}
-
-.team-header-text {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-}
-
-.team-city {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  margin: 0 0 2px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.team-name {
-  font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 2.25rem;
-  font-weight: 400;
-  color: var(--color-text-primary);
-  margin: 0;
-  line-height: 1;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
+/* Team header styles live in common/TeamHeader.vue */
 
 /* Current Date - Hidden on mobile, shown on desktop */
 .current-date {
@@ -3615,6 +3781,32 @@ function handleCloseSimulateModal() {
   -webkit-backdrop-filter: blur(4px);
   z-index: 2;
   pointer-events: none;
+}
+
+/* Full-cover overlay used to mask the wrap-up fallback while the schedule
+   is still being fetched. Inherits the parent .next-game-card's border
+   radius and sits above all card content (including .card-pull-loader). */
+.next-game-box-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: inherit;
+  z-index: 3;
+}
+
+.next-game-box-overlay-fade-enter-active,
+.next-game-box-overlay-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.next-game-box-overlay-fade-enter-from,
+.next-game-box-overlay-fade-leave-to {
+  opacity: 0;
 }
 
 .card-loader-fade-enter-active,
@@ -4213,6 +4405,7 @@ function handleCloseSimulateModal() {
 }
 
 .team-badge-game {
+  position: relative;
   width: 124px;
   height: 124px;
   border-radius: 50%;
@@ -4225,6 +4418,7 @@ function handleCloseSimulateModal() {
   box-shadow: var(--shadow-md);
   border: 3px solid var(--color-bg-tertiary);
   background: var(--team-color, #6B7280);
+  overflow: visible;
 }
 
 /* AWAY TEAM TREATMENT: invert so away/home logos read clearly even when
@@ -4632,19 +4826,7 @@ function handleCloseSimulateModal() {
     flex: 1;
   }
 
-  .team-logo-badge {
-    width: 88px;
-    height: 88px;
-    font-size: 1.5rem;
-  }
-
-  .team-name {
-    font-size: 3rem;
-  }
-
-  .team-city {
-    font-size: 1rem;
-  }
+  /* Team header desktop sizing lives in common/TeamHeader.vue */
 
   .date-day {
     font-size: 2.5rem;

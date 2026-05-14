@@ -10,7 +10,9 @@ import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/u
 import { X, ChevronLeft, Star } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import TeamLogo from '@/components/common/TeamLogo.vue'
+import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
+import { computeTeamOverall } from '@/utils/teamOverall'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
 
@@ -135,6 +137,10 @@ const loadingTeamRoster = ref(false)
 const teamModalTab = ref('roster')
 
 const selectedTeamCoach = computed(() => selectedTeam.value?.team?.coach || null)
+
+// Average overall of the team's available roster (healthy, non-FA, non-retired)
+// — same calc the other team-logo badges use. Reactive on the modal's roster.
+const selectedTeamOverall = computed(() => computeTeamOverall(selectedTeamRoster.value))
 
 const ownedTeamCoachBadges = computed(() => {
   const owned = selectedTeamCoach.value?.badges ?? []
@@ -1049,11 +1055,14 @@ function formatSalary(salary) {
             <main v-if="selectedTeam" class="team-modal-body">
               <!-- Team Card - Cosmic Style -->
               <div class="team-card-cosmic">
-                <TeamLogo
-                  :abbreviation="selectedTeam.team?.abbreviation"
-                  :color="selectedTeam.team?.primary_color"
-                  :size="56"
-                />
+                <div class="team-card-logo-wrap">
+                  <TeamLogo
+                    :abbreviation="selectedTeam.team?.abbreviation"
+                    :color="selectedTeam.team?.primary_color"
+                    :size="56"
+                  />
+                  <TeamOverallBadge :overall="selectedTeamOverall" size="md" />
+                </div>
                 <div class="team-card-info">
                   <h3 class="team-card-name">{{ selectedTeam.team?.name }}</h3>
                   <div class="team-card-record">{{ selectedTeam.wins }}-{{ selectedTeam.losses }}</div>
@@ -3348,6 +3357,17 @@ function formatSalary(salary) {
   position: relative;
 }
 
+/* Logo wrapper inside the cosmic card — `position: relative` so the
+   absolutely-positioned TeamOverallBadge anchors to the logo instead of
+   the card itself. z-index lifts it above the star-field ::before. */
+.team-card-logo-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
 .team-card-cosmic::before {
   content: '';
   position: absolute;
@@ -3384,7 +3404,7 @@ function formatSalary(salary) {
 }
 
 .team-card-name {
-  font-size: 1.1rem;
+  font-size: 1.3rem;
   font-weight: 700;
   color: #1a1520;
   margin: 0 0 4px 0;
@@ -4422,7 +4442,7 @@ function formatSalary(salary) {
   }
 
   .team-card-name {
-    font-size: 1rem;
+    font-size: 1.15rem;
   }
 
   .team-card-record {

@@ -166,4 +166,23 @@ router.beforeEach(async (to, from, next) => {
   next()
 })
 
+// When the user navigates OFF the campaign tree (anything under /campaign/...),
+// push pending local changes to the cloud. afterEach runs after navigation
+// commits so a failed push never blocks routing. Lazy import avoids the
+// circular module dependency that would arise from importing the sync store
+// at the top of the router module.
+router.afterEach((to, from) => {
+  const wasInCampaign = from.path?.startsWith('/campaign/')
+  const stillInCampaign = to.path?.startsWith('/campaign/')
+  if (wasInCampaign && !stillInCampaign) {
+    import('@/stores/sync').then(({ useSyncStore }) => {
+      try {
+        useSyncStore().syncOnRouteLeave()
+      } catch (err) {
+        console.warn('[Sync] route-leave push failed:', err)
+      }
+    })
+  }
+})
+
 export default router

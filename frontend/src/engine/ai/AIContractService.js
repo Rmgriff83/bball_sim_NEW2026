@@ -7,6 +7,7 @@
 
 import { analyzeTeamDirection, buildContext } from './AITradeService';
 import { calculateRetentionScore, getMarketSize } from './MotivationService';
+import { FREE_AGENCY_DURATION_DAYS } from '../season/SeasonDeadlines';
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
@@ -20,6 +21,40 @@ const MIN_ROSTER_SIZE = 10;
 const TARGET_ROSTER_SIZE = 14;
 const MAX_ROSTER_SIZE = 15;
 const MINIMUM_SEASON_ROSTER = 14;
+
+// NBA-style veteran minimum tiers. Teams over the cap can ALWAYS sign at
+// these salaries — they're the league's emergency-fill mechanism for roster
+// holes. Scaled (loosely) by years in the league:
+//   • 0–1 years   → rookie / new-vet min
+//   • 2–9 years   → mid-vet min
+//   • 10+ years   → max-vet min
+const VET_MIN_ROOKIE = 1_200_000;
+const VET_MIN_MID = 2_300_000;
+const VET_MIN_VETERAN = 3_300_000;
+
+// Bird-rights hard ceiling. Real NBA Bird rights have no per-deal cap (just
+// the league max), but teams can't recklessly stack maxes forever — we cap
+// total team payroll at ~20% above the luxury-tax line so AI Bird re-signs
+// don't produce $300M payrolls.
+const BIRD_RIGHTS_PAYROLL_CEILING = Math.floor(LUXURY_TAX_LINE * 1.2);
+
+export function getVeteranMinSalary(player) {
+  const seasons = player.careerSeasons ?? player.career_seasons ?? 0;
+  if (seasons >= 10) return VET_MIN_VETERAN;
+  if (seasons >= 2) return VET_MIN_MID;
+  return VET_MIN_ROOKIE;
+}
+
+/**
+ * "Bird rights" check — true when the player was on this team's roster last
+ * season (set by the offseason flow at `player.previousTeamId`). Real NBA
+ * Bird rights require 3 consecutive seasons; we use the simpler 1-year
+ * previous-team match since the engine doesn't track multi-year tenure.
+ */
+function isTeamIncumbent(player, teamId) {
+  const prev = player.previousTeamId ?? player.previous_team_id ?? null;
+  return prev != null && String(prev) === String(teamId);
+}
 
 // =============================================================================
 // SALARY LOOKUP
@@ -395,6 +430,20 @@ export function evaluateFreeAgentSigning(player, direction, teamRoster, capSitua
   // Any team below 14 should sign serviceable players regardless of direction
   if (needsPlayers && rating >= 60) return true;
 
+  // Elite talent (80+ OVR) overrides strict positional need — real FA
+  // markets have "best player available" energy on top names, so teams will
+  // happily double up at a position to grab a star. Without this clause,
+  // top FAs at over-supplied positions were going unsigned because every
+  // team's hasPositionNeed() came back false.
+  if (rating >= 80) {
+    // Tax teams still pass on top FAs (the offer math will reject anyway).
+    if (capSituation && capSituation.isInTax) return false;
+    // Rebuilding teams only chase elite talent if they're still young.
+    if (direction === 'rebuilding') return age <= 28;
+    // Everyone else is in.
+    return true;
+  }
+
   // Cap-aware: if in luxury tax, only sign minimum-salary caliber players
   if (capSituation && capSituation.isInTax) {
     return rating >= 70 && hasNeed;
@@ -569,17 +618,29 @@ export function processTeamSignings({
     if (signedCount >= maxSignings) break;
 
     const teamRoster = getTeamRoster(updatedPlayers, teamAbbreviation);
-    const shouldSign = evaluateFreeAgentSigning(player, direction, teamRoster, capSituation);
+    const incumbent = isTeamIncumbent(player, teamId);
+    const shouldSign = incumbent || evaluateFreeAgentSigning(player, direction, teamRoster, capSituation);
 
     if (shouldSign) {
       const contract = calculateContractOffer(player, direction, capSituation);
 
-      // Cap check: skip if signing would push team over luxury tax (unless contending)
+      // Cap check: skip if signing would push team over luxury tax (unless
+      // contending OR re-signing an incumbent via Bird rights OR open slot
+      // can be filled at vet min).
       if (capSituation) {
         const projectedPayroll = calculateTeamPayroll(teamRoster) + contract.salary;
         const isContending = direction === 'contending' || direction === 'title_contender' || direction === 'win_now';
         if (projectedPayroll > LUXURY_TAX_LINE && !isContending) {
-          continue;
+          if (incumbent) {
+            // Bird rights — let it ride up to the payroll ceiling.
+            if (projectedPayroll > BIRD_RIGHTS_PAYROLL_CEILING) continue;
+          } else if (teamRoster.length < TARGET_ROSTER_SIZE) {
+            // Vet-min over-cap signing to fill a needed slot.
+            contract.salary = getVeteranMinSalary(player);
+            contract.years = 1;
+          } else {
+            continue;
+          }
         }
       }
 
@@ -803,7 +864,7 @@ export function runAIRosterManagement({
  * @param {Array} leaguePlayers - all players (already mutated by prior steps)
  * @returns {{ signings: Array, updatedPlayers: Array }}
  */
-export function ensureMinimumRosters({ aiTeams, leaguePlayers }) {
+export function ensureMinimumRosters({ aiTeams, leaguePlayers, minRating = 50 }) {
   const signings = [];
   let currentPlayers = [...leaguePlayers];
 
@@ -827,8 +888,10 @@ export function ensureMinimumRosters({ aiTeams, leaguePlayers }) {
     for (const player of freeAgents) {
       if (filled >= slotsNeeded) break;
 
-      // Accept anyone rated 50+ to ensure roster fills
-      if (getPlayerRating(player) < 50) break;
+      // Quality floor — AI uses 50 by default. Callers can pass minRating: 0
+      // for emergency fills (e.g. UserTeamFinalizer's "let AI finish setup")
+      // where filling the roster trumps player quality.
+      if (getPlayerRating(player) < minRating) break;
 
       const salary = 2_000_000;
       const years = 1;
@@ -881,7 +944,22 @@ export const runAIContractDecisions = runAIRosterManagement;
 // summary of new offers placed today.
 
 const MAX_OFFERS_PER_TEAM_PER_WINDOW = 6;
-const MAX_OFFERS_PER_TEAM_PER_DAY = 2;
+const MAX_OFFERS_PER_TEAM_PER_DAY = 1;
+
+/**
+ * Linear pace gate. A team can place at most `ceil(day * MAX / DURATION)`
+ * offers cumulatively by day N — so by day 1 they're capped at 1 of their 6
+ * window allowance, day 7 at ~3, and the full budget only unlocks toward
+ * the end of the window. Stops every AI team from blowing their entire
+ * offer budget on day 1 and leaving the rest of the window dead air.
+ */
+function maxOffersByDay(day) {
+  const ratio = day / FREE_AGENCY_DURATION_DAYS;
+  return Math.max(1, Math.min(
+    MAX_OFFERS_PER_TEAM_PER_WINDOW,
+    Math.ceil(ratio * MAX_OFFERS_PER_TEAM_PER_WINDOW)
+  ));
+}
 
 function hashSeed(...parts) {
   let h = 2166136261;
@@ -971,39 +1049,97 @@ export function generateAIFreeAgencyOffers({
     const pendingForTeam = teamPendingOffersTotal(offersMap, team.id);
     if (pendingForTeam >= MAX_OFFERS_PER_TEAM_PER_WINDOW) continue;
 
+    // Cumulative pace gate: by day N, this team can only have a fraction of
+    // its 6-offer budget on the board. Without this, ~all AI bids land in
+    // the first 2-3 days because top-FA interest thresholds are so low early.
+    const dayCap = maxOffersByDay(day);
+    if (pendingForTeam >= dayCap) continue;
+    const remainingTodayCap = dayCap - pendingForTeam;
+
     let offersToday = 0;
     let pendingCommitment = teamPendingSalaryCommitment(offersMap, team.id);
 
     for (const player of freeAgents) {
       if (offersToday >= MAX_OFFERS_PER_TEAM_PER_DAY) break;
+      if (offersToday >= remainingTodayCap) break;
       if (pendingForTeam + offersToday >= MAX_OFFERS_PER_TEAM_PER_WINDOW) break;
 
       // Deterministic per-team-per-day-per-player chance the team is "interested today"
       const interestRoll = hashSeed(campaignId, team.id, player.id, day);
-      // Top FAs draw earlier interest, bench guys later in the window
+      // Pacing curve: top FAs still draw the earliest interest (otherwise
+      // bench guys would get all the early bids), but no longer "auto-bid"
+      // on day 1. Mid/late windows pick up the slack.
       const rating = getPlayerRating(player);
       const earlyWindow = day <= 4;
+      const midWindow = day >= 5 && day <= 8;
       const lateWindow = day >= 9;
-      let interestThreshold = 0.55;
-      if (rating >= 80 && earlyWindow) interestThreshold = 0.35;
-      else if (rating < 70 && earlyWindow) interestThreshold = 0.85;
-      else if (rating < 70 && lateWindow) interestThreshold = 0.50;
+      let interestThreshold = 0.65;
+      if (rating >= 80) {
+        if (earlyWindow) interestThreshold = 0.55;
+        else if (midWindow) interestThreshold = 0.45;
+        else interestThreshold = 0.40;
+      } else if (rating >= 70) {
+        if (earlyWindow) interestThreshold = 0.70;
+        else if (midWindow) interestThreshold = 0.55;
+        else interestThreshold = 0.50;
+      } else {
+        if (earlyWindow) interestThreshold = 0.88;
+        else if (midWindow) interestThreshold = 0.65;
+        else interestThreshold = 0.55;
+      }
       if (interestRoll < interestThreshold) continue;
 
-      // Roster fit (positional need, direction, etc.)
+      // Roster fit (positional need, direction, etc.). Bird-rights incumbents
+      // bypass the normal evaluation gate — teams ALWAYS want to keep their
+      // own guys around if possible.
       const adjustedCap = { ...baseCap, capSpace: baseCap.capSpace - pendingCommitment };
-      const wantsPlayer = evaluateFreeAgentSigning(player, direction, teamRoster, adjustedCap);
+      const incumbent = isTeamIncumbent(player, team.id);
+      const wantsPlayer = incumbent || evaluateFreeAgentSigning(player, direction, teamRoster, adjustedCap);
       if (!wantsPlayer) continue;
 
       const offer = calculateContractOffer(player, direction, adjustedCap);
 
-      // Cap-aware budgeting: don't exceed available room (with luxury-tax leeway for contenders)
+      // Cap-aware budgeting:
+      //  • Contenders can dip into tax (with a $20M per-deal sanity cap).
+      //  • Bird-rights incumbents → keep the full-market offer regardless of
+      //    cap (capped by BIRD_RIGHTS_PAYROLL_CEILING so payrolls don't
+      //    spiral past ~120% of the tax line).
+      //  • Over-cap teams with open roster slots → vet-min flier instead of
+      //    skipping. This is the real-NBA "minimum exception": teams over
+      //    the cap can still sign players to vet-min deals to fill holes.
+      //  • Elite-talent flier (existing): fitted offer in remaining cap room.
       const isContending = direction === 'contending' || direction === 'title_contender' || direction === 'win_now';
       const projectedCommitment = pendingCommitment + offer.salary;
-      if (!isContending && projectedCommitment > Math.max(0, adjustedCap.capRoom)) continue;
+      const overCap = projectedCommitment > Math.max(0, adjustedCap.capRoom);
+      const needsBodies = teamRoster.length < TARGET_ROSTER_SIZE;
+      if (!isContending && overCap) {
+        if (incumbent) {
+          // Bird rights: bypass cap. Just enforce the payroll ceiling so
+          // even Bird-blessed teams can't bloat past ~$200M.
+          const currentPayroll = calculateTeamPayroll(teamRoster) + pendingCommitment;
+          if (currentPayroll + offer.salary > BIRD_RIGHTS_PAYROLL_CEILING) continue;
+        } else {
+          const expected = calculateExpectedSalary(rating);
+          const remainingRoom = Math.max(0, Math.max(0, adjustedCap.capRoom) - pendingCommitment);
+          if (rating >= 80 && remainingRoom >= expected * 0.25) {
+            // Elite-talent flier — fit into remaining room.
+            offer.salary = Math.floor(remainingRoom * 0.9);
+            offer.years = Math.min(offer.years, 2);
+          } else if (needsBodies) {
+            // Vet-min over-cap signing — only when the team actually needs
+            // bodies. Caps the deal at 1 year so it doesn't lock cap space
+            // beyond the immediate need.
+            offer.salary = getVeteranMinSalary(player);
+            offer.years = 1;
+          } else {
+            continue;
+          }
+        }
+      }
       if (isContending) {
-        // Contenders can dip into tax but cap each pending offer at $20M to avoid wild deals
-        if (offer.salary > 20_000_000 && pendingCommitment > 0) continue;
+        // Contenders can dip into tax but cap each pending offer at $20M
+        // unless re-signing their own incumbent (Bird rights override).
+        if (!incumbent && offer.salary > 20_000_000 && pendingCommitment > 0) continue;
       }
 
       // Dedup: if team already has an offer to this player, only re-offer mid-window with a salary bump

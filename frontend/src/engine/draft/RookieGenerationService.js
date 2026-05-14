@@ -5,7 +5,7 @@
 // college/international diversity, and realistic name generation.
 // =============================================================================
 
-import { generatePlayer } from '../campaign/CampaignManager'
+import { generatePlayer, FIRST_NAMES as FAKE_FIRST_NAMES, LAST_NAMES as FAKE_LAST_NAMES } from '../campaign/CampaignManager'
 import { PlayerRepository } from '../db/PlayerRepository'
 
 // Build list of available headshot filenames for random assignment to rookies
@@ -23,6 +23,16 @@ const TIER_CONFIG = [
   { name: 'secondRound', min: 15, max: 20, ovrMin: 60, ovrMax: 68, potMin: 65, potMax: 75, ageMin: 20, ageMax: 22, workEthicMin: 50, workEthicMax: 85 },
   { name: 'undrafted',   min: 30, max: 35, ovrMin: 55, ovrMax: 65, potMin: 58, potMax: 70, ageMin: 20, ageMax: 22, workEthicMin: 50, workEthicMax: 85 },
 ]
+
+// A once-every-few-years can't-miss prospect. Replaces one franchise slot
+// in a class when present. Higher floor, max potential, top work ethic.
+const GENERATIONAL_TIER = {
+  name: 'generational',
+  ovrMin: 78, ovrMax: 82,
+  potMin: 99, potMax: 99,
+  ageMin: 18, ageMax: 19,
+  workEthicMin: 85, workEthicMax: 99,
+}
 
 const POSITION_WEIGHTS = [
   { position: 'PG', weight: 0.20 },
@@ -159,6 +169,37 @@ function distributePositions(count) {
 }
 
 // ---------------------------------------------------------------------------
+// Generational decision
+// ---------------------------------------------------------------------------
+
+/**
+ * Decide whether a draft class should include a generational prospect.
+ *
+ * Targets roughly one generational per 3-4 years:
+ *   - Hard floor: at least 3 years between generationals
+ *   - Year 3: ~40% chance
+ *   - Year 4: ~70% chance
+ *   - Year 5+: guaranteed
+ * If no prior generational has been recorded, gives a 25% chance on the
+ * first roll so an early-campaign player isn't denied one.
+ *
+ * @param {Object} campaign - Loaded campaign object (reads settings.lastGenerationalDraftYear)
+ * @param {number} draftYear - The draft year being generated
+ * @returns {boolean}
+ */
+export function shouldGenerateGenerational(campaign, draftYear) {
+  const last = campaign?.settings?.lastGenerationalDraftYear
+  if (typeof last !== 'number') {
+    return Math.random() < 0.25
+  }
+  const yearsSince = draftYear - last
+  if (yearsSince < 3) return false
+  if (yearsSince >= 5) return true
+  if (yearsSince === 3) return Math.random() < 0.40
+  return Math.random() < 0.70 // yearsSince === 4
+}
+
+// ---------------------------------------------------------------------------
 // Main Generation
 // ---------------------------------------------------------------------------
 
@@ -168,9 +209,13 @@ function distributePositions(count) {
  * @param {string} campaignId
  * @param {number} gameYear - The draft year / game year
  * @param {Set<string>} [existingNames] - Names already in use (collision avoidance)
+ * @param {Object} [options]
+ * @param {boolean} [options.includeGenerational] - If true, one franchise slot
+ *   is upgraded to a generational prospect (99 potential, top work ethic).
  * @returns {Array} Array of 80 player objects ready for PlayerRepository
  */
-export function generateRookieClass(campaignId, gameYear, existingNames = new Set()) {
+export function generateRookieClass(campaignId, gameYear, existingNames = new Set(), options = {}) {
+  const { includeGenerational = false } = options
   const rookies = []
   const usedNames = new Set(existingNames)
   const totalTarget = 80
@@ -208,11 +253,19 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
   const usedHeadshots = new Set()
   const availableHeadshotPool = [...AVAILABLE_HEADSHOTS]
 
+  // If a generational is requested, the first franchise slot is upgraded.
+  let generationalRemaining = includeGenerational ? 1 : 0
+
   for (let tierIdx = 0; tierIdx < TIER_CONFIG.length; tierIdx++) {
-    const tier = TIER_CONFIG[tierIdx]
+    const baseTier = TIER_CONFIG[tierIdx]
     const count = tierCounts[tierIdx]
 
     for (let j = 0; j < count; j++) {
+      const isGenerationalSlot =
+        baseTier.name === 'franchise' && generationalRemaining > 0
+      const tier = isGenerationalSlot ? GENERATIONAL_TIER : baseTier
+      if (isGenerationalSlot) generationalRemaining--
+
       const position = positions[posIdx++] || 'SF'
       const isInternational = internationalIndices.has(globalIdx)
 
@@ -310,6 +363,9 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
 
       // Store tier info for scouting display
       player.rookieTier = tier.name
+      if (isGenerationalSlot) {
+        player.isGenerational = true
+      }
 
       rookies.push(player)
       globalIdx++
@@ -319,16 +375,38 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
   return rookies
 }
 
+// Combined name pools — mashes rookie-specific names with the AI-generation
+// "fake" pool so a rookie can pair, e.g., a rookie first name with a fake
+// last name (or vice versa). Deduped so popular names aren't over-weighted.
+// Built lazily on first use to dodge a TDZ from the circular import between
+// this module and CampaignManager (which imports generateAndSaveRookieClass).
+let _combinedFirstNames = null
+let _combinedLastNames = null
+function getCombinedFirstNames() {
+  if (!_combinedFirstNames) {
+    _combinedFirstNames = [...new Set([...ROOKIE_FIRST_NAMES, ...(FAKE_FIRST_NAMES ?? [])])]
+  }
+  return _combinedFirstNames
+}
+function getCombinedLastNames() {
+  if (!_combinedLastNames) {
+    _combinedLastNames = [...new Set([...ROOKIE_LAST_NAMES, ...(FAKE_LAST_NAMES ?? [])])]
+  }
+  return _combinedLastNames
+}
+
 /**
  * Generate a unique name that doesn't collide with existing players.
  */
 function generateUniqueName(isInternational, usedNames) {
   let attempts = 0
   let firstName, lastName, fullName
+  const firstPool = getCombinedFirstNames()
+  const lastPool = getCombinedLastNames()
 
   do {
-    firstName = pickRandom(ROOKIE_FIRST_NAMES)
-    lastName = pickRandom(ROOKIE_LAST_NAMES)
+    firstName = pickRandom(firstPool)
+    lastName = pickRandom(lastPool)
     fullName = `${firstName} ${lastName}`
     attempts++
   } while (usedNames.has(fullName) && attempts < 200)
@@ -365,9 +443,11 @@ function repairRookiePotentials(rookies) {
  *
  * @param {string} campaignId
  * @param {number} gameYear
+ * @param {Object} [options]
+ * @param {boolean} [options.includeGenerational] - See generateRookieClass.
  * @returns {Promise<Array>} The generated rookies
  */
-export async function generateAndSaveRookieClass(campaignId, gameYear) {
+export async function generateAndSaveRookieClass(campaignId, gameYear, options = {}) {
   // Load existing player names to avoid collisions
   const existingPlayers = await PlayerRepository.getAllForCampaign(campaignId)
   const existingNames = new Set(existingPlayers.map(p => p.name || `${p.firstName} ${p.lastName}`))
@@ -386,7 +466,7 @@ export async function generateAndSaveRookieClass(campaignId, gameYear) {
     return existingProspects
   }
 
-  const rookies = generateRookieClass(campaignId, gameYear, existingNames)
+  const rookies = generateRookieClass(campaignId, gameYear, existingNames, options)
   repairRookiePotentials(rookies)
   await PlayerRepository.saveBulk(rookies)
   return rookies

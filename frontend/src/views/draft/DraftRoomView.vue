@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDraftStore } from '@/stores/draft'
 import { useCampaignStore } from '@/stores/campaign'
@@ -172,9 +172,14 @@ watch(() => draftStore.draftResults.length, () => {
   }
 })
 
-// Toast: show pick result when a pick is made
+// Per-pick toast notifications — suppressed while the user is fast-forwarding
+// via "skip to my pick" or "skip entire draft" so the toast lane doesn't fill
+// up with dozens of notifications all at once during a rapid sim.
+const suppressPickToasts = ref(false)
+
 watch(() => draftStore.lastPickResult, (result) => {
   if (!result) return
+  if (suppressPickToasts.value || draftStore.isSimming) return
   // In rookie draft, hide OVR for unscouted players (user's own picks are fine)
   let ovr = result.overallRating
   if (isRookieMode.value && result.teamId !== draftStore.userTeamId) {
@@ -206,11 +211,26 @@ watch(() => draftStore.currentPick, (pick, oldPick) => {
 })
 
 async function handleSkipToMyPick() {
-  await draftStore.simToNextUserPick(campaignId.value)
+  suppressPickToasts.value = true
+  try {
+    await draftStore.simToNextUserPick(campaignId.value)
+  } finally {
+    // Hold the suppression one tick past the sim end so any post-loop
+    // watcher fire (last AI pick) is still gated; otherwise the final
+    // toast of the run leaks through after isSimming flips back.
+    await nextTick()
+    suppressPickToasts.value = false
+  }
 }
 
 async function handleSkipEntire() {
-  await draftStore.simEntireDraft(campaignId.value)
+  suppressPickToasts.value = true
+  try {
+    await draftStore.simEntireDraft(campaignId.value)
+  } finally {
+    await nextTick()
+    suppressPickToasts.value = false
+  }
 }
 
 function handleSkipCurrent() {

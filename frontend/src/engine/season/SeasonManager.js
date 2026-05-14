@@ -189,11 +189,31 @@ export class SeasonManager {
     // Distribute games across season ensuring no team plays twice on the same day
     shuffleArray(matchups)
     const gamesPerDay = 10
+    // League-wide pacing:
+    //   MIN gap = 2 calendar days → at least one day off between ANY team's
+    //   games (no back-to-backs, which were spiking fatigue too hard).
+    //   MAX gap = 3 calendar days → forces a USER game by day 3 so the user
+    //   never has to sim through a long stretch of AI-only days. AI teams
+    //   don't get an explicit "must play" force; the per-day sort below
+    //   prioritizes whichever team has rested longest, which keeps every
+    //   AI team's cadence naturally tight without an extra priority pass.
+    // The season expands later into the calendar as a result; calendar-date
+    // triggers (trade deadline / All-Star) still fire at their fixed dates
+    // and are unaffected by this pacing.
+    const TEAM_MIN_GAP_DAYS = 2
+    const USER_GAME_MAX_GAP_DAYS = 3
     let currentDate = parseDate(startDateStr)
     const schedule = []
     let gameNumber = 1
     let remaining = [...matchups]
-    let userLastGameDate = null
+    const teamLastGameDate = new Map() // teamId → Date of most recent scheduled game
+
+    const daysSinceLastGame = (teamId) => {
+      const last = teamLastGameDate.get(teamId)
+      if (!last) return Infinity
+      return daysBetween(last, currentDate)
+    }
+    const teamCanPlayToday = (teamId) => daysSinceLastGame(teamId) >= TEAM_MIN_GAP_DAYS
 
     while (remaining.length > 0) {
       const dayGames = []
@@ -201,20 +221,19 @@ export class SeasonManager {
       let unscheduled = []
       const dateStr = formatDate(currentDate)
 
-      // Check if user team needs a game today (gap would exceed 2 days)
-      let userNeedsGame = false
-      if (userLastGameDate !== null) {
-        const daysSinceUserGame = daysBetween(userLastGameDate, currentDate)
-        if (daysSinceUserGame >= 2) {
-          userNeedsGame = true
-        }
+      // Pacing for the user's slot today.
+      //   userMustPlayToday: at/over the max gap → force a user matchup
+      //   first, before AI games fill the day.
+      let userMustPlayToday = false
+      if (teamLastGameDate.has(userTeamId)) {
+        userMustPlayToday = daysSinceLastGame(userTeamId) >= USER_GAME_MAX_GAP_DAYS
       } else {
         // User hasn't played yet — schedule ASAP
-        userNeedsGame = true
+        userMustPlayToday = true
       }
 
-      // If user needs a game, try to schedule one first
-      if (userNeedsGame) {
+      // If user must play today, try to schedule one first
+      if (userMustPlayToday) {
         let userScheduled = false
         const stillRemaining = []
         for (const matchup of remaining) {
@@ -228,7 +247,8 @@ export class SeasonManager {
             dayGames.push(matchup)
             teamsPlayingToday.push(home, away)
             userScheduled = true
-            userLastGameDate = new Date(currentDate)
+            teamLastGameDate.set(home, new Date(currentDate))
+            teamLastGameDate.set(away, new Date(currentDate))
           } else {
             stillRemaining.push(matchup)
           }
@@ -236,10 +256,26 @@ export class SeasonManager {
         remaining = stillRemaining
       }
 
+      // Prioritize matchups whose teams have been resting longest. Without
+      // this, the random shuffle can leave a few teams paired with always-busy
+      // opponents and their remaining matchups pile up at the season's tail.
+      remaining.sort((a, b) => {
+        const aMax = Math.max(daysSinceLastGame(a.homeTeamId), daysSinceLastGame(a.awayTeamId))
+        const bMax = Math.max(daysSinceLastGame(b.homeTeamId), daysSinceLastGame(b.awayTeamId))
+        return bMax - aMax
+      })
+
       // Fill remaining slots for the day
       for (const matchup of remaining) {
         const home = matchup.homeTeamId
         const away = matchup.awayTeamId
+
+        // Per-team rest enforcement — either team still inside the min-gap
+        // window bumps the matchup to a later day.
+        if (!teamCanPlayToday(home) || !teamCanPlayToday(away)) {
+          unscheduled.push(matchup)
+          continue
+        }
 
         if (dayGames.length >= gamesPerDay ||
             teamsPlayingToday.includes(home) ||
@@ -250,15 +286,12 @@ export class SeasonManager {
 
         dayGames.push(matchup)
         teamsPlayingToday.push(home, away)
+        teamLastGameDate.set(home, new Date(currentDate))
+        teamLastGameDate.set(away, new Date(currentDate))
       }
 
       for (const matchup of dayGames) {
         const gameId = `game_${year}_${String(gameNumber).padStart(4, '0')}`
-
-        // Track user team's last game date
-        if (matchup.homeTeamId === userTeamId || matchup.awayTeamId === userTeamId) {
-          userLastGameDate = new Date(currentDate)
-        }
 
         schedule.push({
           id: gameId,

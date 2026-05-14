@@ -1,7 +1,9 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare } from 'lucide-vue-next'
+import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
+import CoachMeetingConfirmModal from './CoachMeetingConfirmModal.vue'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerBadgeStoreModal from '@/components/team/PlayerBadgeStoreModal.vue'
 import { useTradeStore } from '@/stores/trade'
@@ -129,10 +131,17 @@ const props = defineProps({
   userTokens: {
     type: Number,
     default: 0
+  },
+  // The user team's currently signed head coach (or null). Drives the
+  // "Coach Meeting" button on the Morale tab — needs `actionsRemaining`
+  // and `overallRating` (to resolve tier → budget).
+  coach: {
+    type: Object,
+    default: null
   }
 })
 
-const emit = defineEmits(['close', 'upgrade-attribute', 'purchase-upgrade-point', 'resign-player', 'drop-player', 'scout-player'])
+const emit = defineEmits(['close', 'upgrade-attribute', 'purchase-upgrade-point', 'resign-player', 'drop-player', 'scout-player', 'hold-coach-meeting'])
 
 const activeTab = ref('stats')
 const showPlayerBadgeStore = ref(false)
@@ -410,6 +419,56 @@ function getFatigueColor(fatigue) {
 
 // Morale helpers
 const moraleValue = computed(() => normalizedPlayer.value?.morale ?? 80)
+
+// "Coach Meeting" action — bumps morale +30, consumes one of the head coach's
+// per-season actions (or buys an extra with tokens once the budget is gone).
+const showCoachMeetingModal = ref(false)
+const coachMeetingMode = ref('spend') // 'spend' | 'buy'
+const meetingInProgress = ref(false)
+
+const coachActionsLeft = computed(() => props.coach?.actionsRemaining ?? 0)
+const coachActionBudget = computed(() => getCoachActionBudget(props.coach))
+const coachMeetingExtraCost = COACH_MEETING_EXTRA_COST
+// Auto-hide on opponent / scouting / free-agent contexts — coach meetings
+// only apply to players currently on the user team.
+const playerIsFreeAgent = computed(() => (
+  props.player?.isFreeAgent === 1 || props.player?.is_free_agent === 1
+))
+const canShowCoachMeeting = computed(() =>
+  props.isUserPlayer && !props.scoutingMode && !playerIsFreeAgent.value
+)
+const coachMeetingDisabledReason = computed(() => {
+  if (!props.coach) return 'Sign a coach first'
+  if (moraleValue.value >= 100) return 'Morale already maxed'
+  if (meetingInProgress.value) return 'Working…'
+  if (coachActionsLeft.value === 0 && (props.userTokens ?? 0) < COACH_MEETING_EXTRA_COST) {
+    return 'Out of actions and tokens'
+  }
+  return null
+})
+const coachMeetingLabel = computed(() => (
+  coachActionsLeft.value > 0
+    ? `Coach Meeting · ${coachActionsLeft.value} left`
+    : `Coach Meeting · ${COACH_MEETING_EXTRA_COST} tokens`
+))
+
+function openCoachMeetingModal() {
+  if (coachMeetingDisabledReason.value) return
+  coachMeetingMode.value = coachActionsLeft.value > 0 ? 'spend' : 'buy'
+  showCoachMeetingModal.value = true
+}
+function confirmCoachMeeting() {
+  if (meetingInProgress.value) return
+  meetingInProgress.value = true
+  emit('hold-coach-meeting', {
+    playerId: props.player?.id ?? props.player?.player_id,
+    purchasedAction: coachMeetingMode.value === 'buy',
+  })
+  // Optimistic close — parent handles the async store call + toast feedback.
+  // Reset the in-progress flag a tick later so the props refresh first.
+  showCoachMeetingModal.value = false
+  setTimeout(() => { meetingInProgress.value = false }, 400)
+}
 
 // Motivation helpers
 const playerMotivations = computed(() => props.player?.motivations ?? null)
@@ -736,6 +795,19 @@ function formatChange(change) {
                   <div class="player-card-bio">
                     {{ normalizedPlayer.height }} · {{ normalizedPlayer.weight }} lbs · Age {{ normalizedPlayer.age || 25 }}
                   </div>
+                  <!-- Morale chip — face icon + label + score. Hidden in
+                       scouting mode until the user unlocks personality via
+                       the scout perk (mirrors the morale tab's gating). -->
+                  <div
+                    v-if="!scoutingMode || moraleRevealed"
+                    class="morale-chip"
+                    :style="{ '--morale-color': getMoraleColor(moraleValue) }"
+                    :title="`Morale: ${getMoraleLabel(moraleValue)} (${moraleValue}/100)`"
+                  >
+                    <component :is="getMoraleIcon(moraleValue)" :size="12" :stroke-width="2.25" />
+                    <span class="morale-chip-label">{{ getMoraleLabel(moraleValue) }}</span>
+                    <span class="morale-chip-value">{{ moraleValue }}</span>
+                  </div>
                   <!-- Contract Action Buttons (finances page) -->
                   <div v-if="showContractActions" class="header-contract-actions">
                     <button
@@ -747,6 +819,7 @@ function formatChange(change) {
                       Re-sign
                     </button>
                     <button
+                      v-if="!(player?.isFreeAgent === 1 || player?.is_free_agent === 1)"
                       class="header-action-btn drop"
                       @click.stop="emit('drop-player', player)"
                     >
@@ -1392,6 +1465,21 @@ function formatChange(change) {
                       </span>
                       <span class="morale-subtitle">Current Morale</span>
                     </div>
+                    <!-- Right-aligned Coach Meeting trigger. Auto-hides for
+                         opponent players / scouting mode; otherwise toggles
+                         between "spend an action" and "buy with tokens" based
+                         on the coach's remaining per-season budget. -->
+                    <button
+                      v-if="canShowCoachMeeting"
+                      class="coach-meeting-btn"
+                      :class="{ 'is-buy-mode': coachActionsLeft === 0 }"
+                      :disabled="!!coachMeetingDisabledReason"
+                      :title="coachMeetingDisabledReason || 'Boost morale by +30'"
+                      @click="openCoachMeetingModal"
+                    >
+                      <MessagesSquare :size="14" />
+                      <span>{{ coachMeetingLabel }}</span>
+                    </button>
                   </div>
                   <div class="morale-bar-container">
                     <div
@@ -1630,6 +1718,19 @@ function formatChange(change) {
     :campaign-id="campaignId"
     :player="normalizedPlayer"
     @close="showPlayerBadgeStore = false"
+  />
+
+  <CoachMeetingConfirmModal
+    :show="showCoachMeetingModal"
+    :mode="coachMeetingMode"
+    :player-name="normalizedPlayer?.name || 'Player'"
+    :actions-remaining="coachActionsLeft"
+    :action-budget="coachActionBudget"
+    :extra-action-cost="coachMeetingExtraCost"
+    :user-tokens="userTokens"
+    :loading="meetingInProgress"
+    @close="showCoachMeetingModal = false"
+    @confirm="confirmCoachMeeting"
   />
 </template>
 
@@ -1908,6 +2009,40 @@ function formatChange(change) {
   font-size: 0.8rem;
   color: rgba(26, 21, 32, 0.7);
   font-weight: 500;
+}
+
+/* Morale chip under the bio line — color-keyed by bucket via the same
+   helper functions the dedicated Morale tab uses, so the face icon and
+   label always match. Sits on a translucent dark fill since the header
+   has a light cosmic background. */
+.morale-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 3px 9px;
+  background: rgba(26, 21, 32, 0.65);
+  border: 1px solid color-mix(in srgb, var(--morale-color, #6b7280) 40%, transparent);
+  border-radius: 999px;
+  color: var(--morale-color, #6b7280);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.morale-chip-label {
+  /* slight tracking adjustment relative to the value */
+  letter-spacing: 0.05em;
+}
+
+.morale-chip-value {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.66rem;
+  letter-spacing: 0;
+  padding-left: 6px;
+  border-left: 1px solid color-mix(in srgb, var(--morale-color, #6b7280) 30%, transparent);
 }
 
 .injury-badge-modal {
@@ -2862,6 +2997,48 @@ function formatChange(change) {
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 0.75rem;
+}
+
+/* Coach Meeting trigger — pushed to the right edge of the morale header. */
+.coach-meeting-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(168, 85, 247, 0.14);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: var(--radius-full, 999px);
+  color: #c084fc;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.coach-meeting-btn:hover:not(:disabled) {
+  background: rgba(168, 85, 247, 0.22);
+  border-color: rgba(168, 85, 247, 0.6);
+  transform: translateY(-1px);
+}
+
+.coach-meeting-btn.is-buy-mode {
+  background: rgba(255, 196, 0, 0.14);
+  border-color: rgba(255, 196, 0, 0.4);
+  color: #ffd45a;
+}
+
+.coach-meeting-btn.is-buy-mode:hover:not(:disabled) {
+  background: rgba(255, 196, 0, 0.22);
+  border-color: rgba(255, 196, 0, 0.6);
+}
+
+.coach-meeting-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .morale-face-icon {

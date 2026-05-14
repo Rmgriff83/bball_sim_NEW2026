@@ -247,6 +247,13 @@ class PlayExecutionEngine {
     // and turnover dampener) + late-game `gameManagement` clutch bias.
     const offShotBonus = this.offensiveModifiers.shotQualityBonus ?? 0;
     const offTurnoverPenalty = this.offensiveModifiers.turnoverPenalty ?? 0;
+    // Team chemistry shot bonus — fed in per-possession from GameSimulator
+    // using the average roster morale. Already clamped to ±0.03 upstream.
+    const chemistryShotBonus = this.offensiveModifiers.chemistryShotBonus ?? 0;
+    // Home court advantage — only set when the offense is the home team
+    // (zero for away). +1.5% baseline, +2.5% when the home crowd is engaged
+    // (avg roster morale ≥ 65). See GameSimulator.calculateHomeCourtAdvantage.
+    const homeCourtBonus = this.offensiveModifiers.homeCourtBonus ?? 0;
 
     let clutchShotBias = 0;
     let clutchTurnoverBias = 0;
@@ -290,6 +297,8 @@ class PlayExecutionEngine {
           adjustedProbability += shotMod;
           adjustedProbability += offShotBonus;
           adjustedProbability += clutchShotBias;
+          adjustedProbability += chemistryShotBonus;
+          adjustedProbability += homeCourtBonus;
         }
       }
       // Negative outcomes reduced by positive advantage

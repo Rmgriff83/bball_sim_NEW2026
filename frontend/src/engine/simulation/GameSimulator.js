@@ -105,6 +105,11 @@ class GameSimulator {
     // ---- Chemistry modifiers ----
     this.homeChemistryModifier = 0.0
     this.awayChemistryModifier = 0.0
+
+    // ---- Home court advantage ----
+    // Computed once at tip-off from the home team's average morale.
+    // Applied to the home team's made-shot probability on every possession.
+    this.homeCourtAdvantage = 0.0
   }
 
   // =========================================================================
@@ -390,6 +395,7 @@ class GameSimulator {
     const awayAvgMorale = this.averageMorale(this.awayPlayers)
     this.homeChemistryModifier = this.calculateChemistryModifier(homeAvgMorale)
     this.awayChemistryModifier = this.calculateChemistryModifier(awayAvgMorale)
+    this.homeCourtAdvantage = this.calculateHomeCourtAdvantage(homeAvgMorale)
   }
 
   // =========================================================================
@@ -689,6 +695,16 @@ class GameSimulator {
     // Calculate scheme modifiers, scaled by each coach's IQ + any badge boosts.
     const defensiveModifiers = coachingEngine.calculateDefensiveModifiers(defensiveScheme, play, defensiveCoach)
     const offensiveModifiers = coachingEngine.calculateOffensiveModifiers(offensiveScheme, offensiveCoach)
+
+    // Team chemistry (avg roster morale) feeds the shot probability in the
+    // same ±0.03 range that the existing chemistry/steal coupling used —
+    // happy teams shoot a hair better, unhappy teams shoot a hair worse.
+    offensiveModifiers.chemistryShotBonus = isHome
+      ? this.homeChemistryModifier
+      : this.awayChemistryModifier
+    // Home court advantage: only the home team gets it. Computed once at
+    // tip-off from home avg morale (see calculateHomeCourtAdvantage).
+    offensiveModifiers.homeCourtBonus = isHome ? this.homeCourtAdvantage : 0
 
     // Detect clutch time BEFORE the play resolves so PlayExecutionEngine can
     // apply the offensive coach's gameManagement bias to the shot probability.
@@ -1364,9 +1380,13 @@ class GameSimulator {
         ? synergy.badge2_id
         : synergy.badge1_id
 
-      // Check if any teammate has the other badge
+      // Check if any teammate (NOT the shooter themselves) has the other
+      // badge. Reference + strict id check so falsy ids (0, '', null) can't
+      // accidentally let the shooter self-match against their own badges.
       for (const teammate of teammates) {
-        if (teammate.id === shooter.id) continue
+        if (!teammate) continue
+        if (teammate === shooter) continue
+        if (teammate.id != null && shooter.id != null && teammate.id === shooter.id) continue
 
         const teammateBadgeIds = (teammate.badges || []).map(b => b.id)
         if (teammateBadgeIds.includes(requiredBadge)) {
@@ -1423,6 +1443,17 @@ class GameSimulator {
    */
   calculateChemistryModifier(avgMorale) {
     return Math.max(-0.03, Math.min(0.03, (avgMorale - 80) / 80 * 0.03))
+  }
+
+  /**
+   * Home court advantage applied to the home team's made-shot probability.
+   * Baseline +1.5%, bumped to +2.5% when the home team's average morale is
+   * ≥ 65 (engaged crowd / locker-room buy-in amplifying the edge). Sits in
+   * the same magnitude band as the chemistry shot bonus so they stack
+   * without one swamping the other.
+   */
+  calculateHomeCourtAdvantage(homeAvgMorale) {
+    return homeAvgMorale >= 65 ? 0.025 : 0.015
   }
 
   /**

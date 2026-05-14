@@ -7,8 +7,13 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 
-const SYNC_INTERVAL_MS = 43200000 // 12 hours
 const SYNC_COOLDOWN_MS = 300000 // 5 minutes — minimum time between event-driven syncs
+const PUSH_STAGGER_MS = 250 // pause between sequential part uploads so each request lands independently
+
+// Each push is split into these parts; one HTTP request per part, each well under
+// PHP's post_max_size. Push order matters: meta first creates the server-side
+// campaign record that the player/season parts attach to.
+const PUSH_PARTS = ['meta', 'players_user', 'players_ai', 'players_fa', 'seasons']
 
 export const useSyncStore = defineStore('sync', () => {
   // State
@@ -17,10 +22,12 @@ export const useSyncStore = defineStore('sync', () => {
   const lastSyncAt = ref(null)
   const isDirty = ref(false)
   const syncError = ref(null)
-  const autoSyncIntervalId = ref(null)
   const activeCampaignId = ref(null)
   const _lastEventSyncAt = ref(0) // timestamp of last event-driven sync
   const _visibilityHandler = ref(null)
+  // Parts that still need to be pushed (failed or never attempted since last clean sync).
+  // Lets a 413 on one part avoid re-pushing the parts that already succeeded.
+  const _dirtyParts = ref(new Set(PUSH_PARTS))
 
   // Getters
   const hasPendingChanges = computed(() => isDirty.value)
@@ -60,11 +67,13 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Mark data as dirty (needs sync).
-   * Simplified: just sets a boolean flag.
+   * Mark data as dirty (needs sync). Re-arms the full push part set because a
+   * new local edit could touch any of campaign meta / players / seasons and
+   * we don't track which slice changed.
    */
   async function markDirty(_key) {
     isDirty.value = true
+    _dirtyParts.value = new Set(PUSH_PARTS)
   }
 
   /**
@@ -72,19 +81,16 @@ export const useSyncStore = defineStore('sync', () => {
    */
   async function clearDirty(_key) {
     isDirty.value = false
+    _dirtyParts.value = new Set()
   }
 
   /**
-   * Start the auto-sync timer and register event-driven sync triggers.
+   * Register event-driven sync triggers. No background interval — pushes now
+   * happen on route-leave, visibility-hidden, app-close, sign-out, and the
+   * profile-page "Save to Cloud" button.
    */
   function startAutoSync() {
-    if (autoSyncIntervalId.value) return
-
-    autoSyncIntervalId.value = setInterval(async () => {
-      if (activeCampaignId.value && hasPendingChanges.value) {
-        await syncNow()
-      }
-    }, SYNC_INTERVAL_MS)
+    if (_visibilityHandler.value) return
 
     // Sync when tab becomes hidden (user switching away or closing).
     // Bypasses the route-leave cooldown — closing a tab is a high-risk moment
@@ -98,14 +104,9 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Stop the auto-sync timer and remove event listeners.
+   * Tear down event listeners. (Kept for symmetry / future use; not called today.)
    */
   function stopAutoSync() {
-    if (autoSyncIntervalId.value) {
-      clearInterval(autoSyncIntervalId.value)
-      autoSyncIntervalId.value = null
-    }
-
     if (_visibilityHandler.value) {
       document.removeEventListener('visibilitychange', _visibilityHandler.value)
       _visibilityHandler.value = null
@@ -470,52 +471,136 @@ export const useSyncStore = defineStore('sync', () => {
       // Push snapshot in chunks to cloud
       await pushChanges(activeCampaignId.value)
 
-      // Update sync timestamp
+      // All 5 parts uploaded successfully — clean state.
       lastSyncAt.value = new Date().toISOString()
       isDirty.value = false
+      _dirtyParts.value = new Set()
 
       toastStore.showSuccess('Saved to cloud', 2000)
     } catch (err) {
       syncError.value = err.message || 'Sync failed'
-      toastStore.showError('Sync failed - will retry', 3000)
+      if (err.failedParts && err.failedParts.length > 0) {
+        const total = PUSH_PARTS.length
+        toastStore.showError(`Sync partial: ${err.failedParts.length} of ${total} files failed - will retry`, 3500)
+      } else {
+        toastStore.showError('Sync failed - will retry', 3000)
+      }
     } finally {
       isSyncing.value = false
     }
   }
 
   /**
-   * Push campaign snapshot to the server in 3 sequential chunked requests.
-   * 1. meta (campaign + teams) — always < 50KB
-   * 2. players — typically ~200-300KB
-   * 3. seasons — variable, but much smaller with aggressive stripping
+   * Split players into three buckets:
+   *   - user: players on the user's controlled team
+   *   - ai:   players on the other 29 AI teams
+   *   - fa:   free agents / retired (no team)
+   * Done so each player file is small enough to stay well under PHP's
+   * post_max_size; the `players_ai` chunk is what kept tripping the 413.
+   */
+  function _partitionPlayers(players, userTeamId) {
+    const user = []
+    const ai = []
+    const fa = []
+    for (const p of players) {
+      const teamId = p.team_id ?? p.teamId ?? null
+      if (!teamId) {
+        fa.push(p)
+      } else if (userTeamId != null && teamId === userTeamId) {
+        user.push(p)
+      } else {
+        ai.push(p)
+      }
+    }
+    return { user, ai, fa }
+  }
+
+  /**
+   * Push campaign snapshot to the server in 5 sequential, staggered requests:
+   * meta, players_user, players_ai, players_fa, seasons. Each part is its own
+   * HTTP POST so any single one staying under post_max_size keeps the whole
+   * sync working. Failed parts stay in `_dirtyParts` so the next push only
+   * retries the parts that didn't land.
    */
   async function pushChanges(campaignId) {
     const snapshot = await _serializeCampaignSnapshot(campaignId)
 
-    // Only make API call if we have data to push
     if (!snapshot.campaign) return
 
-    // Chunk 1: meta (campaign + teams)
-    await api.post(`/api/sync/${campaignId}/push`, {
-      part: 'meta',
-      campaign: snapshot.campaign,
-      teams: snapshot.teams,
-      clientUpdatedAt: snapshot.clientUpdatedAt,
-    })
+    const userTeamId = snapshot.campaign.teamId
+      ?? snapshot.campaign.userTeamId
+      ?? snapshot.campaign.team_id
+      ?? snapshot.campaign.user_team_id
+      ?? null
 
-    // Chunk 2: players
-    await api.post(`/api/sync/${campaignId}/push`, {
-      part: 'players',
-      players: snapshot.players,
-      clientUpdatedAt: snapshot.clientUpdatedAt,
-    })
+    const { user: playersUser, ai: playersAi, fa: playersFa } = _partitionPlayers(snapshot.players, userTeamId)
 
-    // Chunk 3: seasons
-    await api.post(`/api/sync/${campaignId}/push`, {
-      part: 'seasons',
-      seasons: snapshot.seasons,
-      clientUpdatedAt: snapshot.clientUpdatedAt,
-    })
+    // Anything not yet known to be clean must be (re-)pushed. New uploads
+    // start with the full set dirty; partial-failure retries push only the
+    // parts that previously failed.
+    if (_dirtyParts.value.size === 0) {
+      _dirtyParts.value = new Set(PUSH_PARTS)
+    }
+
+    const payloads = {
+      meta: {
+        part: 'meta',
+        campaign: snapshot.campaign,
+        teams: snapshot.teams,
+        clientUpdatedAt: snapshot.clientUpdatedAt,
+      },
+      players_user: {
+        part: 'players_user',
+        players: playersUser,
+        clientUpdatedAt: snapshot.clientUpdatedAt,
+      },
+      players_ai: {
+        part: 'players_ai',
+        players: playersAi,
+        clientUpdatedAt: snapshot.clientUpdatedAt,
+      },
+      players_fa: {
+        part: 'players_fa',
+        players: playersFa,
+        clientUpdatedAt: snapshot.clientUpdatedAt,
+      },
+      seasons: {
+        part: 'seasons',
+        seasons: snapshot.seasons,
+        clientUpdatedAt: snapshot.clientUpdatedAt,
+      },
+    }
+
+    const failed = []
+    let first = true
+    // meta must succeed before any other part on a brand-new campaign (server
+    // creates the Campaign row on the meta push), so we always lead with it
+    // when it's dirty. PUSH_PARTS order already starts with meta.
+    const order = PUSH_PARTS.filter(p => _dirtyParts.value.has(p))
+
+    for (const part of order) {
+      if (!first) {
+        await new Promise(resolve => setTimeout(resolve, PUSH_STAGGER_MS))
+      }
+      first = false
+      try {
+        await api.post(`/api/sync/${campaignId}/push`, payloads[part])
+        _dirtyParts.value.delete(part)
+      } catch (err) {
+        failed.push(part)
+        // If meta failed on a fresh push, the other player/season requests
+        // will 404 ("Campaign not found"). Skip them this cycle.
+        if (part === 'meta') {
+          break
+        }
+      }
+    }
+
+    if (failed.length > 0) {
+      const err = new Error(`Sync partial: ${failed.length} of ${order.length} parts failed`)
+      err.failedParts = failed
+      throw err
+    }
   }
 
   /**
@@ -684,6 +769,66 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
+   * Force-overwrite local IndexedDB with whatever is in S3 for this campaign.
+   * Skips the timestamp-based merge that `pullChanges` does — the user pressed
+   * "Pull from Cloud" specifically to nuke any divergent local state. Wipes
+   * the campaign's teams/players/seasons rows first so records that were
+   * deleted remotely don't linger locally.
+   */
+  async function forcePullFromCloud(campaignId) {
+    if (!campaignId) throw new Error('forcePullFromCloud: campaignId required')
+
+    isPulling.value = true
+    const toastStore = useToastStore()
+    try {
+      const response = await api.get(`/api/sync/${campaignId}/pull`, { skipErrorToast: true })
+      const data = response.data
+
+      if (!data || !data.campaign) {
+        throw new Error('No cloud snapshot found for this campaign')
+      }
+
+      await Promise.all([
+        TeamRepository.deleteAllForCampaign(campaignId),
+        PlayerRepository.deleteAllForCampaign(campaignId),
+        SeasonRepository.deleteAllForCampaign(campaignId),
+      ])
+
+      await CampaignRepository.save(data.campaign)
+
+      if (Array.isArray(data.teams) && data.teams.length > 0) {
+        await TeamRepository.saveBulk(data.teams)
+      }
+
+      if (Array.isArray(data.players) && data.players.length > 0) {
+        const hydrated = data.players.map(_hydratePlayerKeys)
+        await PlayerRepository.saveBulk(hydrated)
+      }
+
+      if (Array.isArray(data.seasons)) {
+        for (const season of data.seasons) {
+          if (!season) continue
+          await SeasonRepository.save(season)
+        }
+      }
+
+      lastSyncAt.value = new Date().toISOString()
+      isDirty.value = false
+      _dirtyParts.value = new Set()
+
+      toastStore.showSuccess('Pulled from cloud', 2000)
+      return data
+    } catch (err) {
+      const msg = err.message || 'Pull from cloud failed'
+      syncError.value = msg
+      toastStore.showError(msg, 3500)
+      throw err
+    } finally {
+      isPulling.value = false
+    }
+  }
+
+  /**
    * Queue a background sync check.
    * Push-only: just pushes local changes if dirty, never pulls.
    */
@@ -721,6 +866,7 @@ export const useSyncStore = defineStore('sync', () => {
     syncOnRouteLeave,
     pushChanges,
     pullChanges,
+    forcePullFromCloud,
     resolveConflict,
     fetchServerCampaigns,
     queueSyncCheck,

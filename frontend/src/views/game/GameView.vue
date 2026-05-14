@@ -10,6 +10,9 @@ import { usePlayoffStore } from '@/stores/playoff'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
 import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
+import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { computeTeamOverall } from '@/utils/teamOverall'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
 import { SimulateConfirmModal, EvolutionSummary } from '@/components/game'
@@ -182,6 +185,34 @@ const userTeam = computed(() => campaign.value?.team)
 
 const homeTeam = computed(() => game.value?.home_team)
 const awayTeam = computed(() => game.value?.away_team)
+
+// Live team-overall for both sides (avg OVR of healthy, non-FA, non-retired
+// players). Drives the small badge that overlays each team logo in the
+// pre-game header AND the broadcast scoreboard.
+const homeTeamOverall = ref(null)
+const awayTeamOverall = ref(null)
+const _gameCampaignId = computed(() => route.params.id)
+watch(
+  () => [_gameCampaignId.value, homeTeam.value?.id, awayTeam.value?.id],
+  async ([cid, hid, aid]) => {
+    homeTeamOverall.value = null
+    awayTeamOverall.value = null
+    if (!cid) return
+    try {
+      if (hid) {
+        const players = await PlayerRepository.getByTeam(cid, hid)
+        homeTeamOverall.value = computeTeamOverall(players)
+      }
+      if (aid) {
+        const players = await PlayerRepository.getByTeam(cid, aid)
+        awayTeamOverall.value = computeTeamOverall(players)
+      }
+    } catch {
+      // leave overalls null on failure — badge just won't render
+    }
+  },
+  { immediate: true }
+)
 const isComplete = computed(() => game.value?.is_complete)
 const isInProgress = computed(() => game.value?.is_in_progress)
 const savedQuarter = computed(() => game.value?.current_quarter)
@@ -1983,6 +2014,7 @@ onUnmounted(() => {
                   <span class="badge-record">
                     {{ game.is_playoff ? awaySeriesRecord : awayTeamRecord }}
                   </span>
+                  <TeamOverallBadge :overall="awayTeamOverall" />
                 </div>
                 <div class="team-info">
                   <span v-if="awayTeam?.overall_rating" class="team-rating">{{ awayTeam.overall_rating }} OVR</span>
@@ -2027,6 +2059,7 @@ onUnmounted(() => {
                   <span class="badge-record">
                     {{ game.is_playoff ? homeSeriesRecord : homeTeamRecord }}
                   </span>
+                  <TeamOverallBadge :overall="homeTeamOverall" />
                 </div>
                 <div class="team-info">
                   <span v-if="homeTeam?.overall_rating" class="team-rating">{{ homeTeam.overall_rating }} OVR</span>
@@ -2059,6 +2092,7 @@ onUnmounted(() => {
                     :style="{ '--team-color': awayTeam?.primary_color || '#6B7280' }"
                   >
                     {{ awayTeam?.abbreviation }}
+                    <TeamOverallBadge :overall="awayTeamOverall" />
                   </div>
                   <span class="broadcast-record">
                     {{ game.is_playoff
@@ -2096,6 +2130,7 @@ onUnmounted(() => {
                     :style="{ '--team-color': homeTeam?.primary_color || '#6B7280' }"
                   >
                     {{ homeTeam?.abbreviation }}
+                    <TeamOverallBadge :overall="homeTeamOverall" />
                   </div>
                   <span class="broadcast-record">
                     {{ game.is_playoff
@@ -4022,6 +4057,8 @@ onUnmounted(() => {
 }
 
 .team-badge-game {
+  position: relative;
+  overflow: visible;
   width: 100px;
   height: 100px;
   border-radius: 50%;
@@ -5975,6 +6012,8 @@ onUnmounted(() => {
 }
 
 .broadcast-team-logo {
+  position: relative;
+  overflow: visible;
   width: 44px;
   height: 44px;
   border-radius: 8px;

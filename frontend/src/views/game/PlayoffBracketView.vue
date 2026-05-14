@@ -14,6 +14,8 @@ import PlayoffBracket from '@/components/playoffs/PlayoffBracket.vue'
 import GameDayModal from '@/components/calendar/GameDayModal.vue'
 import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import { Trophy, X, Play, FastForward, AlertTriangle, Cpu, Users } from 'lucide-vue-next'
+import TeamHeader from '@/components/common/TeamHeader.vue'
+import { computeTeamOverall } from '@/utils/teamOverall'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,6 +30,7 @@ const breakingNewsStore = useBreakingNewsStore()
 const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => campaign.value?.team)
+const userTeamOverall = computed(() => computeTeamOverall(teamStore.roster || []))
 
 const loading = ref(false)
 
@@ -450,21 +453,8 @@ function findSeriesById(seriesId) {
 
 <template>
   <div class="playoff-bracket-view">
-    <!-- Team Header -->
-    <section class="team-header">
-      <div class="team-header-row">
-        <div
-          class="team-logo-badge"
-          :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
-        >
-          {{ team?.abbreviation }}
-        </div>
-        <div class="team-header-text">
-          <p class="team-city">{{ team?.city }} · {{ team?.conference === 'east' ? 'EAST' : 'WEST' }}</p>
-          <h1 class="team-name">{{ team?.name }}</h1>
-        </div>
-      </div>
-    </section>
+    <!-- Team Header — shared component (see common/TeamHeader.vue) -->
+    <TeamHeader :team="team" :team-overall="userTeamOverall" />
 
     <!-- Playoffs Banner -->
     <div class="playoffs-banner card-cosmic">
@@ -692,64 +682,7 @@ function findSeriesById(seriesId) {
   }
 }
 
-/* Team Header */
-.team-header {
-  margin-bottom: 16px;
-}
-
-.team-header-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.team-logo-badge {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: white;
-  flex-shrink: 0;
-  border: 4px solid var(--color-bg-tertiary);
-  box-shadow: var(--shadow-md);
-}
-
-.team-header-text {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-}
-
-.team-city {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  margin: 0 0 2px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.team-name {
-  font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  /* Match the home view header sizing: 2.25rem by default, 3rem on desktop. */
-  font-size: 2.25rem;
-  font-weight: 400;
-  color: var(--color-text-primary);
-  margin: 0;
-  line-height: 1;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-
-@media (min-width: 1024px) {
-  .team-name {
-    font-size: 3rem;
-  }
-}
+/* Team header styles live in common/TeamHeader.vue */
 
 /* Playoffs Banner */
 .playoffs-banner {

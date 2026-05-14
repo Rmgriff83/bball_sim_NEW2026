@@ -1,8 +1,9 @@
 <script setup>
 import { computed } from 'vue'
-import { User, AlertTriangle, RefreshCw, UserMinus, FileSignature } from 'lucide-vue-next'
+import { User, AlertTriangle, RefreshCw, UserMinus, FileSignature, Heart } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { StatBadge } from '@/components/ui'
+import { useFreeAgentInterest } from '@/composables/useFreeAgentInterest'
 
 const props = defineProps({
   player: {
@@ -43,6 +44,19 @@ const isExpiringContract = computed(() => {
 const pendingOfferCount = computed(() => props.player.pendingOfferCount ?? 0)
 const userOffer = computed(() => props.player.userOffer || null)
 const hasUserOffer = computed(() => !!userOffer.value)
+
+// Interest preview — only shown for FA cards where the user has an active
+// offer in. Reflects how the player would score that offer if FA resolved
+// right now (same scoring fn the engine uses).
+const { score: scoreInterest, interestLevelForScore } = useFreeAgentInterest()
+const userOfferInterest = computed(() => {
+  if (!props.isFreeAgent || !hasUserOffer.value) return null
+  const raw = scoreInterest(props.player, {
+    salary: userOffer.value.salary,
+    years: userOffer.value.years,
+  })
+  return raw != null ? { score: raw, level: interestLevelForScore(raw) } : null
+})
 
 function getPositionColor(position) {
   const colors = {
@@ -193,6 +207,19 @@ function handleInfo() {
               :title="hasUserOffer ? 'You have a pending offer to this player' : 'Pending offers from other teams'"
             >
               {{ pendingOfferCount }} {{ pendingOfferCount === 1 ? 'OFFER' : 'OFFERS' }}
+            </span>
+            <span
+              v-if="userOfferInterest"
+              class="interest-badge"
+              :style="{
+                color: userOfferInterest.level.color,
+                borderColor: userOfferInterest.level.color,
+                background: `color-mix(in srgb, ${userOfferInterest.level.color} 12%, transparent)`,
+              }"
+              :title="`${userOfferInterest.level.label} (${userOfferInterest.score}/100) — ${userOfferInterest.level.hint}`"
+            >
+              <Heart :size="10" />
+              {{ userOfferInterest.level.label }}
             </span>
           </div>
         </div>
@@ -412,6 +439,19 @@ function handleInfo() {
   background: rgba(168, 85, 247, 0.18);
   color: #c084fc;
   border-color: rgba(168, 85, 247, 0.4);
+}
+
+.interest-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.125rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid;
 }
 
 .player-info {

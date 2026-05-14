@@ -56,18 +56,6 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
-  function showRegularSeasonComplete({ campaignId = null, remainingGames = 0 } = {}) {
-    if (!campaignId) return null
-    return addToast({
-      type: 'regular-season-complete',
-      campaignId,
-      remainingGames,
-      // Sticky — dismiss only via the close X or the action button. The user
-      // needs to make a decision to advance, so don't time it out.
-      duration: 0
-    })
-  }
-
   function showDraftPick({ pickNumber, teamAbbr, teamColor, playerName, position, overallRating, isUserTeam }) {
     return addToast({
       type: 'draft-pick',
@@ -158,7 +146,6 @@ export const useToastStore = defineStore('toast', () => {
     removeToast,
     showGameResult,
     showWeeklySummary,
-    showRegularSeasonComplete,
     showDraftPick,
     addMinimalToast,
     removeMinimalToast,

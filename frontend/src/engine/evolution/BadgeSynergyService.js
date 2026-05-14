@@ -68,6 +68,12 @@ export class BadgeSynergyService {
   findBadgeSynergies (playerABadges, playerBBadges) {
     const foundSynergies = []
 
+    // Reference-equality guard — if a caller accidentally passes the same
+    // player's badge list as both sides (e.g. `findBadgeSynergies(p.badges,
+    // p.badges)`), every shared badge would self-match. Synergies require
+    // TWO different players, so refuse to match in that case.
+    if (playerABadges === playerBBadges) return foundSynergies
+
     const aBadgeIds = playerABadges.map(b => b.id)
     const bBadgeIds = playerBBadges.map(b => b.id)
 
@@ -183,6 +189,13 @@ export class BadgeSynergyService {
     let synergyCount = 0
 
     for (const teammate of teammates) {
+      if (!teammate) continue
+      // Skip self — synergies require TWO different players. Reference + id
+      // check so falsy ids can't slip through.
+      if (teammate === player) continue
+      const tid = teammate.id ?? teammate.player_id
+      const pid = player.id ?? player.player_id
+      if (tid != null && pid != null && tid === pid) continue
       const teammateBadges = teammate.badges ?? []
       const synergies = this.findBadgeSynergies(playerBadges, teammateBadges)
       synergyCount += synergies.length

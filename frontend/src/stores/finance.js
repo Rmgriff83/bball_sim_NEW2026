@@ -429,17 +429,12 @@ export const useFinanceStore = defineStore('finance', () => {
       if (!campaign.settings) campaign.settings = {}
       if (!campaign.settings.freeAgencyOffers) campaign.settings.freeAgencyOffers = {}
 
-      // Validate cap: outstanding user offers + this offer <= cap space.
-      const outstandingUserOffers = []
-      for (const [pid, offers] of Object.entries(campaign.settings.freeAgencyOffers)) {
-        const userOffer = offers.find(o => o.isUserOffer)
-        if (userOffer && pid !== String(playerId)) outstandingUserOffers.push(userOffer)
-      }
-      const outstandingTotal = outstandingUserOffers.reduce((s, o) => s + (o.salary || 0), 0)
-      const room = capSpace.value
-      if (outstandingTotal + salary > room) {
-        throw new Error(`Not enough cap space — your pending offers would total ${formatSalary(outstandingTotal + salary)} of ${formatSalary(room)}.`)
-      }
+      // No cap-space throw here. The user is allowed to bid above their cap
+      // on multiple players — players don't pick a team until the window
+      // ends, so taking swings at several stars is the realistic play. If
+      // more players accept than the cap can fit, resolveFreeAgency surfaces
+      // a "Decision Required" step in the EndOfFreeAgencyModal so the user
+      // picks which signings to keep.
 
       const offerList = campaign.settings.freeAgencyOffers[playerId] || []
       const existingIdx = offerList.findIndex(o => o.isUserOffer)
@@ -588,6 +583,125 @@ export const useFinanceStore = defineStore('finance', () => {
       await CampaignRepository.save(campaign)
     }
     return results
+  }
+
+  /**
+   * Finalize the user's pending free-agency choices when their winning bids
+   * totaled more than their cap space. Called from the EndOfFreeAgencyModal
+   * after the user picks which signings to keep.
+   *
+   * `pendingOffers` is the array carried by `results.pendingChoice.offers`
+   * (snapshot at resolution time). `selectedIds` is the subset of playerIds
+   * the user wants to actually sign — anything not in the set is recorded as
+   * a passed-on signing (player stays a free agent).
+   */
+  async function finalizeFreeAgencyUserChoices(campaignId, pendingOffers, selectedIds) {
+    loading.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+      const userTeamId = campaign.teamId
+      if (!userTeamId) throw new Error('No user team found')
+      const teamData = await TeamRepository.get(campaignId, userTeamId)
+      const userTeamAbbr = teamData?.abbreviation ?? teamData?.abbr ?? null
+
+      const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+      const selected = new Set((selectedIds || []).map(String))
+
+      const playerUpdates = []
+      const accepted = []
+      const declined = []
+
+      for (const offer of pendingOffers ?? []) {
+        const player = allPlayers.find(p => String(p.id) === String(offer.playerId))
+        if (!player) continue
+        if (selected.has(String(offer.playerId))) {
+          playerUpdates.push({
+            ...player,
+            teamId: userTeamId,
+            team_id: userTeamId,
+            teamAbbreviation: userTeamAbbr,
+            team_abbreviation: userTeamAbbr,
+            isFreeAgent: 0,
+            is_free_agent: 0,
+            contractYearsRemaining: offer.years,
+            contract_years_remaining: offer.years,
+            contractSalary: offer.salary,
+            contract_salary: offer.salary,
+            previousTeamId: undefined,
+            previous_team_id: undefined,
+            previousTeamAbbreviation: undefined,
+            previous_team_abbreviation: undefined,
+            campaignId,
+          })
+          accepted.push({
+            playerId: offer.playerId,
+            playerName: offer.playerName,
+            years: offer.years,
+            salary: offer.salary,
+          })
+        } else if (offer.fallback?.teamId) {
+          // User passed → runner-up AI team scoops the player. The fallback
+          // was scored against the same threshold pickBestOffer enforces, so
+          // we just apply it without re-scoring.
+          playerUpdates.push({
+            ...player,
+            teamId: offer.fallback.teamId,
+            team_id: offer.fallback.teamId,
+            teamAbbreviation: offer.fallback.teamAbbr,
+            team_abbreviation: offer.fallback.teamAbbr,
+            isFreeAgent: 0,
+            is_free_agent: 0,
+            contractYearsRemaining: offer.fallback.years,
+            contract_years_remaining: offer.fallback.years,
+            contractSalary: offer.fallback.salary,
+            contract_salary: offer.fallback.salary,
+            previousTeamId: undefined,
+            previous_team_id: undefined,
+            previousTeamAbbreviation: undefined,
+            previous_team_abbreviation: undefined,
+            campaignId,
+          })
+          declined.push({
+            playerId: offer.playerId,
+            playerName: offer.playerName,
+            signedWith: offer.fallback.teamAbbr,
+            signedWithAbbr: offer.fallback.teamAbbr,
+            userOffer: { salary: offer.salary, years: offer.years },
+            winningOffer: { salary: offer.fallback.salary, years: offer.fallback.years },
+            reason: offer.fallback.reason || `You passed — ${offer.fallback.teamAbbr} signed them as the runner-up bidder.`,
+          })
+        } else {
+          // No AI team was a viable backup → player stays a free agent.
+          declined.push({
+            playerId: offer.playerId,
+            playerName: offer.playerName,
+            signedWith: 'unsigned',
+            signedWithAbbr: null,
+            userOffer: { salary: offer.salary, years: offer.years },
+            winningOffer: null,
+            reason: 'You passed on this offer, and no AI team had a competing bid.',
+          })
+        }
+      }
+
+      if (playerUpdates.length > 0) {
+        await PlayerRepository.saveBulk(playerUpdates)
+      }
+
+      await Promise.all([
+        fetchRosterContracts(campaignId, { force: true }),
+        fetchFreeAgents(campaignId, { force: true }),
+      ])
+
+      return { accepted, declined }
+    } catch (err) {
+      error.value = err.message || 'Failed to finalize free-agency choices'
+      throw err
+    } finally {
+      loading.value = false
+    }
   }
 
   async function dropPlayer(campaignId, playerId) {
@@ -752,6 +866,7 @@ export const useFinanceStore = defineStore('finance', () => {
     simFreeAgencyDay,
     simRestOfFreeAgency,
     consumeFreeAgencyResults,
+    finalizeFreeAgencyUserChoices,
     dropPlayer,
     openResignModal,
     closeResignModal,

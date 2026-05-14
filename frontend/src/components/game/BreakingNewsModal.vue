@@ -111,23 +111,12 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  /* Newspaper-textured background */
-  background:
-    radial-gradient(ellipse at 30% 20%, rgba(210, 190, 160, 0.95), transparent 70%),
-    radial-gradient(ellipse at 70% 80%, rgba(200, 180, 150, 0.9), transparent 60%),
-    linear-gradient(180deg, #d4c5a9, #c4b494, #b8a888);
-  /* Noise texture via repeating SVG */
-  background-blend-mode: multiply;
-}
-
-.bn-overlay::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.08'/%3E%3C/svg%3E");
-  background-size: 200px 200px;
-  pointer-events: none;
-  opacity: 0.5;
+  /* Dark backdrop by default — matches the rest of the app's modals in
+     dark mode (which is the implicit default when no data-theme is set).
+     Light mode overrides this to the warm newspaper texture below. */
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .bn-container {
@@ -362,11 +351,24 @@ onUnmounted(() => {
   opacity: 0;
 }
 
-/* Light theme adjustments */
+/* Light theme: keep the warm newspaper texture that fits the masthead vibe.
+   Dark mode (default) uses the plain backdrop above. */
 [data-theme="light"] .bn-overlay {
   background:
     radial-gradient(ellipse at 30% 20%, rgba(230, 215, 190, 0.98), transparent 70%),
     radial-gradient(ellipse at 70% 80%, rgba(220, 205, 180, 0.95), transparent 60%),
     linear-gradient(180deg, #e8dcc8, #ddd0b8, #d4c5a9);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-theme="light"] .bn-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.08'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  pointer-events: none;
+  opacity: 0.5;
 }
 </style>

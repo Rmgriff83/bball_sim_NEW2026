@@ -48,6 +48,54 @@ function getExpectedMinutes(player, difficulty = 'pro') {
   return 6;
 }
 
+function getMentalAttr(player, name) {
+  return player.attributes?.mental?.[name] ?? 50;
+}
+
+/**
+ * Multiplier for the `playing_time_unmet` morale penalty. Role-accepting
+ * bench players (team_player / quiet / mentor, high coachability + work
+ * ethic) shrug off short minutes; ball-hogs, media darlings, and high-OVR
+ * players who think they should be starting feel it more.
+ *
+ * `hot_head` is intentionally not boosted here — it already amplifies the
+ * full morale delta via the volatility multiplier at the end of
+ * `updateAfterGame`, so layering on top would double-count.
+ *
+ * Clamped to [0.1, 2.0] so the floor is "barely a nudge" and the ceiling is
+ * "2× the original sting."
+ */
+function roleAcceptanceUnmetMultiplier(player) {
+  const traits = player.personality?.traits ?? [];
+  let mult = 1.0;
+
+  // Role-accepting traits soften the penalty
+  if (traits.includes('team_player')) mult -= 0.5;
+  if (traits.includes('mentor')) mult -= 0.4;
+  if (traits.includes('quiet')) mult -= 0.3;
+  if (traits.includes('joker')) mult -= 0.15;
+
+  // Role-rejecting traits sharpen it
+  if (traits.includes('ball_hog')) mult += 0.5;
+  if (traits.includes('media_darling')) mult += 0.25;
+
+  // Mental attributes — coachability is the big one (buying into the role),
+  // work ethic is the secondary signal (grinder mindset over playing-time
+  // grievance). Centered at 50 so average attributes are neutral.
+  const coachability = getMentalAttr(player, 'coachability');
+  const workEthic = getMentalAttr(player, 'workEthic');
+  mult -= ((coachability - 50) / 100) * 0.6;
+  mult -= ((workEthic - 50) / 100) * 0.4;
+
+  // Top-tier players who get benched still chafe — acceptance traits can
+  // dampen, but not erase, the "I should be starting" reality.
+  const overall = player.overallRating ?? player.overall_rating ?? 70;
+  if (overall >= 80) mult += 0.3;
+  else if (overall >= 75) mult += 0.15;
+
+  return Math.max(0.1, Math.min(2.0, mult));
+}
+
 /**
  * Update player morale after a game.
  * Returns a new player object with updated morale.
@@ -84,7 +132,7 @@ function updateAfterGame(player, gameResult, boxScore, difficulty = 'pro') {
   } else if (minutes >= expectedMinutes * 0.8) {
     morale += factors.playing_time_met;
   } else {
-    morale += factors.playing_time_unmet;
+    morale += factors.playing_time_unmet * roleAcceptanceUnmetMultiplier(player);
   }
 
   // Apply personality volatility

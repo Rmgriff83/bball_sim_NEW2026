@@ -29,6 +29,16 @@ export const BreakingNewsService = {
     }
   },
 
+  tradeDeadlineWarning({ date }) {
+    return {
+      headline: 'ONE WEEK UNTIL THE TRADE & RE-SIGN DEADLINES',
+      body: 'Front offices around the league are scrambling. The trade deadline closes in one week — no more trades can be proposed once it passes. The contract-extension deadline closes the same day, so any player on the final year of their deal must be re-signed before then or they\'ll hit free agency at season end.',
+      category: 'DEADLINE',
+      icon: 'Clock',
+      date,
+    }
+  },
+
   allStarSelection({ playerName, teamName, selectionType, date }) {
     const label = selectionType === 'rising_stars' ? 'RISING STARS' : 'ALL-STAR'
     return {

@@ -17,6 +17,19 @@ export const SeasonRepository = {
     })
   },
 
+  async deleteAllForCampaign(campaignId) {
+    return withDB(async db => {
+      const tx = db.transaction('seasons', 'readwrite')
+      const index = tx.store.index('campaignId')
+      let cursor = await index.openCursor(IDBKeyRange.only(campaignId))
+      while (cursor) {
+        await cursor.delete()
+        cursor = await cursor.continue()
+      }
+      await tx.done
+    })
+  },
+
   async updateSchedule(campaignId, year, schedule) {
     return withDB(async db => {
       const season = await db.get('seasons', [campaignId, year])

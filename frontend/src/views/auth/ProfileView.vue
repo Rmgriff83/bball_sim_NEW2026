@@ -6,7 +6,7 @@ import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { GlassCard, BaseButton, FormInput, Badge, BaseModal } from '@/components/ui'
-import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, Trash2, AlertTriangle, Zap, Users } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, CloudDownload, Trash2, AlertTriangle, Zap, Users } from 'lucide-vue-next'
 import { useLocalCache } from '@/composables/useLocalCache'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 
@@ -22,6 +22,10 @@ const activeTab = ref('settings')
 // Clear cache modal
 const showClearCacheModal = ref(false)
 const clearingCache = ref(false)
+
+// Pull from cloud modal
+const showPullFromCloudModal = ref(false)
+const pullingFromCloud = ref(false)
 
 // Theme toggle
 const isDarkMode = ref(document.documentElement.getAttribute('data-theme') !== 'light')
@@ -185,6 +189,25 @@ async function saveToCloud() {
   await syncStore.syncNow()
 }
 
+async function pullFromCloud() {
+  const campaignId = syncStore.activeCampaignId
+  if (!campaignId) {
+    showPullFromCloudModal.value = false
+    return
+  }
+  pullingFromCloud.value = true
+  try {
+    await syncStore.forcePullFromCloud(campaignId)
+    showPullFromCloudModal.value = false
+    // Full reload so every Pinia store rehydrates from the now-replaced IndexedDB.
+    window.location.reload()
+  } catch (err) {
+    console.error('Pull from cloud failed:', err)
+  } finally {
+    pullingFromCloud.value = false
+  }
+}
+
 async function clearLocalCache() {
   clearingCache.value = true
   try {
@@ -302,6 +325,16 @@ async function clearLocalCache() {
             Save to Cloud
           </BaseButton>
           <BaseButton
+            variant="secondary"
+            @click="showPullFromCloudModal = true"
+            :loading="syncStore.isPulling"
+            :disabled="!syncStore.activeCampaignId"
+            class="sync-button"
+          >
+            <CloudDownload :size="16" />
+            Pull from Cloud
+          </BaseButton>
+          <BaseButton
             variant="ghost"
             @click="showClearCacheModal = true"
             class="clear-cache-button"
@@ -311,6 +344,35 @@ async function clearLocalCache() {
           </BaseButton>
         </div>
       </div>
+
+      <!-- Pull from Cloud Confirmation Modal -->
+      <BaseModal :show="showPullFromCloudModal" @close="showPullFromCloudModal = false" title="Pull from Cloud?">
+        <div class="clear-cache-modal">
+          <div class="warning-icon">
+            <AlertTriangle :size="32" />
+          </div>
+          <p class="warning-text">
+            This will replace all local campaign data with the version stored in the cloud.
+          </p>
+          <ul class="warning-list">
+            <li>Any unsaved local changes will be lost permanently</li>
+            <li>Use this to recover after switching devices or if local state is out of sync</li>
+            <li>The page will reload once the pull completes</li>
+          </ul>
+          <p class="warning-hint">
+            If you've made changes you want to keep, click "Save to Cloud" first and use this only on the device you want to sync TO.
+          </p>
+          <div class="modal-actions">
+            <BaseButton variant="ghost" @click="showPullFromCloudModal = false">
+              Cancel
+            </BaseButton>
+            <BaseButton variant="danger" @click="pullFromCloud" :loading="pullingFromCloud">
+              <CloudDownload :size="16" />
+              Overwrite Local Data
+            </BaseButton>
+          </div>
+        </div>
+      </BaseModal>
 
       <!-- Clear Cache Confirmation Modal -->
       <BaseModal :show="showClearCacheModal" @close="showClearCacheModal = false" title="Clear Local Cache?">

@@ -1,6 +1,6 @@
 <script setup>
-import { computed } from 'vue'
-import { X, CheckCircle2, XCircle, Briefcase } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { X, CheckCircle2, XCircle, Briefcase, AlertTriangle } from 'lucide-vue-next'
 
 const props = defineProps({
   show: {
@@ -11,14 +11,66 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+  finalizing: {
+    type: Boolean,
+    default: false,
+  },
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'confirm-choices'])
 
 const accepted = computed(() => props.results?.accepted || [])
 const declined = computed(() => props.results?.declined || [])
+const pendingChoice = computed(() => props.results?.pendingChoice || null)
+const pendingOffers = computed(() => pendingChoice.value?.offers ?? [])
+const capSpace = computed(() => pendingChoice.value?.capSpace ?? 0)
 
-const hasAnyOutcome = computed(() => accepted.value.length + declined.value.length > 0)
+const hasAnyOutcome = computed(() =>
+  accepted.value.length + declined.value.length + pendingOffers.value.length > 0
+)
+
+const selectedIds = ref(new Set())
+
+// Reset selection whenever a new pendingChoice block lands in the modal.
+watch(pendingOffers, (offers) => {
+  selectedIds.value = new Set()
+  if (!offers || offers.length === 0) return
+  // Greedy default: pre-select the highest-rated player first, then keep
+  // adding by rating until the next one would push us over the cap. Saves
+  // the user a click when the choice is obvious.
+  const byRating = [...offers].sort(
+    (a, b) => (b.overallRating ?? 0) - (a.overallRating ?? 0)
+  )
+  let running = 0
+  const next = new Set()
+  for (const o of byRating) {
+    if (running + (o.salary ?? 0) <= capSpace.value) {
+      next.add(String(o.playerId))
+      running += o.salary ?? 0
+    }
+  }
+  selectedIds.value = next
+})
+
+function toggleSelected(playerId) {
+  const id = String(playerId)
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+const selectedTotal = computed(() => {
+  let sum = 0
+  for (const o of pendingOffers.value) {
+    if (selectedIds.value.has(String(o.playerId))) sum += o.salary ?? 0
+  }
+  return sum
+})
+
+const remainingAfterChoice = computed(() => capSpace.value - selectedTotal.value)
+const overCap = computed(() => selectedTotal.value > capSpace.value)
+const confirmDisabled = computed(() => overCap.value || props.finalizing)
 
 function formatSalary(salary) {
   if (!salary) return '$0'
@@ -28,6 +80,11 @@ function formatSalary(salary) {
 
 function totalValue(years, salary) {
   return formatSalary((years || 0) * (salary || 0))
+}
+
+function confirmChoices() {
+  if (confirmDisabled.value) return
+  emit('confirm-choices', Array.from(selectedIds.value))
 }
 
 function close() {
@@ -56,6 +113,79 @@ function close() {
             </div>
 
             <template v-else>
+              <!-- Pending choice: user won more bids than their cap can fit.
+                   Surface a checklist that respects the cap meter so they
+                   can pick which signings to keep. -->
+              <section v-if="pendingOffers.length > 0" class="outcome-section pending-section">
+                <div class="section-header">
+                  <AlertTriangle :size="16" class="section-icon pending" />
+                  <h3 class="section-title">Decision Required</h3>
+                  <span class="section-count">{{ pendingOffers.length }}</span>
+                </div>
+                <p class="pending-blurb">
+                  More players accepted your offers than your cap can fit. Pick which signings to lock in — anything you skip stays a free agent.
+                </p>
+                <div class="cap-meter" :class="{ over: overCap }">
+                  <div class="cap-row">
+                    <span class="cap-label">Selected payroll</span>
+                    <span class="cap-value">{{ formatSalary(selectedTotal) }}</span>
+                  </div>
+                  <div class="cap-row">
+                    <span class="cap-label">Cap space</span>
+                    <span class="cap-value">{{ formatSalary(capSpace) }}</span>
+                  </div>
+                  <div class="cap-row cap-row-remaining">
+                    <span class="cap-label">{{ overCap ? 'Over by' : 'Remaining' }}</span>
+                    <span class="cap-value" :class="{ negative: overCap }">
+                      {{ formatSalary(Math.abs(remainingAfterChoice)) }}
+                    </span>
+                  </div>
+                </div>
+                <ul class="outcome-list">
+                  <li
+                    v-for="offer in pendingOffers"
+                    :key="offer.playerId"
+                    class="outcome-row pending-row"
+                    :class="{ 'pending-row-selected': selectedIds.has(String(offer.playerId)) }"
+                  >
+                    <label class="pending-label">
+                      <input
+                        type="checkbox"
+                        :checked="selectedIds.has(String(offer.playerId))"
+                        :disabled="finalizing"
+                        @change="toggleSelected(offer.playerId)"
+                      />
+                      <div class="pending-info">
+                        <div class="outcome-row-top">
+                          <div class="outcome-name">{{ offer.playerName }}</div>
+                          <div v-if="offer.overallRating != null" class="pending-ovr">
+                            {{ offer.overallRating }} OVR
+                          </div>
+                        </div>
+                        <div class="outcome-terms">
+                          <span class="terms-salary">{{ formatSalary(offer.salary) }}</span>
+                          <span class="terms-divider">·</span>
+                          <span class="terms-years">{{ offer.years }} {{ offer.years === 1 ? 'yr' : 'yrs' }}</span>
+                          <span class="terms-divider">·</span>
+                          <span class="terms-total">{{ totalValue(offer.years, offer.salary) }} total</span>
+                          <span v-if="offer.position" class="terms-divider">·</span>
+                          <span v-if="offer.position" class="terms-pos">{{ offer.position }}</span>
+                        </div>
+                        <div class="pending-fallback">
+                          <template v-if="offer.fallback?.teamAbbr">
+                            If passed → signs with <strong>{{ offer.fallback.teamAbbr }}</strong>
+                            ({{ formatSalary(offer.fallback.salary) }} / {{ offer.fallback.years }}yr)
+                          </template>
+                          <template v-else>
+                            If passed → stays a free agent (no AI runner-up)
+                          </template>
+                        </div>
+                      </div>
+                    </label>
+                  </li>
+                </ul>
+              </section>
+
               <section v-if="accepted.length > 0" class="outcome-section">
                 <div class="section-header">
                   <CheckCircle2 :size="16" class="section-icon accepted" />
@@ -109,7 +239,17 @@ function close() {
           </main>
 
           <footer class="modal-footer">
-            <button class="btn-cancel" @click="close">Close</button>
+            <button v-if="pendingOffers.length === 0" class="btn-cancel" @click="close">Close</button>
+            <template v-else>
+              <button class="btn-cancel" :disabled="finalizing" @click="close">Cancel</button>
+              <button
+                class="btn-confirm"
+                :disabled="confirmDisabled"
+                @click="confirmChoices"
+              >
+                {{ finalizing ? 'Signing…' : `Confirm ${selectedIds.size} Signing${selectedIds.size === 1 ? '' : 's'}` }}
+              </button>
+            </template>
           </footer>
         </div>
       </div>
@@ -219,6 +359,7 @@ function close() {
 
 .section-icon.accepted { color: var(--color-success); }
 .section-icon.declined { color: var(--color-error); }
+.section-icon.pending { color: #fbbf24; }
 
 .section-title {
   font-size: 0.8rem;
@@ -367,6 +508,160 @@ function close() {
 .btn-cancel:hover {
   background: var(--color-bg-tertiary);
   border-color: var(--color-text-secondary);
+}
+
+.btn-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-confirm {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.btn-confirm:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.btn-confirm:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Pending-choice block */
+.pending-section {
+  background: rgba(251, 191, 36, 0.05);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.pending-blurb {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.cap-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.cap-meter.over {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.cap-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.cap-row-remaining {
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.cap-value {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+.cap-value.negative {
+  color: #ef4444;
+}
+
+.pending-row {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0;
+}
+
+.pending-row-selected {
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.pending-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.pending-label input[type="checkbox"] {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.pending-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pending-ovr {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.terms-pos {
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+}
+
+.pending-fallback {
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+.pending-fallback strong {
+  color: var(--color-text-secondary);
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 /* Modal transition */

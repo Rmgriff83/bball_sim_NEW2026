@@ -12,6 +12,8 @@ import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/u
 import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
+import TeamHeader from '@/components/common/TeamHeader.vue'
+import { computeTeamOverall } from '@/utils/teamOverall'
 import TradesTab from '@/components/trade/TradesTab.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
 import FacilitiesTab from '@/components/team/FacilitiesTab.vue'
@@ -175,6 +177,9 @@ const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => teamStore.team)
 const roster = computed(() => teamStore.roster)
+// Live team-overall — average OVR of healthy, non-FA, non-retired players.
+// Drives the small badge that overlays the team logo in the header.
+const teamOverall = computed(() => computeTeamOverall(roster.value))
 const coach = computed(() => teamStore.coach)
 
 // Owned coach badges enriched with their definitions (name/description) and
@@ -1098,6 +1103,23 @@ async function handlePurchaseUpgradePoint({ playerId, pool, price }) {
   }
 }
 
+async function handleHoldCoachMeeting({ playerId, purchasedAction }) {
+  try {
+    const res = await teamStore.holdCoachMeeting(
+      campaignId.value, playerId, { purchasedAction }
+    )
+    const summary = purchasedAction
+      ? `Bought a coach meeting · morale +30 (now ${res.morale})`
+      : `Coach meeting held · morale +30 (now ${res.morale}) · ${res.actionsRemaining} actions left`
+    toastStore.showSuccess(summary)
+    // Refresh the selected player ref so the modal re-renders with the new
+    // morale and the button's "X left" counter both update in the same tick.
+    selectedPlayer.value = roster.value.find(p => p.id === playerId)
+  } catch (err) {
+    toastStore.showError(err.response?.data?.message || err.message || 'Failed to hold meeting')
+  }
+}
+
 // Coach functions
 const resigningCoach = ref(false)
 
@@ -1272,20 +1294,7 @@ const STAFF_TRAINER_PERK_LABELS = {
 
     <template v-else-if="team">
       <!-- Team Header - Same style as home page -->
-      <section class="team-header">
-        <div class="team-header-row">
-          <div
-            class="team-logo-badge"
-            :style="{ backgroundColor: team.primary_color || '#E85A4F' }"
-          >
-            {{ team.abbreviation }}
-          </div>
-          <div class="team-header-text">
-            <p class="team-city">{{ team.city }} · {{ conferenceLabel }}</p>
-            <h1 class="team-name">{{ team.name }}</h1>
-          </div>
-        </div>
-      </section>
+      <TeamHeader :team="team" :team-overall="teamOverall" />
 
       <!-- Tab Navigation -->
       <div class="tab-nav">
@@ -2483,9 +2492,11 @@ const STAFF_TRAINER_PERK_LABELS = {
       :current-season-year="campaignStore.currentCampaign?.currentSeasonYear"
       :lineup-players="teamStore.starterPlayers?.filter(p => p != null) || []"
       :user-tokens="authStore.profile?.tokens ?? 0"
+      :coach="teamStore.coach"
       @close="closePlayerModal"
       @upgrade-attribute="handleUpgradeAttribute"
       @purchase-upgrade-point="handlePurchaseUpgradePoint"
+      @hold-coach-meeting="handleHoldCoachMeeting"
     />
   </div>
 </template>
@@ -2517,57 +2528,7 @@ const STAFF_TRAINER_PERK_LABELS = {
   }
 }
 
-/* Team Header - Matching home page */
-.team-header {
-  margin-bottom: 20px;
-}
-
-.team-header-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.team-logo-badge {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: white;
-  flex-shrink: 0;
-  border: 4px solid var(--color-bg-tertiary);
-  box-shadow: var(--shadow-md);
-}
-
-.team-header-text {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-}
-
-.team-city {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  margin: 0 0 2px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.team-name {
-  font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 2.25rem;
-  font-weight: 400;
-  color: var(--color-text-primary);
-  margin: 0;
-  line-height: 1;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
+/* Team header styles live in common/TeamHeader.vue */
 
 /* Tab Navigation */
 .tab-nav {
@@ -4956,20 +4917,7 @@ const STAFF_TRAINER_PERK_LABELS = {
     padding: 24px;
     padding-bottom: 32px;
   }
-
-  .team-logo-badge {
-    width: 88px;
-    height: 88px;
-    font-size: 1.5rem;
-  }
-
-  .team-name {
-    font-size: 3rem;
-  }
-
-  .team-city {
-    font-size: 1rem;
-  }
+  /* Team header desktop sizing lives in common/TeamHeader.vue */
 }
 
 @media (max-width: 640px) {

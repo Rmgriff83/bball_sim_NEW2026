@@ -12,6 +12,21 @@ function findBadge(player, badgeId) {
   return player.badges.find(b => b.id === badgeId) || null
 }
 
+/**
+ * Strict same-player check used everywhere we exclude self from synergy
+ * matching. Covers (a) literal reference equality (safest for normal data),
+ * (b) strict id match when both sides have a real id. Avoids the old
+ * `(p.id || p.player_id) !== ...` pattern which mis-fires on falsy ids
+ * (0, '', null) and could let a player match against themselves.
+ */
+function isSamePlayer(a, b) {
+  if (!a || !b) return false
+  if (a === b) return true
+  const aid = a.id ?? a.player_id ?? null
+  const bid = b.id ?? b.player_id ?? null
+  return aid != null && bid != null && aid === bid
+}
+
 export function useBadgeSynergies() {
   function loadSynergies() {
     // No-op: synergies are bundled at build time
@@ -31,9 +46,7 @@ export function useBadgeSynergies() {
       return { activatedIds, synergyDetails }
     }
 
-    const teammates = lineupPlayers.filter(
-      p => p && (p.id || p.player_id) !== (player.id || player.player_id)
-    )
+    const teammates = lineupPlayers.filter(p => p && !isSamePlayer(p, player))
 
     for (const syn of synergies.value) {
       // Direction A: player has badge1, teammate has badge2
@@ -117,14 +130,13 @@ export function useBadgeSynergies() {
         if (hasBadge1 && hasBadge2) break
       }
 
-      // Ensure the two badges are on different players
+      // Ensure the two badges are on different players (synergies never
+      // count when one player holds both badges).
       if (hasBadge1 && hasBadge2) {
         const playersWithBadge1 = valid.filter(p => findBadge(p, syn.badge1_id))
         const playersWithBadge2 = valid.filter(p => findBadge(p, syn.badge2_id))
         const onDifferentPlayers = playersWithBadge1.some(p1 =>
-          playersWithBadge2.some(p2 =>
-            (p1.id || p1.player_id) !== (p2.id || p2.player_id)
-          )
+          playersWithBadge2.some(p2 => !isSamePlayer(p1, p2))
         )
         if (onDifferentPlayers) count++
       }

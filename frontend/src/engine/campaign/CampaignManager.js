@@ -22,6 +22,8 @@ import {
   generateCoachAttributes,
   calculateCoachSalary,
   findCoachForTeam,
+  getCoachActionBudget,
+  computeCoachTier,
 } from '../data/coaches'
 import { coachBadges } from '../data/coachBadges'
 import { BADGES, BADGES_BY_POSITION } from '../data/badges'
@@ -39,7 +41,7 @@ import { generateAITargetMinutes } from '../simulation/SubstitutionEngine'
 import { processSeasonEnd, processRetirements } from '../evolution/PlayerEvolution'
 import { runAIRosterManagement, ensureMinimumRosters } from '../ai/AIContractService'
 import { generateMotivations, getMarketSize } from '../ai/MotivationService'
-import { generateAndSaveRookieClass } from '../draft/RookieGenerationService'
+import { generateAndSaveRookieClass, shouldGenerateGenerational } from '../draft/RookieGenerationService'
 import { AwardService } from '../season/AwardService'
 import { AllStarService } from '../season/AllStarService'
 
@@ -579,7 +581,7 @@ function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
 // =============================================================================
 // Mirrors the PHP PlayerSeeder arrays and logic.
 
-const FIRST_NAMES = [
+export const FIRST_NAMES = [
   'Marcus', 'Anthony', 'Jaylen', 'Derrick', 'Kyrie', 'James', 'Kevin', 'LeBroom', 'Steffen',
   'Damien', 'Devin', 'Luka', 'Giannis', 'Joel', 'Nikola', 'Jayson', 'Trae', 'Donovan',
   'Zion', 'Ja', 'Tyrese', 'Cade', 'Evan', 'Franz', 'Scottie', 'Paolo', 'Jalen', 'Desmond',
@@ -597,7 +599,7 @@ const FIRST_NAMES = [
   'Myles', 'Bennedict', 'TJ', 'Chuma',
 ]
 
-const LAST_NAMES = [
+export const LAST_NAMES = [
   'Smart', 'Edwards', 'Brown', 'Rose', 'Irving', 'Harden', 'Durant', 'James', 'Curry',
   'Lillard', 'Booker', 'Doncic', 'Antetokounmpo', 'Embiid', 'Jokic', 'Tatum', 'Young', 'Mitchell',
   'Williamson', 'Morant', 'Haliburton', 'Cunningham', 'Mobley', 'Wagner', 'Barnes', 'Banchero', 'Green', 'Bane',
@@ -1022,10 +1024,14 @@ export async function createCampaign(options) {
   // team (AI teams keep the random 1-4 from generateCoach since their coach
   // contracts don't decrement). hiredSeason matches the current year so the
   // "Hired Season YYYY" line in the UI reads correctly from day one.
+  // Stamp the per-season Coach Meeting budget here so the user starts the
+  // campaign with free meetings available — without this the field was
+  // undefined until the first season-rollover refill.
   if (userTeam.coach) {
     userTeam.coach.contractYearsRemaining = 2
     userTeam.coach.contract_years_remaining = 2
     userTeam.coach.hiredSeason = startYear
+    userTeam.coach.actionsRemaining = getCoachActionBudget(userTeam.coach)
   }
 
   // -------------------------------------------------------------------------
@@ -1173,7 +1179,15 @@ export async function createCampaign(options) {
   //    at the end of the current season). This is the value AwardService /
   //    AllStarService / fetchRookieLeaders compare against currentSeasonYear.
   // -------------------------------------------------------------------------
-  await generateAndSaveRookieClass(campaignId, startYear + 1)
+  {
+    const draftYear = startYear + 1
+    const includeGenerational = shouldGenerateGenerational(campaign, draftYear)
+    await generateAndSaveRookieClass(campaignId, draftYear, { includeGenerational })
+    if (includeGenerational) {
+      campaign.settings = campaign.settings ?? {}
+      campaign.settings.lastGenerationalDraftYear = draftYear
+    }
+  }
 
   // -------------------------------------------------------------------------
   // 10. Save final campaign state
@@ -1950,6 +1964,7 @@ export async function enterOffseason(campaignId) {
     age: r.age,
     overallRating: r.overallRating ?? r.overall_rating,
     primaryTeamAbbreviation: r.previousTeamAbbreviation,
+    headshot: r.headshot ?? null,
     careerSeasons: r.retirementSummary?.careerSeasons ?? r.careerSeasons ?? r.career_seasons ?? 0,
     careerHighOvr: r.retirementSummary?.careerHighOvr,
     lastSeasonStats: r.retirementSummary?.lastSeasonStats,
@@ -2100,6 +2115,9 @@ export async function startNewSeason(campaignId) {
     } else {
       userTeamForCoach.coach.contractYearsRemaining = remaining
       userTeamForCoach.coach.contract_years_remaining = remaining
+      // Refill the per-season "Coach Meeting" action budget for the new
+      // season. Tier-driven (free=1, good=3, really_good=5).
+      userTeamForCoach.coach.actionsRemaining = getCoachActionBudget(userTeamForCoach.coach)
     }
     await TeamRepository.save(userTeamForCoach)
   }
@@ -2126,7 +2144,15 @@ export async function startNewSeason(campaignId) {
   // 5. Generate next year's rookie class (viewable on Scouting page throughout
   //    the season). draftYear = season year they'll first play (nextYear + 1),
   //    since they're drafted at the end of nextYear's season.
-  await generateAndSaveRookieClass(campaignId, nextYear + 1)
+  {
+    const draftYear = nextYear + 1
+    const includeGenerational = shouldGenerateGenerational(campaign, draftYear)
+    await generateAndSaveRookieClass(campaignId, draftYear, { includeGenerational })
+    if (includeGenerational) {
+      campaign.settings = campaign.settings ?? {}
+      campaign.settings.lastGenerationalDraftYear = draftYear
+    }
+  }
 
   // 6. Re-initialize all team lineups + target minutes
   for (const team of teams) {
@@ -2284,7 +2310,7 @@ function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
   // back to the UserCog icon when the file isn't present.
   const headshot = masterCoach?.headshot ?? null
 
-  return {
+  const coach = {
     id: generateUUID(),
     firstName,
     lastName,
@@ -2311,6 +2337,10 @@ function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
     conference_titles: 0,
     seasons_coached: 0,
   }
+  // Stamp the canonical tier so downstream lookups (action budget, hire cost,
+  // UI badges) don't have to re-infer from OVR+badges every read.
+  coach.tier = computeCoachTier(coach)
+  return coach
 }
 
 // =============================================================================
@@ -2395,6 +2425,10 @@ function generateFreeAgentCoach(tierKey, usedNames, masterCandidate = null) {
     contract_salary: salary,
     headshot,
     badges: seededBadges,
+    // Tier is authoritative for free-agent coaches — the generator picks an
+    // OVR + badge set from this tier's config, so we record the tier directly
+    // rather than re-inferring it from the score.
+    tier: tierKey,
     hireCost: tierConfig.hireCost,
     career_stats: {
       wins: 0,

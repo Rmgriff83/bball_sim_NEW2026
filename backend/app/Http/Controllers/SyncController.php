@@ -34,7 +34,7 @@ class SyncController extends Controller
 
     /**
      * Push a campaign snapshot part to the server.
-     * Accepts chunked uploads: part = "meta" | "players" | "seasons"
+     * Accepts chunked uploads: part = "meta" | "players" | "players_user" | "players_ai" | "players_fa" | "seasons"
      * POST /api/sync/{clientId}/push
      */
     public function pushSnapshot(Request $request, string $clientId): JsonResponse
@@ -43,7 +43,7 @@ class SyncController extends Controller
         $userId = $request->user()->id;
 
         // Chunked upload: validate based on part type
-        if ($part && in_array($part, ['meta', 'players', 'seasons'])) {
+        if ($part && in_array($part, ['meta', 'players', 'players_user', 'players_ai', 'players_fa', 'seasons'])) {
             return $this->pushSnapshotPart($request, $clientId, $part, $userId);
         }
 
@@ -141,9 +141,9 @@ class SyncController extends Controller
                 'teams' => $request->input('teams'),
                 'clientUpdatedAt' => $request->input('clientUpdatedAt'),
             ];
-        } elseif ($part === 'players') {
+        } elseif (in_array($part, ['players', 'players_user', 'players_ai', 'players_fa'])) {
             $request->validate([
-                'players' => 'required|array',
+                'players' => 'present|array',
                 'clientUpdatedAt' => 'required|string',
             ]);
 
@@ -229,6 +229,9 @@ class SyncController extends Controller
             // Try chunked part files first
             $metaPath = "campaigns/{$clientId}/meta.json.gz";
             $playersPath = "campaigns/{$clientId}/players.json.gz";
+            $playersUserPath = "campaigns/{$clientId}/players_user.json.gz";
+            $playersAiPath = "campaigns/{$clientId}/players_ai.json.gz";
+            $playersFaPath = "campaigns/{$clientId}/players_fa.json.gz";
             $seasonsPath = "campaigns/{$clientId}/seasons.json.gz";
 
             if (Storage::exists($metaPath)) {
@@ -242,8 +245,24 @@ class SyncController extends Controller
                     $snapshot['clientUpdatedAt'] = $metaData['clientUpdatedAt'] ?? null;
                 }
 
-                // Read players part
-                if (Storage::exists($playersPath)) {
+                // Read players: prefer split files (players_user + players_ai + players_fa)
+                // and fall back to legacy single players.json.gz if any split file is missing.
+                $haveSplit = Storage::exists($playersUserPath)
+                    && Storage::exists($playersAiPath)
+                    && Storage::exists($playersFaPath);
+
+                if ($haveSplit) {
+                    $combined = [];
+                    foreach ([$playersUserPath, $playersAiPath, $playersFaPath] as $path) {
+                        $partData = $this->readCompressedJson($path);
+                        if ($partData && isset($partData['players']) && is_array($partData['players'])) {
+                            foreach ($partData['players'] as $p) {
+                                $combined[] = $p;
+                            }
+                        }
+                    }
+                    $snapshot['players'] = $combined;
+                } elseif (Storage::exists($playersPath)) {
                     $playersData = $this->readCompressedJson($playersPath);
                     if ($playersData) {
                         $snapshot['players'] = $playersData['players'] ?? [];

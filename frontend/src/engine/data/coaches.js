@@ -237,6 +237,9 @@ export const FREE_AGENT_COACH_TIERS = {
     badgeLevels: [],
     hireCost: 0,
     count: 3,
+    // Number of free 1-on-1 "Coach Meeting" actions the coach can hold per
+    // season before the user has to start spending tokens for extras.
+    coachActionsPerSeason: 1,
   },
   good: {
     overallRange: [73, 82],
@@ -245,6 +248,7 @@ export const FREE_AGENT_COACH_TIERS = {
     badgeLevels: ["bronze", "silver"],
     hireCost: 1500,
     count: 3,
+    coachActionsPerSeason: 3,
   },
   really_good: {
     overallRange: [83, 92],
@@ -253,8 +257,58 @@ export const FREE_AGENT_COACH_TIERS = {
     badgeLevels: ["silver", "gold"],
     hireCost: 3500,
     count: 2,
+    coachActionsPerSeason: 5,
   },
 };
+
+// Flat token cost for one extra coach meeting after the per-season budget
+// is exhausted. Same cost across all tiers — keeps the economy decision
+// simple ("do I want one more meeting?" → yes / no).
+export const COACH_MEETING_EXTRA_COST = 800;
+
+// Badge level → score points. Levels are rarer the higher you go, so the
+// score curve rewards a single gold/hof badge more than a stack of bronzes.
+const COACH_BADGE_LEVEL_POINTS = { bronze: 1, silver: 2, gold: 4, hof: 8 };
+const COACH_BADGE_POINT_WEIGHT = 3;
+
+/**
+ * Compute a coach's tier from their overallRating + badge loadout. Used at
+ * generation time so every coach — whether predefined in COACHES, randomly
+ * generated for an AI team, or built for the free-agent pool — carries a
+ * canonical `tier` field. Same three buckets as the free-agent pool
+ * (`free` | `good` | `really_good`).
+ */
+export function computeCoachTier(coach) {
+  if (!coach) return "free";
+  const ovr = coach.overallRating ?? coach.overall_rating ?? 0;
+  const badges = Array.isArray(coach.badges) ? coach.badges : [];
+  let badgeScore = 0;
+  for (const badge of badges) {
+    const level = badge?.level ?? "bronze";
+    badgeScore +=
+      (COACH_BADGE_LEVEL_POINTS[level] ?? 1) * COACH_BADGE_POINT_WEIGHT;
+  }
+  const total = ovr + badgeScore;
+  if (total >= 95) return "really_good";
+  if (total >= 76) return "good";
+  return "free";
+}
+
+/**
+ * Resolve a coach to one of the FREE_AGENT_COACH_TIERS keys. Prefers the
+ * canonical `coach.tier` field stamped at generation; falls back to a fresh
+ * compute for legacy records that pre-date the field.
+ */
+export function getCoachTierKey(coach) {
+  if (coach?.tier && FREE_AGENT_COACH_TIERS[coach.tier]) return coach.tier;
+  return computeCoachTier(coach);
+}
+
+/** Per-season free coach-meeting budget for a hired coach. */
+export function getCoachActionBudget(coach) {
+  if (!coach) return 0;
+  return FREE_AGENT_COACH_TIERS[getCoachTierKey(coach)].coachActionsPerSeason;
+}
 
 export const FREE_AGENT_POOL_SIZE = 8; // 3 + 3 + 2
 

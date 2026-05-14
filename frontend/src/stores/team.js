@@ -20,6 +20,7 @@ import {
   nextPlayerBadgeLevel,
   compareBadgeLevels,
 } from '@/engine/data/playerBadgeStore'
+import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import api from '@/composables/useApi'
 
 /**
@@ -175,13 +176,17 @@ export const useTeamStore = defineStore('team', () => {
     Object.values(targetMinutes.value).reduce((sum, m) => sum + m, 0)
   )
 
-  // Team chemistry — from team_chemistry field or computed from roster morale
+  // Team chemistry — from team_chemistry field or computed from roster morale.
+  // The engine writes morale to `player.personality.morale`; the top-level
+  // `player.morale` is a legacy fallback that's rarely populated, so checking
+  // both keeps the display in sync with what the simulator and evolution code
+  // are actually mutating.
   const teamChemistry = computed(() => {
     if (team.value?.team_chemistry) return team.value.team_chemistry
     if (roster.value.length === 0) return 80
     const players = roster.value.filter(p => p !== null)
     if (players.length === 0) return 80
-    const total = players.reduce((sum, p) => sum + (p.morale ?? 80), 0)
+    const total = players.reduce((sum, p) => sum + (p.personality?.morale ?? p.morale ?? 80), 0)
     return Math.round(total / players.length)
   })
 
@@ -1012,7 +1017,12 @@ export const useTeamStore = defineStore('team', () => {
         hiredSeason: currentSeason,
         contractYearsRemaining: 2,
         contract_years_remaining: 2,
+        // Stamp the per-season "Coach Meeting" budget based on tier. Reset
+        // each season in CampaignManager.startNewSeason and on re-sign in
+        // resignCoach below.
+        actionsRemaining: 0,
       }
+      newCoach.actionsRemaining = getCoachActionBudget(newCoach)
 
       // Mid-season coach replacement → small morale hit per player, scaled by
       // coachability/workEthic/personality. Skipped during offseason and when
@@ -1080,6 +1090,9 @@ export const useTeamStore = defineStore('team', () => {
       teamData.coach.contractYearsRemaining = 2
       teamData.coach.contract_years_remaining = 2
       teamData.coach.hiredSeason = currentSeason
+      // Renewing the contract restamps the per-season coach-meeting budget
+      // so the user gets a fresh allotment for the new deal.
+      teamData.coach.actionsRemaining = getCoachActionBudget(teamData.coach)
 
       await TeamRepository.save(teamData)
 
@@ -1138,6 +1151,83 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
+  /**
+   * Hold a 1-on-1 "Coach Meeting" with a player to bump their morale by a
+   * flat +30 points (clamped to 100). Consumes one of the coach's per-season
+   * meeting actions; if `purchasedAction` is true the user spends tokens
+   * instead (used when `actionsRemaining` has hit 0).
+   *
+   * Order matters here: tokens are deducted BEFORE the morale mutation, so a
+   * failed `/api/user/tokens` call doesn't leave a half-applied state.
+   */
+  async function holdCoachMeeting(campaignId, playerId, { purchasedAction = false } = {}) {
+    loading.value = true
+    error.value = null
+    try {
+      if (!campaignId || !playerId) throw new Error('Missing campaign or player')
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+      const userTeamId = campaign.teamId ?? campaign.userTeamId ?? campaign.user_team_id
+      if (!userTeamId) throw new Error('No user team found')
+      const teamData = await TeamRepository.get(campaignId, userTeamId)
+      if (!teamData?.coach) throw new Error('No coach signed')
+
+      const playerRecord = await PlayerRepository.get(campaignId, playerId)
+      if (!playerRecord) throw new Error('Player not found')
+
+      const currentMorale = playerRecord.personality?.morale ?? playerRecord.morale ?? 80
+      if (currentMorale >= 100) throw new Error('Morale already maxed')
+
+      const coachObj = teamData.coach
+      const remaining = coachObj.actionsRemaining ?? 0
+
+      if (purchasedAction) {
+        const authStore = useAuthStore()
+        const tokens = authStore.profile?.tokens ?? 0
+        if (tokens < COACH_MEETING_EXTRA_COST) throw new Error('Not enough tokens')
+        const response = await api.post('/api/user/tokens', { amount: -COACH_MEETING_EXTRA_COST })
+        if (authStore.profile) authStore.profile.tokens = response.data.tokens
+      } else {
+        if (remaining <= 0) throw new Error('No coach meeting actions remaining')
+        coachObj.actionsRemaining = remaining - 1
+      }
+
+      // Apply the morale boost on the canonical (personality.morale) path,
+      // mirror to the legacy top-level field so any code reading `p.morale`
+      // sees the new value too.
+      if (!playerRecord.personality) playerRecord.personality = {}
+      const newMorale = Math.min(100, currentMorale + 30)
+      playerRecord.personality.morale = newMorale
+      playerRecord.morale = newMorale
+
+      // Persist. JSON-clone strips Vue reactive wrappers before IDB writes.
+      await PlayerRepository.save(JSON.parse(JSON.stringify(playerRecord)))
+      await TeamRepository.save(teamData)
+
+      // Mirror into local caches so the PlayerDetailModal's `moraleValue`
+      // computed (and the button's "X left" counter) re-render immediately.
+      const idx = roster.value.findIndex(p => p?.id === playerId)
+      if (idx !== -1) {
+        if (!roster.value[idx].personality) roster.value[idx].personality = {}
+        roster.value[idx].personality.morale = newMorale
+        roster.value[idx].morale = newMorale
+      }
+      coach.value = teamData.coach
+      if (team.value) team.value.coach = teamData.coach
+
+      useSyncStore().markDirty()
+      return {
+        morale: newMorale,
+        actionsRemaining: coachObj.actionsRemaining ?? 0,
+      }
+    } catch (err) {
+      error.value = err.message || 'Failed to hold coach meeting'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     // State
     team,
@@ -1185,6 +1275,7 @@ export const useTeamStore = defineStore('team', () => {
     hireCoach,
     resignCoach,
     fireCoach,
+    holdCoachMeeting,
     clearSelectedPlayer,
     clearTeam,
     invalidate,
