@@ -935,13 +935,30 @@ function selectAIUpgrade(player, position, potential) {
   return candidates[0];
 }
 
+// Matches MANUAL_UPGRADE_BUMP in stores/team.js. Each spent upgrade point bumps
+// the player's unrounded `_overallExact` by this amount so the rounded overall
+// rating actually moves — the per-attribute formula alone is too insensitive
+// (~0.02 per +1) for spent points to feel like progress. Kept in lockstep with
+// the user-side upgrade path so AI-team players develop at the same cadence
+// the user can on their own roster.
+const AI_UPGRADE_BUMP = 0.4;
+
 /**
- * Process AI auto-upgrades for a player.
- * AI spends all available upgrade points intelligently.
+ * Process AI auto-upgrades for a player. Drains all three upgrade-point pools:
+ *  - `offense_upgrade_points` and `defense_upgrade_points` (current per-pool
+ *    system fed by `applyAttributeChanges` on every game)
+ *  - `upgrade_points` (legacy single-pool field; kept so older saves still
+ *    apply their accumulated points on the next AI evolution pass)
+ * Mirrors the user-side `upgradePlayerAttribute` flow in stores/team.js so
+ * AI players accrue the same `_overallExact` bump per spent point.
  */
 function processAIUpgrades(player, upgradeDate = null) {
-  let points = player.upgrade_points ?? player.upgradePoints ?? 0;
-  if (points <= 0) {
+  let legacyPoints = Math.floor(player.upgrade_points ?? player.upgradePoints ?? 0);
+  let offensePoints = Math.floor(player.offense_upgrade_points ?? player.offenseUpgradePoints ?? 0);
+  let defensePoints = Math.floor(player.defense_upgrade_points ?? player.defenseUpgradePoints ?? 0);
+
+  let totalPoints = legacyPoints + offensePoints + defensePoints;
+  if (totalPoints <= 0) {
     return player;
   }
 
@@ -949,19 +966,24 @@ function processAIUpgrades(player, upgradeDate = null) {
   const position = player.position ?? 'SF';
   const date = upgradeDate ?? new Date().toISOString().split('T')[0];
 
-  // Spend all available points
-  while (points > 0) {
+  while (totalPoints > 0) {
     const upgrade = selectAIUpgrade(player, position, potential);
     if (!upgrade) {
       break; // No valid upgrades available (all at cap)
     }
 
-    // Apply the upgrade
+    // Apply the +1 attribute bump
     const { category, attribute } = upgrade;
     const currentValue = player.attributes[category][attribute];
     const newValue = Math.min(potential, currentValue + 1);
-
     player.attributes[category][attribute] = newValue;
+
+    // Bump the unrounded overall so the rounded rating reflects the spent point,
+    // matching the user-side upgrade path. Capped by potential.
+    const baseExact = typeof player._overallExact === 'number'
+      ? player._overallExact
+      : (player.overall_rating ?? player.overallRating ?? 70);
+    player._overallExact = Math.min(potential, baseExact + AI_UPGRADE_BUMP);
 
     // Record in development history
     const history = player.development_history ?? player.developmentHistory ?? [];
@@ -977,11 +999,31 @@ function processAIUpgrades(player, upgradeDate = null) {
     player.development_history = history.slice(-200);
     player.developmentHistory = player.development_history;
 
-    points--;
+    // Decrement from the pool that matches the upgraded attribute category;
+    // fall back to the other pool, then to legacy. The user-side path lets
+    // the user pick the pool, but AI just needs to drain whatever's available.
+    if (category === 'offense' && offensePoints > 0) {
+      offensePoints--;
+    } else if ((category === 'defense' || category === 'physical') && defensePoints > 0) {
+      defensePoints--;
+    } else if (offensePoints > 0) {
+      offensePoints--;
+    } else if (defensePoints > 0) {
+      defensePoints--;
+    } else if (legacyPoints > 0) {
+      legacyPoints--;
+    } else {
+      break; // safety — shouldn't hit because totalPoints would be 0
+    }
+    totalPoints--;
   }
 
-  player.upgrade_points = points;
-  player.upgradePoints = points;
+  player.upgrade_points = legacyPoints;
+  player.upgradePoints = legacyPoints;
+  player.offense_upgrade_points = offensePoints;
+  player.offenseUpgradePoints = offensePoints;
+  player.defense_upgrade_points = defensePoints;
+  player.defenseUpgradePoints = defensePoints;
 
   return player;
 }
@@ -1185,6 +1227,15 @@ function processTeamPostGame(
     player.minutes_played_this_season = (player.minutes_played_this_season ?? player.minutesPlayedThisSeason ?? 0) + minutesPlayed;
     player.minutesPlayedThisSeason = player.minutes_played_this_season;
 
+    // AI teams auto-spend any accumulated upgrade points (offense/defense
+    // pools, plus the legacy single-pool field for older saves). Done after
+    // applyAttributeChanges has awarded the per-game points so the latest
+    // batch gets spent on the same tick rather than stacking up.
+    if (options.isAI) {
+      player = processAIUpgrades(player, gameDate);
+      player = recalculateOverall(player);
+    }
+
     updatedPlayers[player.id] = player;
   }
 
@@ -1242,8 +1293,14 @@ export function processPostGame(
   const awayTeamId = gameData.awayTeamId
   const trainerPerks = options.trainerPerks || {}
 
-  const homeOptions = (userTeamId && String(homeTeamId) === String(userTeamId)) ? trainerPerks : {}
-  const awayOptions = (userTeamId && String(awayTeamId) === String(userTeamId)) ? trainerPerks : {}
+  // A team counts as "user" only if it matches the campaign's user team. Both
+  // sides being AI (the common case for league sims) means both rosters get
+  // auto-upgrades; the user's team never gets them auto-applied so the user
+  // keeps full control of their attribute spend.
+  const homeIsUser = userTeamId && String(homeTeamId) === String(userTeamId)
+  const awayIsUser = userTeamId && String(awayTeamId) === String(userTeamId)
+  const homeOptions = { ...(homeIsUser ? trainerPerks : {}), isAI: !homeIsUser }
+  const awayOptions = { ...(awayIsUser ? trainerPerks : {}), isAI: !awayIsUser }
 
   // Process home team
   const homeResult = processTeamPostGame(

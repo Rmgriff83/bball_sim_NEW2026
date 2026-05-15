@@ -144,11 +144,20 @@ export const useSyncStore = defineStore('sync', () => {
     const players = await PlayerRepository.getAllForCampaign(campaignId)
     const seasons = await SeasonRepository.getAllForCampaign(campaignId)
 
+    // Historical seasons (anything older than the campaign's current season
+    // year) are reduced to a minimal record-and-awards shell. The schedule
+    // alone runs ~120 KB per past season and dominated the seasons chunk —
+    // by season 3 the payload was tripping upstream proxies' 413 limits.
+    // The strip needs the current-season year to make that distinction.
+    const currentSeasonYear = campaign?.currentSeasonYear
+      ?? campaign?.settings?.currentSeasonYear
+      ?? null
+
     return {
       campaign,
       teams: teams.map(_stripTeamForSync),
       players: players.map(_stripPlayerForSync),
-      seasons: seasons.map(_stripSeasonForSync),
+      seasons: seasons.map(s => _stripSeasonForSync(s, currentSeasonYear)),
       clientUpdatedAt: new Date().toISOString(),
     }
   }
@@ -321,31 +330,84 @@ export const useSyncStore = defineStore('sync', () => {
    * leader / rookie-ranking UIs (which divide totals by gamesPlayed) still work.
    * Compact entries carry `_compact: true` so consumers can branch on shape.
    */
-  function _stripSeasonForSync(season) {
+  function _stripSeasonForSync(season, currentSeasonYear = null) {
     const slim = { ...season }
-    const isCompleted = slim.phase === 'offseason'
-      || slim.phase === 'offseason_free_agency'
-      || slim.phase === 'offseason_draft'
-      || slim.isComplete
-      || slim.is_complete
+    const seasonYear = slim.year ?? slim.metadata?.year ?? null
 
-    if (isCompleted) {
-      delete slim.schedule
-      if (slim.playerStats && typeof slim.playerStats === 'object') {
-        slim.playerStats = _compactPlayerStats(slim.playerStats)
+    // A season is historical when its year is strictly less than the current
+    // season year. Phase / isComplete flags are only set on the campaign,
+    // not the season record, so the year comparison is the reliable signal.
+    // Fall back to the legacy phase/isComplete check when we don't know
+    // currentSeasonYear (defensive — newer callers always provide it).
+    const isHistorical = currentSeasonYear != null && seasonYear != null
+      ? seasonYear < currentSeasonYear
+      : (slim.phase === 'offseason'
+        || slim.phase === 'offseason_free_agency'
+        || slim.phase === 'offseason_draft'
+        || slim.isComplete
+        || slim.is_complete)
+
+    if (isHistorical) {
+      // Historical seasons retain only what surfaces in archive UIs:
+      //   - standings (regular-season record per team)
+      //   - seasonAwards (MVP / Rookie of the Year / All-NBA / etc.)
+      //   - allStarRosters (cosmetic but tiny and useful for retrospectives)
+      //   - playoffs.champion + playoff record summary (no per-game detail)
+      //   - metadata (year, ids, timestamps)
+      //
+      // Everything else — schedule, playerStats, teamStats, news, trades,
+      // playoff bracket games, savedGameState — is dropped. The schedule
+      // alone runs ~120 KB per season and was the main 413 offender.
+      // Per-player and per-team season summaries already live on the
+      // player/team records (`seasonHistory`, `awards`), so dropping these
+      // doesn't lose anything user-visible.
+      // Canonical playoff data lives on `season.playoffBracket` (not
+      // `season.playoffs`). Keep a compact summary: champion, Finals MVP,
+      // both conference winners + their Conference Finals MVPs. Drops the
+      // per-round series arrays (the heavyweight part of the bracket).
+      const bracket = slim.playoffBracket
+      const playoffBracketSummary = bracket
+        ? {
+            champion: bracket.champion ?? null,
+            finalsMVP: bracket.finalsMVP ?? null,
+            east: bracket.east
+              ? {
+                  confChampion: bracket.east.confFinals?.winner ?? null,
+                  confFinalsMVP: bracket.east.confFinalsMVP ?? null,
+                }
+              : null,
+            west: bracket.west
+              ? {
+                  confChampion: bracket.west.confFinals?.winner ?? null,
+                  confFinalsMVP: bracket.west.confFinalsMVP ?? null,
+                }
+              : null,
+          }
+        : null
+
+      return {
+        campaignId: slim.campaignId,
+        year: seasonYear,
+        metadata: slim.metadata,
+        standings: slim.standings,
+        seasonAwards: slim.seasonAwards ?? null,
+        allStarRosters: slim.allStarRosters ?? null,
+        playoffBracket: playoffBracketSummary,
+        updatedAt: slim.updatedAt,
+        _historical: true,
       }
     }
-    if (!isCompleted && Array.isArray(slim.schedule)) {
-      // Current season: compact completed games but PRESERVE savedGameState for
-      // games still in progress, so a user can start a game on one device and
-      // resume / sim-to-end on another.
+
+    // Current season: compact completed games' box scores and preserve
+    // savedGameState for any game still in progress so cross-device play
+    // can resume mid-game. Drop the per-game evolution blob — it's
+    // regenerated post-game by simToEnd / continueGame.
+    if (Array.isArray(slim.schedule)) {
       slim.schedule = slim.schedule.map(game => {
         const g = { ...game }
-        // Evolution is regenerated post-game (see simToEnd / continueGame flows)
         delete g.evolution
 
         if (g.isComplete) {
-          // Game is finished — savedGameState is dead weight, drop it.
           delete g.savedGameState
           if (g.boxScore) {
             g.boxScore = _compactBoxScore(g.boxScore)

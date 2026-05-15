@@ -57,17 +57,31 @@ export class AwardService {
     // All-Defense (2 teams, position-based)
     const allDefense = AwardService._selectAllDefense(allStats, playerLookup, teamWinPcts, maxGames)
 
+    // Finals MVP — computed during the playoffs (see PlayoffManager.
+    // advanceWinnerToNextRound stamping `bracket.finalsMVP` when round 4
+    // wraps). We just surface it here so `applyAwardsToPlayers` can bump
+    // the player's `finalsMvpAwards` counter.
+    const finalsMVPRaw = seasonData?.playoffBracket?.finalsMVP ?? null
+    const finalsMVP = finalsMVPRaw
+      ? {
+          playerId: finalsMVPRaw.playerId ?? finalsMVPRaw.id ?? null,
+          playerName: finalsMVPRaw.playerName ?? finalsMVPRaw.name ?? null,
+          teamId: finalsMVPRaw.teamId ?? null,
+          teamAbbreviation: finalsMVPRaw.teamAbbreviation ?? null,
+        }
+      : null
+
     // Determine the end-of-season date for news events
     const schedule = seasonData?.schedule || []
     const lastGame = schedule.filter(g => g.played).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0]
     const date = lastGame?.date || `${year + 1}-04-15`
 
     const newsEvents = AwardService._generateNewsEvents(
-      { mvp, rookieOfTheYear, allNba, allRookie, allDefense },
+      { mvp, rookieOfTheYear, allNba, allRookie, allDefense, finalsMVP },
       playerLookup, userTeamId, date
     )
 
-    return { mvp, rookieOfTheYear, allNba, allRookie, allDefense, newsEvents }
+    return { mvp, rookieOfTheYear, allNba, allRookie, allDefense, finalsMVP, newsEvents }
   }
 
   // -----------------------------------------------------------------------
@@ -475,6 +489,18 @@ export class AwardService {
         p.mvpAwards = (p.mvpAwards ?? p.mvp_awards ?? 0) + 1
         p.mvp_awards = p.mvpAwards
         pushAwardYear(p, 'mvp', year)
+      }
+    }
+
+    // Finals MVP — sourced from `bracket.finalsMVP` via processSeasonAwards.
+    // Pre-fix this was always null because the bracket field was never
+    // populated; the counter on the player record stayed at 0 forever.
+    if (awardResults.finalsMVP) {
+      const p = playerMap[String(awardResults.finalsMVP.playerId)]
+      if (p) {
+        p.finalsMvpAwards = (p.finalsMvpAwards ?? p.finals_mvp_awards ?? 0) + 1
+        p.finals_mvp_awards = p.finalsMvpAwards
+        pushAwardYear(p, 'finals_mvp', year)
       }
     }
 

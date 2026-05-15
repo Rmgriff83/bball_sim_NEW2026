@@ -182,6 +182,16 @@ export async function simFullOffseason(campaignId) {
       is_free_agent: 0,
       isDraftProspect: false,
       campaignId,
+      // Mirror the live rookie draft (`stores/draft.js:finalizeRookieDraft`)
+      // so auto-drafted rookies surface a draft-history card in the player
+      // detail modal — round, pick, team, draft year all come from here.
+      draftInfo: {
+        year: gameYear,
+        round: result.round,
+        pick: result.pick,
+        teamAbbreviation: team.abbreviation,
+        teamName: team.name,
+      },
       ...contract,
     }
     playerUpdates.push(updated)

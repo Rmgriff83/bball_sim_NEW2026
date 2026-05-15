@@ -4,9 +4,41 @@
  */
 
 /**
- * Convert a single seasonHistory entry's raw totals to per-game averages.
+ * Convert a single seasonHistory entry to the per-game shape the UI renders.
+ *
+ * Handles two on-disk shapes:
+ *  - Raw form (locally archived): `{ year, teamAbbreviation, stats: { gamesPlayed, points, rebounds, ... } }`
+ *  - Compact form (post-sync round-trip): `{ _compact: true, year, teamAbbreviation, gamesPlayed, ppg, rpg, apg, ..., fgPct, threePct, ftPct }`
+ *
+ * The sync layer compresses raw entries into compact form on push (so the
+ * players chunk stays under PHP's post_max_size). On pull, compact entries
+ * come back unchanged — so this formatter must recognize both forms or the
+ * entire historical stats table goes empty after the first cloud sync.
  */
 export function formatSeasonHistoryRow(entry) {
+  if (!entry) return null
+
+  // Compact form — fields are already per-game averages.
+  if (entry._compact === true || (entry.gamesPlayed !== undefined && entry.stats === undefined)) {
+    const gp = entry.gamesPlayed || 0
+    if (gp === 0) return null
+    return {
+      year: entry.year,
+      team: entry.teamAbbreviation || '—',
+      gp,
+      ppg: entry.ppg ?? 0,
+      rpg: entry.rpg ?? 0,
+      apg: entry.apg ?? 0,
+      spg: entry.spg ?? 0,
+      bpg: entry.bpg ?? 0,
+      fg_pct: entry.fgPct ?? 0,
+      three_pct: entry.threePct ?? 0,
+      ft_pct: entry.ftPct ?? 0,
+      mpg: entry.mpg ?? 0,
+    }
+  }
+
+  // Raw form — divide cumulative totals by games played.
   const s = entry.stats || {}
   const gp = s.gamesPlayed || 0
   if (gp === 0) return null

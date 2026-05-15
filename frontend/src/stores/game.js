@@ -19,6 +19,11 @@ import { NewsService } from '@/engine/season/NewsService'
 import { processAiToAiTrades, computeAiTradingBlock, analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
 import { AllStarService } from '@/engine/season/AllStarService'
 import { getSeasonDeadlines } from '@/engine/season/SeasonDeadlines'
+import {
+  selectFeaturedPlayer,
+  shouldRefreshFeaturedPlayer,
+  computeFeaturedWindow,
+} from '@/engine/season/FeaturedPlayerService'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { processRecovery as processInjuryRecovery, isInjured as isPlayerInjured } from '@/engine/evolution/InjuryService'
@@ -195,6 +200,18 @@ export const useGameStore = defineStore('game', () => {
     game.currentQuarter = quarter
 
     await SeasonRepository.save({ campaignId, year, ...seasonData })
+
+    // Without this, none of the auto-sync triggers fire after a mid-game
+    // save: route-leave / visibility-hide / beforeunload all gate on
+    // `hasPendingChanges`, so a user who plays a quarter and closes the
+    // tab would lose the in-progress state to the next cloud pull. The
+    // explicit "Save to Cloud" button bypasses isDirty, but markDirty
+    // is what makes the implicit paths actually push.
+    try {
+      useSyncStore().markDirty()
+    } catch (err) {
+      console.warn('[GameStore] markDirty after in-progress save failed:', err)
+    }
   }
 
   /**
@@ -370,17 +387,41 @@ export const useGameStore = defineStore('game', () => {
     const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
     if (!allPlayers || allPlayers.length === 0) return
 
+    // NBA seasons span two calendar years (Oct → June), so a player's birthday
+    // year is whichever calendar year the cursor is in when the date crosses
+    // it — NOT the season-start year. Using `currentSeasonYear` here would mean
+    // a March-birthday player in a 2025-26 season is checked against
+    // "2025-03-15", which is before the season ever starts → they never age.
+    // Build a tiny candidate set (current calendar year + previous, to cover
+    // the Dec 31 → Jan 1 boundary) and pick whichever lands in the window.
+    const newCalYear = parseInt(newDate.slice(0, 4), 10)
+    const prevCalYear = parseInt(prevDate.slice(0, 4), 10)
+    const yearCandidates = newCalYear === prevCalYear
+      ? [newCalYear]
+      : [prevCalYear, newCalYear]
+
     const updates = []
     for (const player of allPlayers) {
       if (player.isRetired || player.is_retired) continue
       const birth = player.birthDate || player.birth_date
       if (!birth || birth.length < 10) continue
       const mmdd = birth.slice(5) // "MM-DD"
-      const birthdayThisYear = `${currentSeasonYear}-${mmdd}`
+
+      // Idempotency: `_lastBirthdayYear` tracks the SEASON START year the
+      // player last aged in, so a player only ages once per season even if
+      // their birthday is checked multiple times.
       const lastAgedYear = player._lastBirthdayYear ?? 0
       if (lastAgedYear >= currentSeasonYear) continue
-      if (birthdayThisYear <= prevDate) continue
-      if (birthdayThisYear > newDate) continue
+
+      let birthdayHit = null
+      for (const yr of yearCandidates) {
+        const candidate = `${yr}-${mmdd}`
+        if (candidate > prevDate && candidate <= newDate) {
+          birthdayHit = candidate
+          break
+        }
+      }
+      if (!birthdayHit) continue
 
       const newAge = (player.age ?? 0) + 1
       player.age = newAge
@@ -705,6 +746,41 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * Re-run the user team's bi-weekly Featured Player selection when the
+   * 14-day window has rolled over. Mutates `campaign.settings.featuredPlayer`
+   * in place — the caller is responsible for persisting `campaign` afterward.
+   *
+   * Quiet no-op when no completed user games fall in the window (e.g. the
+   * first two weeks of a season where games haven't played yet). In that
+   * case we leave any prior selection alone and try again next date advance.
+   */
+  async function _refreshFeaturedPlayerIfStale(campaign, currentDate) {
+    if (!campaign?.teamId || !currentDate) return
+    if (!shouldRefreshFeaturedPlayer(campaign, currentDate)) return
+
+    const year = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear
+    if (!year) return
+    const seasonData = await SeasonRepository.get(campaign.id, year)
+    if (!seasonData) return
+
+    const roster = await PlayerRepository.getByTeam(campaign.id, campaign.teamId)
+    const { windowStart, windowEnd } = computeFeaturedWindow(currentDate)
+    const selection = selectFeaturedPlayer({
+      userTeamId: campaign.teamId,
+      windowStart,
+      windowEnd,
+      seasonData,
+      roster,
+    })
+    // No qualifying games in the window — leave the prior selection (if any)
+    // intact and try again on the next date advance.
+    if (!selection) return
+
+    if (!campaign.settings) campaign.settings = {}
+    campaign.settings.featuredPlayer = selection
+  }
+
+  /**
    * Advance the campaign date to the day after the given game date.
    * Also awards scouting points for any new weeks that passed.
    * Returns { scoutingPointsEarned, previousWeek, currentWeek } for weekly summary.
@@ -752,6 +828,15 @@ export const useGameStore = defineStore('game', () => {
 
       // Award scouting points for any new weeks
       scoutingPointsEarned = await _awardScoutingPoints(campaign, newDate)
+
+      // Refresh the bi-weekly Featured Player selection if the 14-day window
+      // has rolled over (or no selection exists yet). Mutates
+      // `campaign.settings.featuredPlayer` in place; the save below persists it.
+      try {
+        await _refreshFeaturedPlayerIfStale(campaign, newDate)
+      } catch (err) {
+        console.warn('[GameStore] Featured player refresh failed:', err)
+      }
 
       // Process AI-to-AI trades on Monday boundary
       if (currentWeek > previousWeek) {

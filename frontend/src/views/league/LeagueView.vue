@@ -1799,7 +1799,7 @@ function formatSalary(salary) {
   letter-spacing: 0.02em;
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 767px) {
   .league-title {
     font-size: 3rem;
   }

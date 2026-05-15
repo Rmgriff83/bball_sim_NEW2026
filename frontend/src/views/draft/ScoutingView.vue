@@ -736,7 +736,7 @@ onMounted(async () => {
   background-clip: text;
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 767px) {
   .page-title {
     font-size: 3rem;
   }

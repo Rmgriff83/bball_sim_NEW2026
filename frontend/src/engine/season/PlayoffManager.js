@@ -553,9 +553,22 @@ export class PlayoffManager {
       PlayoffManager._createConferenceFinals(bracket, 'east')
       PlayoffManager._createConferenceFinals(bracket, 'west')
     } else if (round === 3) {
+      // Conference finals just wrapped — stamp the conference-MVP at the
+      // bracket level so consumers don't have to dig into the series object,
+      // then create the Finals matchup if both conferences are done.
+      const confKey = series.conference
+      if (confKey && bracket[confKey]) {
+        bracket[confKey].confFinalsMVP = series.seriesMVP ?? null
+      }
       PlayoffManager._createFinalsIfReady(bracket)
     } else if (round === 4) {
+      // Finals just wrapped — stamp champion AND Finals MVP at the bracket
+      // level. Without this, `bracket.finalsMVP` stays null forever even
+      // though the per-series MVP was correctly computed in
+      // `updateSeriesAfterGame`. Archive UIs and the season-awards summary
+      // read this top-level field.
       bracket.champion = series.winner
+      bracket.finalsMVP = series.seriesMVP ?? null
     }
 
     seasonData.playoffBracket = bracket

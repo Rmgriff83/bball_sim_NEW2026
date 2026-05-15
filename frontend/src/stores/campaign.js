@@ -7,7 +7,7 @@ import {
   listCampaigns,
 } from '@/engine/campaign/CampaignManager'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
-import { backfillBirthDates } from '@/engine/migrations/backfillBirthDates'
+import { backfillBirthDates, catchUpPlayerAging } from '@/engine/migrations/backfillBirthDates'
 import { TEAMS } from '@/engine/data/teams'
 import { useSyncStore } from '@/stores/sync'
 import { usePlayoffStore } from '@/stores/playoff'
@@ -179,6 +179,17 @@ export const useCampaignStore = defineStore('campaign', () => {
         await backfillBirthDates(id)
       } catch (migrationErr) {
         console.warn('[Campaign] birthDate backfill failed:', migrationErr)
+      }
+
+      // Catch-up aging: brings stored `age` in line with what each player's
+      // birthDate + the campaign's cursor date imply. Idempotent — no-ops when
+      // every player's age already matches their cursor age. Repairs campaigns
+      // that ran under earlier birthday-tick code (which used currentSeasonYear
+      // as the candidate year and skipped most birthdays).
+      try {
+        await catchUpPlayerAging(id)
+      } catch (catchUpErr) {
+        console.warn('[Campaign] player-aging catchup failed:', catchUpErr)
       }
 
       const { campaign, teams, userTeam, seasonData, year } = result

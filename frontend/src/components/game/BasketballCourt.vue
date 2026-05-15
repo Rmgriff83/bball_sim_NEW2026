@@ -1852,6 +1852,17 @@ watch(() => props.activatedSynergies, (newSynergies, oldSynergies) => {
 // usePlayAnimation live-filters this list by elapsedTime so badges grow
 // progressively across a play. We dedupe per (badgeId, playerId, time) so
 // each animation fires exactly once even if the list updates many times.
+//
+// Multiple badges that activate in the same possession (e.g. catch_and_shoot
+// + corner_specialist on a corner-three release) used to all start their
+// 1.5s pop animation at the same `performance.now()` — and since they
+// share an (x, y) anchor at the player's position, they overlapped into
+// a single unreadable stack. We now stagger their start times so each
+// badge gets its own visible beat. The animator's existing progress filter
+// (`progress < 1`) handles future-dated start times gracefully; the draw
+// path skips rendering until progress > 0.
+const BADGE_STAGGER_MS = 550
+
 watch(() => props.activatedBadges, (newBadges, oldBadges) => {
   // Detect a possession reset: list shrunk to zero or shorter than before.
   // Reset the animated-keys set so the next possession's badges fire fresh.
@@ -1864,16 +1875,27 @@ watch(() => props.activatedBadges, (newBadges, oldBadges) => {
     animatedBadgeKeys.value = new Set()
   }
 
+  let staggerIndex = 0
   for (const badge of newBadges) {
     const key = `${badge.badgeId}-${badge.playerId}-${badge.time || 0}`
     if (animatedBadgeKeys.value.has(key)) continue
     animatedBadgeKeys.value.add(key)
 
     const playerPos = props.interpolatedPositions[badge.playerId]
-    if (playerPos) {
-      triggerBadgeAnimation(badge, playerPos.x, playerPos.y)
+    const x = playerPos ? playerPos.x : 0.5
+    const y = playerPos ? playerPos.y : 0.4
+    const delay = staggerIndex * BADGE_STAGGER_MS
+    staggerIndex++
+
+    if (delay === 0) {
+      triggerBadgeAnimation(badge, x, y)
     } else {
-      triggerBadgeAnimation(badge, 0.5, 0.4)
+      // Snapshot the anchor at queue time so later badges still anchor to
+      // where the player was when the play resolved, even if the player
+      // moves during the stagger window.
+      setTimeout(() => {
+        triggerBadgeAnimation(badge, x, y)
+      }, delay)
     }
   }
 }, { deep: true })

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch, onUnmounted } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import { X, AlertTriangle, Calendar, Star, Zap, Users, Pause, Play } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -14,7 +14,6 @@ const emit = defineEmits([
   'close',           // X / overlay click → cancel sim
   'continue',        // Continue Sim → resume the run
   'pause',           // Pause Sim → cancel the run, leave campaign at current date
-  'view-all-star',   // All-Star variant: open AllStarModal then resume
   'cpu-set-lineup',  // Injury variant: let CPU pick starters, then resume
   'go-to-lineup',    // Injury variant: navigate to lineup editor (cancels run)
 ])
@@ -29,6 +28,39 @@ const title = computed(() => titleByReason[props.reason] || 'Simulation Paused')
 const injuries = computed(() => Array.isArray(props.payload?.injuries) ? props.payload.injuries : [])
 const allStarRosters = computed(() => props.payload?.allStarRosters || null)
 
+// AllStarService stores the payload as { allStars: { east, west }, risingStars: { east, west } }.
+// We render both via a tab switch — no separate "View All-Stars" modal needed.
+const allStarTab = ref('allStars') // 'allStars' | 'risingStars'
+const activeRosterTree = computed(() => {
+  if (allStarTab.value === 'risingStars') return allStarRosters.value?.risingStars || null
+  return allStarRosters.value?.allStars || null
+})
+const risingStarsAvailable = computed(() => {
+  const rs = allStarRosters.value?.risingStars
+  if (!rs) return false
+  for (const conf of ['east', 'west']) {
+    if (rs[conf]?.starters && Object.keys(rs[conf].starters).length > 0) return true
+    if (Array.isArray(rs[conf]?.reserves) && rs[conf].reserves.length > 0) return true
+  }
+  return false
+})
+
+const STARTER_POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C']
+
+function startersList(conference) {
+  const startersMap = activeRosterTree.value?.[conference]?.starters || {}
+  return STARTER_POSITIONS
+    .map(pos => startersMap[pos])
+    .filter(Boolean)
+}
+function reservesList(conference) {
+  const reserves = activeRosterTree.value?.[conference]?.reserves
+  return Array.isArray(reserves) ? reserves : []
+}
+function conferenceCount(conference) {
+  return startersList(conference).length + reservesList(conference).length
+}
+
 function severityColor(severity) {
   switch (severity) {
     case 'minor': return '#fbbf24'
@@ -42,7 +74,6 @@ function severityColor(severity) {
 function close() { emit('close') }
 function continueSim() { emit('continue') }
 function pauseSim() { emit('pause') }
-function viewAllStar() { emit('view-all-star') }
 function cpuSetLineup() { emit('cpu-set-lineup') }
 function goToLineup() { emit('go-to-lineup') }
 
@@ -53,6 +84,9 @@ watch(() => props.show, (open) => {
   if (open) {
     document.body.style.overflow = 'hidden'
     document.addEventListener('keydown', handleKeydown)
+    // Reset the All-Star tab so subsequent pause events start on All-Stars,
+    // not whichever tab the user left it on last.
+    allStarTab.value = 'allStars'
   } else {
     document.body.style.overflow = ''
     document.removeEventListener('keydown', handleKeydown)
@@ -68,7 +102,7 @@ onUnmounted(() => {
   <Teleport to="body">
     <Transition name="modal">
       <div v-if="show" class="modal-overlay" @click.self="close">
-        <div class="modal-container">
+        <div class="modal-container" :class="{ wide: reason === 'all_star' }">
           <!-- Header -->
           <header class="modal-header">
             <div class="header-left">
@@ -102,18 +136,88 @@ onUnmounted(() => {
 
             <!-- All-Star variant -->
             <template v-else-if="reason === 'all_star'">
-              <p class="body-text">All-Star rosters have been announced.</p>
-              <div v-if="allStarRosters" class="all-star-summary">
-                <div v-if="Array.isArray(allStarRosters?.east?.starters) || Array.isArray(allStarRosters?.east?.reserves)" class="conf-summary">
-                  <span class="conf-label">East</span>
-                  <span class="conf-count">{{ (allStarRosters.east.starters?.length || 0) + (allStarRosters.east.reserves?.length || 0) }} selections</span>
-                </div>
-                <div v-if="Array.isArray(allStarRosters?.west?.starters) || Array.isArray(allStarRosters?.west?.reserves)" class="conf-summary">
-                  <span class="conf-label">West</span>
-                  <span class="conf-count">{{ (allStarRosters.west.starters?.length || 0) + (allStarRosters.west.reserves?.length || 0) }} selections</span>
+              <p class="body-text">
+                <template v-if="allStarTab === 'risingStars'">Rising Stars rosters have been announced.</template>
+                <template v-else>All-Star rosters have been announced.</template>
+              </p>
+
+              <!-- Tab switcher: All-Stars / Rising Stars. Lives inside the
+                   pause modal so we don't need a separate "View All-Stars"
+                   secondary modal anymore. -->
+              <div class="roster-tabs">
+                <button
+                  type="button"
+                  class="roster-tab"
+                  :class="{ active: allStarTab === 'allStars' }"
+                  @click="allStarTab = 'allStars'"
+                >
+                  <Star :size="14" />
+                  All-Stars
+                </button>
+                <button
+                  type="button"
+                  class="roster-tab"
+                  :class="{ active: allStarTab === 'risingStars' }"
+                  :disabled="!risingStarsAvailable"
+                  @click="allStarTab = 'risingStars'"
+                >
+                  <Users :size="14" />
+                  Rising Stars
+                </button>
+              </div>
+
+              <div v-if="activeRosterTree" class="all-star-rosters">
+                <div v-for="conf in ['east', 'west']" :key="conf" class="conf-section">
+                  <div class="conf-header">
+                    <span class="conf-name">{{ conf === 'east' ? 'Eastern Conference' : 'Western Conference' }}</span>
+                    <span class="conf-count">{{ conferenceCount(conf) }} selections</span>
+                  </div>
+
+                  <div v-if="startersList(conf).length > 0" class="player-group">
+                    <div class="group-label">Starters</div>
+                    <div
+                      v-for="player in startersList(conf)"
+                      :key="`${allStarTab}-${conf}-s-${player.playerId ?? player.playerName}`"
+                      class="player-row"
+                    >
+                      <span class="pos-tag" :style="{ background: player.teamColor || 'var(--color-bg-tertiary)' }">{{ player.position }}</span>
+                      <div class="player-id">
+                        <span class="p-name">{{ player.playerName }}</span>
+                        <span class="p-team" :style="{ color: player.teamColor }">{{ player.teamAbbr }}</span>
+                      </div>
+                      <div class="p-stats">
+                        <span><b>{{ player.stats?.ppg ?? 0 }}</b> PTS</span>
+                        <span><b>{{ player.stats?.rpg ?? 0 }}</b> REB</span>
+                        <span><b>{{ player.stats?.apg ?? 0 }}</b> AST</span>
+                        <span><b>{{ player.stats?.fgPct ?? 0 }}%</b> FG</span>
+                        <span><b>{{ player.stats?.threePct ?? 0 }}%</b> 3P</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-if="reservesList(conf).length > 0" class="player-group">
+                    <div class="group-label">Reserves</div>
+                    <div
+                      v-for="player in reservesList(conf)"
+                      :key="`${allStarTab}-${conf}-r-${player.playerId ?? player.playerName}`"
+                      class="player-row reserve"
+                    >
+                      <span class="pos-tag small" :style="{ background: player.teamColor || 'var(--color-bg-tertiary)' }">{{ player.position }}</span>
+                      <div class="player-id">
+                        <span class="p-name">{{ player.playerName }}</span>
+                        <span class="p-team" :style="{ color: player.teamColor }">{{ player.teamAbbr }}</span>
+                      </div>
+                      <div class="p-stats">
+                        <span><b>{{ player.stats?.ppg ?? 0 }}</b> PTS</span>
+                        <span><b>{{ player.stats?.rpg ?? 0 }}</b> REB</span>
+                        <span><b>{{ player.stats?.apg ?? 0 }}</b> AST</span>
+                        <span><b>{{ player.stats?.fgPct ?? 0 }}%</b> FG</span>
+                        <span><b>{{ player.stats?.threePct ?? 0 }}%</b> 3P</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <p class="body-hint">View the full rosters before continuing the simulation.</p>
             </template>
 
             <!-- User Injury variant -->
@@ -162,12 +266,9 @@ onUnmounted(() => {
 
             <!-- All-Star footer -->
             <template v-else-if="reason === 'all_star'">
-              <button class="btn-cancel" @click="continueSim">
+              <button class="btn-confirm" @click="continueSim">
+                <Play :size="14" fill="currentColor" />
                 Continue Sim
-              </button>
-              <button class="btn-confirm" @click="viewAllStar">
-                <Star :size="14" />
-                View All-Stars
               </button>
             </template>
 
@@ -217,6 +318,11 @@ onUnmounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* All-Star variant needs more horizontal room for the per-player stats row. */
+.modal-container.wide {
+  max-width: 720px;
 }
 
 .modal-header {
@@ -313,36 +419,182 @@ onUnmounted(() => {
   font-style: italic;
 }
 
-/* All-Star summary */
-.all-star-summary {
+/* Tab switcher between the All-Star and Rising Stars roster trees. Sits
+   above the rosters list in the all_star variant. */
+.roster-tabs {
   display: flex;
-  gap: 12px;
+  gap: 6px;
+  padding: 4px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+}
+
+.roster-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.roster-tab:hover:not(:disabled):not(.active) {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.roster-tab.active {
+  background: var(--color-primary);
+  color: white;
+}
+
+.roster-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* All-Star rosters list */
+.all-star-rosters {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.conf-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 12px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
 }
 
-.conf-summary {
-  flex: 1;
+.conf-header {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: center;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.conf-label {
-  font-size: 0.7rem;
+.conf-name {
+  font-size: 0.85rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-primary);
 }
 
 .conf-count {
-  font-size: 0.95rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+.player-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-text-tertiary);
+  padding: 4px 0 2px;
+}
+
+.player-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.player-row.reserve {
+  background: transparent;
+}
+
+.pos-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: white;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+}
+
+.pos-tag.small {
+  height: 20px;
+  font-size: 0.65rem;
+}
+
+.player-id {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.p-name {
+  font-size: 0.85rem;
   font-weight: 600;
   color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.p-team {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.p-stats {
+  display: flex;
+  gap: 10px;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.p-stats b {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .player-row {
+    grid-template-columns: 32px 1fr;
+    grid-template-rows: auto auto;
+  }
+  .p-stats {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-left: 42px;
+  }
 }
 
 /* Injury list — mirrors styling of inline injury modal in CampaignHomeView */

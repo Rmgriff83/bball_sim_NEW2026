@@ -21,6 +21,7 @@ import {
   compareBadgeLevels,
 } from '@/engine/data/playerBadgeStore'
 import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
+import { selectBestCoachingScheme } from '@/engine/coaching/CoachStrategyService'
 import api from '@/composables/useApi'
 
 /**
@@ -1039,6 +1040,24 @@ export const useTeamStore = defineStore('team', () => {
       }
 
       teamData.coach = newCoach
+
+      // Auto-init the team's coaching scheme to fit the new coach + current
+      // roster. A hire is the right moment to refresh because (a) on first
+      // hire the team has no scheme set, and (b) on replacement the prior
+      // coach's preferences shouldn't carry over. Preserves any custom sub
+      // strategy the user picked previously.
+      try {
+        const rosterForScheme = await PlayerRepository.getByTeam(campaignId, userTeamId)
+        const schemeFit = selectBestCoachingScheme(rosterForScheme, newCoach, teamData.coaching_scheme)
+        teamData.coaching_scheme = {
+          offensive: schemeFit.offensive,
+          defensive: schemeFit.defensive,
+          substitution: schemeFit.substitution,
+        }
+      } catch (schemeErr) {
+        console.warn('[Team] Failed to auto-init coaching scheme on hire:', schemeErr)
+      }
+
       await TeamRepository.save(teamData)
 
       // Remove from pool & save campaign

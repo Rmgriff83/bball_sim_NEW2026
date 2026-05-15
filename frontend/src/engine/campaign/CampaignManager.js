@@ -13,8 +13,6 @@ import { TEAMS, SALARY_CAP, TEAM_TIERS } from '../data/teams'
 import {
   COACH_FIRST_NAMES,
   COACH_LAST_NAMES,
-  OFFENSIVE_SCHEMES,
-  DEFENSIVE_SCHEMES,
   COACH_TIER_RANGES,
   COACHES,
   FREE_AGENT_COACH_TIERS,
@@ -25,6 +23,14 @@ import {
   getCoachActionBudget,
   computeCoachTier,
 } from '../data/coaches'
+// Pull scheme maps from the simulator's canonical source. The arrays exported
+// from `data/coaches` use STRING values, so `Object.keys(arr)` returns "0",
+// "1" etc. — which the simulator doesn't recognise as schemes. The maps below
+// are keyed by the actual scheme name (`balanced`, `motion`, `man`, …) so
+// `pickRandom(Object.keys(...))` gives a real scheme that the simulator can
+// look up.
+import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from '../simulation/CoachingEngine'
+import { selectBestCoachingScheme, isCoachingSchemeValid } from '../coaching/CoachStrategyService'
 import { coachBadges } from '../data/coachBadges'
 import { BADGES, BADGES_BY_POSITION } from '../data/badges'
 import { playersMaster } from '../data/players'
@@ -1123,9 +1129,15 @@ export async function createCampaign(options) {
         subStrategy,
         target_minutes: targetMinutes,
       }
+      // Pick offensive + defensive schemes that fit this team's roster rather
+      // than copying whatever the coach was randomly generated with — coaches
+      // are stamped with random scheme strings that may not even match the
+      // simulator's scheme map. CoachStrategyService picks canonical scheme
+      // keys (`three_point`, `motion`, `man`, …) the simulator understands.
+      const schemeFit = selectBestCoachingScheme(teamPlayers, team.coach)
       team.coaching_scheme = {
-        offensive: team.coach?.offensiveScheme ?? 'balanced',
-        defensive: team.coach?.defensiveScheme ?? 'man',
+        offensive: schemeFit.offensive,
+        defensive: schemeFit.defensive,
         substitution: subStrategy,
       }
     }
@@ -2154,7 +2166,13 @@ export async function startNewSeason(campaignId) {
     }
   }
 
-  // 6. Re-initialize all team lineups + target minutes
+  // 6. Re-initialize all team lineups + target minutes, and refresh coaching
+  // schemes. AI teams ALWAYS get a fresh scheme picked by CoachStrategyService
+  // (so trades and draft picks during the offseason actually shift their
+  // play style). The user team only gets auto-init when the stored scheme
+  // is missing or invalid — manual selections in the Coach Settings tab
+  // are preserved across seasons.
+  const userTeamIdForScheme = campaign.teamId
   for (const team of teams) {
     const teamPlayers = allPlayers.filter(p => p.teamId === team.id)
     if (teamPlayers.length === 0) continue
@@ -2164,6 +2182,24 @@ export async function startNewSeason(campaignId) {
       starters,
       subStrategy,
       target_minutes: targetMinutes,
+    }
+
+    const isUserTeam = team.id === userTeamIdForScheme
+    const shouldReplaceScheme = !isUserTeam || !isCoachingSchemeValid(team.coaching_scheme)
+    if (shouldReplaceScheme) {
+      const schemeFit = selectBestCoachingScheme(teamPlayers, team.coach, team.coaching_scheme)
+      team.coaching_scheme = {
+        offensive: schemeFit.offensive,
+        defensive: schemeFit.defensive,
+        substitution: subStrategy,
+      }
+    } else {
+      // User kept their selections — just refresh sub strategy from the
+      // newly-computed lineup so it tracks lineup changes.
+      team.coaching_scheme = {
+        ...team.coaching_scheme,
+        substitution: team.coaching_scheme.substitution || subStrategy,
+      }
     }
   }
   await TeamRepository.saveBulk(teams)

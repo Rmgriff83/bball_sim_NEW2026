@@ -39,6 +39,7 @@ import TeamHeader from '@/components/common/TeamHeader.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
 import EndOfFreeAgencyModal from '@/components/team/EndOfFreeAgencyModal.vue'
 import UserFreeAgencyOffers from '@/components/team/UserFreeAgencyOffers.vue'
+import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -123,19 +124,95 @@ const startSeasonNeedsCoach = computed(() => !teamStore.coach)
 const startSeasonBlocked = computed(() => startSeasonRosterShort.value || startSeasonNeedsCoach.value)
 const news = computed(() => (campaign.value?.news || []).slice().reverse())
 
-// Top player by overall rating
-const topPlayer = computed(() => {
+// The campaign's bi-weekly Featured Player selection (set by
+// `_refreshFeaturedPlayerIfStale` in game.js). Resolves to the live roster
+// entry so the avatar / OVR / position stay current even though the
+// selection was made at the start of the 14-day window.
+const featuredSelection = computed(() => campaign.value?.settings?.featuredPlayer ?? null)
+
+const featuredPlayer = computed(() => {
+  const sel = featuredSelection.value
+  if (sel?.playerId) {
+    const live = roster.value.find(p => String(p?.id) === String(sel.playerId))
+    if (live) return live
+    // Selection points at a player no longer on the roster (trade / cut).
+    // Render a synthetic stub from the cached selection rather than a blank
+    // card so we don't lose history; next refresh tick will replace it.
+    return {
+      id: sel.playerId,
+      name: sel.playerName,
+      position: sel.position,
+      overall_rating: 0,
+      overallRating: 0,
+    }
+  }
+  // Cold-start fallback (no selection has been made yet — first ~2 weeks of
+  // the season): show the team's top player by OVR so the card isn't empty.
   if (!roster.value.length) return null
   return [...roster.value].sort((a, b) => b.overall_rating - a.overall_rating)[0]
 })
 
-// Get top player's season stats - check multiple possible data paths
-const topPlayerStats = computed(() => {
-  if (!topPlayer.value) {
-    return { ppg: '0.0', rpg: '0.0', apg: '0.0' }
+// 14-day per-game averages from the selection window (PPG / RPG / APG strip
+// on the Featured Player card). Falls back to the player's season averages
+// for the cold-start case when no selection exists yet.
+const featuredPlayerStats = computed(() => {
+  const sel = featuredSelection.value
+  if (sel?.stats) {
+    const round1 = v => (v == null ? '0.0' : Number(v).toFixed(1))
+    return {
+      ppg: round1(sel.stats.ppg),
+      rpg: round1(sel.stats.rpg),
+      apg: round1(sel.stats.apg),
+      spg: round1(sel.stats.spg),
+      bpg: round1(sel.stats.bpg),
+      gamesPlayed: sel.stats.gamesPlayed ?? 0,
+    }
   }
+  return _legacyTopPlayerStats(featuredPlayer.value)
+})
 
-  const player = topPlayer.value
+// Recent-performances rows for the strip on the right of the card. Mirrors
+// the `recent_performances` entry shape PlayerDetailModal renders, so the
+// minimal table on the card uses the same columns.
+// Source order:
+//   1. The bi-weekly selection's `recentGames` (matches the 14-day window
+//      the player was chosen on)
+//   2. Fallback to the featured player's own `recent_performances` rolling
+//      log (last 10 games) so the strip is visible immediately, before the
+//      first selection ever fires (the first ~2 weeks of a new campaign).
+// Always returns newest-first and capped to keep the card height bounded.
+const FEATURED_STRIP_MAX_ROWS = 6
+const featuredRecentGames = computed(() => {
+  const sel = featuredSelection.value
+  if (Array.isArray(sel?.recentGames) && sel.recentGames.length > 0) {
+    return sel.recentGames.slice().reverse().slice(0, FEATURED_STRIP_MAX_ROWS)
+  }
+  const p = featuredPlayer.value
+  const log = p?.recent_performances || p?.recentPerformances
+  if (!Array.isArray(log) || log.length === 0) return []
+  // `recent_performances` entries are PlayerEvolution `trackPerformance`
+  // shape: { date, opponent, won, min, pts, reb, ast, stl, blk, to, fgm,
+  // fga, tpm, tpa, ftm, fta }. Already matches the columns the strip uses.
+  // Filter out any legacy float entries (older code stored just a rating).
+  return log
+    .filter(g => g && typeof g === 'object' && g.date)
+    .slice()
+    .reverse()
+    .slice(0, FEATURED_STRIP_MAX_ROWS)
+})
+
+function formatFeaturedGameDate(dateStr) {
+  if (!dateStr || dateStr.length < 10) return '—'
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+// Legacy season-averages helper, kept for the cold-start fallback above.
+function _legacyTopPlayerStats(player) {
+  if (!player) {
+    return { ppg: '0.0', rpg: '0.0', apg: '0.0', spg: '0.0', bpg: '0.0' }
+  }
   // Try different possible stat locations (snake_case and camelCase)
   const stats = player.season_stats || player.seasonStats || player.stats || player
 
@@ -150,13 +227,17 @@ const topPlayerStats = computed(() => {
   const ppg = stats.ppg ?? stats.pointsPerGame ?? stats.points_per_game ?? 0
   const rpg = stats.rpg ?? stats.reboundsPerGame ?? stats.rebounds_per_game ?? 0
   const apg = stats.apg ?? stats.assistsPerGame ?? stats.assists_per_game ?? 0
+  const spg = stats.spg ?? stats.stealsPerGame ?? stats.steals_per_game ?? 0
+  const bpg = stats.bpg ?? stats.blocksPerGame ?? stats.blocks_per_game ?? 0
 
   return {
     ppg: formatStat(ppg),
     rpg: formatStat(rpg),
-    apg: formatStat(apg)
+    apg: formatStat(apg),
+    spg: formatStat(spg),
+    bpg: formatStat(bpg),
   }
-})
+}
 
 // Team's standing - use leagueStore for accurate data
 const teamStanding = computed(() => {
@@ -733,12 +814,20 @@ onMounted(async () => {
   // If we already have campaign data, refresh in background without blocking
   const hasCachedData = campaignStore.currentCampaign
 
-  const fetchAll = Promise.all([
-    campaignStore.fetchCampaign(campaignId.value),
-    teamStore.fetchTeam(campaignId.value),
-    leagueStore.fetchStandings(campaignId.value),
-    gameStore.fetchGames(campaignId.value)
-  ])
+  // fetchCampaign hydrates IndexedDB (pulls from cloud on cold devices and
+  // runs engine migrations). fetchTeam / fetchStandings / fetchGames all
+  // read directly from IDB, so if they race against fetchCampaign on a
+  // device that doesn't have the campaign locally yet, they'll throw
+  // "Campaign not found". Serialize fetchCampaign first, then fan the rest
+  // out in parallel.
+  const fetchAll = (async () => {
+    await campaignStore.fetchCampaign(campaignId.value)
+    return Promise.all([
+      teamStore.fetchTeam(campaignId.value),
+      leagueStore.fetchStandings(campaignId.value),
+      gameStore.fetchGames(campaignId.value),
+    ])
+  })()
 
   if (hasCachedData) {
     // Refresh in background, don't wait
@@ -1432,8 +1521,106 @@ async function handleConfirmFreeAgencyChoices(selectedIds) {
   }
 }
 
+// -----------------------------------------------------------------------------
+// Featured-player detail modal
+// -----------------------------------------------------------------------------
+// Clicking the Featured Player card opens the same PlayerDetailModal the
+// Personnel tab uses, so the user can scout, upgrade, and run coach meetings
+// without leaving the home view. Wiring mirrors TeamManagementView's setup
+// but binds to a separate `modalPlayer` snapshot (not the live
+// `featuredPlayer` computed) so the modal stays on whoever the user clicked
+// even if the bi-weekly selection rolls over mid-session.
+const modalPlayer = ref(null)
+const showFeaturedPlayerModal = ref(false)
+
 function openPlayerDetails() {
-  router.push(`/campaign/${campaignId.value}/team`)
+  if (!featuredPlayer.value) return
+  modalPlayer.value = featuredPlayer.value
+  showFeaturedPlayerModal.value = true
+}
+
+function closeFeaturedPlayerModal() {
+  showFeaturedPlayerModal.value = false
+  modalPlayer.value = null
+}
+
+const modalEvolutionHistory = computed(() => {
+  return modalPlayer.value?.development_history || []
+})
+
+const modalSevenDaysAgo = computed(() => {
+  const currentDateStr = campaign.value?.current_date || campaign.value?.currentDate || new Date().toISOString().split('T')[0]
+  const [y, m, d] = currentDateStr.split('-').map(Number)
+  const date = new Date(y, m - 1, d)
+  date.setDate(date.getDate() - 7)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+})
+
+function aggregateModalEvolution(history) {
+  const aggregated = {}
+  for (const entry of history) {
+    const key = `${entry.category}.${entry.attribute}`
+    if (!aggregated[key]) {
+      aggregated[key] = { category: entry.category, attribute: entry.attribute, totalChange: 0, count: 0 }
+    }
+    aggregated[key].totalChange += entry.change
+    aggregated[key].count++
+  }
+  return Object.values(aggregated).sort((a, b) => {
+    if (a.totalChange > 0 && b.totalChange <= 0) return -1
+    if (a.totalChange <= 0 && b.totalChange > 0) return 1
+    return Math.abs(b.totalChange) - Math.abs(a.totalChange)
+  })
+}
+
+const modalRecentEvolution = computed(() => {
+  const recent = modalEvolutionHistory.value.filter(e => e.date >= modalSevenDaysAgo.value)
+  return aggregateModalEvolution(recent)
+})
+
+const modalAllTimeEvolution = computed(() => {
+  return aggregateModalEvolution(modalEvolutionHistory.value)
+})
+
+const modalPlayerNews = computed(() => {
+  if (!modalPlayer.value) return []
+  const allNews = campaignStore.currentCampaign?.news ?? []
+  return allNews.filter(n => n.player_id === modalPlayer.value.id).slice().reverse()
+})
+
+async function handleModalUpgradeAttribute({ playerId, category, attribute, pool }) {
+  try {
+    const result = await teamStore.upgradePlayerAttribute(campaignId.value, playerId, category, attribute, pool)
+    const attrLabel = attribute.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim()
+    toastStore.showSuccess(`${attrLabel} upgraded to ${Math.floor(result.new_value)}!`)
+    modalPlayer.value = teamStore.roster?.find(p => p.id === playerId) ?? modalPlayer.value
+  } catch (err) {
+    toastStore.showError(err.response?.data?.message || err.message || 'Upgrade failed')
+  }
+}
+
+async function handleModalPurchaseUpgradePoint({ playerId, pool, price }) {
+  try {
+    await teamStore.purchaseUpgradePoint(campaignId.value, playerId, pool)
+    const label = pool === 'defense' ? 'defensive' : 'offensive'
+    toastStore.showSuccess(`+1 ${label} upgrade point purchased for ${price.toLocaleString()} tokens`)
+    modalPlayer.value = teamStore.roster?.find(p => p.id === playerId) ?? modalPlayer.value
+  } catch (err) {
+    toastStore.showError(err.response?.data?.message || err.message || 'Purchase failed')
+  }
+}
+
+async function handleModalHoldCoachMeeting({ playerId, purchasedAction }) {
+  try {
+    const res = await teamStore.holdCoachMeeting(campaignId.value, playerId, { purchasedAction })
+    const summary = purchasedAction
+      ? `Bought a coach meeting · morale +30 (now ${res.morale})`
+      : `Coach meeting held · morale +30 (now ${res.morale}) · ${res.actionsRemaining} actions left`
+    toastStore.showSuccess(summary)
+    modalPlayer.value = teamStore.roster?.find(p => p.id === playerId) ?? modalPlayer.value
+  } catch (err) {
+    toastStore.showError(err.response?.data?.message || err.message || 'Failed to hold meeting')
+  }
 }
 
 function navigateToGame(gameId) {
@@ -2792,32 +2979,77 @@ function handleCloseSimulateModal() {
       </section>
 
       <!-- Featured Player Card - Cosmic gradient -->
-      <section v-if="topPlayer" class="featured-player-card card-cosmic" @click="openPlayerDetails">
+      <!-- Bi-weekly Featured Player. Selection refreshed every 14 days by
+           `_refreshFeaturedPlayerIfStale` in stores/game.js. PPG/RPG/APG are
+           the 14-day window averages (NOT season averages). The strip on
+           the right (mobile: below) shows the games that fed the selection. -->
+      <section v-if="featuredPlayer" class="featured-player-card card-cosmic" @click="openPlayerDetails">
         <h3 class="section-header featured-header">FEATURED PLAYER</h3>
         <div class="player-content">
           <div class="player-avatar">
-            <PlayerAvatar :player="topPlayer" :size="76" class="avatar-icon" />
+            <PlayerAvatar :player="featuredPlayer" :size="86" class="avatar-icon" />
           </div>
           <div class="player-info">
-            <h4 class="player-name">{{ topPlayer.name }}</h4>
-            <p class="player-position">{{ topPlayer.position }}</p>
+            <h4 class="player-name">{{ featuredPlayer.name }}</h4>
+            <p class="player-position">{{ featuredPlayer.position }}</p>
           </div>
           <div class="player-rating">
-            <span class="rating-badge">{{ topPlayer.overall_rating }}</span>
+            <span class="rating-badge">{{ featuredPlayer.overall_rating ?? featuredPlayer.overallRating ?? '—' }}</span>
           </div>
         </div>
-        <div class="player-stats">
-          <div class="stat-item">
-            <span class="stat-value">{{ topPlayerStats.ppg }}</span>
-            <span class="stat-label">PPG</span>
+        <!-- Unified Last-2-Weeks panel: 14-day per-game averages stacked
+             above the game log that fed them. Single container, full card
+             width, with a clear label so users know these aren't season
+             averages. -->
+        <div class="featured-window-panel">
+          <div class="featured-window-header">
+            <span class="window-label">Last 2 Weeks · Per-Game Averages</span>
+            <span v-if="featuredPlayerStats.gamesPlayed" class="window-meta">{{ featuredPlayerStats.gamesPlayed }} GP</span>
           </div>
-          <div class="stat-item">
-            <span class="stat-value">{{ topPlayerStats.rpg }}</span>
-            <span class="stat-label">RPG</span>
+          <div class="player-stats">
+            <div class="stat-item">
+              <span class="stat-value">{{ featuredPlayerStats.ppg }}</span>
+              <span class="stat-label">PPG</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value">{{ featuredPlayerStats.rpg }}</span>
+              <span class="stat-label">RPG</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value">{{ featuredPlayerStats.apg }}</span>
+              <span class="stat-label">APG</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value">{{ featuredPlayerStats.spg }}</span>
+              <span class="stat-label">SPG</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value">{{ featuredPlayerStats.bpg }}</span>
+              <span class="stat-label">BPG</span>
+            </div>
           </div>
-          <div class="stat-item">
-            <span class="stat-value">{{ topPlayerStats.apg }}</span>
-            <span class="stat-label">APG</span>
+
+          <div v-if="featuredRecentGames.length" class="featured-recent-games">
+            <div class="recent-games-label">Recent Games</div>
+            <table class="recent-games-table">
+              <thead>
+                <tr>
+                  <th>Date</th><th>OPP</th><th></th>
+                  <th>PTS</th><th>REB</th><th>AST</th><th>MIN</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(game, i) in featuredRecentGames" :key="i">
+                  <td class="rg-date">{{ formatFeaturedGameDate(game.date) }}</td>
+                  <td class="rg-opp">{{ game.opponent || '—' }}</td>
+                  <td :class="game.won ? 'rg-win' : 'rg-loss'">{{ game.won ? 'W' : 'L' }}</td>
+                  <td class="rg-pts">{{ game.pts }}</td>
+                  <td>{{ game.reb }}</td>
+                  <td>{{ game.ast }}</td>
+                  <td>{{ game.min }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -3183,6 +3415,28 @@ function handleCloseSimulateModal() {
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Featured Player Detail Modal — opened from the Featured Player card -->
+    <PlayerDetailModal
+      :show="showFeaturedPlayerModal"
+      :player="modalPlayer"
+      :show-growth="true"
+      :recent-evolution="modalRecentEvolution"
+      :all-time-evolution="modalAllTimeEvolution"
+      :player-news="modalPlayerNews"
+      :show-history="true"
+      :can-upgrade="true"
+      :is-user-player="true"
+      :campaign-id="campaignId"
+      :current-season-year="campaign?.currentSeasonYear"
+      :lineup-players="teamStore.starterPlayers?.filter(p => p != null) || []"
+      :user-tokens="authStore.profile?.tokens ?? 0"
+      :coach="teamStore.coach"
+      @close="closeFeaturedPlayerModal"
+      @upgrade-attribute="handleModalUpgradeAttribute"
+      @purchase-upgrade-point="handleModalPurchaseUpgradePoint"
+      @hold-coach-meeting="handleModalHoldCoachMeeting"
+    />
   </div>
 </template>
 
@@ -3522,13 +3776,12 @@ function handleCloseSimulateModal() {
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
-  position: relative;
   z-index: 1;
 }
 
 .player-avatar {
-  width: 76px;
-  height: 76px;
+  width: 88px;
+  height: 88px;
   background: rgba(26, 21, 32, 0.15);
   border-radius: 50%;
   display: flex;
@@ -3570,6 +3823,9 @@ function handleCloseSimulateModal() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: absolute;
+  top: 16px;
+  right: 16px;
   min-width: 44px;
   height: 44px;
   padding: 0 12px;
@@ -3581,11 +3837,52 @@ function handleCloseSimulateModal() {
   color: white;
 }
 
+/* Unified Last-2-Weeks panel — single full-width container that stacks the
+   per-game averages above the recent games table. Replaces the old
+   side-by-side `.featured-body` layout. */
+.featured-window-panel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(26, 21, 32, 0.18);
+  border: 1px solid rgba(26, 21, 32, 0.22);
+  border-radius: var(--radius-lg);
+}
+
+.featured-window-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.window-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(26, 21, 32, 0.78);
+}
+
+.window-meta {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: rgba(26, 21, 32, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+
 .player-stats {
   display: flex;
   gap: 24px;
-  position: relative;
-  z-index: 1;
+  flex-shrink: 0;
+  /* 5 tiles fit comfortably on desktop; wrap on narrow viewports so they
+     don't squeeze the labels. */
+  flex-wrap: wrap;
 }
 
 .stat-item {
@@ -3607,6 +3904,96 @@ function handleCloseSimulateModal() {
   color: rgba(26, 21, 32, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+/* Recent-performances strip lives inside `.featured-window-panel`, directly
+   below the averages. Full panel width; horizontal scroll on narrow screens
+   if the table overflows. */
+.featured-recent-games {
+  width: 100%;
+  min-width: 0;
+  border-top: 1px solid rgba(26, 21, 32, 0.18);
+  padding-top: 8px;
+  overflow-x: auto;
+}
+
+.recent-games-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(26, 21, 32, 0.7);
+  margin-bottom: 4px;
+}
+
+.recent-games-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+  color: #1a1520;
+}
+
+.recent-games-table th {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(26, 21, 32, 0.6);
+  text-align: right;
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(26, 21, 32, 0.15);
+}
+
+.recent-games-table th:nth-child(-n+2) {
+  text-align: left;
+}
+
+.recent-games-table td {
+  padding: 3px 4px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.recent-games-table td:nth-child(-n+2) {
+  text-align: left;
+}
+
+.recent-games-table .rg-date {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.recent-games-table .rg-opp {
+  font-weight: 700;
+}
+
+.recent-games-table .rg-pts {
+  font-weight: 700;
+}
+
+.recent-games-table .rg-win {
+  color: #166534;
+  font-weight: 700;
+}
+
+.recent-games-table .rg-loss {
+  color: #991b1b;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  /* Tighter padding + smaller stat values on mobile so the panel still fits
+     comfortably below the player header. */
+  .featured-window-panel {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .player-stats {
+    gap: 16px;
+  }
+  .stat-value {
+    font-size: 1.25rem;
+  }
 }
 
 /* News Card */

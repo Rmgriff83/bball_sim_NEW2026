@@ -104,7 +104,7 @@ const computedSubtitle = computed(() => {
 
 /* Desktop bump — same breakpoint + values used previously inline in
    CampaignHomeView and TeamManagementView. */
-@media (min-width: 1024px) {
+@media (min-width: 767px) {
   .team-logo-badge {
     width: 88px;
     height: 88px;
