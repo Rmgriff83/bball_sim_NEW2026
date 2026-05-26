@@ -8,6 +8,7 @@ use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\SocialAuthController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\SyncController;
+use App\Http\Controllers\PaymentController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -52,8 +53,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user/stats', [UserController::class, 'stats']);
     Route::get('/user/achievements', [UserController::class, 'achievements']);
 
-    // Token operations
+    // Token operations (spending only — credits flow via Stripe webhook)
     Route::post('/user/tokens', [UserController::class, 'updateTokens']);
+
+    // Payments
+    Route::post('/payments/checkout-session', [PaymentController::class, 'createCheckoutSession']);
 
     // Cloud sync (client-id based, no route model binding)
     Route::get('/sync/campaigns', [SyncController::class, 'listCampaigns']);
@@ -64,3 +68,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
 // Public routes
 Route::get('/achievements', [UserController::class, 'allAchievements']);
+
+// Stripe webhook (public — authenticated by signature, not session)
+Route::post('/webhooks/stripe', [PaymentController::class, 'webhook']);

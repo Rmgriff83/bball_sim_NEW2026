@@ -242,13 +242,16 @@ class UserController extends Controller
     }
 
     /**
-     * Add or deduct tokens from the user's profile.
+     * Spend tokens from the user's profile (negative amount).
      * POST /api/user/tokens
+     *
+     * Positive amounts are rejected — token credits flow only through the
+     * Stripe webhook (PaymentController@webhook) so clients can't self-grant.
      */
     public function updateTokens(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'amount' => 'required|integer',
+            'amount' => 'required|integer|lt:1',
         ]);
 
         $user = $request->user();
@@ -258,16 +261,11 @@ class UserController extends Controller
             return response()->json(['message' => 'Profile not found'], 404);
         }
 
-        $rewards = $profile->rewards ?? $profile::defaultRewards();
-        $newBalance = ($rewards['tokens'] ?? 0) + $validated['amount'];
+        $newBalance = $profile->creditTokens($validated['amount']);
 
-        if ($newBalance < 0) {
+        if ($newBalance === null) {
             return response()->json(['message' => 'Insufficient tokens'], 422);
         }
-
-        $rewards['tokens'] = $newBalance;
-        $profile->rewards = $rewards;
-        $profile->save();
 
         return response()->json([
             'tokens' => $newBalance,

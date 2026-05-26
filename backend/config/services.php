@@ -35,4 +35,25 @@ return [
         ],
     ],
 
+    'stripe' => [
+        'secret' => env('STRIPE_SECRET'),
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+        'checkout_success_url' => env('STRIPE_CHECKOUT_SUCCESS_URL'),
+        'checkout_cancel_url' => env('STRIPE_CHECKOUT_CANCEL_URL'),
+
+        // Bundle catalog — authoritative source for what each bundle id grants.
+        // The webhook looks up the matched price id here to decide how many
+        // tokens to credit, so frontend-supplied amounts can never grant extras.
+        'bundles' => [
+            'tokens_1000' => [
+                'price_id' => env('STRIPE_PRICE_TOKENS_1000'),
+                'tokens' => 1000,
+            ],
+            'tokens_6500' => [
+                'price_id' => env('STRIPE_PRICE_TOKENS_6500'),
+                'tokens' => 6500,
+            ],
+        ],
+    ],
+
 ];

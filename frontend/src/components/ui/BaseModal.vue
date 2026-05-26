@@ -81,11 +81,11 @@ const sizeClasses = {
           style="max-height: 90vh; overflow-y: auto;"
         >
           <!-- Header -->
-          <header v-if="showHeader && (title || closable)" class="flex items-center justify-between p-4 border-b border-white/10">
-            <h2 v-if="title" class="h4 text-gradient">{{ title }}</h2>
+          <header v-if="showHeader && (title || closable)" class="modal-header">
+            <h2 v-if="title" class="modal-title">{{ title }}</h2>
             <button
               v-if="closable"
-              class="btn-ghost btn-icon-sm rounded-full"
+              class="btn-close"
               @click="close"
               aria-label="Close"
             >
@@ -122,5 +122,42 @@ const sizeClasses = {
     opacity: 1;
     transform: scale(1);
   }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.modal-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.btn-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
 }
 </style>
