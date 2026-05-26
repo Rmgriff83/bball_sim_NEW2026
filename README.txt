@@ -32,7 +32,7 @@
   Quick reference for future PRODUCTION deploys
 
   Backend:
-  ssh deploy@164.92.105.227
+  ssh deploy@143.198.57.204
   cd /var/www/bball-sim/bball_sim_NEW2026/backend
   git pull
   composer install --no-dev --optimize-autoloader

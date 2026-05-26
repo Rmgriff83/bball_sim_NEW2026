@@ -2092,7 +2092,6 @@ onUnmounted(() => {
                     :style="{ '--team-color': awayTeam?.primary_color || '#6B7280' }"
                   >
                     {{ awayTeam?.abbreviation }}
-                    <TeamOverallBadge :overall="awayTeamOverall" />
                   </div>
                   <span class="broadcast-record">
                     {{ game.is_playoff
@@ -2130,7 +2129,6 @@ onUnmounted(() => {
                     :style="{ '--team-color': homeTeam?.primary_color || '#6B7280' }"
                   >
                     {{ homeTeam?.abbreviation }}
-                    <TeamOverallBadge :overall="homeTeamOverall" />
                   </div>
                   <span class="broadcast-record">
                     {{ game.is_playoff

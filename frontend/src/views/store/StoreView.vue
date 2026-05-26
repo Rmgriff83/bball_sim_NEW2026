@@ -1,13 +1,14 @@
 <script setup>
-import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, BaseModal } from '@/components/ui'
-import { ArrowLeft, Coins, ShoppingBag } from 'lucide-vue-next'
+import { ArrowLeft, Coins } from 'lucide-vue-next'
 import api from '@/composables/useApi'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const toastStore = useToastStore()
 
@@ -21,9 +22,12 @@ const bundles = [
   { id: 'tokens_6500', amount: 6500, price: '$4.99', label: '6,500', bestValue: true }
 ]
 
-function isNative() {
-  return false
-}
+// Show the sandbox banner whenever the publishable key is a Stripe test key,
+// regardless of whether this is a dev or prod build.
+const isStripeSandbox = computed(() => {
+  const key = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || ''
+  return !key || key.startsWith('pk_test_')
+})
 
 function promptPurchase(bundle) {
   confirmBundle.value = bundle
@@ -42,24 +46,32 @@ async function confirmPurchase() {
   const bundle = confirmBundle.value
 
   try {
-    if (isNative()) {
-      // Future: RevenueCat IAP integration
-      // await Purchases.purchasePackage(bundle.id)
-    }
-
-    // Test mode: directly credit tokens via API
-    const response = await api.post('/api/user/tokens', { amount: bundle.amount })
-    if (authStore.profile) {
-      authStore.profile.tokens = response.data.tokens
-    }
-    confirmBundle.value = null
-    toastStore.showSuccess(`${bundle.label} tokens added!`)
+    const response = await api.post('/api/payments/checkout-session', {
+      bundle_id: bundle.id
+    })
+    window.location.href = response.data.url
   } catch (error) {
-    toastStore.showError('Purchase failed. Please try again.')
-  } finally {
     purchasing.value = false
+    toastStore.showError('Could not start checkout. Please try again.')
   }
 }
+
+onMounted(async () => {
+  // Stripe redirects back to /store?checkout=success or ?checkout=cancel.
+  // Tokens are credited by the webhook, so we just refresh the profile and
+  // surface a toast.
+  const status = route.query.checkout
+  if (status === 'success') {
+    try {
+      await authStore.fetchUser()
+    } catch {}
+    toastStore.showSuccess('Purchase complete! Tokens added to your account.')
+    router.replace({ query: {} })
+  } else if (status === 'cancel') {
+    toastStore.showError('Purchase canceled.')
+    router.replace({ query: {} })
+  }
+})
 </script>
 
 <template>
@@ -67,7 +79,7 @@ async function confirmPurchase() {
     <!-- Header -->
     <header class="store-header">
       <div class="header-container">
-        <button class="back-link" @click="router.back()">
+        <button class="back-link" @click="router.push({ name: 'campaigns' })">
           <ArrowLeft :size="20" />
         </button>
         <h1 class="page-title">Store</h1>
@@ -78,9 +90,9 @@ async function confirmPurchase() {
     <!-- Main Content -->
     <main class="store-main">
       <div class="store-container">
-        <!-- Test Mode Banner -->
-        <div class="test-banner">
-          Test Mode — No real charges
+        <!-- Sandbox Banner — visible whenever test Stripe keys are in use -->
+        <div v-if="isStripeSandbox" class="test-banner">
+          Sandbox Mode — use Stripe test cards
         </div>
 
         <!-- Token Balance -->
@@ -154,7 +166,7 @@ async function confirmPurchase() {
             Cancel
           </button>
           <button class="btn-confirm" :disabled="purchasing" @click="confirmPurchase">
-            {{ purchasing ? 'Processing...' : 'Confirm Purchase' }}
+            {{ purchasing ? 'Redirecting...' : 'Continue to Checkout' }}
           </button>
         </div>
       </template>
@@ -474,11 +486,16 @@ async function confirmPurchase() {
 .confirm-footer .btn-cancel,
 .confirm-footer .btn-confirm {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 12px 20px;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   font-size: 0.85rem;
   font-weight: 600;
   text-transform: uppercase;
+  letter-spacing: 0.03em;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -491,6 +508,7 @@ async function confirmPurchase() {
 
 .confirm-footer .btn-cancel:hover:not(:disabled) {
   background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
 }
 
 .confirm-footer .btn-confirm {
@@ -500,7 +518,7 @@ async function confirmPurchase() {
 }
 
 .confirm-footer .btn-confirm:hover:not(:disabled) {
-  filter: brightness(1.1);
+  background: var(--color-primary-dark);
   transform: translateY(-1px);
 }
 

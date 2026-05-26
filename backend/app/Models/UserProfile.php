@@ -86,4 +86,24 @@ class UserProfile extends Model
 
         return $tokensAwarded;
     }
+
+    /**
+     * Adjust the user's token balance by $amount (positive = credit, negative = spend).
+     * Returns the new balance, or null if the change would push the balance negative.
+     */
+    public function creditTokens(int $amount): ?int
+    {
+        $rewards = $this->rewards ?? self::defaultRewards();
+        $newBalance = ($rewards['tokens'] ?? 0) + $amount;
+
+        if ($newBalance < 0) {
+            return null;
+        }
+
+        $rewards['tokens'] = $newBalance;
+        $this->rewards = $rewards;
+        $this->save();
+
+        return $newBalance;
+    }
 }

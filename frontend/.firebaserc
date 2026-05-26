@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "bball-sim-31989"
-  }
+    "default": "bball-sim-31989",
+    "prod": "bball-sim-76d96"
+  },
+  "targets": {},
+  "etags": {}
 }
