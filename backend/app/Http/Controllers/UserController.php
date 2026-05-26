@@ -242,16 +242,13 @@ class UserController extends Controller
     }
 
     /**
-     * Spend tokens from the user's profile (negative amount).
+     * Adjust the user's token balance.
      * POST /api/user/tokens
-     *
-     * Positive amounts are rejected — token credits flow only through the
-     * Stripe webhook (PaymentController@webhook) so clients can't self-grant.
      */
     public function updateTokens(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'amount' => 'required|integer|lt:1',
+            'amount' => 'required|integer|not_in:0',
         ]);
 
         $user = $request->user();
