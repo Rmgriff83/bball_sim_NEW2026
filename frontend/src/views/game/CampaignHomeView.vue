@@ -2210,39 +2210,55 @@ async function handleConfirmSimSeason() {
 }
 
 async function handleSimToNextPlayoffRound() {
+  // Step 1: run the sim. Only this step's failure means "the sim failed".
   try {
     if (userEliminated.value) {
-      // User is eliminated — sim ALL remaining playoff rounds internally
       await gameStore.simulateToNextPlayoffRound(campaignId.value, { simAll: true })
     } else {
-      // User still in playoffs — sim one round of AI games
       await gameStore.simulateToNextPlayoffRound(campaignId.value)
-    }
-    // Refresh all data — bracket, games, standings
-    await Promise.all([
-      playoffStore.fetchBracket(campaignId.value),
-      gameStore.fetchGames(campaignId.value, { force: true }),
-      campaignStore.fetchCampaign(campaignId.value, true),
-      leagueStore.fetchStandings(campaignId.value, { force: true }),
-    ])
-
-    if (userEliminated.value && playoffStore.champion) {
-      const champion = playoffStore.champion
-      const year = campaign.value?.season?.year || campaign.value?.game_year || new Date().getFullYear()
-      breakingNewsStore.enqueue(
-        BreakingNewsService.winningFinals({
-          teamName: champion.name,
-          year,
-          date: campaign.value?.settings?.currentDate || new Date().toISOString().split('T')[0],
-        }),
-        campaignId.value
-      )
-    } else {
-      toastStore.showSuccess('Next round is ready!')
     }
   } catch (err) {
     toastStore.showError('Failed to simulate playoff games')
     console.error('Failed to sim to next playoff round:', err)
+    return
+  }
+
+  // Step 2: sim succeeded and persisted to IndexedDB. Refresh in-memory
+  // stores with allSettled so a single fetch rejection doesn't masquerade
+  // as a sim failure — production hit a case where the user was eliminated,
+  // the sim finished and saved, but one of these refreshes rejected. The
+  // user saw "Failed to simulate playoff games", got stuck, and only after
+  // leaving and re-entering the campaign did the persisted (correct) state
+  // surface. Treat refresh failures as recoverable: log them, fall back to
+  // a less alarming toast, and let the next nav reload pick up the truth.
+  const refreshResults = await Promise.allSettled([
+    playoffStore.fetchBracket(campaignId.value),
+    gameStore.fetchGames(campaignId.value, { force: true }),
+    campaignStore.fetchCampaign(campaignId.value, true),
+    leagueStore.fetchStandings(campaignId.value, { force: true }),
+  ])
+  const refreshFailures = refreshResults.filter(r => r.status === 'rejected')
+  if (refreshFailures.length > 0) {
+    for (const r of refreshFailures) {
+      console.warn('[PlayoffSim] Post-sim refresh partial failure:', r.reason)
+    }
+    toastStore.showError('Playoffs simulated, but the page failed to refresh — reload to see the latest bracket.')
+    return
+  }
+
+  if (userEliminated.value && playoffStore.champion) {
+    const champion = playoffStore.champion
+    const year = campaign.value?.season?.year || campaign.value?.game_year || new Date().getFullYear()
+    breakingNewsStore.enqueue(
+      BreakingNewsService.winningFinals({
+        teamName: champion.name,
+        year,
+        date: campaign.value?.settings?.currentDate || new Date().toISOString().split('T')[0],
+      }),
+      campaignId.value
+    )
+  } else {
+    toastStore.showSuccess('Next round is ready!')
   }
 }
 

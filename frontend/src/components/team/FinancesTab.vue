@@ -226,7 +226,23 @@ function handleSign(player) {
 function handleInfo(player) {
   // Merge with teamStore player data so season_stats and development_history are available
   const teamPlayer = teamStore.roster?.find(p => p.id === player.id)
-  detailPlayer.value = teamPlayer ? { ...teamPlayer, ...player } : player
+  if (teamPlayer) {
+    // Explicit `season_stats` override: teamStore's `_attachSeasonStats`
+    // re-derives this object from SeasonRepository on every force-refresh
+    // (after every game), so it's the live source. financeStore's
+    // `rosterWithContracts` is hydrated from `PlayerRepository.getByTeam`,
+    // and legacy IDB records carry a stale `season_stats` snapshot that was
+    // persisted by older teamStore saves — which the regular spread would
+    // otherwise let win, freezing the modal's GP at whatever the last
+    // mutation (e.g. the trade/resign-deadline cluster) saw.
+    detailPlayer.value = {
+      ...teamPlayer,
+      ...player,
+      season_stats: teamPlayer.season_stats ?? null,
+    }
+  } else {
+    detailPlayer.value = player
+  }
   showPlayerInfoModal.value = true
 }
 

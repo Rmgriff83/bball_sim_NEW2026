@@ -43,6 +43,65 @@ export const CampaignRepository = {
   },
 
   /**
+   * Atomically add or replace the user's FA offer for one player. Wraps the
+   * read + put in a single IDB readwrite transaction so a concurrent
+   * `simFreeAgencyDay` save (which reads the campaign, mutates the offers
+   * map, then writes the whole campaign back) cannot clobber the offer
+   * mid-write — a production bug where a user FA offer to a former
+   * teammate silently vanished traced back to that race.
+   */
+  async upsertFreeAgencyUserOffer(id, playerId, offer) {
+    return withDB(async db => {
+      const tx = db.transaction('campaigns', 'readwrite')
+      const campaign = await tx.store.get(id)
+      if (!campaign) {
+        await tx.done
+        throw new Error(`Campaign ${id} not found`)
+      }
+      campaign.settings = campaign.settings ?? {}
+      campaign.settings.freeAgencyOffers = campaign.settings.freeAgencyOffers ?? {}
+      const key = String(playerId)
+      const list = campaign.settings.freeAgencyOffers[key] ?? []
+      const idx = list.findIndex(o => o.isUserOffer)
+      if (idx >= 0) list[idx] = offer
+      else list.push(offer)
+      campaign.settings.freeAgencyOffers[key] = list
+      campaign.updatedAt = new Date().toISOString()
+      await tx.store.put(campaign)
+      await tx.done
+      return campaign
+    })
+  },
+
+  /**
+   * Atomically remove the user's FA offer for one player. Same rationale as
+   * `upsertFreeAgencyUserOffer` — wrap read + put in one transaction.
+   */
+  async removeFreeAgencyUserOffer(id, playerId) {
+    return withDB(async db => {
+      const tx = db.transaction('campaigns', 'readwrite')
+      const campaign = await tx.store.get(id)
+      if (!campaign) {
+        await tx.done
+        return null
+      }
+      const map = campaign.settings?.freeAgencyOffers
+      const key = String(playerId)
+      if (!map || !map[key]) {
+        await tx.done
+        return campaign
+      }
+      const remaining = map[key].filter(o => !o.isUserOffer)
+      if (remaining.length === 0) delete map[key]
+      else map[key] = remaining
+      campaign.updatedAt = new Date().toISOString()
+      await tx.store.put(campaign)
+      await tx.done
+      return campaign
+    })
+  },
+
+  /**
    * Stamp `lastSyncedAt` on a campaign WITHOUT bumping `updatedAt`.
    * `updatedAt` must reflect user-content changes only — sync metadata
    * shouldn't make the local copy look "newer" than what's on the server,

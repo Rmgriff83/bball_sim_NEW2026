@@ -397,39 +397,49 @@ async function handleSimRemainingPlayoffs() {
   playoffStore.closeSeriesResultModal()
   const loadingToastId = toastStore.showLoading('Simulating remaining playoffs...')
 
+  // Step 1: run the sim. Only this step's failure means "the sim failed".
   try {
-    // Sim all remaining AI playoff games internally (single in-memory loop)
     await gameStore.simulateToNextPlayoffRound(campaignId.value, { simAll: true })
-
-    toastStore.removeMinimalToast(loadingToastId)
-
-    // Refresh all data
-    await Promise.all([
-      playoffStore.fetchBracket(campaignId.value),
-      gameStore.fetchGames(campaignId.value, { force: true }),
-      campaignStore.fetchCampaign(campaignId.value, true),
-    ])
-
-    // Announce the champion via breaking news
-    if (playoffStore.champion) {
-      const champion = playoffStore.champion
-      const year = campaignStore.currentCampaign?.season?.year || campaignStore.currentCampaign?.game_year || new Date().getFullYear()
-      breakingNewsStore.enqueue(
-        BreakingNewsService.winningFinals({
-          teamName: champion.name,
-          year,
-          date: campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0],
-        }),
-        campaignId.value
-      )
-    }
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Simulation failed. Please try again.')
     console.error('Failed to sim remaining playoffs:', err)
-  } finally {
     seriesResultSimulating.value = false
+    return
   }
+  toastStore.removeMinimalToast(loadingToastId)
+
+  // Step 2: sim succeeded and persisted. Refresh with allSettled so a single
+  // fetch rejection doesn't surface as a sim failure (see CampaignHomeView
+  // for the production incident this guards against).
+  const refreshResults = await Promise.allSettled([
+    playoffStore.fetchBracket(campaignId.value),
+    gameStore.fetchGames(campaignId.value, { force: true }),
+    campaignStore.fetchCampaign(campaignId.value, true),
+  ])
+  const refreshFailures = refreshResults.filter(r => r.status === 'rejected')
+  if (refreshFailures.length > 0) {
+    for (const r of refreshFailures) {
+      console.warn('[PlayoffSim] Post-sim refresh partial failure:', r.reason)
+    }
+    toastStore.showError('Playoffs simulated, but the page failed to refresh — reload to see the latest bracket.')
+    seriesResultSimulating.value = false
+    return
+  }
+
+  if (playoffStore.champion) {
+    const champion = playoffStore.champion
+    const year = campaignStore.currentCampaign?.season?.year || campaignStore.currentCampaign?.game_year || new Date().getFullYear()
+    breakingNewsStore.enqueue(
+      BreakingNewsService.winningFinals({
+        teamName: champion.name,
+        year,
+        date: campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0],
+      }),
+      campaignId.value
+    )
+  }
+  seriesResultSimulating.value = false
 }
 
 // Find a series by ID in the current bracket

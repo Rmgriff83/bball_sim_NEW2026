@@ -458,12 +458,20 @@ export function resignPlayer({ player, years, salary: salaryOverride, resignDead
     ? parseFloat(salaryOverride)
     : parseFloat(player.contractSalary ?? player.contract_salary ?? 0);
 
+  // Mid-season extension semantics: the new N-year deal starts NEXT season.
+  // processSeasonEnd() decrements contractYearsRemaining at season's end for
+  // every player, so without this flag a player re-signed mid-season for N
+  // years would carry only N-1 into the new season — and a 1-year re-sign
+  // would expire to 0 and be flipped to a free agent during enterOffseason.
+  // The flag is consumed and cleared by processSeasonEnd().
   const updatedPlayer = {
     ...player,
     contractYearsRemaining: years,
     contract_years_remaining: years,
     contractSalary: salary,
     contract_salary: salary,
+    resignedThisSeason: true,
+    resigned_this_season: true,
   };
 
   return {

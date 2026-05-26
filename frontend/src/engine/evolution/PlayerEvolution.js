@@ -1607,10 +1607,19 @@ export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro', 
     player.streak_data = null;
     player.streakData = null;
 
-    // Decrement contract
-    const yearsRemaining = player.contract_years_remaining ?? player.contractYearsRemaining ?? 1;
-    player.contract_years_remaining = Math.max(0, yearsRemaining - 1);
-    player.contractYearsRemaining = player.contract_years_remaining;
+    // Decrement contract — but skip once for players re-signed mid-season,
+    // since their new N-year deal is meant to begin NEXT season. Without
+    // this, a 1-year mid-season extension would expire to 0 here and the
+    // offseason FA step would flip the player back into the free-agent pool.
+    const justResigned = player.resigned_this_season ?? player.resignedThisSeason ?? false;
+    if (justResigned) {
+      player.resigned_this_season = false;
+      player.resignedThisSeason = false;
+    } else {
+      const yearsRemaining = player.contract_years_remaining ?? player.contractYearsRemaining ?? 1;
+      player.contract_years_remaining = Math.max(0, yearsRemaining - 1);
+      player.contractYearsRemaining = player.contract_years_remaining;
+    }
 
     // Generate motivations if missing (covers existing campaigns)
     if (!player.motivations) {

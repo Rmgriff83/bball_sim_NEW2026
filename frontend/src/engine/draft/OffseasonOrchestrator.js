@@ -488,7 +488,26 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
 
     // AI team won — finalize immediately.
     const targetTeam = teamFromId(teams, winningOffer.teamId)
-    if (!targetTeam) continue
+    if (!targetTeam) {
+      // Winning team is missing from the league snapshot (orphaned offer
+      // from a deleted/merged team, etc). Surface the user's offer in the
+      // declined list with an unsigned reason rather than silently dropping
+      // it — otherwise the offer just vanishes from the wrap-up modal and
+      // the player resurfaces in the FA pool with no explanation.
+      console.warn('[resolveFreeAgency] Winning team not found for player', player.id, 'teamId=', winningOffer.teamId)
+      if (userOffer) {
+        declined.push({
+          playerId: player.id,
+          playerName,
+          signedWith: 'unsigned',
+          signedWithAbbr: null,
+          userOffer,
+          winningOffer: null,
+          reason: 'No team finalized the bid — the player went unsigned.',
+        })
+      }
+      continue
+    }
 
     playerUpdates.push({
       ...player,

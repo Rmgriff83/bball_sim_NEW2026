@@ -252,6 +252,10 @@ export const useFinanceStore = defineStore('finance', () => {
       dbPlayer.contract_years_remaining = years
       dbPlayer.contractSalary = newSalary
       dbPlayer.contract_salary = newSalary
+      // One-shot flag so processSeasonEnd() doesn't immediately decrement the
+      // just-signed extension at the next season rollover. Cleared there.
+      dbPlayer.resignedThisSeason = true
+      dbPlayer.resigned_this_season = true
 
       // Rebuild contract_details.salaries to match the new term so any
       // downstream code that reads the year-by-year breakdown sees the
@@ -297,6 +301,8 @@ export const useFinanceStore = defineStore('finance', () => {
           contract_salary: newSalary,
           contractDetails: newDetails,
           contract_details: newDetails,
+          resignedThisSeason: true,
+          resigned_this_season: true,
         }
       }
 
@@ -426,9 +432,6 @@ export const useFinanceStore = defineStore('finance', () => {
       const teamData = await TeamRepository.get(campaignId, userTeamId)
       const teamAbbr = teamData?.abbreviation ?? teamData?.abbr ?? null
 
-      if (!campaign.settings) campaign.settings = {}
-      if (!campaign.settings.freeAgencyOffers) campaign.settings.freeAgencyOffers = {}
-
       // No cap-space throw here. The user is allowed to bid above their cap
       // on multiple players — players don't pick a team until the window
       // ends, so taking swings at several stars is the realistic play. If
@@ -436,31 +439,31 @@ export const useFinanceStore = defineStore('finance', () => {
       // a "Decision Required" step in the EndOfFreeAgencyModal so the user
       // picks which signings to keep.
 
-      const offerList = campaign.settings.freeAgencyOffers[playerId] || []
-      const existingIdx = offerList.findIndex(o => o.isUserOffer)
       const newOffer = {
         teamId: userTeamId,
         teamAbbr,
         salary: Math.floor(salary),
         years,
-        dayOffered: campaign.settings.freeAgencyDay ?? 0,
+        dayOffered: campaign.settings?.freeAgencyDay ?? 0,
         isUserOffer: true,
       }
-      if (existingIdx >= 0) {
-        offerList[existingIdx] = newOffer
-      } else {
-        offerList.push(newOffer)
-      }
-      campaign.settings.freeAgencyOffers[playerId] = offerList
 
-      await CampaignRepository.save(campaign)
+      // Atomic upsert — wraps read+put in a single IDB txn so a concurrent
+      // simFreeAgencyDay (which also does a read-modify-write of the whole
+      // campaign object) can't clobber the offer mid-write. Without this,
+      // a race could drop the user's offer and the player would silently
+      // resurface in the FA pool after resolution.
+      const updatedCampaign = await CampaignRepository.upsertFreeAgencyUserOffer(
+        campaignId, playerId, newOffer
+      )
+      const updatedList = updatedCampaign.settings?.freeAgencyOffers?.[String(playerId)] ?? [newOffer]
 
       // Update local FA cache so ContractCard immediately reflects the offer.
       const idx = freeAgents.value.findIndex(p => String(p.id) === String(playerId))
       if (idx >= 0) {
         freeAgents.value[idx] = {
           ...freeAgents.value[idx],
-          pendingOfferCount: offerList.length,
+          pendingOfferCount: updatedList.length,
           userOffer: newOffer,
         }
       }
@@ -486,19 +489,17 @@ export const useFinanceStore = defineStore('finance', () => {
       }
       if (!campaign.settings?.freeAgencyOffers?.[playerId]) return
 
-      const filtered = campaign.settings.freeAgencyOffers[playerId].filter(o => !o.isUserOffer)
-      if (filtered.length === 0) {
-        delete campaign.settings.freeAgencyOffers[playerId]
-      } else {
-        campaign.settings.freeAgencyOffers[playerId] = filtered
-      }
-      await CampaignRepository.save(campaign)
+      // Atomic remove — same race-protection rationale as the upsert path.
+      const updatedCampaign = await CampaignRepository.removeFreeAgencyUserOffer(
+        campaignId, playerId
+      )
+      const remaining = updatedCampaign?.settings?.freeAgencyOffers?.[String(playerId)] ?? []
 
       const idx = freeAgents.value.findIndex(p => String(p.id) === String(playerId))
       if (idx >= 0) {
         freeAgents.value[idx] = {
           ...freeAgents.value[idx],
-          pendingOfferCount: filtered.length,
+          pendingOfferCount: remaining.length,
           userOffer: null,
         }
       }

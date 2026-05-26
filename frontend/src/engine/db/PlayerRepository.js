@@ -19,6 +19,20 @@ function _normalizeAll(players) {
   return players
 }
 
+// `season_stats` is a UI-only derivation that teamStore re-attaches from
+// SeasonRepository on every fetchTeam. Persisting it would freeze whatever
+// snapshot happened to be on the in-memory roster object at save time —
+// downstream readers (financeStore.rosterWithContracts) would then carry
+// that stale snapshot back to the modal, contradicting the live value
+// teamStore re-derives. Strip it at the storage boundary so no caller
+// accidentally pickles a snapshot.
+function _stripTransient(player) {
+  if (!player || typeof player !== 'object') return player
+  if (!('season_stats' in player) && !('seasonStats' in player)) return player
+  const { season_stats: _s1, seasonStats: _s2, ...rest } = player
+  return rest
+}
+
 export const PlayerRepository = {
   async get(campaignId, playerId) {
     return withDB(async db => _normalize(await db.get('players', [campaignId, playerId])))
@@ -49,8 +63,9 @@ export const PlayerRepository = {
   async save(player) {
     return withDB(db => {
       if (!player.campaignId) throw new Error('Player must have campaignId')
-      player.updatedAt = new Date().toISOString()
-      return db.put('players', player)
+      const persistable = _stripTransient(player)
+      persistable.updatedAt = new Date().toISOString()
+      return db.put('players', persistable)
     })
   },
 
@@ -59,8 +74,9 @@ export const PlayerRepository = {
       const tx = db.transaction('players', 'readwrite')
       const now = new Date().toISOString()
       for (const player of players) {
-        player.updatedAt = now
-        tx.store.put(player)
+        const persistable = _stripTransient(player)
+        persistable.updatedAt = now
+        tx.store.put(persistable)
       }
       await tx.done
     })
