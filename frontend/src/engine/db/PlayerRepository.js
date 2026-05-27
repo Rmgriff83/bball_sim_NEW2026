@@ -82,6 +82,24 @@ export const PlayerRepository = {
     })
   },
 
+  /**
+   * Persist players pulled from the server. Preserves each record's
+   * existing `updatedAt` so subsequent pull comparisons see the original
+   * mutation time, not the write-to-IDB time.
+   */
+  async saveBulkFromRemote(players) {
+    return withDB(async db => {
+      const tx = db.transaction('players', 'readwrite')
+      const fallback = new Date().toISOString()
+      for (const player of players) {
+        const persistable = _stripTransient(player)
+        if (!persistable.updatedAt) persistable.updatedAt = fallback
+        tx.store.put(persistable)
+      }
+      await tx.done
+    })
+  },
+
   async delete(campaignId, playerId) {
     return withDB(db => db.delete('players', [campaignId, playerId]))
   },

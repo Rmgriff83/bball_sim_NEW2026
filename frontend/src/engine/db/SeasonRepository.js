@@ -17,6 +17,22 @@ export const SeasonRepository = {
     })
   },
 
+  /**
+   * Persist a season pulled from the server. Preserves the remote
+   * `updatedAt` so the next pull comparison reflects when the data was
+   * actually mutated (on whichever device played the games), not when this
+   * device happened to write it to IndexedDB.
+   */
+  async saveFromRemote(season) {
+    return withDB(db => {
+      if (!season.campaignId) throw new Error('Season must have campaignId')
+      if (!season.updatedAt) {
+        season.updatedAt = new Date().toISOString()
+      }
+      return db.put('seasons', season)
+    })
+  },
+
   async deleteAllForCampaign(campaignId) {
     return withDB(async db => {
       const tx = db.transaction('seasons', 'readwrite')

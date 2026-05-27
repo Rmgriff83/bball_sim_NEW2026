@@ -700,7 +700,7 @@ export const useSyncStore = defineStore('sync', () => {
     if (data.campaign) {
       const localCampaign = await CampaignRepository.get(campaignId)
       if (!localCampaign || remoteIsNewer(localCampaign.updatedAt)) {
-        await CampaignRepository.save(data.campaign)
+        await CampaignRepository.saveFromRemote(data.campaign)
         usedRemote = true
         console.log('[Sync] Using remote campaign data (newer or no local)')
       } else {
@@ -717,7 +717,7 @@ export const useSyncStore = defineStore('sync', () => {
       const localTeams = await TeamRepository.getAllForCampaign(campaignId)
       const teamsToWrite = _pickNewerRecords(data.teams, localTeams, t => t.id)
       if (teamsToWrite.length > 0) {
-        await TeamRepository.saveBulk(teamsToWrite)
+        await TeamRepository.saveBulkFromRemote(teamsToWrite)
         console.log(`[Sync] Updating ${teamsToWrite.length} teams from remote`)
       } else {
         console.log('[Sync] All local teams are up to date')
@@ -773,7 +773,7 @@ export const useSyncStore = defineStore('sync', () => {
       const playersToWrite = _pickNewerRecords(data.players, localPlayers, p => p.id)
       if (playersToWrite.length > 0) {
         const hydrated = playersToWrite.map(_hydratePlayerKeys)
-        await PlayerRepository.saveBulk(hydrated)
+        await PlayerRepository.saveBulkFromRemote(hydrated)
         console.log(`[Sync] Updating ${playersToWrite.length} players from remote`)
       } else {
         console.log('[Sync] All local players are up to date')
@@ -787,11 +787,16 @@ export const useSyncStore = defineStore('sync', () => {
         const localSeason = await SeasonRepository.get(campaignId, year)
         const remoteSeasonUpdatedAt = season.updatedAt ?? season.metadata?.updatedAt ?? null
         const localSeasonUpdatedAt = localSeason?.updatedAt ?? localSeason?.metadata?.updatedAt ?? null
-        const remoteSeasonNewer = remoteSeasonUpdatedAt && localSeasonUpdatedAt
-          ? new Date(remoteSeasonUpdatedAt).getTime() > new Date(localSeasonUpdatedAt).getTime()
-          : false
+        // Treat a missing timestamp on either side as 0 — if local has no
+        // `updatedAt` to defend with, remote wins; if remote is untimestamped,
+        // local stays. The previous form returned `false` whenever EITHER
+        // side was missing, which silently rejected legitimate remote
+        // updates against locally-stamped-but-untracked rows.
+        const remoteTime = remoteSeasonUpdatedAt ? new Date(remoteSeasonUpdatedAt).getTime() : 0
+        const localTime = localSeasonUpdatedAt ? new Date(localSeasonUpdatedAt).getTime() : 0
+        const remoteSeasonNewer = remoteTime > localTime
         if (!localSeason || remoteSeasonNewer) {
-          await SeasonRepository.save(season)
+          await SeasonRepository.saveFromRemote(season)
           console.log(`[Sync] Using remote season ${year} data`)
         } else {
           console.log(`[Sync] Local season ${year} data is newer or equal, keeping local`)
@@ -856,21 +861,21 @@ export const useSyncStore = defineStore('sync', () => {
         SeasonRepository.deleteAllForCampaign(campaignId),
       ])
 
-      await CampaignRepository.save(data.campaign)
+      await CampaignRepository.saveFromRemote(data.campaign)
 
       if (Array.isArray(data.teams) && data.teams.length > 0) {
-        await TeamRepository.saveBulk(data.teams)
+        await TeamRepository.saveBulkFromRemote(data.teams)
       }
 
       if (Array.isArray(data.players) && data.players.length > 0) {
         const hydrated = data.players.map(_hydratePlayerKeys)
-        await PlayerRepository.saveBulk(hydrated)
+        await PlayerRepository.saveBulkFromRemote(hydrated)
       }
 
       if (Array.isArray(data.seasons)) {
         for (const season of data.seasons) {
           if (!season) continue
-          await SeasonRepository.save(season)
+          await SeasonRepository.saveFromRemote(season)
         }
       }
 

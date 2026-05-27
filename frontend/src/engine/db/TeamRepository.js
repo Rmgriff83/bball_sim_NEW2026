@@ -37,6 +37,23 @@ export const TeamRepository = {
     })
   },
 
+  /**
+   * Persist teams pulled from the server. Preserves each record's existing
+   * `updatedAt` so subsequent pull comparisons see the original mutation
+   * time, not the write-to-IDB time.
+   */
+  async saveBulkFromRemote(teams) {
+    return withDB(async db => {
+      const tx = db.transaction('teams', 'readwrite')
+      const fallback = new Date().toISOString()
+      for (const team of teams) {
+        if (!team.updatedAt) team.updatedAt = fallback
+        tx.store.put(team)
+      }
+      await tx.done
+    })
+  },
+
   async deleteAllForCampaign(campaignId) {
     return withDB(async db => {
       const tx = db.transaction('teams', 'readwrite')

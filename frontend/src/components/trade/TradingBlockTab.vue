@@ -37,6 +37,7 @@ const leagueBlockPlayers = ref([])
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 const playerStatsMap = ref({})
+const currentSeasonYear = ref(null)
 
 function getPlayerName(player) {
   const first = player.firstName || player.first_name || ''
@@ -138,6 +139,7 @@ onMounted(async () => {
     const campaign = await CampaignRepository.get(props.campaignId)
     const userTeamId = campaign?.team_id ?? campaign?.teamId
     const year = campaign?.currentSeasonYear ?? campaign?.gameYear ?? 2025
+    currentSeasonYear.value = year
 
     const [allTeams, allPlayers, seasonData] = await Promise.all([
       TeamRepository.getAllForCampaign(props.campaignId),
@@ -302,6 +304,7 @@ onMounted(async () => {
     <PlayerDetailModal
       :show="showPlayerModal"
       :player="selectedPlayer"
+      :current-season-year="currentSeasonYear"
       @close="closePlayer"
     />
   </div>

@@ -20,6 +20,21 @@ export const CampaignRepository = {
     })
   },
 
+  /**
+   * Persist a campaign pulled from the server. Preserves the remote
+   * `updatedAt` — stamping it locally would make the next pull treat the
+   * just-written local copy as "newer" than the server, causing subsequent
+   * cross-device updates to be silently rejected.
+   */
+  async saveFromRemote(campaign) {
+    return withDB(db => {
+      if (!campaign.updatedAt) {
+        campaign.updatedAt = new Date().toISOString()
+      }
+      return db.put('campaigns', campaign)
+    })
+  },
+
   async create(campaign) {
     return withDB(db => {
       campaign.createdAt = new Date().toISOString()
