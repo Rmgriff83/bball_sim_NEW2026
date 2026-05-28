@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useAudioStore } from '@/stores/audio'
 
 export const useToastStore = defineStore('toast', () => {
   const toasts = ref([])
@@ -33,6 +34,16 @@ export const useToastStore = defineStore('toast', () => {
   }
 
   function showGameResult({ homeTeam, awayTeam, homeScore, awayScore, gameId, campaignId, isUserHome }) {
+    // Play a result sound as the toast appears: affirmation on a user win,
+    // the cancellation blip on a loss. Mirrors isWin() in ToastContainer.vue.
+    const userWon = isUserHome === false
+      ? awayScore > homeScore
+      : homeScore > awayScore
+    try {
+      const audio = useAudioStore()
+      audio.play(userWon ? 'affirm' : 'cancel')
+    } catch { /* audio is best-effort */ }
+
     return addToast({
       type: 'game-result',
       homeTeam,

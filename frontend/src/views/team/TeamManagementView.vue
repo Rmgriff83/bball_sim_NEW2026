@@ -6,6 +6,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useAuthStore } from '@/stores/auth'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
@@ -36,6 +37,7 @@ const campaignStore = useCampaignStore()
 const authStore = useAuthStore()
 const tradeStore = useTradeStore()
 const toastStore = useToastStore()
+const audio = useAudioStore()
 const syncStore = useSyncStore()
 const { loadSynergies, getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
 
@@ -1075,6 +1077,7 @@ const playerNews = computed(() => {
 
 // Handle attribute upgrade from PlayerDetailModal
 async function handleUpgradeAttribute({ playerId, category, attribute, pool }) {
+  audio.suppressClickSound() // affirmation on success instead of the generic tap
   try {
     const result = await teamStore.upgradePlayerAttribute(
       campaignId.value,
@@ -1083,6 +1086,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute, pool }) {
       attribute,
       pool
     )
+    audio.affirm()
     toastStore.showSuccess(`${formatAttrName(attribute)} upgraded to ${Math.floor(result.new_value)}!`)
     // Refresh selected player with updated data
     selectedPlayer.value = roster.value.find(p => p.id === playerId)
@@ -1093,8 +1097,10 @@ async function handleUpgradeAttribute({ playerId, category, attribute, pool }) {
 
 // Handle upgrade-point purchase from PlayerDetailModal (tokens → +1 to pool)
 async function handlePurchaseUpgradePoint({ playerId, pool, price }) {
+  audio.suppressClickSound() // cha-ching instead of the generic tap (spends tokens)
   try {
     const result = await teamStore.purchaseUpgradePoint(campaignId.value, playerId, pool)
+    audio.purchase()
     const label = pool === 'defense' ? 'defensive' : 'offensive'
     toastStore.showSuccess(`+1 ${label} upgrade point purchased for ${price.toLocaleString()} tokens`)
     selectedPlayer.value = roster.value.find(p => p.id === playerId)
@@ -1104,6 +1110,9 @@ async function handlePurchaseUpgradePoint({ playerId, pool, price }) {
 }
 
 async function handleHoldCoachMeeting({ playerId, purchasedAction }) {
+  // Buying an extra meeting spends tokens → cha-ching instead of the generic
+  // tap. A free per-season meeting just gets the generic button tap.
+  if (purchasedAction) audio.suppressClickSound()
   try {
     const res = await teamStore.holdCoachMeeting(
       campaignId.value, playerId, { purchasedAction }
@@ -1111,6 +1120,7 @@ async function handleHoldCoachMeeting({ playerId, purchasedAction }) {
     const summary = purchasedAction
       ? `Bought a coach meeting · morale +30 (now ${res.morale})`
       : `Coach meeting held · morale +30 (now ${res.morale}) · ${res.actionsRemaining} actions left`
+    if (purchasedAction) audio.purchase()
     toastStore.showSuccess(summary)
     // Refresh the selected player ref so the modal re-renders with the new
     // morale and the button's "X left" counter both update in the same tick.

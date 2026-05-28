@@ -4,6 +4,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { useSyncStore } from '@/stores/sync'
@@ -21,6 +22,7 @@ const teamStore = useTeamStore()
 const authStore = useAuthStore()
 const toastStore = useToastStore()
 const syncStore = useSyncStore()
+const audio = useAudioStore()
 
 const activeSubTab = ref('scouting')
 const upgrading = ref(false)
@@ -116,6 +118,7 @@ async function upgradeFacility() {
   if (!canUpgrade.value) return
   confirmingUpgrade.value = false
   upgrading.value = true
+  audio.suppressClickSound() // cha-ching on success instead of the generic tap
 
   try {
     // Deduct tokens via backend API
@@ -143,6 +146,7 @@ async function upgradeFacility() {
     }
 
     syncStore.markDirty()
+    audio.purchase()
     toastStore.showSuccess(`${currentFacility.value.name} upgraded to Level ${team.facilities[facilityKey]}!`)
   } catch (err) {
     console.error('Failed to upgrade facility:', err)
