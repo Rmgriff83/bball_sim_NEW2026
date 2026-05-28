@@ -1,6 +1,9 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { X } from 'lucide-vue-next'
+import { useAudioStore } from '@/stores/audio'
+
+const audio = useAudioStore()
 
 const props = defineProps({
   show: {
@@ -30,6 +33,7 @@ const emit = defineEmits(['close'])
 
 function close() {
   if (props.closable) {
+    audio.cancel()
     emit('close')
   }
 }

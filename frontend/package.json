@@ -6,11 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:ios": "vite build && cap sync ios",
+    "open:ios": "cap open ios",
     "preview": "vite preview",
     "audit:gameplay": "node scripts/audit-gameplay-coverage.js",
     "prebuild": "node scripts/audit-gameplay-coverage.js"
   },
   "dependencies": {
+    "@capacitor/cli": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
+    "@capacitor/preferences": "^8.0.1",
     "@vuelidate/core": "^2.0.3",
     "@vuelidate/validators": "^2.0.4",
     "axios": "^1.13.4",

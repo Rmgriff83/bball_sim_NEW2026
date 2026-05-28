@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getToken, removeToken } from "./useTokenStorage";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "",
@@ -15,10 +16,11 @@ export function setToastStore(store) {
   toastStore = store;
 }
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token (async — backed by Capacitor
+// Preferences / Keychain on native, localStorage on web).
 api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem("auth_token");
+  async (config) => {
+    const token = await getToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -36,7 +38,7 @@ api.interceptors.response.use(
     if (error.response) {
       // Handle 401 Unauthorized
       if (error.response.status === 401) {
-        localStorage.removeItem("auth_token");
+        removeToken().catch(() => {});
         // Redirect to login if not already there
         if (window.location.pathname !== "/login") {
           window.location.href = "/login";

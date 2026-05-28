@@ -6,7 +6,8 @@ import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { GlassCard, BaseButton, FormInput, Badge, BaseModal } from '@/components/ui'
-import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, CloudDownload, Trash2, AlertTriangle, Zap, Users } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, CloudDownload, Trash2, AlertTriangle, Zap, Users, Volume2, VolumeX } from 'lucide-vue-next'
+import { useAudioStore } from '@/stores/audio'
 import { useLocalCache } from '@/composables/useLocalCache'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 
@@ -35,6 +36,23 @@ function toggleTheme() {
   const theme = isDarkMode.value ? 'dark' : 'light'
   document.documentElement.setAttribute('data-theme', theme)
   localStorage.setItem('theme', theme)
+}
+
+// Sound settings
+const audio = useAudioStore()
+
+function toggleSound() {
+  // The global click listener taps this button; turning ON before it fires
+  // means the tap plays as feedback, turning OFF silences it. No explicit call.
+  audio.setEnabled(!audio.enabled)
+}
+
+function onVolumeInput(e) {
+  audio.setVolume(Number(e.target.value) / 100)
+}
+
+function previewVolume() {
+  audio.navigate() // play a sample after the user finishes dragging
 }
 
 // Fetch fresh user data on mount to get latest rewards
@@ -275,6 +293,35 @@ async function clearLocalCache() {
               <span class="toggle-thumb"></span>
             </span>
           </button>
+        </div>
+      </div>
+
+      <!-- Sound Card -->
+      <div class="profile-section">
+        <h3 class="section-title">Sound</h3>
+        <div class="theme-toggle-row">
+          <div class="theme-label">
+            <component :is="audio.enabled ? Volume2 : VolumeX" :size="20" />
+            <span>{{ audio.enabled ? 'Sound On' : 'Sound Off' }}</span>
+          </div>
+          <button class="theme-toggle-btn" @click="toggleSound" :class="{ active: audio.enabled }">
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+          </button>
+        </div>
+        <div v-if="audio.enabled" class="volume-row">
+          <span class="volume-label">Volume</span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            :value="Math.round(audio.volume * 100)"
+            class="volume-slider"
+            @input="onVolumeInput"
+            @change="previewVolume"
+          />
+          <span class="volume-value">{{ Math.round(audio.volume * 100) }}%</span>
         </div>
       </div>
 
@@ -587,6 +634,34 @@ async function clearLocalCache() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+/* Volume slider */
+.volume-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.volume-label {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.volume-slider {
+  flex: 1;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.volume-value {
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  min-width: 2.75rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .theme-label {

@@ -5,6 +5,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
@@ -22,6 +23,7 @@ const campaignStore = useCampaignStore()
 const leagueStore = useLeagueStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
+const audio = useAudioStore()
 const syncStore = useSyncStore()
 
 const campaignId = computed(() => route.params.id)
@@ -176,6 +178,7 @@ function openPlayerModal(player) {
 async function scoutPlayer(player) {
   if (scouting.value || scoutingPoints.value < 1 || isFullyScouted(player.id)) return
   scouting.value = true
+  audio.suppressClickSound() // affirmation on success instead of the generic tap
 
   try {
     const revealed = getRevealedAttributes(player.id)
@@ -236,6 +239,7 @@ async function scoutPlayer(player) {
     syncStore.markDirty()
 
     const playerName = player.firstName + ' ' + player.lastName
+    audio.affirm()
     toastStore.showSuccess(`Scouted ${playerName}: ${toReveal.length} attributes revealed!`)
 
     // Trigger stat-pop animation on newly revealed attributes

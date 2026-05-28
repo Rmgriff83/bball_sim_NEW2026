@@ -5,9 +5,18 @@ import App from './App.vue'
 import { setToastStore } from './composables/useApi'
 import { useToastStore } from './stores/toast'
 import { useSyncStore } from './stores/sync'
+import { useAudioStore } from './stores/audio'
+import { unlock as unlockAudio } from './services/audioEngine'
 
 // Styles
 import './assets/styles/main.css'
+
+// Ask the platform to mark our IndexedDB / localStorage as persistent.
+// On iOS WKWebView this hints that the campaign cache should survive
+// storage-pressure eviction. No-op where unsupported.
+if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+  navigator.storage.persist().catch(() => {})
+}
 
 // Global handler for chunk loading errors (happens after deployment)
 // Catches errors from async components, dynamic imports, etc.
@@ -47,6 +56,27 @@ app.use(router)
 // Initialize toast store for API error handling
 const toastStore = useToastStore(pinia)
 setToastStore(toastStore)
+
+// Initialize audio store so persisted sound prefs (enabled/volume) load and
+// apply to the engine at startup.
+const audioStore = useAudioStore(pinia)
+
+// WebAudio starts suspended on iOS/Safari (incl. Capacitor WKWebView) and can
+// only be resumed from inside a user gesture. Unlock it once on the first tap.
+document.addEventListener('pointerdown', () => unlockAudio(), { once: true })
+
+// Play the generic tap on every button click, app-wide. Runs in the bubble
+// phase (after the element's own click handler), so a purchase (cha-ching) or
+// modal dismissal (cancel) can call audioStore.suppressClickSound() during the
+// click to opt that specific button out of the generic tap.
+document.addEventListener('click', (e) => {
+  // Buttons and navigation links (router-link renders <a href>) both count as
+  // clickable controls that should tap.
+  const el = e.target?.closest?.('button, [role="button"], a[href]')
+  if (!el) return
+  if (el.disabled || el.getAttribute('aria-disabled') === 'true') return
+  audioStore.navigate()
+})
 
 // Initialize sync store and start auto-sync
 const syncStore = useSyncStore(pinia)

@@ -1,13 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/composables/useApi'
+import { getToken, setToken, removeToken } from '@/composables/useTokenStorage'
 import { clearDatabase } from '@/engine/db/GameDatabase'
 import { useSyncStore } from '@/stores/sync'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
   const profile = ref(null)
-  const token = ref(localStorage.getItem('auth_token') || null)
+  const token = ref(null)
   const initialized = ref(false)
   const loading = ref(false)
 
@@ -16,12 +17,14 @@ export const useAuthStore = defineStore('auth', () => {
   async function initialize() {
     if (initialized.value) return
 
+    token.value = await getToken()
+
     if (token.value) {
       try {
         await fetchUser()
       } catch (error) {
         // Token is invalid, clear it
-        logout()
+        await logout()
       }
     }
 
@@ -44,7 +47,7 @@ export const useAuthStore = defineStore('auth', () => {
       const response = await api.post('/api/auth/login', credentials)
       token.value = response.data.token
       user.value = response.data.user
-      localStorage.setItem('auth_token', token.value)
+      await setToken(token.value)
       return response.data
     } finally {
       loading.value = false
@@ -60,7 +63,7 @@ export const useAuthStore = defineStore('auth', () => {
       const response = await api.post('/api/auth/register', data)
       token.value = response.data.token
       user.value = response.data.user
-      localStorage.setItem('auth_token', token.value)
+      await setToken(token.value)
       return response.data
     } finally {
       loading.value = false
@@ -89,7 +92,7 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = null
       user.value = null
       profile.value = null
-      localStorage.removeItem('auth_token')
+      await removeToken()
 
       // Clear all local campaign data so the next user doesn't see it
       try {

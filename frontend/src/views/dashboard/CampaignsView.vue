@@ -3,12 +3,21 @@ import { ref, onMounted, watch, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useAuthStore } from '@/stores/auth'
+import { useAudioStore } from '@/stores/audio'
 import { GlassCard, BaseButton, LoadingSpinner } from '@/components/ui'
 import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2 } from 'lucide-vue-next'
 
 const router = useRouter()
 const campaignStore = useCampaignStore()
 const authStore = useAuthStore()
+const audio = useAudioStore()
+
+function openCampaign(id) {
+  // Campaign cards are divs (not buttons), so the global click listener won't
+  // tap them — play the generic tap explicitly.
+  audio.navigate()
+  router.push(`/campaign/${id}`)
+}
 
 const showCreateModal = ref(false)
 const newCampaignName = ref('')
@@ -116,6 +125,7 @@ async function createCampaign() {
 
   creating.value = true
   createError.value = null
+  audio.suppressClickSound() // affirmation on success instead of the generic tap
 
   try {
     const campaignName = newCampaignName.value.trim() || `${selectedTeam.value.name} Dynasty`
@@ -130,6 +140,7 @@ async function createCampaign() {
 
     const campaign = await campaignStore.createCampaign(payload)
 
+    audio.affirm()
     closeCreateModal()
     if (selectedDraftMode.value === 'fantasy') {
       router.push(`/campaign/${campaign.id}/draft`)
@@ -234,7 +245,7 @@ function getDifficultyLabel(value) {
             :key="campaign.id"
             padding="lg"
             class="campaign-card"
-            @click="router.push(`/campaign/${campaign.id}`)"
+            @click="openCampaign(campaign.id)"
           >
             <div class="campaign-header">
               <div class="campaign-info">

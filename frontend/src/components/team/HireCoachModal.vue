@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { StatBadge } from '@/components/ui'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
@@ -27,6 +28,7 @@ const authStore = useAuthStore()
 const campaignStore = useCampaignStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
+const audio = useAudioStore()
 
 const hiringId = ref(null) // candidate id currently being hired (disables row)
 const pendingHire = ref(null) // candidate awaiting "replace current coach" confirmation
@@ -83,11 +85,13 @@ function selectCandidate(candidate) {
 
 async function performHire(candidate) {
   hiringId.value = candidate.id
+  audio.suppressClickSound() // cha-ching on success instead of the generic tap
   try {
     // teamStore.hireCoach assigns the new coach to team.coach, which atomically
     // replaces the previous one (no separate fire call needed).
     await teamStore.hireCoach(props.campaignId, candidate.id)
     const verb = currentCoach.value ? 'signed' : 'signed as head coach'
+    audio.purchase()
     toastStore.showSuccess(`${candidate.name} ${verb}`)
     pendingHire.value = null
     emit('hired')
