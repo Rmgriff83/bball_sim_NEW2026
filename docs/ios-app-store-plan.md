@@ -75,12 +75,12 @@ Goal: existing app boots inside an iOS WKWebView with no behavior changes.
 
 ## Phase 2 — Icons, splash, Info.plist (half a day)
 
-1. Pre-render a 1024×1024 **opaque** PNG from `frontend/public/app-icon.svg` (Apple rejects alpha channels on the marketing icon).
-2. `npm i -D @capacitor/assets`. Run `npx capacitor-assets generate --ios`. Generates the full icon set into `frontend/ios/App/App/Assets.xcassets/AppIcon.appiconset/` and a splash screen.
+1. ~~Pre-render a 1024×1024 **opaque** PNG from `frontend/public/app-icon.svg`.~~ **DONE** — source SVG had `rx=80` rounded corners (would rasterize to transparent corners, which Apple rejects). Created `frontend/assets/icon-source.svg` (corners removed → gradient fills full square) and rasterized to `frontend/assets/logo.png` (1024×1024, no alpha) via `sharp`.
+2. ~~`npm i -D @capacitor/assets`. Run `npx capacitor-assets generate --ios`.~~ **DONE** — generated AppIcon (single 1024 universal) + light/dark splash (`--splashBackgroundColor '#121214'`) into `frontend/ios/App/App/Assets.xcassets/`.
 3. Edit `frontend/ios/App/App/Info.plist`:
-   - `NSCameraUsageDescription` / `NSPhotoLibraryUsageDescription` — required if avatar upload uses camera/library. Missing strings = rejection.
-   - `ITSAppUsesNonExemptEncryption = false` (HTTPS only, no custom crypto).
-   - `CFBundleURLTypes` entry for Sign in with Apple (Phase 4).
+   - ~~`NSCameraUsageDescription` / `NSPhotoLibraryUsageDescription`.~~ **N/A** — app uses no device camera/photo library (the "camera"/"photo" code is canvas rendering of courtside photographers; avatars are generated; "uploads" are S3 campaign sync). Adding unused strings can invite reviewer questions, so omitted deliberately.
+   - ~~`ITSAppUsesNonExemptEncryption = false`~~ **DONE** (HTTPS only, no custom crypto).
+   - `CFBundleURLTypes` entry for Sign in with Apple — deferred to Phase 4.
 
 ---
 
@@ -189,9 +189,9 @@ The 60s sync loop in `sync.js` / `CampaignCacheService.js` may misfire while the
 - ✅ Catch-all 404 → `/` redirect (Phase 1)
 - ✅ `auth_token` migrated from localStorage to Capacitor Preferences / Keychain (Phase 1)
 - ✅ `navigator.storage.persist()` on app boot (Phase 1)
-- ⬜ `frontend/ios/` Xcode project scaffolded via `cap add ios` (Phase 1)
+- ✅ `frontend/ios/` Xcode project scaffolded via `cap add ios` (Phase 1) — Capacitor 8 uses Swift Package Manager, not CocoaPods
 - ⬜ Backend `CORS_ALLOWED_ORIGINS` env adds `https://app.bball-sim.com` (Phase 1)
-- ⬜ Icons + Info.plist usage strings (Phase 2)
+- ✅ Icons + splash generated via `@capacitor/assets` from `frontend/assets/`; `ITSAppUsesNonExemptEncryption=false` in Info.plist (Phase 2). Camera/photo usage strings intentionally omitted — app uses no device camera/photo library
 - ⬜ `frontend/src/views/store/StoreView.vue` — platform branch for native IAP (Phase 3b)
 - ⬜ New `frontend/src/services/iap.js` (Phase 3a)
 - ⬜ `backend/app/Http/Controllers/PaymentController.php` — `revenueCatWebhook()` + `verify()` (Phase 3c)
