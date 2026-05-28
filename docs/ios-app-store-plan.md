@@ -38,7 +38,7 @@ All steps from **Phase 1 step 3 onward** in the plan below — i.e. everything t
 
 1. Install **Xcode** (full app, Mac App Store — ~10GB download, ~40GB installed). Requires macOS 13.5+.
 2. Install Xcode Command Line Tools: `xcode-select --install` (or open Xcode once and accept license).
-3. Install **CocoaPods**: `sudo gem install cocoapods`.
+3. Install **CocoaPods**: `brew install cocoapods`. (Do NOT use `sudo gem install cocoapods` — macOS system Ruby 2.6 is too old for modern CocoaPods/ffi, which needs Ruby ≥ 3.0. Homebrew bundles its own Ruby and avoids the system-gem permission error.)
 4. Clone the repo and check out `prepare-ios-build`: `git checkout prepare-ios-build`.
 5. `cd frontend && npm install`.
 6. Smoke-test the web build first: `npm run dev` → log out, log in, verify the async token flow works.
