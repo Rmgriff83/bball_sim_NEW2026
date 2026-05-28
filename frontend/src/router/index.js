@@ -126,6 +126,10 @@ const routes = [
         component: lazyLoad(() => import('@/views/draft/ScoutingView.vue'))
       }
     ]
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/'
   }
 ]
 

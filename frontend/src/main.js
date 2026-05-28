@@ -9,6 +9,13 @@ import { useSyncStore } from './stores/sync'
 // Styles
 import './assets/styles/main.css'
 
+// Ask the platform to mark our IndexedDB / localStorage as persistent.
+// On iOS WKWebView this hints that the campaign cache should survive
+// storage-pressure eviction. No-op where unsupported.
+if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+  navigator.storage.persist().catch(() => {})
+}
+
 // Global handler for chunk loading errors (happens after deployment)
 // Catches errors from async components, dynamic imports, etc.
 window.addEventListener('error', (event) => {
