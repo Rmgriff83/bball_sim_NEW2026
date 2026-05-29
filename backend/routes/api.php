@@ -71,3 +71,7 @@ Route::get('/achievements', [UserController::class, 'allAchievements']);
 
 // Stripe webhook (public — authenticated by signature, not session)
 Route::post('/webhooks/stripe', [PaymentController::class, 'webhook']);
+
+// RevenueCat webhook for iOS In-App Purchases (public — authenticated by
+// the Authorization header value set in the RevenueCat dashboard).
+Route::post('/webhooks/revenuecat', [PaymentController::class, 'revenueCatWebhook']);

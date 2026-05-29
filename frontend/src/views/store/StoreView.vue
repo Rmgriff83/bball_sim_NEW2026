@@ -1,11 +1,13 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { Capacitor } from '@capacitor/core'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, BaseModal } from '@/components/ui'
 import { ArrowLeft, Coins } from 'lucide-vue-next'
 import api from '@/composables/useApi'
+import * as iap from '@/services/iap'
 
 const router = useRouter()
 const route = useRoute()
@@ -16,6 +18,7 @@ const purchasing = ref(false)
 const confirmBundle = ref(null)
 
 const tokenBalance = computed(() => authStore.profile?.tokens ?? 0)
+const isNative = Capacitor.isNativePlatform()
 
 const bundles = [
   { id: 'tokens_1000', amount: 1000, price: '$0.99', label: '1,000' },
@@ -45,6 +48,32 @@ async function confirmPurchase() {
 
   const bundle = confirmBundle.value
 
+  if (isNative) {
+    // Native iOS — StoreKit 2 via RevenueCat. Tokens are credited
+    // server-side by the RevenueCat webhook; we refresh the profile once
+    // the purchase resolves so the new balance appears.
+    try {
+      const result = await iap.purchase(bundle.id)
+      if (result.cancelled) {
+        purchasing.value = false
+        confirmBundle.value = null
+        return
+      }
+      try {
+        await authStore.fetchUser()
+      } catch {}
+      toastStore.showSuccess('Purchase complete! Tokens added to your account.')
+      confirmBundle.value = null
+    } catch (err) {
+      console.error('IAP purchase failed', err)
+      toastStore.showError('Purchase failed. Please try again.')
+    } finally {
+      purchasing.value = false
+    }
+    return
+  }
+
+  // Web — Stripe Checkout redirect (unchanged).
   try {
     const response = await api.post('/api/payments/checkout-session', {
       bundle_id: bundle.id
@@ -57,9 +86,18 @@ async function confirmPurchase() {
 }
 
 onMounted(async () => {
-  // Stripe redirects back to /store?checkout=success or ?checkout=cancel.
-  // Tokens are credited by the webhook, so we just refresh the profile and
-  // surface a toast.
+  // Native: configure RevenueCat for this user so purchase() can fetch
+  // offerings and trigger StoreKit. initIAP is idempotent.
+  if (isNative && authStore.user?.id) {
+    try {
+      await iap.initIAP(authStore.user.id)
+    } catch (err) {
+      console.error('initIAP failed', err)
+    }
+  }
+
+  // Web only — Stripe redirects back to /store?checkout=success or
+  // ?checkout=cancel after the hosted checkout flow.
   const status = route.query.checkout
   if (status === 'success') {
     try {
@@ -90,8 +128,8 @@ onMounted(async () => {
     <!-- Main Content -->
     <main class="store-main">
       <div class="store-container">
-        <!-- Sandbox Banner — visible whenever test Stripe keys are in use -->
-        <div v-if="isStripeSandbox" class="test-banner">
+        <!-- Sandbox Banner — Stripe sandbox banner is web-only -->
+        <div v-if="!isNative && isStripeSandbox" class="test-banner">
           Sandbox Mode — use Stripe test cards
         </div>
 

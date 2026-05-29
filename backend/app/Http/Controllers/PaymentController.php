@@ -150,4 +150,88 @@ class PaymentController extends Controller
 
         $user->profile->creditTokens($tokens);
     }
+
+    /**
+     * RevenueCat webhook receiver for iOS In-App Purchases.
+     * POST /api/webhooks/revenuecat  (public — authenticated by Authorization header)
+     *
+     * RevenueCat sends a custom Authorization header value configured in the
+     * RC dashboard. We compare it against REVENUECAT_WEBHOOK_AUTH (env). On
+     * a match we credit tokens for supported consumable purchase events.
+     */
+    public function revenueCatWebhook(Request $request): Response
+    {
+        $expected = config('services.iap.webhook_auth');
+        $provided = (string) $request->header('Authorization', '');
+
+        if (!$expected || !hash_equals((string) $expected, $provided)) {
+            return response('Unauthorized', 401);
+        }
+
+        $event = $request->input('event');
+        if (!is_array($event) || empty($event['id']) || empty($event['type'])) {
+            return response('Invalid payload', 400);
+        }
+
+        // Idempotency: claim the event id atomically. If another delivery
+        // already processed this event, the unique pk insert throws and we
+        // return 200 without re-crediting tokens.
+        try {
+            DB::table('revenuecat_webhook_events')->insert([
+                'id' => $event['id'],
+                'type' => $event['type'],
+            ]);
+        } catch (\Illuminate\Database\QueryException $e) {
+            return response('Already processed', 200);
+        }
+
+        // Consumables come through as NON_RENEWING_PURCHASE; INITIAL_PURCHASE
+        // covered defensively in case RC re-classifies them.
+        $purchaseTypes = ['INITIAL_PURCHASE', 'NON_RENEWING_PURCHASE'];
+        if (in_array($event['type'], $purchaseTypes, true)) {
+            $this->fulfillIapPurchase($event);
+        }
+
+        return response('OK', 200);
+    }
+
+    /**
+     * Credit tokens for a RevenueCat purchase event.
+     *
+     * Trust model: tokens granted are looked up server-side via the product
+     * id in services.iap.bundles, NOT from any client- or RC-supplied amount.
+     * Mirrors fulfillCheckoutSession()'s pattern for Stripe.
+     */
+    private function fulfillIapPurchase(array $event): void
+    {
+        $userId = $event['app_user_id'] ?? null;
+        $productId = $event['product_id'] ?? null;
+
+        if (!$userId || !$productId) {
+            Log::warning('RevenueCat event missing app_user_id or product_id', [
+                'event_id' => $event['id'] ?? null,
+            ]);
+            return;
+        }
+
+        $bundle = config('services.iap.bundles', [])[$productId] ?? null;
+        if (!$bundle || empty($bundle['tokens'])) {
+            Log::warning('RevenueCat event for unrecognized product', [
+                'event_id' => $event['id'],
+                'product_id' => $productId,
+            ]);
+            return;
+        }
+
+        $user = User::find($userId);
+        if (!$user || !$user->profile) {
+            Log::warning('RevenueCat event for missing user/profile', [
+                'event_id' => $event['id'],
+                'user_id' => $userId,
+            ]);
+            return;
+        }
+
+        $user->profile->creditTokens($bundle['tokens']);
+    }
 }

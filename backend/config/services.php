@@ -56,4 +56,19 @@ return [
         ],
     ],
 
+    // iOS In-App Purchase (RevenueCat).
+    'iap' => [
+        // Shared secret RC sends as the Authorization header on webhook deliveries.
+        // Configured in RC dashboard → Project Settings → Integrations → Webhooks.
+        'webhook_auth' => env('REVENUECAT_WEBHOOK_AUTH'),
+
+        // Bundle catalog keyed by App Store product id. The webhook resolves
+        // the product id to a token count from here — frontend-supplied
+        // amounts can never grant extras.
+        'bundles' => [
+            'tokens_1000' => ['tokens' => 1000],
+            'tokens_6500' => ['tokens' => 6500],
+        ],
+    ],
+
 ];

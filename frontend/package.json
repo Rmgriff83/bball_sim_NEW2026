@@ -17,6 +17,7 @@
     "@capacitor/core": "^8.3.4",
     "@capacitor/ios": "^8.3.4",
     "@capacitor/preferences": "^8.0.1",
+    "@revenuecat/purchases-capacitor": "^13.1.4",
     "@vuelidate/core": "^2.0.3",
     "@vuelidate/validators": "^2.0.4",
     "axios": "^1.13.4",
@@ -29,6 +30,7 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@vitejs/plugin-vue": "^6.0.1",
     "vite": "^7.2.4",
     "vite-plugin-pwa": "^1.2.0",
