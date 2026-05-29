@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
@@ -11,14 +11,17 @@ import { useAudioStore } from '@/stores/audio'
 import { useLocalCache } from '@/composables/useLocalCache'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 
+const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const syncStore = useSyncStore()
 const localCache = useLocalCache()
 const { synergies, loadSynergies } = useBadgeSynergies()
 
-// Tab navigation
-const activeTab = ref('settings')
+// Tab navigation — honor a ?tab= deep link (e.g. the badge-synergy walkthrough
+// link points here at the Database tab).
+const validTabs = ['settings', 'database']
+const activeTab = ref(validTabs.includes(route.query?.tab) ? route.query.tab : 'settings')
 
 // Clear cache modal
 const showClearCacheModal = ref(false)

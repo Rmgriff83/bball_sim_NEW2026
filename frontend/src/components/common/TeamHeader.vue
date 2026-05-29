@@ -34,7 +34,10 @@ const computedSubtitle = computed(() => {
         :style="{ backgroundColor: team?.primary_color || '#E85A4F' }"
       >
         {{ team?.abbreviation }}
-        <TeamOverallBadge :overall="teamOverall" size="md" />
+        <!-- data-tour anchor used by the campaign-home walkthrough (single root
+             span, so the attribute falls through). Only one TeamHeader is ever
+             mounted at a time, so this is safe across routes. -->
+        <TeamOverallBadge :overall="teamOverall" size="md" data-tour="home-team-overall" />
       </div>
       <div class="team-header-text">
         <p class="team-city">{{ computedSubtitle }}</p>
@@ -62,13 +65,13 @@ const computedSubtitle = computed(() => {
 .team-logo-badge {
   position: relative;
   overflow: visible;
-  width: 72px;
-  height: 72px;
+  width: 102px;
+  height: 102px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 700;
   color: white;
   flex-shrink: 0;
@@ -83,7 +86,7 @@ const computedSubtitle = computed(() => {
 }
 
 .team-city {
-  font-size: 0.875rem;
+  font-size: 1rem;
   font-weight: 500;
   color: var(--color-text-secondary);
   margin: 0 0 2px 0;
@@ -93,7 +96,7 @@ const computedSubtitle = computed(() => {
 
 .team-name {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 2.25rem;
+  font-size: 2.5rem;
   font-weight: 400;
   color: var(--color-text-primary);
   margin: 0;

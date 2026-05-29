@@ -1,12 +1,25 @@
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
+import { useWalkthroughStore } from '@/stores/walkthrough'
 import { ToastContainer, MinimalToast } from '@/components/ui'
 import BreakingNewsModal from '@/components/game/BreakingNewsModal.vue'
+import WalkthroughOverlay from '@/components/walkthrough/WalkthroughOverlay.vue'
 
 const authStore = useAuthStore()
 const breakingNewsStore = useBreakingNewsStore()
+const walkthroughStore = useWalkthroughStore()
+
+// Scope walkthrough state to the signed-in user (keys are per-user in
+// localStorage). Re-runs whenever auth resolves or the user changes.
+watch(
+  () => authStore.user,
+  (user) => {
+    walkthroughStore.setUserId(user?.id ?? user?.email ?? null)
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
   // Initialize theme from localStorage or system preference
@@ -32,4 +45,5 @@ onMounted(() => {
     :item="breakingNewsStore.currentItem"
     @dismiss="breakingNewsStore.dismiss()"
   />
+  <WalkthroughOverlay />
 </template>

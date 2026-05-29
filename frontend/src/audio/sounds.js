@@ -50,4 +50,22 @@ export const UI_SOUNDS = {
     ],
     // file: null,
   },
+
+  // Draft room — "you're on the clock": a confident two-note rise.
+  draftStart: {
+    synth: [
+      { freq: 523.25, duration: 0.12, type: 'triangle', gain: 0.14, release: 0.08 },
+      { freq: 783.99, duration: 0.18, type: 'triangle', gain: 0.14, delay: 0.1, attack: 0.002, release: 0.14 },
+    ],
+    // file: null,
+  },
+
+  // Draft room — per-second countdown tick during the final 10 seconds.
+  // A short, dry blip; intentionally a touch sharper than the generic tap.
+  draftTick: {
+    synth: [
+      { freq: 880, duration: 0.07, type: 'sine', gain: 0.12, release: 0.05 },
+    ],
+    // file: null,
+  },
 }

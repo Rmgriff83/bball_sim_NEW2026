@@ -1779,7 +1779,7 @@ function formatSalary(salary) {
 }
 
 .league-subtitle {
-  font-size: 0.875rem;
+  font-size: 1rem;
   font-weight: 500;
   color: var(--color-text-secondary);
   margin: 0 0 2px 0;
@@ -1789,8 +1789,8 @@ function formatSalary(salary) {
 
 .league-title {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  /* Match the home view header sizing: 2.25rem by default, 3rem on desktop. */
-  font-size: 2.25rem;
+  /* Match the home view header sizing: 2.5rem by default, 3rem on desktop. */
+  font-size: 2.5rem;
   font-weight: 400;
   color: var(--color-text-primary);
   margin: 0;
@@ -1923,11 +1923,6 @@ function formatSalary(salary) {
   .season-card {
     max-width: 100%;
     order: -1; /* Show at top on mobile */
-  }
-
-  .league-title {
-    /* Keep mobile title at the home-view default 2.25rem instead of shrinking. */
-    font-size: 2.25rem;
   }
 
   .league-subtitle {

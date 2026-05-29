@@ -12,6 +12,7 @@ import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
 import { useSyncStore } from '@/stores/sync'
+import { useWalkthroughStore } from '@/stores/walkthrough'
 import { LoadingSpinner, StatBadge } from '@/components/ui'
 import { Search, Binoculars, User } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -25,6 +26,7 @@ const teamStore = useTeamStore()
 const toastStore = useToastStore()
 const audio = useAudioStore()
 const syncStore = useSyncStore()
+const walkthroughStore = useWalkthroughStore()
 
 const campaignId = computed(() => route.params.id)
 const loading = ref(true)
@@ -407,6 +409,9 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+
+  // First-visit onboarding tour (no-op unless enabled and not yet seen).
+  walkthroughStore.maybeStart('scouting')
 })
 </script>
 
@@ -432,6 +437,7 @@ onMounted(async () => {
         <button
           class="tab-btn"
           :class="{ active: activeTab === 'rookies' }"
+          data-tour="scout-tab-rookies"
           @click="activeTab = 'rookies'"
         >
           Rookies
@@ -439,11 +445,12 @@ onMounted(async () => {
         <button
           class="tab-btn"
           :class="{ active: activeTab === 'mock-draft' }"
+          data-tour="scout-tab-mock"
           @click="activeTab = 'mock-draft'"
         >
           Draft
         </button>
-        <div class="scout-points-display">
+        <div class="scout-points-display" data-tour="scout-points">
           <Binoculars :size="14" />
           <span class="sp-value">{{ scoutingPoints }}</span>
           <span class="sp-label">Scout Points</span>
@@ -454,7 +461,7 @@ onMounted(async () => {
       <div v-if="activeTab === 'rookies'" class="tab-content">
         <!-- Filters -->
         <div class="filters-row">
-          <div class="position-filters">
+          <div class="position-filters" data-tour="scout-filters">
             <button
               v-for="pos in ['ALL', 'PG', 'SG', 'SF', 'PF', 'C']"
               :key="pos"
@@ -480,9 +487,10 @@ onMounted(async () => {
         <!-- Player Cards Grid -->
         <div class="players-grid">
           <div
-            v-for="player in paginatedRookies"
+            v-for="(player, idx) in paginatedRookies"
             :key="player.id"
             class="player-card"
+            :data-tour="idx === 0 ? 'scout-card' : null"
             @click="openPlayerModal(player)"
           >
             <div class="card-header">
@@ -517,7 +525,7 @@ onMounted(async () => {
                 <!-- Scout Progress Bar -->
                 <div class="scout-progress-row">
                   <label class="meter-label">SCOUTED</label>
-                  <div class="scout-meter-bar">
+                  <div class="scout-meter-bar" :data-tour="idx === 0 ? 'scout-meter' : null">
                     <div class="scout-meter-fill" :style="{ width: getScoutPercent(player.id) + '%' }" />
                   </div>
                   <span class="scout-pct-value">{{ getScoutPercent(player.id) }}%</span>
@@ -536,6 +544,7 @@ onMounted(async () => {
                 <button
                   v-if="!isFullyScouted(player.id)"
                   class="scout-btn-card"
+                  :data-tour="idx === 0 ? 'scout-card-btn' : null"
                   :disabled="scoutingPoints < 1 || scouting"
                   @click.stop="scoutPlayer(player)"
                 >
@@ -730,8 +739,8 @@ onMounted(async () => {
 
 .page-title {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  /* Match the home view header sizing: 2.25rem by default, 3rem on desktop. */
-  font-size: 2.25rem;
+  /* Match the home view header sizing: 2.5rem by default, 3rem on desktop. */
+  font-size: 2.5rem;
   font-weight: 400;
   letter-spacing: 0.04em;
   background: var(--gradient-cosmic);
@@ -1358,11 +1367,6 @@ onMounted(async () => {
 @media (max-width: 768px) {
   .scouting-view {
     padding: 16px;
-  }
-
-  .page-title {
-    /* Keep mobile title at the home-view default 2.25rem instead of shrinking. */
-    font-size: 2.25rem;
   }
 
   .draft-year {
