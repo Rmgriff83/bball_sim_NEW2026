@@ -2,9 +2,9 @@
 
 ## Context
 
-The basketball sim is a Vue 3 + Vite SPA backed by a Laravel API on DigitalOcean. It currently ships as a PWA on `bball-sim.com`. The goal is to wrap the existing web app in Capacitor, replace Stripe with In-App Purchase for the iOS build (Apple Guideline 3.1.1 requires IAP for digital goods), add Sign in with Apple (required by Guideline 4.8 because Google/Facebook social login already exist), then ship to TestFlight and the App Store.
+The basketball sim is a Vue 3 + Vite SPA backed by a Laravel API on DigitalOcean. It currently ships as a PWA on `bball-sim.com`. The goal is to wrap the existing web app in Capacitor and replace Stripe with In-App Purchase for the iOS build (Apple Guideline 3.1.1 requires IAP for digital goods), then ship to TestFlight and the App Store. Sign in with Apple (Guideline 4.8) is **not** required for v1.0 because the auth UI exposes no third-party social login — see Phase 4 for details.
 
-**Approach in one line:** Capacitor shell + RevenueCat for StoreKit 2 IAP + Sign in with Apple + dual-mode (web=Stripe, iOS=IAP) Store UI.
+**Approach in one line:** Capacitor shell + RevenueCat for StoreKit 2 IAP + dual-mode (web=Stripe, iOS=IAP) Store UI.
 
 **Estimated wall-clock:** 4–5 weeks, mostly gated by Apple Developer enrollment and IAP work.
 
@@ -48,11 +48,11 @@ All steps from **Phase 1 step 3 onward** in the plan below — i.e. everything t
 
 ## Phase 0 — Prerequisites (mostly out-of-repo work)
 
-1. **Enroll in Apple Developer Program** ($99/yr at developer.apple.com). Longest pole — start early. Individual is faster than org (org needs D-U-N-S).
-2. **App Store Connect**: create app record with bundle ID `com.bballsim.app`, reserve the name, generate an App-Specific Shared Secret (needed for StoreKit receipt validation).
-3. **Privacy policy + Terms URLs** live on bball-sim.com — Apple requires them at submission.
-4. **Create two Consumable IAPs** in App Store Connect with IDs `tokens_1000` ($0.99) and `tokens_6500` ($4.99). These match the existing bundle IDs in `frontend/src/views/store/StoreView.vue` so the bundle array is reusable as-is.
-5. **Create a RevenueCat project** (free tier), attach App Store Connect API key, define an Offering with two Packages mapped to the IAPs above.
+1. ~~**Enroll in Apple Developer Program** ($99/yr at developer.apple.com).~~ **DONE** (Individual account, name `Rmgriff83` / Ross — see [[app-transfer-strategy]] note in PR description for the post-launch Individual→Organization transfer path).
+2. ~~**App Store Connect**: create app record with bundle ID `com.bballsim.app`.~~ **DONE**. Shared Secret was also generated but is **unused** — Apple deprecated it for new apps; RevenueCat (StoreKit 2 / `purchases-capacitor` v5+) uses the **In-App Purchase Key (.p8)** instead. Also generated: an **App Store Connect API Key (.p8)** for product sync.
+3. **Privacy policy + Terms URLs** live on bball-sim.com — Apple requires them at submission. Deferred to Phase 7.
+4. ~~**Create two Consumable IAPs** in App Store Connect with IDs `tokens_1000` ($0.99) and `tokens_6500` ($4.99).~~ **DONE** — product IDs match `bundles` array in `frontend/src/views/store/StoreView.vue:20-23`.
+5. ~~**Create a RevenueCat project** (free tier), attach App Store Connect API key, define an Offering with two Packages mapped to the IAPs above.~~ **DONE** — Offering identifier `default`, Packages `tokens_1000` / `tokens_6500`. Public SDK key (`appl_…`) lives in `VITE_REVENUECAT_API_KEY` (user must add to `frontend/.env.local`). Webhook URL/auth secret to be configured in Phase 3c.
 
 ---
 
@@ -88,38 +88,46 @@ Goal: existing app boots inside an iOS WKWebView with no behavior changes.
 
 Use **`@revenuecat/purchases-capacitor`** — handles StoreKit 2, sandbox testing, server-side validation via webhook. Avoids writing a custom native plugin.
 
-### 3a. Frontend IAP service
+### 3a. Frontend IAP service ✅ DONE
 
-1. `npm i @revenuecat/purchases-capacitor` in `frontend/`. Run `npx cap sync ios`.
-2. **New file `frontend/src/services/iap.js`** — exports `initIAP(userId)`, `getOfferings()`, `purchase(productId)`. Set `appUserID` to the authenticated user ID so RevenueCat attributes receipts correctly.
+1. ~~`npm i @revenuecat/purchases-capacitor` in `frontend/`. Run `npx cap sync ios`.~~ Installed `@revenuecat/purchases-capacitor@13.1.4`.
+2. ~~**New file `frontend/src/services/iap.js`**~~ — exports `initIAP(userId)`, `getCurrentOffering()`, `purchase(productId)`, `logoutIAP()`. Uses `VITE_REVENUECAT_API_KEY` (public SDK key) from env. Purchase resolves with `{ success: true, productIdentifier, transactionIdentifier }` on success or `{ cancelled: true }` on user cancel (real errors throw).
 
-### 3b. Platform-aware Store UI (dual mode — web keeps Stripe)
+### 3b. Platform-aware Store UI (dual mode — web keeps Stripe) ✅ DONE
 
-Edit `frontend/src/views/store/StoreView.vue`:
-- Add `import { Capacitor } from '@capacitor/core'` + `const isNative = Capacitor.isNativePlatform()`.
-- `confirmPurchase()` branches: native → `iap.purchase(bundle.id)`; web → existing Stripe redirect (unchanged).
-- `bundles` array stays as-is; product IDs already match.
-- Wrap the Stripe sandbox banner (`isStripeSandbox`) in `v-if="!isNative"`.
-- After native purchase success: call `authStore.fetchUser()` to refresh balance (RevenueCat webhook credits server-side).
+`frontend/src/views/store/StoreView.vue` edits:
+- ~~Imports + `isNative = Capacitor.isNativePlatform()`.~~
+- ~~`confirmPurchase()` branches: native → `iap.purchase(bundle.id)` → `authStore.fetchUser()` → toast; web → existing Stripe redirect (unchanged).~~
+- ~~`onMounted` calls `iap.initIAP(authStore.user.id)` when native + user present.~~
+- ~~Stripe sandbox banner wrapped in `v-if="!isNative && isStripeSandbox"`.~~
 
-### 3c. Backend receipt validation
+### 3c. Backend receipt validation ✅ DONE (verify endpoint deferred)
 
-Mirror the existing Stripe webhook pattern in `backend/app/Http/Controllers/PaymentController.php`:
+Mirrors the Stripe webhook pattern in `PaymentController`:
 
-1. New route `POST /api/payments/iap/revenuecat-webhook` in `backend/routes/api.php` (public, secret-auth header).
-2. New method `PaymentController::revenueCatWebhook()` — idempotency via new `revenuecat_webhook_events` table, look up user by `app_user_id`, map product ID → token amount via new `config('services.iap.bundles')` array, call `$user->profile->creditTokens($tokens)`.
-3. Migration: `create_revenuecat_webhook_events_table` (mirror `stripe_webhook_events`).
-4. **Trust model**: token amount comes from server-side config keyed by product ID — never client-supplied. Same pattern as `PaymentController::fulfillCheckoutSession` (the `foreach` over `config('services.stripe.bundles')` that resolves the price ID to a token count).
-5. **Defense in depth**: also add `POST /api/payments/iap/verify` — client posts the StoreKit transaction ID right after purchase; server queries Apple's verifyReceipt or RevenueCat REST directly. Handles webhook delays so users aren't left waiting.
+1. ~~Route~~ — `POST /api/webhooks/revenuecat` in `backend/routes/api.php` (public, Authorization-header auth). **NOTE:** path changed from the original `/payments/iap/revenuecat-webhook` to `/webhooks/revenuecat` for consistency with the existing `/webhooks/stripe` convention.
+2. ~~`PaymentController::revenueCatWebhook()` + private `fulfillIapPurchase()`~~ — idempotency via the new `revenuecat_webhook_events` table, server-side product→tokens lookup from `config('services.iap.bundles')`, `User::find($app_user_id)->profile->creditTokens(...)`. Triggers on `INITIAL_PURCHASE` and `NON_RENEWING_PURCHASE` events (consumables use the latter).
+3. ~~Migration `2026_05_29_213725_create_revenuecat_webhook_events_table`~~ — same shape as `stripe_webhook_events` (`id` PK, `type`, `processed_at`).
+4. ~~`config/services.php` `iap.bundles`~~ — `tokens_1000 → 1000`, `tokens_6500 → 6500`.
+5. **Defense-in-depth `/verify` endpoint — DEFERRED to v1.1.** RC webhooks usually land in <5s, and the StoreView's post-purchase `fetchUser()` catches the credit. Revisit if observed delays warrant the extra round trip + RC REST secret key.
+
+### Required env vars to wire up
+
+- **`frontend/.env`** → `VITE_REVENUECAT_API_KEY=appl_...` (public SDK key from RC dashboard).
+- **`backend/.env`** → `REVENUECAT_WEBHOOK_AUTH=<long-random-string-you-choose>`. Then in RevenueCat dashboard: **Project Settings → Integrations → + New → Webhooks** → URL `https://api.bball-sim.com/api/webhooks/revenuecat` (prod) or your tunneled local URL for sandbox testing, Authorization header value = the same string.
 
 ---
 
-## Phase 4 — Sign in with Apple (required; ~1 day)
+## Phase 4 — Sign in with Apple ⏭️ SKIPPED for v1.0
+
+**Why skipped:** Guideline 4.8 only requires Sign in with Apple when the app *offers* a third-party social login in its UI. Audit (2026-05-29) confirmed `LoginView.vue` and `RegisterView.vue` expose **no** Google/Facebook buttons; users can only authenticate via email/password. The backend `SocialAuthController` + `social_accounts` table + `/api/auth/social/{provider}` routes exist as unused scaffolding — they don't trigger 4.8 because they're never invoked from the UI.
+
+**When this becomes required:** the moment any social-login button (Google, Facebook, etc.) is added to `LoginView`/`RegisterView`. At that point come back and do the original Phase 4 steps:
 
 1. `npm i @capacitor-community/apple-sign-in`.
-2. Edit `frontend/src/views/auth/LoginView.vue` and `RegisterView.vue`: add native Apple Sign-In button when `Capacitor.isNativePlatform()`. Google + Facebook stay as web-redirect flows (acceptable as long as Apple is offered).
-3. New backend endpoint `POST /api/auth/social/apple/native` in `backend/routes/api.php`. Accepts the `identityToken` from Capacitor, verifies against Apple's JWKS, issues a Sanctum token. Add `nativeApple()` to `SocialAuthController` mirroring the existing `callback()` token-issuance pattern.
-4. In Xcode: enable "Sign in with Apple" capability on the App target.
+2. Add native Apple Sign-In button in `LoginView.vue` and `RegisterView.vue` when `Capacitor.isNativePlatform()`.
+3. New backend endpoint `POST /api/auth/social/apple/native` — accepts the `identityToken` from Capacitor, verifies against Apple's JWKS, issues a Sanctum token. Add `nativeApple()` to `SocialAuthController` mirroring the existing `callback()` token-issuance pattern.
+4. In Xcode: enable "Sign in with Apple" capability on the App target. Also enable the matching capability on the App ID in developer.apple.com (already enabled during Phase 0 Part 1a as a precaution).
 
 ---
 
@@ -192,12 +200,11 @@ The 60s sync loop in `sync.js` / `CampaignCacheService.js` may misfire while the
 - ✅ `frontend/ios/` Xcode project scaffolded via `cap add ios` (Phase 1) — Capacitor 8 uses Swift Package Manager, not CocoaPods
 - ⬜ Backend `CORS_ALLOWED_ORIGINS` env adds `https://app.bball-sim.com` (Phase 1)
 - ✅ Icons + splash generated via `@capacitor/assets` from `frontend/assets/`; `ITSAppUsesNonExemptEncryption=false` in Info.plist (Phase 2). Camera/photo usage strings intentionally omitted — app uses no device camera/photo library
-- ⬜ `frontend/src/views/store/StoreView.vue` — platform branch for native IAP (Phase 3b)
-- ⬜ New `frontend/src/services/iap.js` (Phase 3a)
-- ⬜ `backend/app/Http/Controllers/PaymentController.php` — `revenueCatWebhook()` + `verify()` (Phase 3c)
-- ⬜ New `revenuecat_webhook_events` migration + `config/services.php` `iap.bundles` (Phase 3c)
-- ⬜ `frontend/src/views/auth/LoginView.vue` + `RegisterView.vue` — Apple Sign-In button on native (Phase 4)
-- ⬜ `backend/routes/api.php` + `SocialAuthController` — native Apple Sign-In endpoint (Phase 4)
+- ✅ `frontend/src/views/store/StoreView.vue` — platform branch for native IAP (Phase 3b)
+- ✅ New `frontend/src/services/iap.js` (Phase 3a)
+- ✅ `backend/app/Http/Controllers/PaymentController.php` — `revenueCatWebhook()` (Phase 3c). `verify()` deferred to v1.1.
+- ✅ New `revenuecat_webhook_events` migration + `config/services.php` `iap.bundles` (Phase 3c)
+- ⏭️ ~~Apple Sign-In button + backend endpoint (Phase 4)~~ — **not required for v1.0** since no social login is exposed in the UI; revisit only if Google/Facebook buttons are added later
 - ⬜ Verify backend-pull campaign rehydration works on fresh install (Phase 5)
 - ⬜ Sync pause on app background (Phase 6)
 
