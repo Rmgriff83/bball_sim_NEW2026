@@ -1,0 +1,537 @@
+// Walkthrough step definitions. Pure data — no logic.
+//
+// Each walkthrough is an ordered array of steps:
+//   {
+//     target:    data-tour attribute value, resolved as [data-tour="<target>"].
+//                Omit (or use placement 'center') for a centered card with no spotlight.
+//     title:     short heading
+//     body:      explainer text
+//     route?:    route NAME the engine should be on for this step (router.push if not)
+//     tab?:      { view, tab } internal tab a mounted view must show (via requestTab)
+//     placement: 'top' | 'bottom' | 'left' | 'right' | 'center'  (default 'bottom')
+//   }
+//
+// Anchors are added to the first item of any v-for list so each selector is unique.
+
+export const WALKTHROUGHS = {
+  campaignHome: [
+    {
+      placement: 'center',
+      title: 'Welcome, GM',
+      body: "This is your campaign home base. Each in-game day you'll set your lineup, play or simulate games, scout prospects, and steer your franchise toward a title. Let's take a quick lap.",
+    },
+    {
+      target: 'home-team-header',
+      placement: 'bottom',
+      title: 'Your Team',
+      body: "This banner is your franchise at a glance — logo, name, overall rating, and the current date. Let's break down the two key readouts.",
+    },
+    {
+      target: 'home-team-overall',
+      placement: 'bottom',
+      title: 'Team Overall',
+      body: "This badge is your team's overall rating — the average quality of your healthy roster, and the quickest read on how your franchise stacks up. Build it through smart lineups, player development, and trades.",
+    },
+    {
+      // Desktop shows the date in the team header; mobile shows it in the
+      // campaign top bar — spotlight whichever is visible at this breakpoint.
+      target: ['home-date', 'home-date-mobile'],
+      placement: 'bottom',
+      title: "Today's Date",
+      body: 'Your current spot on the calendar. The season plays out day by day — games, trades, scouting, and the draft all happen on this timeline, and playing or simulating games advances it.',
+    },
+    {
+      target: 'home-record-card',
+      placement: 'bottom',
+      title: 'Your Standing',
+      body: 'Your win-loss record and conference rank live here. Climb the standings to lock in playoff seeding — top seeds get home court through the bracket.',
+    },
+    {
+      target: 'home-tokens',
+      placement: 'bottom',
+      title: 'Tokens',
+      body: 'Tokens are your premium currency. Spend them in the Store or on attribute upgrade points for your players. You earn them by playing and hitting milestones.',
+    },
+    {
+      target: 'home-next-game',
+      placement: 'top',
+      title: 'Next Matchup',
+      body: 'Your upcoming game shows the opponent, their record, and the projected starters on both sides. Size up the matchup before you commit to playing it out.',
+    },
+    {
+      target: 'home-play-btn',
+      placement: 'top',
+      title: 'Play the Game',
+      body: 'Hit PLAY to coach the matchup live — making substitutions and calling the action quarter by quarter.',
+    },
+    {
+      target: 'home-sim-btn',
+      placement: 'top',
+      title: 'Or Simulate',
+      body: 'Short on time? SIMULATE resolves the game instantly using your current lineup and minutes. The engine still respects your rotations and schemes.',
+    },
+    {
+      target: 'home-quick-actions',
+      placement: 'top',
+      title: 'Quick Actions',
+      body: 'These shortcuts jump straight to the key areas of your franchise — the GM Desk to manage your lineup and staff, Scouting to study the draft class, Standings, and your Schedule. You can also reach all of them from the navigation bar at the top.',
+    },
+    {
+      target: 'home-featured-player',
+      placement: 'top',
+      title: 'Featured Player',
+      body: 'Every couple of weeks we spotlight a standout on your roster with their recent form. Tap the card to open their full profile.',
+    },
+    {
+      target: 'home-news',
+      placement: 'top',
+      title: 'Around the League',
+      body: 'Trades, injuries, awards, and breaking storylines land here. Keep an eye out — they hint at trade targets and roster risks.',
+    },
+    {
+      placement: 'center',
+      title: "You're set",
+      body: 'That\'s the home base. Set your lineup, then play or sim your way to the playoffs. Good luck.',
+    },
+  ],
+
+  gmTeam: [
+    {
+      placement: 'center',
+      route: 'team-management',
+      tab: { view: 'gm', tab: 'team' },
+      title: 'Your GM Desk',
+      body: "Welcome to the GM Desk — your franchise command center. Everything you manage lives behind these tabs: your lineup, staff, contracts, trades, facilities, and schedule.",
+    },
+    {
+      target: ['gm-tab-team', 'gm-roster'],
+      tab: { view: 'gm', tab: 'team' },
+      placement: 'bottom',
+      title: 'Your Lineup',
+      body: "You're on the Lineup tab — where you set your starting five and rotation. This is the single biggest lever on your results, whether you play games or simulate them. Let's break it down.",
+    },
+    {
+      target: 'gm-starters',
+      tab: { view: 'gm', tab: 'team' },
+      placement: 'bottom',
+      title: 'Starters & Chemistry',
+      body: 'Your five starters, plus a team chemistry read and your minutes total. Chemistry rises when complementary players share the floor.',
+    },
+    {
+      target: 'gm-minutes',
+      tab: { view: 'gm', tab: 'team' },
+      placement: 'bottom',
+      title: '200 Minutes',
+      body: 'Rotation minutes must total exactly 200 (five players over 40 minutes). The meter turns green when you\'re balanced — red means the game will reject your lineup.',
+    },
+    {
+      target: 'gm-cpu-auto',
+      tab: { view: 'gm', tab: 'team' },
+      placement: 'left',
+      title: 'Auto-Set',
+      body: 'In a hurry? Auto lets the CPU pick your best five and spread minutes sensibly. Tweak from there.',
+    },
+    {
+      target: 'gm-starter-card',
+      tab: { view: 'gm', tab: 'team' },
+      placement: 'right',
+      title: 'Player Cards',
+      body: "Each card shows a player's ratings, assigned minutes, and fatigue at a glance.",
+    },
+    {
+      target: ['gm-move-btn', 'gm-move-dropdown'],
+      tab: { view: 'gm', tab: 'team' },
+      placement: 'right',
+      action: { view: 'gm', enter: 'openFirstStarterMenu', leave: 'closeLineupMenus' },
+      title: 'Adjust Your Lineup',
+      body: "Each card's swap button opens this menu. From here you can promote a bench player into the starting five, or send a starter to the bench — it's how you set your rotation.",
+    },
+    {
+      target: 'gm-starter-card',
+      tab: { view: 'gm', tab: 'team' },
+      placement: 'right',
+      interactive: true,
+      title: "Open a Player's Profile",
+      body: "Now tap this player's card to open their full profile — ratings, badges, development, morale, and upgrade points to spend. Go ahead and tap it.",
+    },
+  ],
+
+  gmPersonnel: [
+    {
+      target: ['gm-personnel-coach', 'gm-coach-skills'],
+      tab: { view: 'gm', tab: 'personnel' },
+      placement: 'left',
+      title: 'Personnel',
+      body: 'Hire and manage your head coach, scout, team physician, and training staff. Better staff means sharper development, fewer injuries, and better scouting.',
+    },
+    {
+      target: 'gm-coach-candidates',
+      tab: { view: 'gm', tab: 'personnel' },
+      placement: 'bottom',
+      title: 'Hiring Coaches',
+      body: "Browse coaching candidates here. They range from free hires to premium coaches that cost tokens. Hiring a new one replaces your current coach — re-sign yours from the button beside this to keep them instead.",
+    },
+    {
+      target: 'gm-coach-badges',
+      tab: { view: 'gm', tab: 'personnel' },
+      placement: 'left',
+      title: 'Coach Badges',
+      body: 'Badges your coach has earned — they boost things like player development, scheme effectiveness, and clutch-time decisions.',
+    },
+    {
+      target: 'gm-coach-badge-store',
+      tab: { view: 'gm', tab: 'personnel' },
+      placement: 'bottom',
+      title: 'Shop Coach Badges',
+      body: 'Spend tokens here to buy new coach badges and sharpen your staff\'s edge.',
+    },
+    {
+      target: 'gm-coach-schemes',
+      tab: { view: 'gm', tab: 'personnel' },
+      placement: 'left',
+      title: 'Coach & Schemes',
+      body: "Your head coach sets the offensive and defensive schemes. Match the scheme to your roster's strengths for a real in-game edge.",
+    },
+  ],
+
+  gmFinances: [
+    {
+      target: 'gm-tab-finances',
+      tab: { view: 'gm', tab: 'finances' },
+      placement: 'bottom',
+      title: 'Roster & Contracts',
+      body: 'Review every contract, expiring deal, and the salary picture. Players with expiring deals hit free agency unless you re-sign them — and the Free Agents sub-tab here is where you sign available players to fill out your roster.',
+    },
+    {
+      target: 'gm-finances-overview',
+      tab: { view: 'gm', tab: 'finances' },
+      placement: 'bottom',
+      title: 'Financial Overview',
+      body: "At a glance: your salary cap, total payroll, remaining cap space, and roster count (out of 15). Stay under the cap and keep room to sign free agents.",
+    },
+    {
+      target: 'gm-finances-subtabs',
+      tab: { view: 'gm', tab: 'finances' },
+      placement: 'bottom',
+      title: 'Roster Views',
+      body: 'Switch between your roster and contracts, expiring deals, available free agents, and your draft picks here.',
+    },
+  ],
+
+  // Sub-sub-tab tour: fires when the Expiring sub-tab is opened with at least
+  // one expiring contract to point at (triggered from FinancesTab).
+  gmFinancesExpiring: [
+    {
+      target: 'gm-expiring-card',
+      placement: 'right',
+      title: 'Expiring Contracts',
+      body: "These players are in the final year of their deals. Do nothing and they'll hit free agency at season's end — and could walk for nothing.",
+    },
+    {
+      target: 'gm-expiring-actions',
+      placement: 'bottom',
+      title: 'Re-sign or Drop',
+      body: 'Re-sign keeps a player on a new multi-year deal; Drop releases them now to free up cap space and a roster spot. Re-signing closes at the Dec 15 deadline.',
+    },
+  ],
+
+  gmTrades: [
+    {
+      target: 'gm-tab-trades',
+      tab: { view: 'gm', tab: 'trades' },
+      placement: 'bottom',
+      title: 'Trades',
+      body: 'Build and propose trades with other teams here — until the in-season trade deadline (Dec 15), after which this tab closes for the season.',
+    },
+    {
+      target: 'gm-trades-content',
+      tab: { view: 'gm', tab: 'trades' },
+      placement: 'top',
+      title: 'Make a Deal',
+      body: 'Pick a trade partner, add players and picks from both sides, and the engine tells you whether the AI accepts. Salary-matching rules apply.',
+    },
+    {
+      target: 'gm-trades-subtabs',
+      tab: { view: 'gm', tab: 'trades' },
+      placement: 'bottom',
+      title: 'Trade Views',
+      body: 'Switch between the Trade Center to build a deal, incoming Offers from other teams, and your Trading Block of players you\'ve made available.',
+    },
+  ],
+
+  gmFacilities: [
+    {
+      target: 'gm-tab-facilities',
+      tab: { view: 'gm', tab: 'facilities' },
+      placement: 'bottom',
+      title: 'Facilities',
+      body: 'Upgrade your training, medical, and scouting facilities. Higher levels unlock staff perks and speed up player growth.',
+    },
+    {
+      target: 'gm-facilities-content',
+      tab: { view: 'gm', tab: 'facilities' },
+      placement: 'top',
+      title: 'Invest in Infrastructure',
+      body: 'Facility upgrades are long-term bets — they compound across seasons by keeping players healthier and developing faster.',
+    },
+  ],
+
+  gmSchedule: [
+    {
+      target: 'gm-tab-schedule',
+      tab: { view: 'gm', tab: 'schedule' },
+      placement: 'bottom',
+      title: 'Schedule',
+      body: 'Your full season schedule, results, and upcoming opponents at a glance.',
+    },
+    {
+      target: 'gm-schedule-content',
+      tab: { view: 'gm', tab: 'schedule' },
+      placement: 'top',
+      title: 'Plan Ahead',
+      body: "Spot back-to-backs and rivalry games and plan rest around tough stretches. You can also simulate ahead from here — jump multiple games forward, or run the entire season at once. Heads up: tokens aren't granted when you sim several games at a time.",
+    },
+  ],
+
+  scouting: [
+    {
+      placement: 'center',
+      route: 'scouting',
+      title: 'Scouting Room',
+      body: 'This is where you study the upcoming draft class. Information is power — the more you scout, the fewer surprises on draft night.',
+    },
+    {
+      target: 'scout-points',
+      placement: 'bottom',
+      title: 'Scout Points',
+      body: "Scout Points are your scouting currency. You earn them weekly — a sharper scout and better scouting facility earn more. Spend them to reveal prospects' hidden ratings.",
+    },
+    {
+      target: 'scout-tab-rookies',
+      placement: 'bottom',
+      title: 'Prospect Board',
+      body: "The Rookies tab lists this year's draft class. Filter and sort to find fits for your roster's needs.",
+    },
+    {
+      target: 'scout-filters',
+      placement: 'bottom',
+      title: 'Filter by Position',
+      body: 'Narrow the board by position to target the holes in your lineup, or search by name.',
+    },
+    {
+      target: 'scout-card',
+      placement: 'right',
+      title: 'Prospect Cards',
+      body: "Each card shows what you've uncovered so far. Click a card for the full breakdown, attribute by attribute.",
+    },
+    {
+      target: 'scout-meter',
+      placement: 'top',
+      title: 'Scouting Progress',
+      body: 'This meter shows how fully you\'ve scouted a prospect. Ratings stay hidden until you reveal them — and potential only unlocks at 100%.',
+    },
+    {
+      target: 'scout-card-btn',
+      placement: 'top',
+      title: 'Scout a Prospect',
+      body: "Spend one Scout Point to reveal a chunk of a prospect's ratings. Fully scout your draft targets before they're on the clock.",
+    },
+    {
+      target: 'scout-tab-mock',
+      placement: 'bottom',
+      title: 'Mock Draft',
+      body: 'The Draft tab projects the draft order. Your picks are highlighted — track where you\'re slotted and which prospects might fall to you.',
+    },
+    {
+      placement: 'center',
+      title: 'Draft smart',
+      body: "Scout aggressively, target your needs, and you'll find steals late in the first round. Good luck on draft night.",
+    },
+  ],
+
+  // Live draft room (fantasy or rookie draft). Fires on first visit; the draft
+  // pick clock is paused for the duration of the tour (see DraftRoomView).
+  liveDraft: [
+    {
+      placement: 'center',
+      title: 'The Draft Room',
+      body: "Welcome to the live draft — you'll build your roster pick by pick. Don't worry, your pick clock is paused while we take a quick tour.",
+    },
+    {
+      target: 'draft-clock',
+      placement: 'bottom',
+      title: 'On the Clock',
+      body: "Shows whose turn it is. When you're up, a 60-second timer counts down — if it hits zero, the best available player is auto-drafted for you.",
+    },
+    {
+      target: 'draft-ticker',
+      placement: 'bottom',
+      title: 'Draft Order',
+      body: 'The full pick order runs across here. Your team is highlighted so you can see exactly when you pick.',
+    },
+    {
+      target: 'draft-pool',
+      placement: 'top',
+      title: 'Available Players',
+      body: 'Every undrafted player. Tap a column header to sort — chase overall rating for win-now talent, or potential for upside.',
+    },
+    {
+      target: 'draft-filters',
+      placement: 'bottom',
+      title: 'Filter & Search',
+      body: 'Narrow the pool by position, or search by name to zero in on a player.',
+    },
+    {
+      target: 'draft-player-row',
+      placement: 'top',
+      title: 'Scout & Pick',
+      body: "Tap a player's row to open their profile. When you're on the clock, a Draft button appears on each row — hit it to add that player to your roster.",
+    },
+    {
+      // Desktop shows the roster sidebar; mobile collapses it behind a toggle
+      // button — spotlight whichever is visible at the current breakpoint.
+      target: ['draft-roster', 'draft-roster-toggle'],
+      placement: 'right',
+      title: 'Your Roster',
+      body: 'Every player you draft lands here, grouped by position. Keep an eye on it to build a balanced lineup.',
+    },
+    {
+      target: 'draft-controls',
+      placement: 'top',
+      title: 'Skip Controls',
+      body: 'In a hurry? Skip to your next pick, or skip the entire draft to auto-fill your roster with the best available players.',
+    },
+    {
+      placement: 'center',
+      title: "You're on the clock",
+      body: "That's the draft room. Build a balanced roster and good luck — your pick clock resumes as soon as you close this.",
+    },
+  ],
+
+  playerDetail: [
+    {
+      target: 'pdm-header',
+      placement: 'bottom',
+      title: 'Player Profile',
+      body: "The header gives you the quick read — their vitals (height, weight, and age), position(s), current morale, and overall rating.",
+    },
+    {
+      target: 'pdm-trade-toggle',
+      placement: 'left',
+      title: 'Trade Block',
+      body: "Tap this toggle to put the player on your trading block — a signal to the rest of the league that you're open to dealing them. Flip it off anytime to pull them back.",
+    },
+    {
+      target: 'pdm-fatigue',
+      placement: 'bottom',
+      title: 'Fatigue',
+      body: 'Tired players play worse and risk injury. Watch fatigue across a heavy stretch and rest starters before it climbs into the red. A high Durability rating slows how fast a player tires, while strong Stamina blunts the performance hit when they do.',
+    },
+    {
+      target: 'pdm-badges',
+      placement: 'top',
+      title: 'Badges',
+      body: 'Badges are special abilities that boost specific situations — and some form synergies when the right teammates share the floor. They can swing close games.',
+      link: { label: 'See the full badge synergy database →', to: '/profile?tab=database' },
+    },
+    {
+      target: 'pdm-stats',
+      placement: 'left',
+      title: 'Season Stats',
+      body: "This is the player's stat line, season by season, with the current season up top. It starts empty and fills in as you play or simulate games.",
+    },
+    {
+      target: 'pdm-contract',
+      placement: 'top',
+      title: 'Contract',
+      body: "Down in the footer is the player's contract — their salary and years remaining. Watch the years: an expiring deal must be re-signed or the player walks in free agency.",
+    },
+    {
+      target: 'pdm-tabs',
+      placement: 'bottom',
+      title: 'Deep Dive',
+      body: 'Switch between stats, attributes, badges, development history, and morale using these tabs.',
+    },
+  ],
+
+  // --- Sub-tab tours (fire on first visit to each tab; intentionally minimal) ---
+
+  playerDetailAttributes: [
+    {
+      target: 'pdm-upgrade-banner',
+      placement: 'bottom',
+      title: 'Upgrade Points',
+      body: 'Two pools — offense and defense — earned through game performance. Every 1.0 points buys a +1 attribute bump.',
+    },
+    {
+      target: ['pdm-buy-offense', 'pdm-buy-defense'],
+      placement: 'bottom',
+      title: 'Buy Points',
+      body: 'Short on points? Spend tokens here to buy one outright for either pool.',
+    },
+    {
+      target: 'pdm-attributes-list',
+      placement: 'top',
+      title: 'Attributes',
+      body: "Ratings broken down by category. Hit the + on any attribute to spend a point and raise it.",
+    },
+  ],
+
+  playerDetailBadges: [
+    {
+      target: 'pdm-badges-list',
+      placement: 'left',
+      title: 'Badges',
+      body: "Every badge this player has earned, grouped by tier — Bronze, Silver, Gold, and Hall of Fame — unlocked as their attributes grow. A badge that's glowing with a ⚡ is firing an active synergy with a teammate on the floor.",
+      link: { label: 'See the full badge synergy database →', to: '/profile?tab=database' },
+    },
+    {
+      target: 'pdm-badge-store-btn',
+      placement: 'bottom',
+      title: 'Badge Store',
+      body: 'You can also buy new badges and upgrade their tiers with tokens here.',
+    },
+  ],
+
+  playerDetailGrowth: [
+    {
+      target: 'pdm-growth',
+      placement: 'left',
+      title: 'Development',
+      body: 'Players evolve season to season. The young grow toward their Potential — faster with high Work Ethic, heavy minutes, and good morale — while age brings decline, physical attributes fading first. A strong development coach speeds it along.',
+    },
+    {
+      target: 'pdm-growth-recent',
+      placement: 'left',
+      title: 'Recent vs. All-Time',
+      body: 'Recent lists the last 7 days of changes; expand All-Time below for every adjustment across the player\'s career.',
+    },
+  ],
+
+  playerDetailMorale: [
+    {
+      target: 'pdm-morale-current',
+      placement: 'bottom',
+      title: 'Morale',
+      body: "A player's morale rises and falls with their minutes versus what they expect, plus the team's wins and losses. Happy players perform better and develop faster; unhappy ones can sour the locker room or ask out.",
+    },
+    {
+      target: 'pdm-coach-meeting',
+      placement: 'bottom',
+      title: 'Coach Meeting',
+      body: 'Hold a coach meeting for a quick morale boost. Your head coach gets a limited number each season — when they run out, you can buy extra meetings with tokens.',
+    },
+    {
+      target: 'pdm-traits',
+      placement: 'left',
+      title: 'Personality Traits',
+      body: 'Traits shape how a player affects team chemistry — leaders lift the locker room, ball-hogs drag it down. Not every player has notable traits.',
+    },
+    {
+      target: 'pdm-motivations',
+      placement: 'left',
+      title: 'Motivations',
+      body: "What the player values most — money, winning, role, loyalty. When their deal is up, how well you've satisfied these drives whether they re-sign or walk.",
+    },
+  ],
+}

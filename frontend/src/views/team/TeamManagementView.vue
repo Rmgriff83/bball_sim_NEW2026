@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
@@ -29,6 +29,8 @@ import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { useSyncStore } from '@/stores/sync'
 import { isPastTradeDeadline } from '@/engine/season/SeasonDeadlines'
+import { useWalkthroughStore } from '@/stores/walkthrough'
+import { useWalkthroughTab } from '@/composables/useWalkthroughTab'
 
 const route = useRoute()
 const router = useRouter()
@@ -39,7 +41,23 @@ const tradeStore = useTradeStore()
 const toastStore = useToastStore()
 const audio = useAudioStore()
 const syncStore = useSyncStore()
+const walkthroughStore = useWalkthroughStore()
 const { loadSynergies, getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
+
+// Each GM sub-tab has its own first-visit walkthrough. The engine drives the
+// active tab through this channel when a step needs a particular tab shown.
+const TAB_TOUR_KEYS = {
+  team: 'gmTeam',
+  personnel: 'gmPersonnel',
+  finances: 'gmFinances',
+  trades: 'gmTrades',
+  facilities: 'gmFacilities',
+  schedule: 'gmSchedule',
+}
+function startTabTour(tab) {
+  const key = TAB_TOUR_KEYS[tab]
+  if (key) walkthroughStore.maybeStart(key)
+}
 
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
@@ -68,8 +86,14 @@ watch(tradeDeadlinePassed, (passed) => {
     activeTab.value = 'team'
   }
 })
+
+// Let the walkthrough engine drive the active tab when a step needs one shown.
+useWalkthroughTab('gm', (tab) => { activeTab.value = tab })
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
+// True only when the modal was opened from the lineup tab — gates both the
+// initial player-detail tour and the per-sub-tab tours inside the modal.
+const playerModalTours = ref(false)
 
 // Evolution history display state
 const showAllRecentEvolution = ref(false)
@@ -344,6 +368,9 @@ onMounted(async () => {
       loading.value = false
     }
   }
+
+  // First-visit walkthrough for whichever tab we landed on.
+  startTabTour(activeTab.value)
 })
 
 // Initialize player minutes — defaults sum to exactly 200
@@ -579,6 +606,9 @@ watch(activeTab, async (newTab, oldTab) => {
       console.error('Failed to fetch coaching schemes:', err)
     }
   }
+
+  // First-visit walkthrough for the tab the user just opened.
+  startTabTour(newTab)
 })
 
 async function updateOffensiveScheme(scheme) {
@@ -611,14 +641,40 @@ async function updateDefensiveScheme(scheme) {
   }
 }
 
+// Walkthrough side-effects: open/close the first starter's move menu so the
+// onboarding tour can demonstrate the lineup-adjustment control. (watch is not
+// immediate, so it only runs after setup when an action is requested.)
+watch(() => walkthroughStore.requestedAction, (req) => {
+  if (!req || req.view !== 'gm') return
+  if (req.action === 'openFirstStarterMenu') {
+    const slot0 = starterSlots.value[0]
+    if (slot0?.player) expandedMovePlayer.value = `starter-${slot0.player.id}`
+  } else if (req.action === 'closeLineupMenus') {
+    expandedMovePlayer.value = null
+  }
+})
+
 function openPlayerModal(player) {
   selectedPlayer.value = player
   showPlayerModal.value = true
+  // The player-detail tours only fire when the modal is opened from the lineup
+  // (team) tab — not from any other GM tab. This flag also gates the per-sub-tab
+  // tours inside the modal (via :enable-tab-tours).
+  playerModalTours.value = activeTab.value === 'team'
+  if (playerModalTours.value) {
+    // Wait a tick so the modal's DOM exists before the tour spotlights inside it.
+    nextTick(() => walkthroughStore.maybeStart('playerDetail'))
+  }
 }
 
 function closePlayerModal() {
   showPlayerModal.value = false
   selectedPlayer.value = null
+  // If any player-detail tour (initial page or a sub-tab) is still running when
+  // the modal closes, end it so it doesn't leave a dangling spotlight.
+  if (walkthroughStore.activeKey?.startsWith('playerDetail')) {
+    walkthroughStore.skip()
+  }
 }
 
 // Move dropdown functions
@@ -1304,13 +1360,16 @@ const STAFF_TRAINER_PERK_LABELS = {
 
     <template v-else-if="team">
       <!-- Team Header - Same style as home page -->
-      <TeamHeader :team="team" :team-overall="teamOverall" />
+      <div data-tour="gm-team-header">
+        <TeamHeader :team="team" :team-overall="teamOverall" />
+      </div>
 
       <!-- Tab Navigation -->
       <div class="tab-nav">
         <button
           class="tab-btn"
           :class="{ active: activeTab === 'team' }"
+          data-tour="gm-tab-team"
           @click="activeTab = 'team'"
         >
           Lineup
@@ -1318,6 +1377,7 @@ const STAFF_TRAINER_PERK_LABELS = {
         <button
           class="tab-btn"
           :class="{ active: activeTab === 'personnel' }"
+          data-tour="gm-tab-personnel"
           @click="activeTab = 'personnel'"
         >
           Personnel
@@ -1328,6 +1388,7 @@ const STAFF_TRAINER_PERK_LABELS = {
         <button
           class="tab-btn"
           :class="{ active: activeTab === 'finances' }"
+          data-tour="gm-tab-finances"
           @click="activeTab = 'finances'"
         >
           Roster
@@ -1337,6 +1398,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           v-if="!tradeDeadlinePassed"
           class="tab-btn"
           :class="{ active: activeTab === 'trades' }"
+          data-tour="gm-tab-trades"
           @click="activeTab = 'trades'"
         >
           Trades
@@ -1344,6 +1406,7 @@ const STAFF_TRAINER_PERK_LABELS = {
         <button
           class="tab-btn"
           :class="{ active: activeTab === 'facilities' }"
+          data-tour="gm-tab-facilities"
           @click="activeTab = 'facilities'"
         >
           Facilities
@@ -1351,6 +1414,7 @@ const STAFF_TRAINER_PERK_LABELS = {
         <button
           class="tab-btn tab-btn-icon"
           :class="{ active: activeTab === 'schedule' }"
+          data-tour="gm-tab-schedule"
           @click="activeTab = 'schedule'"
           title="Schedule"
         >
@@ -1359,9 +1423,9 @@ const STAFF_TRAINER_PERK_LABELS = {
       </div>
 
       <!-- Roster View -->
-      <div v-if="activeTab === 'team'" class="roster-content">
+      <div v-if="activeTab === 'team'" class="roster-content" data-tour="gm-roster">
         <!-- Starters Section -->
-        <div class="roster-list-header card-cosmic">
+        <div class="roster-list-header card-cosmic" data-tour="gm-starters">
           <h3 class="list-header-text">STARTERS</h3>
           <div class="header-metrics">
             <component
@@ -1374,9 +1438,10 @@ const STAFF_TRAINER_PERK_LABELS = {
             />
             <span class="team-chemistry-value" :style="{ color: chemistryColor }">{{ teamChemistry }}%</span>
             <span class="header-metrics-divider">&middot;</span>
-            <span class="total-minutes-value">{{ totalMinutes }} / 200 MIN</span>
+            <span class="total-minutes-value" data-tour="gm-minutes">{{ totalMinutes }} / 200 MIN</span>
             <button
               class="cpu-adjust-btn"
+              data-tour="gm-cpu-auto"
               :disabled="cpuAdjusting || swappingLineup"
               :title="'Let the CPU pick the best 5 + spread minutes'"
               @click="cpuAdjustLineup"
@@ -1445,6 +1510,7 @@ const STAFF_TRAINER_PERK_LABELS = {
             <div
               v-else
               class="player-card"
+              :data-tour="index === 0 ? 'gm-starter-card' : null"
               :class="{
                 injured: slot.player.is_injured || slot.player.isInjured,
                 [getRatingClass(slot.player.overall_rating)]: true,
@@ -1532,7 +1598,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                       title="Upgrade points available"
                     />
                   </div>
-                  <button class="move-btn" :class="{ active: expandedMovePlayer === `starter-${slot.player.id}` }" @click.stop="toggleMoveDropdown(`starter-${slot.player.id}`)" title="Adjust lineup">
+                  <button class="move-btn" :class="{ active: expandedMovePlayer === `starter-${slot.player.id}` }" :data-tour="index === 0 ? 'gm-move-btn' : null" @click.stop="toggleMoveDropdown(`starter-${slot.player.id}`)" title="Adjust lineup">
                     <ArrowUpDown :size="14" />
                   </button>
                 </div>
@@ -1540,7 +1606,7 @@ const STAFF_TRAINER_PERK_LABELS = {
 
               <!-- Move Dropdown for Starters -->
               <Transition name="dropdown-slide">
-                <div v-if="expandedMovePlayer === `starter-${slot.player.id}`" class="move-dropdown">
+                <div v-if="expandedMovePlayer === `starter-${slot.player.id}`" class="move-dropdown" :data-tour="index === 0 ? 'gm-move-dropdown' : null">
                   <div class="dropdown-header">Replace {{ slot.player.name }}</div>
                   <div class="dropdown-list">
                     <!-- Move to Bench option (empty-looking) -->
@@ -1617,7 +1683,7 @@ const STAFF_TRAINER_PERK_LABELS = {
         </div>
 
         <!-- Bench Section -->
-        <div class="roster-list-header card-cosmic">
+        <div class="roster-list-header card-cosmic" data-tour="gm-bench">
           <h3 class="list-header-text">BENCH</h3>
         </div>
         <TransitionGroup name="bench-reorder" tag="div" class="players-grid">
@@ -1816,7 +1882,7 @@ const STAFF_TRAINER_PERK_LABELS = {
       <!-- Personnel View -->
       <div v-else-if="activeTab === 'personnel'" class="coach-content">
         <!-- Personnel Sub-tabs -->
-        <div class="coach-tabs">
+        <div class="coach-tabs" data-tour="gm-personnel-coach">
           <button
             class="coach-tab-btn"
             :class="{ active: activePersonnelTab === 'coach' }"
@@ -1900,14 +1966,14 @@ const STAFF_TRAINER_PERK_LABELS = {
               >
                 {{ resigningCoach ? 'Re-signing...' : 'Re-sign (2 yrs)' }}
               </button>
-              <button class="btn-view-candidates" @click="showHireCoachModal = true">
+              <button class="btn-view-candidates" data-tour="gm-coach-candidates" @click="showHireCoachModal = true">
                 View Candidates
               </button>
             </div>
           </div>
 
           <!-- Coach Badges -->
-          <div class="coach-badges-section mt-4">
+          <div class="coach-badges-section mt-4" data-tour="gm-coach-badges">
             <h4 class="section-title">Coach Badges</h4>
             <div v-if="ownedCoachBadges.length > 0" class="coach-badges-row">
               <div
@@ -1920,7 +1986,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                 <span class="coach-badge-chip-name">{{ badge.name }}</span>
               </div>
             </div>
-            <button class="coach-badge-store-btn" @click="showCoachBadgeStore = true">
+            <button class="coach-badge-store-btn" data-tour="gm-coach-badge-store" @click="showCoachBadgeStore = true">
               <Star :size="14" />
               Shop Badges
             </button>
@@ -1962,7 +2028,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           </div>
 
           <!-- Coach Attributes -->
-          <div v-if="coach.attributes" class="coach-attributes mt-4">
+          <div v-if="coach.attributes" class="coach-attributes mt-4" data-tour="gm-coach-skills">
             <h4 class="section-title">Coaching Skills</h4>
             <div class="attr-grid">
               <div v-for="(value, key) in coach.attributes" :key="key" class="coach-attr-item">
@@ -1977,7 +2043,7 @@ const STAFF_TRAINER_PERK_LABELS = {
         </GlassCard>
 
         <!-- Strategy Settings (Tabbed) -->
-        <GlassCard padding="lg" :hoverable="false" class="mt-6">
+        <GlassCard padding="lg" :hoverable="false" class="mt-6" data-tour="gm-coach-schemes">
           <div class="coach-tabs">
             <button
               class="coach-tab-btn"
@@ -2472,17 +2538,17 @@ const STAFF_TRAINER_PERK_LABELS = {
       </div>
 
       <!-- Trades View — hidden after the in-season trade deadline -->
-      <div v-else-if="activeTab === 'trades' && !tradeDeadlinePassed" class="trades-content">
+      <div v-else-if="activeTab === 'trades' && !tradeDeadlinePassed" class="trades-content" data-tour="gm-trades-content">
         <TradesTab :campaign-id="campaignId" @trade-completed="activeTab = 'team'" />
       </div>
 
       <!-- Facilities View -->
-      <div v-else-if="activeTab === 'facilities'" class="facilities-content">
+      <div v-else-if="activeTab === 'facilities'" class="facilities-content" data-tour="gm-facilities-content">
         <FacilitiesTab :campaign-id="campaignId" />
       </div>
 
       <!-- Schedule View -->
-      <div v-else-if="activeTab === 'schedule'" class="schedule-content">
+      <div v-else-if="activeTab === 'schedule'" class="schedule-content" data-tour="gm-schedule-content">
         <ScheduleTab :campaign-id="campaignId" />
       </div>
     </template>
@@ -2503,6 +2569,7 @@ const STAFF_TRAINER_PERK_LABELS = {
       :lineup-players="teamStore.starterPlayers?.filter(p => p != null) || []"
       :user-tokens="authStore.profile?.tokens ?? 0"
       :coach="teamStore.coach"
+      :enable-tab-tours="playerModalTours"
       @close="closePlayerModal"
       @upgrade-attribute="handleUpgradeAttribute"
       @purchase-upgrade-point="handlePurchaseUpgradePoint"

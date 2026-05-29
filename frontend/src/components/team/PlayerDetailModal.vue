@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check } from 'lucide-vue-next'
 import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import CoachMeetingConfirmModal from './CoachMeetingConfirmModal.vue'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -9,6 +9,7 @@ import PlayerBadgeStoreModal from '@/components/team/PlayerBadgeStoreModal.vue'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
+import { useWalkthroughStore } from '@/stores/walkthrough'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 import { getMotivationLabel, getArchetypeLabel, calculateRetentionScore } from '@/engine/ai/MotivationService'
 
@@ -138,13 +139,45 @@ const props = defineProps({
   coach: {
     type: Object,
     default: null
+  },
+  // When true, switching to a sub-tab auto-starts that tab's onboarding
+  // walkthrough (first visit only). Set by the lineup tab so these tours fire
+  // only for the lineup-opened modal, matching the initial-page tour gating.
+  enableTabTours: {
+    type: Boolean,
+    default: false
+  },
+  // Draft room: when true (it's the user's pick), show a "Draft Player" button
+  // in the header that emits `draft-player`.
+  canDraft: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['close', 'upgrade-attribute', 'purchase-upgrade-point', 'resign-player', 'drop-player', 'scout-player', 'hold-coach-meeting'])
+const emit = defineEmits(['close', 'upgrade-attribute', 'purchase-upgrade-point', 'resign-player', 'drop-player', 'scout-player', 'hold-coach-meeting', 'draft-player'])
 
 const activeTab = ref('stats')
 const showPlayerBadgeStore = ref(false)
+
+// Per-sub-tab onboarding walkthroughs. When the lineup opens this modal
+// (enableTabTours), the first visit to each sub-tab auto-starts its own tour.
+// The 'stats' tab is the initial page, covered by the 'playerDetail' tour.
+const walkthroughStore = useWalkthroughStore()
+const TAB_TOUR_KEYS = {
+  attributes: 'playerDetailAttributes',
+  badges: 'playerDetailBadges',
+  growth: 'playerDetailGrowth',
+  morale: 'playerDetailMorale',
+  // History tab intentionally has no walkthrough.
+}
+watch(activeTab, (tab) => {
+  if (!props.enableTabTours) return
+  const key = TAB_TOUR_KEYS[tab]
+  // maybeStart no-ops if the tour isn't enabled, already seen, already running,
+  // or not yet defined in the registry — so undefined keys are safe.
+  if (key) walkthroughStore.maybeStart(key)
+})
 
 // Evolution display state
 const showAllRecentEvolution = ref(false)
@@ -739,7 +772,7 @@ function formatChange(change) {
           <!-- Modal Content (Scrollable) -->
           <main class="modal-content">
             <!-- Player Header Card -->
-            <div class="player-modal-header" :class="{ 'injured-header': normalizedPlayer.isInjured }">
+            <div class="player-modal-header" :class="{ 'injured-header': normalizedPlayer.isInjured }" data-tour="pdm-header">
               <div class="header-top-row">
                 <div class="modal-player-avatar">
                   <PlayerAvatar :player="normalizedPlayer" :size="84" class="avatar-icon" />
@@ -755,6 +788,7 @@ function formatChange(change) {
                     v-if="isUserPlayer && campaignId"
                     class="trade-block-toggle"
                     :class="{ active: isOnTradingBlock }"
+                    data-tour="pdm-trade-toggle"
                     @click.stop="toggleTradingBlock"
                     :title="isOnTradingBlock ? 'Remove from trading block' : 'Add to trading block'"
                   >
@@ -827,10 +861,17 @@ function formatChange(change) {
                       Drop
                     </button>
                   </div>
+                  <!-- Draft button (draft room — shown only on the user's pick) -->
+                  <div v-if="canDraft" class="header-draft-action">
+                    <button class="header-action-btn draft" @click.stop="emit('draft-player', player)">
+                      <Check :size="14" />
+                      Draft Player
+                    </button>
+                  </div>
                 </div>
               </div>
               <!-- Fatigue Meter (hidden in scouting mode) -->
-              <div v-if="!scoutingMode" class="fatigue-meter-container">
+              <div v-if="!scoutingMode" class="fatigue-meter-container" data-tour="pdm-fatigue">
                 <div class="fatigue-meter-label">
                   <span>Fatigue</span>
                   <span class="fatigue-value" :class="{ warning: fatiguePercent >= 50 && fatiguePercent < 70, high: fatiguePercent >= 70 }">{{ fatiguePercent }}%</span>
@@ -856,7 +897,7 @@ function formatChange(change) {
             </div>
 
             <!-- Badges Preview -->
-            <div v-if="normalizedPlayer.badges?.length > 0" class="badges-preview">
+            <div v-if="normalizedPlayer.badges?.length > 0" class="badges-preview" data-tour="pdm-badges">
               <div class="badges-grid-preview">
                 <template v-if="scoutingMode && !badgesRevealed">
                   <div
@@ -894,7 +935,7 @@ function formatChange(change) {
             </div>
 
             <!-- Tab Navigation -->
-            <div class="modal-tabs">
+            <div class="modal-tabs" data-tour="pdm-tabs">
               <button
                 v-if="!scoutingMode"
                 class="tab-btn"
@@ -905,6 +946,7 @@ function formatChange(change) {
               </button>
               <button
                 class="tab-btn"
+                data-tour="pdm-tab-attributes"
                 :class="{ active: activeTab === 'attributes' }"
                 @click="activeTab = 'attributes'"
               >
@@ -946,7 +988,7 @@ function formatChange(change) {
             <!-- Tab Content -->
             <div class="modal-tab-content">
               <!-- Stats Tab -->
-              <div v-if="activeTab === 'stats'" class="tab-panel">
+              <div v-if="activeTab === 'stats'" class="tab-panel" data-tour="pdm-stats">
                   <div v-if="seasonStatsRows.length > 0" class="game-log-table-wrap">
                     <table class="game-log-table season-history-table">
                       <thead>
@@ -1061,7 +1103,7 @@ function formatChange(change) {
                 </div>
 
                 <!-- Upgrade Points Banner - dual pools -->
-                <div v-if="canUpgrade && !scoutingMode" class="upgrade-points-banner" :class="{ 'no-points': upgradePoints === 0 }">
+                <div v-if="canUpgrade && !scoutingMode" class="upgrade-points-banner" :class="{ 'no-points': upgradePoints === 0 }" data-tour="pdm-upgrade-banner">
                   <div class="upgrade-pools">
                     <div class="pool-item offense-pool" :class="{ 'has-points': offenseUpgradePoints >= 1.0 }">
                       <span class="pool-value">{{ offenseUpgradePoints.toFixed(1) }}</span>
@@ -1069,6 +1111,7 @@ function formatChange(change) {
                       <button
                         v-if="isUserPlayer"
                         class="pool-buy-btn"
+                        data-tour="pdm-buy-offense"
                         :disabled="!offensePurchaseInfo?.canPurchase"
                         :title="purchaseTooltip(offensePurchaseInfo)"
                         @click="handlePurchaseUpgradePoint('offense')"
@@ -1084,6 +1127,7 @@ function formatChange(change) {
                       <button
                         v-if="isUserPlayer"
                         class="pool-buy-btn"
+                        data-tour="pdm-buy-defense"
                         :disabled="!defensePurchaseInfo?.canPurchase"
                         :title="purchaseTooltip(defensePurchaseInfo)"
                         @click="handlePurchaseUpgradePoint('defense')"
@@ -1136,7 +1180,7 @@ function formatChange(change) {
                 </div>
 
                 <!-- Offensive Attributes -->
-                <div v-if="normalizedPlayer.attributes?.offense" class="attr-section">
+                <div v-if="normalizedPlayer.attributes?.offense" class="attr-section" data-tour="pdm-attributes-list">
                   <h4 class="attr-section-title">Offense</h4>
                   <div class="attributes-grid">
                     <div v-for="(value, key) in normalizedPlayer.attributes.offense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasOffenseUpgradePoints && !scoutingMode }">
@@ -1278,12 +1322,12 @@ function formatChange(change) {
                 </div>
                 <template v-else>
                   <div v-if="isUserPlayer && !scoutingMode && campaignId" class="badges-store-row">
-                    <button class="badges-store-btn" @click="showPlayerBadgeStore = true">
+                    <button class="badges-store-btn" data-tour="pdm-badge-store-btn" @click="showPlayerBadgeStore = true">
                       <ShoppingBag :size="14" />
                       <span>Badge Store</span>
                     </button>
                   </div>
-                  <div v-if="normalizedPlayer.badges?.length > 0" class="badges-tab-content">
+                  <div v-if="normalizedPlayer.badges?.length > 0" class="badges-tab-content" data-tour="pdm-badges-list">
                   <!-- HOF Badges -->
                   <div v-if="normalizedPlayer.badges.filter(b => b.level === 'hof').length > 0" class="badge-level-section">
                     <h4 class="badge-level-title hof">Hall of Fame</h4>
@@ -1368,9 +1412,9 @@ function formatChange(change) {
 
               <!-- Growth Tab (Season Evolution) -->
               <div v-if="activeTab === 'growth' && showGrowth" class="tab-panel">
-                <div class="evolution-section">
+                <div class="evolution-section" data-tour="pdm-growth">
                   <!-- Recent Evolution (Last 7 Days) -->
-                  <div class="evolution-subsection">
+                  <div class="evolution-subsection" data-tour="pdm-growth-recent">
                     <h5 class="evolution-subtitle">Recent (Last 7 Days)</h5>
                     <div v-if="recentEvolution.length > 0" class="evolution-list">
                       <div
@@ -1446,7 +1490,7 @@ function formatChange(change) {
               </div>
               <div v-else-if="activeTab === 'morale'" class="tab-panel">
                 <!-- Current Morale -->
-                <div class="morale-current-section">
+                <div class="morale-current-section" data-tour="pdm-morale-current">
                   <div class="morale-header-row">
                     <component
                       :is="getMoraleIcon(moraleValue)"
@@ -1472,6 +1516,7 @@ function formatChange(change) {
                     <button
                       v-if="canShowCoachMeeting"
                       class="coach-meeting-btn"
+                      data-tour="pdm-coach-meeting"
                       :class="{ 'is-buy-mode': coachActionsLeft === 0 }"
                       :disabled="!!coachMeetingDisabledReason"
                       :title="coachMeetingDisabledReason || 'Boost morale by +30'"
@@ -1493,7 +1538,7 @@ function formatChange(change) {
                 </div>
 
                 <!-- Personality Traits -->
-                <div class="morale-traits-section">
+                <div class="morale-traits-section" data-tour="pdm-traits">
                   <h4 class="morale-section-title">Personality Traits</h4>
                   <div v-if="normalizedPlayer.personalityTraits.length > 0" class="traits-list">
                     <div
@@ -1511,7 +1556,7 @@ function formatChange(change) {
                 </div>
 
                 <!-- Motivations -->
-                <div v-if="playerMotivations" class="morale-motivations-section">
+                <div v-if="playerMotivations" class="morale-motivations-section" data-tour="pdm-motivations">
                   <h4 class="morale-section-title">
                     Motivations
                     <span class="archetype-label">{{ motivationArchetype }}</span>
@@ -1694,7 +1739,7 @@ function formatChange(change) {
 
           <!-- Footer -->
           <footer class="modal-footer">
-            <div v-if="normalizedPlayer.contract" class="contract-info">
+            <div v-if="normalizedPlayer.contract" class="contract-info" data-tour="pdm-contract">
               <div class="contract-item">
                 <span class="contract-label">Salary</span>
                 <span class="contract-value text-success">{{ formatSalary(normalizedPlayer.contract.salary) }}/yr</span>
@@ -2130,6 +2175,22 @@ function formatChange(change) {
 .header-action-btn.drop:hover {
   background: rgba(180, 40, 40, 0.25);
   border-color: rgba(180, 40, 40, 0.4);
+}
+
+.header-draft-action {
+  margin-top: 0.5rem;
+}
+
+.header-action-btn.draft {
+  padding: 0.45rem 0.9rem;
+  font-size: 0.8rem;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+}
+
+.header-action-btn.draft:hover {
+  background: var(--color-primary-dark);
 }
 
 .position-badges {

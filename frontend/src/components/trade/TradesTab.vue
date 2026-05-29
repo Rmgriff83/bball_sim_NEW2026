@@ -124,7 +124,7 @@ onMounted(async () => {
       </GlassCard>
 
       <!-- Sub-Tab Navigation -->
-      <div class="sub-tab-nav">
+      <div class="sub-tab-nav" data-tour="gm-trades-subtabs">
         <button
           class="sub-tab-btn"
           :class="{ active: activeSubTab === 'center' }"

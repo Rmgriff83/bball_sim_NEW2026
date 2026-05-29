@@ -255,6 +255,7 @@ function closeMobileMenu() {
             :to="`/campaign/${campaignId}/team`"
             class="nav-link"
             :class="{ active: route.name === 'team-management' }"
+            data-tour="nav-gm-view"
           >
             GM View
           </router-link>
@@ -277,6 +278,7 @@ function closeMobileMenu() {
             :to="`/campaign/${campaignId}/scouting`"
             class="nav-link nav-link-scout"
             :class="{ active: route.name === 'scouting' }"
+            data-tour="nav-scout"
           >
             Scout
             <span v-if="scoutingPoints > 0" class="scout-pts-badge">{{ scoutingPoints }}</span>
@@ -285,6 +287,7 @@ function closeMobileMenu() {
             :to="`/campaign/${campaignId}/play`"
             class="nav-link nav-link-play"
             :class="{ active: route.name === 'game' || route.name === 'play' }"
+            data-tour="nav-play"
           >
             <Play :size="16" fill="currentColor" />
             Play
@@ -306,7 +309,7 @@ function closeMobileMenu() {
 
         <!-- Mobile: Date + Menu Button -->
         <div v-if="isMobile" class="mobile-header-right">
-          <div v-if="formattedCurrentDate" class="current-date-mobile">
+          <div v-if="formattedCurrentDate" class="current-date-mobile" data-tour="home-date-mobile">
             <span class="date-day">{{ formattedCurrentDate.day }}</span>
             <div class="date-details">
               <span class="date-month">{{ formattedCurrentDate.month }}</span>

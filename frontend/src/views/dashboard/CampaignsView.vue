@@ -4,13 +4,29 @@ import { useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useAuthStore } from '@/stores/auth'
 import { useAudioStore } from '@/stores/audio'
+import { useWalkthroughStore } from '@/stores/walkthrough'
 import { GlassCard, BaseButton, LoadingSpinner } from '@/components/ui'
+import HasPlayedBeforeModal from '@/components/walkthrough/HasPlayedBeforeModal.vue'
 import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2 } from 'lucide-vue-next'
 
 const router = useRouter()
 const campaignStore = useCampaignStore()
 const authStore = useAuthStore()
 const audio = useAudioStore()
+const walkthroughStore = useWalkthroughStore()
+
+// After a new campaign is created we ask "have you played before?" — the answer
+// gates the onboarding walkthroughs — then navigate into the campaign.
+const showPlayedBeforeModal = ref(false)
+const pendingNavigation = ref(null)
+
+function handlePlayedBeforeAnswer(playedBefore) {
+  walkthroughStore.setHasPlayedBefore(playedBefore)
+  showPlayedBeforeModal.value = false
+  const target = pendingNavigation.value
+  pendingNavigation.value = null
+  if (target) router.push(target)
+}
 
 function openCampaign(id) {
   // Campaign cards are divs (not buttons), so the global click listener won't
@@ -142,11 +158,11 @@ async function createCampaign() {
 
     audio.affirm()
     closeCreateModal()
-    if (selectedDraftMode.value === 'fantasy') {
-      router.push(`/campaign/${campaign.id}/draft`)
-    } else {
-      router.push(`/campaign/${campaign.id}`)
-    }
+    // Defer navigation until the user answers "have you played before?".
+    pendingNavigation.value = selectedDraftMode.value === 'fantasy'
+      ? `/campaign/${campaign.id}/draft`
+      : `/campaign/${campaign.id}`
+    showPlayedBeforeModal.value = true
   } catch (err) {
     createError.value = err.message || 'Failed to create campaign'
   } finally {
@@ -450,6 +466,12 @@ function getDifficultyLabel(value) {
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Onboarding gate: shown after a new campaign is created -->
+    <HasPlayedBeforeModal
+      :show="showPlayedBeforeModal"
+      @answered="handlePlayedBeforeAnswer"
+    />
   </div>
 </template>
 
