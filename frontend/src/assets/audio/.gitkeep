@@ -1,0 +1,2 @@
+# Drop *.mp3 files here (music, in-game noises), then reference them in
+# src/audio/tracks.js. See that file for instructions.

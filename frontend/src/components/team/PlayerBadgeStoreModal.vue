@@ -4,6 +4,7 @@ import { Coins, Check, Star, ChevronUp, Lock } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { StandardModal } from '@/components/ui'
 import {
   PLAYER_BADGE_LEVELS,
@@ -21,6 +22,7 @@ const emit = defineEmits(['close', 'purchased'])
 const authStore = useAuthStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
+const audio = useAudioStore()
 
 const purchasing = ref(null) // badge id currently being purchased
 
@@ -92,12 +94,14 @@ async function purchase(entry) {
   }
 
   purchasing.value = entry.badge.id
+  audio.suppressClickSound() // cha-ching on success instead of the generic tap
   try {
     const result = await teamStore.purchasePlayerBadge(
       props.campaignId,
       props.player.id,
       entry.badge.id,
     )
+    audio.purchase()
     toastStore.showSuccess(`${entry.badge.name} → ${levelLabel(result.level)}`)
     emit('purchased', { badgeId: entry.badge.id, level: result.level })
   } catch (err) {

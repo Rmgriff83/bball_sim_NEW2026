@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { Coins, Check, Star, ChevronUp } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { useSyncStore } from '@/stores/sync'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { coachBadges, COACH_BADGE_LEVELS, nextCoachBadgeLevel } from '@/engine/data/coachBadges'
@@ -20,6 +21,7 @@ const emit = defineEmits(['close', 'purchased'])
 const authStore = useAuthStore()
 const toastStore = useToastStore()
 const syncStore = useSyncStore()
+const audio = useAudioStore()
 
 const purchasing = ref(null) // badge id currently being purchased
 
@@ -118,6 +120,7 @@ async function purchase(badge) {
   if (purchasing.value) return
 
   purchasing.value = badge.id
+  audio.suppressClickSound() // cha-ching on success instead of the generic tap
   try {
     const response = await api.post('/api/user/tokens', { amount: -cost })
     if (authStore.profile) {
@@ -151,6 +154,7 @@ async function purchase(badge) {
     team.coach.badges = existing
     await TeamRepository.save(team)
 
+    audio.purchase()
     toastStore.showSuccess(`${badge.name} → ${levelLabel(next)}`)
     syncStore.markDirty()
     emit('purchased', { badgeId: badge.id, level: next, team })

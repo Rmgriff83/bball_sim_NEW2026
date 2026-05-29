@@ -18,6 +18,10 @@ export const useDraftStore = defineStore('draft', () => {
   const userTeamId = ref(null)
   const userTeamAbbr = ref(null)
   const timerSeconds = ref(60)
+  // When true, the pick clock is frozen (e.g. the onboarding walkthrough is
+  // showing). startTimer() still resets the seconds but won't tick; resumeTimer()
+  // restarts ticking from the remaining seconds.
+  const timerPaused = ref(false)
   const isDraftActive = ref(false)
   const isDraftComplete = ref(false)
   const isSimming = ref(false)       // fast-forward mode (skip to pick / skip all)
@@ -263,17 +267,19 @@ export const useDraftStore = defineStore('draft', () => {
 
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
-    while (!isDraftComplete.value && !isUserPick.value && !skipRequested.value) {
+    // timerPaused doubles as the "draft frozen for the walkthrough" signal — halt
+    // AI picks while it's set (resumed by the view when the tour ends).
+    while (!isDraftComplete.value && !isUserPick.value && !skipRequested.value && !timerPaused.value) {
       // Wait realistic time before the pick
       const waitTime = getRealisticDelay(currentRound.value)
-      // Break the wait into small chunks so skipRequested can interrupt
+      // Break the wait into small chunks so skipRequested / pause can interrupt
       const chunkSize = 100
       let waited = 0
-      while (waited < waitTime && !skipRequested.value) {
+      while (waited < waitTime && !skipRequested.value && !timerPaused.value) {
         await delay(Math.min(chunkSize, waitTime - waited))
         waited += chunkSize
       }
-      if (skipRequested.value || isDraftComplete.value || isUserPick.value) break
+      if (skipRequested.value || isDraftComplete.value || isUserPick.value || timerPaused.value) break
 
       makeAIPick()
       await delay(200) // small gap after pick for toast visibility
@@ -375,10 +381,10 @@ export const useDraftStore = defineStore('draft', () => {
     if (campaignId) saveDraftToCache(campaignId)
   }
 
-  function startTimer() {
+  // Begin the 1-second countdown from the current timerSeconds. On expiry the
+  // best available player is auto-drafted.
+  function _runTimerInterval() {
     stopTimer()
-    timerSeconds.value = 60
-
     timerInterval = setInterval(() => {
       timerSeconds.value--
       if (timerSeconds.value <= 0) {
@@ -397,10 +403,33 @@ export const useDraftStore = defineStore('draft', () => {
     }, 1000)
   }
 
+  function startTimer() {
+    stopTimer()
+    timerSeconds.value = 60
+    // While paused (walkthrough showing), hold at 60 — resumeTimer() ticks later.
+    if (timerPaused.value) return
+    _runTimerInterval()
+  }
+
   function stopTimer() {
     if (timerInterval) {
       clearInterval(timerInterval)
       timerInterval = null
+    }
+  }
+
+  // Freeze the clock without resetting the remaining seconds.
+  function pauseTimer() {
+    timerPaused.value = true
+    stopTimer()
+  }
+
+  // Unfreeze and resume ticking from where it left off, but only if it's still
+  // the user's live pick.
+  function resumeTimer() {
+    timerPaused.value = false
+    if (isUserPick.value && !isDraftComplete.value && !isSimming.value && timerSeconds.value > 0) {
+      _runTimerInterval()
     }
   }
 
@@ -750,6 +779,7 @@ export const useDraftStore = defineStore('draft', () => {
     userTeamId,
     userTeamAbbr,
     timerSeconds,
+    timerPaused,
     isDraftActive,
     isDraftComplete,
     isSimming,
@@ -783,6 +813,8 @@ export const useDraftStore = defineStore('draft', () => {
     autoPlayAIPicks,
     startTimer,
     stopTimer,
+    pauseTimer,
+    resumeTimer,
     saveDraftToCache,
     loadDraftFromCache,
     clearDraftCache,

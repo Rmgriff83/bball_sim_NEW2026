@@ -1,6 +1,9 @@
 <script setup>
 import { watch, onUnmounted } from 'vue'
 import { X } from 'lucide-vue-next'
+import { useAudioStore } from '@/stores/audio'
+
+const audio = useAudioStore()
 
 const props = defineProps({
   show: {
@@ -25,7 +28,10 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 
 function close() {
-  if (props.closable) emit('close')
+  if (props.closable) {
+    audio.cancel()
+    emit('close')
+  }
 }
 
 function handleKeydown(e) {

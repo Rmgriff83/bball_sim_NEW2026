@@ -13,6 +13,7 @@ import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { useFinanceStore } from '@/stores/finance'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
+import { useWalkthroughStore } from '@/stores/walkthrough'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { LoadingSpinner, BaseModal, StandardModal } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
@@ -54,6 +55,7 @@ const breakingNewsStore = useBreakingNewsStore()
 const financeStore = useFinanceStore()
 const authStore = useAuthStore()
 const syncStore = useSyncStore()
+const walkthroughStore = useWalkthroughStore()
 
 const showSimulateModal = ref(false)
 const simSeasonMode = ref(false)
@@ -875,6 +877,9 @@ onMounted(async () => {
       loading.value = false
     }
   }
+
+  // First-visit onboarding tour (no-op unless enabled and not yet seen).
+  walkthroughStore.maybeStart('campaignHome')
 })
 
 onUnmounted(() => {
@@ -2278,20 +2283,22 @@ function handleCloseSimulateModal() {
 
     <template v-else-if="campaign">
       <!-- Team Header — shared component; date widget slots into the right -->
-      <TeamHeader :team="team" :team-overall="userTeamOverall">
-        <template #right>
-          <div v-if="formattedCurrentDate" class="current-date">
-            <span class="date-day">{{ formattedCurrentDate.day }}</span>
-            <div class="date-details">
-              <span class="date-month">{{ formattedCurrentDate.month }} {{ formattedCurrentDate.year }}</span>
-              <span class="date-weekday">{{ formattedCurrentDate.weekday }}</span>
+      <div data-tour="home-team-header">
+        <TeamHeader :team="team" :team-overall="userTeamOverall">
+          <template #right>
+            <div v-if="formattedCurrentDate" class="current-date" data-tour="home-date">
+              <span class="date-day">{{ formattedCurrentDate.day }}</span>
+              <div class="date-details">
+                <span class="date-month">{{ formattedCurrentDate.month }} {{ formattedCurrentDate.year }}</span>
+                <span class="date-weekday">{{ formattedCurrentDate.weekday }}</span>
+              </div>
             </div>
-          </div>
-        </template>
-      </TeamHeader>
+          </template>
+        </TeamHeader>
+      </div>
 
       <!-- Record Card - Cosmic gradient -->
-      <section class="record-card card-cosmic">
+      <section class="record-card card-cosmic" data-tour="home-record-card">
         <div class="record-content">
           <div class="record-left">
             <span class="record-label">Record</span>
@@ -2301,7 +2308,7 @@ function handleCloseSimulateModal() {
             <span class="record-value">{{ wins }}-{{ losses }}</span>
           </div>
         </div>
-        <div class="record-tokens">
+        <div class="record-tokens" data-tour="home-tokens">
           <Coins :size="13" class="record-tokens-icon" />
           <div class="tokens-score-container">
             <TransitionGroup name="token-slide" tag="div" class="tokens-score-slot">
@@ -2373,7 +2380,7 @@ function handleCloseSimulateModal() {
       </section>
 
       <!-- Next Game Card -->
-      <section v-else-if="nextGame" class="next-game-card glass-card-nebula" :class="{ 'in-progress': isGameInProgress, 'is-playoff': nextGame.is_playoff }">
+      <section v-else-if="nextGame" class="next-game-card glass-card-nebula" :class="{ 'in-progress': isGameInProgress, 'is-playoff': nextGame.is_playoff }" data-tour="home-next-game">
         <Transition name="card-loader-fade">
           <div v-if="syncStore.isPulling" class="card-pull-loader" aria-label="Refreshing">
             <LoadingSpinner size="sm" />
@@ -2479,6 +2486,7 @@ function handleCloseSimulateModal() {
               <button
                 class="btn-play-game"
                 :class="{ 'continue': isGameInProgress }"
+                data-tour="home-play-btn"
                 @click="navigateToGame(nextGame.id)"
               >
                 <Play class="btn-icon" :size="16" />
@@ -2487,6 +2495,7 @@ function handleCloseSimulateModal() {
               <button
                 v-if="!isGameInProgress"
                 class="btn-simulate-game"
+                data-tour="home-sim-btn"
                 @click="handleSimulateToNextGame"
               >
                 <FastForward class="btn-icon" :size="16" />
@@ -2935,7 +2944,7 @@ function handleCloseSimulateModal() {
       </section>
 
       <!-- Quick Actions Card -->
-      <section class="quick-actions-card glass-card-nebula">
+      <section class="quick-actions-card glass-card-nebula" data-tour="home-quick-actions">
         <h3 class="section-header">QUICK ACTIONS</h3>
         <div class="quick-actions-grid">
           <button class="action-box" @click="navigateToScout">
@@ -2999,7 +3008,7 @@ function handleCloseSimulateModal() {
            `_refreshFeaturedPlayerIfStale` in stores/game.js. PPG/RPG/APG are
            the 14-day window averages (NOT season averages). The strip on
            the right (mobile: below) shows the games that fed the selection. -->
-      <section v-if="featuredPlayer" class="featured-player-card card-cosmic" @click="openPlayerDetails">
+      <section v-if="featuredPlayer" class="featured-player-card card-cosmic" data-tour="home-featured-player" @click="openPlayerDetails">
         <h3 class="section-header featured-header">FEATURED PLAYER</h3>
         <div class="player-content">
           <div class="player-avatar">
@@ -3071,7 +3080,7 @@ function handleCloseSimulateModal() {
       </section>
 
       <!-- News Feed Card -->
-      <section class="news-card">
+      <section class="news-card" data-tour="home-news">
         <h3 class="section-header">LATEST NEWS</h3>
         <div v-if="news.length" class="news-list">
           <div

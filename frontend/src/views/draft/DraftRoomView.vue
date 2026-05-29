@@ -5,6 +5,8 @@ import { useDraftStore } from '@/stores/draft'
 import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
+import { useWalkthroughStore } from '@/stores/walkthrough'
+import { useAudioStore } from '@/stores/audio'
 import { LoadingSpinner } from '@/components/ui'
 import DraftCompleteModal from '@/components/draft/DraftCompleteModal.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
@@ -23,6 +25,39 @@ const draftStore = useDraftStore()
 const campaignStore = useCampaignStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
+const walkthroughStore = useWalkthroughStore()
+const audio = useAudioStore()
+
+// Draft-room timer audio: a "you're on the clock" cue when the user's turn
+// begins, and a per-second tick through the final 10 seconds. (Generic button
+// taps are handled app-wide by the global click listener in main.js.)
+watch(() => draftStore.isUserPick, (isUser) => {
+  if (isUser && !draftStore.isDraftComplete && !draftStore.isSimming && !draftStore.timerPaused) {
+    audio.play('draftStart')
+  }
+})
+
+watch(() => draftStore.timerSeconds, (secs, prev) => {
+  if (!draftStore.isUserPick || draftStore.isDraftComplete || draftStore.timerPaused) return
+  // Count down each of the final 10 seconds (skip the auto-pick at 0).
+  if (secs >= 1 && secs <= 10 && secs < prev) {
+    audio.play('draftTick')
+  }
+})
+
+// Freeze the draft while the live-draft walkthrough is showing tips: pauseTimer
+// halts the user's pick clock AND the AI auto-pick loop (both honor timerPaused).
+// On tour end, resume the clock or restart AI picks depending on whose turn it is.
+watch(() => walkthroughStore.activeKey === 'liveDraft', (touring) => {
+  if (touring) {
+    draftStore.pauseTimer()
+  } else {
+    draftStore.resumeTimer()
+    if (!draftStore.isUserPick && !draftStore.isDraftComplete && !draftStore.isSimming) {
+      draftStore.autoPlayAIPicks(campaignId.value)
+    }
+  }
+})
 
 const campaignId = computed(() => route.params.id)
 const isRookieMode = computed(() => route.query.mode === 'rookie' || draftStore.draftMode === 'rookie')
@@ -64,6 +99,25 @@ function isFullyScouted(playerId) {
 function openPlayerModal(player) {
   selectedPlayer.value = player
   showPlayerModal.value = true
+}
+
+// The modal shows a "Draft Player" button only when it's the user's live pick.
+const canDraftCurrent = computed(() =>
+  draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete
+)
+
+// Manual user pick (from the list row or the modal). Plays the affirmation
+// sound; the timer-expiry auto-pick stays silent since it isn't a user action.
+function handleDraftPick(playerId) {
+  if (!playerId) return
+  audio.affirm()
+  draftStore.makeUserPick(playerId)
+}
+
+function handleDraftFromModal(player) {
+  if (!player) return
+  handleDraftPick(player.id)
+  showPlayerModal.value = false
 }
 
 // Computed
@@ -125,6 +179,18 @@ function formatHeight(inches) {
   const ft = Math.floor(inches / 12)
   const rem = inches % 12
   return `${ft}'${rem}"`
+}
+
+// Salary + years remaining for the fantasy-draft pool (existing league players
+// carry contracts; rookies don't, so this column is hidden in rookie mode).
+function formatContract(player) {
+  const salary = player.contractSalary ?? player.contract_salary ?? 0
+  const years = player.contractYearsRemaining ?? player.contract_years_remaining ?? 0
+  if (!salary) return '—'
+  const amount = salary >= 1000000
+    ? `$${(salary / 1000000).toFixed(1)}M`
+    : `$${Math.round(salary / 1000)}K`
+  return years ? `${amount} · ${years}y` : amount
 }
 
 function getSortIcon(field) {
@@ -344,10 +410,15 @@ onMounted(async () => {
       }
     } else {
       // --- FANTASY DRAFT MODE (existing behavior) ---
+      // The fantasy draft pools existing league players only. Next year's draft
+      // class (generated rookies, isDraftProspect) lives in the same campaign
+      // player store but must NOT be draftable here — they belong to the rookie
+      // draft. Exclude them so neither the user nor the AI can pick them.
+      const fantasyPool = allPlayers.filter(p => !p.isDraftProspect)
       const restored = await draftStore.loadDraftFromCache(campaignId.value)
 
       if (restored && draftStore.draftOrder.length > 0) {
-        draftStore.allPlayers = allPlayers
+        draftStore.allPlayers = fantasyPool
         draftStore.teams = teamsList
 
         if (draftStore.isUserPick && !draftStore.isDraftComplete) {
@@ -356,7 +427,7 @@ onMounted(async () => {
           draftStore.autoPlayAIPicks(campaignId.value)
         }
       } else {
-        draftStore.initializeDraft(campaign, allPlayers, teamsList)
+        draftStore.initializeDraft(campaign, fantasyPool, teamsList)
         draftStore.saveDraftToCache(campaignId.value)
 
         if (!draftStore.isUserPick) {
@@ -372,11 +443,22 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+
+  // First-visit walkthrough for the live draft. The watcher above pauses the
+  // pick clock as soon as it starts, so tips never burn the user's timer. Guard
+  // against the error / already-completed-redirect paths where no draft renders.
+  if (!error.value && !draftStore.isDraftComplete && draftStore.draftOrder.length > 0) {
+    walkthroughStore.maybeStart('liveDraft')
+  }
 })
 
 onUnmounted(() => {
   draftStore.stopTimer()
   draftStore.skipRequested = true
+  // If the user leaves mid-tour, end it and make sure the clock isn't left
+  // frozen for a future draft in this session.
+  if (walkthroughStore.activeKey === 'liveDraft') walkthroughStore.skip()
+  draftStore.timerPaused = false
 })
 </script>
 
@@ -411,7 +493,7 @@ onUnmounted(() => {
       </header>
 
       <!-- Draft Ticker -->
-      <div class="draft-ticker" ref="tickerRef">
+      <div class="draft-ticker" ref="tickerRef" data-tour="draft-ticker">
         <div class="ticker-track">
           <div
             v-for="slot in tickerSlots"
@@ -469,7 +551,7 @@ onUnmounted(() => {
       <!-- Main Content -->
       <div class="draft-main">
         <!-- Left Sidebar: User Roster -->
-        <aside class="draft-sidebar roster-panel">
+        <aside class="draft-sidebar roster-panel" data-tour="draft-roster">
           <h3 class="sidebar-title">YOUR ROSTER</h3>
           <div class="roster-count">{{ isRookieMode ? `${draftStore.userRoster.length} picks made` : `${draftStore.userRoster.length} / 15` }}</div>
 
@@ -496,7 +578,7 @@ onUnmounted(() => {
         <!-- Center: On The Clock + Player Pool -->
         <div class="draft-center">
           <!-- On The Clock -->
-          <div class="on-the-clock" :class="{ 'user-turn': draftStore.isUserPick }">
+          <div class="on-the-clock" :class="{ 'user-turn': draftStore.isUserPick }" data-tour="draft-clock">
             <div v-if="!draftStore.isDraftComplete" class="clock-content">
               <div
                 class="clock-team-badge"
@@ -542,14 +624,14 @@ onUnmounted(() => {
           </div>
 
           <!-- Player Pool -->
-          <div class="player-pool">
+          <div class="player-pool" data-tour="draft-pool">
             <div class="pool-header">
               <h3 class="pool-title">AVAILABLE PLAYERS</h3>
               <div class="pool-count">{{ draftStore.availablePlayers.length }} players</div>
             </div>
 
             <!-- Filters -->
-            <div class="pool-filters">
+            <div class="pool-filters" data-tour="draft-filters">
               <div class="position-filters">
                 <button
                   v-for="pos in ['ALL', 'PG', 'SG', 'SF', 'PF', 'C']"
@@ -595,14 +677,16 @@ onUnmounted(() => {
                     </th>
                     <th class="col-num">Age</th>
                     <th class="col-ht">Ht</th>
+                    <th v-if="!isRookieMode" class="col-contract">Contract</th>
                     <th class="col-action"></th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr
-                    v-for="player in draftStore.filteredPlayers.slice(0, 100)"
+                    v-for="(player, idx) in draftStore.filteredPlayers.slice(0, 100)"
                     :key="player.id"
                     class="player-row"
+                    :data-tour="idx === 0 ? 'draft-player-row' : null"
                     @click="openPlayerModal(player)"
                   >
                     <td class="col-name">
@@ -615,11 +699,12 @@ onUnmounted(() => {
                     <td class="col-num pot-cell" :class="{ unrevealed: !isAttributeRevealed(player.id, 'potentialRating') }">{{ getScoutedDisplay(player, 'potentialRating') }}</td>
                     <td class="col-num">{{ getPlayerAge(player.birthDate) }}</td>
                     <td class="col-ht">{{ formatHeight(player.heightInches) }}</td>
+                    <td v-if="!isRookieMode" class="col-contract">{{ formatContract(player) }}</td>
                     <td class="col-action">
                       <button
                         v-if="draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete"
                         class="btn-draft"
-                        @click.stop="draftStore.makeUserPick(player.id)"
+                        @click.stop="handleDraftPick(player.id)"
                       >
                         Draft
                       </button>
@@ -673,9 +758,10 @@ onUnmounted(() => {
 
       <!-- Bottom Bar: Skip Controls -->
       <footer class="draft-footer">
-        <div class="sim-controls">
+        <div class="sim-controls" data-tour="draft-controls">
           <button
             class="sim-btn roster-toggle-btn"
+            data-tour="draft-roster-toggle"
             @click="showMobileRoster = !showMobileRoster"
           >
             <Users :size="16" />
@@ -722,7 +808,7 @@ onUnmounted(() => {
       @close="showCompleteModal = false"
     />
 
-    <!-- Prospect Detail Modal (read-only scouting view) -->
+    <!-- Prospect Detail Modal (rookie draft — read-only scouting view) -->
     <PlayerDetailModal
       v-if="isRookieMode"
       :show="showPlayerModal"
@@ -736,6 +822,20 @@ onUnmounted(() => {
       :scouting-in-progress="false"
       :badges-revealed="selectedPlayer ? (scoutedPlayers[selectedPlayer.id]?.badgesRevealed || false) : false"
       :morale-revealed="selectedPlayer ? (scoutedPlayers[selectedPlayer.id]?.moraleRevealed || false) : false"
+      :can-draft="canDraftCurrent"
+      @draft-player="handleDraftFromModal"
+      @close="showPlayerModal = false"
+    />
+
+    <!-- Player Detail Modal (fantasy draft — full profile of an existing player) -->
+    <PlayerDetailModal
+      v-else
+      :show="showPlayerModal"
+      :player="selectedPlayer"
+      :show-growth="false"
+      :show-history="false"
+      :can-draft="canDraftCurrent"
+      @draft-player="handleDraftFromModal"
       @close="showPlayerModal = false"
     />
   </div>
@@ -1305,6 +1405,12 @@ onUnmounted(() => {
 .col-ht {
   width: 50px;
   text-align: center;
+}
+
+.col-contract {
+  width: 110px;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .col-action {

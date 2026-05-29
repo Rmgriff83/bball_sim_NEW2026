@@ -6,6 +6,7 @@ import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import { useAuthStore } from '@/stores/auth'
+import { useWalkthroughStore } from '@/stores/walkthrough'
 import { GlassCard, LoadingSpinner } from '@/components/ui'
 import { DollarSign, Users, TrendingUp, Calendar, FileText, ArrowDown, ArrowUp, FastForward } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -30,6 +31,7 @@ const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
 const authStore = useAuthStore()
+const walkthroughStore = useWalkthroughStore()
 const route = useRoute()
 
 const loading = ref(true)
@@ -449,6 +451,11 @@ watch(activeSubTab, async (newTab) => {
   if (newTab === 'free-agents' && freeAgents.value.length === 0) {
     await loadFreeAgents()
   }
+  // First-visit walkthrough for the Expiring sub-tab — only when the user
+  // actually has an expiring contract to point at.
+  if (newTab === 'expiring' && expiringContracts.value.length > 0) {
+    walkthroughStore.maybeStart('gmFinancesExpiring')
+  }
 })
 
 onMounted(() => {
@@ -471,7 +478,7 @@ onMounted(() => {
 
     <template v-else>
       <!-- Financial Overview Header -->
-      <GlassCard padding="lg" :hoverable="false" class="overview-card">
+      <GlassCard padding="lg" :hoverable="false" class="overview-card" data-tour="gm-finances-overview">
         <div class="overview-grid">
           <div class="overview-item">
             <div class="overview-icon cap">
@@ -539,7 +546,7 @@ onMounted(() => {
       </GlassCard>
 
       <!-- Sub-Tab Navigation -->
-      <div class="sub-tab-nav">
+      <div class="sub-tab-nav" data-tour="gm-finances-subtabs">
         <button
           class="sub-tab-btn"
           :class="{ active: activeSubTab === 'team' }"
@@ -653,11 +660,12 @@ onMounted(() => {
           </h4>
           <div class="player-cards-grid">
             <ContractCard
-              v-for="player in expiringContracts"
+              v-for="(player, idx) in expiringContracts"
               :key="player.id"
               :player="player"
               :show-stats="true"
               :resign-disabled="resignDeadlinePassed"
+              :data-tour="idx === 0 ? 'gm-expiring-card' : null"
               @resign="handleResign"
               @drop="handleDrop"
               @info="handleInfo"

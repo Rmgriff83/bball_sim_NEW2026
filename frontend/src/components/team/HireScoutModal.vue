@@ -4,6 +4,7 @@ import { X, Star, Lock, Check, Coins } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { useSyncStore } from '@/stores/sync'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { COACH_FIRST_NAMES, COACH_LAST_NAMES } from '@/engine/data/coaches'
@@ -21,6 +22,7 @@ const authStore = useAuthStore()
 const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
 const syncStore = useSyncStore()
+const audio = useAudioStore()
 
 const candidates = ref([])
 const hiring = ref(false)
@@ -108,6 +110,7 @@ function close() {
 async function hireScout(candidate) {
   if (hiring.value || tokens.value < candidate.cost) return
   hiring.value = true
+  audio.suppressClickSound() // cha-ching on success instead of the generic tap
 
   try {
     // Deduct tokens
@@ -140,6 +143,7 @@ async function hireScout(candidate) {
     }
 
     syncStore.markDirty()
+    audio.purchase()
     toastStore.showSuccess('Scout hired successfully!')
     emit('hired')
     emit('close')
