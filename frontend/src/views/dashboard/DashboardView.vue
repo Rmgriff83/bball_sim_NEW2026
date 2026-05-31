@@ -56,7 +56,7 @@ async function handleLogout() {
         <section class="actions-section">
           <h2 class="section-title">Quick Actions</h2>
           <div class="actions-grid">
-            <GlassCard padding="lg" class="action-card" @click="router.push('/campaigns')">
+            <GlassCard padding="lg" class="action-card" role="button" @click="router.push('/campaigns')">
               <div class="action-icon continue">
                 <Gamepad2 :size="24" />
               </div>
@@ -66,7 +66,7 @@ async function handleLogout() {
               </div>
             </GlassCard>
 
-            <GlassCard padding="lg" class="action-card" @click="router.push('/campaigns')">
+            <GlassCard padding="lg" class="action-card" role="button" @click="router.push({ path: '/campaigns', query: { new: '1' } })">
               <div class="action-icon new">
                 <Plus :size="24" />
               </div>
@@ -76,7 +76,7 @@ async function handleLogout() {
               </div>
             </GlassCard>
 
-            <GlassCard padding="lg" class="action-card" @click="router.push('/profile')">
+            <GlassCard padding="lg" class="action-card" role="button" @click="router.push('/profile')">
               <div class="action-icon profile">
                 <Trophy :size="24" />
               </div>

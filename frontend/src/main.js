@@ -11,6 +11,13 @@ import { unlock as unlockAudio } from './services/audioEngine'
 // Styles
 import './assets/styles/main.css'
 
+// Tag <html> with the runtime platform so platform-specific CSS can opt in
+// (e.g. iOS-only floating-glass bottom nav in BottomNav.vue). Capacitor's
+// getPlatform() returns 'ios' | 'android' | 'web'. Runs synchronously
+// before app.mount, so the class is present on first paint.
+import { Capacitor } from '@capacitor/core'
+document.documentElement.classList.add('platform-' + Capacitor.getPlatform())
+
 // Ask the platform to mark our IndexedDB / localStorage as persistent.
 // On iOS WKWebView this hints that the campaign cache should survive
 // storage-pressure eviction. No-op where unsupported.

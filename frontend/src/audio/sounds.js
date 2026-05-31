@@ -37,6 +37,17 @@ export const UI_SOUNDS = {
     // file: null,
   },
 
+  // Tertiary tap — ambient "something happened" feedback for events the user
+  // didn't directly cause (currently AI draft picks). Same noise-click family
+  // as `navigate` so it feels consistent, but darker (lower filter freq) and
+  // slightly longer so it can be distinguished from a user tap.
+  tertiary: {
+    synth: [
+      { noise: true, duration: 0.022, gain: 0.11, filterFreq: 1100, q: 0.6 },
+    ],
+    // file: null,
+  },
+
   // Purchase / spending tokens: a "cha-ching" cash-register chime.
   // A short noise "cha" transient, then two bright bell-like tones ringing up.
   purchase: {

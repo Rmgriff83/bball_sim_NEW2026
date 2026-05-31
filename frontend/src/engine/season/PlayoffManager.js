@@ -556,9 +556,15 @@ export class PlayoffManager {
       // Conference finals just wrapped — stamp the conference-MVP at the
       // bracket level so consumers don't have to dig into the series object,
       // then create the Finals matchup if both conferences are done.
-      const confKey = series.conference
-      if (confKey && bracket[confKey]) {
-        bracket[confKey].confFinalsMVP = series.seriesMVP ?? null
+      // The `series` arg is null when invoked from the safety-net loop in
+      // gameStore.simulateToNextPlayoffRound — in that path the per-series
+      // advancement at game.js:2847 has already stamped MVP, so we just need
+      // _createFinalsIfReady to fire idempotently.
+      if (series) {
+        const confKey = series.conference
+        if (confKey && bracket[confKey]) {
+          bracket[confKey].confFinalsMVP = series.seriesMVP ?? null
+        }
       }
       PlayoffManager._createFinalsIfReady(bracket)
     } else if (round === 4) {
@@ -566,9 +572,11 @@ export class PlayoffManager {
       // level. Without this, `bracket.finalsMVP` stays null forever even
       // though the per-series MVP was correctly computed in
       // `updateSeriesAfterGame`. Archive UIs and the season-awards summary
-      // read this top-level field.
-      bracket.champion = series.winner
-      bracket.finalsMVP = series.seriesMVP ?? null
+      // read this top-level field. Same null guard as round 3.
+      if (series) {
+        bracket.champion = series.winner
+        bracket.finalsMVP = series.seriesMVP ?? null
+      }
     }
 
     seasonData.playoffBracket = bracket

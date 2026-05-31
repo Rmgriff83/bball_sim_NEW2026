@@ -63,7 +63,6 @@ const navItems = computed(() => {
     },
     {
       name: 'play',
-      label: 'PLAY',
       to: `/campaign/${props.campaignId}/play`,
       routeName: 'game',
       icon: 'play',
@@ -131,7 +130,6 @@ function isActive(routeName) {
       <template v-else-if="item.icon === 'play'">
         <div class="play-btn">
           <Play class="play-btn-icon" :size="20" fill="currentColor" />
-          <span class="play-btn-label">{{ item.label }}</span>
         </div>
       </template>
     </router-link>
@@ -141,17 +139,23 @@ function isActive(routeName) {
 <style scoped>
 .bottom-nav {
   position: fixed;
-  bottom: 0;
+  /* Float above the home-indicator safe area so the nav stays a consistent
+     70px tall (matching the browser/desktop look) instead of growing taller
+     on iPhone. The strip below the nav shows the page background — common
+     pattern in native iOS apps. */
+  bottom: env(safe-area-inset-bottom);
   left: 0;
   right: 0;
   z-index: 50;
   display: flex;
   justify-content: space-around;
-  align-items: center;
+  /* Stretch items to the full nav height, then center content inside each
+     item via the rules below. Avoids the subpixel misalignment of
+     align-items: center with items of varying intrinsic heights. */
+  align-items: stretch;
   height: 70px;
   background: var(--color-bg-secondary);
   border-top: 1px solid var(--glass-border);
-  padding-bottom: env(safe-area-inset-bottom);
   overflow: hidden;
 }
 
@@ -177,8 +181,9 @@ function isActive(routeName) {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  padding: 8px 24px;
+  padding: 0 24px;
   color: var(--color-text-tertiary);
   text-decoration: none;
   transition: color 0.2s ease;
@@ -215,13 +220,6 @@ function isActive(routeName) {
   height: 20px;
 }
 
-.play-btn-label {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
 .bottom-nav-icon {
   width: 24px;
   height: 24px;
@@ -248,5 +246,38 @@ function isActive(routeName) {
   .bottom-nav {
     display: none;
   }
+}
+</style>
+
+<!-- Non-scoped block: the iOS override must target a global selector
+     (html.platform-ios stamped by main.js). Inside a `scoped` block the
+     :global() pseudo-class can compile unpredictably, so we use a plain
+     <style> block where the selector is unambiguous. `.bottom-nav` is
+     only used by this component, so the rule remains effectively scoped
+     by class name. -->
+<style>
+html.platform-ios .bottom-nav {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 430px;          /* iPhone Pro Max logical width — avoids stretch on iPad */
+  border-radius: 22px;
+  border: 1px solid var(--glass-border);
+  /* More transparent than --glass-bg (0.8) — leans on the backdrop blur
+     to provide legibility, more in line with Apple's thinMaterial. */
+  background: rgba(37, 32, 48, 0.6);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+/* Light-mode: matching opacity bump for the white glass + softer shadow
+   (dark shadow reads as a harsh bar over a white page). `data-theme` lives
+   on <html> itself, so combine both attribute selectors on one element
+   (no space) rather than treating it as a descendant. */
+html.platform-ios[data-theme="light"] .bottom-nav {
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 8px 24px rgba(45, 40, 56, 0.12);
 }
 </style>

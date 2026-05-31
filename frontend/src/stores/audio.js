@@ -79,6 +79,9 @@ export const useAudioStore = defineStore('audio', () => {
     play('navigate')
   }
   function purchase() { play('purchase') }
+  // Tertiary tap — fires for events the user didn't trigger (e.g. AI draft
+  // picks). No click-suppression needed since it's not called from a click.
+  function tertiary() { play('tertiary') }
 
   // ---- Music (homepage / menus) ----
   function playMusic(key, { loop = true } = {}) {
@@ -118,6 +121,7 @@ export const useAudioStore = defineStore('audio', () => {
     cancel,
     navigate,
     purchase,
+    tertiary,
     suppressClickSound,
     playMusic,
     stopMusic,

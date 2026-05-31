@@ -177,3 +177,4 @@ export function selectBestCoachingScheme(roster, coach, existing = null) {
   const substitution = existing?.substitution || DEFAULT_SUB_STRATEGY
   return { offensive, defensive, substitution }
 }
+

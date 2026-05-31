@@ -130,5 +130,8 @@ const emit = defineEmits(['answered'])
 <style>
 .modal-container:has(.hpb) {
   max-width: 42rem;
+  /* Short content-sized prompt — opt out of BaseModal's standardized 90vh
+     min-height so the dialog doesn't render with awkward empty space. */
+  min-height: auto;
 }
 </style>

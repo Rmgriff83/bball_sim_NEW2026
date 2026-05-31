@@ -1798,6 +1798,7 @@ function formatChange(change) {
   width: 100%;
   max-width: 42rem;
   max-height: 90vh;
+  min-height: 90vh;
   background: var(--glass-bg-elevated, rgba(30, 35, 45, 0.98));
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-2xl);
@@ -2552,6 +2553,7 @@ function formatChange(change) {
 
 .pool-item {
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 6px;
 }
@@ -2620,7 +2622,6 @@ function formatChange(change) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: 6px;
   padding: 6px 12px;
   border-radius: var(--radius-md);
   background: var(--color-primary);
@@ -3458,10 +3459,10 @@ function formatChange(change) {
 
 /* Mobile Responsive Styles */
 @media (max-width: 480px) {
-  .modal-container {
-    max-height: 95vh;
+  .modal-container{
+    max-height:85vh;
+    min-height: 85vh;
   }
-
   .modal-header {
     padding: 12px 16px;
   }

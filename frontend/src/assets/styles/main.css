@@ -24,10 +24,18 @@ html {
 }
 
 body {
+  box-sizing: border-box;
   min-height: 100vh;
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
   overflow-x: hidden;
+  /* Push page content below the notch. Capacitor's contentInset is "never",
+     so the WebView is truly edge-to-edge and we own safe-area handling
+     explicitly. Bottom inset is handled per-component (BottomNav already
+     pads itself by env(safe-area-inset-bottom)); body.padding-bottom is
+     intentionally NOT set so fixed bottom UI can extend to the absolute
+     viewport bottom. */
+  padding-top: env(safe-area-inset-top);
 }
 
 /* Cosmic background with stars - Dark mode */
@@ -71,9 +79,10 @@ body::before {
   display: none;
 }
 
-/* App container */
+/* App container — fills body's content area, which is now 100vh minus the
+   safe-area-inset-top padding applied to body. */
 #app {
-  min-height: 100vh;
+  min-height: calc(100vh - env(safe-area-inset-top));
   display: flex;
   flex-direction: column;
 }

@@ -714,6 +714,14 @@ const lastSimResultOutcome = computed(() => {
 function formatGameDate(dateStr) {
   if (!dateStr) return ''
   const date = parseLocalDate(dateStr)
+  // Relative-label shortcuts based on the campaign's in-game calendar.
+  // Math.round handles DST edges where a 24h diff can come back as 23h/25h.
+  const cur = currentDate.value ? parseLocalDate(currentDate.value) : null
+  if (cur) {
+    const diffDays = Math.round((date - cur) / 86_400_000)
+    if (diffDays === 0) return 'Today'
+    if (diffDays === 1) return 'Tomorrow'
+  }
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
@@ -2444,7 +2452,6 @@ function handleCloseSimulateModal() {
                   </div>
                   <div class="team-info">
                     <span v-if="userTeamRating" class="team-rating">{{ userTeamRating }} OVR</span>
-                    <span class="team-rank">#{{ teamRank }} {{ conferenceLabel }}</span>
                   </div>
                 </div>
               </div>
@@ -2468,7 +2475,6 @@ function handleCloseSimulateModal() {
                   </div>
                   <div class="team-info">
                     <span v-if="nextGameOpponent?.rating" class="team-rating">{{ nextGameOpponent.rating }} OVR</span>
-                    <span v-if="nextGameOpponent?.rank" class="team-rank">#{{ nextGameOpponent.rank }} {{ nextGameOpponent.conference }}</span>
                   </div>
                 </div>
                 <div class="matchup-top-players">
@@ -4299,6 +4305,23 @@ function handleCloseSimulateModal() {
   color: var(--color-text-primary);
 }
 
+/* Mobile: inline the "NEXT GAME" label with the date so the header reads
+   "NEXT GAME: Tue, Oct 21" on one line instead of stacking. The label-group
+   flips from column to row and a colon is appended after the label via
+   ::after. The playoff-info-banner stays inside .next-game-meta-row and
+   wraps naturally if the row overflows. */
+@media (max-width: 640px) {
+  .next-game-label-group {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .next-game-label::after {
+    content: ':';
+  }
+}
+
 .next-game-label-row {
   display: flex;
   align-items: center;
@@ -4882,13 +4905,6 @@ function handleCloseSimulateModal() {
   color: var(--color-text-primary);
 }
 
-.team-rank {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--color-text-tertiary);
-  text-transform: uppercase;
-}
-
 .matchup-vs {
   display: flex;
   align-items: center;
@@ -5252,38 +5268,25 @@ function handleCloseSimulateModal() {
     font-size: 0.75rem;
   }
 
+  /* Desktop badges keep the mobile-style proportions (larger circle, smaller
+     text) per user request — only the circle gets a slight bump over mobile.
+     Text sizes intentionally inherit the base/mobile values (badge-abbr 1.3rem,
+     badge-record 0.85rem, team-abbr 0.9rem) so we don't restate them here. */
   .team-badge-game {
-    width: 100px;
-    height: 100px;
-  }
-
-  .badge-abbr {
-    font-size: 1.5rem;
-  }
-
-  .badge-record {
-    font-size: 0.9rem;
+    width: 140px;
+    height: 140px;
   }
 
   .next-game-matchup {
     gap: 40px;
   }
 
-
   .vs-text {
     font-size: 2rem;
   }
 
-  .next-game-label {
-    font-size: 1.75rem;
-  }
-
   .next-game-date {
     font-size: 1.1rem;
-  }
-
-  .team-abbr {
-    font-size: 1rem;
   }
 
   .team-rating {
@@ -5579,7 +5582,10 @@ function handleCloseSimulateModal() {
 
 @media (max-width: 1023px) {
   .games-ticker {
-    bottom: 70px; /* above BottomNav on mobile */
+    /* Sit directly above the BottomNav. The nav's height is 70px content +
+       env(safe-area-inset-bottom) on iPhone (~34px home-indicator), so
+       hardcoding 70px here would tuck the ticker behind the nav on iOS. */
+    bottom: calc(70px + env(safe-area-inset-bottom));
   }
 }
 

@@ -210,6 +210,20 @@ export const WALKTHROUGHS = {
       body: "At a glance: your salary cap, total payroll, remaining cap space, and roster count (out of 15). Stay under the cap and keep room to sign free agents.",
     },
     {
+      target: 'gm-roster-card',
+      tab: { view: 'gm', tab: 'finances' },
+      placement: 'right',
+      title: 'Player Cards',
+      body: "Each player on your roster shows up as a card — name, position, age, overall, salary, and contract length. Tap a card to open the full player profile.",
+    },
+    {
+      target: 'gm-player-actions',
+      tab: { view: 'gm', tab: 'finances' },
+      placement: 'right',
+      title: 'Re-sign or Drop',
+      body: "Players in the final year of their deal get a Re-sign button to lock in a new multi-year contract before they walk in free agency. Drop releases a player outright to free up cap space and a roster spot.",
+    },
+    {
       target: 'gm-finances-subtabs',
       tab: { view: 'gm', tab: 'finances' },
       placement: 'bottom',
@@ -228,7 +242,7 @@ export const WALKTHROUGHS = {
       body: "These players are in the final year of their deals. Do nothing and they'll hit free agency at season's end — and could walk for nothing.",
     },
     {
-      target: 'gm-expiring-actions',
+      target: 'gm-player-actions',
       placement: 'bottom',
       title: 'Re-sign or Drop',
       body: 'Re-sign keeps a player on a new multi-year deal; Drop releases them now to free up cap space and a roster spot. Re-signing closes at the Dec 15 deadline.',
@@ -290,6 +304,95 @@ export const WALKTHROUGHS = {
       placement: 'top',
       title: 'Plan Ahead',
       body: "Spot back-to-backs and rivalry games and plan rest around tough stretches. You can also simulate ahead from here — jump multiple games forward, or run the entire season at once. Heads up: tokens aren't granted when you sim several games at a time.",
+    },
+  ],
+
+  // Pre-game preview screen — fires on first visit to any user game that
+  // hasn't been played yet. Walks through the matchup card, court preview,
+  // coaches, substitutions, the strategy pills, and the START button.
+  gamePreview: [
+    {
+      placement: 'center',
+      title: 'Game Day',
+      body: "This is your pre-game war room. Before tipoff you can size up the matchup, tweak your starting five, set your offensive and defensive plan, then play it out live or simulate. Let's walk through it.",
+    },
+    {
+      target: 'game-court',
+      placement: 'bottom',
+      title: 'Starting Lineups',
+      body: "A court-level preview of both teams' starters with their positions and overall ratings, side by side. Quick way to spot mismatches — your point guard versus theirs, your center under the rim, and so on.",
+    },
+    {
+      target: ['game-subs-btn', 'game-subs-dropdown'],
+      placement: 'top',
+      action: { view: 'gamePreview', enter: 'openSubsDropdown', leave: 'closeSubsDropdown' },
+      title: 'Last-Minute Substitutions',
+      body: "Need to swap a starter or adjust the rotation before tipoff? This dropdown is your full lineup control — same as the GM Desk, contextual to this game.",
+    },
+    {
+      target: 'game-coaches',
+      placement: 'top',
+      title: 'Head Coaches',
+      body: "Both head coaches' cards live here — their overall, badges, and the offensive and defensive schemes they're running. Coach badges and schemes both swing the simulation, so know what you're up against.",
+    },
+    {
+      target: 'game-plan',
+      placement: 'top',
+      title: 'Your Game Plan',
+      body: "Pick your offensive and defensive schemes for tonight. The percentage on each pill is the fit % — how well your current roster matches that scheme. Higher fit means a bigger in-game edge.",
+    },
+    {
+      target: 'game-start-btn',
+      placement: 'top',
+      title: 'Tip It Off',
+      body: "When you're ready, hit START to launch the game. If there are any earlier games on the schedule that haven't been played yet, you'll be prompted to sim them through first.",
+    },
+    {
+      placement: 'center',
+      title: "Let's play",
+      body: "That's the pre-game flow. Set your lineup, pick your schemes, and go win one. Good luck.",
+    },
+  ],
+
+  // Post-game recap — fires the first time the user lands on a completed
+  // user game. Walks through the quarter scores, box score, the result
+  // banner with explicit win/loss commentary, the rewards earned, and the
+  // player evolution / development updates (which is the most game-impacting
+  // thing on this page and the one users miss most often).
+  gameRecap: [
+    {
+      placement: 'center',
+      title: 'Game in the Books',
+      body: "Here's the post-game recap. We'll quickly walk through what happened — the score by quarter, the stat lines, what you earned, and how the result reshaped your roster going forward.",
+    },
+    {
+      target: 'postgame-quarter-scores',
+      placement: 'bottom',
+      title: 'Quarter by Quarter',
+      body: "How the game flowed — points scored each quarter, with the winning team's row highlighted. Useful for spotting when momentum swung or when you got buried by a run.",
+    },
+    {
+      target: 'postgame-box-score',
+      placement: 'top',
+      title: 'Box Score',
+      body: "Every player's stat line for the game — points, rebounds, assists, shooting splits, plus/minus. Switch tabs between the two teams. The leaders here are usually the ones who carried (or sank) the result.",
+    },
+    {
+      target: 'postgame-rewards',
+      placement: 'top',
+      title: 'Rewards Earned',
+      body: "Tokens you banked from this game, doubled if you won. Synergies Activated counts the badge combos your lineup triggered on the floor — a sign your roster's chemistry is paying off. Tokens spend in the Store and on player upgrade points.",
+    },
+    {
+      target: 'postgame-updates',
+      placement: 'top',
+      title: 'Player Updates',
+      body: "This is the biggest thing on the page. After every game, players can grow, regress, get hot, cool off, get tired, or shift morale. Development bumps real ratings — the +Speed or +Three Point you see here is a permanent attribute increase that makes that player better in every future game. Regression is the opposite: ratings tick down on older players or those riding the bench too much.",
+    },
+    {
+      placement: 'center',
+      title: 'On to the next',
+      body: "That's the recap. Growth and regression compound over a season, so a steady run of starter minutes for your young guys is one of the best ways to build a contender. Head back to the home page when you're ready for the next matchup.",
     },
   ],
 

@@ -162,6 +162,12 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
     stepIndex.value = 0
     requestedTab.value = null
     requestedAction.value = null
+    // Tours often scroll the page to spotlight mid/lower elements; on exit,
+    // return the user to the top of the current view so they're not stranded
+    // at a random scroll position. Guarded for SSR.
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
   }
 
   function skip() {

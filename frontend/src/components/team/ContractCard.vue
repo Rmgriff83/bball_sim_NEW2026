@@ -133,7 +133,7 @@ function handleInfo() {
         </div>
 
         <!-- Action Buttons for Team Players -->
-        <div v-if="showActions && !isFreeAgent" class="action-buttons" data-tour="gm-expiring-actions">
+        <div v-if="showActions && !isFreeAgent" class="action-buttons" data-tour="gm-player-actions">
           <button
             v-if="isExpiringContract && !resignDisabled"
             class="action-btn resign-btn"

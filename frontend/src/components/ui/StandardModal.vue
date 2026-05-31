@@ -96,13 +96,20 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  /* Safe-area-aware padding so the modal never sits under the iPhone notch
+     or home indicator. max() preserves the 16px minimum gutter on devices
+     without insets (web, older iOS, etc.). */
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(4px);
 }
 
 .modal-container {
   width: 100%;
+  min-height: 90vh;
   max-height: 90vh;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
@@ -111,6 +118,13 @@ onUnmounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+@media (max-width: 480px) {
+  .modal-container {
+    min-height: 85vh;
+    max-height: 85vh;
+  }
 }
 
 .size-sm { max-width: 400px; }

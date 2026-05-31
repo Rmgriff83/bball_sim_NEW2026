@@ -303,6 +303,15 @@ function handleSkipCurrent() {
   draftStore.simCurrentPick()
 }
 
+// Continue-to-Season click handler. Plays the generic tap explicitly + tells
+// the global click listener in main.js to skip its own navigate() on this
+// event so the sound only fires once.
+function onContinueClick() {
+  audio.suppressClickSound()
+  audio.play('navigate')
+  handleFinalize()
+}
+
 async function handleFinalize() {
   try {
     if (isRookieMode.value) {
@@ -618,8 +627,19 @@ onUnmounted(() => {
                 <span class="timer-text">{{ draftStore.timerSeconds }}</span>
               </div>
             </div>
-            <div v-else class="clock-content">
+            <div v-else class="clock-content draft-complete">
               <div class="clock-status">DRAFT COMPLETE</div>
+              <!-- Inline continue path. Mirrors the DraftCompleteModal's
+                   @continue handler so the user can advance without going
+                   through the modal — useful on mobile where the modal can
+                   feel like an extra step. -->
+              <button
+                class="continue-btn"
+                :disabled="draftStore.isFinalizing"
+                @click="onContinueClick"
+              >
+                {{ draftStore.isFinalizing ? 'Continuing…' : 'Continue to Season' }}
+              </button>
             </div>
           </div>
 
@@ -675,41 +695,68 @@ onUnmounted(() => {
                       <ChevronUp v-if="getSortIcon('potentialRating') === 'asc'" :size="12" />
                       <ChevronDown v-if="getSortIcon('potentialRating') === 'desc'" :size="12" />
                     </th>
-                    <th class="col-num">Age</th>
+                    <th class="col-num col-age">Age</th>
                     <th class="col-ht">Ht</th>
                     <th v-if="!isRookieMode" class="col-contract">Contract</th>
                     <th class="col-action"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr
+                  <template
                     v-for="(player, idx) in draftStore.filteredPlayers.slice(0, 100)"
                     :key="player.id"
-                    class="player-row"
-                    :data-tour="idx === 0 ? 'draft-player-row' : null"
-                    @click="openPlayerModal(player)"
                   >
-                    <td class="col-name">
-                      <span class="player-name">{{ player.firstName }} {{ player.lastName }}</span>
-                    </td>
-                    <td class="col-pos">
-                      <span class="pos-badge">{{ player.position }}</span>
-                    </td>
-                    <td class="col-num ovr-cell" :class="{ unrevealed: !isAttributeRevealed(player.id, 'overallRating') }">{{ getScoutedDisplay(player, 'overallRating') }}</td>
-                    <td class="col-num pot-cell" :class="{ unrevealed: !isAttributeRevealed(player.id, 'potentialRating') }">{{ getScoutedDisplay(player, 'potentialRating') }}</td>
-                    <td class="col-num">{{ getPlayerAge(player.birthDate) }}</td>
-                    <td class="col-ht">{{ formatHeight(player.heightInches) }}</td>
-                    <td v-if="!isRookieMode" class="col-contract">{{ formatContract(player) }}</td>
-                    <td class="col-action">
-                      <button
-                        v-if="draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete"
-                        class="btn-draft"
-                        @click.stop="handleDraftPick(player.id)"
-                      >
-                        Draft
-                      </button>
-                    </td>
-                  </tr>
+                    <tr
+                      class="player-row"
+                      :data-tour="idx === 0 ? 'draft-player-row' : null"
+                      @click="openPlayerModal(player)"
+                    >
+                      <td class="col-name">
+                        <span class="player-name">{{ player.firstName }} {{ player.lastName }}</span>
+                      </td>
+                      <td class="col-pos">
+                        <span class="pos-badge">{{ player.position }}</span>
+                      </td>
+                      <td class="col-num ovr-cell" :class="{ unrevealed: !isAttributeRevealed(player.id, 'overallRating') }">{{ getScoutedDisplay(player, 'overallRating') }}</td>
+                      <td class="col-num pot-cell" :class="{ unrevealed: !isAttributeRevealed(player.id, 'potentialRating') }">{{ getScoutedDisplay(player, 'potentialRating') }}</td>
+                      <td class="col-num col-age">{{ getPlayerAge(player.birthDate) }}</td>
+                      <td class="col-ht">{{ formatHeight(player.heightInches) }}</td>
+                      <td v-if="!isRookieMode" class="col-contract">{{ formatContract(player) }}</td>
+                      <td class="col-action">
+                        <button
+                          v-if="draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete"
+                          class="btn-draft"
+                          @click.stop="handleDraftPick(player.id)"
+                        >
+                          Draft
+                        </button>
+                        <button
+                          v-else
+                          class="btn-details"
+                          @click.stop="openPlayerModal(player)"
+                        >
+                          Details
+                        </button>
+                      </td>
+                    </tr>
+                    <!-- Mobile-only contract subrow. Hidden on desktop via CSS;
+                         spans the first 4 visible cells (Name→POT) so the
+                         contract info that we dropped from the mobile column
+                         set comes back as a footer-style line under each row. -->
+                    <tr
+                      v-if="!isRookieMode"
+                      class="contract-row"
+                      @click="openPlayerModal(player)"
+                    >
+                      <td colspan="4" class="contract-cell">
+                        <span class="contract-label">Contract</span>
+                        <span class="contract-value">{{ formatContract(player) }}</span>
+                      </td>
+                      <!-- Empty trailing cell so the contract-row's column count
+                           matches the main row (4 + 4 = 8 in non-rookie mode). -->
+                      <td colspan="4" class="contract-spacer"></td>
+                    </tr>
+                  </template>
                 </tbody>
               </table>
             </div>
@@ -891,13 +938,23 @@ onUnmounted(() => {
 
 .draft-title {
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 1.6rem;
+  /* Matches TeamHeader's .team-name sizing (2.5rem mobile → 3rem desktop)
+     so page headers feel consistent across the app. */
+  font-size: 2.5rem;
   font-weight: 400;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
+  line-height: 1;
   background: var(--gradient-cosmic);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+/* Desktop bump — same breakpoint and value used by TeamHeader.vue. */
+@media (min-width: 767px) {
+  .draft-title {
+    font-size: 3rem;
+  }
 }
 
 .campaign-label {
@@ -1212,6 +1269,41 @@ onUnmounted(() => {
   color: var(--color-primary);
 }
 
+/* Draft-complete state — replaces the timer with an inline Continue CTA.
+   Layout switches to a row with the status + button so the user can
+   advance straight from the page without dismissing the modal first. */
+.clock-content.draft-complete {
+  justify-content: space-between;
+}
+
+.continue-btn {
+  padding: 8px 18px;
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  font-weight: 400;
+  text-transform: uppercase;
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-md);
+  color: white;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+.continue-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.continue-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.continue-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* Timer Ring */
 .clock-timer {
   position: relative;
@@ -1460,6 +1552,39 @@ onUnmounted(() => {
   filter: brightness(1.1);
 }
 
+/* Lower-emphasis sibling of .btn-draft — shown when the user isn't on the
+   clock, so the action cell still has a visible affordance to open the
+   player details modal (tapping the row also works). */
+.btn-details {
+  padding: 4px 12px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-details:hover {
+  border-color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+}
+
+/* Mobile contract subrow: hidden on desktop, revealed as a small footer
+   line beneath each player row on phones. */
+.contract-row {
+  display: none;
+}
+
+.contract-cell,
+.contract-spacer {
+  /* No top border so the row reads as a continuation of the main row. */
+  border-top: none;
+}
+
 /* Footer / Skip Controls */
 .draft-footer {
   display: flex;
@@ -1561,10 +1686,6 @@ onUnmounted(() => {
     gap: 8px;
   }
 
-  .draft-title {
-    font-size: 1.2rem;
-  }
-
   .campaign-label {
     display: none;
   }
@@ -1580,6 +1701,85 @@ onUnmounted(() => {
   .pool-table-wrap {
     margin: 0 -16px;
     padding: 0 16px;
+    /* Kill horizontal scroll on phones — fit everything by hiding the
+       less-essential columns instead. Y-axis scrolling stays. */
+    overflow-x: hidden;
+  }
+
+  /* Mobile pool-table: bigger tap targets, no horizontal overflow.
+     Keeps Name / Pos / OVR / POT / Draft action; hides Age, Height,
+     Contract (the user can still see all of those in the player details
+     modal that opens on row tap). */
+  .pool-table {
+    font-size: 0.9rem;
+    table-layout: auto;
+  }
+  .pool-table th {
+    padding: 10px 8px;
+  }
+  .pool-table td {
+    padding: 14px 8px;
+  }
+  .col-name {
+    min-width: 0;
+  }
+  .col-age,
+  .col-ht,
+  .col-contract {
+    display: none;
+  }
+  .btn-draft,
+  .btn-details {
+    padding: 8px 14px;
+    font-size: 0.75rem;
+  }
+
+  /* Show the contract subrow on mobile. Lighter typography, no bottom
+     border on the main row above so the pair reads as a single card. */
+  .contract-row {
+    display: table-row;
+    cursor: pointer;
+  }
+  .player-row > td {
+    border-bottom: none;
+  }
+  .contract-cell {
+    padding: 0 8px 12px 8px;
+    font-size: 0.72rem;
+    color: var(--color-text-secondary);
+    /* Centered so the contract reads as a unified footer line spanning the
+       row's first 4 visible columns. */
+    text-align: center;
+  }
+  .contract-label {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-tertiary);
+    margin-right: 6px;
+    font-size: 0.65rem;
+    font-weight: 600;
+  }
+
+  /* "Player card" treatment: a subtle elevated background painted across
+     the main row + contract subrow so each player visually groups as a
+     distinct card. A thicker bottom border in the page-bg color creates
+     a clean gap between cards (border-collapse merges to the widest, so
+     adjacent card edges read as a single 6px gutter). */
+  .player-row > td,
+  .contract-cell,
+  .contract-spacer {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  /* Light-mode: a white-on-white card disappears, so flip the alpha to a
+     dark tint that reads against the light page background. */
+  [data-theme="light"] .player-row > td,
+  [data-theme="light"] .contract-cell,
+  [data-theme="light"] .contract-spacer {
+    background: rgba(0, 0, 0, 0.04);
+  }
+  .contract-cell,
+  .contract-spacer {
+    border-bottom: 6px solid var(--color-bg-primary);
   }
 
   .draft-footer {
@@ -1619,7 +1819,9 @@ onUnmounted(() => {
     display: block;
     position: fixed;
     inset: 0;
-    z-index: 40;
+    /* Above the toast containers (z-index 100) so toasts don't poke through
+       the dim layer when the roster drawer is open. */
+    z-index: 105;
     background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(2px);
   }
@@ -1629,12 +1831,16 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     position: fixed;
-    top: 0;
+    /* Start below the notch on iPhone. env() returns 0 on devices without
+       a notch (browser, older iOS), so no regression elsewhere. */
+    top: env(safe-area-inset-top);
     left: 0;
     bottom: 0;
     width: 280px;
     max-width: 85vw;
-    z-index: 50;
+    /* Sits above the backdrop (105) and the toast containers (100) so the
+       drawer always renders over any toasts while it's open. */
+    z-index: 110;
     background: var(--color-bg-secondary);
     border-right: 1px solid var(--glass-border);
     box-shadow: var(--shadow-xl);

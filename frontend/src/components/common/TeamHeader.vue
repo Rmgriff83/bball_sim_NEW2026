@@ -20,7 +20,6 @@ const conferenceLabel = computed(() => {
 const computedSubtitle = computed(() => {
   if (props.subtitle != null) return props.subtitle
   const parts = []
-  if (props.team?.city) parts.push(props.team.city)
   if (conferenceLabel.value) parts.push(conferenceLabel.value)
   return parts.join(' · ')
 })

@@ -7,12 +7,15 @@ import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { usePlayoffStore } from '@/stores/playoff'
+import { useWalkthroughStore } from '@/stores/walkthrough'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
 import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { computeTeamOverall } from '@/utils/teamOverall'
+import { coachingEngine } from '@/engine/simulation/CoachingEngine'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
 import { SimulateConfirmModal, EvolutionSummary } from '@/components/game'
@@ -28,6 +31,7 @@ const leagueStore = useLeagueStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
 const playoffStore = usePlayoffStore()
+const walkthroughStore = useWalkthroughStore()
 const { loadSynergies, getActivatedBadges, getHypotheticalActivations, getLineupSynergyCount } = useBadgeSynergies()
 
 // Animation composable
@@ -142,6 +146,11 @@ const selectedLineup = localLineup
 const expandedSwapPlayer = ref(null)
 // Track if substitutions view is open in quarter break modal
 const showSubstitutionsView = ref(false)
+// Contextual dropdown under the new court-card Substitutions button.
+// Distinct from `showSubstitutionsView` (which still drives the live-game
+// quarter-break subs view) so the pre-game flow opens an inline panel
+// instead of swapping the strategy card's content.
+const showSubsDropdown = ref(false)
 
 // Available coaching styles
 const offensiveStyles = [
@@ -345,6 +354,42 @@ const awayTeamRank = computed(() => {
 const getConferenceLabel = (team) => {
   if (!team?.conference) return ''
   return team.conference === 'east' ? 'EAST' : 'WEST'
+}
+
+// Roster-fit % for a single coaching scheme, shown inside each strategy
+// pill so the user can pick the best fit for their team at a glance.
+// Calls the same engine functions teamStore.fetchCoachingSchemes uses, so
+// the values here exactly match the Fit % displayed on the GM view's
+// coaching subtab.
+function fitFor(scheme) {
+  const roster = userRoster.value
+  if (!roster?.length) return 0
+  const isOffense = offensiveStyles.some(s => s.value === scheme)
+  const eff = isOffense
+    ? coachingEngine.calculateSchemeEffectiveness(scheme, roster)
+    : coachingEngine.calculateDefensiveSchemeEffectiveness(scheme, roster)
+  return Math.round(eff)
+}
+
+// Coach for each side. Prefer the coach embedded on the game's team payload
+// if present; otherwise fall back to teamStore.coach for the user-controlled
+// side (the only one we have a guaranteed local copy of). Returns null when
+// neither source has data — coach card is rendered with v-if to hide cleanly.
+const awayTeamCoach = computed(() => {
+  return awayTeam.value?.coach || (!userIsHome.value ? teamStore.coach : null)
+})
+const homeTeamCoach = computed(() => {
+  return homeTeam.value?.coach || (userIsHome.value ? teamStore.coach : null)
+})
+
+// Top 2 coach badges sorted hof → gold → silver → bronze so the visible
+// chips inside the coach card are the most impressive ones the coach owns.
+const COACH_BADGE_RANK = { hof: 4, gold: 3, silver: 2, bronze: 1 }
+function topCoachBadges(coach, limit = 2) {
+  if (!coach?.badges?.length) return []
+  return [...coach.badges]
+    .sort((a, b) => (COACH_BADGE_RANK[b.level] || 0) - (COACH_BADGE_RANK[a.level] || 0))
+    .slice(0, limit)
 }
 
 // Box score data - use animation box score when playing, otherwise game box score
@@ -1049,6 +1094,16 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+
+  // First-visit onboarding tours, gated by what's actually on screen:
+  //   - Pre-game flow tour for the user's upcoming games
+  //   - Post-game recap tour the first time the user lands on a completed
+  //     game (covers the result, rewards, box score, and player evolution)
+  if (isUserGame.value && !isComplete.value) {
+    walkthroughStore.maybeStart('gamePreview')
+  } else if (isUserGame.value && isComplete.value) {
+    walkthroughStore.maybeStart('gameRecap')
+  }
 })
 
 /**
@@ -1459,6 +1514,18 @@ const gameClock = computed(() => {
   const seconds = totalSeconds % 60
 
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
+})
+
+// Walkthrough side-effect: open/close the Substitutions dropdown so the tour
+// can spotlight both the button and the panel it reveals. (watch is not
+// immediate, so it only fires when an action is requested mid-tour.)
+watch(() => walkthroughStore.requestedAction, (req) => {
+  if (!req || req.view !== 'gamePreview') return
+  if (req.action === 'openSubsDropdown') {
+    showSubsDropdown.value = true
+  } else if (req.action === 'closeSubsDropdown') {
+    showSubsDropdown.value = false
+  }
 })
 
 // Watch for background simulation completion (remaining day games after live game)
@@ -1995,11 +2062,30 @@ onUnmounted(() => {
     <template v-else-if="game">
       <!-- Back Button -->
       <button class="back-btn mb-6" @click="goBack">
-        &larr; Back to Campaign
+        &larr; Back
       </button>
 
       <!-- Game Header (hidden during animation mode) -->
       <GlassCard v-if="!showAnimationMode || !hasAnimationData" padding="lg" :hoverable="false" class="mb-6 game-header-card">
+        <!-- Top header: date + game type label, lifted out of game-center so
+             there's room for the VS-only center column on mobile. The status
+             badge (FINAL / Qx complete) also sits here on completed games
+             so the matchup row can keep both team logos + stacked scores in
+             a single mobile-width row without a center text column eating
+             into the gutter. -->
+        <div class="game-header-top">
+          <p class="game-date">{{ formatDate(game.game_date) }}</p>
+          <p v-if="game.is_playoff" class="game-type-label playoff">
+            {{ playoffStore.getPlayoffRoundLabel(game.playoff_round) }}
+          </p>
+          <p v-else class="game-type-label">Regular Season</p>
+          <p v-if="game.is_playoff && playoffSeriesInfo" class="series-record-badge">
+            {{ playoffSeriesInfo.label }}
+          </p>
+          <p v-if="isComplete" class="game-status-badge final">FINAL</p>
+          <p v-else-if="isInProgress" class="game-status-badge in-progress">Q{{ savedQuarter }} COMPLETE</p>
+        </div>
+
         <div class="game-header">
           <!-- Away Team -->
           <div class="team-side away" :class="{ winner: winner === 'away' }">
@@ -2027,20 +2113,12 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Center Info -->
-          <div class="game-center">
-            <p v-if="isComplete" class="final-text">FINAL</p>
-            <p v-else-if="isInProgress" class="in-progress-text">Q{{ savedQuarter }} Complete</p>
-            <p v-else class="vs-text">VS</p>
-            <p class="game-date">{{ formatDate(game.game_date) }}</p>
-            <p v-if="game.is_playoff" class="game-type-label playoff">
-              {{ playoffStore.getPlayoffRoundLabel(game.playoff_round) }}
-            </p>
-            <p v-else class="game-type-label">Regular Season</p>
-            <p v-if="game.is_playoff && playoffSeriesInfo" class="series-record-badge">
-              {{ playoffSeriesInfo.label }}
-            </p>
-            <p v-if="isUserGame" class="user-game-badge">Your Game</p>
+          <!-- Center Info — VS divider for pregame only. The completed /
+               in-progress status badge lives in .game-header-top so we
+               don't burn a center column on mobile (would squeeze the
+               team logos and stacked scores). -->
+          <div v-if="!isComplete && !isInProgress" class="game-center">
+            <p class="vs-text">VS</p>
           </div>
 
           <!-- Home Team -->
@@ -2291,7 +2369,8 @@ onUnmounted(() => {
                                     :class="{ active: selectedOffense === style.value }"
                                     @click="selectedOffense = style.value"
                                   >
-                                    {{ style.label }}
+                                    <span class="strategy-pill-label">{{ style.label }}</span>
+                                    <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
                                   </button>
                                 </div>
                               </div>
@@ -2305,7 +2384,8 @@ onUnmounted(() => {
                                     :class="{ active: selectedDefense === style.value }"
                                     @click="selectedDefense = style.value"
                                   >
-                                    {{ style.label }}
+                                    <span class="strategy-pill-label">{{ style.label }}</span>
+                                    <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
                                   </button>
                                 </div>
                               </div>
@@ -2747,7 +2827,7 @@ onUnmounted(() => {
         <template v-else>
           <div class="pregame-layout">
             <!-- Court Preview with Starters Overlay -->
-            <GlassCard padding="lg" :hoverable="false" class="pregame-court-card">
+            <GlassCard padding="lg" :hoverable="false" class="pregame-court-card" data-tour="game-court">
               <h3 class="h4 mb-4">Starting Lineups</h3>
               <div class="court-container court-container-with-overlay">
                 <BasketballCourt
@@ -2766,20 +2846,15 @@ onUnmounted(() => {
                     </div>
                     <div class="starters-list">
                       <div v-for="player in preGameAwayStarters" :key="player.id || player.player_id" class="starter-row">
-                        <span class="starter-pos">{{ player.slotPosition }}</span>
+                        <div class="starter-avatar-wrap">
+                          <PlayerAvatar :player="player" :size="36" class="starter-avatar" />
+                          <span
+                            class="starter-pos-badge"
+                            :style="{ backgroundColor: getPositionColor(player.slotPosition) }"
+                          >{{ player.slotPosition }}</span>
+                        </div>
                         <span class="starter-name">{{ player.last_name || player.lastName || player.name?.split(' ').pop() }}</span>
-                        <span class="starter-ovr">{{ player.overall_rating || player.overallRating }}</span>
-                      </div>
-                    </div>
-                    <!-- Coach Settings for Away Team (use selections if user is away) -->
-                    <div class="team-coach-settings">
-                      <div class="coach-setting-row">
-                        <span class="coach-setting-label">Off:</span>
-                        <span class="coach-setting-value">{{ getOffenseLabel(!userIsHome && isUserGame ? selectedOffense : awayTeam?.coaching_scheme?.offensive) }}</span>
-                      </div>
-                      <div class="coach-setting-row">
-                        <span class="coach-setting-label">Def:</span>
-                        <span class="coach-setting-value">{{ getDefenseLabel(!userIsHome && isUserGame ? selectedDefense : awayTeam?.coaching_scheme?.defensive) }}</span>
+                        <span class="starter-ovr-badge">{{ player.overall_rating || player.overallRating }}</span>
                       </div>
                     </div>
                   </div>
@@ -2790,145 +2865,46 @@ onUnmounted(() => {
                     </div>
                     <div class="starters-list">
                       <div v-for="player in preGameHomeStarters" :key="player.id || player.player_id" class="starter-row">
-                        <span class="starter-pos">{{ player.slotPosition }}</span>
+                        <div class="starter-avatar-wrap">
+                          <PlayerAvatar :player="player" :size="36" class="starter-avatar" />
+                          <span
+                            class="starter-pos-badge"
+                            :style="{ backgroundColor: getPositionColor(player.slotPosition) }"
+                          >{{ player.slotPosition }}</span>
+                        </div>
                         <span class="starter-name">{{ player.last_name || player.lastName || player.name?.split(' ').pop() }}</span>
-                        <span class="starter-ovr">{{ player.overall_rating || player.overallRating }}</span>
-                      </div>
-                    </div>
-                    <!-- Coach Settings for Home Team (use selections if user is home) -->
-                    <div class="team-coach-settings">
-                      <div class="coach-setting-row">
-                        <span class="coach-setting-label">Off:</span>
-                        <span class="coach-setting-value">{{ getOffenseLabel(userIsHome && isUserGame ? selectedOffense : homeTeam?.coaching_scheme?.offensive) }}</span>
-                      </div>
-                      <div class="coach-setting-row">
-                        <span class="coach-setting-label">Def:</span>
-                        <span class="coach-setting-value">{{ getDefenseLabel(userIsHome && isUserGame ? selectedDefense : homeTeam?.coaching_scheme?.defensive) }}</span>
+                        <span class="starter-ovr-badge">{{ player.overall_rating || player.overallRating }}</span>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </GlassCard>
+              <!-- Substitutions Button — pulled up from the settings card so
+                   it sits directly underneath the canvas. Toggles its own
+                   inline dropdown (below) instead of swapping the strategy
+                   card's content. Only shown for the user's own games. -->
+              <button
+                v-if="isUserGame"
+                class="qb-subs-btn court-card-subs-btn"
+                :class="{ active: showSubsDropdown }"
+                data-tour="game-subs-btn"
+                @click="showSubsDropdown = !showSubsDropdown"
+              >
+                <Users :size="18" />
+                <span>Substitutions</span>
+                <ChevronDown
+                  :size="16"
+                  class="court-card-subs-chevron"
+                  :class="{ open: showSubsDropdown }"
+                />
+              </button>
 
-            <!-- Game Settings Card - Styled like Quarter Break Modal -->
-            <GlassCard padding="lg" :hoverable="false" class="pregame-settings-card">
-              <div class="pregame-coaching-section">
-                <!-- Main View -->
-                <template v-if="!showSubstitutionsView">
-                  <!-- Strategy Settings - Full Width (only for user's game) -->
-                  <div v-if="isUserGame" class="qb-strategy-card">
-                    <div class="strategy-row">
-                      <div class="strategy-group">
-                        <span class="strategy-label">Offense</span>
-                        <div class="strategy-pills">
-                          <button
-                            v-for="style in offensiveStyles"
-                            :key="style.value"
-                            class="strategy-pill"
-                            :class="{ active: selectedOffense === style.value }"
-                            @click="selectedOffense = style.value"
-                          >
-                            {{ style.label }}
-                          </button>
-                        </div>
-                      </div>
-                      <div class="strategy-group">
-                        <span class="strategy-label">Defense</span>
-                        <div class="strategy-pills">
-                          <button
-                            v-for="style in defensiveStyles"
-                            :key="style.value"
-                            class="strategy-pill"
-                            :class="{ active: selectedDefense === style.value }"
-                            @click="selectedDefense = style.value"
-                          >
-                            {{ style.label }}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Substitutions Button (only for user's game) -->
-                  <button
-                    v-if="isUserGame"
-                    class="qb-subs-btn"
-                    @click="showSubstitutionsView = true"
-                  >
-                    <Users :size="18" />
-                    <span>Substitutions</span>
-                  </button>
-
-                  <!-- Play Game Button -->
-                  <button
-                    v-if="isUserGame"
-                    class="qb-continue-btn pregame-play-btn"
-                    :disabled="simulating"
-                    @click="handlePlayGame"
-                  >
-                    <span v-if="simulating" class="qb-btn-loading"></span>
-                    <template v-else>
-                      <Play :size="20" />
-                      <span>{{ isInProgress ? `Resume Game (Q${savedQuarter + 1})` : 'Play Game' }}</span>
-                    </template>
-                  </button>
-
-                  <!-- Sim to End Button (in-progress games only) -->
-                  <button
-                    v-if="isInProgress"
-                    class="qb-sim-to-end-btn"
-                    :disabled="simulating"
-                    @click="handleSimToEnd"
-                  >
-                    <span v-if="simulating" class="qb-btn-loading"></span>
-                    <template v-else>
-                      <FastForward :size="20" />
-                      <span>Sim to End</span>
-                    </template>
-                  </button>
-
-                  <!-- Simulate Button for non-user games -->
-                  <button
-                    v-else-if="!isUserGame"
-                    class="qb-continue-btn pregame-play-btn"
-                    :disabled="simulating"
-                    @click="startGame"
-                  >
-                    <span v-if="simulating" class="qb-btn-loading"></span>
-                    <template v-else>
-                      <Play :size="20" />
-                      <span>{{ isInProgress ? 'Resume Simulation' : 'Simulate Game' }}</span>
-                    </template>
-                  </button>
-                </template>
-
-                <!-- Substitutions View -->
-                <template v-else>
-                  <!-- Header Row: Back + Play Game -->
-                  <div class="subs-header-row">
-                    <button
-                      class="qb-back-btn"
-                      @click="showSubstitutionsView = false; expandedSwapPlayer = null"
-                    >
-                      <ArrowLeft :size="18" />
-                      <span>Back</span>
-                    </button>
-                    <button
-                      v-if="isUserGame"
-                      class="qb-continue-btn subs-continue-btn"
-                      :disabled="simulating"
-                      @click="handlePlayGame"
-                    >
-                      <span v-if="simulating" class="qb-btn-loading"></span>
-                      <template v-else>
-                        <Play :size="18" />
-                        <span>{{ isInProgress ? 'Resume' : 'Play Game' }}</span>
-                      </template>
-                    </button>
-                  </div>
-
-                  <!-- Lineup Cards -->
+              <!-- Inline dropdown panel: same lineup-cards markup the
+                   live-game subs view uses, rendered contextually under the
+                   button so the strategy card on the right keeps showing the
+                   strategy pills. -->
+              <Transition name="dropdown-slide">
+                <div v-if="isUserGame && showSubsDropdown" class="court-card-subs-dropdown" data-tour="game-subs-dropdown">
                   <div class="lineup-cards-section">
                     <div class="lineup-cards-header">
                       <span class="lineup-cards-title">Starting Lineup</span>
@@ -2944,7 +2920,6 @@ onUnmounted(() => {
                           'dropdown-open': expandedSwapPlayer === slot.slotIndex
                         }"
                       >
-                        <!-- Empty Slot -->
                         <template v-if="!slot.player">
                           <div class="lineup-card-empty">
                             <span class="slot-position-badge">{{ slot.slotPosition }}</span>
@@ -2954,8 +2929,6 @@ onUnmounted(() => {
                             </button>
                           </div>
                         </template>
-
-                        <!-- Filled Slot -->
                         <template v-else>
                           <div class="lineup-card-header">
                             <span class="slot-position-badge" :style="{ backgroundColor: getPositionColor(slot.slotPosition) }">
@@ -2980,15 +2953,12 @@ onUnmounted(() => {
                             </div>
                           </div>
                         </template>
-
-                        <!-- Swap Dropdown -->
                         <Transition name="dropdown-slide">
                           <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown">
                             <div class="swap-dropdown-header">
                               {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
                             </div>
                             <div class="swap-dropdown-list">
-                              <!-- Available players who can play this position -->
                               <button
                                 v-for="candidate in getPreGameSwapCandidates(slot.slotPosition, slot.slotIndex)"
                                 :key="candidate.player_id || candidate.id"
@@ -3018,7 +2988,174 @@ onUnmounted(() => {
                       </div>
                     </div>
                   </div>
-                </template>
+                </div>
+              </Transition>
+              <!-- Coaches row: pulled OUT of the canvas overlay into its own
+                   strip beneath the court so each coach card sits aligned
+                   under its team's starters column. -->
+              <h4 class="coaches-row-label">Head Coaches</h4>
+              <div class="coaches-row" data-tour="game-coaches">
+                <div v-if="awayTeamCoach" class="team-coach-card">
+                  <div class="team-coach-top">
+                    <div class="team-coach-avatar-wrap">
+                      <CoachAvatar :coach="awayTeamCoach" :size="40" class="team-coach-avatar" />
+                      <span
+                        v-if="awayTeam?.abbreviation"
+                        class="team-coach-team-badge"
+                        :style="{ backgroundColor: awayTeam?.primary_color || '#666' }"
+                      >{{ awayTeam.abbreviation }}</span>
+                    </div>
+                    <div class="team-coach-info">
+                      <span class="team-coach-name">{{ awayTeamCoach.name }}</span>
+                      <span v-if="awayTeamCoach.overall_rating" class="team-coach-ovr">{{ awayTeamCoach.overall_rating }} OVR</span>
+                      <div v-if="topCoachBadges(awayTeamCoach).length" class="team-coach-badges">
+                        <span
+                          v-for="badge in topCoachBadges(awayTeamCoach)"
+                          :key="badge.id"
+                          class="team-coach-badge-chip"
+                          :class="'level-' + badge.level"
+                        >
+                          {{ badge.id.replace(/_/g, ' ') }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Current Off/Def schemes, lifted out of the starters
+                       overlay so each team's settings sit with its coach. -->
+                  <div class="team-coach-schemes">
+                    <div class="coach-scheme-row">
+                      <span class="coach-scheme-label">Off</span>
+                      <span class="coach-scheme-value">{{ getOffenseLabel(!userIsHome && isUserGame ? selectedOffense : awayTeam?.coaching_scheme?.offensive) }}</span>
+                    </div>
+                    <div class="coach-scheme-row">
+                      <span class="coach-scheme-label">Def</span>
+                      <span class="coach-scheme-value">{{ getDefenseLabel(!userIsHome && isUserGame ? selectedDefense : awayTeam?.coaching_scheme?.defensive) }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="team-coach-card team-coach-placeholder"></div>
+                <div v-if="homeTeamCoach" class="team-coach-card">
+                  <div class="team-coach-top">
+                    <div class="team-coach-avatar-wrap">
+                      <CoachAvatar :coach="homeTeamCoach" :size="40" class="team-coach-avatar" />
+                      <span
+                        v-if="homeTeam?.abbreviation"
+                        class="team-coach-team-badge"
+                        :style="{ backgroundColor: homeTeam?.primary_color || '#666' }"
+                      >{{ homeTeam.abbreviation }}</span>
+                    </div>
+                    <div class="team-coach-info">
+                      <span class="team-coach-name">{{ homeTeamCoach.name }}</span>
+                      <span v-if="homeTeamCoach.overall_rating" class="team-coach-ovr">{{ homeTeamCoach.overall_rating }} OVR</span>
+                      <div v-if="topCoachBadges(homeTeamCoach).length" class="team-coach-badges">
+                        <span
+                          v-for="badge in topCoachBadges(homeTeamCoach)"
+                          :key="badge.id"
+                          class="team-coach-badge-chip"
+                          :class="'level-' + badge.level"
+                        >
+                          {{ badge.id.replace(/_/g, ' ') }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="team-coach-schemes">
+                    <div class="coach-scheme-row">
+                      <span class="coach-scheme-label">Off</span>
+                      <span class="coach-scheme-value">{{ getOffenseLabel(userIsHome && isUserGame ? selectedOffense : homeTeam?.coaching_scheme?.offensive) }}</span>
+                    </div>
+                    <div class="coach-scheme-row">
+                      <span class="coach-scheme-label">Def</span>
+                      <span class="coach-scheme-value">{{ getDefenseLabel(userIsHome && isUserGame ? selectedDefense : homeTeam?.coaching_scheme?.defensive) }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="team-coach-card team-coach-placeholder"></div>
+              </div>
+            </GlassCard>
+
+            <!-- Game Settings Card - Styled like Quarter Break Modal -->
+            <GlassCard padding="lg" :hoverable="false" class="pregame-settings-card">
+              <div class="pregame-coaching-section">
+                <h4 v-if="isUserGame" class="strategy-section-label">Game Plan</h4>
+                <!-- Strategy Settings - Full Width (only for user's game) -->
+                <div v-if="isUserGame" class="qb-strategy-card" data-tour="game-plan">
+                  <div class="strategy-row">
+                    <div class="strategy-group">
+                      <span class="strategy-label">Offense</span>
+                      <div class="strategy-pills">
+                        <button
+                          v-for="style in offensiveStyles"
+                          :key="style.value"
+                          class="strategy-pill"
+                          :class="{ active: selectedOffense === style.value }"
+                          @click="selectedOffense = style.value"
+                        >
+                          <span class="strategy-pill-label">{{ style.label }}</span>
+                          <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="strategy-group">
+                      <span class="strategy-label">Defense</span>
+                      <div class="strategy-pills">
+                        <button
+                          v-for="style in defensiveStyles"
+                          :key="style.value"
+                          class="strategy-pill"
+                          :class="{ active: selectedDefense === style.value }"
+                          @click="selectedDefense = style.value"
+                        >
+                          <span class="strategy-pill-label">{{ style.label }}</span>
+                          <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Play Game Button -->
+                <button
+                  v-if="isUserGame"
+                  class="qb-continue-btn pregame-play-btn"
+                  :disabled="simulating"
+                  data-tour="game-start-btn"
+                  @click="handlePlayGame"
+                >
+                  <span v-if="simulating" class="qb-btn-loading"></span>
+                  <template v-else>
+                    <Play :size="20" class="pregame-play-icon" />
+                    <span class="pregame-play-label">{{ isInProgress ? `Resume Game (Q${savedQuarter + 1})` : 'START' }}</span>
+                  </template>
+                </button>
+
+                <!-- Sim to End Button (in-progress games only) -->
+                <button
+                  v-if="isInProgress"
+                  class="qb-sim-to-end-btn"
+                  :disabled="simulating"
+                  @click="handleSimToEnd"
+                >
+                  <span v-if="simulating" class="qb-btn-loading"></span>
+                  <template v-else>
+                    <FastForward :size="20" />
+                    <span>Sim to End</span>
+                  </template>
+                </button>
+
+                <!-- Simulate Button for non-user games -->
+                <button
+                  v-else-if="!isUserGame"
+                  class="qb-continue-btn pregame-play-btn"
+                  :disabled="simulating"
+                  @click="startGame"
+                >
+                  <span v-if="simulating" class="qb-btn-loading"></span>
+                  <template v-else>
+                    <Play :size="20" class="pregame-play-icon" />
+                    <span class="pregame-play-label">{{ isInProgress ? 'Resume Simulation' : 'Simulate Game' }}</span>
+                  </template>
+                </button>
               </div>
             </GlassCard>
           </div>
@@ -3028,7 +3165,7 @@ onUnmounted(() => {
       <!-- Post-Game (Completed) -->
       <template v-else>
         <!-- Quarter Scores -->
-        <GlassCard padding="md" :hoverable="false" class="mb-6">
+        <GlassCard padding="md" :hoverable="false" class="mb-6" data-tour="postgame-quarter-scores">
           <div class="quarter-scores">
             <table class="quarters-table">
               <thead>
@@ -3044,28 +3181,12 @@ onUnmounted(() => {
               </thead>
               <tbody>
                 <tr :class="{ winner: winner === 'away' }">
-                  <td class="team-header">
-                    <div class="team-mini">
-                      <div
-                        class="team-dot"
-                        :style="{ backgroundColor: awayTeam?.primary_color }"
-                      />
-                      {{ awayTeam?.abbreviation }}
-                    </div>
-                  </td>
+                  <td class="team-header">{{ awayTeam?.abbreviation }}</td>
                   <td v-for="(score, i) in quarterScores.away" :key="i">{{ score }}</td>
                   <td class="total-col">{{ game.away_score }}</td>
                 </tr>
                 <tr :class="{ winner: winner === 'home' }">
-                  <td class="team-header">
-                    <div class="team-mini">
-                      <div
-                        class="team-dot"
-                        :style="{ backgroundColor: homeTeam?.primary_color }"
-                      />
-                      {{ homeTeam?.abbreviation }}
-                    </div>
-                  </td>
+                  <td class="team-header">{{ homeTeam?.abbreviation }}</td>
                   <td v-for="(score, i) in quarterScores.home" :key="i">{{ score }}</td>
                   <td class="total-col">{{ game.home_score }}</td>
                 </tr>
@@ -3268,7 +3389,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Box Score -->
-        <GlassCard padding="none" :hoverable="false" class="mb-6">
+        <GlassCard padding="none" :hoverable="false" class="mb-6" data-tour="postgame-box-score">
           <BoxScore
             :box-score="boxScore"
             :home-team="homeTeam"
@@ -3286,7 +3407,7 @@ onUnmounted(() => {
 
           <div class="summary-grid">
             <!-- Rewards Card -->
-            <GlassCard v-if="rewardsData" padding="md" :hoverable="false" class="summary-card rewards-card">
+            <GlassCard v-if="rewardsData" padding="md" :hoverable="false" class="summary-card rewards-card" data-tour="postgame-rewards">
               <h4 class="card-title">
                 <Coins :size="16" />
                 Rewards Earned
@@ -3333,7 +3454,13 @@ onUnmounted(() => {
           </div>
 
           <!-- Evolution Data - Home Team -->
-          <GlassCard v-if="evolutionData?.home && Object.keys(evolutionData.home).length > 0" padding="md" :hoverable="false" class="summary-card evolution-card mb-4">
+          <GlassCard
+            v-if="evolutionData?.home && Object.keys(evolutionData.home).length > 0"
+            padding="md"
+            :hoverable="false"
+            class="summary-card evolution-card mb-4"
+            :data-tour="userIsHome ? 'postgame-updates' : null"
+          >
             <h4 class="card-title">
               <Zap :size="16" />
               {{ homeTeam?.name }} Updates
@@ -3448,7 +3575,13 @@ onUnmounted(() => {
           </GlassCard>
 
           <!-- Evolution Data - Away Team -->
-          <GlassCard v-if="evolutionData?.away && Object.keys(evolutionData.away).length > 0" padding="md" :hoverable="false" class="summary-card evolution-card mb-4">
+          <GlassCard
+            v-if="evolutionData?.away && Object.keys(evolutionData.away).length > 0"
+            padding="md"
+            :hoverable="false"
+            class="summary-card evolution-card mb-4"
+            :data-tour="!userIsHome ? 'postgame-updates' : null"
+          >
             <h4 class="card-title">
               <Zap :size="16" />
               {{ awayTeam?.name }} Updates
@@ -3727,6 +3860,7 @@ onUnmounted(() => {
       :simulating="false"
       :background-progress="null"
       :user-team="userTeam"
+      :gold-confirm="true"
       @close="handleCloseSimulateModal"
       @confirm="handleConfirmSimulate"
     />
@@ -3868,6 +4002,26 @@ onUnmounted(() => {
   margin: 0 auto;
 }
 
+/* Mobile: slide the page content up so the header card starts close to
+   the top of the viewport (matching the homepage's tighter top padding).
+   Overrides Tailwind's p-6 / mb-6 from the template just on mobile widths
+   so the back-btn bottom sits close to the game-date row in the card.
+   Keep the back-btn above the card on the z-axis since they now nearly
+   overlap and the card's glass background was intercepting taps. */
+@media (max-width: 1023px) {
+  .game-view {
+    padding-top: 8px;
+    /* Bottom nav (70px) + safe-area + 12px gap + floating Play Game button
+       (~50px tall) + 16px breathing room below the last content card. */
+    padding-bottom: calc(70px + env(safe-area-inset-bottom) + 12px + 50px + 16px);
+  }
+  .back-btn {
+    margin-bottom: 8px;
+    position: relative;
+    z-index: 2;
+  }
+}
+
 .page-loading-container {
   display: flex;
   align-items: center;
@@ -3925,6 +4079,8 @@ onUnmounted(() => {
 .game-header-card {
   background: var(--gradient-cosmic) !important;
   border: 1px solid rgba(232, 90, 79, 0.3);
+  /* Containing block for the absolute-positioned .game-header-top on desktop. */
+  position: relative;
 }
 
 .game-header-card .team-rating,
@@ -4012,6 +4168,30 @@ onUnmounted(() => {
 [data-theme="light"] .game-header-card .team-name-text {
   color: black;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* Top header inside the game-header-card: date on top, game type label
+   stacked below. Pulled out of the center column so mobile has room to
+   keep both teams in one row with just VS between them. */
+.game-header-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+/* Desktop: float the header absolutely so it doesn't consume vertical
+   space (matchup row moves up to fill it), while staying visually pinned
+   to the top-center of the card where it appeared before. */
+@media (min-width: 1024px) {
+  .game-header-top {
+    position: absolute;
+    top: 20px;
+    left: 0;
+    right: 0;
+    margin-bottom: 0;
+  }
 }
 
 .game-header {
@@ -4194,6 +4374,40 @@ onUnmounted(() => {
   border-radius: var(--radius-full);
 }
 
+/* Status pill that replaces the old center-column FINAL / Q? Complete text.
+   Lives in .game-header-top so the matchup row underneath can give all of
+   its width to the team logos + stacked scores on mobile. */
+.game-status-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-top: 4px;
+  padding: 3px 12px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.game-status-badge.final {
+  background: var(--color-primary);
+  color: white;
+  border-color: transparent;
+}
+
+.game-status-badge.in-progress {
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--color-warning, #fbbf24);
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+[data-theme="light"] .game-status-badge.in-progress {
+  background: rgba(0, 0, 0, 0.7);
+  color: #fbbf24;
+}
+
 [data-theme="light"] .series-record-badge {
   color: #b8860b;
   background: rgba(184, 134, 11, 0.1);
@@ -4261,19 +4475,37 @@ onUnmounted(() => {
   transform: translate(-50%, -50%);
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(8px);
-  border-radius: 12px;
-  padding: 16px 20px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  min-width: 320px;
+  gap: 16px;
+  min-width: 360px;
 }
 
+/* Each team is its own glass "cell" now. The translucent bg + saturated
+   blur lives here instead of on the wrapping overlay so home and away
+   read as visually distinct cards. */
 .starters-column {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 12px 14px;
+  background: rgba(37, 32, 48, 0.6);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+}
+
+[data-theme="light"] .starters-column {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+/* Mobile: stack each starter as avatar-on-top → name-below. Position
+   badge stays in its base bottom-left spot on the avatar. */
+@media (max-width: 640px) {
+  .starter-row {
+    grid-template-columns: 1fr;
+    justify-items: start;
+    gap: 4px;
+  }
 }
 
 .starters-header {
@@ -4295,32 +4527,251 @@ onUnmounted(() => {
 
 .starter-row {
   display: grid;
-  grid-template-columns: 28px 1fr 32px;
+  /* 44px avatar column (36px avatar + 8px buffer for the pos badge that
+     hangs off the bottom-left) | name. OVR is rendered as an absolute
+     badge anchored to the row's top-right (see .starter-ovr-badge), which
+     keeps it visually consistent across rows regardless of how the name
+     wraps. */
+  grid-template-columns: 44px 1fr;
   align-items: center;
-  gap: 8px;
-  font-size: 0.8rem;
+  gap: 10px;
+  font-size: 0.75rem;
   padding: 4px 0;
+  position: relative;
 }
 
-.starter-pos {
-  font-weight: 600;
-  color: var(--color-secondary);
-  font-size: 0.7rem;
+/* Headshot column — wraps PlayerAvatar so we can absolutely overlay the
+   position badge at the bottom-left, mirroring the .slot-position-label
+   pattern used on the GM view's lineup tab. */
+.starter-avatar-wrap {
+  position: relative;
+  width: 36px;
+  height: 36px;
+}
+
+.starter-avatar {
+  border-radius: 50%;
+  width: 100%;
+  height: 100%;
+}
+
+.starter-pos-badge {
+  position: absolute;
+  bottom: -9px;
+  left: -4px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
+  color: white;
+  padding: 1px 5px;
+  border-radius: 4px;
+  line-height: 1.2;
+  z-index: 1;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+/* OVR badge — same pill design as .starter-pos-badge, anchored to the
+   top-right of the .starter-row (which is position: relative). Sits
+   above the row's content regardless of how the name wraps. */
+.starter-ovr-badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: white;
+  background: var(--color-success);
+  padding: 1px 5px;
+  border-radius: 4px;
+  line-height: 1.2;
+  z-index: 1;
+  border: 1px solid rgba(0, 0, 0, 0.25);
 }
 
 .starter-name {
   color: var(--color-text-primary);
+  font-size: 0.72rem;
+  line-height: 1.15;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.starter-ovr {
-  font-weight: 700;
-  color: var(--color-success);
-  text-align: right;
+/* Section label above the coaches row. Matches the visual weight of
+   "Starting Lineups" above the court. */
+.coaches-row-label {
+  margin-top: 16px;
+  margin-bottom: 8px;
   font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-text-secondary);
+}
+
+/* Coaches row sits beneath the court (outside the overlay) with each
+   coach card aligned under its team's starters column. Two equal-width
+   tracks mirror the .starters-overlay's 1fr 1fr grid. */
+.coaches-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+/* Per-team coach card: avatar + name + OVR + top 2 badges, then a small
+   Off/Def schemes row beneath. Sized to roughly match the width of the
+   starters column above it. */
+.team-coach-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+}
+
+.team-coach-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Wraps CoachAvatar so we can absolutely overlay a small team-color
+   badge at the bottom-left, mirroring the .starter-pos-badge pattern on
+   the player avatars above. Identifies which team the coach belongs to. */
+.team-coach-avatar-wrap {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.team-coach-team-badge {
+  position: absolute;
+  bottom: -9px;
+  left: -4px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: white;
+  padding: 1px 5px;
+  border-radius: 4px;
+  line-height: 1.2;
+  z-index: 1;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+/* When a side doesn't have a coach loaded yet, render an invisible
+   placeholder so the grid still allocates the column and the other
+   coach card stays aligned with its team. */
+.team-coach-placeholder {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Top 2 coach badges inside the coach card. Same color scale as the
+   coach badge chips in the GM-view coach card. */
+.team-coach-badges {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.team-coach-badge-chip {
+  font-size: 0.5rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: white;
+  line-height: 1.2;
+}
+
+.team-coach-badge-chip.level-bronze { background: #cd7f32; }
+.team-coach-badge-chip.level-silver { background: #c0c0c0; color: #1a1520; }
+.team-coach-badge-chip.level-gold { background: #ffd700; color: #1a1520; }
+.team-coach-badge-chip.level-hof { background: var(--gradient-cosmic, #E85A4F); }
+
+/* Mobile: stack the two coach cards into one column, and stack the badge
+   chips inside each card into a column too (the long badge labels don't
+   wrap cleanly side-by-side at narrow widths). */
+@media (max-width: 640px) {
+  .coaches-row {
+    grid-template-columns: 1fr;
+  }
+  .team-coach-badges {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* Off/Def coaching-scheme row inside the coach card. Replaces the
+   `.team-coach-settings` block that used to live in the starters overlay. */
+.team-coach-schemes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.coach-scheme-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.7rem;
+  min-width: 0;
+}
+
+.coach-scheme-label {
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.6rem;
+}
+
+.coach-scheme-value {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.team-coach-avatar {
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.team-coach-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.team-coach-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.1;
+}
+
+.team-coach-ovr {
+  font-size: 0.62rem;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 /* Team Coach Settings in Overlay */
@@ -4366,6 +4817,7 @@ onUnmounted(() => {
 .pregame-settings-card {
   display: flex;
   flex-direction: column;
+  align-self: start;
 }
 
 .pregame-coaching-section {
@@ -4373,11 +4825,138 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  flex: 1;
 }
 
-.pregame-play-btn {
-  margin-top: auto;
+.strategy-section-label {
+  margin: 0 0 8px 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-text-secondary);
+}
+
+/* Floating bottom-right primary action. Sits above the mobile bottom nav
+   (70px + safe-area-inset-bottom) on small screens and above the page edge
+   on desktop. Width: full row (minus 16px gutters) on mobile to preserve
+   the original tappable size; capped at 360px on desktop so it reads as a
+   bottom-right action rather than a wall-to-wall bar. */
+/* Selector intentionally bumps specificity (compound .qb-continue-btn.pregame-play-btn)
+   to win against `.qb-continue-btn` which is declared later in this stylesheet
+   and would otherwise overwrite the gradient + black color. */
+.qb-continue-btn.pregame-play-btn {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(70px + env(safe-area-inset-bottom) + 12px);
+  margin-top: 0;
+  z-index: 50;
+  /* Coral→orange→gold gradient (same recipe as scout-pts-badge). Black
+     text/icon gives much higher contrast for the shimmer sweep than
+     white-on-coral did. */
+  background: var(--gradient-cosmic);
+  color: black;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transform: translateY(8px) scale(0.92);
+  animation: pregamePlayPop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) 1s forwards;
+}
+
+.qb-continue-btn.pregame-play-btn:hover:not(:disabled) {
+  background: var(--gradient-cosmic);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+@media (min-width: 1024px) {
+  .qb-continue-btn.pregame-play-btn {
+    left: auto;
+    right: 24px;
+    bottom: 24px;
+    width: 360px;
+  }
+}
+
+@keyframes pregamePlayPop {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.92);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Shimmer sweep across the label text. Base is solid black (matches the
+   button's black-on-gradient color); the stripe is bright white, which
+   reads as a "glint" sweeping across the black letters. Background is
+   300% wide and position animates 100% → 0%, so the gradient always
+   covers the text fully (no edge clipping). */
+.pregame-play-label {
+  display: inline-block;
+  background-image: linear-gradient(
+    100deg,
+    #000 0%,
+    #000 42%,
+    rgba(255, 255, 255, 0.95) 50%,
+    #000 58%,
+    #000 100%
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: pregamePlayShimmer 2.6s ease-in-out 1.8s infinite;
+}
+
+@keyframes pregamePlayShimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  55% {
+    background-position: 0% 0;
+  }
+  100% {
+    background-position: 0% 0;
+  }
+}
+
+.pregame-play-btn:disabled .pregame-play-label {
+  animation: none;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  color: currentColor;
+}
+
+/* Icon glints with the same timing as the text shimmer. Lucide SVGs use
+   stroke="currentColor", so animating color is enough — the icon fades
+   to bright white at the midpoint of each cycle then back to black,
+   matching the highlight stripe sweeping through the label. */
+.pregame-play-icon {
+  color: black;
+  animation: pregamePlayIconShimmer 2.6s ease-in-out 1.8s infinite;
+}
+
+@keyframes pregamePlayIconShimmer {
+  0%, 100% {
+    color: black;
+  }
+  50% {
+    color: #fff;
+  }
+}
+
+.pregame-play-btn:disabled .pregame-play-icon {
+  animation: none;
+  color: currentColor;
 }
 
 .lineup-player-pos-secondary {
@@ -4391,18 +4970,11 @@ onUnmounted(() => {
   border-top-color: rgba(0, 0, 0, 0.1);
 }
 
-/* Light mode starters overlay */
-[data-theme="light"] .starters-overlay {
-  background: rgba(255, 255, 255, 0.95);
-  border-color: rgba(0, 0, 0, 0.1);
-}
-
 /* Mobile adjustments for starters overlay */
 @media (max-width: 620px) {
   .starters-overlay {
     min-width: 280px;
-    gap: 16px;
-    padding: 12px 16px;
+    gap: 12px;
   }
 
   .starter-row {
@@ -4633,6 +5205,7 @@ onUnmounted(() => {
   display: flex;
   gap: 24px;
   justify-content: center;
+  flex-direction: column;
 }
 
 /* Substitutions Button */
@@ -4657,6 +5230,34 @@ onUnmounted(() => {
 .qb-subs-btn:hover {
   background: var(--color-bg-tertiary);
   border-color: var(--color-border-medium);
+}
+
+/* Subs button when rendered inside .pregame-court-card directly beneath
+   the canvas. Adds breathing room above + a full-width feel. */
+.court-card-subs-btn {
+  width: 100%;
+  margin-top: 16px;
+}
+
+/* Chevron rotates when the dropdown is open so the disclosure direction
+   reads correctly. */
+.court-card-subs-chevron {
+  transition: transform 0.2s ease;
+  margin-left: auto;
+}
+.court-card-subs-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* Inline dropdown panel under the Substitutions button. Sits inside the
+   same .pregame-court-card so it expands beneath the button rather than
+   replacing the strategy card on the right. */
+.court-card-subs-dropdown {
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
 }
 
 /* Back Button */
@@ -4804,26 +5405,51 @@ onUnmounted(() => {
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  text-align: center;
+  text-align: left;
 }
 
 .strategy-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  justify-content: center;
+  gap: 8px;
+  justify-content: flex-start;
 }
 
 .strategy-pill {
-  padding: 5px 10px;
+  /* 3 per row → forces the 6 options into a 2-row grid at every breakpoint,
+     same shape mobile already had. Width math: 100% minus the two 8px gaps,
+     divided by 3. */
+  flex: 1 0 calc((100% - 16px) / 3);
+  min-width: 0;
+  padding: 8px 12px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 16px;
+  border-radius: 14px;
   color: var(--color-text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
+  /* Pill stacks scheme label + small fit% line, left-aligned. */
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  gap: 2px;
+  line-height: 1.15;
+}
+
+.strategy-pill-fit {
+  font-size: 0.68rem;
+  font-weight: 600;
+  opacity: 0.65;
+  letter-spacing: 0.02em;
+}
+
+/* Active pill's fit % loses the muted opacity so it stays legible on the
+   primary-color background. */
+.strategy-pill.active .strategy-pill-fit {
+  opacity: 0.9;
 }
 
 .strategy-pill:hover {
@@ -5330,18 +5956,6 @@ onUnmounted(() => {
 
 .quarters-table tr.winner .total-col {
   color: var(--color-success);
-}
-
-.team-mini {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.team-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
 }
 
 .performers-header {
@@ -6163,18 +6777,23 @@ onUnmounted(() => {
 }
 
 @media (max-width: 700px) {
+  /* Keep the matchup in a single row on mobile (matches the homepage's
+     next-game box pattern: away | center | home all side-by-side). The
+     base .game-header is already display: flex row — just trim the gap
+     and let .team-side's flex:1 distribute width. */
   .game-header {
-    flex-direction: column;
-    gap: 16px;
+    gap: 12px;
   }
-
   .team-side {
-    width: 100%;
     justify-content: center !important;
+    /* Stack the score underneath the team badge on mobile. Away keeps the
+       column->score DOM order; home uses column-reverse so the score
+       still lands beneath the badge (its DOM order is score then column). */
+    flex-direction: column;
+    gap: 8px;
   }
-
   .team-side.home {
-    flex-direction: row-reverse;
+    flex-direction: column-reverse;
   }
 }
 

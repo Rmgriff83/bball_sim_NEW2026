@@ -39,6 +39,13 @@ const props = defineProps({
   remainingSeasonGames: {
     type: Object,
     default: null
+  },
+  // Opt-in: paints the primary confirm button with the cosmic gold gradient
+  // and black text/icon to match the START button on the game preview page.
+  // No animations — purely a color swap.
+  goldConfirm: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -138,6 +145,7 @@ const opponentTeamData = computed(() => {
       <div
         v-if="show"
         class="modal-overlay"
+        :class="{ 'gold-confirm-modal': goldConfirm }"
         @click.self="close"
       >
         <div class="modal-container">
@@ -908,6 +916,20 @@ const opponentTeamData = computed(() => {
   transform: translateY(-1px);
 }
 
+/* Gold variant — mirrors the START button on the game preview page
+   (same gradient-cosmic + black foreground). No shimmer/pop animations
+   here; this is purely a color swap, opted into via the goldConfirm prop. */
+.gold-confirm-modal .btn-confirm {
+  background: var(--gradient-cosmic);
+  color: black;
+}
+
+.gold-confirm-modal .btn-confirm:hover:not(:disabled) {
+  background: var(--gradient-cosmic);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
 .btn-sim-to-end {
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-primary);
@@ -972,6 +994,19 @@ const opponentTeamData = computed(() => {
   to {
     opacity: 0;
     transform: scale(0.95);
+  }
+}
+
+/* Standardized modal heights — min-height dropped because this is a short
+   confirmation dialog and forcing 90vh leaves a lot of empty space below
+   the action buttons. Max caps preserved so very tall content still scrolls. */
+.modal-container {
+  max-height: 90vh;
+}
+
+@media (max-width: 480px) {
+  .modal-container {
+    max-height: 85vh;
   }
 }
 </style>

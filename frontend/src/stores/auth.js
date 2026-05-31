@@ -48,6 +48,9 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = response.data.token
       user.value = response.data.user
       await setToken(token.value)
+      // /api/auth/login returns only { user, token } — pull the full profile
+      // so profile.tokens is available immediately for the homepage.
+      await fetchUser()
       return response.data
     } finally {
       loading.value = false
@@ -64,6 +67,8 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = response.data.token
       user.value = response.data.user
       await setToken(token.value)
+      // Same as login — /api/auth/register doesn't carry profile.
+      await fetchUser()
       return response.data
     } finally {
       loading.value = false

@@ -7,6 +7,6 @@
     "hostname": "app.bball-sim.com"
   },
   "ios": {
-    "contentInset": "always"
+    "contentInset": "never"
   }
 }

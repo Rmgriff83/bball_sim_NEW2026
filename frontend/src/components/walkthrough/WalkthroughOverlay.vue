@@ -18,6 +18,13 @@ const router = useRouter()
 const spotlightRect = ref(null)
 const tooltipStyle = ref({})
 const centerMode = ref(false)
+// `step` content is reactive and updates the instant stepIndex changes, but
+// runStep is async (target resolve + scrollIntoView wait). Without gating,
+// the next step's text would render briefly inside the *previous* step's
+// spotlight area — reading as "old step's tooltip flickered before the new
+// one." This flag stays false through that window so the tooltip is hidden
+// until its new position is settled.
+const tooltipReady = ref(false)
 
 // The currently spotlighted element(s), kept so resize/scroll can reposition
 // without re-resolving the whole step. A step may target more than one element,
@@ -134,6 +141,15 @@ function placeTooltip(r, placement, tw, th) {
   const vh = window.innerHeight
   let place = placement || 'bottom'
 
+  // On mobile-width viewports, side placements (left/right) rarely have
+  // enough horizontal room — the tooltip ends up overlapping the target
+  // and obscuring the content. Force any side placement to a vertical one
+  // (top/bottom), picking whichever has more room.
+  const MOBILE_MAX_WIDTH = 768
+  if (vw <= MOBILE_MAX_WIDTH && (place === 'left' || place === 'right')) {
+    place = (vh - r.bottom) >= r.top ? 'bottom' : 'top'
+  }
+
   // Flip if the preferred side doesn't fit.
   if (place === 'bottom' && r.bottom + TOOLTIP_GAP + th > vh - VIEWPORT_MARGIN) place = 'top'
   else if (place === 'top' && r.top - TOOLTIP_GAP - th < VIEWPORT_MARGIN) place = 'bottom'
@@ -208,6 +224,10 @@ async function runStep() {
   const s = store.currentStep
   if (!s) return
 
+  // Hide the tooltip until the new spotlight + position are settled. Prevents
+  // the next step's text from flashing inside the previous step's spotlight.
+  tooltipReady.value = false
+
   // 0. Fire the previous step's leave action (e.g. close a menu) before moving.
   if (pendingLeave) {
     store.requestAction(pendingLeave.view, pendingLeave.action)
@@ -250,6 +270,7 @@ async function runStep() {
   const targets = Array.isArray(s.target) ? s.target : (s.target ? [s.target] : [])
   if (targets.length === 0 || s.placement === 'center') {
     setCentered()
+    tooltipReady.value = true
     return
   }
 
@@ -263,6 +284,7 @@ async function runStep() {
     // obvious to fix. The warning helps catch it in dev.
     console.warn(`[walkthrough] target not found, showing centered: ${JSON.stringify(s.target)}`)
     setCentered()
+    tooltipReady.value = true
     return
   }
 
@@ -276,6 +298,8 @@ async function runStep() {
 
   activeEls = els
   await positionToTargets(els, s.placement)
+  if (token !== resolveToken) return
+  tooltipReady.value = true
 }
 
 // While a tour is active, block user-initiated scrolling so the highlighted
@@ -349,6 +373,7 @@ watch(
       activeEls = []
       spotlightRect.value = null
       centerMode.value = false
+      tooltipReady.value = false
     }
   }
 )
@@ -393,7 +418,12 @@ onUnmounted(() => {
       />
 
       <!-- Tooltip / instruction box -->
-      <div ref="tooltipRef" class="wt-tooltip" :style="tooltipStyle">
+      <div
+        ref="tooltipRef"
+        class="wt-tooltip"
+        :class="{ 'wt-tooltip-ready': tooltipReady }"
+        :style="tooltipStyle"
+      >
         <div class="wt-tooltip-counter">{{ counter }}</div>
         <h3 class="wt-tooltip-title">{{ step.title }}</h3>
         <p class="wt-tooltip-body">{{ step.body }}</p>
@@ -472,6 +502,14 @@ onUnmounted(() => {
   box-shadow: var(--shadow-xl);
   padding: 16px 18px;
   pointer-events: auto;
+  /* Hidden by default so the tooltip can't flash at a stale position during a
+     step transition. `runStep` flips `.wt-tooltip-ready` once the new
+     spotlight + tooltip position are settled, which re-runs `wtTooltipIn`. */
+  opacity: 0;
+}
+
+.wt-tooltip-ready {
+  opacity: 1;
   animation: wtTooltipIn var(--duration-normal) var(--ease-out);
 }
 

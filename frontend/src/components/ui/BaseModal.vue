@@ -73,7 +73,7 @@ const sizeClasses = {
     <Transition name="modal">
       <div
         v-if="show"
-        class="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
+        class="modal-overlay fixed inset-0 z-50 flex items-center justify-center"
         style="background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px);"
         @click.self="close"
       >
@@ -82,7 +82,7 @@ const sizeClasses = {
             'modal-container glass-card-elevated w-full',
             sizeClasses[size]
           ]"
-          style="max-height: 90vh; overflow-y: auto;"
+          style="overflow-y: auto;"
         >
           <!-- Header -->
           <header v-if="showHeader && (title || closable)" class="modal-header">
@@ -113,8 +113,27 @@ const sizeClasses = {
 </template>
 
 <style scoped>
+/* Replace Tailwind p-4 with safe-area-aware padding so the modal can never
+   render under the notch / home indicator on iPhone. max() keeps the
+   minimum 16px gutter on devices without insets. */
+.modal-overlay {
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
+}
+
 .modal-container {
   animation: scaleIn var(--duration-normal) var(--ease-out);
+  min-height: 90vh;
+  max-height: 90vh;
+}
+
+@media (max-width: 480px) {
+  .modal-container {
+    min-height: 85vh;
+    max-height: 85vh;
+  }
 }
 
 @keyframes scaleIn {

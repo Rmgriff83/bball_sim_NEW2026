@@ -8,6 +8,7 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { initializeAllTeamLineups } from '@/engine/ai/AILineupService'
 import { assignRookieContract, assignUndraftedContract } from '@/engine/draft/RookieContractService'
 import { rollDraftPicks } from '@/engine/draft/DraftPickService'
+import { useAudioStore } from '@/stores/audio'
 
 export const useDraftStore = defineStore('draft', () => {
   // State
@@ -265,6 +266,11 @@ export const useDraftStore = defineStore('draft', () => {
     isAutoPlaying.value = true
     skipRequested.value = false
 
+    // Lazy store lookup — Pinia stores must be resolved inside actions, not at
+    // module top level. Used to fire the tertiary "blip" after each AI pick so
+    // the user gets passive feedback that something happened.
+    const audio = useAudioStore()
+
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
     // timerPaused doubles as the "draft frozen for the walkthrough" signal — halt
@@ -282,6 +288,7 @@ export const useDraftStore = defineStore('draft', () => {
       if (skipRequested.value || isDraftComplete.value || isUserPick.value || timerPaused.value) break
 
       makeAIPick()
+      audio.tertiary()
       await delay(200) // small gap after pick for toast visibility
     }
 

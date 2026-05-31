@@ -414,4 +414,17 @@ onUnmounted(() => {
   from { opacity: 1; transform: scale(1); }
   to { opacity: 0; transform: scale(0.95); }
 }
+
+/* Standardized modal heights (90vh desktop, 85vh mobile) */
+.modal-container {
+  min-height: 90vh;
+  max-height: 90vh;
+}
+
+@media (max-width: 480px) {
+  .modal-container {
+    min-height: 85vh;
+    max-height: 85vh;
+  }
+}
 </style>

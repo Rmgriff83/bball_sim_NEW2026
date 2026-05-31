@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, watch, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useAuthStore } from '@/stores/auth'
 import { useAudioStore } from '@/stores/audio'
@@ -10,6 +10,7 @@ import HasPlayedBeforeModal from '@/components/walkthrough/HasPlayedBeforeModal.
 import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2 } from 'lucide-vue-next'
 
 const router = useRouter()
+const route = useRoute()
 const campaignStore = useCampaignStore()
 const authStore = useAuthStore()
 const audio = useAudioStore()
@@ -62,6 +63,14 @@ const difficulties = [
 onMounted(async () => {
   await campaignStore.fetchCampaigns()
   await campaignStore.fetchAvailableTeams()
+
+  // Auto-open the create modal when arriving from the dashboard's
+  // "New Campaign" card (e.g. /campaigns?new=1). Strip the query after so a
+  // refresh or back/forward doesn't keep reopening it.
+  if (route.query.new === '1') {
+    openCreateModal()
+    router.replace({ path: route.path, query: { ...route.query, new: undefined } })
+  }
 })
 
 async function handleLogout() {

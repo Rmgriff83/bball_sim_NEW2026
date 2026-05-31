@@ -4420,7 +4420,7 @@ function formatSalary(salary) {
   .team-modal-container,
   .player-modal-container {
     max-width: 100%;
-    max-height: 95vh;
+    max-height: 90vh;
     margin: 8px;
     border-radius: var(--radius-xl);
   }

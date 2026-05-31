@@ -1095,7 +1095,7 @@ onUnmounted(() => {
 /* Mobile adjustments */
 @media (max-width: 480px) {
   .modal-container {
-    max-height: 95vh;
+    max-height: 85vh;
   }
 
   .matchup-card {
@@ -1204,5 +1204,18 @@ onUnmounted(() => {
 .warning-btn-confirm:hover {
   background: var(--color-primary-dark);
   transform: translateY(-1px);
+}
+
+/* Standardized modal heights (90vh desktop, 85vh mobile) */
+.modal-container {
+  min-height: 90vh;
+  max-height: 90vh;
+}
+
+@media (max-width: 480px) {
+  .modal-container {
+    min-height: 85vh;
+    max-height: 85vh;
+  }
 }
 </style>

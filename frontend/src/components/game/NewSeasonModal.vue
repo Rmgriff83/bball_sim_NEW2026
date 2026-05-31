@@ -334,4 +334,17 @@ footer {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(232, 90, 79, 0.3);
 }
+
+/* Standardized modal heights (90vh desktop, 85vh mobile) */
+.modal-container {
+  min-height: 90vh;
+  max-height: 90vh;
+}
+
+@media (max-width: 480px) {
+  .modal-container {
+    min-height: 85vh;
+    max-height: 85vh;
+  }
+}
 </style>

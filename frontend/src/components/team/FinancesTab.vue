@@ -626,11 +626,12 @@ onMounted(() => {
           <h4 class="section-title">Team Roster</h4>
           <div class="player-cards-grid">
             <ContractCard
-              v-for="player in sortedRoster"
+              v-for="(player, idx) in sortedRoster"
               :key="player.id"
               :player="player"
               :show-stats="true"
               :resign-disabled="resignDeadlinePassed"
+              :data-tour="idx === 0 ? 'gm-roster-card' : null"
               @resign="handleResign"
               @drop="handleDrop"
               @info="handleInfo"

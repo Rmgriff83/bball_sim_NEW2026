@@ -176,3 +176,15 @@ const toastStore = useToastStore()
   }
 }
 </style>
+
+<!-- iOS-only override: clear the new floating glass bottom nav
+     (bottom: env(safe-area-inset-bottom), 70px tall) with a 12px gap above.
+     Non-scoped block — `html.platform-ios` is set globally on <html> by
+     main.js. Browser builds keep the existing 90px bottom. -->
+<style>
+@media (max-width: 1023px) {
+  html.platform-ios .minimal-toast-container {
+    bottom: calc(70px + env(safe-area-inset-bottom) + 12px);
+  }
+}
+</style>

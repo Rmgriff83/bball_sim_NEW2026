@@ -1099,4 +1099,13 @@ async function clearLocalCache() {
     align-self: center;
   }
 }
+
+/* Cloud-sync confirmation modals (Pull from Cloud, Clear Local Cache) are
+   short content-sized dialogs — opt them out of the standardized 90vh
+   min-height applied to BaseModal so they don't render with awkward empty
+   space below the action buttons. :deep() reaches into BaseModal's scoped
+   .modal-container; only BaseModal usages within ProfileView are affected. */
+:deep(.modal-container) {
+  min-height: auto !important;
+}
 </style>

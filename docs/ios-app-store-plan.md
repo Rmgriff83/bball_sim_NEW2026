@@ -46,6 +46,92 @@ All steps from **Phase 1 step 3 onward** in the plan below — i.e. everything t
 
 ---
 
+## Build & run commands (local dev vs. production)
+
+Two distinct modes. The choice changes what the WebView loads and which backend the app talks to.
+
+### Mode A — Local dev (live reload, local backend)
+
+The native shell is installed on the simulator/device, but the WebView loads from your local Vite dev server instead of the bundled `dist/`. Edit a `.vue` file → vite HMR → the simulator picks it up. API calls hit the local Laravel backend through the Vite proxy.
+
+```bash
+# Terminal 1 — backend
+brew services start mysql                     # only if not already up
+cd backend && php artisan serve               # :8000
+
+# Terminal 2 — dev server (Vite, with /api proxy to :8000)
+cd frontend && npm run dev                    # :3000
+
+# Terminal 3 — deploy live-reload build to the simulator
+cd frontend
+npx cap run ios --list                        # copy the iPhone simulator UDID
+npx cap run ios -l --host localhost --port 3000 --target <UDID>
+```
+
+Key flags:
+- `-l` / `--live-reload` — overrides `server.url` for this run only (ephemeral; never touches the committed `capacitor.config.json`).
+- `--host localhost` — works because the iOS simulator shares the host's loopback. For a physical device you'd use the Mac's LAN IP and `npm run dev -- --host`.
+- `--target <UDID>` — keeps it non-interactive; otherwise `cap run` prompts.
+
+The `cap run -l` process stays alive to keep the live-reload session open. Stop with **Ctrl+C** or:
+```bash
+pkill -f "cap run ios"
+```
+
+### Mode B — Production build (bundled, talks to api.bball-sim.com)
+
+The WebView loads the bundled `dist/` files compiled with prod env vars. No vite server required. This is what TestFlight / App Store builds will look like.
+
+Prereqs in `frontend/.env.production`:
+```
+VITE_API_URL=https://api.bball-sim.com
+VITE_REVENUECAT_API_KEY=appl_...
+VITE_STRIPE_PUBLISHABLE_KEY=pk_...
+```
+
+```bash
+cd frontend
+
+# 1) build dist/ with prod env baked in, then copy into the iOS project
+npm run build:ios                              # = vite build && cap sync ios
+
+# 2) deploy to the simulator
+npx cap run ios --target <UDID> --no-sync      # --no-sync because step 1 already synced
+
+# OR open Xcode (for archiving / signing-required device runs)
+npm run open:ios
+```
+
+**Switching between modes:** the installed app remembers whatever `server.url` was active at install time. Going from Mode A → Mode B (or vice versa) requires another `cap run` — the second run reinstalls the app with the new origin.
+
+### Useful Capacitor / simctl helpers
+
+```bash
+npx cap run ios --list                                    # list simulator + device targets
+xcrun simctl list devices booted                          # which simulator is booted
+xcrun simctl get_app_container booted com.bballsim.app    # confirm install
+xcrun simctl launch booted com.bballsim.app               # launch from CLI (handy when GUI launch fails with "No such process")
+xcrun simctl uninstall booted com.bballsim.app            # wipe app + its localStorage / Keychain
+xcrun simctl io booted screenshot ~/Desktop/shot.png      # quick screenshot
+```
+
+**Gotcha:** if `xcrun simctl` errors with `unable to find utility "simctl"`, your `xcode-select` is pointed at the Command Line Tools instead of the full Xcode. Fix with:
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
+
+### Sandbox IAP testing (Mode B only)
+
+IAP only fires against StoreKit, which means a production-style build. Sandbox testing in the simulator:
+1. App Store Connect → **Users and Access → Sandbox Testers → +** to create a fake Apple ID.
+2. Simulator's **Settings → App Store → Sandbox Account → Sign In** with that tester.
+3. Run the prod build, trigger a purchase from the Store view. StoreKit sandbox sheet appears.
+4. Verify the RevenueCat webhook fires (Project Settings → Integrations → Webhooks → Delivery log) and the user's token balance updates.
+
+If the StoreKit sheet appears but tokens don't credit: it's almost always the webhook auth header — check `REVENUECAT_WEBHOOK_AUTH` on the prod backend matches the Authorization value configured in the RevenueCat dashboard.
+
+---
+
 ## Phase 0 — Prerequisites (mostly out-of-repo work)
 
 1. ~~**Enroll in Apple Developer Program** ($99/yr at developer.apple.com).~~ **DONE** (Individual account, name `Rmgriff83` / Ross — see [[app-transfer-strategy]] note in PR description for the post-launch Individual→Organization transfer path).
@@ -66,7 +152,20 @@ Goal: existing app boots inside an iOS WKWebView with no behavior changes.
 3. **`npx cap add ios`** — creates `frontend/ios/` (commit this directory).
 4. ~~Catch-all route in router.~~ **DONE**
 5. ~~Add `build:ios` + `open:ios` npm scripts.~~ **DONE**
-6. **Backend CORS**: add `https://app.bball-sim.com` to the `CORS_ALLOWED_ORIGINS` env on the API host (no edit to `backend/config/cors.php`; it reads from env).
+6. ~~**Backend CORS**: add `https://app.bball-sim.com` to the `CORS_ALLOWED_ORIGINS` env on the API host.~~ **DONE** — but with an important gotcha worth recording.
+
+   **`CORS_ALLOWED_ORIGINS` must include BOTH `https://app.bball-sim.com` AND `capacitor://app.bball-sim.com`** — the latter is what the WKWebView actually sends. `iosScheme: 'https'` only controls how the *page loads* inside the WebView; outbound cross-origin fetches still carry the `capacitor://` scheme in their `Origin` header. This is a Capacitor-on-iOS quirk, not a bug in our config.
+
+   **Symptom if missing:** Simulator/device login returns "Network Error" while the same login works in the production web build. Safari Web Inspector (Develop → Simulator → WebView) confirms it via console:
+   ```
+   Origin capacitor://app.bball-sim.com is not allowed by Access-Control-Allow-Origin. Status code: 204
+   ```
+
+   **Current value on prod:**
+   ```
+   CORS_ALLOWED_ORIGINS=https://bball-sim.com,https://www.bball-sim.com,https://bball-sim-31989.web.app,https://app.bball-sim.com,capacitor://app.bball-sim.com,http://localhost:5173
+   ```
+   No edit to `backend/config/cors.php` — it reads from env. After updating env: `php artisan config:cache`.
 7. ~~Move `auth_token` to Capacitor Preferences / Keychain.~~ **DONE**
 8. ~~Add `navigator.storage.persist()` to app boot.~~ **DONE**
 9. Smoke test: `npm run build:ios && npm run open:ios` → run on iPhone Simulator. Confirm login, navigation, sync, gameplay all work.
@@ -198,7 +297,7 @@ The 60s sync loop in `sync.js` / `CampaignCacheService.js` may misfire while the
 - ✅ `auth_token` migrated from localStorage to Capacitor Preferences / Keychain (Phase 1)
 - ✅ `navigator.storage.persist()` on app boot (Phase 1)
 - ✅ `frontend/ios/` Xcode project scaffolded via `cap add ios` (Phase 1) — Capacitor 8 uses Swift Package Manager, not CocoaPods
-- ⬜ Backend `CORS_ALLOWED_ORIGINS` env adds `https://app.bball-sim.com` (Phase 1)
+- ✅ Backend `CORS_ALLOWED_ORIGINS` env adds **both** `https://app.bball-sim.com` AND `capacitor://app.bball-sim.com` (Phase 1). The `capacitor://` origin is the one the WKWebView actually sends — `iosScheme: 'https'` does NOT change it. See Phase 1 step 6 for the symptom + Web Inspector trace.
 - ✅ Icons + splash generated via `@capacitor/assets` from `frontend/assets/`; `ITSAppUsesNonExemptEncryption=false` in Info.plist (Phase 2). Camera/photo usage strings intentionally omitted — app uses no device camera/photo library
 - ✅ `frontend/src/views/store/StoreView.vue` — platform branch for native IAP (Phase 3b)
 - ✅ New `frontend/src/services/iap.js` (Phase 3a)

@@ -410,3 +410,17 @@ function isWin(toast) {
   }
 }
 </style>
+
+<!-- iOS-only override: the new floating glass bottom nav sits at
+     `bottom: env(safe-area-inset-bottom)` and is 70px tall, so its top
+     edge is calc(70px + env(safe-area-inset-bottom)) above the viewport
+     bottom. Push toasts above that with a 12px breathing gap.
+     Non-scoped block so the global selector `html.platform-ios` matches
+     unambiguously. Browser (platform-web) keeps the existing 90px bottom. -->
+<style>
+@media (max-width: 1023px) {
+  html.platform-ios .toast-container {
+    bottom: calc(70px + env(safe-area-inset-bottom) + 12px);
+  }
+}
+</style>
