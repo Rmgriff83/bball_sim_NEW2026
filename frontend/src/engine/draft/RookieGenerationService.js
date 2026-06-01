@@ -83,38 +83,11 @@ const INTERNATIONAL_ORIGINS = [
   { country: 'Israel',    clubs: ['Maccabi Tel Aviv (Israel)', 'Hapoel Jerusalem (Israel)'] },
 ]
 
-const ROOKIE_FIRST_NAMES = [
-  'Jaylen', 'Tyrese', 'Jalen', 'Cam', 'Dereck', 'Scoot', 'Amen', 'Ausar',
-  'Chet', 'Jarace', 'GG', 'Keyonte', 'Gradey', 'Bilal', 'Kobe', 'Brandin',
-  'Brice', 'Terquavion', 'Jordan', 'Dariq', 'Leonard', 'Kris', 'Tristan',
-  'Jaime', 'Olivier', 'Zach', 'Colby', 'Cason', 'Maxwell', 'Adem',
-  'Dillon', 'Trevon', 'Keon', 'Nick', 'Andre', 'Toumani', 'Moussa',
-  'Ibrahima', 'Rayan', 'Hugo', 'Ousmane', 'Killian', 'Theo', 'Victor',
-  'Alexandre', 'Yuki', 'Rui', 'Kai', 'Matheus', 'Gui', 'Deni',
-  'Marcus', 'Anthony', 'DeAndre', 'Malik', 'Trey', 'Xavier', 'Caleb',
-  'Isaiah', 'Josiah', 'Elijah', 'Micah', 'Darius', 'Quincy', 'Amari',
-  'Jaylin', 'Tariq', 'Marquis', 'Donovan', 'Javonte', 'Kendall', 'Dashawn',
-  'Rasheed', 'Kofi', 'Ayo', 'Chima', 'Emeka', 'Bam', 'Precious',
-  'Jett', 'Reed', 'Stone', 'Cash', 'Ace', 'Knox', 'Cruz',
-  'Blake', 'Bryce', 'Cole', 'Drew', 'Grant', 'Reece', 'Tate', 'Wade',
-]
-
-const ROOKIE_LAST_NAMES = [
-  'Thompson', 'Walker', 'Henderson', 'Watkins', 'Dixon', 'Pierce', 'Lively',
-  'Whitmore', 'Miller', 'Sensabaugh', 'Jackson', 'Filipowski', 'Dick', 'Coulibaly',
-  'Bufkin', 'Podziemski', 'Hawkins', 'Wallace', 'Livingston', 'Washington',
-  'Daniels', 'Risacher', 'Da Silva', 'Sarr', 'Buzelis', 'Castle', 'Topic',
-  'Clingan', 'Edey', 'Missi', 'Sallis', 'Sheddon', 'Sheppard', 'Reed',
-  'Mitchell', 'Diallo', 'Diabate', 'Traore', 'Maledon', 'Bamba',
-  'Camara', 'Ndiaye', 'Kawamura', 'Hachimura', 'Watanabe', 'Santos',
-  'Silva', 'Avdija', 'Bazley', 'Okpala', 'Kuminga',
-  'Brooks', 'Coleman', 'Foster', 'Harris', 'Jenkins', 'King', 'Lewis',
-  'Morgan', 'Nelson', 'Owens', 'Patterson', 'Reynolds', 'Shaw', 'Tucker',
-  'Underwood', 'Vaughn', 'Webb', 'Young', 'Zhang', 'Adams', 'Banks',
-  'Chambers', 'Douglas', 'Ellis', 'Floyd', 'Gordon', 'Hunt', 'Ingram',
-  'Jefferson', 'Knight', 'Lambert', 'Mason', 'Newton', 'Oliver', 'Price',
-  'Quinn', 'Roberts', 'Sanders', 'Taylor', 'Upton', 'Vincent', 'Watts',
-]
+// Rookie names are pulled from the scrambled pool exported by CampaignManager
+// (see FAKE_FIRST_NAMES / FAKE_LAST_NAMES at top of this file). The raw
+// rookie-name arrays that used to live here contained NBA-derived names
+// (Wembanyama, Chet, Scoot, etc.) — removed to avoid identifiability under
+// publicity-rights law.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -383,14 +356,18 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
 let _combinedFirstNames = null
 let _combinedLastNames = null
 function getCombinedFirstNames() {
+  // Use the scrambled pool exclusively. The raw ROOKIE_FIRST_NAMES still
+  // contains real-derived names (Wembanyama, Chet, Scoot, etc.) so feeding
+  // them straight in would reintroduce identifiability. The scrambled pool
+  // from CampaignManager has thousands of unique made-up names already.
   if (!_combinedFirstNames) {
-    _combinedFirstNames = [...new Set([...ROOKIE_FIRST_NAMES, ...(FAKE_FIRST_NAMES ?? [])])]
+    _combinedFirstNames = [...(FAKE_FIRST_NAMES ?? [])]
   }
   return _combinedFirstNames
 }
 function getCombinedLastNames() {
   if (!_combinedLastNames) {
-    _combinedLastNames = [...new Set([...ROOKIE_LAST_NAMES, ...(FAKE_LAST_NAMES ?? [])])]
+    _combinedLastNames = [...(FAKE_LAST_NAMES ?? [])]
   }
   return _combinedLastNames
 }

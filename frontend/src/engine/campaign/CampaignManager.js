@@ -33,7 +33,7 @@ import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from '../simulation/CoachingEngi
 import { selectBestCoachingScheme, isCoachingSchemeValid } from '../coaching/CoachStrategyService'
 import { coachBadges } from '../data/coachBadges'
 import { BADGES, BADGES_BY_POSITION } from '../data/badges'
-import { playersMaster } from '../data/players'
+import { generateLeagueRosters, generateFreeAgentPool } from '../draft/LeagueRosterGenerator'
 import { CampaignRepository } from '../db/CampaignRepository'
 import { TeamRepository } from '../db/TeamRepository'
 import { PlayerRepository } from '../db/PlayerRepository'
@@ -87,6 +87,10 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)]
 }
 
+function randFloat(min, max) {
+  return min + Math.random() * (max - min)
+}
+
 /**
  * Determine which tier a team abbreviation belongs to.
  * @param {string} abbreviation
@@ -102,492 +106,20 @@ function getTeamTier(abbreviation) {
 }
 
 // =============================================================================
-// MASTER PLAYER RANDOMIZATION
+// PROCEDURAL NAME GENERATION
 // =============================================================================
-// Translated from PHP CampaignPlayerService::randomizePlayerData() and sub-methods.
-// Called once per player during campaign initialization to add variety.
+// The raw arrays below are SEED material for a scrambler that builds a pool of
+// thousands of unique made-up names. The scrambler runs once at module load
+// time and the exported FIRST_NAMES / LAST_NAMES are the SCRAMBLED outputs —
+// every consumer (generatePlayer, generateVeteran, RookieGenerationService)
+// reads from those, so no player path ever ships a real-life name.
+//
+// Why scramble at runtime instead of hand-curating: keeps the seed lists tiny
+// + maintainable while still producing 1000s of fictional combinations, and
+// makes the IP-safety guarantee mechanical (you can't accidentally leak a real
+// name through the system because no consumer touches the seed arrays).
 
-function randFloat(min, max) {
-  return min + Math.random() * (max - min)
-}
-
-function normalRandom(mean, stddev) {
-  const u1 = Math.max(0.0001, Math.random())
-  const u2 = Math.random()
-  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)
-  return mean + z * stddev
-}
-
-/**
- * Infer age from ratings gap and generate a realistic birth date.
- * Matches PHP CampaignPlayerService::randomizeBirthDate()
- */
-function randomizeBirthDate(data) {
-  const ovr = data.overallRating ?? 70
-  const potential = data.potentialRating ?? ovr
-  const potentialGap = potential - ovr
-  let age
-
-  if (potentialGap >= 10) {
-    age = randInt(19, 23)
-  } else if (potentialGap >= 5 && ovr < 80) {
-    age = randInt(20, 25)
-  } else if (ovr >= 88 && potentialGap >= 3) {
-    age = randInt(22, 27)
-  } else if (ovr >= 88 && potentialGap < 3) {
-    age = randInt(26, 32)
-  } else if (ovr >= 78) {
-    age = randInt(24, 32)
-  } else if (ovr >= 68) {
-    age = randInt(22, 34)
-  } else if (potentialGap <= 0 && ovr < 65) {
-    age = randInt(28, 36)
-  } else {
-    age = randInt(19, 24)
-  }
-
-  const birthYear = 2025 - age
-  const month = randInt(1, 12)
-  const maxDay = new Date(birthYear, month, 0).getDate() // last day of month
-  const day = randInt(1, maxDay)
-  const birthMonth = String(month).padStart(2, '0')
-  const birthDay = String(day).padStart(2, '0')
-
-  data.birthDate = `${birthYear}-${birthMonth}-${birthDay}`
-  data._age = age
-  return data
-}
-
-/**
- * Generate draft year, round, and pick based on age and ratings.
- * Matches PHP CampaignPlayerService::randomizeDraftInfo()
- */
-function randomizeDraftInfo(data) {
-  const age = data._age ?? 25
-  const ovr = data.overallRating ?? 70
-  const potential = data.potentialRating ?? ovr
-  const combinedScore = ovr + (potential - ovr) * 0.5
-
-  // Entry age: weighted random 19-22
-  const entryRoll = randInt(1, 100)
-  let entryAge
-  if (entryRoll <= 40) entryAge = 19
-  else if (entryRoll <= 70) entryAge = 20
-  else if (entryRoll <= 90) entryAge = 21
-  else entryAge = 22
-
-  entryAge = Math.min(entryAge, age)
-  const draftYear = 2025 - (age - entryAge)
-
-  let draftRound, draftPick
-  if (combinedScore >= 88) {
-    draftRound = 1; draftPick = randInt(1, 5)
-  } else if (combinedScore >= 82) {
-    draftRound = 1; draftPick = randInt(3, 14)
-  } else if (combinedScore >= 76) {
-    draftRound = 1; draftPick = randInt(10, 30)
-  } else if (combinedScore >= 70) {
-    draftRound = randInt(1, 2)
-    draftPick = draftRound === 1 ? randInt(15, 30) : randInt(31, 60)
-  } else if (combinedScore >= 60) {
-    draftRound = 2; draftPick = randInt(31, 60)
-  } else {
-    // 50% undrafted, 50% late 2nd round
-    if (randInt(0, 1) === 0) {
-      data.draftYear = null; data.draftRound = null; data.draftPick = null
-      return data
-    }
-    draftRound = 2; draftPick = randInt(45, 60)
-  }
-
-  data.draftYear = draftYear
-  data.draftRound = draftRound
-  data.draftPick = draftPick
-  return data
-}
-
-/**
- * Generate trade value based on OVR with age modifier.
- * Matches PHP CampaignPlayerService::randomizeTradeValue()
- */
-function randomizeTradeValue(data) {
-  if (data.tradeValue != null) return data
-
-  const ovr = data.overallRating ?? 70
-  const age = data._age ?? 25
-  let value
-
-  if (ovr >= 92)      value = randFloat(25, 40)
-  else if (ovr >= 88) value = randFloat(18, 28)
-  else if (ovr >= 84) value = randFloat(12, 20)
-  else if (ovr >= 80) value = randFloat(8, 14)
-  else if (ovr >= 76) value = randFloat(5, 10)
-  else if (ovr >= 72) value = randFloat(3, 7)
-  else if (ovr >= 68) value = randFloat(1.5, 4)
-  else                value = randFloat(0.5, 2)
-
-  if (age <= 24) value *= 1.15
-  else if (age >= 32) value *= 0.80
-
-  data.tradeValue = Math.round(value * 100) / 100
-  data.tradeValueTotal = Math.round(value * randFloat(0.6, 0.9) * 100) / 100
-  return data
-}
-
-/**
- * Assign personality traits based on attributes and random selection.
- * Matches PHP CampaignPlayerService::randomizePersonalityTraits()
- */
-function randomizePersonalityTraits(data) {
-  const traits = data.personality?.traits ?? []
-  if (traits.length > 0) return data
-
-  const allTraits = ['competitor', 'leader', 'mentor', 'hot_head', 'ball_hog', 'team_player', 'joker', 'quiet', 'media_darling']
-
-  const countRoll = randInt(1, 100)
-  let numTraits
-  if (countRoll <= 20) numTraits = 0
-  else if (countRoll <= 60) numTraits = 1
-  else if (countRoll <= 90) numTraits = 2
-  else numTraits = 3
-
-  if (numTraits === 0) return data
-
-  const assignedTraits = []
-  const ovr = data.overallRating ?? 70
-  const age = data._age ?? 25
-  const workEthic = data.attributes?.mental?.workEthic ?? 50
-  const basketballIQ = data.attributes?.mental?.basketballIQ ?? 50
-
-  if (workEthic >= 85 && randInt(1, 100) <= 40) {
-    assignedTraits.push('competitor')
-  }
-  if (basketballIQ >= 85 && age >= 28 && randInt(1, 100) <= 30 && assignedTraits.length < numTraits) {
-    assignedTraits.push('mentor')
-  }
-  if (basketballIQ >= 80 && ovr >= 82 && randInt(1, 100) <= 25 && assignedTraits.length < numTraits) {
-    assignedTraits.push('leader')
-  }
-
-  const remainingPool = allTraits.filter(t => !assignedTraits.includes(t))
-  shuffleArray(remainingPool)
-
-  while (assignedTraits.length < numTraits && remainingPool.length > 0) {
-    assignedTraits.push(remainingPool.shift())
-  }
-
-  // Conflict resolution
-  const hasBallHog = assignedTraits.includes('ball_hog')
-  const hasTeamPlayer = assignedTraits.includes('team_player')
-  const hasHotHead = assignedTraits.includes('hot_head')
-  const hasQuiet = assignedTraits.includes('quiet')
-
-  if (hasBallHog && hasTeamPlayer) {
-    const remove = randInt(0, 1) ? 'ball_hog' : 'team_player'
-    assignedTraits.splice(assignedTraits.indexOf(remove), 1)
-  }
-  if (hasHotHead && hasQuiet) {
-    const remove = randInt(0, 1) ? 'hot_head' : 'quiet'
-    assignedTraits.splice(assignedTraits.indexOf(remove), 1)
-  }
-
-  if (!data.personality) data.personality = { morale: 80, chemistry: 75, mediaProfile: 'normal' }
-  data.personality.traits = assignedTraits
-  return data
-}
-
-/**
- * Generate realistic physical attributes from position-appropriate distributions.
- * Matches PHP CampaignPlayerService::randomizePhysicalAttributes()
- */
-function randomizePhysicalAttributes(data) {
-  const position = data.position ?? 'SF'
-
-  const positionProfiles = {
-    PG: { hMean: 74, hStd: 2.0, hMin: 70, hMax: 78, wMean: 190, wStd: 12, wMin: 165, wMax: 215 },
-    SG: { hMean: 76, hStd: 1.8, hMin: 72, hMax: 80, wMean: 200, wStd: 12, wMin: 175, wMax: 225 },
-    SF: { hMean: 79, hStd: 1.8, hMin: 75, hMax: 83, wMean: 220, wStd: 12, wMin: 200, wMax: 250 },
-    PF: { hMean: 81, hStd: 1.8, hMin: 77, hMax: 85, wMean: 240, wStd: 12, wMin: 215, wMax: 265 },
-    C:  { hMean: 83, hStd: 2.0, hMin: 79, hMax: 88, wMean: 255, wStd: 15, wMin: 225, wMax: 285 },
-  }
-
-  const profile = positionProfiles[position] ?? positionProfiles.SF
-
-  const height = Math.max(profile.hMin, Math.min(profile.hMax, Math.round(normalRandom(profile.hMean, profile.hStd))))
-  data.heightInches = height
-
-  const heightOffset = height - profile.hMean
-  const weightMean = profile.wMean + heightOffset * 5
-  const weight = Math.max(profile.wMin, Math.min(profile.wMax, Math.round(normalRandom(weightMean, profile.wStd))))
-  data.weightLbs = weight
-
-  let wingspanBase = height + randInt(0, 5)
-  if (position === 'C' || position === 'PF') wingspanBase += randInt(0, 2)
-  data.wingspanInches = wingspanBase
-
-  return data
-}
-
-/**
- * Assign college and hometown if missing.
- * Matches PHP CampaignPlayerService::randomizeBioData()
- */
-function randomizeBioData(data) {
-  const country = data.country ?? 'United States'
-  const isInternational = country !== 'United States'
-
-  if (!data.college) {
-    if (isInternational) {
-      data.college = randInt(0, 1) ? 'International' : 'Overseas Academy'
-    } else {
-      const colleges = [
-        'Duke', 'Kentucky', 'North Carolina', 'Kansas', 'UCLA',
-        'Michigan State', 'Gonzaga', 'Villanova', 'Louisville', 'Syracuse',
-        'Indiana', 'Connecticut', 'Arizona', 'Florida', 'Ohio State',
-        'Michigan', 'Texas', 'Georgetown', 'Wake Forest', 'Memphis',
-        'LSU', 'Auburn', 'Baylor', 'Tennessee', 'Virginia',
-        'Wisconsin', 'Purdue', 'Iowa State', 'Oregon', 'Maryland',
-        'Georgia Tech', 'Creighton', 'Marquette', 'San Diego State', 'Houston',
-        'USC', 'Stanford', 'Notre Dame', 'Oklahoma', 'Arkansas',
-        'Alabama', 'Dayton', 'Xavier', 'Butler', 'Providence',
-      ]
-      data.college = pickRandom(colleges)
-    }
-  }
-
-  if (!data.hometown && !isInternational) {
-    const hometowns = [
-      'Los Angeles, CA', 'Chicago, IL', 'Houston, TX', 'New York, NY',
-      'Philadelphia, PA', 'Atlanta, GA', 'Detroit, MI', 'Memphis, TN',
-      'Miami, FL', 'Dallas, TX', 'Oakland, CA', 'Indianapolis, IN',
-      'Baltimore, MD', 'Charlotte, NC', 'Milwaukee, WI', 'St. Louis, MO',
-      'Cleveland, OH', 'New Orleans, LA', 'Minneapolis, MN', 'Phoenix, AZ',
-      'San Antonio, TX', 'Washington, DC', 'Denver, CO', 'Seattle, WA',
-      'Boston, MA', 'Raleigh, NC', 'Nashville, TN', 'Jacksonville, FL',
-      'Columbus, OH', 'Sacramento, CA', 'Las Vegas, NV', 'Louisville, KY',
-      'Compton, CA', 'Brooklyn, NY', 'Akron, OH',
-    ]
-    data.hometown = pickRandom(hometowns)
-  }
-
-  return data
-}
-
-/**
- * Apply all randomization steps to a master player entry.
- * Matches PHP CampaignPlayerService::randomizePlayerData()
- */
-function randomizePlayerData(data) {
-  // Deep clone to avoid mutating the original master data
-  data = JSON.parse(JSON.stringify(data))
-  data = randomizeBirthDate(data)
-  data = randomizeDraftInfo(data)
-  data = randomizeTradeValue(data)
-  data = randomizePersonalityTraits(data)
-  data = randomizePhysicalAttributes(data)
-  data = randomizeBioData(data)
-  data.jerseyNumber = randInt(0, 99)
-  delete data._age
-  return data
-}
-
-/**
- * Convert a randomized master player entry into a full IndexedDB player object.
- * This is the master-data equivalent of generatePlayer().
- */
-function prepareMasterPlayer(masterData, campaignId, teamId, teamAbbreviation) {
-  const playerId = generateUUID()
-  const age = masterData._age ?? (masterData.birthDate ? (2025 - parseInt(masterData.birthDate.substring(0, 4))) : 25)
-  const heightInches = masterData.heightInches ?? 78
-  const weightLbs = masterData.weightLbs ?? 210
-  const overall = masterData.overallRating ?? 75
-  const position = masterData.position ?? 'SF'
-  const salary = masterData.contractSalary ?? calculateSalary(overall, age)
-  const contractYears = randInt(1, 4)
-  const contractDetailsObj = {
-    totalYears: randInt(2, 5),
-    salaries: [salary],
-    options: {},
-    noTradeClause: false,
-  }
-
-  // Generate attributes/tendencies/badges/personality when master data is missing them
-  const attrs = masterData.attributes ?? generateAttributes(position, overall)
-  const tends = masterData.tendencies ?? generateTendencies(position)
-  const bdgs = (masterData.badges && masterData.badges.length > 0)
-    ? masterData.badges
-    : generateBadges(position, overall)
-  const pers = (masterData.personality && masterData.personality.traits?.length > 0)
-    ? masterData.personality
-    : generatePersonality()
-
-  // Generate motivations when missing
-  const motivations = masterData.motivations ?? generateMotivations({
-    age, overallRating: overall, personality: pers,
-  })
-
-  // Generate potential with upside when missing — weighted by age
-  let potentialDefault
-  if (!masterData.potentialRating) {
-    // Younger players have more room to grow
-    let potentialFloor, potentialCeiling
-    if (age <= 23) {
-      potentialFloor = Math.round(overall * 1.05)  // 5% above current
-      potentialCeiling = Math.round(overall * 1.20) // 20% above current
-    } else if (age <= 26) {
-      potentialFloor = Math.round(overall * 1.03)
-      potentialCeiling = Math.round(overall * 1.12)
-    } else if (age <= 31) {
-      potentialFloor = overall
-      potentialCeiling = Math.round(overall * 1.05)
-    } else {
-      // Decline-age players: potential is at or just below current
-      potentialFloor = Math.max(25, overall - 3)
-      potentialCeiling = overall
-    }
-    potentialDefault = Math.min(99, randInt(potentialFloor, potentialCeiling))
-  }
-  const potentialRating = masterData.potentialRating ?? potentialDefault
-
-  // Generate trade value when missing
-  let tradeValue = masterData.tradeValue
-  let tradeValueTotal = masterData.tradeValueTotal
-  if (tradeValue == null) {
-    let tv
-    if (overall >= 92)      tv = randFloat(25, 40)
-    else if (overall >= 88) tv = randFloat(18, 28)
-    else if (overall >= 84) tv = randFloat(12, 20)
-    else if (overall >= 80) tv = randFloat(8, 14)
-    else if (overall >= 76) tv = randFloat(5, 10)
-    else if (overall >= 72) tv = randFloat(3, 7)
-    else if (overall >= 68) tv = randFloat(1.5, 4)
-    else                    tv = randFloat(0.5, 2)
-    if (age <= 24) tv *= 1.15
-    else if (age >= 32) tv *= 0.80
-    tradeValue = Math.round(tv * 100) / 100
-    tradeValueTotal = Math.round(tv * randFloat(0.6, 0.9) * 100) / 100
-  }
-
-  return {
-    // IndexedDB keys
-    campaignId,
-    id: playerId,
-
-    // Core identity — preserved from master data
-    teamId,
-    teamAbbreviation,
-    isFreeAgent: teamId ? 0 : 1,
-    firstName: masterData.firstName,
-    first_name: masterData.firstName,
-    lastName: masterData.lastName,
-    last_name: masterData.lastName,
-    name: `${masterData.firstName} ${masterData.lastName}`,
-    headshot: masterData.originalName
-      ? `${masterData.originalName.trim().replace(/\./g, '').replace(/\s+/g, '_')}.png`
-      : null,
-    position,
-    secondaryPosition: masterData.secondaryPosition ?? null,
-    secondary_position: masterData.secondaryPosition ?? null,
-    jerseyNumber: masterData.jerseyNumber,
-    jersey_number: masterData.jerseyNumber,
-    heightInches,
-    height_inches: heightInches,
-    height: `${Math.floor(heightInches / 12)}'${heightInches % 12}"`,
-    weightLbs,
-    weight_lbs: weightLbs,
-    weight: weightLbs,
-    wingspanInches: masterData.wingspanInches ?? heightInches + randInt(0, 5),
-    birthDate: masterData.birthDate,
-    birth_date: masterData.birthDate,
-    age,
-    country: masterData.country ?? 'United States',
-    college: masterData.college ?? null,
-    hometown: masterData.hometown ?? null,
-    draftYear: masterData.draftYear ?? null,
-    draftRound: masterData.draftRound ?? null,
-    draftPick: masterData.draftPick ?? null,
-
-    // Ratings — preserved from master data
-    overallRating: overall,
-    overall_rating: overall,
-    potentialRating,
-    potential_rating: potentialRating,
-    archetype: masterData.archetype ?? null,
-
-    // Attributes & gameplay — generated when missing from master data
-    attributes: attrs,
-    tendencies: tends,
-    badges: bdgs,
-    personality: pers,
-    motivations,
-
-    // Contract
-    contractYearsRemaining: contractYears,
-    contract_years_remaining: contractYears,
-    contractSalary: salary,
-    contract_salary: salary,
-    contractDetails: contractDetailsObj,
-    contract_details: contractDetailsObj,
-    tradeValue,
-    tradeValueTotal,
-    injuryRisk: masterData.injuryRisk ?? 'M',
-
-    // Status
-    isInjured: false,
-    is_injured: false,
-    injuryDetails: null,
-    injury_details: null,
-    fatigue: 0,
-
-    // Evolution tracking
-    developmentHistory: [],
-    development_history: [],
-    streakData: null,
-    streak_data: null,
-    recentPerformances: [],
-    recent_performances: [],
-    upgradePoints: 0,
-    upgrade_points: 0,
-    offenseUpgradePoints: 0,
-    offense_upgrade_points: 0,
-    defenseUpgradePoints: 0,
-    defense_upgrade_points: 0,
-    gamesPlayedThisSeason: 0,
-    games_played_this_season: 0,
-    minutesPlayedThisSeason: 0,
-    minutes_played_this_season: 0,
-    careerSeasons: 0,
-    career_seasons: 0,
-
-    // Awards
-    championships: 0,
-    allStarSelections: 0,
-    all_star_selections: 0,
-    mvpAwards: 0,
-    mvp_awards: 0,
-    finalsMvpAwards: 0,
-    finals_mvp_awards: 0,
-    rookieOfTheYear: 0,
-    rookie_of_the_year: 0,
-    allNbaSelections: 0,
-    all_nba_selections: 0,
-    allNbaFirstTeam: 0,
-    all_nba_first_team: 0,
-    allRookieTeam: 0,
-    all_rookie_team: 0,
-    allDefensiveTeam: 0,
-    all_defensive_team: 0,
-
-    updatedAt: new Date().toISOString(),
-  }
-}
-
-// =============================================================================
-// RANDOM PLAYER GENERATION DATA (used as fallback / fantasy fill)
-// =============================================================================
-// Mirrors the PHP PlayerSeeder arrays and logic.
-
-export const FIRST_NAMES = [
+const RAW_FIRST_NAMES = [
   'Marcus', 'Anthony', 'Jaylen', 'Derrick', 'Kyrie', 'James', 'Kevin', 'LeBroom', 'Steffen',
   'Damien', 'Devin', 'Luka', 'Giannis', 'Joel', 'Nikola', 'Jayson', 'Trae', 'Donovan',
   'Zion', 'Ja', 'Tyrese', 'Cade', 'Evan', 'Franz', 'Scottie', 'Paolo', 'Jalen', 'Desmond',
@@ -605,7 +137,7 @@ export const FIRST_NAMES = [
   'Myles', 'Bennedict', 'TJ', 'Chuma',
 ]
 
-export const LAST_NAMES = [
+const RAW_LAST_NAMES = [
   'Smart', 'Edwards', 'Brown', 'Rose', 'Irving', 'Harden', 'Durant', 'James', 'Curry',
   'Lillard', 'Booker', 'Doncic', 'Antetokounmpo', 'Embiid', 'Jokic', 'Tatum', 'Young', 'Mitchell',
   'Williamson', 'Morant', 'Haliburton', 'Cunningham', 'Mobley', 'Wagner', 'Barnes', 'Banchero', 'Green', 'Bane',
@@ -622,6 +154,166 @@ export const LAST_NAMES = [
   'Okongwu', 'Bogdanovic', 'Capela', 'Smith', 'Griffin', 'Suggs', 'Murray', 'Sabonis',
   'Turner', 'Mathurin', 'Nesmith', 'McConnell', 'Nembhard', 'Duarte', 'Okeke',
 ]
+
+// Split a name into [prefix, suffix] after the FIRST vowel cluster. The cluster
+// boundary keeps suffixes pronounceable (consonant-onset) and gives prefixes a
+// natural consonant-vowel-(consonant) shape. Falls back to a midpoint split if
+// no vowel cluster boundary is found.
+function _splitName(name) {
+  if (!name || name.length < 3) return null
+  const vowels = 'aeiouyAEIOUY'
+  let inVowel = false
+  for (let i = 1; i < name.length - 1; i++) {
+    const isV = vowels.includes(name[i])
+    if (isV) {
+      inVowel = true
+    } else if (inVowel) {
+      return [name.slice(0, i), name.slice(i)]
+    }
+  }
+  const mid = Math.max(2, Math.floor(name.length / 2))
+  return [name.slice(0, mid), name.slice(mid)]
+}
+
+// Reject candidates that look unnatural (3+ consonants in a row, etc.).
+function _isPlausibleName(name) {
+  if (name.length < 4 || name.length > 13) return false
+  // No four consonants in a row
+  if (/[bcdfghjklmnpqrstvwxz]{4,}/i.test(name)) return false
+  // No starting with apostrophe/hyphen
+  if (/^[-']/.test(name)) return false
+  return true
+}
+
+function _scrambleNamePool(rawNames) {
+  const realLower = new Set(rawNames.map(n => n.toLowerCase()))
+  const prefixes = new Set()
+  const suffixes = new Set()
+  for (const n of rawNames) {
+    const parts = _splitName(n)
+    if (!parts) continue
+    const [pre, suf] = parts
+    if (pre) prefixes.add(pre)
+    if (suf) suffixes.add(suf.toLowerCase())
+  }
+
+  const pool = new Set()
+  for (const pre of prefixes) {
+    for (const suf of suffixes) {
+      const candidate = pre + suf
+      const formatted = candidate.charAt(0).toUpperCase() + candidate.slice(1).toLowerCase()
+      if (!_isPlausibleName(formatted)) continue
+      if (realLower.has(formatted.toLowerCase())) continue
+      pool.add(formatted)
+    }
+  }
+  return [...pool]
+}
+
+// Real-feeling first / last names mixed into the exported pool below. Pure
+// scrambler output reads as a 100% fictional league — atmospheric, but the
+// names all sound unusual together. Salting in real-name buckets makes the
+// league feel more grounded without re-introducing real NBA-player names.
+//
+// Two buckets so the proportion of each can be tuned independently:
+//   NORMAL_*  — broadly common American/Anglo names
+//   BLACK_*   — names commonly used in Black American communities (curated
+//               to avoid direct overlap with current/recent NBA players)
+const NORMAL_FIRST_NAMES = [
+  'John', 'Michael', 'David', 'Robert', 'William', 'Richard', 'Thomas', 'Charles',
+  'Christopher', 'Daniel', 'Matthew', 'Mark', 'Steven', 'Andrew', 'Joshua', 'Ryan',
+  'Brian', 'Edward', 'Ronald', 'Timothy', 'Jeffrey', 'Jacob', 'Nicholas', 'Eric',
+  'Jonathan', 'Stephen', 'Larry', 'Justin', 'Scott', 'Benjamin', 'Samuel', 'Gregory',
+  'Frank', 'Raymond', 'Jack', 'Dennis', 'Tyler', 'Henry', 'Sean', 'Adam',
+  'Nathan', 'Zachary', 'Walter', 'Peter', 'Harold', 'Carl', 'Arthur', 'Roger',
+  'Joe', 'Dylan', 'Lucas', 'Owen', 'Caleb', 'Connor', 'Wyatt', 'Hunter',
+  'Mason', 'Logan', 'Ethan', 'Noah', 'Liam', 'Ian', 'Eli', 'Brett',
+  'Cole', 'Sean', 'Travis', 'Shane', 'Hayden', 'Holden', 'Levi', 'Pierce',
+  'Wesley', 'Reid', 'Ross', 'Spencer', 'Garrett', 'Vincent', 'Theo', 'Max',
+]
+
+const NORMAL_LAST_NAMES = [
+  'Smith', 'Johnson', 'Davis', 'Miller', 'Wilson', 'Anderson', 'Taylor', 'Moore',
+  'Martin', 'Lee', 'Clark', 'Lewis', 'Walker', 'Hall', 'Allen', 'King',
+  'Wright', 'Scott', 'Green', 'Baker', 'Nelson', 'Adams', 'Mitchell', 'Roberts',
+  'Phillips', 'Evans', 'Turner', 'Parker', 'Collins', 'Stewart', 'Morris', 'Murphy',
+  'Cook', 'Rogers', 'Reed', 'Bailey', 'Bell', 'Cooper', 'Howard', 'Ward',
+  'Cox', 'Brooks', 'Gray', 'Watson', 'Price', 'Bennett', 'Wood', 'Barnes',
+  'Ross', 'Henderson', 'Coleman', 'Jenkins', 'Perry', 'Powell', 'Long', 'Patterson',
+  'Hughes', 'Foster', 'Sanders', 'Russell', 'Bryant', 'Murray', 'Webb', 'Snyder',
+  'Hayes', 'Crawford', 'Knight', 'Lambert', 'Pierce', 'Burns', 'Stevens', 'Marshall',
+  'Reynolds', 'Owens', 'Mason', 'Tucker', 'Hunter', 'Holland', 'Lawrence', 'Carter',
+]
+
+// First names commonly used in Black American communities. Some overlap with
+// the general American pool (Curtis, Andre, Marcus) because those names cross
+// cultural lines, but the bucket leans toward names that lend the league a
+// more representative feel. Filtered to avoid names of current / recent NBA
+// stars that would create identifiability concerns.
+const BLACK_FIRST_NAMES = [
+  'Jamal', 'Tyrone', 'Darnell', 'DeAndre', 'Maurice', 'Reggie', 'Cedric',
+  'Bryson', 'Otis', 'Curtis', 'Bernard', 'Dexter', 'Roscoe', 'Reginald',
+  'Quincy', 'Damon', 'Lamar', 'Cornelius', 'Demetrius', 'Donte', 'Antoine',
+  'Antwan', 'Tariq', 'Tavon', 'Terrence', 'Tyree', 'Tyrell', 'Vernon',
+  'Wendell', 'Willie', 'Andre', 'Earl', 'Stanley', 'Melvin', 'Ervin',
+  'Rashad', 'Marquis', 'Jermaine', 'Jamar', 'Jamir', 'Malachi', 'Malik',
+  'Kareem', 'Khalil', 'Omar', 'Sterling', 'Trevon', 'Tre', 'Jaylin',
+  'Marcellus', 'DeShawn', 'DeMarco', 'DeVonte', 'Jaheim', 'Keyshawn',
+  'Rashawn', 'Tobias', 'Solomon', 'Terrell', 'Booker', 'Calvin', 'Gerald',
+  'Leon', 'Lonnie', 'Rufus', 'Cyrus', 'Marquise', 'Demarius', 'Tyrese',
+  'Jaxson', 'Trayvon', 'Devontae', 'Jamel', 'Cleophus', 'Jerome',
+]
+
+// Last names common across Black American communities. Many of these are
+// shared with the general American pool culturally — included here as a
+// second-bucket weight nudge rather than a strict ethnic divide.
+const BLACK_LAST_NAMES = [
+  'Washington', 'Jefferson', 'Jackson', 'Booker', 'Mosley', 'Cummings',
+  'Pinkston', 'Frazier', 'Gaines', 'Witherspoon', 'Lassiter', 'Pittman',
+  'McNair', 'Boyd', 'Boykin', 'Carver', 'Christian', 'Cleveland', 'Coles',
+  'Crockett', 'Duke', 'Fletcher', 'Floyd', 'Freeman', 'Gantt', 'Garner',
+  'Givens', 'Grant', 'Greene', 'Hampton', 'Hardy', 'Harmon', 'Harvey',
+  'Heath', 'Holmes', 'Jeffries', 'Jordan', 'Keys', 'Langston', 'Lawson',
+  'Lemon', 'Mack', 'Madison', 'Massey', 'McCray', 'McKinney', 'McNeil',
+  'Norris', 'Pace', 'Page', 'Paige', 'Pope', 'Prentice', 'Pryor',
+  'Reese', 'Riggs', 'Roach', 'Rollins', 'Saunders', 'Shaw', 'Stafford',
+  'Steele', 'Stokes', 'Sutton', 'Tate', 'Thurmond', 'Vance', 'Vaughn',
+  'Waters', 'Wells', 'Whitaker', 'Wilkins', 'Woodson', 'Drummond',
+]
+
+// Each real-name bucket is repeated N times when concatenating with the
+// scrambled pool so it lands at roughly its target share of total picks.
+// Tweaking the weight up/down is the per-bucket knob — independent of the
+// scrambled pool's natural size (~3,400 entries).
+const NORMAL_NAME_WEIGHT = 14
+const BLACK_NAME_WEIGHT = 14
+
+function _mixRealNames(scrambled, buckets) {
+  const pool = [...scrambled]
+  for (const { names, weight } of buckets) {
+    for (let i = 0; i < weight; i++) pool.push(...names)
+  }
+  return pool
+}
+
+// Build the scrambled pools once at module load. Both raw seed lists are
+// combined with the coach-name pools so the scrambler has maximum variety.
+// The exported arrays mix in real-name buckets at tunable rates so the
+// league reads less uniformly fictional.
+export const FIRST_NAMES = _mixRealNames(
+  _scrambleNamePool([...RAW_FIRST_NAMES, ...COACH_FIRST_NAMES]),
+  [
+    { names: NORMAL_FIRST_NAMES, weight: NORMAL_NAME_WEIGHT },
+    { names: BLACK_FIRST_NAMES,  weight: BLACK_NAME_WEIGHT },
+  ],
+)
+export const LAST_NAMES = _mixRealNames(
+  _scrambleNamePool([...RAW_LAST_NAMES, ...COACH_LAST_NAMES]),
+  [
+    { names: NORMAL_LAST_NAMES, weight: NORMAL_NAME_WEIGHT },
+    { names: BLACK_LAST_NAMES,  weight: BLACK_NAME_WEIGHT },
+  ],
+)
 
 const PERSONALITY_TRAITS = ['team_player', 'ball_hog', 'mentor', 'hot_head', 'media_darling', 'quiet', 'leader', 'joker', 'competitor']
 const MEDIA_PROFILES = ['low_key', 'normal', 'high_profile']
@@ -912,19 +604,28 @@ function generatePersonality() {
 }
 
 function calculateSalary(overall, age) {
+  // Bands tuned so league avg payroll lands near the $136M cap with realistic
+  // spread. With the bottom-heavy talent distribution (more players in 56-69
+  // OVR, fewer in 70-82), the LOW-end salary tiers had to be pulled up to
+  // keep total payrolls realistic — real NBA bench guys earn $3-8M, not
+  // minimum, and there are a lot of bench guys per roster now.
   let baseSalary
-  if (overall >= 92)      baseSalary = randInt(40000000, 50000000)
-  else if (overall >= 88) baseSalary = randInt(30000000, 42000000)
-  else if (overall >= 84) baseSalary = randInt(20000000, 32000000)
-  else if (overall >= 80) baseSalary = randInt(12000000, 22000000)
-  else if (overall >= 76) baseSalary = randInt(6000000, 14000000)
-  else if (overall >= 72) baseSalary = randInt(3000000, 8000000)
-  else if (overall >= 68) baseSalary = randInt(1500000, 4000000)
-  else                    baseSalary = randInt(900000, 2000000)
+  if (overall >= 92)      baseSalary = randInt(45000000, 55000000)
+  else if (overall >= 88) baseSalary = randInt(35000000, 47000000)
+  else if (overall >= 84) baseSalary = randInt(24000000, 36000000)
+  else if (overall >= 80) baseSalary = randInt(15000000, 25000000)
+  else if (overall >= 76) baseSalary = randInt(9000000, 17000000)
+  else if (overall >= 72) baseSalary = randInt(6000000, 12000000)
+  else if (overall >= 68) baseSalary = randInt(4000000, 8000000)
+  else if (overall >= 64) baseSalary = randInt(2500000, 5000000)
+  else if (overall >= 60) baseSalary = randInt(1800000, 3500000)
+  else                    baseSalary = randInt(1100000, 2500000)
 
-  // Age adjustment
-  if (age >= 33) baseSalary = Math.round(baseSalary * 0.85)
-  else if (age <= 23) baseSalary = Math.round(baseSalary * 0.7)
+  // Age adjustment — young stars sign cheaper extensions; aging vets give
+  // a modest discount but not as steep as before so 33+ vets still command
+  // real money.
+  if (age >= 33) baseSalary = Math.round(baseSalary * 0.90)
+  else if (age <= 23) baseSalary = Math.round(baseSalary * 0.75)
 
   return Math.round(baseSalary / 10000) * 10000
 }
@@ -934,7 +635,7 @@ function generateContract(overall, age) {
   const salary = calculateSalary(overall, age)
 
   const salaries = []
-  for (let i = 0; i <= yearsRemaining; i++) {
+  for (let i = 0; i < yearsRemaining; i++) {
     salaries.push(Math.round(salary * (1 + 0.05 * i) / 10000) * 10000)
   }
 
@@ -949,6 +650,132 @@ function generateContract(overall, age) {
       signedYear: 2025 - randInt(0, 3),
     },
   }
+}
+
+// =============================================================================
+// AGE/EXPERIENCE-BASED HELPERS (shared across player-generation paths)
+// =============================================================================
+
+/**
+ * Derive a realistic potential rating from overall and age. Younger players
+ * have more headroom; veterans cap at or just below their current overall.
+ * Extracted from prepareMasterPlayer so generateVeteran can reuse identical
+ * logic to keep PlayerEvolution behavior consistent across the procedural
+ * pipeline.
+ */
+function computePotentialFromAge(overall, age) {
+  let floor, ceiling
+  if (age <= 23) {
+    floor = Math.round(overall * 1.05)
+    ceiling = Math.round(overall * 1.20)
+  } else if (age <= 26) {
+    floor = Math.round(overall * 1.03)
+    ceiling = Math.round(overall * 1.12)
+  } else if (age <= 31) {
+    floor = overall
+    ceiling = Math.round(overall * 1.05)
+  } else {
+    floor = Math.max(25, overall - 3)
+    ceiling = overall
+  }
+  return Math.min(99, randInt(floor, ceiling))
+}
+
+/**
+ * Derive trade value from overall + age. Extracted from prepareMasterPlayer.
+ * Returns { tradeValue, tradeValueTotal } — same tiered formula previously
+ * applied to master players.
+ */
+function computeTradeValue(overall, age) {
+  let tv
+  if (overall >= 92)      tv = randFloat(25, 40)
+  else if (overall >= 88) tv = randFloat(18, 28)
+  else if (overall >= 84) tv = randFloat(12, 20)
+  else if (overall >= 80) tv = randFloat(8, 14)
+  else if (overall >= 76) tv = randFloat(5, 10)
+  else if (overall >= 72) tv = randFloat(3, 7)
+  else if (overall >= 68) tv = randFloat(1.5, 4)
+  else                    tv = randFloat(0.5, 2)
+  if (age <= 24) tv *= 1.15
+  else if (age >= 32) tv *= 0.80
+  return {
+    tradeValue: Math.round(tv * 100) / 100,
+    tradeValueTotal: Math.round(tv * randFloat(0.6, 0.9) * 100) / 100,
+  }
+}
+
+/**
+ * Badge count and tier mix for a veteran. Tightened distribution: superstars
+ * stay loaded with badges (clearly differentiated), the middle tier is sparse
+ * (so role players don't trigger constant synergies with everyone they share
+ * the floor with), and bench guys are mostly bare. Each OVR band also caps
+ * the careerSeasons bonus tighter than before so a 12-year vet bench player
+ * doesn't pile up gold-tier badges from longevity alone.
+ */
+function generateVeteranBadges(position, overall, careerSeasons) {
+  const availableBadges = BADGES_BY_POSITION[position] ?? BADGES_BY_POSITION.SF
+
+  let baseCount, bonusCap
+  if (overall >= 90)      { baseCount = randInt(7, 11); bonusCap = 5 }
+  else if (overall >= 85) { baseCount = randInt(5, 8);  bonusCap = 4 }
+  else if (overall >= 80) { baseCount = randInt(3, 6);  bonusCap = 3 }
+  else if (overall >= 75) { baseCount = randInt(2, 4);  bonusCap = 2 }
+  else if (overall >= 70) { baseCount = randInt(1, 3);  bonusCap = 2 }
+  else                    { baseCount = randInt(0, 2);  bonusCap = 1 }
+
+  const seasonBonus = Math.max(0, Math.min(bonusCap, Math.floor((careerSeasons ?? 0) / 2)))
+  const numBadges = baseCount + seasonBonus
+
+  if (numBadges <= 0) return []
+
+  const shuffled = shuffleArray([...availableBadges])
+  const selected = shuffled.slice(0, Math.min(numBadges, shuffled.length))
+
+  return selected.map(id => ({
+    id,
+    level: getBadgeLevel(overall),
+  }))
+}
+
+/**
+ * Pick a realistic veteran age from a role band. Used by generateVeteran to
+ * spread roster ages naturally instead of clustering everyone in the rookie
+ * 18-22 window the base generator produces.
+ */
+function pickVeteranAge(role) {
+  switch (role) {
+    case 'superstar': return randInt(27, 32)
+    case 'star':      return randInt(25, 31)
+    case 'starter':   return randInt(24, 30)
+    case 'rotation':  return randInt(22, 29)
+    case 'bench':
+    default: {
+      // Bench bimodal: most are young (21-25), with a vet-min tail (32-37)
+      const roll = randInt(1, 100)
+      if (roll <= 25) return randInt(32, 37)
+      return randInt(21, 26)
+    }
+  }
+}
+
+/**
+ * Derive a plausible draft pick from a player's overall — mirrors the
+ * tiered logic in randomizeDraftInfo but doesn't try to back-fit from age.
+ * Returns { draftRound, draftPick } or { draftRound: null, draftPick: null }
+ * for undrafted players.
+ */
+function pickDraftHistory(overall) {
+  if (overall >= 88) return { draftRound: 1, draftPick: randInt(1, 5) }
+  if (overall >= 82) return { draftRound: 1, draftPick: randInt(3, 14) }
+  if (overall >= 76) return { draftRound: 1, draftPick: randInt(10, 30) }
+  if (overall >= 70) {
+    const r = randInt(1, 2)
+    return { draftRound: r, draftPick: r === 1 ? randInt(15, 30) : randInt(31, 60) }
+  }
+  if (overall >= 60) return { draftRound: 2, draftPick: randInt(31, 60) }
+  // 50/50 undrafted vs late 2nd
+  if (randInt(0, 1) === 0) return { draftRound: null, draftPick: null }
+  return { draftRound: 2, draftPick: randInt(45, 60) }
 }
 
 // =============================================================================
@@ -976,6 +803,7 @@ export async function createCampaign(options) {
   // Accept both camelCase and snake_case parameter names
   const teamAbbreviation = options.teamAbbreviation ?? options.team_abbreviation
   const draftMode = options.draftMode ?? options.draft_mode ?? 'standard'
+  const customTeamName = options.customTeamName ?? options.custom_team_name ?? null
 
   const isFantasy = draftMode === 'fantasy'
   const campaignId = generateUUID()
@@ -1040,37 +868,39 @@ export async function createCampaign(options) {
     userTeam.coach.actionsRemaining = getCoachActionBudget(userTeam.coach)
   }
 
+  // Apply the optional user-team rename. Teams are persisted per-campaign,
+  // so this only affects this campaign's record — the source teams.js file
+  // and other campaigns are untouched.
+  if (customTeamName && customTeamName.trim()) {
+    userTeam.name = customTeamName.trim()
+  }
+
   // -------------------------------------------------------------------------
-  // 4. Load master players and assign to teams
+  // 4. Generate procedural rosters for all 30 teams (or the fantasy pool)
   // -------------------------------------------------------------------------
   let allPlayers = []
 
-  // Build team abbreviation → team ID lookup
-  const teamsByAbbr = {}
-  for (const team of teams) {
-    teamsByAbbr[team.abbreviation] = team
-  }
-
   if (!isFantasy) {
-    // Standard mode: load master players, randomize, assign to teams by teamAbbreviation
-    for (const masterEntry of playersMaster) {
-      const randomized = randomizePlayerData(masterEntry)
-      const abbr = randomized.teamAbbreviation
-      const team = teamsByAbbr[abbr]
+    // Standard mode: generate ~450 procedural players (15 per team) with
+    // realistic mode-driven talent distribution. The user's chosen team is
+    // always 'average_strong' so a new player isn't handed a fire-sale
+    // roster; the other 29 teams are randomly bucketed into
+    // contender/average/rebuilder per-campaign for replay variety.
+    const result = generateLeagueRosters(campaignId, teams, {
+      startYear,
+      userTeamAbbreviation: teamAbbreviation,
+    })
+    allPlayers = result.players
+    // Persist the per-campaign mode map so it survives reload and is
+    // available for any future UI ("3 contenders this season: …").
+    campaign.settings = campaign.settings ?? {}
+    campaign.settings.teamModes = result.modes
 
-      if (team) {
-        const player = prepareMasterPlayer(randomized, campaignId, team.id, abbr)
-        allPlayers.push(player)
-      } else {
-        // Player's team not found (e.g. free agent or unknown abbreviation) — add as free agent
-        const player = prepareMasterPlayer(randomized, campaignId, null, abbr)
-        player.isFreeAgent = 1
-        allPlayers.push(player)
-      }
-    }
     await PlayerRepository.saveBulk(allPlayers)
 
-    // Update team payroll from master players
+    // Update team payroll from the generated roster. The mode assignment
+    // (team.campaignMode, team.aiDirection) was already stamped on each team
+    // object inside generateLeagueRosters — saveBulk below persists those too.
     for (const team of teams) {
       const teamPlayers = allPlayers.filter(p => p.teamId === team.id)
       const totalPayroll = teamPlayers.reduce((sum, p) => sum + (p.contractSalary ?? 0), 0)
@@ -1079,13 +909,9 @@ export async function createCampaign(options) {
     }
     await TeamRepository.saveBulk(teams)
   } else {
-    // Fantasy draft mode: load all master players as free agents
-    for (const masterEntry of playersMaster) {
-      const randomized = randomizePlayerData(masterEntry)
-      const player = prepareMasterPlayer(randomized, campaignId, null, 'FA')
-      player.isFreeAgent = 1
-      allPlayers.push(player)
-    }
+    // Fantasy draft mode: generate a procedural free-agent pool the user/AI
+    // will draft from.
+    allPlayers = generateFreeAgentPool(campaignId, { startYear, count: 530 })
     await PlayerRepository.saveBulk(allPlayers)
   }
 
@@ -2300,8 +2126,10 @@ function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
   const defensiveScheme = pickRandom(Object.keys(DEFENSIVE_SCHEMES))
 
   // If a master coach is defined for this team in coaches.js, use their
-  // identity (name, headshot, starter badges). Otherwise fall back to a
-  // randomly-generated unique name from the COACH_*_NAMES pools.
+  // identity (name, headshot, starter badges) verbatim — that's the override
+  // path for hand-curated coach personas. Otherwise fall back to the
+  // scrambled FIRST_NAMES / LAST_NAMES pool (same fictional-name pool used
+  // for players) so generated coaches don't ship real-world identities.
   const masterCoach = findCoachForTeam(teamAbbreviation)
 
   let firstName, lastName, fullName
@@ -2313,12 +2141,8 @@ function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
   } else {
     let attempts = 0
     do {
-      firstName = COACH_FIRST_NAMES[
-        (index + attempts) % COACH_FIRST_NAMES.length
-      ]
-      lastName = COACH_LAST_NAMES[
-        (index + attempts) % COACH_LAST_NAMES.length
-      ]
+      firstName = FIRST_NAMES[(index + attempts) % FIRST_NAMES.length]
+      lastName = LAST_NAMES[(index + attempts) % LAST_NAMES.length]
       fullName = `${firstName} ${lastName}`
       attempts++
     } while (usedNames.has(fullName) && attempts < 100)
@@ -2424,8 +2248,11 @@ function generateFreeAgentCoach(tierKey, usedNames, masterCandidate = null) {
   } else {
     let attempts = 0
     do {
-      firstName = pickRandom(COACH_FIRST_NAMES)
-      lastName = pickRandom(COACH_LAST_NAMES)
+      // Same scrambled fictional pool used by player generation — keeps
+      // free-agent coaches off the real-name list when no master candidate
+      // is supplied.
+      firstName = pickRandom(FIRST_NAMES)
+      lastName = pickRandom(LAST_NAMES)
       fullName = `${firstName} ${lastName}`
       attempts++
     } while (usedNames.has(fullName) && attempts < 100)
@@ -2749,6 +2576,121 @@ export function generatePlayer(options) {
     allDefensiveTeam: 0,
     all_defensive_team: 0,
 
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+/**
+ * Generate a veteran (non-rookie) player. Wrapper around generatePlayer() that
+ * post-adjusts age, careerSeasons, potential, badges, contract, name, draft
+ * history, motivations, and tradeValue so the result resembles a player who's
+ * been in the league for `careerSeasons` years. Used by LeagueRosterGenerator
+ * to populate campaign rosters from scratch (replaces the legacy master-player
+ * ingestion path).
+ *
+ * @param {Object} options
+ * @param {string} options.campaignId
+ * @param {string|null} options.teamId
+ * @param {string} [options.teamAbbreviation]
+ * @param {string} options.position
+ * @param {number} options.overall - Target overall rating
+ * @param {string} options.role - 'superstar'|'star'|'starter'|'rotation'|'bench'
+ * @param {number} [options.careerSeasons] - If omitted, derived from age band
+ * @param {number} [options.jerseyNumber]
+ * @param {Set<string>} [options.usedNames] - Collision-avoidance set
+ * @param {number} [options.startYear=2025]
+ * @returns {Object} Player object ready for IndexedDB
+ */
+export function generateVeteran(options) {
+  const {
+    role = 'rotation',
+    startYear = 2025,
+    usedNames,
+  } = options
+
+  // 1. Base shape from generatePlayer
+  const base = generatePlayer(options)
+
+  // 2. Age + careerSeasons from role band
+  const age = pickVeteranAge(role)
+  const careerSeasons = options.careerSeasons != null
+    ? options.careerSeasons
+    : Math.max(0, Math.min(18, age - 19 + randInt(-1, 1)))
+
+  // 3. Realistic birth date for the new age
+  const birthYear = startYear - age
+  const birthMonth = String(randInt(1, 12)).padStart(2, '0')
+  const birthDay = String(randInt(1, 28)).padStart(2, '0')
+  const birthDate = `${birthYear}-${birthMonth}-${birthDay}`
+
+  // 4. Age-banded potential (replaces the rookie-style +random formula)
+  const overall = base.overallRating
+  const potentialRating = computePotentialFromAge(overall, age)
+
+  // 5. Badge sheet that scales with experience
+  const position = base.position
+  const badges = generateVeteranBadges(position, overall, careerSeasons)
+
+  // 6. Contract using the canonical age-modulated salary formula
+  const contract = generateContract(overall, age)
+
+  // 7. Re-derive motivations now that we know the age
+  const motivations = generateMotivations({
+    age,
+    overallRating: overall,
+    personality: base.personality,
+  })
+
+  // 8. Trade value tier
+  const { tradeValue, tradeValueTotal } = computeTradeValue(overall, age)
+
+  // 9. Draft history: tier from overall, year from careerSeasons
+  const { draftRound, draftPick } = pickDraftHistory(overall)
+  const draftYear = startYear - careerSeasons
+
+  // 10. Name with collision avoidance against any caller-supplied set.
+  // generatePlayer's deterministic name seed can collide across many calls;
+  // for a 450-player league we want unique full names where feasible.
+  let firstName = base.firstName
+  let lastName = base.lastName
+  if (usedNames) {
+    let attempts = 0
+    while (usedNames.has(`${firstName} ${lastName}`) && attempts < 20) {
+      firstName = pickRandom(FIRST_NAMES)
+      lastName = pickRandom(LAST_NAMES)
+      attempts++
+    }
+    usedNames.add(`${firstName} ${lastName}`)
+  }
+
+  return {
+    ...base,
+    firstName,
+    first_name: firstName,
+    lastName,
+    last_name: lastName,
+    name: `${firstName} ${lastName}`,
+    age,
+    birthDate,
+    birth_date: birthDate,
+    _lastBirthdayYear: startYear,
+    potentialRating,
+    potential_rating: potentialRating,
+    badges,
+    motivations,
+    contractYearsRemaining: contract.years,
+    contract_years_remaining: contract.years,
+    contractSalary: contract.salary,
+    contract_salary: contract.salary,
+    contractDetails: contract.details,
+    contract_details: contract.details,
+    tradeValue,
+    tradeValueTotal,
+    draftYear,
+    draftRound,
+    draftPick,
+    careerSeasons,
+    career_seasons: careerSeasons,
     updatedAt: new Date().toISOString(),
   }
 }

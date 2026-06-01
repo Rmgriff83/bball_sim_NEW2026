@@ -1,0 +1,6 @@
+#!/Users/rossgriffus/Documents/projects/growthdyn/bball_sim_NEW2026/frontend/src/assets/.headshot-venv/bin/python3
+import sys
+from cairosvg.__main__ import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main())

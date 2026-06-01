@@ -74,15 +74,21 @@ export class BadgeSynergyService {
     // TWO different players, so refuse to match in that case.
     if (playerABadges === playerBBadges) return foundSynergies
 
-    const aBadgeIds = playerABadges.map(b => b.id)
-    const bBadgeIds = playerBBadges.map(b => b.id)
-
     for (const synergy of this.synergies) {
       const badge1 = synergy.badge1_id ?? ''
       const badge2 = synergy.badge2_id ?? ''
+      // Each synergy has min_level1 / min_level2 tier requirements. Earlier
+      // versions of this matcher ignored them, which meant a synergy
+      // declared as silver+silver fired even when both players just had
+      // bronze of the relevant badges — flooding rosters with "synergies"
+      // and making them feel meaningless. The check below enforces the
+      // declared minimums (defaulting to 'silver' when the data omits one).
+      const minLevel1 = synergy.min_level1 ?? 'silver'
+      const minLevel2 = synergy.min_level2 ?? 'silver'
 
-      // Check if player A has badge1 and player B has badge2
-      if (aBadgeIds.includes(badge1) && bBadgeIds.includes(badge2)) {
+      // Forward direction: A has badge1, B has badge2
+      if (this._hasBadgeAtLevel(playerABadges, badge1, minLevel1) &&
+          this._hasBadgeAtLevel(playerBBadges, badge2, minLevel2)) {
         foundSynergies.push({
           synergy,
           badge1_level: this._getBadgeLevel(playerABadges, badge1),
@@ -90,8 +96,9 @@ export class BadgeSynergyService {
         })
       }
 
-      // Check reverse direction
-      if (aBadgeIds.includes(badge2) && bBadgeIds.includes(badge1)) {
+      // Reverse direction: A has badge2, B has badge1
+      if (this._hasBadgeAtLevel(playerABadges, badge2, minLevel2) &&
+          this._hasBadgeAtLevel(playerBBadges, badge1, minLevel1)) {
         foundSynergies.push({
           synergy,
           badge1_level: this._getBadgeLevel(playerABadges, badge2),
@@ -101,6 +108,23 @@ export class BadgeSynergyService {
     }
 
     return foundSynergies
+  }
+
+  /**
+   * Whether `badges` contains `badgeId` at or above `minLevel`.
+   * Tier comparison via LEVEL_VALUES (bronze=1, silver=2, gold=3, hof=4).
+   * @private
+   */
+  _hasBadgeAtLevel (badges, badgeId, minLevel) {
+    if (!badgeId) return false
+    const minValue = LEVEL_VALUES[minLevel] ?? LEVEL_VALUES.silver
+    for (const badge of badges) {
+      if ((badge.id ?? '') !== badgeId) continue
+      const level = badge.level ?? 'bronze'
+      const value = LEVEL_VALUES[level] ?? LEVEL_VALUES.bronze
+      if (value >= minValue) return true
+    }
+    return false
   }
 
   // ---------------------------------------------------------------------------
