@@ -36,6 +36,10 @@ body {
      intentionally NOT set so fixed bottom UI can extend to the absolute
      viewport bottom. */
   padding-top: env(safe-area-inset-top);
+  /* Disable double-tap-to-zoom and the 300ms tap delay native WebView ships
+     with. Pinch-to-zoom is still allowed (manipulation keeps pan/zoom but
+     drops double-tap), so accessibility zoom users aren't blocked. */
+  touch-action: manipulation;
 }
 
 /* Cosmic background with stars - Dark mode */

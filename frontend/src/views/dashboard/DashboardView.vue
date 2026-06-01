@@ -81,8 +81,8 @@ async function handleLogout() {
                 <Trophy :size="24" />
               </div>
               <div class="action-content">
-                <h3 class="action-title">Achievements</h3>
-                <p class="action-description">View your stats & trophies</p>
+                <h3 class="action-title">Profile</h3>
+                <p class="action-description">Edit settings & view badge synergies</p>
               </div>
             </GlassCard>
           </div>

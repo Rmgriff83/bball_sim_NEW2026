@@ -838,7 +838,12 @@ function getDifficultyLabel(value) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  /* Safe-area-aware padding so the modal can never render under the notch /
+     home indicator on iPhone. Matches BaseModal's gutter behavior. */
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(4px);
 }
@@ -1206,12 +1211,7 @@ function getDifficultyLabel(value) {
   }
 
   .modal-container {
-    max-height: 100%;
-    border-radius: 0;
-  }
-
-  .modal-overlay {
-    padding: 0;
+    max-height: 85vh;
   }
 }
 
