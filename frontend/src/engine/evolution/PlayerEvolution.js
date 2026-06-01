@@ -508,11 +508,12 @@ function recalculateOverall(player) {
   }
 
   // Run the category-weighted average formula. NOTE: this number is NOT the
-  // player's actual overall rating — it's a derivable signal the master file
-  // wasn't calibrated against. Veterans loaded from `engine/data/players.js`
-  // have hand-tuned overalls (e.g. Giannis 97, LeBron 99) that the formula
-  // alone produces ~10-15 points lower for. We use this calculated value
-  // only as an ANCHOR to compute deltas across calls.
+  // player's actual overall rating — it's a derivable signal that the
+  // attribute generator (LeagueRosterGenerator + generateVeteran) wasn't
+  // calibrated against. Generated veterans have stamped overalls (e.g. a
+  // superstar at 92) that this formula alone produces ~10-15 points lower
+  // for. We use this calculated value only as an ANCHOR to compute deltas
+  // across calls.
   let calculated = 0;
   for (const [category, weight] of Object.entries(weights)) {
     calculated += (categoryAverages[category] ?? 75) * weight;

@@ -1215,13 +1215,18 @@ export function generateWeeklyProposals({
 
     const direction = analyzeTeamDirection(aiTeam, aiRoster, context);
 
-    // Probability check — keep trade proposals infrequent so the user isn't overwhelmed
-    let baseProbability = 0.06;
+    // Probability check — tuned so the user sees ~1-2 trade offers per
+    // in-game week in the regular season. With 29 AI teams rolling per day,
+    // 1.2% baseline gives ~30% chance any single team hits per day, which
+    // (combined with need / target / cooldown filters and the 1-per-day
+    // cap) lands in the 1-2/week steady-state range. Deadline window
+    // sharpens the crunch — buyers double, others bump 1.5x.
+    let baseProbability = 0.012;
     if (isDeadlineMonth) {
       if (['title_contender', 'win_now'].includes(direction)) {
-        baseProbability *= 3.0;
-      } else {
         baseProbability *= 2.0;
+      } else {
+        baseProbability *= 1.5;
       }
     }
 
@@ -1242,11 +1247,15 @@ export function generateWeeklyProposals({
       !recentlyDeclinedPlayers.has(String(p.id))
     );
 
-    // Retention-based targeting: skip very happy players, prefer unhappy ones
+    // Retention-based targeting: only pursue genuinely disgruntled players.
+    // The previous threshold (<= 80) caught everyone except true homers and
+    // produced a flood of offers for players who'd never want to leave; <= 60
+    // restricts targeting to clearly unhappy guys (low minutes, soured
+    // chemistry, expiring stars looking elsewhere).
     filteredTargets = filteredTargets.filter(p => {
       if (!p.motivations) return true; // No data = default targeting
       const retention = calculateRetentionScore(p, {});
-      return retention <= 80; // Skip very happy players (unlikely to move)
+      return retention <= 60;
     });
     if (filteredTargets.length === 0) continue;
 
@@ -1308,8 +1317,10 @@ export function generateWeeklyProposals({
 
     newProposals.push(proposal);
 
-    // Cap at 2 new proposals per generation cycle to avoid overwhelming the user
-    if (newProposals.length >= 2) break;
+    // Cap at 1 new proposal per generation cycle to avoid overwhelming the
+    // user — combined with the per-team and per-player cooldowns, this means
+    // at most one fresh trade conversation per game day.
+    if (newProposals.length >= 1) break;
   }
 
   return newProposals;

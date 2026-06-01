@@ -39,6 +39,7 @@ function openCampaign(id) {
 const showCreateModal = ref(false)
 const newCampaignName = ref('')
 const selectedTeam = ref(null)
+const customTeamName = ref('')
 const selectedDifficulty = ref('pro')
 const selectedDraftMode = ref('standard')
 const creating = ref(false)
@@ -87,6 +88,7 @@ function openCreateModal() {
   showCreateModal.value = true
   newCampaignName.value = ''
   selectedTeam.value = null
+  customTeamName.value = ''
   selectedDifficulty.value = 'pro'
   selectedDraftMode.value = 'standard'
   document.body.style.overflow = 'hidden'
@@ -94,17 +96,25 @@ function openCreateModal() {
 
 function requestDelete(campaignId, event) {
   event.stopPropagation()
+  // stopPropagation prevents the global click-sound listener from firing,
+  // so re-add the generic tap explicitly.
+  audio.navigate()
   confirmDeleteId.value = campaignId
 }
 
 function cancelDelete(event) {
   if (event) event.stopPropagation()
+  audio.navigate()
   confirmDeleteId.value = null
 }
 
 async function confirmDelete(event) {
   if (event) event.stopPropagation()
   if (!confirmDeleteId.value) return
+
+  // Destructive action — play the cancel/negative SFX. The audio store's
+  // cancel() also suppresses the global click-sound for this event.
+  audio.cancel()
 
   deleting.value = true
   try {
@@ -153,11 +163,16 @@ async function createCampaign() {
   audio.suppressClickSound() // affirmation on success instead of the generic tap
 
   try {
-    const campaignName = newCampaignName.value.trim() || `${selectedTeam.value.name} Dynasty`
+    const renamedTeam = customTeamName.value.trim()
+    const effectiveTeamName = renamedTeam || selectedTeam.value.name
+    const campaignName = newCampaignName.value.trim() || `${effectiveTeamName} Dynasty`
     const payload = {
       name: campaignName,
       team_abbreviation: selectedTeam.value.abbreviation,
       difficulty: selectedDifficulty.value,
+    }
+    if (renamedTeam) {
+      payload.custom_team_name = renamedTeam
     }
     if (selectedDraftMode.value === 'fantasy') {
       payload.draft_mode = 'fantasy'
@@ -451,9 +466,21 @@ function getDifficultyLabel(value) {
                   {{ selectedTeam.abbreviation }}
                 </div>
                 <div class="preview-info">
-                  <h4 class="preview-name">{{ selectedTeam.name }}</h4>
+                  <h4 class="preview-name">{{ customTeamName.trim() || selectedTeam.name }}</h4>
                   <p class="preview-meta">{{ selectedTeam.division }} Division</p>
                 </div>
+              </div>
+
+              <!-- Rename Your Team (optional) -->
+              <div v-if="selectedTeam" class="form-group">
+                <label class="form-label">Rename your team (optional)</label>
+                <input
+                  v-model="customTeamName"
+                  type="text"
+                  class="form-input"
+                  :placeholder="selectedTeam.name"
+                  maxlength="40"
+                />
               </div>
             </main>
 
