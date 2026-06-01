@@ -219,6 +219,49 @@ async function positionToTargets(els, placement) {
 
 const tooltipRef = ref(null)
 
+// Walk up from `el` and return the nearest ancestor whose computed overflow-y
+// is auto/scroll AND that actually has scrollable content. Stops at document.
+function nearestScrollableAncestor(el) {
+  let node = el?.parentElement
+  while (node && node !== document.body && node !== document.documentElement) {
+    const style = window.getComputedStyle(node)
+    const oy = style.overflowY
+    if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight) {
+      return node
+    }
+    node = node.parentElement
+  }
+  return null
+}
+
+// Bring `el` into the visible center of its scroll container (or the window if
+// it lives in the page). Handles the modal case explicitly so a fixed-position
+// modal-content gets scrolled instead of (or in addition to) the window.
+async function scrollTargetIntoView(el) {
+  const container = nearestScrollableAncestor(el)
+  if (container) {
+    const cRect = container.getBoundingClientRect()
+    const eRect = el.getBoundingClientRect()
+    // Already roughly centered in the container? skip.
+    const inView =
+      eRect.top >= cRect.top + VIEWPORT_MARGIN &&
+      eRect.bottom <= cRect.bottom - VIEWPORT_MARGIN
+    if (!inView) {
+      const elOffsetInContainer = eRect.top - cRect.top + container.scrollTop
+      const targetScrollTop = elOffsetInContainer - (container.clientHeight / 2) + (eRect.height / 2)
+      container.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' })
+      await wait(380)
+    }
+    return
+  }
+  // No scrollable ancestor — fall back to window viewport check + scrollIntoView.
+  const r0 = el.getBoundingClientRect()
+  if (r0.top < VIEWPORT_MARGIN || r0.bottom > window.innerHeight - VIEWPORT_MARGIN) {
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    await wait(380)
+  }
+}
+
 async function runStep() {
   const token = ++resolveToken
   const s = store.currentStep
@@ -289,12 +332,15 @@ async function runStep() {
   }
 
   // Scroll the first target into view if it's off-screen, then settle.
-  const r0 = els[0].getBoundingClientRect()
-  if (r0.top < VIEWPORT_MARGIN || r0.bottom > window.innerHeight - VIEWPORT_MARGIN) {
-    els[0].scrollIntoView({ block: 'center', behavior: 'smooth' })
-    await wait(380)
-    if (token !== resolveToken) return
-  }
+  // For targets inside a scrollable modal (e.g. PlayerDetailModal.modal-content),
+  // the native scrollIntoView ancestor walk is unreliable when the modal is a
+  // fixed-position element — sometimes only the window scrolls, leaving the
+  // target clipped inside the modal. So we explicitly scroll the nearest
+  // overflow-y:auto/scroll ancestor when one exists, AND also check the rect
+  // against that container's box (not just the window viewport) so the trigger
+  // catches "off-screen inside the modal" cases the window check misses.
+  await scrollTargetIntoView(els[0])
+  if (token !== resolveToken) return
 
   activeEls = els
   await positionToTargets(els, s.placement)

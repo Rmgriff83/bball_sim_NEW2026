@@ -1202,6 +1202,7 @@ async function startGame() {
   simulating.value = true
   isLiveMode.value = true
   showAnimationMode.value = true
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 
   try {
     let result
@@ -2827,9 +2828,9 @@ onUnmounted(() => {
         <template v-else>
           <div class="pregame-layout">
             <!-- Court Preview with Starters Overlay -->
-            <GlassCard padding="lg" :hoverable="false" class="pregame-court-card" data-tour="game-court">
+            <GlassCard padding="lg" :hoverable="false" class="pregame-court-card">
               <h3 class="h4 mb-4">Starting Lineups</h3>
-              <div class="court-container court-container-with-overlay">
+              <div class="court-container court-container-with-overlay" data-tour="game-court">
                 <BasketballCourt
                   :width="500"
                   :height="300"

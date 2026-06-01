@@ -128,7 +128,17 @@ export const useGameStore = defineStore('game', () => {
       playoff_game_number: game.playoffGameNumber ?? null,
       is_complete: game.isComplete ?? false,
       is_cancelled: game.isCancelled ?? false,
-      is_in_progress: game.isInProgress ?? false,
+      // Treat a game as in-progress if any persistence signal indicates it.
+      // The dedicated flag, a saved worker state, or a recorded quarter all
+      // mean the user has started the game — needed because earlier writes
+      // could drop the flag (e.g. partial save) while still leaving the
+      // resumable state on disk, which would otherwise revert the preview
+      // page to pre-game UI even though the home tile shows in-progress.
+      is_in_progress:
+        !(game.isComplete ?? false) &&
+        (game.isInProgress === true ||
+          !!game.savedGameState ||
+          (typeof game.currentQuarter === 'number' && game.currentQuarter > 0)),
       home_score: game.homeScore ?? null,
       away_score: game.awayScore ?? null,
       box_score: game.boxScore ?? null,

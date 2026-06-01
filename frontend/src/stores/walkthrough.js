@@ -157,17 +157,27 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
 
   // Completing or skipping both mark the walkthrough done so it never re-pops.
   function finish() {
-    if (activeKey.value) markDone(activeKey.value)
+    const finishedKey = activeKey.value
+    if (finishedKey) markDone(finishedKey)
     activeKey.value = null
     stepIndex.value = 0
     requestedTab.value = null
     requestedAction.value = null
-    // Tours often scroll the page to spotlight mid/lower elements; on exit,
-    // return the user to the top of the current view so they're not stranded
-    // at a random scroll position. Guarded for SSR.
-    if (typeof window !== 'undefined') {
-      window.scrollTo({ top: 0, behavior: 'smooth' })
+    // Tours often scroll to spotlight mid/lower elements; on exit, return the
+    // user to the top of the current view. For tours that run inside the
+    // player-details modal the page itself isn't scrolled — the modal's
+    // .modal-content is — so scrolling window leaves the modal stranded mid-
+    // content. Detect modal tours and reset the modal's scroll instead.
+    if (typeof window === 'undefined') return
+    const isModalTour = typeof finishedKey === 'string' && finishedKey.startsWith('playerDetail')
+    if (isModalTour) {
+      const modalContent = document.querySelector('.modal-content')
+      if (modalContent) {
+        modalContent.scrollTo({ top: 0, behavior: 'smooth' })
+        return
+      }
     }
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   function skip() {

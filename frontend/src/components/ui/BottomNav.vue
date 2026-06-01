@@ -139,13 +139,19 @@ function isActive(routeName) {
 <style scoped>
 .bottom-nav {
   position: fixed;
-  /* Float above the home-indicator safe area so the nav stays a consistent
-     70px tall (matching the browser/desktop look) instead of growing taller
-     on iPhone. The strip below the nav shows the page background — common
-     pattern in native iOS apps. */
+  /* Float above the home-indicator safe area on devices that have one (iOS),
+     and stay flush with the bottom on devices that don't (env() = 0). The
+     strip below the nav shows the page background — common pattern in native
+     iOS apps and now consistent across all mobile clients. */
   bottom: env(safe-area-inset-bottom);
-  left: 0;
-  right: 0;
+  /* Centered floating "island" look on every mobile device. The 90% / 430px
+     pairing renders as ~88vw on phones and caps on tablets so the nav doesn't
+     stretch into a bar. */
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 430px;
   z-index: 50;
   display: flex;
   justify-content: space-around;
@@ -154,9 +160,22 @@ function isActive(routeName) {
      align-items: center with items of varying intrinsic heights. */
   align-items: stretch;
   height: 70px;
-  background: var(--color-bg-secondary);
-  border-top: 1px solid var(--glass-border);
+  border-radius: 22px;
+  border: 1px solid var(--glass-border);
+  /* Translucent + backdrop blur for the glass effect. The 0.6 opacity leans
+     on the blur for legibility, closer to Apple's thinMaterial. */
+  background: rgba(37, 32, 48, 0.6);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   overflow: hidden;
+}
+
+/* Light-mode glass: whiter + softer shadow (a dark shadow reads as a harsh
+   bar against a white page). */
+[data-theme="light"] .bottom-nav {
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 8px 24px rgba(45, 40, 56, 0.12);
 }
 
 /* Nebula effect */
@@ -249,35 +268,3 @@ function isActive(routeName) {
 }
 </style>
 
-<!-- Non-scoped block: the iOS override must target a global selector
-     (html.platform-ios stamped by main.js). Inside a `scoped` block the
-     :global() pseudo-class can compile unpredictably, so we use a plain
-     <style> block where the selector is unambiguous. `.bottom-nav` is
-     only used by this component, so the rule remains effectively scoped
-     by class name. -->
-<style>
-html.platform-ios .bottom-nav {
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
-  width: 90%;
-  max-width: 430px;          /* iPhone Pro Max logical width — avoids stretch on iPad */
-  border-radius: 22px;
-  border: 1px solid var(--glass-border);
-  /* More transparent than --glass-bg (0.8) — leans on the backdrop blur
-     to provide legibility, more in line with Apple's thinMaterial. */
-  background: rgba(37, 32, 48, 0.6);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  backdrop-filter: saturate(180%) blur(20px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-}
-
-/* Light-mode: matching opacity bump for the white glass + softer shadow
-   (dark shadow reads as a harsh bar over a white page). `data-theme` lives
-   on <html> itself, so combine both attribute selectors on one element
-   (no space) rather than treating it as a descendant. */
-html.platform-ios[data-theme="light"] .bottom-nav {
-  background: rgba(255, 255, 255, 0.55);
-  box-shadow: 0 8px 24px rgba(45, 40, 56, 0.12);
-}
-</style>

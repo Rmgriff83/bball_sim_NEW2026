@@ -233,7 +233,6 @@ function handleKeydown(e) {
 .modal-container {
   width: 100%;
   max-width: 620px;
-  min-height: 60vh;
   max-height: 90vh;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
@@ -557,15 +556,13 @@ function handleKeydown(e) {
   opacity: 0;
 }
 
-/* Standardized modal heights (90vh desktop, 85vh mobile) */
+/* Standardized modal max heights (90vh desktop, 85vh mobile) */
 .modal-container {
-  min-height: 90vh;
   max-height: 90vh;
 }
 
 @media (max-width: 480px) {
   .modal-container {
-    min-height: 85vh;
     max-height: 85vh;
   }
 }

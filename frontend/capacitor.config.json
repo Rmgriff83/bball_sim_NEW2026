@@ -2,10 +2,6 @@
   "appId": "com.bballsim.app",
   "appName": "BBALL SIM",
   "webDir": "dist",
-  "server": {
-    "iosScheme": "https",
-    "hostname": "app.bball-sim.com"
-  },
   "ios": {
     "contentInset": "never"
   }

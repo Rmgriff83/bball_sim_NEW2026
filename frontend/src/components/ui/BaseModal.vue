@@ -125,13 +125,11 @@ const sizeClasses = {
 
 .modal-container {
   animation: scaleIn var(--duration-normal) var(--ease-out);
-  min-height: 90vh;
   max-height: 90vh;
 }
 
 @media (max-width: 480px) {
   .modal-container {
-    min-height: 85vh;
     max-height: 85vh;
   }
 }
