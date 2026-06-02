@@ -901,6 +901,7 @@ export function ensureMinimumRosters({ aiTeams, leaguePlayers, minRating = 50 })
           currentPlayers[i] = {
             ...currentPlayers[i],
             teamId: team.id,
+            team_id: team.id,
             teamAbbreviation: team.abbreviation,
             team_abbreviation: team.abbreviation,
             contractYearsRemaining: years,
@@ -908,6 +909,7 @@ export function ensureMinimumRosters({ aiTeams, leaguePlayers, minRating = 50 })
             contractSalary: salary,
             contract_salary: salary,
             isFreeAgent: 0,
+            is_free_agent: 0,
           };
           break;
         }

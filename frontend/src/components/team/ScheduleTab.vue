@@ -345,6 +345,51 @@ async function handleSimulated() {
   // the same checks locally here for users who sim from the schedule tab.
   await checkTradeDeadline()
   await checkAllStarSelections()
+
+  // End-of-season auto-progression. When the user sims their final
+  // regular-season (or final playoff) game from this tab, there's no
+  // SeasonEndModal mounted here to surface the transition — that modal
+  // lives on CampaignHomeView. Detect the "no more games for the user"
+  // state and bounce them to home so the normal progression flow (auto-
+  // finish remaining AI games → SeasonEndModal → playoffs / offseason)
+  // runs. Skip if already in playoffs/offseason — those phases handle
+  // their own transitions through the home page or series-result modals.
+  await maybeRouteHomeForSeasonTransition()
+}
+
+async function maybeRouteHomeForSeasonTransition() {
+  try {
+    // Pull a fresh games snapshot so nextUserGame reflects the just-simmed
+    // result. simToEnd / simulateGame already refresh gameStore.games, but
+    // be defensive in case the refresh races with this check.
+    if (!gameStore.games || gameStore.games.length === 0) {
+      await gameStore.fetchGames(props.campaignId, { force: true })
+    }
+    const camp = campaign.value
+    const phase = camp?.phase
+    const inOffseason = phase === 'offseason'
+      || phase === 'offseason_free_agency'
+      || phase === 'offseason_draft'
+    // If we're already in playoffs/offseason the home page handles the
+    // remaining transitions (series result modals, offseason hub).
+    // Navigating still helps the user see the new state, but only do so
+    // when the user has actually exhausted their current schedule.
+    const userHasMoreGames = !!gameStore.nextUserGame
+    if (userHasMoreGames) return
+
+    // Update playoff store flags so home's onMounted has fresh state.
+    await playoffStore.checkRegularSeasonEnd(props.campaignId)
+
+    const shouldNavigate =
+      playoffStore.regularSeasonComplete ||
+      playoffStore.isInPlayoffs ||
+      inOffseason
+    if (!shouldNavigate) return
+
+    router.push(`/campaign/${props.campaignId}`)
+  } catch (err) {
+    console.warn('[ScheduleTab] season-transition routing failed:', err)
+  }
 }
 
 async function checkTradeDeadline() {

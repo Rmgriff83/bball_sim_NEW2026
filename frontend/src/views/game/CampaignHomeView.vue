@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/composables/useApi'
 import { useCampaignStore } from '@/stores/campaign'
@@ -888,7 +888,28 @@ onMounted(async () => {
 
   // First-visit onboarding tour (no-op unless enabled and not yet seen).
   walkthroughStore.maybeStart('campaignHome')
+
+  // First-time offseason tour — fires only in the entry offseason phase
+  // (before free agency starts) so the ENTER FREE AGENCY anchor is visible
+  // for its step. maybeStart() is a safe no-op if conditions aren't met
+  // or the tour has already been completed/skipped.
+  if (isOffseason.value && freeAgencyNotStarted.value) {
+    walkthroughStore.maybeStart('campaignOffseason')
+  }
 })
+
+// Live transition into the offseason hub: if the user is already on this
+// page when the championship resolves and the phase flips, fire the tour
+// without waiting for a re-mount. Guard prevents firing during sub-phases
+// (mid-FA, post-draft) where the spotlight anchors wouldn't exist.
+// `flush: 'post'` makes the callback run after Vue applies DOM updates so
+// the v-if for the offseason buttons has rendered them by the time the
+// walkthrough overlay tries to find its targets.
+watch([isOffseason, freeAgencyNotStarted], ([off, faNotStarted]) => {
+  if (off && faNotStarted) {
+    walkthroughStore.maybeStart('campaignOffseason')
+  }
+}, { flush: 'post' })
 
 onUnmounted(() => {
   stopIdleDetection()
@@ -1163,6 +1184,15 @@ async function handleEnterOffseason() {
     if (!showSeasonAwardsModal.value) {
       await maybeShowRetirementModal()
     }
+
+    // Fire the first-time offseason walkthrough at the canonical
+    // "just entered offseason" moment. The campaign refetch above flipped
+    // phase to 'offseason', and the offseason hub buttons are now in the
+    // DOM. nextTick is the belt to the post-flush watch's suspenders —
+    // guarantees layout is settled before the overlay measures the
+    // spotlight anchors. maybeStart is a no-op if already done.
+    await nextTick()
+    walkthroughStore.maybeStart('campaignOffseason')
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Failed to enter offseason')
@@ -2706,7 +2736,11 @@ function handleCloseSimulateModal() {
             />
 
             <div class="next-game-buttons offseason-buttons">
-              <button class="btn-simulate-game" @click="router.push(`/campaign/${campaignId}/team`)">
+              <button
+                class="btn-simulate-game"
+                data-tour="offseason-manage-roster"
+                @click="router.push(`/campaign/${campaignId}/team`)"
+              >
                 <Users class="btn-icon" :size="16" />
                 MANAGE ROSTER
               </button>
@@ -2739,7 +2773,12 @@ function handleCloseSimulateModal() {
                 SIM REST OF FA
               </button>
 
-              <button v-if="!rookieDraftCompleted && !isFreeAgencyActive" class="btn-simulate-game" @click="router.push(`/campaign/${campaignId}/scouting`)">
+              <button
+                v-if="!rookieDraftCompleted && !isFreeAgencyActive"
+                class="btn-simulate-game"
+                data-tour="offseason-scouting"
+                @click="router.push(`/campaign/${campaignId}/scouting`)"
+              >
                 <Binoculars class="btn-icon" :size="16" />
                 SCOUTING
               </button>
@@ -2748,6 +2787,7 @@ function handleCloseSimulateModal() {
               <button
                 v-if="freeAgencyNotStarted"
                 class="btn-play-game"
+                data-tour="offseason-enter-fa"
                 @click="handleEnterFreeAgency"
                 :disabled="enteringFreeAgency"
               >

@@ -95,6 +95,41 @@ export const WALKTHROUGHS = {
     },
   ],
 
+  // Offseason tour — fires once when the user first hits the offseason hub
+  // on Campaign Home (after the championship is decided). Walks the user
+  // through the reshape-the-franchise phase: staff, facilities, then the
+  // two big offseason events (free agency + rookie draft).
+  campaignOffseason: [
+    {
+      placement: 'center',
+      title: 'Welcome to the Offseason',
+      body: "The season's over and the franchise is yours to reshape. You'll have time to hire or fire staff, upgrade your facilities, work the free-agent market, and draft the next class of rookies before next year tips off. Let's walk through the moves you've got.",
+    },
+    {
+      target: 'offseason-manage-roster',
+      placement: 'top',
+      title: 'Roster & Staff',
+      body: "Manage Roster drops you into the GM Desk — your roster page, plus the Personnel tab where you can fire your head coach, replace your scouts, or bring in new trainers, and the Facilities tab where you spend tokens to upgrade Training, Medical, Scouting, and Analytics. Smart investments here pay dividends all next season.",
+    },
+    {
+      target: 'offseason-enter-fa',
+      placement: 'top',
+      title: 'Free Agency Window',
+      body: "When you're ready, this kicks off the free-agency period. You'll see every unsigned player league-wide, place bids on the ones who fit your roster, and watch other teams move alongside you. Bench depth, role players, and the occasional veteran cornerstone all come from here.",
+    },
+    {
+      target: 'offseason-scouting',
+      placement: 'top',
+      title: 'Rookie Draft Prep',
+      body: "Scouting opens the incoming rookie class — overalls, archetypes, projected picks. Study it before the draft so you're not flying blind. Once free agency wraps, this same slot turns into BEGIN DRAFT and you're on the clock.",
+    },
+    {
+      placement: 'center',
+      title: 'Tip-off the Next Season',
+      body: "Once free agency and the draft are both done, START SEASON launches year two. Until then, take your time — the offseason is where dynasties are built.",
+    },
+  ],
+
   gmTeam: [
     {
       placement: 'center',

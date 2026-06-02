@@ -401,8 +401,11 @@ export function generateFreeAgentPool(campaignId, { startYear = 2025, count = 53
     })
     for (const p of roster) {
       p.teamId = null
+      p.team_id = null
       p.teamAbbreviation = 'FA'
+      p.team_abbreviation = 'FA'
       p.isFreeAgent = 1
+      p.is_free_agent = 1
       p.contractSalary = 0
       p.contract_salary = 0
       p.contractDetails = null
@@ -434,6 +437,11 @@ export function generateFreeAgentPool(campaignId, { startYear = 2025, count = 53
       usedNames,
     })
     player.isFreeAgent = 1
+    player.is_free_agent = 1
+    player.teamId = null
+    player.team_id = null
+    player.teamAbbreviation = 'FA'
+    player.team_abbreviation = 'FA'
     player.contractSalary = 0
     player.contract_salary = 0
     player.contractDetails = null

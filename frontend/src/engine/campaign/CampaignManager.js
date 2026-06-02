@@ -1749,10 +1749,15 @@ export async function enterOffseason(campaignId) {
         updatedPlayers[i] = {
           ...p,
           isFreeAgent: 1,
+          is_free_agent: 1,
           previousTeamId: p.teamId,
+          previous_team_id: p.teamId,
           previousTeamAbbreviation: p.teamAbbreviation,
+          previous_team_abbreviation: p.teamAbbreviation,
           teamId: null,
+          team_id: null,
           teamAbbreviation: 'FA',
+          team_abbreviation: 'FA',
         }
       }
     }
@@ -1873,8 +1878,11 @@ export async function startNewSeason(campaignId) {
       allPlayers[i] = {
         ...p,
         isFreeAgent: 1,
+        is_free_agent: 1,
         teamId: null,
+        team_id: null,
         teamAbbreviation: 'FA',
+        team_abbreviation: 'FA',
       }
     }
   }

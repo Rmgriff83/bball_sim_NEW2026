@@ -386,8 +386,16 @@ export function signFreeAgent({ playerId, leaguePlayers, currentRoster, capMode 
   for (let i = 0; i < leaguePlayers.length; i++) {
     const player = leaguePlayers[i];
     if ((player.id ?? '') == playerId) {
+      // Accept the player if ANY free-agent signal is true. Older release
+      // paths in the engine only update some of the duplicated camelCase /
+      // snake_case fields, which can leave a player record where
+      // `isFreeAgent === 1` but `team_abbreviation` still points at their
+      // previous club (or vice versa). Honoring any of the four signals
+      // keeps the signing flow resilient to that drift.
       const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
-      if (!teamAbbr || teamAbbr === 'FA') {
+      const isFA = player.isFreeAgent === 1 || player.is_free_agent === 1;
+      const hasNoTeam = !player.teamId && !player.team_id;
+      if (isFA || hasNoTeam || !teamAbbr || teamAbbr === 'FA') {
         freeAgent = player;
         freeAgentIndex = i;
         break;
