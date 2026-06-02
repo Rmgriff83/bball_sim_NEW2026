@@ -3,20 +3,59 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, helpers } from '@vuelidate/validators'
+import { Capacitor } from '@capacitor/core'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
+import { useToastStore } from '@/stores/toast'
 import { GlassCard, BaseButton, FormInput, Badge, BaseModal } from '@/components/ui'
-import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, CloudDownload, Trash2, AlertTriangle, Zap, Users, Volume2, VolumeX } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, CloudDownload, Trash2, AlertTriangle, Zap, Users, Volume2, VolumeX, RotateCcw, Check } from 'lucide-vue-next'
 import { useAudioStore } from '@/stores/audio'
 import { useLocalCache } from '@/composables/useLocalCache'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
+import * as iap from '@/services/iap'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const syncStore = useSyncStore()
+const toastStore = useToastStore()
 const localCache = useLocalCache()
 const { synergies, loadSynergies } = useBadgeSynergies()
+
+const isNative = Capacitor.isNativePlatform()
+const restoringPurchases = ref(false)
+
+// Features unlocked via one-time IAP — currently just headshot_editor.
+// Displayed in the Purchases section so the user can see what they own
+// without going to /store.
+const unlockedFeatureCatalog = [
+  { id: 'headshot_editor', label: 'Headshot Editor' }
+]
+
+const ownedFeatures = computed(() =>
+  unlockedFeatureCatalog.filter(f => authStore.hasFeature(f.id))
+)
+
+async function handleRestorePurchases() {
+  if (restoringPurchases.value) return
+  restoringPurchases.value = true
+  try {
+    if (isNative) {
+      const result = await iap.restorePurchases()
+      if (result.cancelled) return
+      if (!result.success) {
+        toastStore.showError('Could not restore purchases.')
+        return
+      }
+    }
+    try {
+      await authStore.fetchUser()
+    } catch {}
+    toastStore.showSuccess('Purchases restored.')
+  } finally {
+    restoringPurchases.value = false
+  }
+}
 
 // Tab navigation — honor a ?tab= deep link (e.g. the badge-synergy walkthrough
 // link points here at the Database tab).
@@ -352,6 +391,37 @@ async function clearLocalCache() {
           </div>
         </div>
         <p class="reward-hint">Earn tokens when your team's badge synergies activate during games.</p>
+      </div>
+
+      <!-- Purchases Card -->
+      <div class="profile-section">
+        <h3 class="section-title">Purchases</h3>
+        <div v-if="ownedFeatures.length > 0" class="owned-features-list">
+          <div
+            v-for="feature in ownedFeatures"
+            :key="feature.id"
+            class="owned-feature-row"
+          >
+            <Check :size="16" class="owned-feature-check" />
+            <span class="owned-feature-label">{{ feature.label }}</span>
+            <span class="owned-feature-tag">Owned</span>
+          </div>
+        </div>
+        <p v-else class="purchases-empty">
+          No one-time unlocks yet — browse the store to add features.
+        </p>
+        <p class="purchases-hint">
+          If you previously purchased a feature on this Apple ID and don't see it here, tap Restore Purchases.
+        </p>
+        <BaseButton
+          variant="secondary"
+          @click="handleRestorePurchases"
+          :loading="restoringPurchases"
+          class="restore-button"
+        >
+          <RotateCcw :size="16" />
+          Restore Purchases
+        </BaseButton>
       </div>
 
       <!-- Data & Sync Card -->
@@ -782,6 +852,65 @@ async function clearLocalCache() {
 .reward-hint {
   font-size: 0.75rem;
   color: var(--color-text-tertiary);
+}
+
+/* Purchases */
+.owned-features-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.owned-feature-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.75rem 0.875rem;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  border-radius: var(--radius-lg);
+}
+
+.owned-feature-check {
+  color: #22c55e;
+  flex-shrink: 0;
+}
+
+.owned-feature-label {
+  flex: 1;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.owned-feature-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #22c55e;
+}
+
+.purchases-empty {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 0.75rem;
+}
+
+.purchases-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  margin: 0 0 1rem;
+  line-height: 1.5;
+}
+
+.restore-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
 }
 
 /* Sync Status */

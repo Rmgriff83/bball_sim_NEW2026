@@ -672,4 +672,51 @@ export const WALKTHROUGHS = {
       body: "What the player values most — money, winning, role, loyalty. When their deal is up, how well you've satisfied these drives whether they re-sign or walk.",
     },
   ],
+
+  // Headshot editor tour — fires on first visit even when global walkthroughs
+  // are disabled (the editor is an opt-in unlock, the user just paid to use
+  // it, so we don't want them landing on the page with no orientation). The
+  // editor view triggers via walkthroughStore.forceStart() on first visit,
+  // falling back to maybeStart() on subsequent visits so the standard
+  // enabled-gate + isDone() guard applies.
+  headshotEditor: [
+    {
+      placement: 'center',
+      title: 'Make Them Yours',
+      body: "Tweak any layer of this player's face — style, color, or toggle features on and off. Save when you like the look and it syncs across your devices.",
+    },
+    {
+      target: 'editor-layer-hair',
+      placement: 'left',
+      title: 'Layers',
+      body: 'Each button on the side opens controls for one part of the face — hair, skin, eyes, mouth, and so on.',
+    },
+    {
+      target: 'editor-context-menu',
+      placement: 'top',
+      // The context menu only renders when a layer is active. Have the editor
+      // open the Hair menu for this step so the user sees what we're spotlighting,
+      // then close it when the step leaves.
+      action: { view: 'headshotEditor', enter: 'openHairContext', leave: 'closeContext' },
+      title: 'Pick a Variant',
+      body: 'Tap a thumbnail to swap that part. Color swatches under the styles let you change just the tint. The big preview updates instantly.',
+    },
+    {
+      target: 'editor-save',
+      placement: 'bottom',
+      title: 'Save',
+      body: 'Locks in your changes and returns you to the player.',
+    },
+    {
+      target: 'editor-exit',
+      placement: 'bottom',
+      title: 'Back Out',
+      body: "Closes the editor. If you have unsaved changes you'll be asked first.",
+    },
+    {
+      placement: 'center',
+      title: "You're Set",
+      body: 'Have fun. You can come back and re-edit anytime from any player.',
+    },
+  ],
 }

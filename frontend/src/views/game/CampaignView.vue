@@ -33,6 +33,13 @@ const scoutingPoints = computed(() => {
   return campaign.value?.settings?.scoutingPoints ?? 0
 })
 
+// Some child routes (the headshot editor) provide their own bottom nav, so
+// the main one needs to step aside. Driven by route meta so adding more such
+// routes later is one-line.
+const hideBottomNav = computed(() =>
+  route.matched.some(r => r.meta?.hideBottomNav)
+)
+
 // Parse a date string (YYYY-MM-DD or datetime) into a local Date, avoiding UTC shift
 function parseLocalDate(dateStr) {
   const [y, m, d] = dateStr.split('T')[0].split(' ')[0].split('-').map(Number)
@@ -365,7 +372,7 @@ function closeMobileMenu() {
     </main>
 
     <!-- Bottom Nav - Mobile/Tablet only -->
-    <BottomNav v-if="isMobile" :campaign-id="campaignId" />
+    <BottomNav v-if="isMobile && !hideBottomNav" :campaign-id="campaignId" />
 
     <!-- Sim Pause Modal — global across all campaign sub-routes. Shown whenever
          simulateToGame halts (trade-deadline, All-Star, user injury). The

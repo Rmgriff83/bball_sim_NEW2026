@@ -98,6 +98,36 @@ export async function purchase(productId) {
 }
 
 /**
+ * Restore prior non-consumable purchases for the current Apple ID. Required
+ * by App Store Review Guideline 3.1.1 for apps that sell non-consumables
+ * (e.g. the headshot_editor_unlock). RevenueCat re-validates StoreKit
+ * receipts and re-fires the entitlement webhook server-side, which idempotently
+ * sets the unlock flag on the user profile. Callers should follow up with
+ * authStore.fetchUser() so the refreshed `unlockedFeatures` array lands locally.
+ *
+ * No-op on web — Stripe purchases are already fulfilled via webhook and
+ * a refreshed fetchUser() returns the same entitlement state.
+ *
+ * @returns {Promise<{ success: boolean, cancelled?: boolean, reason?: string,
+ *   customerInfo?: object, error?: string }>}
+ */
+export async function restorePurchases() {
+  if (!configured) {
+    return { success: false, reason: 'not_configured' }
+  }
+  try {
+    const { customerInfo } = await Purchases.restorePurchases()
+    return { success: true, customerInfo }
+  } catch (err) {
+    if (err?.userCancelled === true) {
+      return { success: false, cancelled: true }
+    }
+    console.error('[IAP] restorePurchases failed', err)
+    return { success: false, error: err?.message ?? 'restore_failed' }
+  }
+}
+
+/**
  * Drop the identified user. Call on logout so the next user gets a fresh
  * anonymous appUserID rather than inheriting receipts.
  */

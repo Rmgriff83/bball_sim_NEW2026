@@ -6,14 +6,15 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { PlayerHeadshotRepository } from '@/engine/db/PlayerHeadshotRepository'
 
 const SYNC_COOLDOWN_MS = 300000 // 5 minutes — minimum time between event-driven syncs
 const PUSH_STAGGER_MS = 250 // pause between sequential part uploads so each request lands independently
 
 // Each push is split into these parts; one HTTP request per part, each well under
 // PHP's post_max_size. Push order matters: meta first creates the server-side
-// campaign record that the player/season parts attach to.
-const PUSH_PARTS = ['meta', 'players_user', 'players_ai', 'players_fa', 'seasons']
+// campaign record that the player/season/headshot parts attach to.
+const PUSH_PARTS = ['meta', 'players_user', 'players_ai', 'players_fa', 'seasons', 'headshots']
 
 export const useSyncStore = defineStore('sync', () => {
   // State
@@ -143,6 +144,7 @@ export const useSyncStore = defineStore('sync', () => {
     const teams = await TeamRepository.getAllForCampaign(campaignId)
     const players = await PlayerRepository.getAllForCampaign(campaignId)
     const seasons = await SeasonRepository.getAllForCampaign(campaignId)
+    const headshots = await PlayerHeadshotRepository.getAllByCampaign(campaignId)
 
     // Historical seasons (anything older than the campaign's current season
     // year) are reduced to a minimal record-and-awards shell. The schedule
@@ -158,6 +160,7 @@ export const useSyncStore = defineStore('sync', () => {
       teams: teams.map(_stripTeamForSync),
       players: players.map(_stripPlayerForSync),
       seasons: seasons.map(s => _stripSeasonForSync(s, currentSeasonYear)),
+      headshots,
       clientUpdatedAt: new Date().toISOString(),
     }
   }
@@ -533,7 +536,7 @@ export const useSyncStore = defineStore('sync', () => {
       // Push snapshot in chunks to cloud
       await pushChanges(activeCampaignId.value)
 
-      // All 5 parts uploaded successfully — clean state.
+      // All parts uploaded successfully — clean state.
       lastSyncAt.value = new Date().toISOString()
       isDirty.value = false
       _dirtyParts.value = new Set()
@@ -578,11 +581,11 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
-   * Push campaign snapshot to the server in 5 sequential, staggered requests:
-   * meta, players_user, players_ai, players_fa, seasons. Each part is its own
-   * HTTP POST so any single one staying under post_max_size keeps the whole
-   * sync working. Failed parts stay in `_dirtyParts` so the next push only
-   * retries the parts that didn't land.
+   * Push campaign snapshot to the server in sequential, staggered requests:
+   * meta, players_user, players_ai, players_fa, seasons, headshots. Each part
+   * is its own HTTP POST so any single one staying under post_max_size keeps
+   * the whole sync working. Failed parts stay in `_dirtyParts` so the next
+   * push only retries the parts that didn't land.
    */
   async function pushChanges(campaignId) {
     const snapshot = await _serializeCampaignSnapshot(campaignId)
@@ -631,6 +634,11 @@ export const useSyncStore = defineStore('sync', () => {
         seasons: snapshot.seasons,
         clientUpdatedAt: snapshot.clientUpdatedAt,
       },
+      headshots: {
+        part: 'headshots',
+        headshots: snapshot.headshots,
+        clientUpdatedAt: snapshot.clientUpdatedAt,
+      },
     }
 
     const failed = []
@@ -638,7 +646,17 @@ export const useSyncStore = defineStore('sync', () => {
     // meta must succeed before any other part on a brand-new campaign (server
     // creates the Campaign row on the meta push), so we always lead with it
     // when it's dirty. PUSH_PARTS order already starts with meta.
-    const order = PUSH_PARTS.filter(p => _dirtyParts.value.has(p))
+    const order = PUSH_PARTS.filter(p => {
+      if (!_dirtyParts.value.has(p)) return false
+      // Skip an empty headshots payload — the backend's entitlement gate
+      // 403s unentitled users, but there's also nothing to write either way
+      // when no player has been customized. Mark clean so we don't retry.
+      if (p === 'headshots' && (!snapshot.headshots || snapshot.headshots.length === 0)) {
+        _dirtyParts.value.delete(p)
+        return false
+      }
+      return true
+    })
 
     for (const part of order) {
       if (!first) {
@@ -649,6 +667,14 @@ export const useSyncStore = defineStore('sync', () => {
         await api.post(`/api/sync/${campaignId}/push`, payloads[part])
         _dirtyParts.value.delete(part)
       } catch (err) {
+        // Headshots are gated by the server-side feature unlock — a 403 here
+        // just means the user hasn't (yet) had the entitlement webhook
+        // fulfilled. Skip cleanly so we don't keep retrying every route-leave.
+        const status = err?.response?.status
+        if (part === 'headshots' && status === 403) {
+          _dirtyParts.value.delete(part)
+          continue
+        }
         failed.push(part)
         // If meta failed on a fresh push, the other player/season requests
         // will 404 ("Campaign not found"). Skip them this cycle.
@@ -780,6 +806,21 @@ export const useSyncStore = defineStore('sync', () => {
       }
     }
 
+    if (data.headshots && Array.isArray(data.headshots) && data.headshots.length > 0) {
+      const localHeadshots = await PlayerHeadshotRepository.getAllByCampaign(campaignId)
+      const headshotsToWrite = _pickNewerRecords(
+        data.headshots,
+        localHeadshots,
+        h => `${h.campaignId}:${h.playerId}`
+      )
+      if (headshotsToWrite.length > 0) {
+        await PlayerHeadshotRepository.saveBulkFromRemote(headshotsToWrite)
+        console.log(`[Sync] Updating ${headshotsToWrite.length} custom headshots from remote`)
+      } else {
+        console.log('[Sync] All local headshots are up to date')
+      }
+    }
+
     if (data.seasons && Array.isArray(data.seasons)) {
       for (const season of data.seasons) {
         const year = season.metadata?.year ?? season.year
@@ -859,6 +900,7 @@ export const useSyncStore = defineStore('sync', () => {
         TeamRepository.deleteAllForCampaign(campaignId),
         PlayerRepository.deleteAllForCampaign(campaignId),
         SeasonRepository.deleteAllForCampaign(campaignId),
+        PlayerHeadshotRepository.deleteAllForCampaign(campaignId),
       ])
 
       await CampaignRepository.saveFromRemote(data.campaign)
@@ -877,6 +919,10 @@ export const useSyncStore = defineStore('sync', () => {
           if (!season) continue
           await SeasonRepository.saveFromRemote(season)
         }
+      }
+
+      if (Array.isArray(data.headshots) && data.headshots.length > 0) {
+        await PlayerHeadshotRepository.saveBulkFromRemote(data.headshots)
       }
 
       lastSyncAt.value = new Date().toISOString()

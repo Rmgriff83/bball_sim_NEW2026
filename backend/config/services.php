@@ -42,8 +42,13 @@ return [
         'checkout_cancel_url' => env('STRIPE_CHECKOUT_CANCEL_URL'),
 
         // Bundle catalog — authoritative source for what each bundle id grants.
-        // The webhook looks up the matched price id here to decide how many
-        // tokens to credit, so frontend-supplied amounts can never grant extras.
+        // The webhook looks up the matched price id here to decide what to
+        // credit, so frontend-supplied amounts can never grant extras.
+        // Two shapes are supported:
+        //   - tokens (int)        → consumable; calls profile->creditTokens()
+        //   - unlocks (string[])  → one-time non-consumable feature unlocks;
+        //                            calls profile->setUnlock() for each
+        // A bundle may set both; the webhook applies whichever are present.
         'bundles' => [
             'tokens_1000' => [
                 'price_id' => env('STRIPE_PRICE_TOKENS_1000'),
@@ -52,6 +57,11 @@ return [
             'tokens_6500' => [
                 'price_id' => env('STRIPE_PRICE_TOKENS_6500'),
                 'tokens' => 6500,
+            ],
+            'headshot_editor_unlock' => [
+                'price_id' => env('STRIPE_PRICE_HEADSHOT_EDITOR_UNLOCK'),
+                'tokens' => 0,
+                'unlocks' => ['headshot_editor'],
             ],
         ],
     ],
@@ -62,12 +72,16 @@ return [
         // Configured in RC dashboard → Project Settings → Integrations → Webhooks.
         'webhook_auth' => env('REVENUECAT_WEBHOOK_AUTH'),
 
-        // Bundle catalog keyed by App Store product id. The webhook resolves
-        // the product id to a token count from here — frontend-supplied
-        // amounts can never grant extras.
+        // Bundle catalog keyed by App Store product id. Same dual shape as
+        // stripe.bundles: tokens credit consumables, unlocks grant one-time
+        // non-consumable feature flags on the user profile.
         'bundles' => [
             'tokens_1000' => ['tokens' => 1000],
             'tokens_6500' => ['tokens' => 6500],
+            'headshot_editor_unlock' => [
+                'tokens' => 0,
+                'unlocks' => ['headshot_editor'],
+            ],
         ],
     ],
 

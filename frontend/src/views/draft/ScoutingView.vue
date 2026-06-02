@@ -18,6 +18,7 @@ import { Search, Binoculars, User } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import { SCOUTABLE_ATTRIBUTES, SCOUTABLE_ATTRIBUTE_CATEGORIES } from '@/engine/data/attributeSchema'
+import { useHeadshotEditorReturn } from '@/composables/useHeadshotEditorReturn'
 
 const route = useRoute()
 const campaignStore = useCampaignStore()
@@ -42,6 +43,21 @@ const sortDirection = ref('desc')
 // Player detail modal state
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
+
+// Reopen the modal on the same prospect when returning from the headshot
+// editor. Always re-fetch from IDB so hasCustomHeadshot reflects the save
+// (the local rookies array can be stale).
+useHeadshotEditorReturn(async (playerId) => {
+  try {
+    const fresh = await PlayerRepository.get(campaignId.value, playerId)
+    if (fresh) {
+      selectedPlayer.value = fresh
+      showPlayerModal.value = true
+    }
+  } catch (err) {
+    console.warn('[ScoutingView] reopen modal failed', err)
+  }
+})
 
 // Scouting state
 const scoutedPlayers = ref({})
@@ -375,7 +391,7 @@ onMounted(async () => {
     )
 
     // Patch headshots onto rookies that are missing them (older campaigns)
-    const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
+    const headshotModules = import.meta.glob('@/assets/headshots/*.svg', { eager: true })
     const availableHeadshots = Object.keys(headshotModules).map(k => k.split('/').pop())
     if (availableHeadshots.length > 0) {
       const usedHeadshots = new Set(prospects.filter(p => p.headshot).map(p => p.headshot))

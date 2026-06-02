@@ -41,6 +41,9 @@ class UserController extends Controller
                 'experience_points' => $user->profile->experience_points,
                 'tokens' => $user->profile->getTokens(),
                 'lifetime_synergies' => $user->profile->getLifetimeSynergies(),
+                // Frontend reads camelCase via authStore.hasFeature(); the
+                // storage column uses snake_case. Translate at the boundary.
+                'unlockedFeatures' => $user->profile->getUnlockedFeatures(),
             ] : null,
         ]);
     }

@@ -1606,6 +1606,11 @@ class GameSimulator {
       playerId: player.id,
       name: (player.first_name || '') + ' ' + (player.last_name || ''),
       headshot: player.headshot || null,
+      // Carry the custom-headshot flag through to the box-score record so the
+      // BasketballCourt canvas picks the right resolver branch (custom SVG
+      // in IDB vs bundled). Without this the live court always shows the
+      // bundled face even after the user saves an edit.
+      hasCustomHeadshot: player.hasCustomHeadshot ?? player.has_custom_headshot ?? false,
       position: player.position,
       secondary_position: player.secondary_position || null,
       overall_rating: player.overall_rating || null,
@@ -1639,6 +1644,7 @@ class GameSimulator {
       player_id: stats.playerId,
       name: stats.name,
       headshot: stats.headshot || null,
+      hasCustomHeadshot: stats.hasCustomHeadshot ?? false,
       position: stats.position,
       secondary_position: stats.secondary_position || null,
       overall_rating: stats.overall_rating || stats.overallRating || null,

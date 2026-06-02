@@ -5,6 +5,32 @@ import { getToken, setToken, removeToken } from '@/composables/useTokenStorage'
 import { clearDatabase } from '@/engine/db/GameDatabase'
 import { useSyncStore } from '@/stores/sync'
 
+// Local-only feature unlocks (TEMP — until real IAP fulfillment is live).
+// Persisted in localStorage so the user keeps access across reloads. Once
+// the RevenueCat / Stripe webhooks populate `profile.unlockedFeatures`
+// server-side, this localStorage path can be removed and hasFeature() will
+// fall back to the profile-only check below.
+const LOCAL_UNLOCKS_KEY = 'localUnlocks'
+
+function _readLocalUnlocks() {
+  try {
+    const raw = localStorage.getItem(LOCAL_UNLOCKS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function _writeLocalUnlocks(list) {
+  try {
+    localStorage.setItem(LOCAL_UNLOCKS_KEY, JSON.stringify(list))
+  } catch {
+    /* private mode etc. */
+  }
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
   const profile = ref(null)
@@ -12,7 +38,33 @@ export const useAuthStore = defineStore('auth', () => {
   const initialized = ref(false)
   const loading = ref(false)
 
+  // Reactive mirror of localStorage. Re-assigned (not mutated) on grant so
+  // computed/template consumers of hasFeature() actually re-evaluate.
+  const localUnlocks = ref(_readLocalUnlocks())
+
   const isAuthenticated = computed(() => !!token.value && !!user.value)
+
+  // One-time IAP unlocks (e.g. headshot_editor). The backend mirrors entitled
+  // purchases into `profile.unlockedFeatures` after the RevenueCat / Stripe
+  // webhook fulfills. Until that's wired, the local fallback below lets the
+  // user grant themselves access via the Store's Purchase button.
+  // Server-side endpoints that gate on this MUST re-check entitlement
+  // independently — the local list is a UI convenience, not a security gate.
+  function hasFeature(name) {
+    if (localUnlocks.value.includes(name)) return true
+    const features = profile.value?.unlockedFeatures ?? profile.value?.unlocked_features
+    return Array.isArray(features) && features.includes(name)
+  }
+
+  // TEMP: grant a local-only unlock. Called from StoreView when the user
+  // taps Purchase on an unlock-kind bundle while real IAP fulfillment is
+  // still being wired up.
+  function grantLocalUnlock(name) {
+    if (localUnlocks.value.includes(name)) return
+    const next = [...localUnlocks.value, name]
+    localUnlocks.value = next
+    _writeLocalUnlocks(next)
+  }
 
   async function initialize() {
     if (initialized.value) return
@@ -171,6 +223,8 @@ export const useAuthStore = defineStore('auth', () => {
     updatePassword,
     forgotPassword,
     resetPassword,
-    updateSettings
+    updateSettings,
+    hasFeature,
+    grantLocalUnlock
   }
 })

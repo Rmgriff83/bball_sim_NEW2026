@@ -1,7 +1,11 @@
 import { openDB } from 'idb'
 
 const DB_NAME = 'bball-sim'
-const DB_VERSION = 1
+// v3 bump exists purely to re-run the headshot-store creation for any user
+// whose DB ended up at version 2 with `playerHeadshots` missing (an upgrade
+// transaction that committed the version bump but not the store). The v3
+// block is idempotent and will no-op if the store is already there.
+const DB_VERSION = 3
 
 let dbPromise = null
 
@@ -9,6 +13,13 @@ function createDB() {
   return openDB(DB_NAME, DB_VERSION, {
     blocked() {
       // Another tab has an older version open; reset so we retry
+      dbPromise = null
+    },
+    blocking() {
+      // Another instance (another tab, or the same tab requesting a higher
+      // version) is trying to upgrade. Close THIS connection so the upgrade
+      // can proceed instead of staying open and blocking it forever.
+      dbPromise?.then(db => { try { db.close() } catch {} }).catch(() => {})
       dbPromise = null
     },
     terminated() {
@@ -58,6 +69,21 @@ function createDB() {
         // Sync metadata store
         db.createObjectStore('syncMeta', { keyPath: 'key' })
       }
+
+      if (oldVersion < 2 && !db.objectStoreNames.contains('playerHeadshots')) {
+        // Per-player custom headshot overrides (SVG strings). Keyed by
+        // [campaignId, playerId] so they ride along with their owning
+        // player. Sync pushes the full per-campaign set as a single chunk.
+        const headshots = db.createObjectStore('playerHeadshots', { keyPath: ['campaignId', 'playerId'] })
+        headshots.createIndex('campaignId', 'campaignId')
+      }
+
+      if (oldVersion < 3 && !db.objectStoreNames.contains('playerHeadshots')) {
+        // Recovery: if a prior v1→v2 upgrade landed the version bump but
+        // never created the store (observed in dev), this rerun creates it.
+        const headshots = db.createObjectStore('playerHeadshots', { keyPath: ['campaignId', 'playerId'] })
+        headshots.createIndex('campaignId', 'campaignId')
+      }
     },
   })
 }
@@ -74,6 +100,29 @@ export function getDB() {
  */
 export function resetDB() {
   dbPromise = null
+}
+
+/**
+ * Wait until a connection exists that contains the named store. If the
+ * current connection is stale (still at an older schema version because the
+ * upgrade was blocked), close it and reopen so the upgrade callback runs.
+ * Throws if the store still isn't present after a fresh open — the caller
+ * should treat that as "schema migration didn't run, the user needs to
+ * close other tabs of the app and reload."
+ */
+export async function ensureStoreUpgraded(storeName) {
+  let db = await getDB()
+  if (db.objectStoreNames.contains(storeName)) return db
+  try { db.close() } catch { /* ignore */ }
+  resetDB()
+  db = await getDB()
+  if (!db.objectStoreNames.contains(storeName)) {
+    throw new Error(
+      `IDB schema is out of date — '${storeName}' is missing. ` +
+      `Close other tabs of this app and reload.`
+    )
+  }
+  return db
 }
 
 /**
@@ -105,7 +154,13 @@ export async function clearDatabase() {
 
 export async function clearCampaignData(campaignId) {
   const db = await getDB()
-  const campaignStores = ['teams', 'players', 'seasons', 'news', 'trades']
+  // Filter out any stores the live connection doesn't have. Belt-and-suspenders
+  // against an in-flight schema upgrade — if a tab opened pre-bump still holds
+  // a v1 connection, `playerHeadshots` won't exist yet and naming it in the
+  // transaction would throw NotFoundError. Skipping it is safe: there can't be
+  // headshot rows in a v1 store that doesn't exist.
+  const campaignStores = ['teams', 'players', 'seasons', 'news', 'trades', 'playerHeadshots']
+    .filter(name => db.objectStoreNames.contains(name))
   const tx = db.transaction(campaignStores, 'readwrite')
 
   for (const storeName of campaignStores) {

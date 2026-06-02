@@ -140,6 +140,12 @@ const routes = [
         path: 'scouting',
         name: 'scouting',
         component: lazyLoad(() => import('@/views/draft/ScoutingView.vue'))
+      },
+      {
+        path: 'headshot-editor/:playerId',
+        name: 'headshot-editor',
+        component: lazyLoad(() => import('@/views/game/HeadshotEditorView.vue')),
+        meta: { hideBottomNav: true, requiresHeadshotEditor: true }
       }
     ]
   },
@@ -180,6 +186,14 @@ router.beforeEach(async (to, from, next) => {
   // Check if route is for guests only (login, register)
   if (to.meta.guest && authStore.isAuthenticated) {
     next({ name: 'dashboard' })
+    return
+  }
+
+  // Entitlement gate for IAP-unlocked features. Backstop for users who paste
+  // the URL directly — the entry-point button is already hidden in
+  // PlayerDetailModal when hasFeature is false, but routing must enforce it.
+  if (to.meta.requiresHeadshotEditor && !authStore.hasFeature?.('headshot_editor')) {
+    next({ name: 'store' })
     return
   }
 

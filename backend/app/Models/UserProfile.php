@@ -43,6 +43,7 @@ class UserProfile extends Model
         return [
             'tokens' => 0,
             'lifetime_synergies' => 0,
+            'unlocked_features' => [],
         ];
     }
 
@@ -105,5 +106,44 @@ class UserProfile extends Model
         $this->save();
 
         return $newBalance;
+    }
+
+    /**
+     * Return the user's unlocked feature flags as a plain array. Backed by
+     * rewards.unlocked_features (snake_case for parity with the rest of the
+     * column; the API layer translates to camelCase for the frontend).
+     */
+    public function getUnlockedFeatures(): array
+    {
+        $features = $this->rewards['unlocked_features'] ?? [];
+        return is_array($features) ? array_values($features) : [];
+    }
+
+    /**
+     * Check if the user owns a given one-time unlock (e.g. 'headshot_editor').
+     */
+    public function hasUnlock(string $feature): bool
+    {
+        return in_array($feature, $this->getUnlockedFeatures(), true);
+    }
+
+    /**
+     * Grant a one-time unlock. Idempotent — calling repeatedly with the same
+     * feature key is a no-op. Returns the full list of unlocked features.
+     */
+    public function setUnlock(string $feature): array
+    {
+        $rewards = $this->rewards ?? self::defaultRewards();
+        $features = $rewards['unlocked_features'] ?? [];
+        if (!is_array($features)) {
+            $features = [];
+        }
+        if (!in_array($feature, $features, true)) {
+            $features[] = $feature;
+            $rewards['unlocked_features'] = array_values($features);
+            $this->rewards = $rewards;
+            $this->save();
+        }
+        return array_values($features);
     }
 }
