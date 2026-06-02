@@ -98,12 +98,21 @@ const isAuthenticated = computed(() => authStore.isAuthenticated)
     <!-- Footer -->
     <footer class="home-footer">
       <p>Basketball Simulator &copy; 2026</p>
-      <a
-        class="footer-link"
-        href="https://bball-sim.com/support"
-        target="_blank"
-        rel="noopener"
-      >Contact Us</a>
+      <div class="footer-links">
+        <a
+          class="footer-link"
+          href="https://bball-sim.com/support"
+          target="_blank"
+          rel="noopener"
+        >Contact Us</a>
+        <span class="footer-sep">·</span>
+        <a
+          class="footer-link"
+          href="https://bball-sim.com/privacy"
+          target="_blank"
+          rel="noopener"
+        >Privacy</a>
+      </div>
     </footer>
   </div>
 </template>
@@ -444,6 +453,17 @@ const isAuthenticated = computed(() => authStore.isAuthenticated)
   flex-direction: column;
   align-items: center;
   gap: 6px;
+}
+
+.footer-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer-sep {
+  color: var(--color-text-tertiary);
+  opacity: 0.5;
 }
 
 .footer-link {

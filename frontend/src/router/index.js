@@ -30,15 +30,20 @@ const routes = [
     name: 'home',
     component: lazyLoad(() => import('@/views/HomeView.vue'))
   },
-  // Web-only — Apple's App Store reviewer hits this URL on the web,
-  // it has no purpose inside the iOS app. VITE_NATIVE_BUILD is set by
-  // `npm run build:ios`, so this entire route (including the dynamic
-  // import) is dead-code-eliminated from the iOS bundle.
+  // Web-only — Apple's App Store reviewer hits these URLs on the web,
+  // they have no purpose inside the iOS app. VITE_NATIVE_BUILD is set by
+  // `npm run build:ios`, so these routes (including their dynamic imports)
+  // are dead-code-eliminated from the iOS bundle.
   ...(import.meta.env.VITE_NATIVE_BUILD ? [] : [
     {
       path: '/support',
       name: 'support',
       component: lazyLoad(() => import('@/views/SupportView.vue'))
+    },
+    {
+      path: '/privacy',
+      name: 'privacy',
+      component: lazyLoad(() => import('@/views/PrivacyView.vue'))
     }
   ]),
   {
