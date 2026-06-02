@@ -117,6 +117,12 @@ export const useDraftStore = defineStore('draft', () => {
 
   // Actions
   function initializeDraft(campaign, players, teamsList) {
+    // Reset the mode flag explicitly. Without this, a fantasy draft started
+    // in the same session after a rookie draft inherits draftMode='rookie'
+    // (the rookie initializer sets it; this one used to skip the reset),
+    // which makes the UI render rookie-mode chrome and writes the cache to
+    // the wrong key (`rookie_draft_<id>` instead of `draft_<id>`).
+    draftMode.value = 'fantasy'
     allPlayers.value = players
     teams.value = teamsList
     userTeamId.value = campaign.teamId || campaign.team?.id || campaign.team_id
@@ -509,11 +515,19 @@ export const useDraftStore = defineStore('draft', () => {
         const team = teamsByAbbr[result.teamAbbr]
         if (!team) continue
 
-        // Convert reactive proxy to plain object for IndexedDB storage
+        // Convert reactive proxy to plain object for IndexedDB storage.
+        // Both casings must flip in sync — computeTeamOverall (and several
+        // AI services) read `is_free_agent === 1` independently of the
+        // camelCase field, so leaving the snake_case duplicate at 1 makes
+        // every drafted player look like a free agent and breaks the team
+        // overall badge among other things.
         const plain = { ...toRaw(player) }
         plain.teamId = team.id
+        plain.team_id = team.id
         plain.teamAbbreviation = result.teamAbbr
+        plain.team_abbreviation = result.teamAbbr
         plain.isFreeAgent = 0
+        plain.is_free_agent = 0
         plain.campaignId = campaignId
 
         // Save draft selection data on player
@@ -639,8 +653,11 @@ export const useDraftStore = defineStore('draft', () => {
 
         const plain = { ...toRaw(player) }
         plain.teamId = team.id
+        plain.team_id = team.id
         plain.teamAbbreviation = team.abbreviation
+        plain.team_abbreviation = team.abbreviation
         plain.isFreeAgent = 0
+        plain.is_free_agent = 0
         plain.isDraftProspect = false
         plain.campaignId = campaignId
 
@@ -669,8 +686,11 @@ export const useDraftStore = defineStore('draft', () => {
           const plain = { ...toRaw(player) }
           plain.isDraftProspect = false
           plain.isFreeAgent = 1
+          plain.is_free_agent = 1
           plain.teamId = null
+          plain.team_id = null
           plain.teamAbbreviation = 'FA'
+          plain.team_abbreviation = 'FA'
           plain.campaignId = campaignId
 
           // Minimum contract for undrafted

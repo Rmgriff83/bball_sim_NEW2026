@@ -235,8 +235,23 @@ function generateTeamRoster({ campaignId, team, mode, startYear, usedNames }) {
   const jerseyNumbers = generateJerseyNumbers()
   const players = []
 
+  // Randomize which of the 5 starting positions receives each tier slot.
+  // Without this, the slot-index-to-position mapping in ROSTER_POSITIONS
+  // (PG, SG, SF, PF, C) combined with the blueprint's slot-index-to-role
+  // band (superstar, star, starter, starter, starter) meant the star tier
+  // ALWAYS landed on PG and the second-best slot ALWAYS landed on SG. Across
+  // 30 teams that produced 30 star PGs + 30 star SGs at the top of the
+  // league and zero stars at SF/PF/C. Shuffling per team distributes the
+  // star tier across all five positions league-wide while keeping every
+  // team's starting five at one of each position.
+  const starterPositions = shuffleArray(['PG', 'SG', 'SF', 'PF', 'C'])
+
   for (let posIndex = 0; posIndex < ROSTER_POSITIONS.length; posIndex++) {
-    const position = ROSTER_POSITIONS[posIndex]
+    // First 5 slots use the shuffled starter positions; bench/rotation
+    // slots keep the existing template so per-position depth stays balanced
+    // (the template intentionally over-indexes on wing depth — SG/SF/PF —
+    // since real benches do too).
+    const position = posIndex < 5 ? starterPositions[posIndex] : ROSTER_POSITIONS[posIndex]
     const { role, min, max } = blueprint[posIndex]
     const overall = randInt(min, max)
 
@@ -400,18 +415,17 @@ export function generateFreeAgentPool(campaignId, { startYear = 2025, count = 53
       usedNames,
     })
     for (const p of roster) {
+      // Detach from the placeholder team, but PRESERVE the contract that
+      // generateVeteran assigned — those salaries are the player's market
+      // value and the fantasy-draft UI displays them on each row. When the
+      // user drafts a player in finalizeDraft, the contract follows them
+      // onto the new team as their starting deal.
       p.teamId = null
       p.team_id = null
       p.teamAbbreviation = 'FA'
       p.team_abbreviation = 'FA'
       p.isFreeAgent = 1
       p.is_free_agent = 1
-      p.contractSalary = 0
-      p.contract_salary = 0
-      p.contractDetails = null
-      p.contract_details = null
-      p.contractYearsRemaining = 0
-      p.contract_years_remaining = 0
     }
     pool.push(...roster)
   }
@@ -436,18 +450,15 @@ export function generateFreeAgentPool(campaignId, { startYear = 2025, count = 53
       startYear,
       usedNames,
     })
+    // Deep-bench filler — keeps the generateVeteran-assigned contract intact
+    // so the fantasy-draft UI shows a market-value salary for every row. The
+    // generator already produces vet-min-ish salaries for OVR 58-67 players.
     player.isFreeAgent = 1
     player.is_free_agent = 1
     player.teamId = null
     player.team_id = null
     player.teamAbbreviation = 'FA'
     player.team_abbreviation = 'FA'
-    player.contractSalary = 0
-    player.contract_salary = 0
-    player.contractDetails = null
-    player.contract_details = null
-    player.contractYearsRemaining = 0
-    player.contract_years_remaining = 0
     pool.push(player)
   }
 
