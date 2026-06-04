@@ -20,7 +20,7 @@ import {
   nextPlayerBadgeLevel,
   compareBadgeLevels,
 } from '@/engine/data/playerBadgeStore'
-import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
+import { getCoachActionBudget, getCoachResignCost, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { selectBestCoachingScheme } from '@/engine/coaching/CoachStrategyService'
 import api from '@/composables/useApi'
 
@@ -1089,9 +1089,10 @@ export const useTeamStore = defineStore('team', () => {
 
   /**
    * Re-sign the user team's current head coach for another 2 seasons. Resets
-   * `contractYearsRemaining` to 2 and stamps a fresh `hiredSeason`. Free —
-   * keeps the surrounding flow (cap-hold style) light. Surfaced as a button on
-   * the coach card during the final year of the contract.
+   * `contractYearsRemaining` to 2 and stamps a fresh `hiredSeason`. Costs tokens
+   * scaled by the coach's tier (see getCoachResignCost) so a strong coach can't
+   * be retained indefinitely for free. Surfaced as a button on the coach card
+   * during the final year of the contract. Returns { coach, cost }.
    */
   async function resignCoach(campaignId) {
     loading.value = true
@@ -1104,6 +1105,19 @@ export const useTeamStore = defineStore('team', () => {
       const teamData = await TeamRepository.get(campaignId, userTeamId)
       if (!teamData) throw new Error('Team not found')
       if (!teamData.coach) throw new Error('No coach to re-sign')
+
+      // Charge tokens up front (before mutating the contract) so a failed
+      // deduction can't leave a re-signed coach the user didn't pay for.
+      const authStore = useAuthStore()
+      const cost = getCoachResignCost(teamData.coach)
+      const tokens = authStore.profile?.tokens ?? 0
+      if (cost > tokens) throw new Error('Insufficient tokens')
+      if (cost > 0) {
+        const response = await api.post('/api/user/tokens', { amount: -cost })
+        if (authStore.profile) {
+          authStore.profile.tokens = response.data.tokens
+        }
+      }
 
       const currentSeason = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? 2025
       teamData.coach.contractYearsRemaining = 2
@@ -1119,7 +1133,7 @@ export const useTeamStore = defineStore('team', () => {
       if (team.value) team.value.coach = teamData.coach
 
       useSyncStore().markDirty()
-      return { coach: teamData.coach }
+      return { coach: teamData.coach, cost }
     } catch (err) {
       error.value = err.message || 'Failed to re-sign coach'
       throw err

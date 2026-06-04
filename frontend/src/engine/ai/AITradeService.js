@@ -12,6 +12,12 @@ import { calculateRetentionScore } from './MotivationService';
 const TRADE_DEADLINE_MONTH = 12; // December
 const TRADE_DEADLINE_DAY = 15;
 
+// Regular season tips off Oct 21. Automated AI trade offers are suppressed for
+// the first week so users aren't flooded with proposals on opening night.
+const SEASON_START_MONTH = 10; // October
+const SEASON_START_DAY = 21;
+const SEASON_OPENING_QUIET_DAYS = 7;
+
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 const TOTAL_GAMES = 54;
 
@@ -877,6 +883,21 @@ export function isBeforeDeadline(currentDate, seasonYear) {
 }
 
 /**
+ * Whether the current date falls within the opening week of the season, during
+ * which automated AI trade offers are suppressed. User-initiated trades with AI
+ * teams are unaffected — this only gates AI-generated proposals.
+ * @param {string} currentDate - ISO date string (e.g. '2025-10-23')
+ * @param {number} seasonYear - The year the season started (e.g. 2025)
+ * @returns {boolean}
+ */
+export function isInFirstWeekOfSeason(currentDate, seasonYear) {
+  const seasonStart = new Date(seasonYear, SEASON_START_MONTH - 1, SEASON_START_DAY);
+  const current = new Date(currentDate);
+  const daysElapsed = Math.floor((current - seasonStart) / (1000 * 60 * 60 * 24));
+  return daysElapsed >= 0 && daysElapsed < SEASON_OPENING_QUIET_DAYS;
+}
+
+/**
  * Expire stale proposals past their expiration date.
  * Mutates proposals array in place (sets status to 'expired').
  * @param {Array} proposals - Array of proposal objects with status and expires_at
@@ -1147,6 +1168,11 @@ export function generateWeeklyProposals({
 
   // Check trade deadline
   if (!isBeforeDeadline(currentDate, seasonYear)) return [];
+
+  // No automated AI offers in the opening week of the season. Users can still
+  // initiate trades with AI teams during this window — that path doesn't run
+  // through here.
+  if (isInFirstWeekOfSeason(currentDate, seasonYear)) return [];
 
   const deadline = getTradeDeadline(seasonYear);
   const deadlineDate = new Date(deadline.year, deadline.month - 1, deadline.day);

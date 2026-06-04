@@ -25,6 +25,12 @@ const seasonPhase = computed(() => {
   return c?.settings?.season_phase ?? c?.settings?.seasonPhase ?? c?.phase ?? 'regular_season'
 })
 
+// Scouting is closed once the rookie draft begins and stays closed through
+// free agency, reopening when the next season starts.
+const hideScout = computed(() =>
+  seasonPhase.value === 'offseason_draft' || seasonPhase.value === 'offseason_free_agency'
+)
+
 const navItems = computed(() => {
   const showPlayoffs = playoffStore.isInPlayoffs && seasonPhase.value !== 'regular_season'
   const thirdTab = showPlayoffs
@@ -55,7 +61,7 @@ const navItems = computed(() => {
       icon: 'users'
     },
     thirdTab,
-    {
+    hideScout.value ? null : {
       name: 'scout',
       to: `/campaign/${props.campaignId}/scouting`,
       routeName: 'scouting',
@@ -68,7 +74,7 @@ const navItems = computed(() => {
       icon: 'play',
       highlight: true
     }
-  ]
+  ].filter(Boolean)
 })
 
 function isActive(routeName) {

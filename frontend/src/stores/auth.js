@@ -149,6 +149,30 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function deleteAccount(password) {
+    loading.value = true
+    try {
+      // DELETE with a body — axios requires the payload under `data`.
+      // Backend validates `password` (current_password), revokes all tokens,
+      // and cascade-deletes the user's profile, campaigns, and achievements.
+      await api.delete('/api/user', { data: { password } })
+
+      // Account is gone server-side; tear down all local state. Mirror logout's
+      // cleanup but skip the /api/auth/logout call (token is already revoked).
+      token.value = null
+      user.value = null
+      profile.value = null
+      await removeToken()
+      try {
+        await clearDatabase()
+      } catch (e) {
+        console.warn('[Auth] Failed to clear IndexedDB on account deletion:', e)
+      }
+    } finally {
+      loading.value = false
+    }
+  }
+
   function updateSettings(settings) {
     if (user.value) {
       user.value.settings = { ...user.value.settings, ...settings }
@@ -171,6 +195,7 @@ export const useAuthStore = defineStore('auth', () => {
     updatePassword,
     forgotPassword,
     resetPassword,
+    deleteAccount,
     updateSettings
   }
 })

@@ -948,6 +948,18 @@ export const runAIContractDecisions = runAIRosterManagement;
 const MAX_OFFERS_PER_TEAM_PER_WINDOW = 6;
 const MAX_OFFERS_PER_TEAM_PER_DAY = 1;
 
+// Per-FREE-AGENT spread caps. These are what keep the market even: without
+// them every team piles its day-1 offer onto the same handful of stars while
+// mid-tier FAs go untouched all week.
+//  • WINDOW cap: a single FA draws at most this many distinct suitors over the
+//    whole window. Once a star is "full," teams cascade down to the next-best
+//    available FA — spreading offers into the mid tier.
+//  • NEW-per-day cap: a FA gains at most this many *new* suitors on any one
+//    day, so a star's offers trickle in across the week instead of flooding in
+//    on day 1. (Salary bumps to existing offers are exempt — see dedup below.)
+const MAX_OFFERS_PER_PLAYER_PER_WINDOW = 4;
+const MAX_NEW_OFFERS_PER_PLAYER_PER_DAY = 1;
+
 /**
  * Linear pace gate. A team can place at most `ceil(day * MAX / DURATION)`
  * offers cumulatively by day N — so by day 1 they're capped at 1 of their 6
@@ -1066,28 +1078,38 @@ export function generateAIFreeAgencyOffers({
       if (offersToday >= remainingTodayCap) break;
       if (pendingForTeam + offersToday >= MAX_OFFERS_PER_TEAM_PER_WINDOW) break;
 
+      const incumbent = isTeamIncumbent(player, team.id);
+      const playerOffers = (offersMap[player.id] || []).filter(o => !o.isUserOffer);
+      const teamAlreadyOffered = playerOffers.some(o => o.teamId === team.id);
+
+      // Spread caps for fresh suitors. A team re-signing its own Bird-rights guy
+      // bypasses these, and an existing suitor (handled by the dedup branch
+      // below) isn't a "new" offer. The `continue` lets the team cascade to the
+      // next FA, which is what pushes offers down into the mid tier.
+      if (!incumbent && !teamAlreadyOffered) {
+        if (playerOffers.length >= MAX_OFFERS_PER_PLAYER_PER_WINDOW) continue;
+        const newOffersToday = playerOffers.filter(o => o.dayOffered === day).length;
+        if (newOffersToday >= MAX_NEW_OFFERS_PER_PLAYER_PER_DAY) continue;
+      }
+
       // Deterministic per-team-per-day-per-player chance the team is "interested today"
       const interestRoll = hashSeed(campaignId, team.id, player.id, day);
-      // Pacing curve: top FAs still draw the earliest interest (otherwise
-      // bench guys would get all the early bids), but no longer "auto-bid"
-      // on day 1. Mid/late windows pick up the slack.
+      // Pacing curve: top FAs still draw the earliest interest (otherwise bench
+      // guys would get all the early bids), but the per-player caps above keep
+      // them from being flooded — so these thresholds are flattened across tiers
+      // (finer bands) to give mid- and lower-tier FAs a real early market too.
       const rating = getPlayerRating(player);
       const earlyWindow = day <= 4;
       const midWindow = day >= 5 && day <= 8;
-      const lateWindow = day >= 9;
-      let interestThreshold = 0.65;
+      let interestThreshold;
       if (rating >= 80) {
-        if (earlyWindow) interestThreshold = 0.55;
-        else if (midWindow) interestThreshold = 0.45;
-        else interestThreshold = 0.40;
-      } else if (rating >= 70) {
-        if (earlyWindow) interestThreshold = 0.70;
-        else if (midWindow) interestThreshold = 0.55;
-        else interestThreshold = 0.50;
+        interestThreshold = earlyWindow ? 0.50 : midWindow ? 0.42 : 0.38;
+      } else if (rating >= 73) {
+        interestThreshold = earlyWindow ? 0.58 : midWindow ? 0.48 : 0.42;
+      } else if (rating >= 66) {
+        interestThreshold = earlyWindow ? 0.66 : midWindow ? 0.55 : 0.48;
       } else {
-        if (earlyWindow) interestThreshold = 0.88;
-        else if (midWindow) interestThreshold = 0.65;
-        else interestThreshold = 0.55;
+        interestThreshold = earlyWindow ? 0.74 : midWindow ? 0.62 : 0.52;
       }
       if (interestRoll < interestThreshold) continue;
 
@@ -1095,7 +1117,6 @@ export function generateAIFreeAgencyOffers({
       // bypass the normal evaluation gate — teams ALWAYS want to keep their
       // own guys around if possible.
       const adjustedCap = { ...baseCap, capSpace: baseCap.capSpace - pendingCommitment };
-      const incumbent = isTeamIncumbent(player, team.id);
       const wantsPlayer = incumbent || evaluateFreeAgentSigning(player, direction, teamRoster, adjustedCap);
       if (!wantsPlayer) continue;
 

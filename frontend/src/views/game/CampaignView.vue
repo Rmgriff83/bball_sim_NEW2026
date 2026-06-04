@@ -33,6 +33,14 @@ const scoutingPoints = computed(() => {
   return campaign.value?.settings?.scoutingPoints ?? 0
 })
 
+// Scouting is closed once the rookie draft begins and stays closed through
+// free agency, reopening when the next season starts. Mirrors BottomNav.
+const hideScout = computed(() => {
+  const c = campaign.value
+  const phase = c?.settings?.season_phase ?? c?.settings?.seasonPhase ?? c?.phase ?? 'regular_season'
+  return phase === 'offseason_draft' || phase === 'offseason_free_agency'
+})
+
 // Parse a date string (YYYY-MM-DD or datetime) into a local Date, avoiding UTC shift
 function parseLocalDate(dateStr) {
   const [y, m, d] = dateStr.split('T')[0].split(' ')[0].split('-').map(Number)
@@ -275,6 +283,7 @@ function closeMobileMenu() {
             Playoffs
           </router-link>
           <router-link
+            v-if="!hideScout"
             :to="`/campaign/${campaignId}/scouting`"
             class="nav-link nav-link-scout"
             :class="{ active: route.name === 'scouting' }"

@@ -31,6 +31,25 @@ const clearingCache = ref(false)
 const showPullFromCloudModal = ref(false)
 const pullingFromCloud = ref(false)
 
+// Delete account modal — Apple requires a destructive, clearly-worded
+// confirmation. We also require the password (backend validates it) and that
+// the user types DELETE, so an accidental tap can't wipe their account.
+const showDeleteAccountModal = ref(false)
+const deletingAccount = ref(false)
+const deleteAccountPassword = ref('')
+const deleteAccountConfirmText = ref('')
+const deleteAccountError = ref('')
+const canDeleteAccount = computed(
+  () => deleteAccountPassword.value.length > 0 && deleteAccountConfirmText.value.trim().toUpperCase() === 'DELETE'
+)
+
+function closeDeleteAccountModal() {
+  showDeleteAccountModal.value = false
+  deleteAccountPassword.value = ''
+  deleteAccountConfirmText.value = ''
+  deleteAccountError.value = ''
+}
+
 // Theme toggle
 const isDarkMode = ref(document.documentElement.getAttribute('data-theme') !== 'light')
 
@@ -226,6 +245,22 @@ async function pullFromCloud() {
     console.error('Pull from cloud failed:', err)
   } finally {
     pullingFromCloud.value = false
+  }
+}
+
+async function handleDeleteAccount() {
+  if (!canDeleteAccount.value) return
+  deleteAccountError.value = ''
+  deletingAccount.value = true
+  try {
+    await authStore.deleteAccount(deleteAccountPassword.value)
+    closeDeleteAccountModal()
+    router.push('/login')
+  } catch (err) {
+    deleteAccountError.value =
+      err.response?.data?.message || 'Failed to delete account. Please check your password and try again.'
+  } finally {
+    deletingAccount.value = false
   }
 }
 
@@ -489,6 +524,67 @@ async function clearLocalCache() {
         <h3 class="section-title">Session</h3>
         <BaseButton variant="danger" @click="handleLogout">Sign Out</BaseButton>
       </div>
+
+      <!-- Danger Zone Card -->
+      <div class="profile-section danger-zone">
+        <h3 class="section-title">Delete Account</h3>
+        <p class="danger-zone-desc">
+          Permanently delete your account and all of its data. This cannot be undone.
+        </p>
+        <BaseButton variant="danger" @click="showDeleteAccountModal = true" class="delete-account-button">
+          <Trash2 :size="16" />
+          Delete Account
+        </BaseButton>
+      </div>
+
+      <!-- Delete Account Confirmation Modal -->
+      <BaseModal :show="showDeleteAccountModal" @close="closeDeleteAccountModal" title="Delete Account?">
+        <div class="clear-cache-modal">
+          <div class="warning-icon">
+            <AlertTriangle :size="32" />
+          </div>
+          <p class="warning-text">
+            This will permanently delete your account. This action <strong>cannot be undone.</strong>
+          </p>
+          <ul class="warning-list">
+            <li>Your profile, username, and login will be erased</li>
+            <li>All of your campaigns and saved game data will be deleted</li>
+            <li>Your tokens, rewards, and synergy progress will be lost forever</li>
+            <li>This data cannot be recovered — there is no going back</li>
+          </ul>
+          <p class="warning-hint">
+            If you're sure, enter your password and type DELETE to confirm.
+          </p>
+          <div v-if="deleteAccountError" class="form-message error">{{ deleteAccountError }}</div>
+          <div class="delete-confirm-fields">
+            <FormInput
+              v-model="deleteAccountPassword"
+              label="Password"
+              type="password"
+              placeholder="Enter your password"
+            />
+            <FormInput
+              v-model="deleteAccountConfirmText"
+              label="Type DELETE to confirm"
+              placeholder="DELETE"
+            />
+          </div>
+          <div class="modal-actions">
+            <BaseButton variant="ghost" @click="closeDeleteAccountModal">
+              Cancel
+            </BaseButton>
+            <BaseButton
+              variant="danger"
+              @click="handleDeleteAccount"
+              :loading="deletingAccount"
+              :disabled="!canDeleteAccount"
+            >
+              <Trash2 :size="16" />
+              Delete My Account
+            </BaseButton>
+          </div>
+        </div>
+      </BaseModal>
 
       </div><!-- end Settings Tab -->
 
@@ -883,6 +979,33 @@ async function clearLocalCache() {
 
 .modal-actions .btn {
   min-width: 120px;
+}
+
+/* Danger Zone */
+.danger-zone {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.danger-zone-desc {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 1rem;
+}
+
+.delete-account-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.delete-confirm-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  text-align: left;
 }
 
 /* Forms */

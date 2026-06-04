@@ -335,15 +335,14 @@ footer {
   box-shadow: 0 4px 12px rgba(232, 90, 79, 0.3);
 }
 
-/* Standardized modal heights (90vh desktop, 85vh mobile) */
+/* Size to content — cap height so long content scrolls, but no min-height so
+   the modal hugs its (usually short) content instead of stretching to 90vh. */
 .modal-container {
-  min-height: 90vh;
   max-height: 90vh;
 }
 
 @media (max-width: 480px) {
   .modal-container {
-    min-height: 85vh;
     max-height: 85vh;
   }
 }

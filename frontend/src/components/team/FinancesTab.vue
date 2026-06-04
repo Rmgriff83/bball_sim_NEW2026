@@ -40,6 +40,14 @@ const requestedSubTab = route.query?.sub
 const activeSubTab = ref(VALID_SUB_TABS.includes(requestedSubTab) ? requestedSubTab : 'team')
 
 const inFreeAgencyPeriod = computed(() => isInFreeAgencyPeriod(campaignStore.currentCampaign))
+
+// In the offseason (incl. draft / free agency), the "Expiring" sub-tab is
+// hidden: the players it lists expire NEXT season, so surfacing it during
+// free agency is confusing. Covers 'offseason', 'offseason_draft', and
+// 'offseason_free_agency'.
+const isOffseason = computed(() =>
+  (campaignStore.currentCampaign?.phase ?? '').startsWith('offseason')
+)
 const signModalMode = computed(() => inFreeAgencyPeriod.value ? 'offer' : 'instant')
 
 // Drives the inline Sim Day / Sim Rest buttons that appear under the sub-tab
@@ -263,6 +271,11 @@ function handleDropFromDetail(player) {
   financeStore.openDropModal(player)
 }
 
+function handleSignFromDetail(player) {
+  closePlayerInfoModal()
+  financeStore.openSignModal(player)
+}
+
 async function handleHoldCoachMeeting({ playerId, purchasedAction }) {
   try {
     const res = await teamStore.holdCoachMeeting(
@@ -458,6 +471,15 @@ watch(activeSubTab, async (newTab) => {
   }
 })
 
+// If we slip into the offseason while the Expiring view is open (or arrive via
+// a ?sub=expiring deep link), fall back to Contracts so we're not stranded on a
+// view whose tab is now hidden.
+watch(isOffseason, (offseason) => {
+  if (offseason && activeSubTab.value === 'expiring') {
+    activeSubTab.value = 'team'
+  }
+}, { immediate: true })
+
 onMounted(() => {
   loadData()
   // Deep-link case: activeSubTab can start as 'free-agents' (from ?sub=...),
@@ -555,6 +577,7 @@ onMounted(() => {
           Contracts
         </button>
         <button
+          v-if="!isOffseason"
           class="sub-tab-btn"
           :class="{ active: activeSubTab === 'expiring' }"
           @click="activeSubTab = 'expiring'"
@@ -822,6 +845,7 @@ onMounted(() => {
       @close="closePlayerInfoModal"
       @resign-player="handleResignFromDetail"
       @drop-player="handleDropFromDetail"
+      @sign-player="handleSignFromDetail"
       @hold-coach-meeting="handleHoldCoachMeeting"
     />
 

@@ -180,7 +180,9 @@ function openPlayerModal(player) {
 async function scoutPlayer(player) {
   if (scouting.value || scoutingPoints.value < 1 || isFullyScouted(player.id)) return
   scouting.value = true
-  audio.suppressClickSound() // affirmation on success instead of the generic tap
+  // Routine reveals get only the generic click tap (played by the global
+  // listener) + the silent stat-pop — no toast. We surface an affirmation +
+  // toast only for the milestone cases below (full scout / badge reveal).
 
   try {
     const revealed = getRevealedAttributes(player.id)
@@ -207,15 +209,25 @@ async function scoutPlayer(player) {
       toReveal.push(pool.splice(idx, 1)[0])
     }
 
-    // Update local state with attribute reveals + badge/morale perk chances
+    // Update local state with attribute reveals + badge/morale perk chances.
+    // Roll badge/morale reveals into locals so we can detect what happened THIS
+    // action (the flags are sticky once true, so we compare before/after).
     const newRevealed = [...revealed, ...toReveal]
     const existing = scoutedPlayers.value[player.id] || {}
+    const hadBadgesRevealed = existing.badgesRevealed === true
+    const badgesRevealed = hadBadgesRevealed || (isPerkActive('badge_reveal') && Math.random() < 0.35)
+    const moraleRevealed = existing.moraleRevealed === true || (isPerkActive('morale_reveal') && Math.random() < 0.35)
+
+    // Milestone detection for the gated success toast.
+    const badgesJustRevealed = !hadBadgesRevealed && badgesRevealed
+    const hitFullScout = newRevealed.length >= ALL_ATTRIBUTES.length
+
     scoutedPlayers.value = {
       ...scoutedPlayers.value,
       [player.id]: {
         revealedAttributes: newRevealed,
-        badgesRevealed: existing.badgesRevealed || (isPerkActive('badge_reveal') && Math.random() < 0.35),
-        moraleRevealed: existing.moraleRevealed || (isPerkActive('morale_reveal') && Math.random() < 0.35),
+        badgesRevealed,
+        moraleRevealed,
       },
     }
     scoutingPoints.value -= 1
@@ -240,9 +252,21 @@ async function scoutPlayer(player) {
 
     syncStore.markDirty()
 
-    const playerName = player.firstName + ' ' + player.lastName
-    audio.affirm()
-    toastStore.showSuccess(`Scouted ${playerName}: ${toReveal.length} attributes revealed!`)
+    // Success toast only on a milestone: full scout reached or badges revealed
+    // by the scout's perk. Routine reveals stay silent (generic tap only).
+    if (hitFullScout || badgesJustRevealed) {
+      const playerName = player.firstName + ' ' + player.lastName
+      let message
+      if (hitFullScout && badgesJustRevealed) {
+        message = `${playerName} fully scouted — badges revealed!`
+      } else if (hitFullScout) {
+        message = `${playerName} fully scouted!`
+      } else {
+        message = `Badges revealed for ${playerName}!`
+      }
+      audio.affirm()
+      toastStore.showSuccess(message)
+    }
 
     // Trigger stat-pop animation on newly revealed attributes
     const newAnims = {}
