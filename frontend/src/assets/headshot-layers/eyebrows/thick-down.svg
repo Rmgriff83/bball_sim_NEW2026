@@ -1,0 +1,6 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <rect x="19" y="21" width="9" height="2" fill="{{brow.sh}}"/>
+  <rect x="36" y="21" width="9" height="2" fill="{{brow.sh}}"/>
+  <rect x="25" y="20" width="3" height="1" fill="{{brow.sh}}"/>
+  <rect x="36" y="20" width="3" height="1" fill="{{brow.sh}}"/>
+</svg>

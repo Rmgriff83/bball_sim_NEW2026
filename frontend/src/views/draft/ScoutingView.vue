@@ -18,7 +18,6 @@ import { Search, Binoculars, User } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import { SCOUTABLE_ATTRIBUTES, SCOUTABLE_ATTRIBUTE_CATEGORIES } from '@/engine/data/attributeSchema'
-import { useHeadshotEditorReturn } from '@/composables/useHeadshotEditorReturn'
 
 const route = useRoute()
 const campaignStore = useCampaignStore()
@@ -44,20 +43,8 @@ const sortDirection = ref('desc')
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 
-// Reopen the modal on the same prospect when returning from the headshot
-// editor. Always re-fetch from IDB so hasCustomHeadshot reflects the save
-// (the local rookies array can be stale).
-useHeadshotEditorReturn(async (playerId) => {
-  try {
-    const fresh = await PlayerRepository.get(campaignId.value, playerId)
-    if (fresh) {
-      selectedPlayer.value = fresh
-      showPlayerModal.value = true
-    }
-  } catch (err) {
-    console.warn('[ScoutingView] reopen modal failed', err)
-  }
-})
+// Exiting the headshot editor lands the user back on this view's default
+// state — no modal auto-reopens.
 
 // Scouting state
 const scoutedPlayers = ref({})

@@ -1,0 +1,12 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <rect x="20" y="24" width="8" height="4" fill="#ffffff"/>
+  <rect x="36" y="24" width="8" height="4" fill="#ffffff"/>
+  <rect x="23" y="24" width="3" height="4" fill="{{eye.iris}}"/>
+  <rect x="38" y="24" width="3" height="4" fill="{{eye.iris}}"/>
+  <rect x="24" y="24" width="2" height="2" fill="{{eye.pupil}}"/>
+  <rect x="39" y="24" width="2" height="2" fill="{{eye.pupil}}"/>
+  <rect x="24" y="24" width="1" height="1" fill="#ffffff"/>
+  <rect x="39" y="24" width="1" height="1" fill="#ffffff"/>
+  <rect x="20" y="28" width="8" height="1" fill="{{skin.sh}}"/>
+  <rect x="36" y="28" width="8" height="1" fill="{{skin.sh}}"/>
+</svg>

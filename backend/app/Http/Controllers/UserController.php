@@ -30,6 +30,7 @@ class UserController extends Controller
                 'settings' => $user->settings,
                 'email_verified' => $user->hasVerifiedEmail(),
                 'created_at' => $user->created_at,
+                'global_admin' => (bool) $user->global_admin,
             ],
             'profile' => $user->profile ? [
                 'total_games' => $user->profile->total_games,

@@ -1,0 +1,9 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <g data-piece="skin-sh" data-color-token="skin.sh" data-color-label="Skin Sh">
+    <rect x="20" y="39" width="24" height="1"/>
+    <rect x="20" y="38" width="24" height="1"/>
+  </g>
+  <g data-piece="skin-deep" data-color-token="skin.deep" data-color-label="Skin Deep">
+    <rect x="22" y="40" width="20" height="2"/>
+  </g>
+</svg>

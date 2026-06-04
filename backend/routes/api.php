@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\SocialAuthController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\SyncController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\AdminHeadshotController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -64,6 +65,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/sync/{clientId}/push', [SyncController::class, 'pushSnapshot']);
     Route::get('/sync/{clientId}/pull', [SyncController::class, 'pullSnapshot']);
     Route::delete('/sync/{clientId}', [SyncController::class, 'deleteCampaign']);
+
+    // Admin: headshot layer catalog management. The controller enforces
+    // global_admin and 503s in production where FRONTEND_ASSETS_PATH is unset.
+    Route::post('/admin/headshot-layers/tier', [AdminHeadshotController::class, 'setTier']);
+    Route::post('/admin/headshot-layers/save', [AdminHeadshotController::class, 'saveVariant']);
+    Route::post('/admin/headshot-layers/delete', [AdminHeadshotController::class, 'deleteVariant']);
+    Route::post('/admin/headshot-layers/rename', [AdminHeadshotController::class, 'renameVariant']);
+    Route::get('/admin/headshot-layers/variant', [AdminHeadshotController::class, 'getVariant']);
 });
 
 // Public routes

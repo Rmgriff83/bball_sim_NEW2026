@@ -89,6 +89,12 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/admin/headshots',
+    name: 'admin-headshots',
+    component: lazyLoad(() => import('@/views/admin/HeadshotAdminEditorView.vue')),
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
     path: '/campaigns',
     name: 'campaigns',
     component: lazyLoad(() => import('@/views/dashboard/CampaignsView.vue')),
@@ -194,6 +200,13 @@ router.beforeEach(async (to, from, next) => {
   // PlayerDetailModal when hasFeature is false, but routing must enforce it.
   if (to.meta.requiresHeadshotEditor && !authStore.hasFeature?.('headshot_editor')) {
     next({ name: 'store' })
+    return
+  }
+
+  // Admin-only gate. Backend endpoints also enforce global_admin; this is the
+  // UI-side safety net so non-admins can't even load the page chrome.
+  if (to.meta.requiresAdmin && !authStore.isGlobalAdmin) {
+    next({ name: 'dashboard' })
     return
   }
 

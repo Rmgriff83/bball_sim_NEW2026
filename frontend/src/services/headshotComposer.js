@@ -1,6 +1,8 @@
 // =============================================================================
 // headshotComposer.js — JS port of generate_headshots.py
 // =============================================================================
+import { reactive, ref } from 'vue'
+
 // The Python script is the source-of-truth for the bundled SVG library. This
 // module mirrors it function-for-function so the editor can:
 //   1) compose() a fresh SVG from a config object (live preview as the user
@@ -73,16 +75,34 @@ export const ETHNICITY_PROFILES = {
 // ---------------------------------------------------------------------------
 // Variant lists — what's editable per layer
 // ---------------------------------------------------------------------------
+// String-keyed lists (hairStyle, eyeShape, noseShape, mouthFullness,
+// headbandStyle) are derived from the headshot-layers/ folder scan further
+// below so newly-created variants in the admin editor flow through to the
+// user-facing variant picker automatically.
+//
+// Integer-keyed lists (jawWidth, browThickness) stay hardcoded — the
+// geometry is parameterized in extract_layers.py with fixed indices, and
+// the editor's preview-swap logic relies on the integer↔name mapping
+// (JAW_NAMES, BROW_THICK_NAMES).
+//
+// browAngle is hardcoded because it's a sub-axis of eyebrows — the file
+// names combine thickness+angle (e.g. thick-up.svg) so the angle list
+// can't be derived layer-by-layer from filenames.
 
 export const VARIANTS = {
-  hairStyle:        ['short', 'fade', 'wavy', 'side_part', 'curly', 'buzz', 'afro'],
   jawWidth:         [0, 1, 2],
   browThickness:    [1, 2],
   browAngle:        ['flat', 'up', 'down'],
-  eyeShape:         ['round', 'almond'],
-  noseShape:        ['narrow', 'medium', 'broad'],
-  mouthFullness:    ['thin', 'full'],
-  headbandStyle:    ['none', 'white', 'black'],
+  // String-keyed variants populated by _deriveStringVariants() after
+  // LAYER_CONTENT is built. Defaults below are baseline fallbacks if a
+  // layer ever has zero variants on disk (defensive).
+  hairStyle:        [],
+  eyeShape:         [],
+  noseShape:        [],
+  mouthFullness:    [],
+  headbandStyle:    ['none'],  // 'none' is virtual (no file), kept so the editor can offer "no headband"
+  neckStyle:        [],         // populated from disk like the other string-keyed layers
+  stubbleStyle:     ['none'],   // 'none' is virtual (no file) — represents "no stubble" in the picker
 }
 
 // ---------------------------------------------------------------------------
@@ -93,247 +113,371 @@ export const VARIANTS = {
 // styleVariants/colorPalette. Add a new layer = add an entry here + add a
 // build_* function above + stamp metadata in generate_headshots.py.
 
+// Layer order mirrors stacking top→bottom (first entry = top of the z-order
+// in composeSvg). The admin layer panel renders this list as-is, so the
+// admin sees the same vertical ordering they see in the composed headshot:
+// headband on top, then hair, then face-level features beneath.
 export const LAYERS = [
+  { id: 'headband', label: 'Headband', styleKey: 'headband',      styleVariants: VARIANTS.headbandStyle },
   { id: 'hair',     label: 'Hair',     styleKey: 'hairStyle',     styleVariants: VARIANTS.hairStyle,     colorKey: 'hair',         colorPalette: HAIR_COLORS },
-  { id: 'face',     label: 'Face',     styleKey: 'jawWidth',      styleVariants: VARIANTS.jawWidth,      colorKey: 'skin',         colorPalette: SKIN_TONES },
+  { id: 'neck',     label: 'Neck',     styleKey: 'neckStyle',      styleVariants: VARIANTS.neckStyle },
+  { id: 'mouth',    label: 'Mouth',    styleKey: 'mouthFullness', styleVariants: VARIANTS.mouthFullness, colorKey: 'lip',          colorPalette: LIP_COLORS },
+  { id: 'nose',     label: 'Nose',     styleKey: 'noseShape',     styleVariants: VARIANTS.noseShape },
   { id: 'eyes',     label: 'Eyes',     styleKey: 'eyeShape',      styleVariants: VARIANTS.eyeShape,      colorKey: 'eye',          colorPalette: EYE_COLORS },
   { id: 'eyebrows', label: 'Brows',    styleKey: 'browThickness', styleVariants: VARIANTS.browThickness, colorKey: 'eyebrowColor', colorPalette: HAIR_COLORS },
-  { id: 'nose',     label: 'Nose',     styleKey: 'noseShape',     styleVariants: VARIANTS.noseShape },
-  { id: 'mouth',    label: 'Mouth',    styleKey: 'mouthFullness', styleVariants: VARIANTS.mouthFullness, colorKey: 'lip',          colorPalette: LIP_COLORS },
-  { id: 'stubble',  label: 'Stubble',  toggleKey: 'hasStubble' },
-  { id: 'headband', label: 'Headband', styleKey: 'headband',      styleVariants: VARIANTS.headbandStyle },
-  { id: 'neck',     label: 'Neck' },  // no edits — derives from face skin
+  { id: 'stubble',  label: 'Stubble',  styleKey: 'stubbleStyle', styleVariants: VARIANTS.stubbleStyle },
+  { id: 'face',     label: 'Face',     styleKey: 'jawWidth',      styleVariants: VARIANTS.jawWidth,      colorKey: 'skin',         colorPalette: SKIN_TONES },
 ]
 
 // ---------------------------------------------------------------------------
-// Build helpers — direct port of the Python rect()/layer_open() pattern
+// Layer SVG library — loaded at build time by Vite
 // ---------------------------------------------------------------------------
+// Each layer variant lives in its own standalone SVG file in one of two
+// parallel folders:
+//
+//   headshot-layers/             ← generic tier (default — campaign pool + editor)
+//   headshot-layers-upgraded/    ← upgraded tier (editor only, IAP-gated for users)
+//
+// The folder location IS the tier — there's no manifest. Admins toggle the
+// tier of a variant by moving its file between folders (via the admin editor
+// route + AdminHeadshotController). The Python generator scans only the
+// generic folder, so upgraded variants never end up in the bundled
+// procedural pool.
+//
+// Files use `{{token}}` placeholders (e.g. `{{skin.base}}`, `{{hair.sh}}`)
+// in place of hex colors. The composer fills them in from the active
+// config's palettes at compose time.
+//
+// To regenerate the layer files from the original Python build_* code, run
+//   cd frontend/src/assets && python3 extract_layers.py
+const GENERIC_FILES = import.meta.glob('@/assets/headshot-layers/**/*.svg', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+})
+const UPGRADED_FILES = import.meta.glob('@/assets/headshot-layers-upgraded/**/*.svg', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+})
 
-function rect(x, y, w, h, fill) {
-  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}"/>`
+// Layer content map: variant key → raw SVG file content. Built once at module
+// init from the merged file globs; doesn't change at runtime (the underlying
+// files require a Vite reload to swap their globbed contents).
+const LAYER_CONTENT = (() => {
+  const map = {}
+  for (const [path, content] of Object.entries(GENERIC_FILES)) {
+    const m = path.match(/headshot-layers\/([^/]+)\/([^/]+)\.svg$/)
+    if (m) map[`${m[1]}/${m[2]}`] = content
+  }
+  for (const [path, content] of Object.entries(UPGRADED_FILES)) {
+    const m = path.match(/headshot-layers-upgraded\/([^/]+)\/([^/]+)\.svg$/)
+    if (m) map[`${m[1]}/${m[2]}`] = content
+  }
+  return map
+})()
+
+// Derive string-keyed variant lists from the on-disk layer files. Filenames
+// use hyphens (e.g. side-part.svg) but composer config keys use underscores
+// (e.g. side_part), so we reverse the convention while scanning.
+//
+// Layers tracked here are EXACTLY the ones where a variant name = a config
+// value. Eyebrows are intentionally NOT included because their files combine
+// two axes (thickness + angle, e.g. thick-up.svg).
+const STRING_KEYED_LAYERS = {
+  hair:     'hairStyle',
+  eyes:     'eyeShape',
+  nose:     'noseShape',
+  mouth:    'mouthFullness',
+  headband: 'headbandStyle',
+  neck:     'neckStyle',
+  stubble:  'stubbleStyle',
+}
+function _filenameToConfigKey(filename) {
+  return filename.replace(/-/g, '_')
+}
+function _deriveStringVariants() {
+  for (const [layerId, variantsKey] of Object.entries(STRING_KEYED_LAYERS)) {
+    // CRITICAL: mutate the existing VARIANTS[variantsKey] array IN PLACE
+    // rather than reassigning. LAYERS captured `styleVariants: VARIANTS.hairStyle`
+    // as a reference at module init; reassigning would leave LAYERS pointing
+    // at the original empty array and the user-facing variant picker would
+    // render zero options.
+    const target = VARIANTS[variantsKey] || []
+    const seen = new Set(target)  // hardcoded defaults already in target (e.g. headband 'none')
+    const prefix = `${layerId}/`
+    for (const key of Object.keys(LAYER_CONTENT)) {
+      if (!key.startsWith(prefix)) continue
+      const configKey = _filenameToConfigKey(key.slice(prefix.length))
+      if (!seen.has(configKey)) {
+        target.push(configKey)
+        seen.add(configKey)
+      }
+    }
+  }
+}
+_deriveStringVariants()
+
+// Reactive tier state: variant key → 'generic' | 'paid'. Separate from the
+// content map so the admin UI can flip a variant's tier optimistically (after
+// the backend file-move succeeds) and the badge re-renders without remounting
+// the strip. Upgraded wins ties at init (defensive).
+const layerTiers = reactive({})
+for (const path of Object.keys(GENERIC_FILES)) {
+  const m = path.match(/headshot-layers\/([^/]+)\/([^/]+)\.svg$/)
+  if (m) layerTiers[`${m[1]}/${m[2]}`] = 'generic'
+}
+for (const path of Object.keys(UPGRADED_FILES)) {
+  const m = path.match(/headshot-layers-upgraded\/([^/]+)\/([^/]+)\.svg$/)
+  if (m) layerTiers[`${m[1]}/${m[2]}`] = 'paid'
 }
 
-function layerOpen(parts, layerId, attrs = {}) {
-  let attrStr = ''
+const JAW_NAMES = { 0: 'narrow', 1: 'medium', 2: 'wide' }
+const BROW_THICK_NAMES = { 1: 'thin', 2: 'thick' }
+
+/**
+ * Reactive lookup of a variant's tier ('generic' | 'paid'), or null if no
+ * file exists. Used by the admin editor's variant strip to render Free/Paid
+ * state. Reactive because the reactive store is mutated by setLayerTier()
+ * on toggle.
+ */
+export function getLayerTier(layerId, variantKey) {
+  return layerTiers[`${layerId}/${variantKey}`] ?? null
+}
+
+/**
+ * Optimistically update a variant's tier in the in-memory store. Called by
+ * the admin editor after the backend successfully moves the file between
+ * folders. The actual on-disk source-of-truth swap is what persists; this
+ * just keeps the UI snappy until the next Vite reload.
+ */
+export function setLayerTier(layerId, variantKey, tier) {
+  if (tier !== 'generic' && tier !== 'paid') return
+  layerTiers[`${layerId}/${variantKey}`] = tier
+}
+
+/**
+ * List every variant key found on disk for a given layer, across BOTH
+ * tiers. Sorted alphabetically. Used by the admin editor's variant strip
+ * so newly-dropped files show up without code changes.
+ */
+export function listAllVariants(layerId) {
+  const prefix = `${layerId}/`
+  return Object.keys(LAYER_CONTENT)
+    .filter(k => k.startsWith(prefix))
+    .map(k => k.slice(prefix.length))
+    .sort()
+}
+
+/**
+ * Read the raw SVG source for a variant. Returns null if the file isn't
+ * present in either tier folder. Used by the admin variant editor to seed
+ * its in-memory pieces array (via parseVariantPieces in svgPieces.js).
+ */
+export function getVariantSource(layerId, variantKey) {
+  return LAYER_CONTENT[`${layerId}/${variantKey}`] ?? null
+}
+
+/**
+ * Map a layer + config back to its variant filename (hyphenated, as used
+ * in LAYER_CONTENT keys). Mirrors the filename derivation inside composeSvg
+ * so callers (e.g. the user-facing LayerContextMenu's piece picker) can
+ * load the active variant's source SVG and parse its pieces.
+ *
+ * Returns null for layers without an editable variant (neck) or when the
+ * layer is in an off state (stubble disabled, headband 'none').
+ */
+export function getCurrentVariantKey(layerId, config) {
+  const c = normalizeConfig(config)
+  switch (layerId) {
+    case 'hair':     return c.hairStyle.replace(/_/g, '-')
+    case 'face':     return c.faceVariantOverride || JAW_NAMES[c.jawWidth]
+    case 'eyebrows': return c.browVariantOverride || `${BROW_THICK_NAMES[c.browThickness]}-${c.browAngle}`
+    case 'eyes':     return c.eyeShape
+    case 'nose':     return c.noseShape
+    case 'mouth':    return c.mouthFullness
+    case 'stubble':  return c.stubbleStyle === 'none' ? null : c.stubbleStyle
+    case 'headband': return c.headband === 'none' ? null : c.headband
+    case 'neck':     return c.neckStyle
+    default:         return null
+  }
+}
+
+/**
+ * In-memory patches to the variant library used by the admin editor's
+ * save/delete/rename flows. The Vite-glob LAYER_CONTENT is built once at
+ * module init; without these patches the variant strip's thumbnails would
+ * keep rendering the pre-save SVG until the next full reload. These keep
+ * the in-memory map consistent with what's on disk so re-mounting catalog
+ * views shows fresh content immediately.
+ *
+ * `layerContentVersion` is a reactive counter that bumps on every patch.
+ * LAYER_CONTENT itself is a plain object — Vue can't track mutations to it,
+ * so consumers (like the variant strip's thumbnailFor) read this counter
+ * during render to opt into reactivity. Without it, the strip would render
+ * once with whatever LAYER_CONTENT had at mount time and never update.
+ */
+export const layerContentVersion = ref(0)
+
+export function updateLayerVariantContent(layerId, variantKey, content) {
+  LAYER_CONTENT[`${layerId}/${variantKey}`] = content
+  layerContentVersion.value++
+}
+
+export function removeLayerVariantContent(layerId, variantKey) {
+  delete LAYER_CONTENT[`${layerId}/${variantKey}`]
+  layerContentVersion.value++
+}
+
+export function renameLayerVariantContent(layerId, oldKey, newKey) {
+  const k = `${layerId}/${oldKey}`
+  if (LAYER_CONTENT[k] === undefined) return
+  LAYER_CONTENT[`${layerId}/${newKey}`] = LAYER_CONTENT[k]
+  delete LAYER_CONTENT[k]
+  layerContentVersion.value++
+}
+
+/**
+ * Resolve a piece's effective hex color under the given config. Token-bound
+ * pieces look up the relevant palette slot; literal pieces just return their
+ * stored hex. Returns null when the piece has no color set yet.
+ */
+export function resolvePieceColor(piece, config) {
+  if (!piece) return null
+  if (piece.colorMode === 'literal') return piece.colorHex || null
+  if (piece.colorMode === 'token' && piece.colorToken) {
+    const tokens = _buildTokens(normalizeConfig(config))
+    return tokens[piece.colorToken] || null
+  }
+  return null
+}
+
+function _extractInnerLines(svgString) {
+  // Pull everything between <svg ...> and </svg>, then normalize whitespace
+  // line-by-line. Result is one rect per line with no leading indentation,
+  // matching the format the legacy inline composer produced.
+  const m = svgString.match(/<svg[^>]*>([\s\S]*?)<\/svg>/i)
+  const inner = m ? m[1] : svgString
+  return inner
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .join('\n')
+}
+
+function _applyTokens(text, tokens) {
+  return text.replace(/\{\{([^}]+)\}\}/g, (_, key) => {
+    const value = tokens[key.trim()]
+    return value != null ? value : `{{${key}}}`
+  })
+}
+
+function _buildAttrString(layerId, attrs = {}) {
+  let attrStr = ` data-layer="${layerId}"`
   for (const [k, v] of Object.entries(attrs)) {
     if (v === undefined || v === null) continue
     attrStr += ` data-${k.replace(/_/g, '-')}="${v}"`
   }
-  parts.push(`<g data-layer="${layerId}"${attrStr}>`)
+  return attrStr
 }
 
-function layerClose(parts) {
-  parts.push('</g>')
-}
-
-// ---------------------------------------------------------------------------
-// Layer builders (ports of build_* in generate_headshots.py)
-// ---------------------------------------------------------------------------
-
-function buildFace(parts, skin, jawWidth, skinName) {
-  const { base: b, hi, sh } = skin
-  const inset = { 0: 1, 1: 0, 2: 0 }[jawWidth]
-  const lowX = 17 + inset
-  const lowW = 30 - 2 * inset
-  const chinX = 20 + inset + (jawWidth === 0 ? 1 : 0)
-  const chinW = lowW - 2 * (chinX - lowX)
-
-  layerOpen(parts, 'face', { skin: skinName, jaw: jawWidth })
-  parts.push(rect(17, 15, 30, 20, b))
-  parts.push(rect(15, 18, 2, 13, b))
-  parts.push(rect(47, 18, 2, 13, b))
-  parts.push(rect(lowX, 35, lowW, 7, b))
-  parts.push(rect(chinX, 42, Math.max(chinW, 12), 3, sh))
-  parts.push(rect(17, 15, 30, 2, hi))
-  parts.push(rect(19, 17, 4, 2, hi))
-  parts.push(rect(41, 17, 4, 2, hi))
-  parts.push(rect(15, 20, 2, 8, sh))
-  parts.push(rect(47, 20, 2, 8, sh))
-  parts.push(rect(17, 33, 4, 4, sh))
-  parts.push(rect(43, 33, 4, 4, sh))
-  parts.push(rect(19, 29, 4, 3, hi))
-  parts.push(rect(41, 29, 4, 3, hi))
-  layerClose(parts)
-}
-
-function buildStubble(parts, skin, hasStubble) {
-  layerOpen(parts, 'stubble', { enabled: hasStubble ? 'true' : 'false' })
-  if (hasStubble) {
-    parts.push(rect(18, 38, 28, 2, skin.sh))
-    parts.push(rect(22, 40, 20, 2, skin.deep))
-  }
-  layerClose(parts)
-}
-
-function buildHair(parts, hair, style, hairName) {
-  const { base: b, hi, sh } = hair
-  layerOpen(parts, 'hair', { style, color: hairName })
-  if (style === 'short') {
-    parts.push(rect(18, 7, 28, 3, b))
-    parts.push(rect(16, 10, 32, 3, hi))
-    parts.push(rect(15, 13, 34, 2, b))
-    parts.push(rect(14, 15, 36, 1, sh))
-    parts.push(rect(14, 16, 2, 4, b))
-    parts.push(rect(48, 16, 2, 4, b))
-  } else if (style === 'fade') {
-    parts.push(rect(19, 8, 26, 3, b))
-    parts.push(rect(17, 11, 30, 3, hi))
-    parts.push(rect(16, 14, 32, 2, b))
-    parts.push(rect(15, 16, 2, 3, sh))
-    parts.push(rect(47, 16, 2, 3, sh))
-  } else if (style === 'wavy') {
-    parts.push(rect(19, 5, 26, 3, b))
-    parts.push(rect(16, 8, 32, 3, hi))
-    parts.push(rect(15, 11, 34, 3, b))
-    parts.push(rect(14, 14, 36, 3, hi))
-    parts.push(rect(21, 4, 22, 1, hi))
-    parts.push(rect(22, 6, 3, 2, hi))
-    parts.push(rect(30, 5, 3, 2, hi))
-    parts.push(rect(38, 6, 3, 2, hi))
-    parts.push(rect(14, 17, 2, 6, b))
-    parts.push(rect(48, 17, 2, 6, b))
-  } else if (style === 'side_part') {
-    parts.push(rect(18, 6, 28, 3, b))
-    parts.push(rect(16, 9, 32, 3, hi))
-    parts.push(rect(15, 12, 34, 3, b))
-    parts.push(rect(14, 15, 36, 2, sh))
-    parts.push(rect(20, 5, 24, 1, hi))
-    parts.push(rect(26, 6, 3, 6, hi))
-    parts.push(rect(20, 6, 26, 1, hi))
-    parts.push(rect(14, 17, 2, 5, b))
-    parts.push(rect(48, 17, 2, 5, b))
-  } else if (style === 'curly') {
-    for (let cx = 16; cx < 46; cx += 4) {
-      parts.push(rect(cx, 5, 4, 4, (Math.floor(cx / 4) % 2) ? b : hi))
+/**
+ * Resolve fill on Phase 2 piece wrappers. After the token-replacement pass
+ * runs, any <g data-piece ...> without an explicit fill gets one injected.
+ *
+ * Resolution order (first match wins):
+ *   1. layerOverrides[label] — Phase 3 user-facing per-piece override,
+ *      keyed by the admin's piece label. Lets users recolor individual
+ *      pieces independently of the palette/token system.
+ *   2. data-color-token="X"  → fill="${tokens[X]}"  (palette-bound)
+ *   3. data-color="HEX"      → fill="HEX"           (literal + label)
+ *
+ * Children of the group inherit the fill via SVG attribute inheritance, so
+ * the rects inside stay clean (no per-rect fill needed). Backwards compat
+ * with legacy flat-rect variants — those rects have their own fill="{{...}}"
+ * which already got replaced in the prior _applyTokens pass.
+ */
+function _resolvePieceFills(text, tokens, layerOverrides = null) {
+  return text.replace(/<g\b([^>]*?)data-piece="[^"]*"([^>]*?)>/g, (match, before, after) => {
+    const attrs = before + after
+    if (/\sfill="[^"]*"/.test(attrs)) return match  // explicit fill present, skip
+    // 1) User override by label — checked first so it wins over the admin's
+    //    original token/literal choice.
+    if (layerOverrides) {
+      const labelMatch = attrs.match(/data-color-label="([^"]+)"/)
+      if (labelMatch) {
+        const override = layerOverrides[labelMatch[1].trim()]
+        if (override) return match.replace(/>$/, ` fill="${override}">`)
+      }
     }
-    parts.push(rect(15, 9, 34, 4, b))
-    parts.push(rect(14, 13, 36, 3, hi))
-    parts.push(rect(14, 16, 2, 5, b))
-    parts.push(rect(48, 16, 2, 5, b))
-  } else if (style === 'buzz') {
-    parts.push(rect(17, 10, 30, 3, b))
-    parts.push(rect(16, 12, 32, 2, hi))
-    parts.push(rect(15, 13, 34, 2, sh))
-  } else { // afro / tall
-    parts.push(rect(16, 3, 32, 5, b))
-    parts.push(rect(14, 6, 36, 4, hi))
-    parts.push(rect(13, 9, 38, 4, b))
-    parts.push(rect(13, 13, 38, 3, hi))
-    parts.push(rect(13, 16, 3, 6, b))
-    parts.push(rect(48, 16, 3, 6, b))
-  }
-  layerClose(parts)
+    const tokenMatch = attrs.match(/data-color-token="([^"]+)"/)
+    if (tokenMatch) {
+      const hex = tokens[tokenMatch[1].trim()]
+      if (hex) return match.replace(/>$/, ` fill="${hex}">`)
+      return match
+    }
+    const litMatch = attrs.match(/data-color="([^"]+)"/)
+    if (litMatch) return match.replace(/>$/, ` fill="${litMatch[1]}">`)
+    return match
+  })
 }
 
-function buildEyebrows(parts, brow, thickness, angle, browColorName) {
-  // `brow` is the HAIR_COLORS palette entry chosen for the eyebrow itself
-  // (defaults to the head's hair palette, but the user can override via the
-  // eyebrows layer's color picker). The flat-angle softening rects use the
-  // same palette's hi shade so the eyebrow is internally consistent.
-  const color = brow.base !== '#2a2018' ? brow.sh : '#1c140e'
-  const w = thickness === 1 ? 8 : 9
-  const [lx, rx] = thickness === 1 ? [20, 36] : [19, 36]
-  layerOpen(parts, 'eyebrows', { thickness, angle, color: browColorName })
-  parts.push(rect(lx, 21, w, thickness, color))
-  parts.push(rect(rx, 21, w, thickness, color))
-  if (angle === 'up') {
-    parts.push(rect(lx, 20, 3, 1, color))
-    parts.push(rect(rx + w - 3, 20, 3, 1, color))
-  } else if (angle === 'down') {
-    parts.push(rect(lx + w - 3, 20, 3, 1, color))
-    parts.push(rect(rx, 20, 3, 1, color))
-  } else {
-    parts.push(rect(lx, 20, 3, 1, brow.hi))
-    parts.push(rect(rx + w - 3, 20, 3, 1, brow.hi))
+/**
+ * Render one layer to a metadata-wrapped <g>...</g> block. Passing variantKey
+ * = null produces an empty wrapper (used for off-state layers like stubble
+ * disabled or headband=none so the editor can still find and toggle them).
+ *
+ * An optional `overrideContent` arg lets a caller substitute the layer's
+ * file content with arbitrary SVG (used by the admin variant editor to
+ * render its in-memory pieces in place of the on-disk variant).
+ */
+function _renderLayer(layerId, variantKey, tokens, metaAttrs = {}, overrideContent = null, pieceOverrides = null) {
+  const attrStr = _buildAttrString(layerId, metaAttrs)
+  // 'none' is a virtual variant that hides the layer entirely — already
+  // used by stubble/headband as their "off" value, and surfaced via the
+  // admin backdrop picker as a generic "hide this layer" option.
+  if (variantKey === 'none') variantKey = null
+  if (!variantKey && !overrideContent) {
+    return `<g${attrStr}>\n</g>`
   }
-  layerClose(parts)
+  const content = overrideContent ?? LAYER_CONTENT[`${layerId}/${variantKey}`]
+  if (!content) {
+    console.warn(`[headshotComposer] missing layer file: ${layerId}/${variantKey}.svg`)
+    return `<g${attrStr}>\n</g>`
+  }
+  // Two-pass resolution: 1) rect-level {{tokens}} (legacy + literal hex rects),
+  // 2) group-level fill injection for Phase 2 <g data-piece> wrappers (with
+  // optional Phase 3 user piece-color overrides applied first).
+  let inner = _applyTokens(_extractInnerLines(content), tokens)
+  inner = _resolvePieceFills(inner, tokens, pieceOverrides)
+  return `<g${attrStr}>\n${inner}\n</g>`
 }
 
-function buildEyes(parts, skin, eye, shape, eyeName) {
-  const { iris, pupil } = eye
-  const sh = skin.sh
-  layerOpen(parts, 'eyes', { shape, color: eyeName })
-  const eh = shape === 'round' ? 4 : 3
-  const ey = shape === 'round' ? 24 : 25
-  parts.push(rect(20, ey, 8, eh, '#ffffff'))
-  parts.push(rect(36, ey, 8, eh, '#ffffff'))
-  parts.push(rect(23, ey, 3, eh, iris))
-  parts.push(rect(38, ey, 3, eh, iris))
-  parts.push(rect(24, ey, 2, 2, pupil))
-  parts.push(rect(39, ey, 2, 2, pupil))
-  parts.push(rect(24, ey, 1, 1, '#ffffff'))
-  parts.push(rect(39, ey, 1, 1, '#ffffff'))
-  if (shape === 'almond') {
-    parts.push(rect(20, 24, 8, 1, skin.deep))
-    parts.push(rect(36, 24, 8, 1, skin.deep))
+/**
+ * Flatten the palette entries the active config resolves to into a dot-keyed
+ * token map (skin.base, hair.sh, eye.iris, ...). Layer files reference these
+ * by name and the renderer substitutes hex values in.
+ */
+function _buildTokens(c) {
+  const skin = SKIN_TONES[c.skin]
+  const hair = HAIR_COLORS[c.hair]
+  const brow = HAIR_COLORS[c.eyebrowColor] || hair
+  const eye = EYE_COLORS[c.eye]
+  return {
+    'skin.base':  skin.base,
+    'skin.hi':    skin.hi,
+    'skin.sh':    skin.sh,
+    'skin.deep':  skin.deep,
+    'hair.base':  hair.base,
+    'hair.hi':    hair.hi,
+    'hair.sh':    hair.sh,
+    'brow.base':  brow.base,
+    'brow.hi':    brow.hi,
+    'brow.sh':    brow.sh,
+    'eye.iris':   eye.iris,
+    'eye.pupil':  eye.pupil,
+    'lip':        LIP_COLORS[c.lip],
   }
-  parts.push(rect(20, ey + eh, 8, 1, sh))
-  parts.push(rect(36, ey + eh, 8, 1, sh))
-  layerClose(parts)
-}
-
-function buildNose(parts, skin, shape) {
-  const { base: b, hi, sh, deep } = skin
-  layerOpen(parts, 'nose', { shape })
-  if (shape === 'narrow') {
-    parts.push(rect(31, 27, 2, 7, sh))
-    parts.push(rect(30, 33, 4, 1, deep))
-    parts.push(rect(33, 28, 1, 5, hi))
-    parts.push(rect(29, 34, 2, 1, deep))
-    parts.push(rect(33, 34, 2, 1, deep))
-  } else if (shape === 'broad') {
-    parts.push(rect(30, 28, 4, 6, sh))
-    parts.push(rect(29, 33, 6, 2, deep))
-    parts.push(rect(33, 29, 1, 4, hi))
-    parts.push(rect(28, 34, 2, 1, deep))
-    parts.push(rect(34, 34, 2, 1, deep))
-    parts.push(rect(31, 33, 2, 2, b))
-  } else { // medium
-    parts.push(rect(31, 27, 2, 6, sh))
-    parts.push(rect(30, 32, 4, 2, deep))
-    parts.push(rect(33, 28, 1, 4, hi))
-    parts.push(rect(29, 33, 2, 1, deep))
-    parts.push(rect(33, 33, 2, 1, deep))
-  }
-  layerClose(parts)
-}
-
-function buildMouth(parts, skin, lip, fullness, lipName) {
-  const hi = skin.hi
-  layerOpen(parts, 'mouth', { fullness, color: lipName })
-  if (fullness === 'full') {
-    parts.push(rect(27, 38, 10, 1, '#8a4a3c'))
-    parts.push(rect(28, 39, 8, 2, lip))
-    parts.push(rect(29, 37, 6, 1, hi))
-  } else {
-    parts.push(rect(27, 37, 10, 1, '#5e3a23'))
-    parts.push(rect(28, 38, 8, 1, lip))
-    parts.push(rect(29, 36, 6, 1, hi))
-  }
-  parts.push(rect(27, 40, 10, 2, skin.sh))
-  layerClose(parts)
-}
-
-function buildNeck(parts, skin) {
-  layerOpen(parts, 'neck', {})
-  parts.push(rect(24, 45, 16, 3, skin.sh))
-  parts.push(rect(24, 45, 16, 1, skin.deep))
-  parts.push(rect(26, 45, 12, 1, skin.deep))
-  layerClose(parts)
-}
-
-function buildHeadband(parts, headbandKey) {
-  const style = headbandKey || 'none'
-  layerOpen(parts, 'headband', { style })
-  const palette = HEADBAND_STYLES[style]
-  if (palette) {
-    parts.push(rect(14, 13, 36, 4, palette.main))
-    parts.push(rect(14, 13, 36, 1, palette.edge))
-    parts.push(rect(14, 16, 36, 1, palette.edge))
-    parts.push(rect(14, 13, 2, 4, palette.edge))
-    parts.push(rect(48, 13, 2, 4, palette.edge))
-  }
-  layerClose(parts)
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +488,15 @@ function buildHeadband(parts, headbandKey) {
  * Validate + fill missing fields in a config so composeSvg always succeeds
  * even if parseSvgConfig returned partials from a legacy SVG.
  */
+// `'none'` is a universal "hide this layer" sentinel — passed through here
+// even when not in the layer's VARIANTS list so the admin backdrop picker's
+// "None" option survives normalization. `_renderLayer` translates 'none' to
+// null (empty wrapper) at compose time.
+function _allowNoneOrFallback(value, validList, fallback) {
+  if (value === 'none') return 'none'
+  return validList.includes(value) ? value : fallback
+}
+
 function normalizeConfig(config = {}) {
   const ethnicity = config.ethnicity in ETHNICITY_PROFILES ? config.ethnicity : 'black'
   const profile = ETHNICITY_PROFILES[ethnicity]
@@ -360,27 +513,57 @@ function normalizeConfig(config = {}) {
     eye:          config.eye in EYE_COLORS ? config.eye : 'brown',
     lip:          config.lip in LIP_COLORS ? config.lip : 'warm',
     jawWidth:     [0, 1, 2].includes(Number(config.jawWidth)) ? Number(config.jawWidth) : 1,
-    hairStyle:    VARIANTS.hairStyle.includes(config.hairStyle) ? config.hairStyle : 'short',
+    hairStyle:    _allowNoneOrFallback(config.hairStyle, VARIANTS.hairStyle, 'short'),
     browThickness: [1, 2].includes(Number(config.browThickness)) ? Number(config.browThickness) : 1,
     browAngle:    VARIANTS.browAngle.includes(config.browAngle) ? config.browAngle : 'flat',
-    eyeShape:     VARIANTS.eyeShape.includes(config.eyeShape) ? config.eyeShape : 'round',
-    noseShape:    VARIANTS.noseShape.includes(config.noseShape) ? config.noseShape : 'medium',
-    mouthFullness: VARIANTS.mouthFullness.includes(config.mouthFullness) ? config.mouthFullness : 'thin',
+    eyeShape:     _allowNoneOrFallback(config.eyeShape, VARIANTS.eyeShape, 'round'),
+    noseShape:    _allowNoneOrFallback(config.noseShape, VARIANTS.noseShape, 'medium'),
+    mouthFullness: _allowNoneOrFallback(config.mouthFullness, VARIANTS.mouthFullness, 'thin'),
+    // hasStubble kept for legacy data paths that still read the boolean form.
+    // The authoritative field is now `stubbleStyle` ('none' = off, otherwise
+    // a variant filename) — derived from legacy hasStubble when needed.
     hasStubble:   !!config.hasStubble,
+    stubbleStyle: VARIANTS.stubbleStyle.includes(config.stubbleStyle)
+      ? config.stubbleStyle
+      : (config.hasStubble ? 'default' : 'none'),
     headband:     VARIANTS.headbandStyle.includes(config.headband) ? config.headband : 'none',
+    neckStyle:    _allowNoneOrFallback(config.neckStyle, VARIANTS.neckStyle, 'default'),
+    // Admin-only: lets the variant editor's backdrop picker swap the face
+    // layer to an arbitrary on-disk file (including admin-created variants
+    // that don't map to a jawWidth integer). User-facing configs leave this
+    // null and the composer falls back to JAW_NAMES[jawWidth] as before.
+    faceVariantOverride: typeof config.faceVariantOverride === 'string' && config.faceVariantOverride
+      ? config.faceVariantOverride : null,
+    // Same idea for eyebrows — the canonical user-facing fields are the
+    // multi-axis (browThickness × browAngle) pair, but the admin backdrop
+    // picker treats the whole brow filename ('thin-up', etc.) as one value
+    // so admin-created brow variants can be picked without splitting them
+    // back into the two axes.
+    browVariantOverride: typeof config.browVariantOverride === 'string' && config.browVariantOverride
+      ? config.browVariantOverride : null,
   }
 }
 
 /**
  * Compose an SVG string from a config object. Layer draw order matches the
  * Python script so the visual output is identical.
+ *
+ * `overrides` is an optional map of `layerId → SVG content string` used by
+ * the admin variant editor to render its in-memory pieces in place of the
+ * on-disk variant for that layer. Other layers still load normally from
+ * LAYER_CONTENT, which is why the backdrop shows the rest of the head while
+ * the admin edits just one layer.
  */
-export function composeSvg(config) {
+export function composeSvg(config, overrides = null) {
   const c = normalizeConfig(config)
-  const skin = SKIN_TONES[c.skin]
-  const hair = HAIR_COLORS[c.hair]
-  const eye = EYE_COLORS[c.eye]
-  const lip = LIP_COLORS[c.lip]
+  const tokens = _buildTokens(c)
+  const ov = (id) => overrides?.[id] ?? null
+  // Phase 3 per-piece user overrides — keyed by layerId → label → hex. Lets
+  // users recolor admin-labeled pieces independently of the palette tokens.
+  // Falls through to null when nothing's set, which makes _resolvePieceFills
+  // behave exactly as before for legacy configs without this field.
+  const pieceColors = (config && config.pieceColors) || null
+  const po = (id) => (pieceColors && pieceColors[id]) || null
 
   const parts = [
     '<svg width="500" height="500" viewBox="70 -30 500 500" xmlns="http://www.w3.org/2000/svg">',
@@ -388,16 +571,51 @@ export function composeSvg(config) {
     '<g transform="scale(10)">',
   ]
 
-  const brow = HAIR_COLORS[c.eyebrowColor] || hair
-  buildHair(parts, hair, c.hairStyle, c.hair)
-  buildFace(parts, skin, c.jawWidth, c.skin)
-  buildStubble(parts, skin, c.hasStubble)
-  buildHeadband(parts, c.headband === 'none' ? null : c.headband)
-  buildEyebrows(parts, brow, c.browThickness, c.browAngle, c.eyebrowColor)
-  buildEyes(parts, skin, eye, c.eyeShape, c.eye)
-  buildNose(parts, skin, c.noseShape)
-  buildMouth(parts, skin, lip, c.mouthFullness, c.lip)
-  buildNeck(parts, skin)
+  // Style key → filename mapping. config uses raw values like `side_part`
+  // and `1` (browThickness); the file system uses hyphenated string keys.
+  const hairFile = c.hairStyle.replace(/_/g, '-')
+  // Face: admin backdrop picker can override to any on-disk filename via
+  // `faceVariantOverride`. Falls back to the integer jawWidth mapping when
+  // no override is set (the user-facing default path).
+  const faceFile = c.faceVariantOverride || JAW_NAMES[c.jawWidth]
+  // Eyebrow file: admin backdrop can pin to any on-disk filename; otherwise
+  // fall back to the canonical thickness × angle composition.
+  const browFile = c.browVariantOverride || `${BROW_THICK_NAMES[c.browThickness]}-${c.browAngle}`
+
+  // Stacking order: later push = painted on top (SVG document order). The
+  // top-of-stack pair is hair (second-to-last) then headband (last) so a
+  // headband always wraps over hair, and hair wraps over every face-level
+  // feature (bangs/fringes overlap forehead, brows, neck/shoulders).
+  parts.push(_renderLayer('face', faceFile, tokens, { skin: c.skin, jaw: c.jawWidth }, ov('face'), po('face')))
+  parts.push(_renderLayer(
+    'stubble',
+    c.stubbleStyle === 'none' ? null : c.stubbleStyle,
+    tokens,
+    {
+      style: c.stubbleStyle,
+      // Legacy attr kept for old consumers (analytics, downstream parsers)
+      // that still branch on the boolean form.
+      enabled: c.stubbleStyle !== 'none' ? 'true' : 'false',
+    },
+    ov('stubble'), po('stubble')
+  ))
+  parts.push(_renderLayer('eyebrows', browFile, tokens, {
+    thickness: c.browThickness,
+    angle: c.browAngle,
+    color: c.eyebrowColor,
+  }, ov('eyebrows'), po('eyebrows')))
+  parts.push(_renderLayer('eyes', c.eyeShape, tokens, { shape: c.eyeShape, color: c.eye }, ov('eyes'), po('eyes')))
+  parts.push(_renderLayer('nose', c.noseShape, tokens, { shape: c.noseShape }, ov('nose'), po('nose')))
+  parts.push(_renderLayer('mouth', c.mouthFullness, tokens, { fullness: c.mouthFullness, color: c.lip }, ov('mouth'), po('mouth')))
+  parts.push(_renderLayer('neck', c.neckStyle, tokens, { style: c.neckStyle }, ov('neck'), po('neck')))
+  parts.push(_renderLayer('hair', hairFile, tokens, { style: c.hairStyle, color: c.hair }, ov('hair'), po('hair')))
+  parts.push(_renderLayer(
+    'headband',
+    c.headband === 'none' ? null : c.headband,
+    tokens,
+    { style: c.headband },
+    ov('headband'), po('headband')
+  ))
 
   parts.push('</g>', '</g>', '</svg>')
   return parts.join('\n')
@@ -436,7 +654,16 @@ export function parseSvgConfig(svgString) {
         if (attrs.jaw !== undefined) config.jawWidth = Number(attrs.jaw)
         break
       case 'stubble':
-        config.hasStubble = attrs.enabled === 'true'
+        // New data-style attribute is authoritative; fall back to the
+        // legacy data-enabled boolean form for SVGs saved before the
+        // toggle-to-variant migration.
+        if (attrs.style) {
+          config.stubbleStyle = attrs.style
+          config.hasStubble = attrs.style !== 'none'
+        } else if (attrs.enabled !== undefined) {
+          config.hasStubble = attrs.enabled === 'true'
+          config.stubbleStyle = attrs.enabled === 'true' ? 'default' : 'none'
+        }
         break
       case 'headband':
         if (attrs.style) config.headband = attrs.style
@@ -457,7 +684,9 @@ export function parseSvgConfig(svgString) {
         if (attrs.fullness) config.mouthFullness = attrs.fullness
         if (attrs.color) config.lip = attrs.color
         break
-      // 'neck' has no editable params
+      case 'neck':
+        if (attrs.style) config.neckStyle = attrs.style
+        break
     }
   }
 

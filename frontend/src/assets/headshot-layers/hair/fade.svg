@@ -1,0 +1,23 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <g data-piece="hair-base" data-color-token="hair.base" data-color-label="Hair Base">
+    <rect x="19" y="10" width="26" height="1"/>
+    <rect x="20" y="9" width="24" height="1"/>
+    <rect x="20" y="8" width="24" height="1"/>
+    <rect x="16" y="14" width="32" height="2"/>
+  </g>
+  <g data-piece="hair-hi" data-color-token="hair.hi" data-color-label="Hair Hi">
+    <rect x="17" y="12" width="30" height="2"/>
+    <rect x="18" y="11" width="28" height="1"/>
+    <rect x="18" y="15" width="27" height="2"/>
+    <rect x="20" y="8" width="23" height="1"/>
+    <rect x="21" y="7" width="21" height="1"/>
+  </g>
+  <g data-piece="hair-sh" data-color-token="hair.sh" data-color-label="Hair Sh">
+    <rect x="15" y="16" width="2" height="3"/>
+    <rect x="47" y="16" width="2" height="3"/>
+  </g>
+  <g data-piece="sideburns" data-color-token="hair.base" data-color-label="sideburns">
+    <rect x="16" y="16" width="3" height="4"/>
+    <rect x="44" y="15" width="3" height="5"/>
+  </g>
+</svg>

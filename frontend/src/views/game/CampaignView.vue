@@ -314,8 +314,11 @@ function closeMobileMenu() {
           </button>
         </div>
 
-        <!-- Mobile: Date + Menu Button -->
-        <div v-if="isMobile" class="mobile-header-right">
+        <!-- Mobile: Date + Menu Button. Hidden on routes that opt out of the
+             bottom nav (the headshot editor is full-screen on mobile and its
+             own header carries the back/save controls) so the campaign chrome
+             doesn't compete with the editor's UI. -->
+        <div v-if="isMobile && !hideBottomNav" class="mobile-header-right">
           <div v-if="formattedCurrentDate" class="current-date-mobile" data-tour="home-date-mobile">
             <span class="date-day">{{ formattedCurrentDate.day }}</span>
             <div class="date-details">

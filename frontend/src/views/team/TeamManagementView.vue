@@ -31,7 +31,6 @@ import { useSyncStore } from '@/stores/sync'
 import { isPastTradeDeadline } from '@/engine/season/SeasonDeadlines'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { useWalkthroughTab } from '@/composables/useWalkthroughTab'
-import { useHeadshotEditorReturn } from '@/composables/useHeadshotEditorReturn'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 
 const route = useRoute()
@@ -95,21 +94,10 @@ const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 
 // If the user just came back from the headshot editor, restore the modal on
-// the same player so the round-trip feels seamless. Always re-fetch from IDB
-// so any flags the editor just set (hasCustomHeadshot, updatedAt) are
-// reflected in the modal that re-opens — finding from roster.value can
-// return a stale cache entry that pre-dates the save.
-useHeadshotEditorReturn(async (playerId) => {
-  try {
-    const fresh = await PlayerRepository.get(route.params.id, playerId)
-    if (fresh) {
-      selectedPlayer.value = fresh
-      showPlayerModal.value = true
-    }
-  } catch (err) {
-    console.warn('[TeamManagementView] reopen modal failed', err)
-  }
-})
+// Exiting the headshot editor now leaves the user on this view's default
+// state (the lineup tab) — no auto-reopen of the PlayerDetailModal. The
+// editor's exit handler still routes here via the captured return route;
+// it just lands without the modal popping back up.
 // True only when the modal was opened from the lineup tab — gates both the
 // initial player-detail tour and the per-sub-tab tours inside the modal.
 const playerModalTours = ref(false)

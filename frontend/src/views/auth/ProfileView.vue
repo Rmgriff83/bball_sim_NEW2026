@@ -554,6 +554,17 @@ async function clearLocalCache() {
         </form>
       </div>
 
+      <!-- Admin Tools — only rendered for users with global_admin = true.
+           Same dev-only caveat applies as the backend tier endpoint: the
+           page renders in any environment but the file-mutation actions
+           require FRONTEND_ASSETS_PATH to be set locally. -->
+      <div v-if="authStore.isGlobalAdmin" class="profile-section">
+        <h3 class="section-title">Admin Tools</h3>
+        <BaseButton variant="secondary" @click="router.push('/admin/headshots')">
+          Open Headshot Forge
+        </BaseButton>
+      </div>
+
       <!-- Session Card -->
       <div class="profile-section">
         <h3 class="section-title">Session</h3>

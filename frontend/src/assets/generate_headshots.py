@@ -12,6 +12,13 @@ as SVG files, following a fixed framework with randomized:
   - mouth
   - optional white or black headband
 
+Each layer's geometry lives in a standalone SVG file under
+headshot-layers/<layer>/<variant>.svg with {{token}} color placeholders. This
+generator loads those files and templates in the active palette per headshot.
+The JS runtime composer (headshotComposer.js) does the same — both stay in
+sync via the shared layer library. To regenerate the layer files themselves
+from the original pixel-coordinate source, run `python3 extract_layers.py`.
+
 USAGE
 -----
     python3 generate_headshots.py                 # 10 headshots -> ./headshots/
@@ -35,6 +42,7 @@ REQUIREMENTS
 import argparse
 import os
 import random
+import re
 import sys
 
 # cairosvg + Pillow are only needed when --png is passed. Defer their import
@@ -113,306 +121,297 @@ ETHNICITY_PROFILES = {
 
 
 # ----------------------------------------------------------------------------
-# SVG building helpers
+# Layer file loader — same library the JS composer uses
 # ----------------------------------------------------------------------------
-# Each layer is wrapped in a <g data-layer="..." ...> with palette-key names
-# (NOT hex codes) so the JS editor can round-trip parse → mutate → recompose
-# without losing the user's choices. The Python and JS composers must agree
-# on these attribute names.
-def rect(x, y, w, h, fill):
-    return f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{fill}"/>'
+# Layer geometry lives in headshot-layers/<layer>/<variant>.svg with
+# {{token}} placeholders. We cache the parsed inner content per (layer,
+# variant) since a single library run touches the same files repeatedly.
+_LAYER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'headshot-layers')
+_layer_cache = {}
+
+JAW_NAMES = {0: 'narrow', 1: 'medium', 2: 'wide'}
+BROW_THICK_NAMES = {1: 'thin', 2: 'thick'}
 
 
-def _layer_open(parts, layer_id, **attrs):
-    attr_str = ''.join(f' data-{k.replace("_", "-")}="{v}"' for k, v in attrs.items() if v is not None)
-    parts.append(f'<g data-layer="{layer_id}"{attr_str}>')
+def _load_layer(layer_id, variant_key):
+    """Return the inner rect content of a layer file (between <svg> and
+    </svg>), normalized to one element per line with no leading whitespace.
+    Returns '' when the variant has no file (off-state layers)."""
+    if variant_key is None:
+        return ''
+    cache_key = f'{layer_id}/{variant_key}'
+    if cache_key in _layer_cache:
+        return _layer_cache[cache_key]
+    path = os.path.join(_LAYER_DIR, layer_id, f'{variant_key}.svg')
+    try:
+        with open(path) as f:
+            content = f.read()
+    except FileNotFoundError:
+        print(f'WARNING: missing layer file {path}', file=sys.stderr)
+        _layer_cache[cache_key] = ''
+        return ''
+    m = re.search(r'<svg[^>]*>([\s\S]*?)</svg>', content)
+    inner = m.group(1) if m else content
+    inner = '\n'.join(line.strip() for line in inner.split('\n') if line.strip())
+    _layer_cache[cache_key] = inner
+    return inner
 
 
-def _layer_close(parts):
-    parts.append('</g>')
+def _apply_tokens(text, tokens):
+    """Replace every {{key}} placeholder with tokens[key]; leave unknown keys
+    as-is so missing tokens surface as visible diff rather than silent black."""
+    return re.sub(
+        r'\{\{([^}]+)\}\}',
+        lambda m: tokens.get(m.group(1).strip(), m.group(0)),
+        text,
+    )
 
 
-def build_face(parts, skin, jaw_width, skin_name):
-    """jaw_width: 0 narrow, 1 medium, 2 wide. Affects lower-face span."""
-    b, hi, sh, deep = skin["base"], skin["hi"], skin["sh"], skin["deep"]
-    # narrower jaw insets the lower face
-    inset = {0: 1, 1: 0, 2: 0}[jaw_width]
-    low_x = 17 + inset
-    low_w = 30 - 2 * inset
-    chin_x = 20 + inset + (1 if jaw_width == 0 else 0)
-    chin_w = low_w - 2 * (chin_x - low_x)
-
-    _layer_open(parts, 'face', skin=skin_name, jaw=jaw_width)
-    parts.append(rect(17, 15, 30, 20, b))
-    parts.append(rect(15, 18, 2, 13, b))
-    parts.append(rect(47, 18, 2, 13, b))
-    parts.append(rect(low_x, 35, low_w, 7, b))
-    parts.append(rect(chin_x, 42, max(chin_w, 12), 3, sh))
-    # forehead highlight
-    parts.append(rect(17, 15, 30, 2, hi))
-    parts.append(rect(19, 17, 4, 2, hi))
-    parts.append(rect(41, 17, 4, 2, hi))
-    # temple/cheek shadow
-    parts.append(rect(15, 20, 2, 8, sh))
-    parts.append(rect(47, 20, 2, 8, sh))
-    parts.append(rect(17, 33, 4, 4, sh))
-    parts.append(rect(43, 33, 4, 4, sh))
-    # cheek warmth
-    parts.append(rect(19, 29, 4, 3, hi))
-    parts.append(rect(41, 29, 4, 3, hi))
-    _layer_close(parts)
+# --- piece-group fill resolution -------------------------------------------
+# Admin-edited variants wrap their rects in <g data-piece="..." ...> groups
+# carrying either `data-color-token="X"` (palette slot lookup) or
+# `data-color="#hex"` (literal). The inner rects omit fill and inherit from
+# the group. Python's compose has to inject that group-level fill itself
+# (mirroring headshotComposer.js::_resolvePieceFills); otherwise the SVG
+# falls back to default black and every piece-wrapped variant renders all
+# black in the bundled procedural pool.
+_PIECE_GROUP_RE = re.compile(r'<g\b([^>]*?)data-piece="[^"]*"([^>]*?)>')
+_FILL_PRESENT_RE = re.compile(r'\sfill="[^"]*"')
+_COLOR_TOKEN_RE = re.compile(r'data-color-token="([^"]+)"')
+_COLOR_LITERAL_RE = re.compile(r'data-color="([^"]+)"')
 
 
-def build_stubble(parts, skin, has_stubble):
-    # Always emit the wrapper so the editor can find the layer and toggle it on.
-    _layer_open(parts, 'stubble', enabled='true' if has_stubble else 'false')
-    if has_stubble:
-        sh, deep = skin["sh"], skin["deep"]
-        parts.append(rect(18, 38, 28, 2, sh))
-        parts.append(rect(22, 40, 20, 2, deep))
-    _layer_close(parts)
+def _resolve_piece_fills(text, tokens):
+    def replace(match):
+        full = match.group(0)
+        attrs = (match.group(1) or '') + (match.group(2) or '')
+        # If the group already has an explicit fill, respect it.
+        if _FILL_PRESENT_RE.search(attrs):
+            return full
+        token_match = _COLOR_TOKEN_RE.search(attrs)
+        if token_match:
+            hex_color = tokens.get(token_match.group(1).strip())
+            if hex_color:
+                return full[:-1] + f' fill="{hex_color}">'
+            return full
+        literal_match = _COLOR_LITERAL_RE.search(attrs)
+        if literal_match:
+            return full[:-1] + f' fill="{literal_match.group(1)}">'
+        return full
+    return _PIECE_GROUP_RE.sub(replace, text)
 
 
-def build_hair(parts, hair, style, hair_name):
-    b, hi, sh = hair["base"], hair["hi"], hair["sh"]
-    _layer_open(parts, 'hair', style=style, color=hair_name)
-    if style == "short":
-        parts.append(rect(18, 7, 28, 3, b))
-        parts.append(rect(16, 10, 32, 3, hi))
-        parts.append(rect(15, 13, 34, 2, b))
-        parts.append(rect(14, 15, 36, 1, sh))
-        parts.append(rect(14, 16, 2, 4, b))
-        parts.append(rect(48, 16, 2, 4, b))
-    elif style == "fade":
-        parts.append(rect(19, 8, 26, 3, b))
-        parts.append(rect(17, 11, 30, 3, hi))
-        parts.append(rect(16, 14, 32, 2, b))
-        # tight sides
-        parts.append(rect(15, 16, 2, 3, sh))
-        parts.append(rect(47, 16, 2, 3, sh))
-    elif style == "wavy":
-        parts.append(rect(19, 5, 26, 3, b))
-        parts.append(rect(16, 8, 32, 3, hi))
-        parts.append(rect(15, 11, 34, 3, b))
-        parts.append(rect(14, 14, 36, 3, hi))
-        parts.append(rect(21, 4, 22, 1, hi))
-        # wave flecks
-        parts.append(rect(22, 6, 3, 2, hi))
-        parts.append(rect(30, 5, 3, 2, hi))
-        parts.append(rect(38, 6, 3, 2, hi))
-        parts.append(rect(14, 17, 2, 6, b))
-        parts.append(rect(48, 17, 2, 6, b))
-    elif style == "side_part":
-        parts.append(rect(18, 6, 28, 3, b))
-        parts.append(rect(16, 9, 32, 3, hi))
-        parts.append(rect(15, 12, 34, 3, b))
-        parts.append(rect(14, 15, 36, 2, sh))
-        parts.append(rect(20, 5, 24, 1, hi))
-        parts.append(rect(26, 6, 3, 6, hi))   # part highlight
-        parts.append(rect(20, 6, 26, 1, hi))
-        parts.append(rect(14, 17, 2, 5, b))
-        parts.append(rect(48, 17, 2, 5, b))
-    elif style == "curly":
-        # clumpy top
-        for cx in range(16, 46, 4):
-            parts.append(rect(cx, 5, 4, 4, b if (cx // 4) % 2 else hi))
-        parts.append(rect(15, 9, 34, 4, b))
-        parts.append(rect(14, 13, 36, 3, hi))
-        parts.append(rect(14, 16, 2, 5, b))
-        parts.append(rect(48, 16, 2, 5, b))
-    elif style == "buzz":
-        parts.append(rect(17, 10, 30, 3, b))
-        parts.append(rect(16, 12, 32, 2, hi))
-        parts.append(rect(15, 13, 34, 2, sh))
-    else:  # afro / tall
-        parts.append(rect(16, 3, 32, 5, b))
-        parts.append(rect(14, 6, 36, 4, hi))
-        parts.append(rect(13, 9, 38, 4, b))
-        parts.append(rect(13, 13, 38, 3, hi))
-        parts.append(rect(13, 16, 3, 6, b))
-        parts.append(rect(48, 16, 3, 6, b))
-    _layer_close(parts)
+def _layer_attrs(layer_id, attrs):
+    """Build the data-* attribute string for a layer's wrapping <g>."""
+    attr_str = f' data-layer="{layer_id}"'
+    for k, v in attrs.items():
+        if v is None:
+            continue
+        attr_str += f' data-{k.replace("_", "-")}="{v}"'
+    return attr_str
 
 
-def build_eyebrows(parts, hair, thickness, angle, hair_name):
-    """thickness: 1 thin, 2 thick. angle: 'flat','up','down'. Initial color
-    matches hair; the editor can override via the eyebrows layer's color
-    picker (stamped here so the JS parser can round-trip it)."""
-    color = hair["sh"] if hair["base"] != "#2a2018" else "#1c140e"
-    w = 8 if thickness == 1 else 9
-    lx, rx = (20, 36) if thickness == 1 else (19, 36)
-    _layer_open(parts, 'eyebrows', thickness=thickness, angle=angle, color=hair_name)
-    parts.append(rect(lx, 21, w, thickness, color))
-    parts.append(rect(rx, 21, w, thickness, color))
-    if angle == "up":
-        parts.append(rect(lx, 20, 3, 1, color))
-        parts.append(rect(rx + w - 3, 20, 3, 1, color))
-    elif angle == "down":
-        parts.append(rect(lx + w - 3, 20, 3, 1, color))
-        parts.append(rect(rx, 20, 3, 1, color))
-    else:
-        parts.append(rect(lx, 20, 3, 1, hair["hi"]))
-        parts.append(rect(rx + w - 3, 20, 3, 1, hair["hi"]))
-    _layer_close(parts)
+def _render_layer(layer_id, variant_key, tokens, attrs):
+    """Compose one layer's <g>...</g> block. variant_key=None produces an
+    empty wrapper (used for off-state layers so the editor can still toggle).
+
+    Two-pass resolution mirrors the JS composer: 1) rect-level {{tokens}}
+    for legacy + literal-hex rect variants; 2) group-level fill injection
+    for Phase 2 admin-edited <g data-piece> wrappers. Without step 2 the
+    piece-wrapped variants render all black in the bundled pool."""
+    attr_str = _layer_attrs(layer_id, attrs)
+    if variant_key is None:
+        return f'<g{attr_str}>\n</g>'
+    inner = _load_layer(layer_id, variant_key)
+    if not inner:
+        return f'<g{attr_str}>\n</g>'
+    inner = _apply_tokens(inner, tokens)
+    inner = _resolve_piece_fills(inner, tokens)
+    return f'<g{attr_str}>\n{inner}\n</g>'
 
 
-def build_eyes(parts, skin, eye, shape, eye_name):
-    """shape: 'round' or 'almond'."""
-    iris, pupil = eye["iris"], eye["pupil"]
-    sh = skin["sh"]
-    _layer_open(parts, 'eyes', shape=shape, color=eye_name)
-    eh = 4 if shape == "round" else 3
-    ey = 24 if shape == "round" else 25
-    parts.append(rect(20, ey, 8, eh, "#ffffff"))
-    parts.append(rect(36, ey, 8, eh, "#ffffff"))
-    parts.append(rect(23, ey, 3, eh, iris))
-    parts.append(rect(38, ey, 3, eh, iris))
-    parts.append(rect(24, ey, 2, 2, pupil))
-    parts.append(rect(39, ey, 2, 2, pupil))
-    parts.append(rect(24, ey, 1, 1, "#ffffff"))
-    parts.append(rect(39, ey, 1, 1, "#ffffff"))
-    if shape == "almond":
-        parts.append(rect(20, 24, 8, 1, skin["deep"]))
-        parts.append(rect(36, 24, 8, 1, skin["deep"]))
-    parts.append(rect(20, ey + eh, 8, 1, sh))
-    parts.append(rect(36, ey + eh, 8, 1, sh))
-    _layer_close(parts)
+_FREE_LAYERS_DIR = _LAYER_DIR  # alias; only the Free folder feeds the random pool
+
+# Hardcoded fallbacks if the Free folder is somehow empty for a layer. Lets
+# the script still produce something rather than crashing mid-batch.
+_FALLBACK_VARIANTS = {
+    'hair':     ['short'],
+    'eyes':     ['round'],
+    'nose':     ['medium'],
+    'mouth':    ['thin'],
+    'headband': ['white'],
+    'neck':     ['default'],
+    'stubble':  ['default'],
+}
 
 
-def build_nose(parts, skin, shape):
-    """shape: 'narrow','medium','broad'. Color derives from skin."""
-    b, hi, sh, deep = skin["base"], skin["hi"], skin["sh"], skin["deep"]
-    _layer_open(parts, 'nose', shape=shape)
-    if shape == "narrow":
-        parts.append(rect(31, 27, 2, 7, sh))
-        parts.append(rect(30, 33, 4, 1, deep))
-        parts.append(rect(33, 28, 1, 5, hi))
-        parts.append(rect(29, 34, 2, 1, deep))
-        parts.append(rect(33, 34, 2, 1, deep))
-    elif shape == "broad":
-        parts.append(rect(30, 28, 4, 6, sh))
-        parts.append(rect(29, 33, 6, 2, deep))
-        parts.append(rect(33, 29, 1, 4, hi))
-        parts.append(rect(28, 34, 2, 1, deep))
-        parts.append(rect(34, 34, 2, 1, deep))
-        parts.append(rect(31, 33, 2, 2, b))
-    else:  # medium
-        parts.append(rect(31, 27, 2, 6, sh))
-        parts.append(rect(30, 32, 4, 2, deep))
-        parts.append(rect(33, 28, 1, 4, hi))
-        parts.append(rect(29, 33, 2, 1, deep))
-        parts.append(rect(33, 33, 2, 1, deep))
-    _layer_close(parts)
+def _scan_layer_variants(layer_id):
+    """List the variant config-keys present in the Free folder for a layer.
+    Filenames use hyphens (side-part.svg); config uses underscores (side_part).
+    Returns a sorted list, or the layer's hardcoded fallback if the folder
+    is empty or missing."""
+    folder = os.path.join(_FREE_LAYERS_DIR, layer_id)
+    if not os.path.isdir(folder):
+        return list(_FALLBACK_VARIANTS.get(layer_id, []))
+    names = []
+    for fn in os.listdir(folder):
+        if not fn.endswith('.svg'):
+            continue
+        names.append(fn[:-4].replace('-', '_'))
+    if not names:
+        return list(_FALLBACK_VARIANTS.get(layer_id, []))
+    return sorted(names)
 
 
-def build_mouth(parts, skin, lip, fullness, lip_name):
-    """fullness: 'thin' or 'full'."""
-    hi = skin["hi"]
-    _layer_open(parts, 'mouth', fullness=fullness, color=lip_name)
-    if fullness == "full":
-        parts.append(rect(27, 38, 10, 1, "#8a4a3c"))
-        parts.append(rect(28, 39, 8, 2, lip))
-        parts.append(rect(29, 37, 6, 1, hi))
-    else:
-        parts.append(rect(27, 37, 10, 1, "#5e3a23"))
-        parts.append(rect(28, 38, 8, 1, lip))
-        parts.append(rect(29, 36, 6, 1, hi))
-    parts.append(rect(27, 40, 10, 2, skin["sh"]))
-    _layer_close(parts)
-
-
-def build_neck(parts, skin):
-    # Neck has no editable params — color follows the face's skin.
-    _layer_open(parts, 'neck')
-    parts.append(rect(24, 45, 16, 3, skin["sh"]))
-    parts.append(rect(24, 45, 16, 1, skin["deep"]))
-    parts.append(rect(26, 45, 12, 1, skin["deep"]))
-    _layer_close(parts)
-
-
-def build_headband(parts, color):
-    """color: 'white', 'black', or None. Sits across forehead."""
-    # Always emit the wrapper so the editor can toggle the headband on/off.
-    style = color if color else 'none'
-    _layer_open(parts, 'headband', style=style)
-    if color is not None:
-        if color == "white":
-            main, edge = "#f4f4f4", "#cfcfcf"
-        else:
-            main, edge = "#222222", "#000000"
-        parts.append(rect(14, 13, 36, 4, main))
-        parts.append(rect(14, 13, 36, 1, edge))
-        parts.append(rect(14, 16, 36, 1, edge))
-        parts.append(rect(14, 13, 2, 4, edge))
-        parts.append(rect(48, 13, 2, 4, edge))
-    _layer_close(parts)
+def _build_tokens(config):
+    """Flatten the active palettes into a dot-keyed lookup the layer files
+    reference (skin.base, hair.sh, eye.iris, ...)."""
+    skin = SKIN_TONES[config['skin']]
+    hair = HAIR_COLORS[config['hair']]
+    brow = HAIR_COLORS.get(config['brow'], hair)
+    eye = EYE_COLORS[config['eye']]
+    return {
+        'skin.base':  skin['base'],
+        'skin.hi':    skin['hi'],
+        'skin.sh':    skin['sh'],
+        'skin.deep':  skin['deep'],
+        'hair.base':  hair['base'],
+        'hair.hi':    hair['hi'],
+        'hair.sh':    hair['sh'],
+        'brow.base':  brow['base'],
+        'brow.hi':    brow['hi'],
+        'brow.sh':    brow['sh'],
+        'eye.iris':   eye['iris'],
+        'eye.pupil':  eye['pupil'],
+        'lip':        LIP_COLORS[config['lip']],
+    }
 
 
 # ----------------------------------------------------------------------------
-# Compose one randomized SVG
+# Compose one SVG from a config dict. Mirror of composeSvg() in
+# headshotComposer.js — same layer order, same viewBox, same wrapping <g>s,
+# same metadata attributes. Round-trips byte-for-byte with the JS composer.
+# ----------------------------------------------------------------------------
+def compose_svg(config):
+    tokens = _build_tokens(config)
+    headband = config['headband']
+    has_stubble = config['has_stubble']
+
+    parts = [
+        '<svg width="500" height="500" viewBox="70 -30 500 500" '
+        'xmlns="http://www.w3.org/2000/svg">',
+        '<g shape-rendering="crispEdges">',
+        '<g transform="scale(10)">',
+    ]
+
+    hair_file = config['hair_style'].replace('_', '-')
+    face_file = JAW_NAMES[config['jaw_width']]
+    brow_file = f"{BROW_THICK_NAMES[config['brow_thickness']]}-{config['brow_angle']}"
+
+    # Stacking order mirrors headshotComposer.js exactly: later push = painted
+    # on top. Headband sits on top of hair; hair sits on top of every face-
+    # level feature so bangs/fringes/volume overlap the forehead, brows, and
+    # shoulders rather than being clipped behind them.
+    parts.append(_render_layer('face', face_file, tokens,
+        {'skin': config['skin'], 'jaw': config['jaw_width']}))
+    stubble_style = config.get('stubble_style', 'default' if has_stubble else 'none')
+    parts.append(_render_layer('stubble',
+        None if stubble_style == 'none' else stubble_style, tokens,
+        {
+            'style': stubble_style,
+            'enabled': 'true' if stubble_style != 'none' else 'false',
+        }))
+    parts.append(_render_layer('eyebrows', brow_file, tokens, {
+        'thickness': config['brow_thickness'],
+        'angle': config['brow_angle'],
+        'color': config['brow'],
+    }))
+    parts.append(_render_layer('eyes', config['eye_shape'], tokens,
+        {'shape': config['eye_shape'], 'color': config['eye']}))
+    parts.append(_render_layer('nose', config['nose_shape'], tokens,
+        {'shape': config['nose_shape']}))
+    parts.append(_render_layer('mouth', config['mouth_fullness'], tokens,
+        {'fullness': config['mouth_fullness'], 'color': config['lip']}))
+    neck_style = config.get('neck_style', 'default')
+    parts.append(_render_layer('neck', neck_style, tokens, {'style': neck_style}))
+    parts.append(_render_layer('hair', hair_file, tokens,
+        {'style': config['hair_style'], 'color': config['hair']}))
+    parts.append(_render_layer('headband',
+        None if headband == 'none' else headband, tokens,
+        {'style': headband}))
+
+    parts += ['</g>', '</g>', '</svg>']
+    return '\n'.join(parts)
+
+
+# ----------------------------------------------------------------------------
+# Randomize one config, then compose. viewBox = (70, -30, 500, 500) crops
+# tight to the rendered content; the inner scale(10) maps the 64-unit layer
+# files into the SVG's pixel space.
 # ----------------------------------------------------------------------------
 def random_headshot_svg(rng, ethnicity=None, headband_chance=0.11):
     if ethnicity is None:
         ethnicity = rng.choice(list(ETHNICITY_PROFILES.keys()))
     profile = ETHNICITY_PROFILES[ethnicity]
 
-    # Keep the palette KEY (e.g. "dark", "black") alongside the dict so each
-    # build_* function can stamp it into the layer's data-* attributes.
-    skin_name = rng.choice(profile["skins"])
-    skin = SKIN_TONES[skin_name]
-    hair_name = rng.choice(profile["hairs"])
-    hair = HAIR_COLORS[hair_name]
+    skin_name = rng.choice(profile['skins'])
+    hair_name = rng.choice(profile['hairs'])
     eye_name = rng.choice(list(EYE_COLORS.keys()))
-    eye = EYE_COLORS[eye_name]
     lip_name = rng.choice(list(LIP_COLORS.keys()))
-    lip = LIP_COLORS[lip_name]
 
-    jaw_width = rng.choice([0, 1, 2])
-    hair_style = rng.choice(["short", "fade", "wavy", "side_part", "curly", "buzz", "afro"])
-    brow_thick = rng.choice([1, 2])
-    brow_angle = rng.choice(["flat", "up", "down"])
-    eye_shape = rng.choice(["round", "almond"])
-    nose_shape = rng.choice(["narrow", "medium", "broad"])
-    mouth_full = rng.choice(["thin", "full"])
-    has_stubble = rng.random() < 0.45
+    # String-keyed variant lists are scanned from the Free folder so any new
+    # variants the admin promoted via the Headshot Forge auto-appear here
+    # (and any variants currently demoted to Paid drop out cleanly). The
+    # integer-keyed and angle-keyed lists stay hardcoded — see the JS
+    # composer for the same rationale.
+    headband_pool = _scan_layer_variants('headband')
+    headband = 'none'
+    if rng.random() < headband_chance and headband_pool:
+        headband = rng.choice(headband_pool)
 
-    headband = None
-    if rng.random() < headband_chance:
-        headband = rng.choice(["white", "black"])
-
-    # viewBox is cropped tight to the content rather than the full 64-unit grid
-    # the rects are drawn in. After scale(10), content lives at SVG coords
-    # roughly x=130-510, y=30-480. Cropping to (70, -30, 500, 500):
-    #   - 60 units of side padding either side (was 130) — tighter horizontally
-    #   - 60 units above the head before content (was 30) — head sits ~30 SVG
-    #     units lower than in the old framing
-    #   - bottom clips ~30 units of the neck strip, mostly hidden under any
-    #     downstream circular avatar crop anyway
-    parts = ['<svg width="500" height="500" viewBox="70 -30 500 500" '
-             'xmlns="http://www.w3.org/2000/svg">',
-             '<g shape-rendering="crispEdges">', '<g transform="scale(10)">']
-
-    build_hair(parts, hair, hair_style, hair_name)
-    build_face(parts, skin, jaw_width, skin_name)
-    build_stubble(parts, skin, has_stubble)
-    build_headband(parts, headband)   # drawn over hair/forehead
-    build_eyebrows(parts, hair, brow_thick, brow_angle, hair_name)
-    build_eyes(parts, skin, eye, eye_shape, eye_name)
-    build_nose(parts, skin, nose_shape)
-    build_mouth(parts, skin, lip, mouth_full, lip_name)
-    build_neck(parts, skin)
-
-    parts += ["</g>", "</g>", "</svg>"]
-    meta = {
-        "ethnicity": ethnicity, "hair_style": hair_style,
-        "jaw": jaw_width, "eye_shape": eye_shape, "nose": nose_shape,
-        "mouth": mouth_full, "stubble": has_stubble, "headband": headband or "none",
+    config = {
+        'skin': skin_name,
+        'hair': hair_name,
+        'brow': hair_name,  # default eyebrow color follows hair until user edits
+        'eye': eye_name,
+        'lip': lip_name,
+        'jaw_width': rng.choice([0, 1, 2]),
+        'hair_style': rng.choice(_scan_layer_variants('hair')),
+        'brow_thickness': rng.choice([1, 2]),
+        'brow_angle': rng.choice(['flat', 'up', 'down']),
+        'eye_shape': rng.choice(_scan_layer_variants('eyes')),
+        'nose_shape': rng.choice(_scan_layer_variants('nose')),
+        'mouth_fullness': rng.choice(_scan_layer_variants('mouth')),
+        # Neck variants ship as bundled headshots — scan the folder so any
+        # new neck files (e.g. v-neck, turtleneck) immediately enter the
+        # procedural pool without code edits. Falls back to 'default' only
+        # when the folder is empty / missing.
+        'neck_style': rng.choice(_scan_layer_variants('neck')),
+        # Stubble: 55% clean-shaven; remaining 45% randomly picks from the
+        # actual stubble files on disk (so newly-added variants enter the
+        # pool automatically without rebalancing).
+        'stubble_style': 'none' if rng.random() >= 0.45 else rng.choice(_scan_layer_variants('stubble')),
+        'has_stubble': False,  # back-compat field; the renderer derives the real state from stubble_style
+        'headband': headband,
     }
-    return "\n".join(parts), meta
+    config['has_stubble'] = config['stubble_style'] != 'none'
+
+    svg = compose_svg(config)
+    meta = {
+        'ethnicity': ethnicity,
+        'hair_style': config['hair_style'],
+        'jaw': config['jaw_width'],
+        'eye_shape': config['eye_shape'],
+        'nose': config['nose_shape'],
+        'mouth': config['mouth_fullness'],
+        'stubble': config['has_stubble'],
+        'headband': config['headband'],
+    }
+    return svg, meta
 
 
 # ----------------------------------------------------------------------------
-# Render SVG -> cropped, squared, transparent PNG
+# Render SVG -> cropped, squared, transparent PNG (only when --png is set)
 # ----------------------------------------------------------------------------
 def render_png(svg, out_path, canvas=450, pad=10):
     png_bytes = cairosvg.svg2png(bytestring=svg.encode(),

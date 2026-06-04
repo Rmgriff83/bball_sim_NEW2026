@@ -41,7 +41,6 @@ import { computeTeamOverall } from '@/utils/teamOverall'
 import EndOfFreeAgencyModal from '@/components/team/EndOfFreeAgencyModal.vue'
 import UserFreeAgencyOffers from '@/components/team/UserFreeAgencyOffers.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
-import { useHeadshotEditorReturn } from '@/composables/useHeadshotEditorReturn'
 
 const route = useRoute()
 const router = useRouter()
@@ -1577,20 +1576,8 @@ async function handleConfirmFreeAgencyChoices(selectedIds) {
 const modalPlayer = ref(null)
 const showFeaturedPlayerModal = ref(false)
 
-// Reopen the featured-player modal when returning from the headshot editor.
-// Featured player rotates bi-weekly, but the user picked a specific player
-// to edit — load them by id directly rather than depending on the rotation.
-useHeadshotEditorReturn(async (playerId) => {
-  try {
-    const fresh = await PlayerRepository.get(campaignId.value, playerId)
-    if (fresh) {
-      modalPlayer.value = fresh
-      showFeaturedPlayerModal.value = true
-    }
-  } catch (err) {
-    console.warn('[CampaignHomeView] reopen modal failed', err)
-  }
-})
+// Exiting the headshot editor lands the user back on this view's default
+// state — no featured-player modal auto-reopens.
 
 function openPlayerDetails() {
   if (!featuredPlayer.value) return

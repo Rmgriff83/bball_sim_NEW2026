@@ -189,7 +189,11 @@ function handleExit(skipDirtyCheck = false) {
     showExitConfirm.value = true
     return
   }
-  const ctx = returnStore.peek()
+  // consume() clears the captured playerId so nothing downstream tries to
+  // act on it. The destination view no longer auto-reopens the modal — the
+  // user just lands on its default state (e.g. TeamManagementView's lineup
+  // tab) and the editor has done its job.
+  const ctx = returnStore.consume()
   if (ctx.route?.name) {
     router.push({ name: ctx.route.name, params: ctx.route.params || {} })
   } else {
@@ -563,6 +567,26 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
   }
   .editor-main {
     padding-bottom: 140px;
+  }
+}
+
+/* Desktop: overlay the campaign top nav. The editor is a full-screen
+   modal-style surface — the user opted into this view from a player card
+   and the campaign nav links would just distract from the editing task.
+   Mobile keeps the in-flow layout (its own header doubles as the page
+   header and the editor never competes with the campaign chrome there). */
+@media (min-width: 1024px) {
+  .headshot-editor {
+    position: fixed;
+    inset: 0;
+    /* Above the campaign-header (sticky, z-index ≤ 40) but BELOW the
+       walkthrough overlay (z-index: 90) so tour spotlights/tooltips still
+       render on top of the editor. */
+    z-index: 50;
+    min-height: 0;
+    height: 100vh;
+    overflow-y: auto;        /* sticky editor-header stays anchored here */
+    background: var(--color-bg-primary);
   }
 }
 </style>

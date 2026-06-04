@@ -1,7 +1,11 @@
 <script setup>
 import { computed } from 'vue'
-import { X } from 'lucide-vue-next'
-import { composeSvg, LAYERS } from '@/services/headshotComposer'
+import { X, RotateCcw } from 'lucide-vue-next'
+import {
+  composeSvg, LAYERS,
+  getCurrentVariantKey, getVariantSource, resolvePieceColor,
+} from '@/services/headshotComposer'
+import { parseVariantPieces } from '@/services/svgPieces'
 
 const props = defineProps({
   layerId: { type: String, default: null },
@@ -46,10 +50,6 @@ function setColor(key, configKey) {
   emit('update:config', { ...props.config, [configKey]: key })
 }
 
-function toggleStubble() {
-  emit('update:config', { ...props.config, hasStubble: !props.config.hasStubble })
-}
-
 // Thumbnail for a style variant — compose the full headshot with just this
 // layer's style overridden. Memoized via computed map.
 function thumbnailFor(variant) {
@@ -60,6 +60,59 @@ function thumbnailFor(variant) {
 function labelForVariant(variant) {
   if (typeof variant === 'number') return String(variant)
   return String(variant).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+// ----- Phase 3: per-piece color overrides -----
+// Parse the active variant's source SVG to expose its admin-defined pieces
+// (each with a `label`). The user picks colors for individual pieces via
+// the swatch UI below; the composer applies them per-piece independently
+// of palette tokens.
+const layerPieces = computed(() => {
+  if (!props.layerId) return []
+  const variantKey = getCurrentVariantKey(props.layerId, props.config)
+  if (!variantKey) return []
+  const source = getVariantSource(props.layerId, variantKey)
+  if (!source) return []
+  // Stable order = SVG document order. Skip pieces without a usable label
+  // so we don't dump cryptic ids into the UI.
+  return parseVariantPieces(source).filter(p => p.label)
+})
+
+// Resolved hex shown in each piece's swatch — user override if present,
+// otherwise the admin-set token/literal color resolved through the active
+// config's palette.
+function pieceColorFor(piece) {
+  const override = props.config?.pieceColors?.[props.layerId]?.[piece.label]
+  if (override) return override
+  return resolvePieceColor(piece, props.config) || '#999999'
+}
+
+function hasOverride(piece) {
+  return Boolean(props.config?.pieceColors?.[props.layerId]?.[piece.label])
+}
+
+function setPieceColor(piece, hex) {
+  const layerId = props.layerId
+  const prev = props.config?.pieceColors || {}
+  const layerMap = { ...(prev[layerId] || {}), [piece.label]: hex }
+  emit('update:config', {
+    ...props.config,
+    pieceColors: { ...prev, [layerId]: layerMap },
+  })
+}
+
+function clearPieceColor(piece) {
+  const layerId = props.layerId
+  const prev = props.config?.pieceColors || {}
+  const layerMap = { ...(prev[layerId] || {}) }
+  delete layerMap[piece.label]
+  const nextAll = { ...prev }
+  if (Object.keys(layerMap).length === 0) {
+    delete nextAll[layerId]
+  } else {
+    nextAll[layerId] = layerMap
+  }
+  emit('update:config', { ...props.config, pieceColors: nextAll })
 }
 </script>
 
@@ -76,20 +129,6 @@ function labelForVariant(variant) {
         <X :size="16" />
       </button>
     </header>
-
-    <!-- Toggle layer (stubble) -->
-    <div v-if="layer.toggleKey === 'hasStubble'" class="toggle-row">
-      <span>{{ config.hasStubble ? 'On' : 'Off' }}</span>
-      <button
-        class="ctx-toggle"
-        :class="{ on: config.hasStubble }"
-        @click="toggleStubble"
-      >
-        <span class="ctx-toggle-track">
-          <span class="ctx-toggle-thumb"></span>
-        </span>
-      </button>
-    </div>
 
     <!-- Style variants grid -->
     <section v-if="styleVariants" class="ctx-section">
@@ -127,9 +166,44 @@ function labelForVariant(variant) {
       </div>
     </section>
 
-    <!-- No edits for derived-only layers (neck) -->
+    <!-- Per-piece colors — uses labels the admin set in the variant editor.
+         Each row shows the resolved color and lets the user pick a custom
+         hex. The undo button beside an overridden swatch removes the
+         override so the piece falls back to the palette/literal default. -->
+    <section v-if="layerPieces.length > 0" class="ctx-section">
+      <h4>Piece Colors</h4>
+      <div class="piece-list">
+        <div v-for="piece in layerPieces" :key="piece.id" class="piece-row">
+          <label class="piece-swatch-label" :for="`piece-${piece.id}`">
+            <span class="piece-swatch" :style="{ background: pieceColorFor(piece) }">
+              <input
+                :id="`piece-${piece.id}`"
+                type="color"
+                class="piece-color-input"
+                :value="pieceColorFor(piece)"
+                @input="setPieceColor(piece, $event.target.value)"
+              />
+            </span>
+            <span class="piece-label">{{ piece.label }}</span>
+          </label>
+          <button
+            v-if="hasOverride(piece)"
+            type="button"
+            class="piece-reset"
+            title="Reset to default color"
+            @click="clearPieceColor(piece)"
+          >
+            <RotateCcw :size="12" />
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- No edits for derived-only layers (none currently — neck now has
+         its own style variants too, but kept defensively in case a future
+         layer ends up purely derived). -->
     <p
-      v-if="!styleVariants && !colorEntries && layer.toggleKey !== 'hasStubble'"
+      v-if="!styleVariants && !colorEntries && layerPieces.length === 0"
       class="derived-note"
     >
       This layer follows the Face skin tone. Change it from the Face layer.
@@ -330,5 +404,80 @@ function labelForVariant(variant) {
   font-size: 0.8rem;
   color: var(--color-text-secondary);
   margin: 8px 0 0;
+}
+
+/* Piece-color list — one row per admin-labeled piece in the active variant.
+   The swatch IS the color input (the native color picker is hidden behind a
+   round swatch tile) so the row stays compact while still being clickable. */
+.piece-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.piece-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.piece-swatch-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  cursor: pointer;
+}
+
+.piece-swatch {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.piece-color-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  padding: 0;
+  border: none;
+}
+
+.piece-label {
+  font-size: 0.8rem;
+  color: var(--color-text-primary);
+}
+
+.piece-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-tertiary);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.piece-reset:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-primary);
 }
 </style>
