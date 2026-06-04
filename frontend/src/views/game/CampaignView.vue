@@ -33,6 +33,14 @@ const scoutingPoints = computed(() => {
   return campaign.value?.settings?.scoutingPoints ?? 0
 })
 
+// Scouting is closed once the rookie draft begins and stays closed through
+// free agency, reopening when the next season starts. Mirrors BottomNav.
+const hideScout = computed(() => {
+  const c = campaign.value
+  const phase = c?.settings?.season_phase ?? c?.settings?.seasonPhase ?? c?.phase ?? 'regular_season'
+  return phase === 'offseason_draft' || phase === 'offseason_free_agency'
+})
+
 // Some child routes (the headshot editor) provide their own bottom nav, so
 // the main one needs to step aside. Driven by route meta so adding more such
 // routes later is one-line.
@@ -282,6 +290,7 @@ function closeMobileMenu() {
             Playoffs
           </router-link>
           <router-link
+            v-if="!hideScout"
             :to="`/campaign/${campaignId}/scouting`"
             class="nav-link nav-link-scout"
             :class="{ active: route.name === 'scouting' }"

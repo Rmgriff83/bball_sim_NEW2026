@@ -5,10 +5,9 @@
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C']
 
-// Badge synergy pairs from the 18 seeded BadgeSynergy definitions
+// Badge synergy pairs — mirrors the definitions in engine/data/synergies.js
 const SYNERGY_PAIRS = [
   ['pick_and_roll_maestro', 'brick_wall'],
-  ['pick_and_roll_maestro', 'lob_city_finisher'],
   ['dimer', 'catch_and_shoot'],
   ['floor_general', 'corner_specialist'],
   ['lob_city_passer', 'lob_city_finisher'],

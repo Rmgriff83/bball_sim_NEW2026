@@ -236,6 +236,11 @@ export const FREE_AGENT_COACH_TIERS = {
     maxBadges: 0,
     badgeLevels: [],
     hireCost: 0,
+    // Cost to re-sign an already-hired coach for another 2 seasons. Cheaper
+    // than hiring fresh (continuity, no morale hit), but never free — even a
+    // free-tier coach costs tokens to retain, so a strong starting coach can't
+    // be kept indefinitely at zero cost. Scales up with tier.
+    resignCost: 400,
     count: 3,
     // Number of free 1-on-1 "Coach Meeting" actions the coach can hold per
     // season before the user has to start spending tokens for extras.
@@ -247,6 +252,7 @@ export const FREE_AGENT_COACH_TIERS = {
     maxBadges: 2,
     badgeLevels: ["bronze", "silver"],
     hireCost: 1500,
+    resignCost: 1000,
     count: 3,
     coachActionsPerSeason: 3,
   },
@@ -256,6 +262,7 @@ export const FREE_AGENT_COACH_TIERS = {
     maxBadges: 3,
     badgeLevels: ["silver", "gold"],
     hireCost: 3500,
+    resignCost: 2200,
     count: 2,
     coachActionsPerSeason: 5,
   },
@@ -308,6 +315,16 @@ export function getCoachTierKey(coach) {
 export function getCoachActionBudget(coach) {
   if (!coach) return 0;
   return FREE_AGENT_COACH_TIERS[getCoachTierKey(coach)].coachActionsPerSeason;
+}
+
+/**
+ * Token cost to re-sign (renew) an already-hired coach for another 2 seasons,
+ * scaled by the coach's tier. Always > 0 so a top coach can't be kept forever
+ * for free. See `resignCost` notes on FREE_AGENT_COACH_TIERS.
+ */
+export function getCoachResignCost(coach) {
+  if (!coach) return 0;
+  return FREE_AGENT_COACH_TIERS[getCoachTierKey(coach)].resignCost;
 }
 
 export const FREE_AGENT_POOL_SIZE = 8; // 3 + 3 + 2

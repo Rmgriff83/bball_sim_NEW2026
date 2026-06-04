@@ -2,7 +2,7 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check, Brush } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, UserPlus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check, Brush } from 'lucide-vue-next'
 import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import CoachMeetingConfirmModal from './CoachMeetingConfirmModal.vue'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -158,7 +158,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'upgrade-attribute', 'purchase-upgrade-point', 'resign-player', 'drop-player', 'scout-player', 'hold-coach-meeting', 'draft-player'])
+const emit = defineEmits(['close', 'upgrade-attribute', 'purchase-upgrade-point', 'resign-player', 'drop-player', 'sign-player', 'scout-player', 'hold-coach-meeting', 'draft-player'])
 
 const activeTab = ref('stats')
 const showPlayerBadgeStore = ref(false)
@@ -365,6 +365,13 @@ const spendableUpgradePoints = computed(() =>
     ? Math.floor(offenseUpgradePoints.value) + Math.floor(defenseUpgradePoints.value)
     : 0
 )
+// A player who has reached their ceiling (overall === potential) can't be
+// improved further, so the upgrade-points box is hidden for them.
+const isPotentialMaxed = computed(() => {
+  const overall = normalizedPlayer.value?.overallRating
+  const potential = normalizedPlayer.value?.potentialRating
+  return overall != null && potential != null && overall >= potential
+})
 
 // Handle upgrade button click
 function handleUpgrade(category, attrKey) {
@@ -825,7 +832,7 @@ function formatChange(change) {
                   <StatBadge v-else :value="normalizedPlayer.overallRating" size="lg" />
                   <span v-if="normalizedPlayer.isInjured" class="injury-badge-modal">INJ</span>
                   <button
-                    v-if="isUserPlayer && campaignId"
+                    v-if="isUserPlayer && campaignId && !playerIsFreeAgent"
                     class="trade-block-toggle"
                     :class="{ active: isOnTradingBlock }"
                     data-tour="pdm-trade-toggle"
@@ -882,8 +889,18 @@ function formatChange(change) {
                     <span class="morale-chip-label">{{ getMoraleLabel(moraleValue) }}</span>
                     <span class="morale-chip-value">{{ moraleValue }}</span>
                   </div>
+                  <!-- Sign button (free agents) -->
+                  <div v-if="playerIsFreeAgent && !scoutingMode" class="header-contract-actions">
+                    <button
+                      class="header-action-btn sign"
+                      @click.stop="emit('sign-player', player)"
+                    >
+                      <UserPlus :size="13" />
+                      Sign
+                    </button>
+                  </div>
                   <!-- Contract Action Buttons (finances page) -->
-                  <div v-if="showContractActions" class="header-contract-actions">
+                  <div v-if="showContractActions && !playerIsFreeAgent" class="header-contract-actions">
                     <button
                       v-if="isExpiringContract"
                       class="header-action-btn resign"
@@ -1143,7 +1160,7 @@ function formatChange(change) {
                 </div>
 
                 <!-- Upgrade Points Banner - dual pools -->
-                <div v-if="canUpgrade && !scoutingMode" class="upgrade-points-banner" :class="{ 'no-points': upgradePoints === 0 }" data-tour="pdm-upgrade-banner">
+                <div v-if="canUpgrade && !scoutingMode && !isPotentialMaxed" class="upgrade-points-banner" :class="{ 'no-points': upgradePoints === 0 }" data-tour="pdm-upgrade-banner">
                   <div class="upgrade-pools">
                     <div class="pool-item offense-pool" :class="{ 'has-points': offenseUpgradePoints >= 1.0 }">
                       <span class="pool-value">{{ offenseUpgradePoints.toFixed(1) }}</span>
@@ -2241,6 +2258,17 @@ function formatChange(change) {
 .header-action-btn.drop:hover {
   background: rgba(180, 40, 40, 0.25);
   border-color: rgba(180, 40, 40, 0.4);
+}
+
+.header-action-btn.sign {
+  background: var(--color-primary);
+  color: #fff;
+  border: 1px solid var(--color-primary);
+}
+
+.header-action-btn.sign:hover {
+  background: var(--color-primary-dark);
+  border-color: var(--color-primary-dark);
 }
 
 .header-draft-action {

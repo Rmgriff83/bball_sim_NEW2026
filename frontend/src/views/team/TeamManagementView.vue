@@ -9,8 +9,8 @@ import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
-import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
-import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp } from 'lucide-vue-next'
+import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
+import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp, Coins } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
@@ -26,6 +26,7 @@ import HireStaffTrainerModal from '@/components/team/HireStaffTrainerModal.vue'
 import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import CoachBadgeStoreModal from '@/components/coach/CoachBadgeStoreModal.vue'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
+import { getCoachResignCost } from '@/engine/data/coaches'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { useSyncStore } from '@/stores/sync'
 import { isPastTradeDeadline } from '@/engine/season/SeasonDeadlines'
@@ -1195,13 +1196,19 @@ async function handleHoldCoachMeeting({ playerId, purchasedAction }) {
 
 // Coach functions
 const resigningCoach = ref(false)
+const showResignModal = ref(false)
+
+// Token cost to re-sign the current coach, scaled by their tier.
+const resignCost = computed(() => (coach.value ? getCoachResignCost(coach.value) : 0))
+const canAffordResign = computed(() => (authStore.profile?.tokens ?? 0) >= resignCost.value)
 
 async function resignCoach() {
   if (resigningCoach.value) return
   resigningCoach.value = true
   try {
-    await teamStore.resignCoach(campaignId.value)
-    toastStore.showSuccess('Head coach re-signed for 2 more seasons')
+    const { cost } = await teamStore.resignCoach(campaignId.value)
+    showResignModal.value = false
+    toastStore.showSuccess(`Head coach re-signed for 2 more seasons (−${cost} tokens)`)
   } catch (err) {
     console.error('Failed to re-sign coach:', err)
     toastStore.showError(err.message || 'Failed to re-sign coach')
@@ -1965,18 +1972,22 @@ const STAFF_TRAINER_PERK_LABELS = {
             </div>
             <div class="coach-header-actions">
               <StatBadge :value="coach.overall_rating" size="lg" />
-              <button
-                v-if="(coach.contractYearsRemaining ?? coach.contract_years_remaining ?? 0) <= 1"
-                class="btn-resign-coach"
-                :disabled="resigningCoach"
-                @click="resignCoach"
-              >
-                {{ resigningCoach ? 'Re-signing...' : 'Re-sign (2 yrs)' }}
-              </button>
-              <button class="btn-view-candidates" data-tour="gm-coach-candidates" @click="showHireCoachModal = true">
-                View Candidates
-              </button>
             </div>
+          </div>
+
+          <!-- Coach Actions -->
+          <div class="coach-actions-row">
+            <button
+              v-if="(coach.contractYearsRemaining ?? coach.contract_years_remaining ?? 0) <= 1"
+              class="btn-resign-coach"
+              :disabled="resigningCoach"
+              @click="showResignModal = true"
+            >
+              Re-sign (2 yrs) · {{ resignCost }} <Coins :size="12" class="btn-coin-icon" />
+            </button>
+            <button class="btn-view-candidates" data-tour="gm-coach-candidates" @click="showHireCoachModal = true">
+              View Candidates
+            </button>
           </div>
 
           <!-- Coach Badges -->
@@ -2537,6 +2548,46 @@ const STAFF_TRAINER_PERK_LABELS = {
           @close="showCoachBadgeStore = false"
           @purchased="onCoachBadgePurchased"
         />
+
+        <!-- Re-sign Coach Confirmation Modal -->
+        <BaseModal :show="showResignModal" @close="showResignModal = false" title="Re-sign Head Coach?">
+          <div class="resign-modal">
+            <div class="resign-coach-summary">
+              <CoachAvatar v-if="coach" :coach="coach" :size="56" />
+              <div>
+                <p class="resign-coach-name">{{ coach?.name }}</p>
+                <p class="resign-coach-meta">Overall {{ coach?.overall_rating }}</p>
+              </div>
+            </div>
+            <p class="resign-text">
+              Re-sign your head coach to a new <strong>2-season</strong> contract.
+            </p>
+            <div class="resign-cost-row">
+              <span>Cost</span>
+              <span class="resign-cost-value" :class="{ insufficient: !canAffordResign }">
+                {{ resignCost }} <Coins :size="14" />
+              </span>
+            </div>
+            <div class="resign-balance-row">
+              <span>Your balance</span>
+              <span>{{ authStore.profile?.tokens ?? 0 }} <Coins :size="14" /></span>
+            </div>
+            <p v-if="!canAffordResign" class="resign-warning">
+              You don't have enough tokens to re-sign this coach.
+            </p>
+            <div class="resign-actions">
+              <BaseButton variant="ghost" @click="showResignModal = false">Cancel</BaseButton>
+              <BaseButton
+                variant="primary"
+                :loading="resigningCoach"
+                :disabled="!canAffordResign"
+                @click="resignCoach"
+              >
+                Confirm · {{ resignCost }} tokens
+              </BaseButton>
+            </div>
+          </div>
+        </BaseModal>
       </div>
 
       <!-- Finances View -->
@@ -4122,6 +4173,103 @@ const STAFF_TRAINER_PERK_LABELS = {
   align-items: flex-end;
   gap: 10px;
   flex-shrink: 0;
+}
+
+.coach-actions-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.coach-actions-row .btn-resign-coach,
+.coach-actions-row .btn-view-candidates {
+  width: 100%;
+  text-align: center;
+}
+
+.btn-coin-icon {
+  display: inline-block;
+  vertical-align: -2px;
+}
+
+/* Re-sign confirmation modal */
+.resign-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.resign-coach-summary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.resign-coach-name {
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.resign-coach-meta {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.resign-text {
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.resign-cost-row,
+.resign-balance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+}
+
+.resign-cost-row {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.resign-cost-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #EAB308;
+}
+
+.resign-cost-value.insufficient {
+  color: var(--color-error, #EF4444);
+}
+
+.resign-balance-row {
+  display: flex;
+}
+
+.resign-balance-row span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.resign-warning {
+  font-size: 0.8rem;
+  color: var(--color-error, #EF4444);
+  background: rgba(239, 68, 68, 0.1);
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-lg);
+}
+
+.resign-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
 }
 
 .btn-view-candidates {
