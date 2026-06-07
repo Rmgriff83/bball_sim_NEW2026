@@ -89,6 +89,12 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/admin/headshots',
+    name: 'admin-headshots',
+    component: lazyLoad(() => import('@/views/admin/HeadshotAdminEditorView.vue')),
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
     path: '/campaigns',
     name: 'campaigns',
     component: lazyLoad(() => import('@/views/dashboard/CampaignsView.vue')),
@@ -140,6 +146,29 @@ const routes = [
         path: 'scouting',
         name: 'scouting',
         component: lazyLoad(() => import('@/views/draft/ScoutingView.vue'))
+      },
+      {
+        path: 'headshot-editor/:playerId',
+        name: 'headshot-editor',
+        component: lazyLoad(() => import('@/views/game/HeadshotEditorView.vue')),
+        meta: { hideBottomNav: true, requiresHeadshotEditor: true }
+      },
+      {
+        // Phase 3: coach customize. Reuses HeadshotEditorView with audience
+        // mode derived from the route name (see HeadshotEditorView).
+        path: 'coach-headshot-editor/:coachId',
+        name: 'coach-headshot-editor',
+        component: lazyLoad(() => import('@/views/game/HeadshotEditorView.vue')),
+        meta: { hideBottomNav: true, requiresHeadshotEditor: true }
+      },
+      {
+        // Phase 4: generalized personnel route. Covers coach/scout/physician/
+        // staff_trainer via the kind path param. HeadshotEditorView's load
+        // path branches on kind to pull from the right pool / IDB row.
+        path: 'personnel-headshot-editor/:kind/:personnelId',
+        name: 'personnel-headshot-editor',
+        component: lazyLoad(() => import('@/views/game/HeadshotEditorView.vue')),
+        meta: { hideBottomNav: true, requiresHeadshotEditor: true }
       }
     ]
   },
@@ -179,6 +208,21 @@ router.beforeEach(async (to, from, next) => {
 
   // Check if route is for guests only (login, register)
   if (to.meta.guest && authStore.isAuthenticated) {
+    next({ name: 'dashboard' })
+    return
+  }
+
+  // Entitlement gate for IAP-unlocked features. Backstop for users who paste
+  // the URL directly — the entry-point button is already hidden in
+  // PlayerDetailModal when hasFeature is false, but routing must enforce it.
+  if (to.meta.requiresHeadshotEditor && !authStore.hasFeature?.('headshot_editor')) {
+    next({ name: 'store' })
+    return
+  }
+
+  // Admin-only gate. Backend endpoints also enforce global_admin; this is the
+  // UI-side safety net so non-admins can't even load the page chrome.
+  if (to.meta.requiresAdmin && !authStore.isGlobalAdmin) {
     next({ name: 'dashboard' })
     return
   }

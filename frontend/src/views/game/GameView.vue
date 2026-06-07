@@ -2999,7 +2999,7 @@ onUnmounted(() => {
                 <div v-if="awayTeamCoach" class="team-coach-card">
                   <div class="team-coach-top">
                     <div class="team-coach-avatar-wrap">
-                      <CoachAvatar :coach="awayTeamCoach" :size="40" class="team-coach-avatar" />
+                      <CoachAvatar :coach="awayTeamCoach" :size="40" :campaign-id="campaignId" class="team-coach-avatar" />
                       <span
                         v-if="awayTeam?.abbreviation"
                         class="team-coach-team-badge"
@@ -3038,7 +3038,7 @@ onUnmounted(() => {
                 <div v-if="homeTeamCoach" class="team-coach-card">
                   <div class="team-coach-top">
                     <div class="team-coach-avatar-wrap">
-                      <CoachAvatar :coach="homeTeamCoach" :size="40" class="team-coach-avatar" />
+                      <CoachAvatar :coach="homeTeamCoach" :size="40" :campaign-id="campaignId" class="team-coach-avatar" />
                       <span
                         v-if="homeTeam?.abbreviation"
                         class="team-coach-team-badge"

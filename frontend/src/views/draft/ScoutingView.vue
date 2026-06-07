@@ -43,6 +43,9 @@ const sortDirection = ref('desc')
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 
+// Exiting the headshot editor lands the user back on this view's default
+// state — no modal auto-reopens.
+
 // Scouting state
 const scoutedPlayers = ref({})
 const scoutingPoints = ref(0)
@@ -399,7 +402,7 @@ onMounted(async () => {
     )
 
     // Patch headshots onto rookies that are missing them (older campaigns)
-    const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
+    const headshotModules = import.meta.glob('@/assets/headshots/*.svg', { eager: true })
     const availableHeadshots = Object.keys(headshotModules).map(k => k.split('/').pop())
     if (availableHeadshots.length > 0) {
       const usedHeadshots = new Set(prospects.filter(p => p.headshot).map(p => p.headshot))

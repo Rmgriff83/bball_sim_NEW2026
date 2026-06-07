@@ -1,6 +1,6 @@
 <template>
   <img
-    v-if="resolvedSrc"
+    v-if="resolvedSrc && !imageError"
     :src="resolvedSrc"
     :alt="player?.name || 'Player'"
     class="player-headshot"
@@ -11,33 +11,43 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { User } from 'lucide-vue-next'
+import { useSyncStore } from '@/stores/sync'
+import { resolveHeadshotSrc } from '@/services/headshotResolver'
 
 const props = defineProps({
   player: { type: Object, default: null },
   size: { type: Number, default: 32 },
+  // Optional explicit campaign — falls back to the sync store's active
+  // campaign so existing call sites don't need to thread it through.
+  campaignId: { type: [String, Number], default: null },
 })
 
+const syncStore = useSyncStore()
 const imageError = ref(false)
+const resolvedSrc = ref(null)
 
-const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
-
-const resolvedSrc = computed(() => {
-  if (imageError.value) return null
-  const filename = props.player?.headshot
-  if (!filename) return null
-  const filenameLower = filename.toLowerCase()
-  const match = Object.entries(headshotModules).find(([k]) => {
-    const parts = k.split('/')
-    return parts[parts.length - 1].toLowerCase() === filenameLower
-  })
-  return match ? match[1].default : null
-})
-
-watch(() => props.player?.headshot, () => {
+async function refreshSrc() {
   imageError.value = false
-})
+  if (!props.player) {
+    resolvedSrc.value = null
+    return
+  }
+  const cid = props.campaignId ?? syncStore.activeCampaignId
+  resolvedSrc.value = await resolveHeadshotSrc(props.player, cid)
+}
+
+watch(
+  () => [
+    props.player?.id,
+    props.player?.headshot,
+    props.player?.hasCustomHeadshot ?? props.player?.has_custom_headshot,
+    props.campaignId,
+  ],
+  refreshSrc,
+  { immediate: true }
+)
 
 function onImageError() {
   imageError.value = true

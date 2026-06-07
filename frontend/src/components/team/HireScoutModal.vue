@@ -8,6 +8,8 @@ import { useAudioStore } from '@/stores/audio'
 import { useSyncStore } from '@/stores/sync'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { COACH_FIRST_NAMES, COACH_LAST_NAMES } from '@/engine/data/coaches'
+import { PERSONNEL_POOL_KEY } from '@/engine/data/personnelTiers'
+import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
 import api from '@/composables/useApi'
 
 const props = defineProps({
@@ -92,10 +94,22 @@ function generateCandidates() {
   candidates.value = results
 }
 
-watch(() => props.show, (val) => {
+watch(() => props.show, async (val) => {
   if (val) {
-    generateCandidates()
     hiring.value = false
+    // Prefer the persistent pool seeded at campaign creation (each candidate
+    // already carries an id + headshot). Fall back to the on-demand generator
+    // for legacy campaigns that pre-date the pool — those candidates won't
+    // have avatars but still hire correctly.
+    try {
+      const campaign = await CampaignRepository.get(props.campaignId)
+      const pool = campaign?.settings?.[PERSONNEL_POOL_KEY.scout]
+      if (Array.isArray(pool) && pool.length > 0) {
+        candidates.value = pool
+        return
+      }
+    } catch { /* fall through to local generator */ }
+    generateCandidates()
   }
 })
 
@@ -125,12 +139,22 @@ async function hireScout(candidate) {
 
     const currentSeason = campaignStore.currentCampaign?.currentSeasonYear ?? 2025
     campaign.settings = campaign.settings ?? {}
+    // Preserve id + headshot so the avatar continues to resolve the same
+    // face and the personnelHeadshots IDB key stays stable across hires.
     campaign.settings.scout = {
+      id: candidate.id,
       name: candidate.name,
       tier: candidate.tier,
       hiredSeason: currentSeason,
       contractYears: 2,
       perks: candidate.perks.map(p => ({ key: p.key, requiredLevel: p.requiredLevel })),
+      headshot: candidate.headshot ?? null,
+      hasCustomHeadshot: candidate.hasCustomHeadshot ?? false,
+    }
+    // Drop the hired candidate from the pool so they don't show up next open.
+    const poolKey = PERSONNEL_POOL_KEY.scout
+    if (Array.isArray(campaign.settings[poolKey])) {
+      campaign.settings[poolKey] = campaign.settings[poolKey].filter(p => p.id !== candidate.id)
     }
     await CampaignRepository.save(campaign)
 
@@ -187,7 +211,13 @@ async function hireScout(candidate) {
                 :class="{ 'tier-4': candidate.tier === 4 }"
               >
                 <div class="candidate-header">
-                  <div class="candidate-avatar">{{ candidate.name.charAt(0) }}</div>
+                  <div class="candidate-avatar-wrap">
+                    <PersonnelAvatar
+                      :personnel="candidate"
+                      kind="scout"
+                      :size="48"
+                    />
+                  </div>
                   <div class="candidate-info">
                     <h4 class="candidate-name">{{ candidate.name }}</h4>
                     <div class="candidate-tier">

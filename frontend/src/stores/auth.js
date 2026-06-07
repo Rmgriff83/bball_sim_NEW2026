@@ -5,6 +5,38 @@ import { getToken, setToken, removeToken } from '@/composables/useTokenStorage'
 import { clearDatabase } from '@/engine/db/GameDatabase'
 import { useSyncStore } from '@/stores/sync'
 
+// Local-only feature unlocks (TEMP — until real IAP fulfillment is live).
+// Persisted in localStorage so the user keeps access across reloads. Once
+// the RevenueCat / Stripe webhooks populate `profile.unlockedFeatures`
+// server-side, this localStorage path can be removed and hasFeature() will
+// fall back to the profile-only check below.
+//
+// Scoped per user-id so a shared device doesn't leak unlocks between
+// accounts. The 'anon' bucket holds entries granted before login (rare —
+// the Store requires auth anyway, but a defensive default).
+function _unlocksKey(userId) {
+  return `localUnlocks.${userId ?? 'anon'}`
+}
+
+function _readLocalUnlocks(userId) {
+  try {
+    const raw = localStorage.getItem(_unlocksKey(userId))
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function _writeLocalUnlocks(userId, list) {
+  try {
+    localStorage.setItem(_unlocksKey(userId), JSON.stringify(list))
+  } catch {
+    /* private mode etc. */
+  }
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
   const profile = ref(null)
@@ -12,7 +44,45 @@ export const useAuthStore = defineStore('auth', () => {
   const initialized = ref(false)
   const loading = ref(false)
 
+  // Reactive mirror of the active user's localStorage bucket. Starts empty
+  // (anon bucket) and gets re-read whenever the user changes via
+  // _syncLocalUnlocks(). Re-assigned (not mutated) on grant so computed/
+  // template consumers of hasFeature() actually re-evaluate.
+  const localUnlocks = ref([])
+
+  function _syncLocalUnlocks() {
+    localUnlocks.value = _readLocalUnlocks(user.value?.id)
+  }
+
   const isAuthenticated = computed(() => !!token.value && !!user.value)
+
+  // Admin-only routes (e.g. /admin/headshots) gate on this flag, mirrored
+  // from the users.global_admin DB column. Set manually via tinker; no UI
+  // for granting since admin status is implicitly the project owner.
+  const isGlobalAdmin = computed(() => !!user.value?.global_admin)
+
+  // One-time IAP unlocks (e.g. headshot_editor). The backend mirrors entitled
+  // purchases into `profile.unlockedFeatures` after the RevenueCat / Stripe
+  // webhook fulfills. Until that's wired, the local fallback below lets the
+  // user grant themselves access via the Store's Purchase button.
+  // Server-side endpoints that gate on this MUST re-check entitlement
+  // independently — the local list is a UI convenience, not a security gate.
+  function hasFeature(name) {
+    if (localUnlocks.value.includes(name)) return true
+    const features = profile.value?.unlockedFeatures ?? profile.value?.unlocked_features
+    return Array.isArray(features) && features.includes(name)
+  }
+
+  // TEMP: grant a local-only unlock. Called from StoreView when the user
+  // taps Purchase on an unlock-kind bundle while real IAP fulfillment is
+  // still being wired up. Persisted under the active user's bucket so
+  // logging out + logging in as someone else doesn't leak the unlock.
+  function grantLocalUnlock(name) {
+    if (localUnlocks.value.includes(name)) return
+    const next = [...localUnlocks.value, name]
+    localUnlocks.value = next
+    _writeLocalUnlocks(user.value?.id, next)
+  }
 
   async function initialize() {
     if (initialized.value) return
@@ -35,6 +105,10 @@ export const useAuthStore = defineStore('auth', () => {
     const response = await api.get('/api/user')
     user.value = response.data.user
     profile.value = response.data.profile
+    // Re-scope localUnlocks to the now-authenticated user. Prevents the
+    // dev-shortcut Store unlock granted to a prior account from leaking
+    // into this session.
+    _syncLocalUnlocks()
     return user.value
   }
 
@@ -98,6 +172,9 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = null
       profile.value = null
       await removeToken()
+      // Clear the in-memory unlock list so the login screen doesn't briefly
+      // expose stale entitlements before the next user authenticates.
+      _syncLocalUnlocks()
 
       // Clear all local campaign data so the next user doesn't see it
       try {
@@ -186,6 +263,7 @@ export const useAuthStore = defineStore('auth', () => {
     initialized,
     loading,
     isAuthenticated,
+    isGlobalAdmin,
     initialize,
     fetchUser,
     login,
@@ -196,6 +274,8 @@ export const useAuthStore = defineStore('auth', () => {
     forgotPassword,
     resetPassword,
     deleteAccount,
-    updateSettings
+    updateSettings,
+    hasFeature,
+    grantLocalUnlock
   }
 })

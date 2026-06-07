@@ -1,0 +1,24 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <g data-piece="color-1" data-color="#ffffff" data-color-label="Color 1" transform="translate(1 0)">
+    <rect x="20" y="25" width="7" height="2"/>
+    <rect x="35" y="25" width="7" height="2"/>
+    <rect x="24" y="25" width="1" height="1"/>
+    <rect x="37" y="25" width="1" height="1"/>
+  </g>
+  <g data-piece="eye-iris" data-color-token="eye.iris" data-color-label="Eye Iris" transform="translate(1 0)">
+    <rect x="23" y="25" width="3" height="2"/>
+    <rect x="37" y="25" width="3" height="2"/>
+  </g>
+  <g data-piece="eye-pupil" data-color-token="eye.pupil" data-color-label="Eye Pupil" transform="translate(1 0)">
+    <rect x="24" y="25" width="2" height="2"/>
+    <rect x="37" y="25" width="2" height="2"/>
+  </g>
+  <g data-piece="skin-deep" data-color-token="skin.deep" data-color-label="Skin Deep" transform="translate(1 0)">
+    <rect x="20" y="24" width="7" height="1"/>
+    <rect x="35" y="24" width="7" height="1"/>
+  </g>
+  <g data-piece="skin-sh" data-color-token="skin.sh" data-color-label="Skin Sh" transform="translate(1 0)">
+    <rect x="20" y="27" width="7" height="1"/>
+    <rect x="35" y="27" width="7" height="1"/>
+  </g>
+</svg>

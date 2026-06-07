@@ -321,7 +321,7 @@ const PLAYOFF_ROUND_LABELS = {
   round1: 'First Round',
   round2: 'Conference Semifinals',
   confFinals: 'Conference Finals',
-  finals: 'NBA Finals',
+  finals: 'Finals',
 }
 
 // Where the user finished last season — drives the offseason summary line.
@@ -1575,6 +1575,9 @@ async function handleConfirmFreeAgencyChoices(selectedIds) {
 // even if the bi-weekly selection rolls over mid-session.
 const modalPlayer = ref(null)
 const showFeaturedPlayerModal = ref(false)
+
+// Exiting the headshot editor lands the user back on this view's default
+// state — no featured-player modal auto-reopens.
 
 function openPlayerDetails() {
   if (!featuredPlayer.value) return

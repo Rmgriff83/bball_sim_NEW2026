@@ -61,7 +61,7 @@ onUnmounted(() => {
           <!-- Breaking News Banner -->
           <div class="bn-banner" :class="{ 'bn-banner-champion': isChampion }">
             <Trophy v-if="isChampion" :size="20" class="bn-banner-trophy" />
-            <span class="bn-banner-text">{{ isChampion ? 'NBA CHAMPIONS' : 'BREAKING NEWS' }}</span>
+            <span class="bn-banner-text">{{ isChampion ? 'CHAMPIONS' : 'BREAKING NEWS' }}</span>
             <Trophy v-if="isChampion" :size="20" class="bn-banner-trophy" />
             <div class="bn-banner-shimmer"></div>
           </div>

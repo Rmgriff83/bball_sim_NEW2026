@@ -41,6 +41,13 @@ const hideScout = computed(() => {
   return phase === 'offseason_draft' || phase === 'offseason_free_agency'
 })
 
+// Some child routes (the headshot editor) provide their own bottom nav, so
+// the main one needs to step aside. Driven by route meta so adding more such
+// routes later is one-line.
+const hideBottomNav = computed(() =>
+  route.matched.some(r => r.meta?.hideBottomNav)
+)
+
 // Parse a date string (YYYY-MM-DD or datetime) into a local Date, avoiding UTC shift
 function parseLocalDate(dateStr) {
   const [y, m, d] = dateStr.split('T')[0].split(' ')[0].split('-').map(Number)
@@ -316,8 +323,11 @@ function closeMobileMenu() {
           </button>
         </div>
 
-        <!-- Mobile: Date + Menu Button -->
-        <div v-if="isMobile" class="mobile-header-right">
+        <!-- Mobile: Date + Menu Button. Hidden on routes that opt out of the
+             bottom nav (the headshot editor is full-screen on mobile and its
+             own header carries the back/save controls) so the campaign chrome
+             doesn't compete with the editor's UI. -->
+        <div v-if="isMobile && !hideBottomNav" class="mobile-header-right">
           <div v-if="formattedCurrentDate" class="current-date-mobile" data-tour="home-date-mobile">
             <span class="date-day">{{ formattedCurrentDate.day }}</span>
             <div class="date-details">
@@ -374,7 +384,7 @@ function closeMobileMenu() {
     </main>
 
     <!-- Bottom Nav - Mobile/Tablet only -->
-    <BottomNav v-if="isMobile" :campaign-id="campaignId" />
+    <BottomNav v-if="isMobile && !hideBottomNav" :campaign-id="campaignId" />
 
     <!-- Sim Pause Modal — global across all campaign sub-routes. Shown whenever
          simulateToGame halts (trade-deadline, All-Star, user injury). The
@@ -426,10 +436,6 @@ function closeMobileMenu() {
 .campaign-header.mobile-minimal {
   background: transparent;
   border-bottom: none;
-}
-
-.campaign-header.mobile-minimal::before {
-  display: none;
 }
 
 .header-content {

@@ -28,11 +28,11 @@ import { generateVeteran } from '../campaign/CampaignManager'
 
 // Scan the headshots assets folder at build time so we know what custom
 // portraits exist. Anything you drop into frontend/src/assets/headshots/
-// becomes a candidate file. Sorted alphabetically so `headshot_1.png`
-// gets assigned before `headshot_2.png`, etc. — pad future filenames to
-// `headshot_01.png` if you ever cross 10+ files (lexicographic sort puts
+// becomes a candidate file. Sorted alphabetically so `headshot_1.svg`
+// gets assigned before `headshot_2.svg`, etc. — pad future filenames to
+// `headshot_01.svg` if you ever cross 10+ files (lexicographic sort puts
 // `_10` before `_2` otherwise).
-const _headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
+const _headshotModules = import.meta.glob('@/assets/headshots/*.svg', { eager: true })
 const AVAILABLE_HEADSHOTS = Object.keys(_headshotModules)
   .map(path => path.split('/').pop())
   .sort()

@@ -34,7 +34,7 @@ class SyncController extends Controller
 
     /**
      * Push a campaign snapshot part to the server.
-     * Accepts chunked uploads: part = "meta" | "players" | "players_user" | "players_ai" | "players_fa" | "seasons"
+     * Accepts chunked uploads: part = "meta" | "players" | "players_user" | "players_ai" | "players_fa" | "seasons" | "headshots"
      * POST /api/sync/{clientId}/push
      */
     public function pushSnapshot(Request $request, string $clientId): JsonResponse
@@ -43,7 +43,7 @@ class SyncController extends Controller
         $userId = $request->user()->id;
 
         // Chunked upload: validate based on part type
-        if ($part && in_array($part, ['meta', 'players', 'players_user', 'players_ai', 'players_fa', 'seasons'])) {
+        if ($part && in_array($part, ['meta', 'players', 'players_user', 'players_ai', 'players_fa', 'seasons', 'headshots'])) {
             return $this->pushSnapshotPart($request, $clientId, $part, $userId);
         }
 
@@ -155,7 +155,7 @@ class SyncController extends Controller
                 'players' => $request->input('players'),
                 'clientUpdatedAt' => $request->input('clientUpdatedAt'),
             ];
-        } else { // seasons
+        } elseif ($part === 'seasons') {
             $request->validate([
                 'seasons' => 'required|array',
                 'clientUpdatedAt' => 'required|string',
@@ -167,6 +167,39 @@ class SyncController extends Controller
 
             $data = [
                 'seasons' => $request->input('seasons'),
+                'clientUpdatedAt' => $request->input('clientUpdatedAt'),
+            ];
+        } else { // headshots
+            // Entitlement gate — only users who own the headshot_editor unlock
+            // can persist custom headshots. The frontend hides the editor UI
+            // for unentitled users, but this is the actual security boundary:
+            // a forged request with valid auth still gets rejected here.
+            $user = $request->user();
+            $profile = $user ? $user->profile : null;
+            if (!$profile || !$profile->hasUnlock('headshot_editor')) {
+                return response()->json([
+                    'error' => 'feature_not_unlocked',
+                    'feature' => 'headshot_editor',
+                ], 403);
+            }
+
+            $request->validate([
+                'headshots' => 'present|array',
+                'headshots.*.campaignId' => 'sometimes',
+                'headshots.*.playerId' => 'required',
+                // 250KB cap — composed headshots with piece-wrapped face
+                // variants (e.g. the slim face alone is ~70KB) can easily
+                // exceed the old 50KB limit once you add hair/eyes/etc.
+                'headshots.*.svgContent' => 'required|string|max:250000',
+                'clientUpdatedAt' => 'required|string',
+            ]);
+
+            if (!$campaign) {
+                return response()->json(['message' => 'Campaign not found. Push meta part first.'], 404);
+            }
+
+            $data = [
+                'headshots' => $request->input('headshots'),
                 'clientUpdatedAt' => $request->input('clientUpdatedAt'),
             ];
         }
@@ -233,6 +266,7 @@ class SyncController extends Controller
             $playersAiPath = "campaigns/{$clientId}/players_ai.json.gz";
             $playersFaPath = "campaigns/{$clientId}/players_fa.json.gz";
             $seasonsPath = "campaigns/{$clientId}/seasons.json.gz";
+            $headshotsPath = "campaigns/{$clientId}/headshots.json.gz";
 
             if (Storage::exists($metaPath)) {
                 $snapshot = [];
@@ -274,6 +308,17 @@ class SyncController extends Controller
                     $seasonsData = $this->readCompressedJson($seasonsPath);
                     if ($seasonsData) {
                         $snapshot['seasons'] = $seasonsData['seasons'] ?? [];
+                    }
+                }
+
+                // Read custom headshots — returned regardless of current
+                // entitlement state, since they were validly created and a
+                // refund/revocation shouldn't silently strip the user's
+                // existing work. Only NEW writes are gated.
+                if (Storage::exists($headshotsPath)) {
+                    $headshotsData = $this->readCompressedJson($headshotsPath);
+                    if ($headshotsData) {
+                        $snapshot['headshots'] = $headshotsData['headshots'] ?? [];
                     }
                 }
 

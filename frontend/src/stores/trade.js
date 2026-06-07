@@ -107,7 +107,13 @@ export const useTradeStore = defineStore('trade', () => {
   // Helper: get campaign year
   async function _getCampaignYear(campaignId) {
     const campaign = await CampaignRepository.get(campaignId)
-    return campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+    // CampaignManager's canonical field is `currentSeasonYear`; the others
+    // are read-only fallbacks for older payload shapes and external sync.
+    return campaign?.currentSeasonYear
+      ?? campaign?.current_season_year
+      ?? campaign?.settings?.currentYear
+      ?? campaign?.year
+      ?? new Date().getFullYear()
   }
 
   // Actions
@@ -220,7 +226,17 @@ export const useTradeStore = defineStore('trade', () => {
 
     try {
       const campaign = await CampaignRepository.get(campaignId)
-      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      // Canonical field set by CampaignManager is `currentSeasonYear`
+      // (NOT settings.currentYear or top-level `year`). Reading from the
+      // wrong field made `year` fall through to new Date().getFullYear(),
+      // which then mismatched against campaign.currentDate's actual year
+      // and broke the opening-week trade-quiet gate (`isInFirstWeekOfSeason`
+      // got the wrong seasonYear and returned false on day 1).
+      const year = campaign?.currentSeasonYear
+        ?? campaign?.current_season_year
+        ?? campaign?.settings?.currentYear
+        ?? campaign?.year
+        ?? new Date().getFullYear()
       const difficulty = campaign?.settings?.difficulty ?? 'pro'
       const seasonData = await SeasonRepository.get(campaignId, year)
       const allTeams = await TeamRepository.getAllForCampaign(campaignId)
@@ -375,7 +391,17 @@ export const useTradeStore = defineStore('trade', () => {
       }
 
       // Save trade to history in season data & update player stats team
-      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      // Canonical field set by CampaignManager is `currentSeasonYear`
+      // (NOT settings.currentYear or top-level `year`). Reading from the
+      // wrong field made `year` fall through to new Date().getFullYear(),
+      // which then mismatched against campaign.currentDate's actual year
+      // and broke the opening-week trade-quiet gate (`isInFirstWeekOfSeason`
+      // got the wrong seasonYear and returned false on day 1).
+      const year = campaign?.currentSeasonYear
+        ?? campaign?.current_season_year
+        ?? campaign?.settings?.currentYear
+        ?? campaign?.year
+        ?? new Date().getFullYear()
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (seasonData) {
         // Update team ID in player stats so league leaders / stats history reflect the new team
@@ -456,7 +482,17 @@ export const useTradeStore = defineStore('trade', () => {
     try {
       const campaign = await CampaignRepository.get(campaignId)
       const userTeamId = campaign?.team_id ?? campaign?.teamId
-      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      // Canonical field set by CampaignManager is `currentSeasonYear`
+      // (NOT settings.currentYear or top-level `year`). Reading from the
+      // wrong field made `year` fall through to new Date().getFullYear(),
+      // which then mismatched against campaign.currentDate's actual year
+      // and broke the opening-week trade-quiet gate (`isInFirstWeekOfSeason`
+      // got the wrong seasonYear and returned false on day 1).
+      const year = campaign?.currentSeasonYear
+        ?? campaign?.current_season_year
+        ?? campaign?.settings?.currentYear
+        ?? campaign?.year
+        ?? new Date().getFullYear()
       const difficulty = campaign?.settings?.difficulty ?? 'pro'
       const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
 
@@ -705,7 +741,17 @@ export const useTradeStore = defineStore('trade', () => {
       }
 
       // Save trade to history & update player stats team
-      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      // Canonical field set by CampaignManager is `currentSeasonYear`
+      // (NOT settings.currentYear or top-level `year`). Reading from the
+      // wrong field made `year` fall through to new Date().getFullYear(),
+      // which then mismatched against campaign.currentDate's actual year
+      // and broke the opening-week trade-quiet gate (`isInFirstWeekOfSeason`
+      // got the wrong seasonYear and returned false on day 1).
+      const year = campaign?.currentSeasonYear
+        ?? campaign?.current_season_year
+        ?? campaign?.settings?.currentYear
+        ?? campaign?.year
+        ?? new Date().getFullYear()
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (seasonData) {
         // Update team ID in player stats so league leaders / stats history reflect the new team
@@ -777,7 +823,17 @@ export const useTradeStore = defineStore('trade', () => {
   async function _updateProposalStatus(campaignId, proposalId, status) {
     try {
       const campaign = await CampaignRepository.get(campaignId)
-      const year = campaign?.settings?.currentYear ?? campaign?.year ?? new Date().getFullYear()
+      // Canonical field set by CampaignManager is `currentSeasonYear`
+      // (NOT settings.currentYear or top-level `year`). Reading from the
+      // wrong field made `year` fall through to new Date().getFullYear(),
+      // which then mismatched against campaign.currentDate's actual year
+      // and broke the opening-week trade-quiet gate (`isInFirstWeekOfSeason`
+      // got the wrong seasonYear and returned false on day 1).
+      const year = campaign?.currentSeasonYear
+        ?? campaign?.current_season_year
+        ?? campaign?.settings?.currentYear
+        ?? campaign?.year
+        ?? new Date().getFullYear()
       const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData?.tradeProposals) return

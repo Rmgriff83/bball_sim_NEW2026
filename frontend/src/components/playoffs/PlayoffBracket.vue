@@ -354,7 +354,7 @@ function handleSeriesClick(series) {
     <div class="finals-section">
       <div class="finals-header">
         <Trophy :size="24" />
-        <span>NBA Finals</span>
+        <span>Finals</span>
       </div>
       <div class="finals-matchup-wrapper">
         <div
@@ -414,7 +414,7 @@ function handleSeriesClick(series) {
       <div v-if="champion" class="champion-display">
         <Trophy :size="32" class="champion-trophy" />
         <div class="champion-info">
-          <span class="champion-label">NBA Champions</span>
+          <span class="champion-label">Champions</span>
           <span class="champion-name">{{ champion.name }}</span>
         </div>
       </div>

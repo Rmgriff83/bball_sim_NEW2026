@@ -1,77 +1,78 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { NBA_COURT, COURT_CANVAS } from '@/config/courtConfig'
+import { resolveHeadshotSrc } from '@/services/headshotResolver'
+import { useSyncStore } from '@/stores/sync'
 
-// Pre-load all headshot images for canvas rendering
-const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
+const syncStore = useSyncStore()
+
+// Canvas-side image cache. Keys differentiate bundled (filename, content-stable)
+// from custom (player.id, content may change when the user re-edits).
+//   bundled:<filename>  — cached forever
+//   custom:<playerId>   — re-resolved on each preload so post-edit saves
+//                         replace the prior image in the same canvas session
 const headshotImageCache = {}
-// Tracks the in-flight load promise per filename so multiple callers (mount +
-// roster watch) don't race against each other. Each entry resolves once the
-// Image has either loaded or failed — never rejects, so Promise.all is safe.
 const headshotLoadPromises = {}
 
-function resolveHeadshotUrl(filename) {
-  if (!filename) return null
-  const filenameLower = filename.toLowerCase()
-  const match = Object.entries(headshotModules).find(([k]) => {
-    const parts = k.split('/')
-    return parts[parts.length - 1].toLowerCase() === filenameLower
-  })
-  return match ? match[1].default : null
+function _cacheKey(player) {
+  if (!player) return null
+  const hasCustom = player.hasCustomHeadshot ?? player.has_custom_headshot ?? false
+  // Box-score records use player_id (snake_case); roster/team records use id.
+  // Check both so the custom branch fires regardless of which shape the
+  // caller passes in.
+  const pid = player.id ?? player.player_id ?? player.playerId
+  if (hasCustom && pid) return `custom:${pid}`
+  if (player.headshot) return `bundled:${player.headshot}`
+  return null
 }
 
-function getHeadshotImage(filename) {
-  if (!filename) return null
-  if (headshotImageCache[filename]) return headshotImageCache[filename]
-
-  const url = resolveHeadshotUrl(filename)
-  if (!url) return null
-
-  const img = new Image()
-  img.src = url
-  headshotImageCache[filename] = img
-  return img
+function getHeadshotImage(player) {
+  const key = _cacheKey(player)
+  if (!key) return null
+  return headshotImageCache[key] || null
 }
 
 /**
  * Preload every headshot referenced by the supplied players. Returns a Promise
  * that resolves once each image has either loaded or errored — never rejects
  * (a 404 on one headshot shouldn't block the rest of the canvas from rendering).
+ *
+ * Custom headshots (hasCustomHeadshot=true) are re-resolved on every preload
+ * call so a save made mid-session lands in the canvas the next time the
+ * lineup updates. Bundled headshots stay cached after first load.
  */
 function preloadHeadshots(players) {
   if (!Array.isArray(players) || players.length === 0) return Promise.resolve()
-  const filenames = new Set()
-  for (const p of players) {
-    if (p?.headshot) filenames.add(p.headshot)
-  }
+  const campaignId = syncStore.activeCampaignId
   const promises = []
-  for (const filename of filenames) {
-    if (headshotLoadPromises[filename]) {
-      promises.push(headshotLoadPromises[filename])
+  const seen = new Set()
+
+  for (const player of players) {
+    const key = _cacheKey(player)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+
+    const isCustom = key.startsWith('custom:')
+    if (!isCustom && headshotLoadPromises[key]) {
+      promises.push(headshotLoadPromises[key])
       continue
     }
-    const url = resolveHeadshotUrl(filename)
-    if (!url) continue
 
-    let img = headshotImageCache[filename]
-    if (!img) {
-      img = new Image()
+    const promise = (async () => {
+      const url = await resolveHeadshotSrc(player, campaignId)
+      if (!url) return
+      const img = new Image()
       img.src = url
-      headshotImageCache[filename] = img
-    }
-
-    let promise
-    if (img.complete && img.naturalWidth > 0) {
-      // Already cached by a prior call (or hot module reload)
-      promise = Promise.resolve()
-    } else {
-      promise = new Promise(resolve => {
+      headshotImageCache[key] = img
+      if (img.complete && img.naturalWidth > 0) return
+      await new Promise(resolve => {
         const done = () => resolve()
         img.addEventListener('load', done, { once: true })
         img.addEventListener('error', done, { once: true })
       })
-    }
-    headshotLoadPromises[filename] = promise
+    })().catch(() => { /* swallow — never reject from preload */ })
+
+    headshotLoadPromises[key] = promise
     promises.push(promise)
   }
   return Promise.all(promises)
@@ -1410,7 +1411,7 @@ function drawPlayers(c) {
 
     const radius = 12
     const headshotRadius = 17
-    const headshotImg = getHeadshotImage(player.headshot)
+    const headshotImg = getHeadshotImage(player)
     const hasHeadshot = headshotImg && headshotImg.complete && headshotImg.naturalWidth > 0
 
     if (hasHeadshot) {
@@ -1634,7 +1635,7 @@ function drawAnimatedPlayers(c) {
 
     const radius = 14
     const headshotRadius = 19
-    const headshotImg = getHeadshotImage(player?.headshot)
+    const headshotImg = getHeadshotImage(player)
     const hasHeadshot = headshotImg && headshotImg.complete && headshotImg.naturalWidth > 0
 
     if (hasHeadshot) {

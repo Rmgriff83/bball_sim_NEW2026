@@ -134,6 +134,17 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
     stepIndex.value = 0
   }
 
+  // Same as maybeStart but bypasses the global `enabled` flag AND the per-key
+  // `isDone` flag. Used for opt-in feature tours (e.g. the headshot editor
+  // first-visit walkthrough) that should run even for experienced players who
+  // have turned off the campaign tours.
+  function forceStart(key) {
+    if (activeKey.value) return
+    if (!WALKTHROUGHS[key]) return
+    activeKey.value = key
+    stepIndex.value = 0
+  }
+
   const isRunning = computed(() => !!activeKey.value)
   const currentSteps = computed(() => (activeKey.value ? WALKTHROUGHS[activeKey.value] || [] : []))
   const totalSteps = computed(() => currentSteps.value.length)
@@ -215,6 +226,7 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
     isDone,
     markDone,
     maybeStart,
+    forceStart,
     next,
     back,
     finish,

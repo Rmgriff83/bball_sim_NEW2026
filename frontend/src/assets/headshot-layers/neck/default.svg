@@ -1,0 +1,5 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <rect x="24" y="45" width="16" height="3" fill="{{skin.sh}}"/>
+  <rect x="24" y="45" width="16" height="1" fill="{{skin.deep}}"/>
+  <rect x="26" y="45" width="12" height="1" fill="{{skin.deep}}"/>
+</svg>

@@ -9,7 +9,7 @@ import { generatePlayer, FIRST_NAMES as FAKE_FIRST_NAMES, LAST_NAMES as FAKE_LAS
 import { PlayerRepository } from '../db/PlayerRepository'
 
 // Build list of available headshot filenames for random assignment to rookies
-const headshotModules = import.meta.glob('@/assets/headshots/*.png', { eager: true })
+const headshotModules = import.meta.glob('@/assets/headshots/*.svg', { eager: true })
 const AVAILABLE_HEADSHOTS = Object.keys(headshotModules).map(k => k.split('/').pop())
 
 // ---------------------------------------------------------------------------
@@ -29,9 +29,9 @@ const TIER_CONFIG = [
 const GENERATIONAL_TIER = {
   name: 'generational',
   ovrMin: 78, ovrMax: 82,
-  potMin: 99, potMax: 99,
+  potMin: 99, potMax: 100,
   ageMin: 18, ageMax: 19,
-  workEthicMin: 85, workEthicMax: 99,
+  workEthicMin: 85, workEthicMax: 100,
 }
 
 const POSITION_WEIGHTS = [

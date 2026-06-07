@@ -1,15 +1,18 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, UserPlus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, UserPlus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check, Brush } from 'lucide-vue-next'
 import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import CoachMeetingConfirmModal from './CoachMeetingConfirmModal.vue'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerBadgeStoreModal from '@/components/team/PlayerBadgeStoreModal.vue'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
+import { useAuthStore } from '@/stores/auth'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 import { getMotivationLabel, getArchetypeLabel, calculateRetentionScore } from '@/engine/ai/MotivationService'
 
@@ -152,6 +155,16 @@ const props = defineProps({
   canDraft: {
     type: Boolean,
     default: false
+  },
+  // True when this modal is being shown from any draft-room flow (rookie
+  // OR fantasy). Used to suppress contract actions (Sign / Re-sign / Drop)
+  // that don't make sense before the player has been drafted to a team.
+  // The rookie-draft caller can rely on `scoutingMode` for the same effect,
+  // but the fantasy-draft caller needs this explicit signal because its
+  // players already carry the free-agent flag.
+  inDraft: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -197,6 +210,31 @@ watch(() => props.show, (newVal) => {
 // Trade block
 const tradeStore = useTradeStore()
 const toastStore = useToastStore()
+const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
+const headshotEditorReturnStore = useHeadshotEditorReturnStore()
+
+function openHeadshotEditor() {
+  if (!props.isUserPlayer) return
+  if (!authStore.hasFeature('headshot_editor')) return
+  const pid = normalizedPlayer.value?.id ?? props.player?.id
+  if (!pid) return
+  // Capture the host route so the editor can return us here and the host
+  // view can auto-reopen the modal on the same player.
+  headshotEditorReturnStore.capture({
+    routeName: route.name,
+    routeParams: { ...route.params },
+    playerId: pid,
+  })
+  // Close the modal before navigating so the route change doesn't fight
+  // with the modal's open state.
+  emit('close')
+  router.push({
+    name: 'headshot-editor',
+    params: { id: route.params.id, playerId: pid },
+  })
+}
 
 const isOnTradingBlock = computed(() => {
   if (!props.isUserPlayer || !props.player) return false
@@ -291,6 +329,10 @@ const normalizedPlayer = computed(() => {
     personality: p.personality || null,
     personalityTraits: p.personality?.traits || [],
     headshot: p.headshot || null,
+    // PlayerAvatar's resolver checks hasCustomHeadshot to decide whether to
+    // load the user-edited SVG from IDB. Without this passthrough the modal
+    // header always renders the bundled base headshot, even after a save.
+    hasCustomHeadshot: p.hasCustomHeadshot ?? p.has_custom_headshot ?? false,
   }
 })
 
@@ -783,6 +825,15 @@ function formatChange(change) {
               <div class="header-top-row">
                 <div class="modal-player-avatar">
                   <PlayerAvatar :player="normalizedPlayer" :size="84" class="avatar-icon" />
+                  <button
+                    v-if="isUserPlayer && authStore.hasFeature('headshot_editor')"
+                    type="button"
+                    class="edit-headshot-overlay"
+                    title="Edit headshot"
+                    @click.stop="openHeadshotEditor"
+                  >
+                    <Brush :size="13" />
+                  </button>
                 </div>
                 <div class="header-rating-corner">
                   <span class="ovr-label">OVR</span>
@@ -849,8 +900,9 @@ function formatChange(change) {
                     <span class="morale-chip-label">{{ getMoraleLabel(moraleValue) }}</span>
                     <span class="morale-chip-value">{{ moraleValue }}</span>
                   </div>
-                  <!-- Sign button (free agents) -->
-                  <div v-if="playerIsFreeAgent && !scoutingMode" class="header-contract-actions">
+                  <!-- Sign button (free agents) — suppressed in draft room
+                       contexts since the player hasn't been drafted yet. -->
+                  <div v-if="playerIsFreeAgent && !scoutingMode && !inDraft" class="header-contract-actions">
                     <button
                       class="header-action-btn sign"
                       @click.stop="emit('sign-player', player)"
@@ -2006,6 +2058,7 @@ function formatChange(change) {
 }
 
 .modal-player-avatar {
+  position: relative;
   width: 92px;
   height: 92px;
   display: flex;
@@ -2016,6 +2069,30 @@ function formatChange(change) {
   border-radius: 50%;
   color: rgba(255, 255, 255, 0.9);
   flex-shrink: 0;
+}
+
+.edit-headshot-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  border: 2px solid var(--color-bg-secondary, #1a1520);
+  color: white;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: filter 0.15s ease, transform 0.15s ease;
+  padding: 0;
+}
+
+.edit-headshot-overlay:hover {
+  filter: brightness(1.1);
+  transform: scale(1.05);
 }
 
 .header-rating-corner {

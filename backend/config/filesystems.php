@@ -60,6 +60,24 @@ return [
             'report' => false,
         ],
 
+        // Second S3 disk for the admin-authored headshot asset bucket
+        // (bball-sim-assets). Kept separate from the campaigns bucket above so
+        // each can use its own IAM user / scope. Falls back to the shared
+        // AWS_* credentials if the ASSETS_AWS_* keys aren't set, since the
+        // same IAM user may have access to both buckets in some envs.
+        'assets' => [
+            'driver' => 's3',
+            'key' => env('ASSETS_AWS_ACCESS_KEY_ID', env('AWS_ACCESS_KEY_ID')),
+            'secret' => env('ASSETS_AWS_SECRET_ACCESS_KEY', env('AWS_SECRET_ACCESS_KEY')),
+            'region' => env('ASSETS_AWS_DEFAULT_REGION', env('AWS_DEFAULT_REGION')),
+            'bucket' => env('ASSETS_AWS_BUCKET'),
+            'endpoint' => env('ASSETS_AWS_ENDPOINT', env('AWS_ENDPOINT')),
+            'url' => env('ASSETS_AWS_URL'),
+            'use_path_style_endpoint' => env('ASSETS_AWS_USE_PATH_STYLE_ENDPOINT', false),
+            'throw' => false,
+            'report' => false,
+        ],
+
     ],
 
     /*

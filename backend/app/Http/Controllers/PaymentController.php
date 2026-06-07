@@ -123,15 +123,15 @@ class PaymentController extends Controller
             return;
         }
 
-        $tokens = null;
+        $matchedBundle = null;
         foreach (config('services.stripe.bundles', []) as $bundle) {
             if (($bundle['price_id'] ?? null) === $priceId) {
-                $tokens = $bundle['tokens'];
+                $matchedBundle = $bundle;
                 break;
             }
         }
 
-        if ($tokens === null) {
+        if (!$matchedBundle) {
             Log::warning('Stripe checkout for unrecognized price id', [
                 'session' => $session->id,
                 'price_id' => $priceId,
@@ -148,7 +148,28 @@ class PaymentController extends Controller
             return;
         }
 
-        $user->profile->creditTokens($tokens);
+        $this->applyBundle($user, $matchedBundle);
+    }
+
+    /**
+     * Credit a fulfilled bundle to the user. Bundles can grant tokens
+     * (consumable), unlock features (non-consumable), or both. Both setUnlock
+     * and creditTokens are idempotent enough for webhook retry safety:
+     * setUnlock no-ops when the feature is already owned, creditTokens is
+     * already guarded by the unique webhook-event-id insert upstream.
+     */
+    private function applyBundle(User $user, array $bundle): void
+    {
+        if (!empty($bundle['unlocks']) && is_array($bundle['unlocks'])) {
+            foreach ($bundle['unlocks'] as $feature) {
+                if (is_string($feature) && $feature !== '') {
+                    $user->profile->setUnlock($feature);
+                }
+            }
+        }
+        if (!empty($bundle['tokens']) && (int) $bundle['tokens'] > 0) {
+            $user->profile->creditTokens((int) $bundle['tokens']);
+        }
     }
 
     /**
@@ -215,7 +236,9 @@ class PaymentController extends Controller
         }
 
         $bundle = config('services.iap.bundles', [])[$productId] ?? null;
-        if (!$bundle || empty($bundle['tokens'])) {
+        $grantsTokens = !empty($bundle['tokens']) && (int) $bundle['tokens'] > 0;
+        $grantsUnlocks = !empty($bundle['unlocks']) && is_array($bundle['unlocks']);
+        if (!$bundle || (!$grantsTokens && !$grantsUnlocks)) {
             Log::warning('RevenueCat event for unrecognized product', [
                 'event_id' => $event['id'],
                 'product_id' => $productId,
@@ -232,6 +255,6 @@ class PaymentController extends Controller
             return;
         }
 
-        $user->profile->creditTokens($bundle['tokens']);
+        $this->applyBundle($user, $bundle);
     }
 }

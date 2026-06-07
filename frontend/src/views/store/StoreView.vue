@@ -5,7 +5,7 @@ import { Capacitor } from '@capacitor/core'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, BaseModal } from '@/components/ui'
-import { ArrowLeft, Coins } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Palette, RotateCcw, Check } from 'lucide-vue-next'
 import api from '@/composables/useApi'
 import * as iap from '@/services/iap'
 
@@ -15,15 +15,63 @@ const authStore = useAuthStore()
 const toastStore = useToastStore()
 
 const purchasing = ref(false)
+const restoring = ref(false)
 const confirmBundle = ref(null)
 
 const tokenBalance = computed(() => authStore.profile?.tokens ?? 0)
 const isNative = Capacitor.isNativePlatform()
 
-const bundles = [
-  { id: 'tokens_1000', amount: 1000, price: '$0.99', label: '1,000' },
-  { id: 'tokens_6500', amount: 6500, price: '$4.99', label: '6,500', bestValue: true }
+// Wait for the RevenueCat → backend webhook to actually fulfill the
+// purchase server-side. StoreKit can resolve before Apple's server-to-
+// server notification reaches our backend (typically 1-5s, occasionally
+// longer under load), so a one-shot fetchUser races ahead and shows the
+// stale balance. Poll until the relevant field changes or we hit ~12s,
+// then bail — the success toast still fires either way and the next
+// page mount will pick up the credited balance.
+async function _waitForFulfillment(bundle, beforeTokens) {
+  const MAX_ATTEMPTS = 8
+  const DELAY_MS = 1500
+  const isUnlock = bundle.kind === 'unlock'
+  const hadFeature = isUnlock && bundle.feature
+    ? authStore.hasFeature(bundle.feature)
+    : false
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    try { await authStore.fetchUser() } catch { /* network blip — retry */ }
+    if (isUnlock && bundle.feature) {
+      if (!hadFeature && authStore.hasFeature(bundle.feature)) return
+    } else {
+      const after = authStore.profile?.tokens ?? 0
+      if (after > beforeTokens) return
+    }
+    if (i < MAX_ATTEMPTS - 1) {
+      await new Promise(resolve => setTimeout(resolve, DELAY_MS))
+    }
+  }
+}
+
+// Consumable token bundles (existing).
+const tokenBundles = [
+  { id: 'tokens_1000', kind: 'tokens', amount: 1000, price: '$0.99', label: '1,000' },
+  { id: 'tokens_6500', kind: 'tokens', amount: 6500, price: '$4.99', label: '6,500', bestValue: true }
 ]
+
+// Non-consumable one-time unlocks. Pricing is configured in App Store Connect
+// + the RevenueCat dashboard; the `price` shown here is a placeholder that
+// the native sheet overrides at purchase time.
+const unlockBundles = [
+  {
+    id: 'headshot_editor_unlock',
+    kind: 'unlock',
+    feature: 'headshot_editor',
+    price: '$5.99',
+    label: 'Headshot Editor',
+    description: 'Customize any player\'s, coach\'s, or other personnel\'s headshot. Also unlocks renaming your team on campaign creation. One-time purchase.'
+  }
+]
+
+function isUnlockOwned(bundle) {
+  return bundle.kind === 'unlock' && authStore.hasFeature(bundle.feature)
+}
 
 // Show the sandbox banner whenever the publishable key is a Stripe test key,
 // regardless of whether this is a dev or prod build.
@@ -33,7 +81,31 @@ const isStripeSandbox = computed(() => {
 })
 
 function promptPurchase(bundle) {
+  if (isUnlockOwned(bundle)) return
   confirmBundle.value = bundle
+}
+
+async function restorePurchases() {
+  if (restoring.value) return
+  restoring.value = true
+  try {
+    if (isNative) {
+      const result = await iap.restorePurchases()
+      if (result.cancelled) return
+      if (!result.success) {
+        toastStore.showError('Could not restore purchases.')
+        return
+      }
+    }
+    // Always re-fetch the profile — web purchases land via webhook and are
+    // recovered just by re-reading the user record.
+    try {
+      await authStore.fetchUser()
+    } catch {}
+    toastStore.showSuccess('Purchases restored.')
+  } finally {
+    restoring.value = false
+  }
 }
 
 function cancelPurchase() {
@@ -48,21 +120,41 @@ async function confirmPurchase() {
 
   const bundle = confirmBundle.value
 
+  const isUnlock = bundle.kind === 'unlock'
+  const successMessage = isUnlock
+    ? 'Purchase complete! Feature unlocked.'
+    : 'Purchase complete! Tokens added to your account.'
+
+  // TEMP: until real IAP fulfillment is wired up, unlock-kind purchases
+  // short-circuit the StoreKit / Stripe path and grant the feature locally.
+  // Remove this branch and let the normal native/web flow handle unlocks
+  // once the SKU + webhook are live.
+  if (isUnlock && bundle.feature) {
+    authStore.grantLocalUnlock(bundle.feature)
+    toastStore.showSuccess(successMessage)
+    purchasing.value = false
+    confirmBundle.value = null
+    return
+  }
+
   if (isNative) {
-    // Native iOS — StoreKit 2 via RevenueCat. Tokens are credited
-    // server-side by the RevenueCat webhook; we refresh the profile once
-    // the purchase resolves so the new balance appears.
+    // Native iOS — StoreKit 2 via RevenueCat. Tokens / unlocks are credited
+    // server-side by the RevenueCat webhook AFTER StoreKit returns success.
+    // The Apple → RevenueCat → our-backend hop is server-to-server and
+    // typically lands in 1-5 seconds, but a single fetchUser fired
+    // immediately after iap.purchase() resolves often races ahead of it —
+    // the user sees the old balance until they navigate away/back. Poll
+    // with backoff up to ~12s waiting for the balance to actually change.
     try {
+      const beforeTokens = authStore.profile?.tokens ?? 0
       const result = await iap.purchase(bundle.id)
       if (result.cancelled) {
         purchasing.value = false
         confirmBundle.value = null
         return
       }
-      try {
-        await authStore.fetchUser()
-      } catch {}
-      toastStore.showSuccess('Purchase complete! Tokens added to your account.')
+      await _waitForFulfillment(bundle, beforeTokens)
+      toastStore.showSuccess(successMessage)
       confirmBundle.value = null
     } catch (err) {
       console.error('IAP purchase failed', err)
@@ -103,7 +195,7 @@ onMounted(async () => {
     try {
       await authStore.fetchUser()
     } catch {}
-    toastStore.showSuccess('Purchase complete! Tokens added to your account.')
+    toastStore.showSuccess('Purchase complete!')
     router.replace({ query: {} })
   } else if (status === 'cancel') {
     toastStore.showError('Purchase canceled.')
@@ -153,7 +245,7 @@ onMounted(async () => {
 
           <div class="bundles-grid">
             <GlassCard
-              v-for="bundle in bundles"
+              v-for="bundle in tokenBundles"
               :key="bundle.id"
               padding="lg"
               class="bundle-card"
@@ -175,6 +267,47 @@ onMounted(async () => {
             </GlassCard>
           </div>
         </section>
+
+        <!-- One-Time Unlocks -->
+        <section class="bundles-section">
+          <h2 class="section-title">Feature Unlocks</h2>
+          <p class="section-subtitle">One-time purchases — no subscription</p>
+
+          <div class="unlocks-grid">
+            <GlassCard
+              v-for="bundle in unlockBundles"
+              :key="bundle.id"
+              padding="lg"
+              class="bundle-card unlock-card"
+              :class="{ owned: isUnlockOwned(bundle) }"
+            >
+              <div v-if="isUnlockOwned(bundle)" class="owned-badge">
+                <Check :size="12" /> Owned
+              </div>
+              <div class="bundle-icon unlock-icon">
+                <Palette :size="32" />
+              </div>
+              <div class="unlock-label">{{ bundle.label }}</div>
+              <p class="unlock-description">{{ bundle.description }}</p>
+              <div class="bundle-price">{{ bundle.price }}</div>
+              <button
+                class="purchase-btn"
+                :disabled="isUnlockOwned(bundle)"
+                @click="promptPurchase(bundle)"
+              >
+                {{ isUnlockOwned(bundle) ? 'Owned' : 'Purchase' }}
+              </button>
+            </GlassCard>
+          </div>
+        </section>
+
+        <!-- Restore Purchases — Apple guideline 3.1.1 for non-consumable IAPs -->
+        <section class="restore-section">
+          <button class="restore-btn" :disabled="restoring" @click="restorePurchases">
+            <RotateCcw :size="14" />
+            {{ restoring ? 'Restoring...' : 'Restore Purchases' }}
+          </button>
+        </section>
       </div>
     </main>
 
@@ -187,14 +320,19 @@ onMounted(async () => {
       @close="cancelPurchase"
     >
       <div v-if="confirmBundle" class="confirm-content">
-        <div class="confirm-icon">
-          <Coins :size="36" />
+        <div class="confirm-icon" :class="{ unlock: confirmBundle.kind === 'unlock' }">
+          <component :is="confirmBundle.kind === 'unlock' ? Palette : Coins" :size="36" />
         </div>
         <div class="confirm-amount">{{ confirmBundle.label }}</div>
-        <div class="confirm-label">Award Tokens</div>
+        <div class="confirm-label">
+          {{ confirmBundle.kind === 'unlock' ? 'One-Time Unlock' : 'Award Tokens' }}
+        </div>
         <div class="confirm-price">{{ confirmBundle.price }}</div>
-        <div class="confirm-balance">
+        <div v-if="confirmBundle.kind === 'tokens'" class="confirm-balance">
           Balance after purchase: <strong>{{ (tokenBalance + confirmBundle.amount).toLocaleString() }}</strong>
+        </div>
+        <div v-else class="confirm-balance">
+          {{ confirmBundle.description }}
         </div>
       </div>
 
@@ -368,6 +506,95 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 1rem;
+}
+
+.unlocks-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.unlock-card {
+  align-items: flex-start;
+  text-align: left;
+}
+
+.unlock-card.owned {
+  opacity: 0.7;
+}
+
+.owned-badge {
+  position: absolute;
+  top: -10px;
+  right: -8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #052e16;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+.unlock-icon {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(124, 58, 237, 0.1));
+  color: #a855f7;
+}
+
+.unlock-label {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.4rem;
+  line-height: 1.1;
+  color: var(--color-text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.unlock-description {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 1rem;
+  line-height: 1.4;
+}
+
+.restore-section {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.restore-btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
+
+.restore-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.confirm-icon.unlock {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(124, 58, 237, 0.1));
+  color: #a855f7;
 }
 
 .bundle-card {
