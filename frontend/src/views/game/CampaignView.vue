@@ -438,6 +438,10 @@ function closeMobileMenu() {
   border-bottom: none;
 }
 
+.campaign-header.mobile-minimal::before {
+  display: none;
+}
+
 .header-content {
   display: flex;
   align-items: center;

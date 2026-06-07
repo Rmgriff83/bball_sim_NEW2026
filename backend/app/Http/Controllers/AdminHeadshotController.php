@@ -30,12 +30,17 @@ class AdminHeadshotController extends Controller
      * Production-safe guard. Without an S3 bucket configured for the assets
      * disk the admin endpoints have nowhere to write, so they 503 — same UX
      * shape the old FRONTEND_ASSETS_PATH gate had, just sourced from the
-     * ASSETS_AWS_BUCKET env now (the dedicated headshot-assets bucket,
-     * separate from the campaigns bucket on the default AWS_BUCKET var).
+     * dedicated headshot-assets disk now (separate from the campaigns
+     * bucket on the default `s3` disk).
+     *
+     * Reads through `config()` (not `env()`) — env() outside of config
+     * files returns null when `php artisan config:cache` has been run,
+     * which is the default in every production Laravel deploy. config()
+     * stays correct in both cached and uncached modes.
      */
     private function s3Unavailable(): bool
     {
-        return !env('ASSETS_AWS_BUCKET');
+        return !config('filesystems.disks.assets.bucket');
     }
 
     /**
