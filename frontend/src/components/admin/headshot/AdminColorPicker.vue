@@ -22,6 +22,10 @@ const props = defineProps({
   // making the Palette tab feel like it isn't doing anything when the
   // resolved color happens to match the piece's existing color.
   config: { type: Object, default: null },
+  // The layer being edited (eye, hair, mouth, etc.). Used to suggest a
+  // sensible default palette slot when the admin opts to bind a Custom
+  // hex to a token via the "Bind to palette token" checkbox below.
+  layerId: { type: String, default: '' },
   // MRU list from the editor's recentColors ref. Each entry:
   //   { mode: 'token', token, hex, label } OR
   //   { mode: 'literal', hex, label }
@@ -39,6 +43,41 @@ function liveHexForSwatch(swatch) {
     props.config,
   )
   return resolved || swatch.hex
+}
+
+// Flat list of every palette slot, used to populate the "Bind to palette
+// token" dropdown when admin picks a Custom hex but wants the variant to
+// follow the player's palette at generation time. Same set the Palette
+// tab surfaces — kept independent so it's easy to extend either side.
+const BIND_OPTIONS = [
+  { token: 'skin.base', label: 'Skin Base' },
+  { token: 'skin.hi',   label: 'Skin Highlight' },
+  { token: 'skin.sh',   label: 'Skin Shadow' },
+  { token: 'skin.deep', label: 'Skin Deep' },
+  { token: 'hair.base', label: 'Hair Base' },
+  { token: 'hair.hi',   label: 'Hair Highlight' },
+  { token: 'hair.sh',   label: 'Hair Shadow' },
+  { token: 'brow.base', label: 'Brow Base' },
+  { token: 'brow.hi',   label: 'Brow Highlight' },
+  { token: 'brow.sh',   label: 'Brow Shadow' },
+  { token: 'eye.iris',  label: 'Eye Iris' },
+  { token: 'eye.pupil', label: 'Eye Pupil' },
+  { token: 'lip',       label: 'Lip' },
+]
+
+// Sensible default palette slot per layer so the dropdown opens on the
+// most likely choice for that layer's primary piece. The admin can still
+// pick a different slot from the full list above (e.g. eye.pupil instead
+// of eye.iris for a pupil piece).
+const LAYER_DEFAULT_BIND_TOKEN = {
+  eye:      'eye.iris',
+  hair:     'hair.base',
+  eyebrows: 'brow.base',
+  mouth:    'lip',
+  face:     'skin.base',
+  neck:     'skin.deep',
+  nose:     'skin.base',
+  stubble:  'hair.sh',
 }
 
 const emit = defineEmits(['close', 'confirm'])
@@ -89,6 +128,16 @@ const labelError = ref('')
 // token or a custom hex). 1 = fully opaque (default + back-compat).
 const opacity = ref(1)
 
+// Custom-tab "bind to palette" toggle + slot. When checked at confirm
+// time, the picker emits token mode with `bindCustomToken` as the bound
+// slot — the custom hex stays useful as the in-editor preview color but
+// the saved variant SVG carries `data-color-token=<slot>`, so the
+// generator + composer both flex it across the player's palette. Default
+// off so existing flows stay literal-hex (back-compat with everything
+// authored before this knob existed).
+const bindCustomToPalette = ref(false)
+const bindCustomToken = ref('')
+
 // Convert literalHex's possible 8-digit form to a clean 6-digit value +
 // extract the alpha into `opacity`. Keeps the <input type="color"> happy
 // (it only accepts 6-digit) and centralizes opacity in one slider.
@@ -117,6 +166,13 @@ watch(() => props.show, (visible) => {
     literalLabel.value = props.initialLabel
     labelTouched.value = false
     labelError.value = ''
+    // Reset the Custom-tab "bind to palette" knob every time the picker
+    // opens. Default OFF (preserves the original literal-hex behavior for
+    // anyone who isn't paying attention to the new toggle). Seed the
+    // dropdown with the layer's natural palette slot so checking the box
+    // doesn't make the admin scroll the dropdown for the obvious choice.
+    bindCustomToPalette.value = false
+    bindCustomToken.value = LAYER_DEFAULT_BIND_TOKEN[props.layerId] || 'eye.iris'
   }
 })
 
@@ -212,6 +268,20 @@ function confirm() {
       labelTouched.value = true
       return
     }
+    // "Bind to palette token" flips this Custom emit into a token emit:
+    // the picked hex was a preview convenience, but the saved piece
+    // carries the palette slot so it flexes per player. Falls through to
+    // a plain literal when the checkbox is off or no slot is chosen.
+    if (bindCustomToPalette.value && bindCustomToken.value) {
+      emit('confirm', {
+        colorMode: 'token',
+        colorToken: bindCustomToken.value,
+        colorHex: null,
+        colorOpacity,
+        label: literalLabel.value.trim(),
+      })
+      return
+    }
     emit('confirm', {
       colorMode: 'literal',
       colorToken: null,
@@ -268,6 +338,29 @@ function confirm() {
             <label>Color</label>
             <input v-model="literalHex" type="color" class="acp-color-input" />
             <input v-model="literalHex" type="text" class="acp-hex-input" maxlength="7" />
+          </div>
+          <!-- "Bind to palette token" — lets the admin pick any hex they
+               want as a visual preview while still saving the piece as
+               palette-bound, so generators + composers vary it per
+               player's palette. The dropdown is hidden until the box is
+               checked to keep the Custom tab uncluttered when not in use. -->
+          <div class="acp-field acp-bind-field">
+            <label
+              class="acp-bind-toggle"
+              title="By default the exact hex you pick is locked into the variant — every player sees the same color. Check this to save the piece as palette-bound instead: at generation time the color follows whichever palette slot you pick below, so it flexes across the league. The hex above stays as a preview while editing."
+            >
+              <input v-model="bindCustomToPalette" type="checkbox" />
+              <span>Bind to palette token (varies per player)</span>
+            </label>
+            <select
+              v-if="bindCustomToPalette"
+              v-model="bindCustomToken"
+              class="acp-bind-select"
+            >
+              <option v-for="opt in BIND_OPTIONS" :key="opt.token" :value="opt.token">
+                {{ opt.label }}
+              </option>
+            </select>
           </div>
           <!-- Recently used custom colors — quick re-pick from the editor's
                per-user MRU. Click loads the hex (and label if blank). Hidden
@@ -483,6 +576,43 @@ function confirm() {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Bind-to-palette toggle row in the Custom tab. Stacks vertically so the
+   dropdown can render on its own line below the checkbox when active. */
+.acp-bind-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.acp-bind-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.acp-bind-toggle input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.acp-bind-select {
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+[data-theme="light"] .acp-bind-select {
+  background: rgba(0, 0, 0, 0.04);
 }
 
 .acp-opacity-readout {

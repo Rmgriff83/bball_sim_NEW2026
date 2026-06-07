@@ -1749,7 +1749,10 @@ function formatSalary(salary) {
 
 <style scoped>
 .league-view {
-  padding-bottom: 100px;
+  /* Floating bottom nav is 70px tall and sits at env(safe-area-inset-bottom).
+     Reserve 70 + safe area + 16px breathing room so the last content row
+     never gets covered on devices with a home indicator. */
+  padding-bottom: calc(70px + env(safe-area-inset-bottom) + 16px);
   max-width: 1024px;
   margin: 0 auto;
 }

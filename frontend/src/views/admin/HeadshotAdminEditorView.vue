@@ -17,6 +17,7 @@ import { parseVariantPieces } from '@/services/svgPieces'
 import HeadshotPreview from '@/components/headshot/HeadshotPreview.vue'
 import AdminVariantStrip from '@/components/admin/headshot/AdminVariantStrip.vue'
 import AdminVariantEditor from '@/components/admin/headshot/AdminVariantEditor.vue'
+import AdminPaletteEditor from '@/components/admin/headshot/AdminPaletteEditor.vue'
 import PieceColorPicker from '@/components/headshot/PieceColorPicker.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 
@@ -41,6 +42,34 @@ try {
 watch(activeAudience, (next) => {
   try { localStorage.setItem(_activeAudienceStorageKey(), next) } catch { /* noop */ }
 })
+
+// Palettes tab — orthogonal to the Players/Coaches audience axis since
+// palettes are global (not per-audience). When active, the main column
+// swaps from the variant strip / preview catalog to the Palette Editor.
+// activeAudience persists separately so going Palettes → back to a
+// Player/Coach tab restores their last audience.
+const PALETTE_TAB_PREFIX = 'headshot.admin.paletteTabActive'
+function _paletteTabStorageKey() {
+  const userId = authStore.user?.id ?? 'anon'
+  return `${PALETTE_TAB_PREFIX}.${userId}`
+}
+const paletteTabActive = ref(false)
+try {
+  const raw = localStorage.getItem(_paletteTabStorageKey())
+  if (raw === '1') paletteTabActive.value = true
+} catch { /* noop */ }
+watch(paletteTabActive, (next) => {
+  try { localStorage.setItem(_paletteTabStorageKey(), next ? '1' : '0') } catch { /* noop */ }
+})
+
+function selectAudienceTab(next) {
+  paletteTabActive.value = false
+  activeAudience.value = next
+}
+
+function selectPalettesTab() {
+  paletteTabActive.value = true
+}
 
 // Per-audience preview state. Each tab has its own preview config (so the
 // seed face is independent between Players and Coaches) and its own
@@ -737,18 +766,26 @@ onUnmounted(() => {
           type="button"
           role="tab"
           class="ae-audience-tab"
-          :class="{ active: activeAudience === 'player' }"
-          :aria-selected="activeAudience === 'player'"
-          @click="activeAudience = 'player'"
+          :class="{ active: !paletteTabActive && activeAudience === 'player' }"
+          :aria-selected="!paletteTabActive && activeAudience === 'player'"
+          @click="selectAudienceTab('player')"
         >Players</button>
         <button
           type="button"
           role="tab"
           class="ae-audience-tab"
-          :class="{ active: activeAudience === 'coach' }"
-          :aria-selected="activeAudience === 'coach'"
-          @click="activeAudience = 'coach'"
+          :class="{ active: !paletteTabActive && activeAudience === 'coach' }"
+          :aria-selected="!paletteTabActive && activeAudience === 'coach'"
+          @click="selectAudienceTab('coach')"
         >Coaches</button>
+        <button
+          type="button"
+          role="tab"
+          class="ae-audience-tab"
+          :class="{ active: paletteTabActive }"
+          :aria-selected="paletteTabActive"
+          @click="selectPalettesTab"
+        >Palettes</button>
       </nav>
       <div v-else class="ae-right-spacer" />
     </header>
@@ -757,6 +794,13 @@ onUnmounted(() => {
       <AlertTriangle :size="28" />
       <p>The admin editor requires a desktop viewport (≥ 1024px).</p>
     </div>
+
+    <!-- Palette editor mode: skin/hair/eye/lip/headband catalog editor.
+         Orthogonal to the variant tools, so it gets its own simple main
+         that doesn't render the preview column. -->
+    <main v-else-if="paletteTabActive" class="ae-main palette-mode">
+      <AdminPaletteEditor />
+    </main>
 
     <!-- Editor mode: full-page variant editor swaps in over the catalog -->
     <main v-else-if="editingVariant" class="ae-main editor-mode">
@@ -1431,6 +1475,17 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* Palette editor mode: single-column, takes the full main area. No
+   preview column / backdrop sidebar — palettes are global so there's
+   nothing per-audience or per-layer to mirror them against. */
+.ae-main.palette-mode {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px;
+  gap: 12px;
 }
 
 /* New Variant modal */

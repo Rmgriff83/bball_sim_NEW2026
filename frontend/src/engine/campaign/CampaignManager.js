@@ -291,8 +291,15 @@ const BLACK_LAST_NAMES = [
 // scrambled pool so it lands at roughly its target share of total picks.
 // Tweaking the weight up/down is the per-bucket knob — independent of the
 // scrambled pool's natural size (~3,400 entries).
-const NORMAL_NAME_WEIGHT = 14
-const BLACK_NAME_WEIGHT = 14
+//
+// Tuning history:
+//   14 → ~60% scrambled (too made-up-name soup)
+//   30 → ~42% scrambled (better but still too noisy)
+//   80 → ~22% scrambled (current — rosters read mostly grounded with
+//                        scrambler adding occasional unusual surnames
+//                        for variety)
+const NORMAL_NAME_WEIGHT = 80
+const BLACK_NAME_WEIGHT = 80
 
 function _mixRealNames(scrambled, buckets) {
   const pool = [...scrambled]

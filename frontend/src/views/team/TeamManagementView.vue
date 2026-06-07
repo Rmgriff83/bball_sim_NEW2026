@@ -2659,8 +2659,11 @@ const STAFF_TRAINER_PERK_LABELS = {
 
 <style scoped>
 .roster-view {
+  /* Bottom padding clears the floating mobile nav (70px tall, sits at
+     env(safe-area-inset-bottom)) with 16px breathing room so the lineup
+     tab's last player card isn't covered on devices with a home indicator. */
   padding: 8px 16px;
-  padding-bottom: 100px;
+  padding-bottom: calc(70px + env(safe-area-inset-bottom) + 16px);
   max-width: 1024px;
   margin: 0 auto;
 }

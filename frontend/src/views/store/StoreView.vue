@@ -399,7 +399,11 @@ onMounted(async () => {
 /* Main Content */
 .store-main {
   flex: 1;
-  padding: 1.5rem;
+  /* Bottom padding clears the floating mobile nav (70px tall, sits at
+     env(safe-area-inset-bottom)) with 16px breathing room. The shorthand
+     covers top/horizontal at the normal 1.5rem while the bottom takes
+     the larger calc value. */
+  padding: 1.5rem 1.5rem calc(70px + env(safe-area-inset-bottom) + 16px);
 }
 
 .store-container {

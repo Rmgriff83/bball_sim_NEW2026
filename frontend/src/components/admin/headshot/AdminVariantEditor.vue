@@ -1665,6 +1665,7 @@ const headerTitle = computed(() =>
       :initial-label="colorPickerInitial.label"
       :initial-opacity="colorPickerInitial.opacity"
       :config="config"
+      :layer-id="layerId"
       :recents="recentColors"
       @close="colorPickerOpen = false; colorPickerTarget = null; pendingEyedropHex = null"
       @confirm="handleColorConfirm"

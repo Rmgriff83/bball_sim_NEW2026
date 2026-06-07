@@ -80,6 +80,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/headshot-premades', [AdminHeadshotController::class, 'listPremades']);
     Route::post('/admin/headshot-premades', [AdminHeadshotController::class, 'savePremade']);
     Route::delete('/admin/headshot-premades/{name}', [AdminHeadshotController::class, 'deletePremade']);
+
+    // Admin: color palette catalog (skin/hair/eye/lip/headband + ethnicity
+    // profiles). Backs the Palettes tab in HeadshotAdminEditorView. Reads
+    // palettes.json from S3; full-document writes atomically.
+    Route::get('/admin/palettes', [AdminHeadshotController::class, 'getPalettes']);
+    Route::put('/admin/palettes', [AdminHeadshotController::class, 'savePalettes']);
 });
 
 // Public routes

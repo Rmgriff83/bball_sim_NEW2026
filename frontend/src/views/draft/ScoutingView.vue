@@ -715,7 +715,10 @@ onMounted(async () => {
 
 <style scoped>
 .scouting-view {
-  padding: 20px 24px;
+  /* Bottom padding clears the floating mobile nav (70px tall, sits at
+     env(safe-area-inset-bottom)) with 16px breathing room. Desktop
+     override below replaces it with a normal value. */
+  padding: 20px 24px calc(70px + env(safe-area-inset-bottom) + 16px);
   max-width: 1024px;
   margin: 0 auto;
 }
@@ -1393,7 +1396,10 @@ onMounted(async () => {
 /* Responsive */
 @media (max-width: 768px) {
   .scouting-view {
-    padding: 16px;
+    /* Keep the bottom clearance for the floating mobile nav even after the
+       tighter mobile padding kicks in — `padding: 16px` would otherwise
+       reset the bottom padding back to 16px and obscure the last row. */
+    padding: 16px 16px calc(70px + env(safe-area-inset-bottom) + 16px);
   }
 
   .draft-year {

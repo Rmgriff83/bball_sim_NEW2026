@@ -660,4 +660,118 @@ class AdminHeadshotController extends Controller
 
         return response()->json(['deleted' => true, 'name' => $name, 'audiences' => $deleted]);
     }
+
+    /**
+     * Top-level S3 key for the editable color palette JSON. Both the JS
+     * composer and the Python pool generator read the same file at build
+     * time; admin edits happen through the endpoints below.
+     */
+    private const PALETTES_KEY = 'palettes.json';
+
+    /**
+     * Required schema keys in the palette blob — used by both load and save
+     * to fail-fast on a malformed payload (so an accidental empty PUT can't
+     * wipe the bucket's color truth).
+     */
+    private const PALETTE_REQUIRED_KEYS = ['skin', 'hair', 'eye', 'lip', 'headband', 'ethnicity_profiles'];
+
+    /**
+     * Read the palette JSON from S3 and return it verbatim. Admin Palette
+     * Editor calls this on mount to hot-swap composeSvg's in-memory palette
+     * constants so authoring against fresh truth works without a redeploy.
+     *
+     * GET /api/admin/palettes
+     */
+    public function getPalettes(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->global_admin) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+
+        if ($this->s3Unavailable()) {
+            return response()->json([
+                'error' => 'admin_palettes_endpoint_unavailable',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
+            ], 503);
+        }
+
+        $s3 = Storage::disk('assets');
+        if (!$s3->exists(self::PALETTES_KEY)) {
+            return response()->json([
+                'error' => 'palettes_not_initialized',
+                'detail' => 'palettes.json does not exist in the bucket yet. Run sync:headshots:upload to seed it.',
+            ], 404);
+        }
+
+        try {
+            $raw = $s3->get(self::PALETTES_KEY);
+        } catch (\Throwable $e) {
+            Log::error('AdminHeadshotController: S3 get palettes.json failed: ' . $e->getMessage());
+            return response()->json(['error' => 'read_failed'], 500);
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return response()->json([
+                'error' => 'palettes_malformed',
+                'detail' => 'palettes.json in the bucket is not valid JSON.',
+            ], 500);
+        }
+
+        return response()->json(['palettes' => $decoded]);
+    }
+
+    /**
+     * Persist the entire palette blob to S3. Full-document writes (not
+     * per-entry patches) keep the controller small and atomic — the file
+     * is only a few KB and admin authoring is bursty, so the simpler
+     * approach is fine.
+     *
+     * PUT /api/admin/palettes
+     * Body: { palettes: { skin, hair, eye, lip, headband, ethnicity_profiles } }
+     */
+    public function savePalettes(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->global_admin) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+
+        if ($this->s3Unavailable()) {
+            return response()->json([
+                'error' => 'admin_palettes_endpoint_unavailable',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
+            ], 503);
+        }
+
+        // 64KB is way more than the current palette catalog needs but cheap
+        // insurance against an accidentally-massive PUT.
+        $validated = $request->validate([
+            'palettes' => 'required|array',
+        ]);
+        $palettes = $validated['palettes'];
+
+        foreach (self::PALETTE_REQUIRED_KEYS as $key) {
+            if (!array_key_exists($key, $palettes) || !is_array($palettes[$key])) {
+                return response()->json([
+                    'error' => 'invalid_palettes',
+                    'detail' => "Missing or invalid top-level key: {$key}",
+                ], 422);
+            }
+        }
+
+        $encoded = json_encode($palettes, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if ($encoded === false) {
+            return response()->json(['error' => 'encode_failed'], 500);
+        }
+
+        $s3 = Storage::disk('assets');
+        if (!$s3->put(self::PALETTES_KEY, $encoded)) {
+            Log::error('AdminHeadshotController: S3 put palettes.json failed');
+            return response()->json(['error' => 'write_failed'], 500);
+        }
+
+        return response()->json(['saved' => true, 'palettes' => $palettes]);
+    }
 }

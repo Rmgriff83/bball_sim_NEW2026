@@ -34,6 +34,16 @@ const SYNC_FOLDERS = [
   'headshots-premade',
 ];
 
+// Top-level JSON blobs the bucket holds alongside the six folder trees. Each
+// entry is a single S3 key whose contents land at the matching local path
+// under `src/assets/`. `palettes.json` is the admin-edited color truth used
+// by both the JS composer and the Python pool generator; missing on S3 just
+// leaves the local copy untouched so brand-new buckets still produce a
+// valid build (the seed copy ships in the repo).
+const SYNC_FILES = [
+  { key: 'palettes.json', localRel: 'palettes.json' },
+];
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_ROOT = path.resolve(SCRIPT_DIR, '..');
 const ASSETS_ROOT = path.join(FRONTEND_ROOT, 'src', 'assets');
@@ -217,6 +227,52 @@ function contentTypeFor(filename) {
   return 'application/octet-stream';
 }
 
+async function downloadFile(client, bucket, key, localRel) {
+  try {
+    const res = await client.send(
+      new GetObjectCommand({ Bucket: bucket, Key: key })
+    );
+    const body = await streamToBuffer(res.Body);
+    const dest = path.join(ASSETS_ROOT, localRel);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.writeFile(dest, body);
+    info(`${key}: pulled`);
+    return 1;
+  } catch (err) {
+    // Missing-key on first use is expected (bootstrap path); leave the
+    // committed seed copy alone instead of failing the whole sync.
+    if (err?.$metadata?.httpStatusCode === 404 || err?.name === 'NoSuchKey') {
+      info(`${key}: not in bucket yet, keeping local copy`);
+      return 0;
+    }
+    throw err;
+  }
+}
+
+async function uploadFile(client, bucket, key, localRel) {
+  const src = path.join(ASSETS_ROOT, localRel);
+  let body;
+  try {
+    body = await fs.readFile(src);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      info(`${key}: no local file, skipping`);
+      return 0;
+    }
+    throw err;
+  }
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentTypeFor(src),
+    })
+  );
+  info(`${key}: pushed`);
+  return 1;
+}
+
 async function uploadFolder(client, bucket, folder) {
   const localDir = path.join(ASSETS_ROOT, folder);
   const files = await walk(localDir);
@@ -263,6 +319,13 @@ async function main() {
       total += await uploadFolder(client, bucket, folder);
     } else {
       total += await downloadFolder(client, bucket, folder);
+    }
+  }
+  for (const { key, localRel } of SYNC_FILES) {
+    if (MODE === 'upload') {
+      total += await uploadFile(client, bucket, key, localRel);
+    } else {
+      total += await downloadFile(client, bucket, key, localRel);
     }
   }
   info(`done — ${total} file(s) ${MODE === 'upload' ? 'uploaded' : 'downloaded'}`);

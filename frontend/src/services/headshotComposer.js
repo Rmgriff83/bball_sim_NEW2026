@@ -3,6 +3,7 @@
 // =============================================================================
 import { reactive, ref } from 'vue'
 import { defaultLabelForToken, generatePieceId } from '@/services/svgPieces'
+import paletteData from '@/assets/palettes.json'
 
 // The Python script is the source-of-truth for the bundled SVG library. This
 // module mirrors it function-for-function so the editor can:
@@ -18,59 +19,97 @@ import { defaultLabelForToken, generatePieceId } from '@/services/svgPieces'
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// Palettes — keyed by name (mirror of Python's SKIN_TONES / HAIR_COLORS etc.)
+// Palettes — keyed by name. Source-of-truth lives in `palettes.json` (synced
+// from the bball-sim-assets S3 bucket at build time via prebuild). The admin
+// Palette Editor reads + writes through `/api/admin/palettes` and calls
+// `applyPalettesPatch()` below to hot-swap the in-memory objects so admin
+// edits take effect in the active session without a reload. Every consumer
+// (composeSvg's _buildTokens, LayerContextMenu, AdminColorPicker, the
+// campaign + rookie generators) imports these named constants by reference,
+// so mutating the objects in place propagates the change everywhere.
 // ---------------------------------------------------------------------------
 
-export const SKIN_TONES = {
-  dark:   { base: '#6e4326', hi: '#85553a', sh: '#5a3620', deep: '#472a18' },
-  brown:  { base: '#8a5a3c', hi: '#9c6647', sh: '#7a4e33', deep: '#5e3a23' },
-  olive:  { base: '#b88457', hi: '#c89668', sh: '#a5734a', deep: '#8a5c38' },
-  tan:    { base: '#cda07a', hi: '#dcb591', sh: '#b88863', deep: '#9c7350' },
-  fair:   { base: '#e8c1a0', hi: '#f2d2b6', sh: '#d2a380', deep: '#c99a76' },
-  pale:   { base: '#f0d2bc', hi: '#f8e2d2', sh: '#dcb8a0', deep: '#c9a488' },
+export const SKIN_TONES = { ...(paletteData.skin || {}) }
+export const HAIR_COLORS = { ...(paletteData.hair || {}) }
+export const EYE_COLORS = { ...(paletteData.eye || {}) }
+export const LIP_COLORS = { ...(paletteData.lip || {}) }
+export const HEADBAND_STYLES = { ...(paletteData.headband || {}) }
+export const ETHNICITY_PROFILES = { ...(paletteData.ethnicity_profiles || {}) }
+
+// Reactive version stamp consumers can `void` inside computeds to opt into
+// re-evaluation when the admin saves a palette edit. Mirrors the role
+// `layerContentVersion` plays for variant content.
+export const paletteVersion = ref(0)
+
+// Schema definitions for each palette type. Drives the admin Palette
+// Editor's per-entry form (how many color pickers to render, what to
+// label them) and the auto-include-in-ethnicity behavior on add. Keep
+// the slot keys in sync with what the variant SVGs reference via
+// `data-color-token="<palette>.<slot>"` and the `{{token}}` strings in
+// legacy layer files.
+export const PALETTE_SCHEMAS = {
+  skin: {
+    slots: ['base', 'hi', 'sh', 'deep'],
+    slotLabels: ['Base', 'Highlight', 'Shadow', 'Deep'],
+    inEthnicity: 'skins',
+  },
+  hair: {
+    slots: ['base', 'hi', 'sh'],
+    slotLabels: ['Base', 'Highlight', 'Shadow'],
+    inEthnicity: 'hairs',
+  },
+  eye: {
+    slots: ['iris', 'pupil'],
+    slotLabels: ['Iris', 'Pupil'],
+    inEthnicity: null,
+  },
+  lip: {
+    // Lip palette entries are flat hex strings rather than slot objects.
+    // The editor uses a single picker per entry when slots === null.
+    slots: null,
+    slotLabels: null,
+    inEthnicity: null,
+  },
+  headband: {
+    slots: ['main', 'edge'],
+    slotLabels: ['Main', 'Edge'],
+    // The 'none' entry serializes to null and isn't editable from the
+    // grid (admin can't delete it either — it's the "no headband" sentinel
+    // composeSvg + LayerContextMenu both reference by name).
+    allowsNone: true,
+    inEthnicity: null,
+  },
 }
 
-export const HAIR_COLORS = {
-  black:        { base: '#2a2018', hi: '#3a2e22', sh: '#1c140e' },
-  dark_brown:   { base: '#3a2817', hi: '#4a3320', sh: '#2b1d12' },
-  brown:        { base: '#5a3d22', hi: '#6e4d2e', sh: '#46301a' },
-  light_brown:  { base: '#7a5634', hi: '#917046', sh: '#634428' },
-  blonde:       { base: '#c79a44', hi: '#e6c878', sh: '#a87e30' },
-  dirty_blonde: { base: '#9c7c44', hi: '#c0a060', sh: '#806434' },
-  auburn:       { base: '#6e3a22', hi: '#8a4d30', sh: '#562c18' },
-  red:          { base: '#9c4a26', hi: '#bd6038', sh: '#7c3818' },
-  gray:         { base: '#8a8a8a', hi: '#a8a8a8', sh: '#6e6e6e' },
-}
-
-export const EYE_COLORS = {
-  dark_brown: { iris: '#3a2414', pupil: '#160d06' },
-  brown:      { iris: '#5a3a26', pupil: '#1c1208' },
-  hazel:      { iris: '#7a6030', pupil: '#2a1e0e' },
-  blue:       { iris: '#4a7fb0', pupil: '#16263a' },
-  green:      { iris: '#5a8a5a', pupil: '#1e2e1e' },
-  gray:       { iris: '#8a98a0', pupil: '#2a3236' },
-}
-
-export const LIP_COLORS = {
-  warm:  '#8a4a3c',
-  rose:  '#a05a4a',
-  blush: '#b5715e',
-  deep:  '#7a4438',
-  clay:  '#9c5848',
-}
-
-export const HEADBAND_STYLES = {
-  none:  null,
-  white: { main: '#f4f4f4', edge: '#cfcfcf' },
-  black: { main: '#222222', edge: '#000000' },
-}
-
-export const ETHNICITY_PROFILES = {
-  black:  { skins: ['dark', 'brown'],           hairs: ['black', 'dark_brown'] },
-  latino: { skins: ['olive', 'tan', 'brown'],   hairs: ['black', 'dark_brown', 'brown'] },
-  white:  { skins: ['fair', 'pale', 'tan'],     hairs: ['blonde', 'dirty_blonde', 'brown', 'light_brown', 'auburn', 'red', 'black'] },
-  asian:  { skins: ['tan', 'olive', 'fair'],    hairs: ['black', 'dark_brown'] },
-  mixed:  { skins: ['brown', 'olive', 'tan'],   hairs: ['black', 'dark_brown', 'brown', 'dirty_blonde'] },
+/**
+ * Replace every palette object's contents with the server's truth. Called
+ * by `AdminPaletteEditor` after fetching `/api/admin/palettes` and after
+ * each save. Mutates the EXPORTED constants in place so existing imports
+ * (held by reference across the codebase) see the new keys immediately.
+ *
+ * `paletteVersion` bumps so any reactive consumer that touched it inside
+ * a computed re-evaluates. Most consumers iterate Object.entries() inside
+ * computeds that already track via other reactive deps (config refs, etc.),
+ * so the version stamp is a defensive belt-and-suspenders against any
+ * consumer that doesn't otherwise have a reactive trigger.
+ */
+export function applyPalettesPatch(json) {
+  if (!json || typeof json !== 'object') return
+  const sources = {
+    skin: SKIN_TONES,
+    hair: HAIR_COLORS,
+    eye: EYE_COLORS,
+    lip: LIP_COLORS,
+    headband: HEADBAND_STYLES,
+    ethnicity_profiles: ETHNICITY_PROFILES,
+  }
+  for (const [paletteKey, target] of Object.entries(sources)) {
+    const incoming = json[paletteKey]
+    if (!incoming || typeof incoming !== 'object') continue
+    for (const k of Object.keys(target)) delete target[k]
+    for (const [k, v] of Object.entries(incoming)) target[k] = v
+  }
+  paletteVersion.value++
 }
 
 // ---------------------------------------------------------------------------
