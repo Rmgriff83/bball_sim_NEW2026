@@ -628,18 +628,20 @@ async function deletePremade(name) {
 }
 
 /**
- * Pull the live S3 layer catalog and merge any variants that aren't already
- * known to the composer's bundled LAYER_CONTENT. Without this hydration,
- * variants saved after the last `npm run build` are invisible to the
- * picker until the next deploy — even though they exist in S3 and the
- * strip would happily fetch their bytes if it knew their names.
+ * Pull the live S3 layer catalog and rehydrate the composer's in-memory
+ * LAYER_CONTENT against S3 truth for EVERY variant, not just the ones
+ * missing from the bundle. The bundled glob is a snapshot from the last
+ * `npm run build`; any variant edited (or re-saved) after that deploy
+ * shows up stale on the main preview's compose path and in the variant
+ * editor's load path (both consult LAYER_CONTENT first). The variant
+ * strip dodges this because it does its own per-thumb HTTP fetch into
+ * a local cache — but composeSvg and AdminVariantEditor don't, so they
+ * render last-deploy bytes until this overwrite runs.
  *
- * Two-pass: first register names so they show up in pickers immediately,
- * then fetch the bytes for any variant not present in the bundle so that
- * composeSvg (the main preview's compose path) can actually render them.
- * The strip has its own per-thumb fetch cache, but the preview reads
- * LAYER_CONTENT directly — without the byte hydration, selecting a
- * post-deploy variant from the backdrop picker renders a blank layer.
+ * The N+1 fan-out (one GET per variant) is acceptable here because:
+ *   - admin-only path, runs once on mount + once per audience flip
+ *   - fetches run in parallel
+ *   - each variant SVG is small (~5-20KB)
  */
 async function loadLayerManifest(audience) {
   try {
@@ -648,17 +650,22 @@ async function loadLayerManifest(audience) {
     })
     const layers = data?.layers || {}
 
-    const missing = []
+    // Pass 1: register every name + tier synchronously so the pickers
+    // and strip have something to render before the byte fetches finish.
+    const allVariants = []
     for (const [layerId, entries] of Object.entries(layers)) {
       for (const entry of entries) {
         const tier = entry.tier === 'upgraded' ? 'paid' : 'generic'
-        const hadContent = !!getVariantSource(layerId, entry.name, audience)
         registerLayerVariant(layerId, entry.name, tier, audience)
-        if (!hadContent) missing.push({ layerId, variant: entry.name })
+        allVariants.push({ layerId, variant: entry.name })
       }
     }
 
-    await Promise.all(missing.map(async ({ layerId, variant }) => {
+    // Pass 2: fetch fresh bytes for ALL variants and overwrite
+    // LAYER_CONTENT. Skipping the ones already in the bundle (the
+    // previous behavior) is what was leaving the preview + editor
+    // stale after a save → reload cycle.
+    await Promise.all(allVariants.map(async ({ layerId, variant }) => {
       try {
         const res = await api.get('/api/admin/headshot-layers/variant', {
           params: { layer: layerId, variant, audience },

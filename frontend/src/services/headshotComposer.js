@@ -898,10 +898,22 @@ export function composeSvg(config, overrides = null, audience = 'player') {
   // the canonical integer-keyed JAW_NAMES path). Without it, a premade
   // built off a custom face would round-trip back to the default jawWidth
   // file in the user editor.
+  // Filename-vs-config-key boundary: config fields use underscores
+  // (`wide_grin`) for legibility but variant SVGs live on disk with
+  // hyphens (`wide-grin.svg`). Old single-token variants like `thin` /
+  // `wide` never tripped this — hyphenated names from admin-authored
+  // variants did, leaving `LAYER_CONTENT['mouth/wide_grin']` undefined
+  // even when `mouth/wide-grin.svg` was on S3. `_fileKey` normalizes
+  // every string-keyed variant lookup so any new multi-word variant
+  // works uniformly. `null` (off-state for stubble/headband) and
+  // `'none'` (which `_renderLayer` collapses to an empty wrapper)
+  // pass through unchanged.
+  const _fileKey = (v) => (v == null || v === 'none' ? v : String(v).replace(/_/g, '-'))
+
   parts.push(_renderLayer('face', faceFile, tokens, { skin: c.skin, jaw: c.jawWidth, file: faceFile }, ov('face'), po('face'), audience))
   parts.push(_renderLayer(
     'stubble',
-    c.stubbleStyle === 'none' ? null : c.stubbleStyle,
+    _fileKey(c.stubbleStyle === 'none' ? null : c.stubbleStyle),
     tokens,
     {
       style: c.stubbleStyle,
@@ -920,14 +932,14 @@ export function composeSvg(config, overrides = null, audience = 'player') {
     color: c.eyebrowColor,
     file: browFile,
   }, ov('eyebrows'), po('eyebrows'), audience))
-  parts.push(_renderLayer('eyes', c.eyeShape, tokens, { shape: c.eyeShape, color: c.eye }, ov('eyes'), po('eyes'), audience))
-  parts.push(_renderLayer('nose', c.noseShape, tokens, { shape: c.noseShape }, ov('nose'), po('nose'), audience))
-  parts.push(_renderLayer('mouth', c.mouthFullness, tokens, { fullness: c.mouthFullness, color: c.lip }, ov('mouth'), po('mouth'), audience))
-  parts.push(_renderLayer('neck', c.neckStyle, tokens, { style: c.neckStyle }, ov('neck'), po('neck'), audience))
+  parts.push(_renderLayer('eyes', _fileKey(c.eyeShape), tokens, { shape: c.eyeShape, color: c.eye }, ov('eyes'), po('eyes'), audience))
+  parts.push(_renderLayer('nose', _fileKey(c.noseShape), tokens, { shape: c.noseShape }, ov('nose'), po('nose'), audience))
+  parts.push(_renderLayer('mouth', _fileKey(c.mouthFullness), tokens, { fullness: c.mouthFullness, color: c.lip }, ov('mouth'), po('mouth'), audience))
+  parts.push(_renderLayer('neck', _fileKey(c.neckStyle), tokens, { style: c.neckStyle }, ov('neck'), po('neck'), audience))
   parts.push(_renderLayer('hair', hairFile, tokens, { style: c.hairStyle, color: c.hair }, ov('hair'), po('hair'), audience))
   parts.push(_renderLayer(
     'headband',
-    c.headband === 'none' ? null : c.headband,
+    _fileKey(c.headband === 'none' ? null : c.headband),
     tokens,
     { style: c.headband },
     ov('headband'), po('headband'), audience,
