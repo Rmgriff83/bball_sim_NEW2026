@@ -1,7 +1,10 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { X } from 'lucide-vue-next'
-import { SKIN_TONES, HAIR_COLORS, EYE_COLORS, LIP_COLORS } from '@/services/headshotComposer'
+import {
+  SKIN_TONES, HAIR_COLORS, EYE_COLORS, LIP_COLORS,
+  resolvePieceColor,
+} from '@/services/headshotComposer'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -12,12 +15,31 @@ const props = defineProps({
   initialLabel: { type: String, default: '' },
   // 0..1, null = fully opaque (the default). Pre-fills the opacity slider.
   initialOpacity: { type: Number, default: null },
+  // The active preview config — used to resolve palette tokens to their
+  // live hex values for the swatch backgrounds. Without this the swatches
+  // would render the static brown-keyed seed hex from TOKEN_SWATCHES and
+  // diverge from what the rendered headshot actually shows after Apply,
+  // making the Palette tab feel like it isn't doing anything when the
+  // resolved color happens to match the piece's existing color.
+  config: { type: Object, default: null },
   // MRU list from the editor's recentColors ref. Each entry:
   //   { mode: 'token', token, hex, label } OR
   //   { mode: 'literal', hex, label }
   // The Custom tab surfaces literal entries as quick swatches.
   recents: { type: Array, default: () => [] },
 })
+
+// Resolve a palette token to its current effective hex under the active
+// config. Falls back to the swatch's static seed hex when no config is
+// passed (defensive — keeps standalone usage of the picker valid).
+function liveHexForSwatch(swatch) {
+  if (!props.config) return swatch.hex
+  const resolved = resolvePieceColor(
+    { colorMode: 'token', colorToken: swatch.token },
+    props.config,
+  )
+  return resolved || swatch.hex
+}
 
 const emit = defineEmits(['close', 'confirm'])
 
@@ -229,7 +251,7 @@ function confirm() {
                 type="button"
                 class="acp-swatch"
                 :class="{ active: selectedToken === swatch.token }"
-                :style="{ background: swatch.hex }"
+                :style="{ background: liveHexForSwatch(swatch) }"
                 :title="`${swatch.label} (${swatch.token})`"
                 @click="pickToken(swatch.token)"
               />

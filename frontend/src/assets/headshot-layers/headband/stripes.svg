@@ -1,0 +1,21 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <g data-piece="base" data-color="#000000" data-color-label="Base">
+    <rect x="18" y="10" width="28" height="7"/>
+  </g>
+  <g data-piece="stripes" data-color="#a8edf7" data-color-label="Stripes">
+    <rect x="20" y="12" width="1" height="1"/>
+    <rect x="21" y="12" width="1" height="1"/>
+    <rect x="20" y="13" width="1" height="1"/>
+    <rect x="21" y="13" width="1" height="1"/>
+    <rect x="20" y="14" width="1" height="1"/>
+    <rect x="21" y="14" width="1" height="1"/>
+    <rect x="20" y="15" width="1" height="1"/>
+    <rect x="21" y="15" width="1" height="1"/>
+    <rect x="20" y="16" width="1" height="1"/>
+    <rect x="21" y="16" width="1" height="1"/>
+    <rect x="23" y="13" width="1" height="1"/>
+    <rect x="23" y="14" width="1" height="1"/>
+    <rect x="23" y="15" width="1" height="1"/>
+    <rect x="23" y="16" width="1" height="1"/>
+  </g>
+</svg>

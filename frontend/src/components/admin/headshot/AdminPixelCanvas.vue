@@ -72,6 +72,13 @@ const emit = defineEmits([
   'select-pieces',   // { ids: [pieceId], additive: bool }
   'translate',       // { pieceIds, dx, dy }           move drag
   'reference-translate', // { dx, dy }                 ref-move drag in display-space px
+  'stroke-end',      // no payload — fires after every pointer release so the
+                     // editor can close out the current undo group; without
+                     // this, the editor's snapshot-collapse logic (which
+                     // groups by action TYPE, not by drag session) would
+                     // collapse separate pencil strokes into one snapshot,
+                     // making undo wipe every stroke at once instead of
+                     // just the most recent one.
 ])
 
 // Render the full headshot via the composer, with the active layer
@@ -318,12 +325,17 @@ function onPointerUp() {
     refMoveDrag.value = null
     return
   }
+  // rotate + scale dispatch snapshot-producing updates during the drag, so
+  // they need a stroke-end at the close of each drag too. pan + ref-move
+  // don't mutate piece data so they don't need one.
   if (rotateDrag.value) {
     rotateDrag.value = null
+    emit('stroke-end')
     return
   }
   if (scaleDrag.value) {
     scaleDrag.value = null
+    emit('stroke-end')
     return
   }
   if (!isDragging.value) return
@@ -352,6 +364,10 @@ function onPointerUp() {
   dragLast.value = null
   moveDelta.value = null
   marqueeRect.value = null
+  // Fire AFTER any final emit above so the drag's last action still lands
+  // under the current snapshot group. Resetting the action-type tracker now
+  // means the next drag's first event starts a fresh undo step.
+  emit('stroke-end')
 }
 
 // --- pencil/eraser ---

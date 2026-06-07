@@ -69,22 +69,18 @@
     <rect x="35" y="26" width="1" height="1"/>
     <rect x="36" y="26" width="1" height="1"/>
     <rect x="37" y="26" width="1" height="1"/>
+    <rect x="22" y="26" width="1" height="1"/>
+    <rect x="27" y="26" width="1" height="1"/>
+    <rect x="38" y="26" width="1" height="1"/>
+    <rect x="32" y="26" width="1" height="1"/>
   </g>
-  <g data-piece="eyelids" data-color-token="skin.hi" data-color-label="eyelids">
+  <g data-piece="eyelids" data-color-token="skin.hi" data-color-label="eyelids" transform="translate(0 1)">
     <rect x="23" y="23" width="1" height="1"/>
     <rect x="24" y="23" width="1" height="1"/>
     <rect x="25" y="23" width="1" height="1"/>
     <rect x="26" y="23" width="1" height="1"/>
     <rect x="27" y="23" width="1" height="1"/>
     <rect x="28" y="23" width="1" height="1"/>
-    <rect x="22" y="24" width="1" height="1"/>
-    <rect x="23" y="24" width="1" height="1"/>
-    <rect x="24" y="24" width="1" height="1"/>
-    <rect x="25" y="24" width="1" height="1"/>
-    <rect x="26" y="24" width="1" height="1"/>
-    <rect x="27" y="24" width="1" height="1"/>
-    <rect x="28" y="24" width="1" height="1"/>
-    <rect x="29" y="24" width="1" height="1"/>
     <rect x="33" y="23" width="1" height="1"/>
     <rect x="34" y="23" width="1" height="1"/>
     <rect x="35" y="23" width="1" height="1"/>
@@ -92,24 +88,13 @@
     <rect x="37" y="23" width="1" height="1"/>
     <rect x="38" y="23" width="1" height="1"/>
     <rect x="39" y="23" width="1" height="1"/>
-    <rect x="32" y="24" width="1" height="1"/>
-    <rect x="33" y="24" width="1" height="1"/>
-    <rect x="34" y="24" width="1" height="1"/>
-    <rect x="35" y="24" width="1" height="1"/>
-    <rect x="36" y="24" width="1" height="1"/>
-    <rect x="37" y="24" width="1" height="1"/>
-    <rect x="38" y="24" width="1" height="1"/>
-    <rect x="39" y="24" width="1" height="1"/>
-    <rect x="40" y="24" width="1" height="1"/>
   </g>
   <g data-piece="pupils" data-color="#6d86e5" data-color-label="Iris" data-color-opacity="0.71">
     <rect x="26" y="25" width="1" height="1"/>
-    <rect x="26" y="26" width="1" height="1"/>
     <rect x="27" y="26" width="1" height="1"/>
     <rect x="36" y="25" width="1" height="1"/>
     <rect x="36" y="25" width="1" height="1"/>
     <rect x="36" y="26" width="1" height="1"/>
-    <rect x="37" y="26" width="1" height="1"/>
     <rect x="38" y="26" width="1" height="1"/>
     <rect x="38" y="25" width="1" height="1"/>
     <rect x="37" y="25" width="1" height="1"/>
@@ -117,9 +102,5 @@
     <rect x="27" y="25" width="1" height="1"/>
     <rect x="25" y="25" width="1" height="1"/>
     <rect x="25" y="26" width="1" height="1"/>
-  </g>
-  <g data-piece="pupil" data-color-token="eye.pupil" data-color-label="Pupil">
-    <rect x="37" y="26" width="1" height="1"/>
-    <rect x="26" y="26" width="1" height="1"/>
   </g>
 </svg>

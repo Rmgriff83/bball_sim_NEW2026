@@ -499,6 +499,18 @@ function openNewVariantModal() {
   newVariantModalOpen.value = true
 }
 
+// Belt-and-suspenders normalization: HTML attributes (autocapitalize="none"
+// + autocorrect="off") tell iOS not to auto-capitalize, but if any caps
+// still sneak in (paste, switch keyboards, etc.) we lowercase on every
+// keystroke so the validator never trips on something that's already
+// being saved as lowercase to S3. Same-length transform keeps the
+// cursor position stable.
+function onNewVariantNameInput() {
+  const lowered = newVariantName.value.toLowerCase()
+  if (lowered !== newVariantName.value) newVariantName.value = lowered
+  newVariantError.value = ''
+}
+
 function validateNewVariantName() {
   const name = newVariantName.value.trim()
   if (!name) {
@@ -935,7 +947,11 @@ onUnmounted(() => {
             class="nv-input"
             placeholder="e.g. mohawk"
             maxlength="40"
-            @input="newVariantError = ''"
+            autocapitalize="none"
+            autocomplete="off"
+            autocorrect="off"
+            spellcheck="false"
+            @input="onNewVariantNameInput"
             @keydown.enter.prevent="confirmNewVariant"
           />
           <div class="nv-hint">lowercase letters, numbers, hyphens — no spaces or extension</div>

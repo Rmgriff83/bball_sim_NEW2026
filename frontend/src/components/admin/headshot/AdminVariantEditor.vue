@@ -440,6 +440,17 @@ function undo() {
   lastActionType.value = null
 }
 
+// Pointer release on the canvas closes the current drag's undo group. The
+// snapshot() helper collapses consecutive same-action calls into one undo
+// step (so a single pencil drag with many paint events = one undo); without
+// this reset, separate drags of the same tool also collapse because
+// `lastActionType` never gets cleared between them — undo would then wipe
+// every stroke since the very first one. Resetting on stroke-end means each
+// drag becomes its own undo step.
+function handleStrokeEnd() {
+  lastActionType.value = null
+}
+
 // ----- init -----
 // ----- editor working-state persistence -----
 // Vite triggers a full page reload after every save (raw + eager glob
@@ -1392,6 +1403,7 @@ const headerTitle = computed(() =>
             @select-pieces="handleSelect"
             @translate="handleTranslate"
             @reference-translate="handleReferenceTranslate"
+            @stroke-end="handleStrokeEnd"
           />
         </div>
         <!-- Zoom controls overlay — anchored to the wrap, NOT the canvas, so
@@ -1652,6 +1664,7 @@ const headerTitle = computed(() =>
       :initial-hex="colorPickerInitial.hex"
       :initial-label="colorPickerInitial.label"
       :initial-opacity="colorPickerInitial.opacity"
+      :config="config"
       :recents="recentColors"
       @close="colorPickerOpen = false; colorPickerTarget = null; pendingEyedropHex = null"
       @confirm="handleColorConfirm"
@@ -1683,7 +1696,12 @@ const headerTitle = computed(() =>
             class="rename-input"
             maxlength="40"
             placeholder="lowercase-hyphenated"
+            autocapitalize="none"
+            autocomplete="off"
+            autocorrect="off"
+            spellcheck="false"
             :disabled="renaming"
+            @input="renameBuffer = renameBuffer.toLowerCase()"
             @keydown.enter.prevent="confirmRename"
           />
         </label>

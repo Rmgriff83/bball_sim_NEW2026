@@ -1,5 +1,5 @@
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
-  <g data-piece="color-1" data-color="#ffffff" data-color-label="Color 1" transform="translate(1 0)">
+  <g data-piece="color-1" data-color="#ffffff" data-color-label="Base" transform="translate(1 0)">
     <rect x="20" y="25" width="7" height="2"/>
     <rect x="35" y="25" width="7" height="2"/>
     <rect x="24" y="25" width="1" height="1"/>
