@@ -192,13 +192,24 @@ def _split_brow_name(name):
 def _load_layer(layer_id, variant_key):
     """Return the inner rect content of a layer file (between <svg> and
     </svg>), normalized to one element per line with no leading whitespace.
-    Returns '' when the variant has no file (off-state layers)."""
+    Returns '' when the variant has no file (off-state layers).
+
+    Filename-vs-config-key normalization: config fields use underscores
+    (`wide_grin`) per `_scan_layer_variants`, but on-disk filenames use
+    hyphens (`wide-grin.svg`). Hair already does this conversion in
+    `compose_svg`, but the other string-keyed layers (eyes/nose/mouth/
+    neck/stubble/headband) pass the raw config form straight through —
+    so any admin-authored variant whose filename contains a hyphen was
+    silently missing from the procedural pool until this normalization
+    landed. Mirror of the JS-side fix in `getVariantSource`.
+    """
     if variant_key is None:
         return ''
-    cache_key = f'{layer_id}/{variant_key}'
+    file_key = variant_key.replace('_', '-')
+    cache_key = f'{layer_id}/{file_key}'
     if cache_key in _layer_cache:
         return _layer_cache[cache_key]
-    path = os.path.join(_LAYER_DIR, layer_id, f'{variant_key}.svg')
+    path = os.path.join(_LAYER_DIR, layer_id, f'{file_key}.svg')
     try:
         with open(path) as f:
             content = f.read()

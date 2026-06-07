@@ -125,18 +125,6 @@ async function confirmPurchase() {
     ? 'Purchase complete! Feature unlocked.'
     : 'Purchase complete! Tokens added to your account.'
 
-  // TEMP: until real IAP fulfillment is wired up, unlock-kind purchases
-  // short-circuit the StoreKit / Stripe path and grant the feature locally.
-  // Remove this branch and let the normal native/web flow handle unlocks
-  // once the SKU + webhook are live.
-  if (isUnlock && bundle.feature) {
-    authStore.grantLocalUnlock(bundle.feature)
-    toastStore.showSuccess(successMessage)
-    purchasing.value = false
-    confirmBundle.value = null
-    return
-  }
-
   if (isNative) {
     // Native iOS — StoreKit 2 via RevenueCat. Tokens / unlocks are credited
     // server-side by the RevenueCat webhook AFTER StoreKit returns success.
