@@ -10,7 +10,9 @@
     "open:ios": "cap open ios",
     "preview": "vite preview",
     "audit:gameplay": "node scripts/audit-gameplay-coverage.js",
-    "prebuild": "node scripts/audit-gameplay-coverage.js"
+    "sync:headshots": "node scripts/sync-headshot-assets.mjs",
+    "sync:headshots:upload": "node scripts/sync-headshot-assets.mjs upload",
+    "prebuild": "npm run sync:headshots && node scripts/audit-gameplay-coverage.js"
   },
   "dependencies": {
     "@capacitor/cli": "^8.3.4",
@@ -30,6 +32,7 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1063.0",
     "@capacitor/assets": "^3.0.5",
     "@vitejs/plugin-vue": "^6.0.1",
     "vite": "^7.2.4",

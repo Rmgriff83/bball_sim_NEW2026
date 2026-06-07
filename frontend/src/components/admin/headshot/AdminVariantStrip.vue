@@ -1,8 +1,9 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, reactive, watch } from 'vue'
 import { Plus } from 'lucide-vue-next'
 import {
-  composeSvg, listAllVariants, getLayerTier, LAYERS,
+  composeSvg, listAllVariants, listAllVariantsForAudience,
+  getLayerTier, LAYERS,
   layerContentVersion,
 } from '@/services/headshotComposer'
 import { useAudioStore } from '@/stores/audio'
@@ -20,6 +21,9 @@ const props = defineProps({
   pendingVariant: { type: String, default: null },
   // Layer list for the in-header pill picker. Empty array = no pills.
   layers: { type: Array, default: () => [] },
+  // Active audience tab. Filters the strip's variant list to only those
+  // tagged for this audience. 'player' (default) preserves legacy behavior.
+  audience: { type: String, default: 'player' },
 })
 
 // Per-variant SVG content fetched from the backend. This bypasses the
@@ -32,43 +36,56 @@ const props = defineProps({
 // bumps (save/delete/rename). Each thumb passes its fetched content as
 // the `face` / `hair` / etc. override to composeSvg, so the rendered
 // thumbnail reflects exactly what's on disk right now.
-const fetchedContent = ref(new Map())
-const fetching = ref(false)
+//
+// fetchedContent is a reactive plain object (not Map) so per-variant
+// updates trigger granular re-renders — each tile resolves the moment
+// its S3 fetch returns instead of waiting for the whole batch.
+const fetchedContent = reactive({})
+// Variants whose backend fetch is in flight. The thumb template overlays
+// a spinner while a variant is in this set. Cleared per-variant as each
+// fetch resolves (success OR failure), so the overlay can't get stuck.
+const pendingFetches = reactive(new Set())
 
-async function loadVariantsForLayer(layerId) {
+// Generation counter — bumped on every loadVariantsForLayer call. Stale
+// fetches (from a layer/audience switch that happened mid-batch) check
+// this before mutating state so they can't clobber the active run.
+let loadGeneration = 0
+
+async function loadVariantsForLayer(layerId, audience) {
   if (!layerId) return
-  fetching.value = true
-  const next = new Map()
-  try {
-    const variantList = listAllVariants(layerId)
-    const results = await Promise.all(variantList.map(async (v) => {
-      try {
-        const { data } = await api.get('/api/admin/headshot-layers/variant', {
-          params: { layer: layerId, variant: v },
-        })
-        return [v, data?.content || '']
-      } catch (err) {
-        // 503 in prod (no FRONTEND_ASSETS_PATH) is expected — fall back to
-        // the bundled LAYER_CONTENT by leaving the entry unset, which
-        // makes thumbnailFor use the composer's default lookup.
-        return [v, null]
-      }
-    }))
-    for (const [v, content] of results) {
-      if (content) next.set(v, content)
+  const gen = ++loadGeneration
+
+  // Clear prior state so the picker doesn't briefly render with stale
+  // content from a previous layer / audience.
+  for (const k of Object.keys(fetchedContent)) delete fetchedContent[k]
+  pendingFetches.clear()
+
+  const variantList = listAllVariantsForAudience(layerId, audience)
+  for (const v of variantList) pendingFetches.add(v)
+
+  await Promise.all(variantList.map(async (v) => {
+    try {
+      const { data } = await api.get('/api/admin/headshot-layers/variant', {
+        params: { layer: layerId, variant: v, audience },
+      })
+      if (gen !== loadGeneration) return
+      if (data?.content) fetchedContent[v] = data.content
+    } catch (err) {
+      // 503 in prod (no bucket configured) is expected — leave the entry
+      // unset so thumbnailFor falls back to the composer's bundled lookup.
+    } finally {
+      if (gen === loadGeneration) pendingFetches.delete(v)
     }
-  } finally {
-    fetchedContent.value = next
-    fetching.value = false
-  }
+  }))
 }
 
-// Fire on mount + every layer switch + every successful save/delete/rename.
-// `layerContentVersion` lives in the composer module so any of the three
-// admin write paths bumps it, which is exactly when we want to refetch.
+// Fire on mount + every layer switch + audience switch + every successful
+// save/delete/rename. `layerContentVersion` lives in the composer module so
+// any of the three admin write paths bumps it, which is exactly when we
+// want to refetch.
 watch(
-  [() => props.activeLayerId, layerContentVersion],
-  ([layerId]) => loadVariantsForLayer(layerId),
+  [() => props.activeLayerId, () => props.audience, layerContentVersion],
+  ([layerId, audience]) => loadVariantsForLayer(layerId, audience),
   { immediate: true },
 )
 
@@ -79,7 +96,7 @@ function selectLayer(layerId) {
 }
 
 function enterEdit(variant) {
-  emit('enter-edit', { variant, tier: getLayerTier(props.activeLayerId, variant) })
+  emit('enter-edit', { variant, tier: getLayerTier(props.activeLayerId, variant, props.audience) })
 }
 
 function requestCreate() {
@@ -88,7 +105,12 @@ function requestCreate() {
 
 const layer = computed(() => LAYERS.find(l => l.id === props.activeLayerId) ?? null)
 
-const variants = computed(() => listAllVariants(props.activeLayerId))
+// Filter by active audience tab so the Coaches tab only shows variants
+// tagged for coaches. Touch layerContentVersion so chip toggles re-evaluate.
+const variants = computed(() => {
+  void layerContentVersion.value
+  return listAllVariantsForAudience(props.activeLayerId, props.audience)
+})
 
 function labelFor(variant) {
   return variant.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
@@ -108,10 +130,14 @@ function thumbnailFor(variant) {
   // regardless of whether the layer is string- or integer-keyed in config.
   // Falls back to the bundled lookup (no override) if the fetch hasn't
   // returned yet or failed.
-  const fresh = fetchedContent.value.get(variant)
+  const fresh = fetchedContent[variant]
   const overrides = fresh ? { [props.activeLayerId]: fresh } : null
-  const composed = composeSvg(props.config, overrides)
+  const composed = composeSvg(props.config, overrides, props.audience)
   return _isolateActiveLayer(composed, variant)
+}
+
+function isLoading(variant) {
+  return pendingFetches.has(variant)
 }
 
 function _isolateActiveLayer(svg, variant) {
@@ -127,7 +153,7 @@ function _isolateActiveLayer(svg, variant) {
 }
 
 function isPaid(variant) {
-  return getLayerTier(props.activeLayerId, variant) === 'paid'
+  return getLayerTier(props.activeLayerId, variant, props.audience) === 'paid'
 }
 
 function toggleTier(variant) {
@@ -140,6 +166,7 @@ function toggleTier(variant) {
   if (next === 'paid') audioStore.suppressClickSound()
   emit('toggle-tier', { variant, tier: next })
 }
+
 </script>
 
 <template>
@@ -184,12 +211,23 @@ function toggleTier(variant) {
              rather than diffing innerHTML against its previous string. This
              beats relying purely on dep-tracking inside `thumbnailFor` —
              v-html with a stable parent key can keep stale DOM around even
-             when the bound expression returns a fresh string. -->
-        <div
-          :key="`thumb-${variant}-${layerContentVersion}`"
-          class="avs-thumb"
-          v-html="thumbnailFor(variant)"
-        />
+             when the bound expression returns a fresh string.
+
+             Per-tile loading overlay: while this variant's S3 fetch is in
+             flight, thumbnailFor falls back to the bundled composer and
+             every tile renders the active config's variant — making them
+             all look identical until the batch resolves. The overlay
+             masks that during the load. -->
+        <div class="avs-thumb-wrap">
+          <div
+            :key="`thumb-${variant}-${layerContentVersion}`"
+            class="avs-thumb"
+            v-html="thumbnailFor(variant)"
+          />
+          <div v-if="isLoading(variant)" class="avs-thumb-loader" aria-label="Loading variant">
+            <div class="avs-spinner"></div>
+          </div>
+        </div>
         <div class="avs-meta">
           <span class="avs-name">{{ labelFor(variant) }}</span>
           <div class="avs-toggle-row" :class="{ paid: isPaid(variant), pending: pendingVariant === variant }">
@@ -415,6 +453,45 @@ function toggleTier(variant) {
   display: block;
 }
 
+.avs-thumb-wrap {
+  position: relative;
+  width: 80px;
+  height: 80px;
+}
+
+.avs-thumb-loader {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+}
+
+[data-theme="light"] .avs-thumb-loader {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.avs-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: rgba(168, 85, 247, 0.95);
+  animation: avs-spin 0.7s linear infinite;
+}
+
+[data-theme="light"] .avs-spinner {
+  border: 2px solid rgba(0, 0, 0, 0.15);
+  border-top-color: rgba(168, 85, 247, 0.95);
+}
+
+@keyframes avs-spin {
+  to { transform: rotate(360deg); }
+}
+
 .avs-meta {
   display: flex;
   flex-direction: column;
@@ -510,4 +587,5 @@ function toggleTier(variant) {
 [data-theme="light"] .avs-toggle-row.paid .avs-tier-label {
   color: #b45309;
 }
+
 </style>

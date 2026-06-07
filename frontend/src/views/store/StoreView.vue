@@ -21,6 +21,34 @@ const confirmBundle = ref(null)
 const tokenBalance = computed(() => authStore.profile?.tokens ?? 0)
 const isNative = Capacitor.isNativePlatform()
 
+// Wait for the RevenueCat → backend webhook to actually fulfill the
+// purchase server-side. StoreKit can resolve before Apple's server-to-
+// server notification reaches our backend (typically 1-5s, occasionally
+// longer under load), so a one-shot fetchUser races ahead and shows the
+// stale balance. Poll until the relevant field changes or we hit ~12s,
+// then bail — the success toast still fires either way and the next
+// page mount will pick up the credited balance.
+async function _waitForFulfillment(bundle, beforeTokens) {
+  const MAX_ATTEMPTS = 8
+  const DELAY_MS = 1500
+  const isUnlock = bundle.kind === 'unlock'
+  const hadFeature = isUnlock && bundle.feature
+    ? authStore.hasFeature(bundle.feature)
+    : false
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    try { await authStore.fetchUser() } catch { /* network blip — retry */ }
+    if (isUnlock && bundle.feature) {
+      if (!hadFeature && authStore.hasFeature(bundle.feature)) return
+    } else {
+      const after = authStore.profile?.tokens ?? 0
+      if (after > beforeTokens) return
+    }
+    if (i < MAX_ATTEMPTS - 1) {
+      await new Promise(resolve => setTimeout(resolve, DELAY_MS))
+    }
+  }
+}
+
 // Consumable token bundles (existing).
 const tokenBundles = [
   { id: 'tokens_1000', kind: 'tokens', amount: 1000, price: '$0.99', label: '1,000' },
@@ -35,9 +63,9 @@ const unlockBundles = [
     id: 'headshot_editor_unlock',
     kind: 'unlock',
     feature: 'headshot_editor',
-    price: '$2.99',
+    price: '$5.99',
     label: 'Headshot Editor',
-    description: 'Customize any player\'s headshot. One-time purchase.'
+    description: 'Customize any player\'s, coach\'s, or other personnel\'s headshot. Also unlocks renaming your team on campaign creation. One-time purchase.'
   }
 ]
 
@@ -111,18 +139,21 @@ async function confirmPurchase() {
 
   if (isNative) {
     // Native iOS — StoreKit 2 via RevenueCat. Tokens / unlocks are credited
-    // server-side by the RevenueCat webhook; we refresh the profile once
-    // the purchase resolves so the new balance or unlocked feature appears.
+    // server-side by the RevenueCat webhook AFTER StoreKit returns success.
+    // The Apple → RevenueCat → our-backend hop is server-to-server and
+    // typically lands in 1-5 seconds, but a single fetchUser fired
+    // immediately after iap.purchase() resolves often races ahead of it —
+    // the user sees the old balance until they navigate away/back. Poll
+    // with backoff up to ~12s waiting for the balance to actually change.
     try {
+      const beforeTokens = authStore.profile?.tokens ?? 0
       const result = await iap.purchase(bundle.id)
       if (result.cancelled) {
         purchasing.value = false
         confirmBundle.value = null
         return
       }
-      try {
-        await authStore.fetchUser()
-      } catch {}
+      await _waitForFulfillment(bundle, beforeTokens)
       toastStore.showSuccess(successMessage)
       confirmBundle.value = null
     } catch (err) {

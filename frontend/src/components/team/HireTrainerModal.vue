@@ -8,6 +8,8 @@ import { useAudioStore } from '@/stores/audio'
 import { useSyncStore } from '@/stores/sync'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { COACH_FIRST_NAMES, COACH_LAST_NAMES } from '@/engine/data/coaches'
+import { PERSONNEL_POOL_KEY } from '@/engine/data/personnelTiers'
+import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
 import api from '@/composables/useApi'
 
 const props = defineProps({
@@ -91,10 +93,18 @@ function generateCandidates() {
   candidates.value = results
 }
 
-watch(() => props.show, (val) => {
+watch(() => props.show, async (val) => {
   if (val) {
-    generateCandidates()
     hiring.value = false
+    try {
+      const campaign = await CampaignRepository.get(props.campaignId)
+      const pool = campaign?.settings?.[PERSONNEL_POOL_KEY.physician]
+      if (Array.isArray(pool) && pool.length > 0) {
+        candidates.value = pool
+        return
+      }
+    } catch { /* fall through to local generator */ }
+    generateCandidates()
   }
 })
 
@@ -125,11 +135,18 @@ async function hireTrainer(candidate) {
     const currentSeason = campaignStore.currentCampaign?.currentSeasonYear ?? 2025
     campaign.settings = campaign.settings ?? {}
     campaign.settings.trainer = {
+      id: candidate.id,
       name: candidate.name,
       tier: candidate.tier,
       hiredSeason: currentSeason,
       contractYears: 2,
       perks: candidate.perks.map(p => ({ key: p.key, requiredLevel: p.requiredLevel })),
+      headshot: candidate.headshot ?? null,
+      hasCustomHeadshot: candidate.hasCustomHeadshot ?? false,
+    }
+    const poolKey = PERSONNEL_POOL_KEY.physician
+    if (Array.isArray(campaign.settings[poolKey])) {
+      campaign.settings[poolKey] = campaign.settings[poolKey].filter(p => p.id !== candidate.id)
     }
     await CampaignRepository.save(campaign)
 
@@ -186,7 +203,13 @@ async function hireTrainer(candidate) {
                 :class="{ 'tier-4': candidate.tier === 4 }"
               >
                 <div class="candidate-header">
-                  <div class="candidate-avatar">{{ candidate.name.charAt(0) }}</div>
+                  <div class="candidate-avatar-wrap">
+                    <PersonnelAvatar
+                      :personnel="candidate"
+                      kind="physician"
+                      :size="48"
+                    />
+                  </div>
                   <div class="candidate-info">
                     <h4 class="candidate-name">{{ candidate.name }}</h4>
                     <div class="candidate-tier">

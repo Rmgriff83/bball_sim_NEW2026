@@ -187,7 +187,10 @@ class SyncController extends Controller
                 'headshots' => 'present|array',
                 'headshots.*.campaignId' => 'sometimes',
                 'headshots.*.playerId' => 'required',
-                'headshots.*.svgContent' => 'required|string|max:50000',
+                // 250KB cap — composed headshots with piece-wrapped face
+                // variants (e.g. the slim face alone is ~70KB) can easily
+                // exceed the old 50KB limit once you add hair/eyes/etc.
+                'headshots.*.svgContent' => 'required|string|max:250000',
                 'clientUpdatedAt' => 'required|string',
             ]);
 

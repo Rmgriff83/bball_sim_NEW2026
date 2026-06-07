@@ -83,12 +83,23 @@ function _parseNewFormatPieces(inner) {
       colorMode: attrs['data-color-token'] ? 'token' : 'literal',
       colorToken: attrs['data-color-token'] || null,
       colorHex: attrs['data-color'] || null,
+      // Optional sidecar opacity (0..1). Null = fully opaque (back-compat
+      // with every piece authored before opacity support landed).
+      colorOpacity: attrs['data-color-opacity'] != null
+        ? _parseAlphaAttr(attrs['data-color-opacity'])
+        : null,
       transform: _parseTransform(attrs['transform']),
       rects,
       visible: true,
     })
   }
   return pieces
+}
+
+function _parseAlphaAttr(v) {
+  const n = parseFloat(v)
+  if (!Number.isFinite(n)) return null
+  return Math.max(0, Math.min(1, n))
 }
 
 function _migrateLegacyRects(inner) {
@@ -202,6 +213,13 @@ function _serializePiece(piece) {
   }
   if (piece.label) {
     attrs.push(`data-color-label="${_escapeAttr(piece.label)}"`)
+  }
+  // Sidecar opacity. Skip when null or fully opaque (1) to keep variant
+  // files clean and back-compat with consumers that don't know about the
+  // attribute.
+  if (piece.colorOpacity != null && piece.colorOpacity < 1) {
+    const a = Math.max(0, Math.min(1, Number(piece.colorOpacity)))
+    attrs.push(`data-color-opacity="${a.toFixed(2)}"`)
   }
   const transformStr = _serializeTransform(piece.transform, piece.rects)
   if (transformStr) attrs.push(`transform="${transformStr}"`)

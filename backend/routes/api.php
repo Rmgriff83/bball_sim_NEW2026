@@ -67,12 +67,19 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/sync/{clientId}', [SyncController::class, 'deleteCampaign']);
 
     // Admin: headshot layer catalog management. The controller enforces
-    // global_admin and 503s in production where FRONTEND_ASSETS_PATH is unset.
+    // global_admin and 503s when ASSETS_AWS_BUCKET isn't configured.
+    Route::get('/admin/headshot-layers/manifest', [AdminHeadshotController::class, 'listManifest']);
     Route::post('/admin/headshot-layers/tier', [AdminHeadshotController::class, 'setTier']);
     Route::post('/admin/headshot-layers/save', [AdminHeadshotController::class, 'saveVariant']);
     Route::post('/admin/headshot-layers/delete', [AdminHeadshotController::class, 'deleteVariant']);
     Route::post('/admin/headshot-layers/rename', [AdminHeadshotController::class, 'renameVariant']);
     Route::get('/admin/headshot-layers/variant', [AdminHeadshotController::class, 'getVariant']);
+
+    // Admin: premade-headshot snapshots authored from the catalog preview.
+    // Same admin/env gates as the layer endpoints above.
+    Route::get('/admin/headshot-premades', [AdminHeadshotController::class, 'listPremades']);
+    Route::post('/admin/headshot-premades', [AdminHeadshotController::class, 'savePremade']);
+    Route::delete('/admin/headshot-premades/{name}', [AdminHeadshotController::class, 'deletePremade']);
 });
 
 // Public routes

@@ -321,7 +321,7 @@ const PLAYOFF_ROUND_LABELS = {
   round1: 'First Round',
   round2: 'Conference Semifinals',
   confFinals: 'Conference Finals',
-  finals: 'NBA Finals',
+  finals: 'Finals',
 }
 
 // Where the user finished last season — drives the offseason summary line.

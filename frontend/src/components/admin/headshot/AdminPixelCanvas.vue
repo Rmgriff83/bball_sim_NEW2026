@@ -11,6 +11,9 @@ import {
 const props = defineProps({
   // The layer being edited (e.g. 'hair')
   layerId: { type: String, required: true },
+  // Audience the variant belongs to — drives which folder the backdrop
+  // layers load from when composing the preview behind the editable layer.
+  audience: { type: String, default: 'player' },
   // In-memory pieces array (live edits)
   pieces: { type: Array, required: true },
   // Backdrop config — the rest of the head renders behind the editable layer
@@ -61,7 +64,7 @@ const scaledSize = computed(() => props.size * props.zoom)
 
 const emit = defineEmits([
   'paint',           // { pieceId, pixels: [{x,y}] }   pencil
-  'erase',           // { pieceId, x, y }              eraser (one cell)
+  'erase',           // { pieceId, pixels: [{x,y},...] } eraser (brush footprint)
   'add-rect',        // { pieceId, rect: {x,y,w,h} }   rect tool commit
   'cut-region',      // { pieceId, rect: {x,y,w,h} }   cut tool commit
   'scale-update',    // { pieceId, rects: [...] }      scale drag — full new rects on each move
@@ -83,7 +86,7 @@ const overrideSvg = computed(() => {
 })
 
 const composedSvg = computed(() => {
-  const base = composeSvg(props.config, { [props.layerId]: overrideSvg.value })
+  const base = composeSvg(props.config, { [props.layerId]: overrideSvg.value }, props.audience)
   return _injectOpacityStyles(base)
 })
 
@@ -284,7 +287,8 @@ function onPointerMove(event) {
     }
     case 'eraser': {
       const line = bresenhamLine(dragLast.value.x, dragLast.value.y, grid.x, grid.y)
-      for (const p of line.slice(1)) _eraseAt(p)
+      // Skip the first cell — already erased on the previous step.
+      _eraseMany(line.slice(1))
       dragLast.value = grid
       break
     }
@@ -383,9 +387,29 @@ function _paintMany(grids) {
 function _eraseAt(grid) {
   if (!props.activePieceId) return
   const cells = brushFootprint(clampToGrid(grid.x), clampToGrid(grid.y), props.brushSize)
-  for (const c of cells) {
-    emit('erase', { pieceId: props.activePieceId, x: c.x, y: c.y })
+  if (cells.length === 0) return
+  emit('erase', { pieceId: props.activePieceId, pixels: cells })
+}
+
+function _eraseMany(grids) {
+  if (!props.activePieceId || grids.length === 0) return
+  // Mirror _paintMany: expand each interpolated cursor cell into its brush
+  // footprint, dedupe, emit once per stroke step. Without this a fast drag
+  // would fire one event per cell × brush footprint and blow past the
+  // editor's snapshot/undo budget.
+  const seen = new Set()
+  const pixels = []
+  for (const g of grids) {
+    const cells = brushFootprint(clampToGrid(g.x), clampToGrid(g.y), props.brushSize)
+    for (const c of cells) {
+      const key = `${c.x},${c.y}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      pixels.push(c)
+    }
   }
+  if (pixels.length === 0) return
+  emit('erase', { pieceId: props.activePieceId, pixels })
 }
 
 // --- select / move ---

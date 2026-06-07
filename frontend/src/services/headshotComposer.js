@@ -2,6 +2,7 @@
 // headshotComposer.js — JS port of generate_headshots.py
 // =============================================================================
 import { reactive, ref } from 'vue'
+import { defaultLabelForToken, generatePieceId } from '@/services/svgPieces'
 
 // The Python script is the source-of-truth for the bundled SVG library. This
 // module mirrors it function-for-function so the editor can:
@@ -132,17 +133,19 @@ export const LAYERS = [
 // ---------------------------------------------------------------------------
 // Layer SVG library — loaded at build time by Vite
 // ---------------------------------------------------------------------------
-// Each layer variant lives in its own standalone SVG file in one of two
-// parallel folders:
+// Each layer variant lives in its own standalone SVG file. Audience and tier
+// are encoded ENTIRELY by folder location — there's no sidecar manifest.
+// The four folders form the 2×2 axis:
 //
-//   headshot-layers/             ← generic tier (default — campaign pool + editor)
-//   headshot-layers-upgraded/    ← upgraded tier (editor only, IAP-gated for users)
+//   headshot-layers/                  ← player + generic (default — campaign pool)
+//   headshot-layers-upgraded/         ← player + upgraded (IAP-gated for users)
+//   headshot-layers-coaches/          ← coach  + generic
+//   headshot-layers-coaches-upgraded/ ← coach  + upgraded
 //
-// The folder location IS the tier — there's no manifest. Admins toggle the
-// tier of a variant by moving its file between folders (via the admin editor
-// route + AdminHeadshotController). The Python generator scans only the
-// generic folder, so upgraded variants never end up in the bundled
-// procedural pool.
+// Admin actions (saveVariant / setTier / deleteVariant / rename) all take an
+// audience parameter to route to the correct folder pair. The Python
+// generator scans only the player+generic folder, so upgraded and coach
+// variants never end up in the bundled procedural pool.
 //
 // Files use `{{token}}` placeholders (e.g. `{{skin.base}}`, `{{hair.sh}}`)
 // in place of hex colors. The composer fills them in from the active
@@ -150,40 +153,62 @@ export const LAYERS = [
 //
 // To regenerate the layer files from the original Python build_* code, run
 //   cd frontend/src/assets && python3 extract_layers.py
-const GENERIC_FILES = import.meta.glob('@/assets/headshot-layers/**/*.svg', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-})
-const UPGRADED_FILES = import.meta.glob('@/assets/headshot-layers-upgraded/**/*.svg', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-})
 
-// Layer content map: variant key → raw SVG file content. Built once at module
-// init from the merged file globs; doesn't change at runtime (the underlying
-// files require a Vite reload to swap their globbed contents).
-const LAYER_CONTENT = (() => {
-  const map = {}
-  for (const [path, content] of Object.entries(GENERIC_FILES)) {
-    const m = path.match(/headshot-layers\/([^/]+)\/([^/]+)\.svg$/)
-    if (m) map[`${m[1]}/${m[2]}`] = content
-  }
-  for (const [path, content] of Object.entries(UPGRADED_FILES)) {
-    const m = path.match(/headshot-layers-upgraded\/([^/]+)\/([^/]+)\.svg$/)
-    if (m) map[`${m[1]}/${m[2]}`] = content
-  }
-  return map
-})()
+const PLAYER_GENERIC_FILES = import.meta.glob(
+  '@/assets/headshot-layers/**/*.svg',
+  { eager: true, query: '?raw', import: 'default' },
+)
+const PLAYER_UPGRADED_FILES = import.meta.glob(
+  '@/assets/headshot-layers-upgraded/**/*.svg',
+  { eager: true, query: '?raw', import: 'default' },
+)
+const COACH_GENERIC_FILES = import.meta.glob(
+  '@/assets/headshot-layers-coaches/**/*.svg',
+  { eager: true, query: '?raw', import: 'default' },
+)
+const COACH_UPGRADED_FILES = import.meta.glob(
+  '@/assets/headshot-layers-coaches-upgraded/**/*.svg',
+  { eager: true, query: '?raw', import: 'default' },
+)
 
-// Derive string-keyed variant lists from the on-disk layer files. Filenames
-// use hyphens (e.g. side-part.svg) but composer config keys use underscores
-// (e.g. side_part), so we reverse the convention while scanning.
-//
-// Layers tracked here are EXACTLY the ones where a variant name = a config
-// value. Eyebrows are intentionally NOT included because their files combine
-// two axes (thickness + angle, e.g. thick-up.svg).
+// Per-audience content maps. Each holds "<layer>/<variant>" → raw SVG content.
+// Two parallel maps mean a variant named `hair/test` can exist independently
+// in both audiences with different bytes.
+const LAYER_CONTENT = {
+  player: (() => {
+    const map = {}
+    for (const [path, content] of Object.entries(PLAYER_GENERIC_FILES)) {
+      const m = path.match(/headshot-layers\/([^/]+)\/([^/]+)\.svg$/)
+      if (m) map[`${m[1]}/${m[2]}`] = content
+    }
+    for (const [path, content] of Object.entries(PLAYER_UPGRADED_FILES)) {
+      const m = path.match(/headshot-layers-upgraded\/([^/]+)\/([^/]+)\.svg$/)
+      if (m) map[`${m[1]}/${m[2]}`] = content
+    }
+    return map
+  })(),
+  coach: (() => {
+    const map = {}
+    for (const [path, content] of Object.entries(COACH_GENERIC_FILES)) {
+      const m = path.match(/headshot-layers-coaches\/([^/]+)\/([^/]+)\.svg$/)
+      if (m) map[`${m[1]}/${m[2]}`] = content
+    }
+    for (const [path, content] of Object.entries(COACH_UPGRADED_FILES)) {
+      const m = path.match(/headshot-layers-coaches-upgraded\/([^/]+)\/([^/]+)\.svg$/)
+      if (m) map[`${m[1]}/${m[2]}`] = content
+    }
+    return map
+  })(),
+}
+
+function _contentMapFor(audience) {
+  return LAYER_CONTENT[audience === 'coach' ? 'coach' : 'player']
+}
+
+// Derive string-keyed variant lists by UNION across audiences. VARIANTS arrays
+// gather every distinct variant name from every folder so normalizeConfig
+// accepts cross-audience values without rejecting them. Audience-specific
+// filtering happens later at the picker level via listAllVariantsForAudience.
 const STRING_KEYED_LAYERS = {
   hair:     'hairStyle',
   eyes:     'eyeShape',
@@ -204,78 +229,151 @@ function _deriveStringVariants() {
     // at the original empty array and the user-facing variant picker would
     // render zero options.
     const target = VARIANTS[variantsKey] || []
-    const seen = new Set(target)  // hardcoded defaults already in target (e.g. headband 'none')
+    const seen = new Set(target)
     const prefix = `${layerId}/`
-    for (const key of Object.keys(LAYER_CONTENT)) {
-      if (!key.startsWith(prefix)) continue
-      const configKey = _filenameToConfigKey(key.slice(prefix.length))
-      if (!seen.has(configKey)) {
-        target.push(configKey)
-        seen.add(configKey)
+    for (const audience of ['player', 'coach']) {
+      for (const key of Object.keys(LAYER_CONTENT[audience])) {
+        if (!key.startsWith(prefix)) continue
+        const configKey = _filenameToConfigKey(key.slice(prefix.length))
+        if (!seen.has(configKey)) {
+          target.push(configKey)
+          seen.add(configKey)
+        }
       }
     }
   }
 }
 _deriveStringVariants()
 
-// Reactive tier state: variant key → 'generic' | 'paid'. Separate from the
-// content map so the admin UI can flip a variant's tier optimistically (after
-// the backend file-move succeeds) and the badge re-renders without remounting
-// the strip. Upgraded wins ties at init (defensive).
-const layerTiers = reactive({})
-for (const path of Object.keys(GENERIC_FILES)) {
-  const m = path.match(/headshot-layers\/([^/]+)\/([^/]+)\.svg$/)
-  if (m) layerTiers[`${m[1]}/${m[2]}`] = 'generic'
+// Per-audience reactive tier state. Variant key → 'generic' | 'paid'.
+// Admin setLayerTier mutates the active audience's map after the backend
+// confirms a folder move; consumers reactively re-render Free/Paid badges.
+const layerTiers = {
+  player: reactive({}),
+  coach: reactive({}),
 }
-for (const path of Object.keys(UPGRADED_FILES)) {
+for (const path of Object.keys(PLAYER_GENERIC_FILES)) {
+  const m = path.match(/headshot-layers\/([^/]+)\/([^/]+)\.svg$/)
+  if (m) layerTiers.player[`${m[1]}/${m[2]}`] = 'generic'
+}
+for (const path of Object.keys(PLAYER_UPGRADED_FILES)) {
   const m = path.match(/headshot-layers-upgraded\/([^/]+)\/([^/]+)\.svg$/)
-  if (m) layerTiers[`${m[1]}/${m[2]}`] = 'paid'
+  if (m) layerTiers.player[`${m[1]}/${m[2]}`] = 'paid'
+}
+for (const path of Object.keys(COACH_GENERIC_FILES)) {
+  const m = path.match(/headshot-layers-coaches\/([^/]+)\/([^/]+)\.svg$/)
+  if (m) layerTiers.coach[`${m[1]}/${m[2]}`] = 'generic'
+}
+for (const path of Object.keys(COACH_UPGRADED_FILES)) {
+  const m = path.match(/headshot-layers-coaches-upgraded\/([^/]+)\/([^/]+)\.svg$/)
+  if (m) layerTiers.coach[`${m[1]}/${m[2]}`] = 'paid'
 }
 
-const JAW_NAMES = { 0: 'narrow', 1: 'medium', 2: 'wide' }
+// Face variants are integer-keyed in config (jawWidth 0..N). Per-audience
+// because the coach catalog can author a totally different face roster.
+// Indices are stable per audience (Free first, then Paid, alphabetical
+// within each group) so saved data keeps resolving to the same file.
+const _FACE_FALLBACK = ['narrow', 'medium', 'wide']
+function _buildJawNamesFor(audience) {
+  const content = _contentMapFor(audience)
+  const tierMap = layerTiers[audience]
+  const prefix = 'face/'
+  const free = []
+  const paid = []
+  for (const key of Object.keys(content)) {
+    if (!key.startsWith(prefix)) continue
+    const name = key.slice(prefix.length)
+    if (tierMap[key] === 'paid') paid.push(name)
+    else free.push(name)
+  }
+  free.sort()
+  paid.sort()
+  const list = (free.length + paid.length) > 0 ? [...free, ...paid]
+    : (audience === 'player' ? _FACE_FALLBACK : [])
+  const map = {}
+  list.forEach((name, i) => { map[i] = name })
+  return map
+}
+const JAW_NAMES = {
+  player: _buildJawNamesFor('player'),
+  coach: _buildJawNamesFor('coach'),
+}
+
+// Sync VARIANTS.jawWidth (which LAYERS captures by reference for the user-
+// facing face style picker) to the UNION of indices across audiences so
+// normalizeConfig accepts values from either side. The actual file lookup
+// at render time goes through audience-specific JAW_NAMES[audience].
+VARIANTS.jawWidth.length = 0
+const _allJawIndices = new Set([
+  ...Object.keys(JAW_NAMES.player).map(Number),
+  ...Object.keys(JAW_NAMES.coach).map(Number),
+])
+for (const i of [..._allJawIndices].sort((a, b) => a - b)) VARIANTS.jawWidth.push(i)
+if (VARIANTS.jawWidth.length === 0) VARIANTS.jawWidth.push(0, 1, 2)
+
 const BROW_THICK_NAMES = { 1: 'thin', 2: 'thick' }
 
 /**
  * Reactive lookup of a variant's tier ('generic' | 'paid'), or null if no
- * file exists. Used by the admin editor's variant strip to render Free/Paid
- * state. Reactive because the reactive store is mutated by setLayerTier()
- * on toggle.
+ * file exists in the given audience's folders. The admin editor's variant
+ * strip uses this to render Free/Paid badges per audience tab.
  */
-export function getLayerTier(layerId, variantKey) {
-  return layerTiers[`${layerId}/${variantKey}`] ?? null
+export function getLayerTier(layerId, variantKey, audience = 'player') {
+  return layerTiers[audience]?.[`${layerId}/${variantKey}`] ?? null
 }
 
 /**
- * Optimistically update a variant's tier in the in-memory store. Called by
- * the admin editor after the backend successfully moves the file between
- * folders. The actual on-disk source-of-truth swap is what persists; this
- * just keeps the UI snappy until the next Vite reload.
+ * Optimistically update a variant's tier in the in-memory store for the
+ * given audience. Called by the admin editor after the backend successfully
+ * moves the file between folders.
  */
-export function setLayerTier(layerId, variantKey, tier) {
+export function setLayerTier(layerId, variantKey, tier, audience = 'player') {
   if (tier !== 'generic' && tier !== 'paid') return
-  layerTiers[`${layerId}/${variantKey}`] = tier
+  if (!layerTiers[audience]) return
+  layerTiers[audience][`${layerId}/${variantKey}`] = tier
 }
 
 /**
- * List every variant key found on disk for a given layer, across BOTH
- * tiers. Sorted alphabetically. Used by the admin editor's variant strip
- * so newly-dropped files show up without code changes.
+ * List every variant key found on disk for a layer + audience pair, across
+ * BOTH tiers within that audience. Sorted alphabetically.
  */
-export function listAllVariants(layerId) {
+export function listAllVariantsForAudience(layerId, audience = 'player') {
+  const content = _contentMapFor(audience)
   const prefix = `${layerId}/`
-  return Object.keys(LAYER_CONTENT)
+  return Object.keys(content)
     .filter(k => k.startsWith(prefix))
     .map(k => k.slice(prefix.length))
     .sort()
 }
 
 /**
- * Read the raw SVG source for a variant. Returns null if the file isn't
- * present in either tier folder. Used by the admin variant editor to seed
- * its in-memory pieces array (via parseVariantPieces in svgPieces.js).
+ * Legacy alias — kept so the existing player-only call sites keep working
+ * without a behavior change. Defaults to the player audience.
  */
-export function getVariantSource(layerId, variantKey) {
-  return LAYER_CONTENT[`${layerId}/${variantKey}`] ?? null
+export function listAllVariants(layerId, audience = 'player') {
+  return listAllVariantsForAudience(layerId, audience)
+}
+
+/**
+ * Read the raw SVG source for a variant in the given audience's folders.
+ * Returns null if not present. Used by the admin variant editor to seed its
+ * in-memory pieces array, and by HeadshotEditorView's coach load path.
+ */
+export function getVariantSource(layerId, variantKey, audience = 'player') {
+  return _contentMapFor(audience)[`${layerId}/${variantKey}`] ?? null
+}
+
+/**
+ * Expose the per-audience face index → filename map so consumers (admin
+ * backdrop picker, LayerContextMenu's face style grid) can resolve indices
+ * to files for the active audience.
+ */
+export function getJawName(index, audience = 'player') {
+  return JAW_NAMES[audience]?.[index] ?? null
+}
+
+export function listJawIndicesForAudience(audience = 'player') {
+  return Object.keys(JAW_NAMES[audience] || {}).map(Number).sort((a, b) => a - b)
 }
 
 /**
@@ -287,11 +385,11 @@ export function getVariantSource(layerId, variantKey) {
  * Returns null for layers without an editable variant (neck) or when the
  * layer is in an off state (stubble disabled, headband 'none').
  */
-export function getCurrentVariantKey(layerId, config) {
+export function getCurrentVariantKey(layerId, config, audience = 'player') {
   const c = normalizeConfig(config)
   switch (layerId) {
     case 'hair':     return c.hairStyle.replace(/_/g, '-')
-    case 'face':     return c.faceVariantOverride || JAW_NAMES[c.jawWidth]
+    case 'face':     return c.faceVariantOverride || getJawName(c.jawWidth, audience)
     case 'eyebrows': return c.browVariantOverride || `${BROW_THICK_NAMES[c.browThickness]}-${c.browAngle}`
     case 'eyes':     return c.eyeShape
     case 'nose':     return c.noseShape
@@ -319,21 +417,62 @@ export function getCurrentVariantKey(layerId, config) {
  */
 export const layerContentVersion = ref(0)
 
-export function updateLayerVariantContent(layerId, variantKey, content) {
-  LAYER_CONTENT[`${layerId}/${variantKey}`] = content
+/**
+ * Register that a variant EXISTS in the catalog for the given audience
+ * without setting / overwriting its content. Used by the admin editor's
+ * S3 manifest hydration on mount: the backend tells us a variant lives
+ * in S3, we make the name appear in listAllVariantsForAudience so the
+ * picker renders a thumb, and the strip's per-variant fetch then pulls
+ * the actual bytes on demand. If the variant already has bundled content,
+ * this only updates the tier (so a manifest tier change overrides what
+ * was bundled at build time).
+ */
+export function registerLayerVariant(layerId, variantKey, tier, audience = 'player') {
+  const map = _contentMapFor(audience)
+  const key = `${layerId}/${variantKey}`
+  if (map[key] === undefined) {
+    // Empty string is a "name registered, content not loaded" sentinel.
+    // The strip overrides per-thumb via its fetchedContent map, and the
+    // editor's open path falls back to /variant when getVariantSource
+    // returns falsy — so empty here is safe.
+    map[key] = ''
+  }
+  if (tier === 'generic' || tier === 'paid') {
+    layerTiers[audience][key] = tier
+  }
   layerContentVersion.value++
 }
 
-export function removeLayerVariantContent(layerId, variantKey) {
-  delete LAYER_CONTENT[`${layerId}/${variantKey}`]
+export function updateLayerVariantContent(layerId, variantKey, content, audience = 'player') {
+  const map = _contentMapFor(audience)
+  map[`${layerId}/${variantKey}`] = content
+  // Mirror the tier so subsequent getLayerTier(...) reads the right side.
+  // We can't tell the tier from content alone — caller is responsible for
+  // calling setLayerTier separately if it matters. Default new in-memory
+  // entries land in 'generic' if they don't already have an entry.
+  if (layerTiers[audience][`${layerId}/${variantKey}`] == null) {
+    layerTiers[audience][`${layerId}/${variantKey}`] = 'generic'
+  }
   layerContentVersion.value++
 }
 
-export function renameLayerVariantContent(layerId, oldKey, newKey) {
+export function removeLayerVariantContent(layerId, variantKey, audience = 'player') {
+  delete _contentMapFor(audience)[`${layerId}/${variantKey}`]
+  delete layerTiers[audience][`${layerId}/${variantKey}`]
+  layerContentVersion.value++
+}
+
+export function renameLayerVariantContent(layerId, oldKey, newKey, audience = 'player') {
+  const map = _contentMapFor(audience)
   const k = `${layerId}/${oldKey}`
-  if (LAYER_CONTENT[k] === undefined) return
-  LAYER_CONTENT[`${layerId}/${newKey}`] = LAYER_CONTENT[k]
-  delete LAYER_CONTENT[k]
+  if (map[k] === undefined) return
+  map[`${layerId}/${newKey}`] = map[k]
+  delete map[k]
+  const tierMap = layerTiers[audience]
+  if (tierMap[k] != null) {
+    tierMap[`${layerId}/${newKey}`] = tierMap[k]
+    delete tierMap[k]
+  }
   layerContentVersion.value++
 }
 
@@ -397,27 +536,169 @@ function _buildAttrString(layerId, attrs = {}) {
  * with legacy flat-rect variants — those rects have their own fill="{{...}}"
  * which already got replaced in the prior _applyTokens pass.
  */
+/**
+ * Parse a piece-color string (override OR data-color/data-color-token value)
+ * into a `{ base, alpha }` pair. The base is the raw value (hex starting
+ * with '#' OR a token name); alpha is null when no opacity is packed in.
+ *
+ * Supported forms:
+ *   - "#RRGGBB"       → { base: "#RRGGBB",   alpha: null }
+ *   - "#RRGGBBAA"     → { base: "#RRGGBB",   alpha: 0..1 }   (split out)
+ *   - "hair.base"     → { base: "hair.base", alpha: null }
+ *   - "hair.base@0.5" → { base: "hair.base", alpha: 0.5 }
+ */
+function _parseColorWithAlpha(input) {
+  if (input == null) return { base: null, alpha: null }
+  const s = String(input).trim()
+  if (s.startsWith('#')) {
+    if (s.length === 9) {
+      const hexA = s.slice(7, 9)
+      const a = parseInt(hexA, 16)
+      if (Number.isFinite(a)) return { base: s.slice(0, 7), alpha: a / 255 }
+    }
+    return { base: s, alpha: null }
+  }
+  const at = s.indexOf('@')
+  if (at >= 0) {
+    const a = parseFloat(s.slice(at + 1))
+    if (Number.isFinite(a)) {
+      return { base: s.slice(0, at), alpha: Math.max(0, Math.min(1, a)) }
+    }
+  }
+  return { base: s, alpha: null }
+}
+
+function _alphaToHex2(alpha) {
+  const a = Math.max(0, Math.min(1, alpha))
+  return Math.round(a * 255).toString(16).padStart(2, '0')
+}
+
+/**
+ * Apply an alpha (0..1, or null=opaque) to a 6-digit hex, returning an
+ * 8-digit hex when alpha < 1. Idempotent for null/1.0.
+ */
+function _hexWithAlpha(hex6, alpha) {
+  if (alpha == null || alpha >= 1) return hex6
+  return `${hex6}${_alphaToHex2(alpha)}`
+}
+
+/**
+ * Legacy variant SVGs (the procedural baseline files written by the
+ * Python generator and a handful of hand-authored brow/eye/headband/nose/
+ * neck variants) carry color on bare rects via fill="{{token}}" or
+ * fill="#HEX" — no <g data-piece> wrappers, so the new-format piece-fill
+ * resolver below can't see them. That means user piece-color overrides
+ * applied through LayerContextMenu silently no-op for those variants
+ * because the override path keys on data-color-label.
+ *
+ * To unify the two formats at compose time, scan for rects with explicit
+ * fills and synthesize a <g data-piece data-color-token|data-color
+ * data-color-label> wrapper per unique fill, then strip the fill off the
+ * underlying rect so the group's injected fill cascades down via SVG
+ * attribute inheritance. The rest of the compose pipeline (_applyTokens,
+ * _resolvePieceFills) then treats legacy and new variants identically —
+ * picker overrides work, palette resolution works, opacity works.
+ *
+ * No-op for content that already declares <g data-piece> wrappers.
+ */
+function _wrapLegacyRectsAsPieces(inner) {
+  if (/<g\b[^>]*\bdata-piece=/.test(inner)) return inner
+
+  const rectRegex = /<rect\s+([^/>]*)\/?>/g
+  const byFill = new Map() // fill → array of <rect.../> (stripped of fill attr)
+  const fillOrder = []     // first-encounter order — preserves z-order across the group emit
+  let m
+  while ((m = rectRegex.exec(inner)) !== null) {
+    const attrs = m[1]
+    const fillMatch = attrs.match(/\bfill="([^"]+)"/)
+    // If a rect has no fill at all there's nothing the user can override;
+    // pass it through untouched (rare in legacy content but defensive).
+    if (!fillMatch) continue
+    const fill = fillMatch[1]
+    const stripped = attrs.replace(/\s*\bfill="[^"]*"/, '')
+    if (!byFill.has(fill)) {
+      byFill.set(fill, [])
+      fillOrder.push(fill)
+    }
+    byFill.get(fill).push(`<rect ${stripped.trim()}/>`)
+  }
+
+  // No fillable rects? Leave inner alone (could be an empty layer, a comment-
+  // only file, or already-stripped content).
+  if (fillOrder.length === 0) return inner
+
+  const usedIds = []
+  let literalCounter = 1
+  const parts = []
+  for (const fill of fillOrder) {
+    const tokenMatch = fill.match(/^\{\{\s*([^}]+)\s*\}\}$/)
+    const isToken = !!tokenMatch
+    const colorToken = isToken ? tokenMatch[1].trim() : null
+    const labelSeed = isToken
+      ? defaultLabelForToken(colorToken)
+      : `Color ${literalCounter++}`
+    const id = generatePieceId(labelSeed, usedIds)
+    usedIds.push(id)
+    const attrs = [`data-piece="${id}"`]
+    if (isToken) attrs.push(`data-color-token="${colorToken}"`)
+    else attrs.push(`data-color="${fill}"`)
+    attrs.push(`data-color-label="${labelSeed}"`)
+    parts.push(`<g ${attrs.join(' ')}>${byFill.get(fill).join('')}</g>`)
+  }
+  return parts.join('\n')
+}
+
 function _resolvePieceFills(text, tokens, layerOverrides = null) {
   return text.replace(/<g\b([^>]*?)data-piece="[^"]*"([^>]*?)>/g, (match, before, after) => {
     const attrs = before + after
     if (/\sfill="[^"]*"/.test(attrs)) return match  // explicit fill present, skip
+
+    // Sidecar opacity from the variant file's `data-color-opacity="0.5"` —
+    // baseline alpha that applies when neither the override nor a packed
+    // form supplies one. Admin variant editor writes this when authoring.
+    const opacityAttrMatch = attrs.match(/data-color-opacity="([^"]+)"/)
+    const baselineAlpha = opacityAttrMatch ? parseFloat(opacityAttrMatch[1]) : null
+
     // 1) User override by label — checked first so it wins over the admin's
-    //    original token/literal choice.
+    //    original token/literal choice. The override value is either:
+    //      - a hex string ("#ffaa00", or "#ffaa00cc" with packed alpha), OR
+    //      - a palette token name ("hair.base", or "hair.base@0.5" with alpha).
     if (layerOverrides) {
       const labelMatch = attrs.match(/data-color-label="([^"]+)"/)
       if (labelMatch) {
         const override = layerOverrides[labelMatch[1].trim()]
-        if (override) return match.replace(/>$/, ` fill="${override}">`)
+        if (override) {
+          const { base, alpha } = _parseColorWithAlpha(override)
+          const effectiveAlpha = alpha != null ? alpha : baselineAlpha
+          const baseHex = base?.startsWith('#') ? base : (tokens[String(base).trim()] || base)
+          const fill = baseHex?.startsWith('#')
+            ? _hexWithAlpha(baseHex, effectiveAlpha)
+            : baseHex
+          if (fill) return match.replace(/>$/, ` fill="${fill}">`)
+        }
       }
     }
+    // 2) Palette-token piece (admin-authored). Supports packed alpha too,
+    //    e.g. data-color-token="hair.base@0.5", with sidecar data-color-opacity
+    //    as a fallback baseline.
     const tokenMatch = attrs.match(/data-color-token="([^"]+)"/)
     if (tokenMatch) {
-      const hex = tokens[tokenMatch[1].trim()]
-      if (hex) return match.replace(/>$/, ` fill="${hex}">`)
+      const { base, alpha } = _parseColorWithAlpha(tokenMatch[1])
+      const effectiveAlpha = alpha != null ? alpha : baselineAlpha
+      const hex = tokens[String(base).trim()]
+      if (hex) return match.replace(/>$/, ` fill="${_hexWithAlpha(hex, effectiveAlpha)}">`)
       return match
     }
+    // 3) Literal hex piece (admin-authored). Already supports 8-digit hex
+    //    natively in SVG; we still split-and-recombine so the sidecar
+    //    data-color-opacity can override an opaque hex.
     const litMatch = attrs.match(/data-color="([^"]+)"/)
-    if (litMatch) return match.replace(/>$/, ` fill="${litMatch[1]}">`)
+    if (litMatch) {
+      const { base, alpha } = _parseColorWithAlpha(litMatch[1])
+      const effectiveAlpha = alpha != null ? alpha : baselineAlpha
+      const fill = base?.startsWith('#') ? _hexWithAlpha(base, effectiveAlpha) : litMatch[1]
+      return match.replace(/>$/, ` fill="${fill}">`)
+    }
     return match
   })
 }
@@ -431,7 +712,7 @@ function _resolvePieceFills(text, tokens, layerOverrides = null) {
  * file content with arbitrary SVG (used by the admin variant editor to
  * render its in-memory pieces in place of the on-disk variant).
  */
-function _renderLayer(layerId, variantKey, tokens, metaAttrs = {}, overrideContent = null, pieceOverrides = null) {
+function _renderLayer(layerId, variantKey, tokens, metaAttrs = {}, overrideContent = null, pieceOverrides = null, audience = 'player') {
   const attrStr = _buildAttrString(layerId, metaAttrs)
   // 'none' is a virtual variant that hides the layer entirely — already
   // used by stubble/headband as their "off" value, and surfaced via the
@@ -440,15 +721,22 @@ function _renderLayer(layerId, variantKey, tokens, metaAttrs = {}, overrideConte
   if (!variantKey && !overrideContent) {
     return `<g${attrStr}>\n</g>`
   }
-  const content = overrideContent ?? LAYER_CONTENT[`${layerId}/${variantKey}`]
+  const content = overrideContent ?? _contentMapFor(audience)[`${layerId}/${variantKey}`]
   if (!content) {
-    console.warn(`[headshotComposer] missing layer file: ${layerId}/${variantKey}.svg`)
+    console.warn(`[headshotComposer] missing layer file: ${audience}/${layerId}/${variantKey}.svg`)
     return `<g${attrStr}>\n</g>`
   }
-  // Two-pass resolution: 1) rect-level {{tokens}} (legacy + literal hex rects),
-  // 2) group-level fill injection for Phase 2 <g data-piece> wrappers (with
-  // optional Phase 3 user piece-color overrides applied first).
-  let inner = _applyTokens(_extractInnerLines(content), tokens)
+  // Three-pass resolution:
+  //   0) wrap legacy `fill="{{token}}"` / `fill="#HEX"` rects in synthetic
+  //      <g data-piece> groups so user piece-color overrides apply uniformly
+  //      across legacy and new-format variants (no-op for new format),
+  //   1) rect-level {{tokens}} for any residual placeholders (defensive — the
+  //      wrap pass strips rect fills, so this typically has nothing left to
+  //      substitute on legacy content),
+  //   2) group-level fill injection for <g data-piece> wrappers with optional
+  //      user piece-color overrides applied first.
+  let inner = _wrapLegacyRectsAsPieces(_extractInnerLines(content))
+  inner = _applyTokens(inner, tokens)
   inner = _resolvePieceFills(inner, tokens, pieceOverrides)
   return `<g${attrStr}>\n${inner}\n</g>`
 }
@@ -512,7 +800,14 @@ function normalizeConfig(config = {}) {
     eyebrowColor: config.eyebrowColor in HAIR_COLORS ? config.eyebrowColor : hair,
     eye:          config.eye in EYE_COLORS ? config.eye : 'brown',
     lip:          config.lip in LIP_COLORS ? config.lip : 'warm',
-    jawWidth:     [0, 1, 2].includes(Number(config.jawWidth)) ? Number(config.jawWidth) : 1,
+    // jawWidth is the integer key into JAW_NAMES, which is now built from
+    // whatever face variants are on disk — so the valid range can extend
+    // beyond [0, 1, 2] when the admin adds more face variants.
+    // jawWidth validates against the UNION of player+coach indices so
+    // cross-audience configs (e.g. a coach premade opening in the editor)
+    // don't get clobbered. composeSvg resolves the actual file by audience.
+    jawWidth:     Number.isInteger(Number(config.jawWidth)) && VARIANTS.jawWidth.includes(Number(config.jawWidth))
+      ? Number(config.jawWidth) : (VARIANTS.jawWidth[0] ?? 0),
     hairStyle:    _allowNoneOrFallback(config.hairStyle, VARIANTS.hairStyle, 'short'),
     browThickness: [1, 2].includes(Number(config.browThickness)) ? Number(config.browThickness) : 1,
     browAngle:    VARIANTS.browAngle.includes(config.browAngle) ? config.browAngle : 'flat',
@@ -541,6 +836,13 @@ function normalizeConfig(config = {}) {
     // back into the two axes.
     browVariantOverride: typeof config.browVariantOverride === 'string' && config.browVariantOverride
       ? config.browVariantOverride : null,
+    // Per-piece color overrides parsed back out of saved SVGs by
+    // parseSvgConfig. Pass through unchanged — composeSvg's _resolvePieceFills
+    // wins over the data-color / data-color-token defaults using this map.
+    // Without this pass-through, picking a premade with admin-customized
+    // hair colors loses the overrides on re-compose.
+    pieceColors: (config.pieceColors && typeof config.pieceColors === 'object')
+      ? config.pieceColors : undefined,
   }
 }
 
@@ -551,10 +853,14 @@ function normalizeConfig(config = {}) {
  * `overrides` is an optional map of `layerId → SVG content string` used by
  * the admin variant editor to render its in-memory pieces in place of the
  * on-disk variant for that layer. Other layers still load normally from
- * LAYER_CONTENT, which is why the backdrop shows the rest of the head while
- * the admin edits just one layer.
+ * the audience's content map, which is why the backdrop shows the rest of
+ * the head while the admin edits just one layer.
+ *
+ * `audience` selects which folder set we read variant files from. Defaults
+ * to 'player' so legacy callers keep working. The coach editor and the
+ * admin Coaches tab pass 'coach' explicitly.
  */
-export function composeSvg(config, overrides = null) {
+export function composeSvg(config, overrides = null, audience = 'player') {
   const c = normalizeConfig(config)
   const tokens = _buildTokens(c)
   const ov = (id) => overrides?.[id] ?? null
@@ -576,8 +882,9 @@ export function composeSvg(config, overrides = null) {
   const hairFile = c.hairStyle.replace(/_/g, '-')
   // Face: admin backdrop picker can override to any on-disk filename via
   // `faceVariantOverride`. Falls back to the integer jawWidth mapping when
-  // no override is set (the user-facing default path).
-  const faceFile = c.faceVariantOverride || JAW_NAMES[c.jawWidth]
+  // no override is set (the user-facing default path). The mapping is
+  // per-audience so coach configs resolve to coach face files.
+  const faceFile = c.faceVariantOverride || getJawName(c.jawWidth, audience)
   // Eyebrow file: admin backdrop can pin to any on-disk filename; otherwise
   // fall back to the canonical thickness × angle composition.
   const browFile = c.browVariantOverride || `${BROW_THICK_NAMES[c.browThickness]}-${c.browAngle}`
@@ -586,7 +893,12 @@ export function composeSvg(config, overrides = null) {
   // top-of-stack pair is hair (second-to-last) then headband (last) so a
   // headband always wraps over hair, and hair wraps over every face-level
   // feature (bangs/fringes overlap forehead, brows, neck/shoulders).
-  parts.push(_renderLayer('face', faceFile, tokens, { skin: c.skin, jaw: c.jawWidth }, ov('face'), po('face')))
+  // Stamp `data-file` so parseSvgConfig can recover the exact filename used
+  // (matters for admin-authored custom variants whose names don't map to
+  // the canonical integer-keyed JAW_NAMES path). Without it, a premade
+  // built off a custom face would round-trip back to the default jawWidth
+  // file in the user editor.
+  parts.push(_renderLayer('face', faceFile, tokens, { skin: c.skin, jaw: c.jawWidth, file: faceFile }, ov('face'), po('face'), audience))
   parts.push(_renderLayer(
     'stubble',
     c.stubbleStyle === 'none' ? null : c.stubbleStyle,
@@ -597,24 +909,28 @@ export function composeSvg(config, overrides = null) {
       // that still branch on the boolean form.
       enabled: c.stubbleStyle !== 'none' ? 'true' : 'false',
     },
-    ov('stubble'), po('stubble')
+    ov('stubble'), po('stubble'), audience,
   ))
+  // `data-file` records the exact eyebrow filename — needed so admin-
+  // authored variants whose names don't match the canonical thickness-angle
+  // pattern (e.g. "custom-arch") round-trip through saved SVGs and premades.
   parts.push(_renderLayer('eyebrows', browFile, tokens, {
     thickness: c.browThickness,
     angle: c.browAngle,
     color: c.eyebrowColor,
-  }, ov('eyebrows'), po('eyebrows')))
-  parts.push(_renderLayer('eyes', c.eyeShape, tokens, { shape: c.eyeShape, color: c.eye }, ov('eyes'), po('eyes')))
-  parts.push(_renderLayer('nose', c.noseShape, tokens, { shape: c.noseShape }, ov('nose'), po('nose')))
-  parts.push(_renderLayer('mouth', c.mouthFullness, tokens, { fullness: c.mouthFullness, color: c.lip }, ov('mouth'), po('mouth')))
-  parts.push(_renderLayer('neck', c.neckStyle, tokens, { style: c.neckStyle }, ov('neck'), po('neck')))
-  parts.push(_renderLayer('hair', hairFile, tokens, { style: c.hairStyle, color: c.hair }, ov('hair'), po('hair')))
+    file: browFile,
+  }, ov('eyebrows'), po('eyebrows'), audience))
+  parts.push(_renderLayer('eyes', c.eyeShape, tokens, { shape: c.eyeShape, color: c.eye }, ov('eyes'), po('eyes'), audience))
+  parts.push(_renderLayer('nose', c.noseShape, tokens, { shape: c.noseShape }, ov('nose'), po('nose'), audience))
+  parts.push(_renderLayer('mouth', c.mouthFullness, tokens, { fullness: c.mouthFullness, color: c.lip }, ov('mouth'), po('mouth'), audience))
+  parts.push(_renderLayer('neck', c.neckStyle, tokens, { style: c.neckStyle }, ov('neck'), po('neck'), audience))
+  parts.push(_renderLayer('hair', hairFile, tokens, { style: c.hairStyle, color: c.hair }, ov('hair'), po('hair'), audience))
   parts.push(_renderLayer(
     'headband',
     c.headband === 'none' ? null : c.headband,
     tokens,
     { style: c.headband },
-    ov('headband'), po('headband')
+    ov('headband'), po('headband'), audience,
   ))
 
   parts.push('</g>', '</g>', '</svg>')
@@ -652,6 +968,10 @@ export function parseSvgConfig(svgString) {
       case 'face':
         if (attrs.skin) config.skin = attrs.skin
         if (attrs.jaw !== undefined) config.jawWidth = Number(attrs.jaw)
+        // Recover the exact face filename if composeSvg stamped one (admin-
+        // authored variant whose name doesn't map to the canonical
+        // integer-keyed JAW_NAMES path).
+        if (attrs.file) config.faceVariantOverride = attrs.file
         break
       case 'stubble':
         // New data-style attribute is authoritative; fall back to the
@@ -672,6 +992,10 @@ export function parseSvgConfig(svgString) {
         if (attrs.thickness !== undefined) config.browThickness = Number(attrs.thickness)
         if (attrs.angle) config.browAngle = attrs.angle
         if (attrs.color) config.eyebrowColor = attrs.color
+        // Recover the exact brow filename — admin-authored custom eyebrow
+        // variants whose names don't match the canonical thickness-angle
+        // pattern would otherwise revert to the composed default on load.
+        if (attrs.file) config.browVariantOverride = attrs.file
         break
       case 'eyes':
         if (attrs.shape) config.eyeShape = attrs.shape
@@ -699,6 +1023,53 @@ export function parseSvgConfig(svgString) {
         config.ethnicity = ethnicity
         break
       }
+    }
+  }
+
+  // Per-piece color overrides. composeSvg writes `fill="#HEX"` onto each
+  // `<g data-piece ... data-color-label="LABEL">` based on the active
+  // `pieceColors` map (or the authored data-color / data-color-token
+  // fallbacks). To make admin-created premades round-trip — so a user
+  // picking one sees the admin's exact per-piece colors instead of the
+  // authored defaults — we re-extract those fills here, grouped by their
+  // enclosing data-layer wrapper.
+  //
+  // Strategy: walk all layer-wrapper start positions, then for each layer
+  // scan the document slice between its start and the next layer's start
+  // for `<g data-piece ... fill="HEX" ... data-color-label="LABEL">`.
+  // Layer groups don't nest (the renderer emits them flat as siblings),
+  // so position-bounded slicing is safe.
+  const layerSpans = []
+  const layerSpanRegex = /<g\s+data-layer=["'](\w+)["'][^>]*>/g
+  let lm
+  while ((lm = layerSpanRegex.exec(svgString)) !== null) {
+    layerSpans.push({
+      layerId: lm[1],
+      bodyStart: lm.index + lm[0].length,
+      tagStart: lm.index,
+    })
+  }
+  if (layerSpans.length > 0) {
+    const pieceColors = {}
+    for (let i = 0; i < layerSpans.length; i++) {
+      const { layerId, bodyStart } = layerSpans[i]
+      const bodyEnd = i + 1 < layerSpans.length
+        ? layerSpans[i + 1].tagStart
+        : svgString.length
+      const body = svgString.slice(bodyStart, bodyEnd)
+      const pieceRegex = /<g\b([^>]*\sdata-piece=["'][^"']*["'][^>]*)>/g
+      let pm
+      while ((pm = pieceRegex.exec(body)) !== null) {
+        const attrs = pm[1]
+        const labelMatch = attrs.match(/data-color-label=["']([^"']+)["']/)
+        const fillMatch = attrs.match(/\sfill=["']([^"']+)["']/)
+        if (!labelMatch || !fillMatch) continue
+        if (!pieceColors[layerId]) pieceColors[layerId] = {}
+        pieceColors[layerId][labelMatch[1]] = fillMatch[1]
+      }
+    }
+    if (Object.keys(pieceColors).length > 0) {
+      config.pieceColors = pieceColors
     }
   }
 

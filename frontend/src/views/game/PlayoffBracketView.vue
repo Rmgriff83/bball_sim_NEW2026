@@ -164,7 +164,7 @@ const roundLabel = computed(() => {
     case 1: return 'First Round'
     case 2: return 'Semifinals'
     case 3: return 'Conference Finals'
-    case 4: return 'NBA Finals'
+    case 4: return 'Finals'
     default: return `Round ${selectedSeries.value.round}`
   }
 })

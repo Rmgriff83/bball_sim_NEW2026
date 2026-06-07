@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, onBeforeUnmount } from 'vue'
-import { MousePointer, Pencil, Minus, Square, Circle, Scissors, Move3d, Hand, RotateCw, Copy, FlipHorizontal2, FlipVertical2, ChevronDown } from 'lucide-vue-next'
+import { MousePointer, Pencil, Eraser, Square, Circle, Scissors, Move3d, Hand, RotateCw, Copy, FlipHorizontal2, FlipVertical2, ChevronDown } from 'lucide-vue-next'
 import ColorSwatchPicker from './ColorSwatchPicker.vue'
 
 const props = defineProps({
@@ -74,7 +74,7 @@ const MODES = computed(() => [
   { id: 'pencil', label: 'Pencil', icon: Pencil },
   // Tool id stays 'eraser' (canvas dispatch + cursor map key) — only the
   // user-facing label and icon change to the cleaner "Remove" semantic.
-  { id: 'eraser', label: 'Remove', icon: Minus },
+  { id: 'eraser', label: 'Remove', icon: Eraser },
   { id: 'rect',   label: activeShape.value.label, icon: activeShape.value.icon },
   { id: 'cut',    label: 'Cut',    icon: Scissors },
   { id: 'scale',  label: 'Scale',  icon: Move3d },
@@ -278,12 +278,15 @@ function fireAction(action) {
             <ChevronDown :size="10" />
           </button>
         </div>
-        <!-- Caret + size-picker dropdown attached to the Pencil tool.
-             Shows the active brush size as the caret's label so it's
-             readable at a glance, and opens a teleported menu with the
-             other size options. Renders only when pencil OR eraser is
-             active (both consume `brushSize`). -->
-        <div v-if="mode.id === 'pencil' && showSize" ref="sizeCaretWrapRef" class="atp-shape-wrap">
+        <!-- Caret + size-picker dropdown. Lives directly under whichever of
+             Pencil / Eraser is currently active so the brush size is
+             discoverable in either tool's context (both consume the same
+             `brushSize`). Shows the active size as its label. -->
+        <div
+          v-if="(mode.id === 'pencil' || mode.id === 'eraser') && activeTool === mode.id"
+          ref="sizeCaretWrapRef"
+          class="atp-shape-wrap"
+        >
           <button
             ref="sizeCaretRef"
             type="button"

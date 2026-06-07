@@ -50,6 +50,11 @@ import { generateMotivations, getMarketSize } from '../ai/MotivationService'
 import { generateAndSaveRookieClass, shouldGenerateGenerational } from '../draft/RookieGenerationService'
 import { AwardService } from '../season/AwardService'
 import { AllStarService } from '../season/AllStarService'
+import { listCoachHeadshots } from '../../services/headshotPremades'
+import {
+  SCOUT_TIERS, PHYSICIAN_TIERS, STAFF_TRAINER_TIERS,
+  PERSONNEL_POOL_COUNTS, PERSONNEL_POOL_KEY,
+} from '../data/personnelTiers'
 
 // =============================================================================
 // HELPERS
@@ -243,6 +248,7 @@ const NORMAL_LAST_NAMES = [
   'Hughes', 'Foster', 'Sanders', 'Russell', 'Bryant', 'Murray', 'Webb', 'Snyder',
   'Hayes', 'Crawford', 'Knight', 'Lambert', 'Pierce', 'Burns', 'Stevens', 'Marshall',
   'Reynolds', 'Owens', 'Mason', 'Tucker', 'Hunter', 'Holland', 'Lawrence', 'Carter',
+  'Connelly', 'Henderson', 'Griffin', 'Stills', 'Maroney', 'Trevey', 'Brent', 'Bendt'
 ]
 
 // First names commonly used in Black American communities. Some overlap with
@@ -840,10 +846,27 @@ export async function createCampaign(options) {
   // 2. Generate all 30 teams with coaches
   // -------------------------------------------------------------------------
   const teams = generateTeams(campaignId)
-  await TeamRepository.saveBulk(teams)
 
-  // Seed the user-facing free-agent coach pool (8 candidates across 3 tiers)
+  // Seed the user-facing free-agent coach pool (8 candidates across 3 tiers).
   campaign.settings.availableCoaches = generateCoachPool(teams)
+  // Seed the parallel scout / physician / staff-trainer hire pools so users
+  // browse a persistent roster instead of fresh random candidates every modal
+  // open (matches the coach pool pattern).
+  const personnelPools = {
+    scout: generatePersonnelPool('scout'),
+    physician: generatePersonnelPool('physician'),
+    staff_trainer: generatePersonnelPool('staff_trainer'),
+  }
+  campaign.settings[PERSONNEL_POOL_KEY.scout] = personnelPools.scout
+  campaign.settings[PERSONNEL_POOL_KEY.physician] = personnelPools.physician
+  campaign.settings[PERSONNEL_POOL_KEY.staff_trainer] = personnelPools.staff_trainer
+
+  // Distribute admin-authored coach headshots across every personnel slot
+  // — coaches first, then scouts, physicians, staff trainers — so the
+  // priority is honored when the pool is smaller than total demand.
+  assignPersonnelHeadshots(teams, personnelPools)
+
+  await TeamRepository.saveBulk(teams)
   await CampaignRepository.save(campaign)
 
   // -------------------------------------------------------------------------
@@ -2078,7 +2101,7 @@ export async function startNewSeason(campaignId) {
 export function generateTeams(campaignId) {
   const usedCoachNames = new Set()
 
-  return TEAMS.map((template, index) => {
+  const teams = TEAMS.map((template, index) => {
     const teamId = generateUUID()
     const tier = getTeamTier(template.abbreviation)
 
@@ -2115,6 +2138,114 @@ export function generateTeams(campaignId) {
       updatedAt: new Date().toISOString(),
     }
   })
+
+  // Coaches alone here — scout/physician/staff_trainer pools are generated
+  // by generateCampaign() one level up, after all teams exist. Headshot
+  // assignment happens there too so the priority distribution can see every
+  // personnel kind at once.
+  return teams
+}
+
+/**
+ * Generate a hire pool for a non-coach personnel kind (scout / physician /
+ * staff_trainer). Mirrors the modal generators' shape so HireXModal can
+ * read this pool directly. Each candidate gets a stable id so the headshot
+ * editor and IDB-based custom edits can target them.
+ *
+ * @param {'scout'|'physician'|'staff_trainer'} kind
+ * @returns {Array} pool of candidate objects
+ */
+function generatePersonnelPool(kind) {
+  const tiers = kind === 'scout' ? SCOUT_TIERS
+    : kind === 'physician' ? PHYSICIAN_TIERS
+    : STAFF_TRAINER_TIERS
+  const counts = PERSONNEL_POOL_COUNTS[kind] || {}
+  const used = new Set()
+  const pool = []
+
+  function randomName() {
+    let name
+    do {
+      const first = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)]
+      const last = LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)]
+      name = `${first} ${last}`
+    } while (used.has(name))
+    used.add(name)
+    return name
+  }
+
+  for (const tierKey of Object.keys(counts)) {
+    const tierNum = Number(tierKey)
+    const tier = tiers[tierNum]
+    if (!tier) continue
+    for (let i = 0; i < counts[tierKey]; i++) {
+      pool.push({
+        id: generateUUID(),
+        name: randomName(),
+        tier: tierNum,
+        cost: tier.cost,
+        label: tier.label,
+        rating: tier.rating,
+        perks: tier.perks,
+        headshot: null,    // filled in by assignPersonnelHeadshots below
+      })
+    }
+  }
+  return pool
+}
+
+/**
+ * Distribute admin-authored coach-headshots files across every personnel
+ * kind that exists at campaign creation: coaches first, then scouts, then
+ * physicians, then staff trainers. Within each group, master/curated
+ * filenames are excluded from the shared pool so they can't end up
+ * doubled-up. Shuffled order; cycles with repetition when the pool is
+ * smaller than total demand. Pool allowed to be empty — those personnel
+ * stay headshot-less and their avatars fall back to the UserCog icon.
+ *
+ * @param {Array} teams - generated team list (every team.coach gets a turn)
+ * @param {Object} pools - { scout, physician, staff_trainer } pool arrays
+ */
+function assignPersonnelHeadshots(teams, pools) {
+  // Filenames already claimed by master coaches — keep them out of the
+  // random pool so a master portrait can't be re-used by a free-agent coach
+  // or a scout/physician/trainer.
+  const masterUsed = new Set(
+    teams
+      .map(t => t?.coach?.headshot)
+      .filter(Boolean)
+      .map(s => String(s).toLowerCase()),
+  )
+  const allFiles = listCoachHeadshots().filter(name => !masterUsed.has(name.toLowerCase()))
+  if (allFiles.length === 0) return
+
+  const shuffled = [...allFiles]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+
+  // Distribute in priority order, cycling through `shuffled` when demand
+  // exceeds supply so every personnel slot still gets a face.
+  let cursor = 0
+  const claim = () => {
+    const file = shuffled[cursor % shuffled.length]
+    cursor++
+    return file
+  }
+
+  // 1) Coaches (one per team, skip masters which already have a face).
+  for (const team of teams) {
+    if (!team?.coach) continue
+    if (team.coach.headshot) continue
+    team.coach.headshot = claim()
+  }
+  // 2) Scouts, 3) Physicians, 4) Staff trainers — pool order is the spec.
+  for (const kind of ['scout', 'physician', 'staff_trainer']) {
+    for (const candidate of (pools[kind] || [])) {
+      candidate.headshot = claim()
+    }
+  }
 }
 
 /**
@@ -2175,7 +2306,10 @@ function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
 
   // Master-seeded headshot filename (e.g. 'gregg_popovich.png'). Maps to a
   // file dropped into frontend/src/assets/coach-headshots/. CoachAvatar falls
-  // back to the UserCog icon when the file isn't present.
+  // back to the UserCog icon when the file isn't present. Coaches without
+  // a master headshot get one assigned by the post-pass below in
+  // assignCoachHeadshots() — after all teams have been generated so the
+  // shuffle can spread the pool across every unassigned coach at once.
   const headshot = masterCoach?.headshot ?? null
 
   const coach = {

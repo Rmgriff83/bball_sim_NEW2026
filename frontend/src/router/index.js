@@ -152,6 +152,23 @@ const routes = [
         name: 'headshot-editor',
         component: lazyLoad(() => import('@/views/game/HeadshotEditorView.vue')),
         meta: { hideBottomNav: true, requiresHeadshotEditor: true }
+      },
+      {
+        // Phase 3: coach customize. Reuses HeadshotEditorView with audience
+        // mode derived from the route name (see HeadshotEditorView).
+        path: 'coach-headshot-editor/:coachId',
+        name: 'coach-headshot-editor',
+        component: lazyLoad(() => import('@/views/game/HeadshotEditorView.vue')),
+        meta: { hideBottomNav: true, requiresHeadshotEditor: true }
+      },
+      {
+        // Phase 4: generalized personnel route. Covers coach/scout/physician/
+        // staff_trainer via the kind path param. HeadshotEditorView's load
+        // path branches on kind to pull from the right pool / IDB row.
+        path: 'personnel-headshot-editor/:kind/:personnelId',
+        name: 'personnel-headshot-editor',
+        component: lazyLoad(() => import('@/views/game/HeadshotEditorView.vue')),
+        meta: { hideBottomNav: true, requiresHeadshotEditor: true }
       }
     ]
   },

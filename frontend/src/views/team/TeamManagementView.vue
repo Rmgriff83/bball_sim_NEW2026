@@ -13,6 +13,7 @@ import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/c
 import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp, Coins } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
+import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
 import TradesTab from '@/components/trade/TradesTab.vue'
@@ -1442,15 +1443,17 @@ const STAFF_TRAINER_PERK_LABELS = {
         <div class="roster-list-header card-cosmic" data-tour="gm-starters">
           <h3 class="list-header-text">STARTERS</h3>
           <div class="header-metrics">
-            <component
-              :is="chemistryIcon"
-              :size="14"
-              :stroke-width="2.25"
-              class="chemistry-face-icon"
-              :style="{ color: chemistryColor }"
-              aria-hidden="true"
-            />
-            <span class="team-chemistry-value" :style="{ color: chemistryColor }">{{ teamChemistry }}%</span>
+            <span class="chemistry-chip" :style="{ '--chemistry-color': chemistryColor }">
+              <component
+                :is="chemistryIcon"
+                :size="14"
+                :stroke-width="2.25"
+                class="chemistry-face-icon"
+                :style="{ color: chemistryColor }"
+                aria-hidden="true"
+              />
+              <span class="team-chemistry-value" :style="{ color: chemistryColor }">{{ teamChemistry }}%</span>
+            </span>
             <span class="header-metrics-divider">&middot;</span>
             <span class="total-minutes-value" data-tour="gm-minutes">{{ totalMinutes }} / 200 MIN</span>
             <button
@@ -1961,7 +1964,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           <h3 class="h4 mb-4">Head Coach</h3>
           <div class="coach-header">
             <div class="coach-avatar-wrap">
-              <CoachAvatar :coach="coach" :size="64" />
+              <CoachAvatar :coach="coach" :size="64" :campaign-id="campaignId" :editable="true" />
             </div>
             <div class="coach-info">
               <p class="coach-name">{{ coach.name }}</p>
@@ -2280,8 +2283,14 @@ const STAFF_TRAINER_PERK_LABELS = {
           <GlassCard v-if="hiredScout" padding="lg" :hoverable="false">
             <h3 class="h4 mb-4">Your Scout</h3>
             <div class="coach-header">
-              <div class="coach-avatar scout-avatar">
-                {{ hiredScout.name?.charAt(0) || 'S' }}
+              <div class="coach-avatar-wrap">
+                <PersonnelAvatar
+                  :personnel="hiredScout"
+                  kind="scout"
+                  :size="64"
+                  :campaign-id="campaignId"
+                  :editable="true"
+                />
               </div>
               <div class="coach-info">
                 <p class="coach-name">{{ hiredScout.name }}</p>
@@ -2357,8 +2366,14 @@ const STAFF_TRAINER_PERK_LABELS = {
           <GlassCard v-if="hiredTrainer" padding="lg" :hoverable="false">
             <h3 class="h4 mb-4">Your Team Physician</h3>
             <div class="coach-header">
-              <div class="coach-avatar trainer-avatar">
-                {{ hiredTrainer.name?.charAt(0) || 'T' }}
+              <div class="coach-avatar-wrap">
+                <PersonnelAvatar
+                  :personnel="hiredTrainer"
+                  kind="physician"
+                  :size="64"
+                  :campaign-id="campaignId"
+                  :editable="true"
+                />
               </div>
               <div class="coach-info">
                 <p class="coach-name">{{ hiredTrainer.name }}</p>
@@ -2434,8 +2449,14 @@ const STAFF_TRAINER_PERK_LABELS = {
           <GlassCard v-if="hiredStaffTrainer" padding="lg" :hoverable="false">
             <h3 class="h4 mb-4">Your Trainer</h3>
             <div class="coach-header">
-              <div class="coach-avatar staff-trainer-avatar">
-                {{ hiredStaffTrainer.name?.charAt(0) || 'T' }}
+              <div class="coach-avatar-wrap">
+                <PersonnelAvatar
+                  :personnel="hiredStaffTrainer"
+                  kind="staff_trainer"
+                  :size="64"
+                  :campaign-id="campaignId"
+                  :editable="true"
+                />
               </div>
               <div class="coach-info">
                 <p class="coach-name">{{ hiredStaffTrainer.name }}</p>
@@ -2553,7 +2574,7 @@ const STAFF_TRAINER_PERK_LABELS = {
         <BaseModal :show="showResignModal" @close="showResignModal = false" title="Re-sign Head Coach?">
           <div class="resign-modal">
             <div class="resign-coach-summary">
-              <CoachAvatar v-if="coach" :coach="coach" :size="56" />
+              <CoachAvatar v-if="coach" :coach="coach" :size="56" :campaign-id="campaignId" />
               <div>
                 <p class="resign-coach-name">{{ coach?.name }}</p>
                 <p class="resign-coach-meta">Overall {{ coach?.overall_rating }}</p>
@@ -3678,7 +3699,12 @@ const STAFF_TRAINER_PERK_LABELS = {
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
   flex-shrink: 0;
-  overflow: hidden;
+  /* No overflow clipping — the brush edit badge sits at the bottom-left
+     corner and gets cut off when this wrapper has `overflow: hidden`.
+     The avatar's own `border-radius: 50%` (on .coach-headshot inside
+     CoachAvatar) already keeps the photo round, so we don't need wrapper
+     clipping to maintain the circle. */
+  overflow: visible;
 }
 
 .coach-badge-store-btn {
@@ -5379,6 +5405,21 @@ const STAFF_TRAINER_PERK_LABELS = {
   gap: 8px;
   position: relative;
   z-index: 1;
+}
+
+/* Chemistry chip — dark translucent pill around the chemistry icon + %
+   so the band signal pops against the cosmic header background. Mirrors
+   the morale-chip in PlayerDetailModal's header (rgba(26,21,32,.65) fill +
+   chemistry-tinted border). */
+.chemistry-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  background: rgba(26, 21, 32, 0.65);
+  border: 1px solid color-mix(in srgb, var(--chemistry-color, #6b7280) 40%, transparent);
+  border-radius: 999px;
+  line-height: 1;
 }
 
 .team-chemistry-value {

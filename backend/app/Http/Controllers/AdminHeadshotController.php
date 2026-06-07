@@ -5,120 +5,124 @@ namespace App\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class AdminHeadshotController extends Controller
 {
     /**
-     * Move a headshot layer SVG between the generic and upgraded folders.
+     * Per-audience folder prefix helpers. Variant SVGs live in 2×2 folders
+     * (audience × tier). The audience axis is encoded by folder name; the
+     * tier axis is the `-upgraded` suffix. There is no manifest — folder
+     * location is the source of truth. These prefixes are also the top-level
+     * keys in the S3 bucket.
+     */
+    private function genericPrefix(string $audience): string
+    {
+        return $audience === 'coach' ? 'headshot-layers-coaches' : 'headshot-layers';
+    }
+
+    private function upgradedPrefix(string $audience): string
+    {
+        return $audience === 'coach' ? 'headshot-layers-coaches-upgraded' : 'headshot-layers-upgraded';
+    }
+
+    /**
+     * Production-safe guard. Without an S3 bucket configured for the assets
+     * disk the admin endpoints have nowhere to write, so they 503 — same UX
+     * shape the old FRONTEND_ASSETS_PATH gate had, just sourced from the
+     * ASSETS_AWS_BUCKET env now (the dedicated headshot-assets bucket,
+     * separate from the campaigns bucket on the default AWS_BUCKET var).
+     */
+    private function s3Unavailable(): bool
+    {
+        return !env('ASSETS_AWS_BUCKET');
+    }
+
+    /**
+     * Move a headshot layer SVG between the generic and upgraded folders
+     * for the given audience by relocating the S3 key.
      *
      * POST /api/admin/headshot-layers/tier
-     * Body: { layer: 'hair', variant: 'afro', tier: 'upgraded' | 'generic' }
-     *
-     * This is inherently a dev-time tool: the layer files live in the
-     * frontend repo's src/assets directory and are bundled by Vite at build
-     * time, so writes here only show up after the next deploy. Requires
-     * FRONTEND_ASSETS_PATH env to point at the (writable) frontend assets
-     * directory; returns 503 otherwise.
+     * Body: { layer, variant, tier: 'upgraded'|'generic', audience?: 'player'|'coach' }
      */
     public function setTier(Request $request): JsonResponse
     {
-        // Admin gate
         $user = $request->user();
         if (!$user || !$user->global_admin) {
             return response()->json(['error' => 'forbidden'], 403);
         }
 
-        // Validate body
         $validated = $request->validate([
             'layer' => 'required|string|alpha_dash',
             'variant' => 'required|string|alpha_dash',
             'tier' => 'required|in:generic,upgraded',
+            'audience' => 'sometimes|string|in:player,coach',
         ]);
+        $audience = $validated['audience'] ?? 'player';
 
-        // Verify the env points at a writable frontend assets dir. In prod
-        // this won't be set (assets are bundled), so the endpoint disables
-        // itself cleanly with a 503 rather than silently failing.
-        $assetsRoot = env('FRONTEND_ASSETS_PATH');
-        if (!$assetsRoot || !is_dir($assetsRoot) || !is_writable($assetsRoot)) {
+        if ($this->s3Unavailable()) {
             return response()->json([
                 'error' => 'admin_tier_endpoint_unavailable',
-                'detail' => 'FRONTEND_ASSETS_PATH is not set or not writable. This endpoint only operates in a dev environment with mutable frontend assets.',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
             ], 503);
         }
 
         $layer = $validated['layer'];
         $variant = $validated['variant'];
         $targetTier = $validated['tier'];
+        $genericFolder = $this->genericPrefix($audience);
+        $upgradedFolder = $this->upgradedPrefix($audience);
 
-        $genericDir = rtrim($assetsRoot, '/') . "/headshot-layers/{$layer}";
-        $upgradedDir = rtrim($assetsRoot, '/') . "/headshot-layers-upgraded/{$layer}";
         $filename = "{$variant}.svg";
-        $genericPath = "{$genericDir}/{$filename}";
-        $upgradedPath = "{$upgradedDir}/{$filename}";
+        $genericKey = "{$genericFolder}/{$layer}/{$filename}";
+        $upgradedKey = "{$upgradedFolder}/{$layer}/{$filename}";
 
-        $currentlyGeneric = file_exists($genericPath);
-        $currentlyUpgraded = file_exists($upgradedPath);
+        $s3 = Storage::disk('assets');
+        $currentlyGeneric = $s3->exists($genericKey);
+        $currentlyUpgraded = $s3->exists($upgradedKey);
 
         if (!$currentlyGeneric && !$currentlyUpgraded) {
             return response()->json([
                 'error' => 'variant_not_found',
-                'detail' => "Neither {$genericPath} nor {$upgradedPath} exists.",
+                'detail' => "Neither {$genericKey} nor {$upgradedKey} exists.",
             ], 404);
         }
 
-        // Already in target tier — idempotent no-op
         if ($targetTier === 'generic' && $currentlyGeneric && !$currentlyUpgraded) {
-            return response()->json(['tier' => 'generic', 'path' => "headshot-layers/{$layer}/{$filename}"]);
+            return response()->json(['tier' => 'generic', 'audience' => $audience, 'path' => $genericKey]);
         }
         if ($targetTier === 'upgraded' && $currentlyUpgraded && !$currentlyGeneric) {
-            return response()->json(['tier' => 'upgraded', 'path' => "headshot-layers-upgraded/{$layer}/{$filename}"]);
+            return response()->json(['tier' => 'upgraded', 'audience' => $audience, 'path' => $upgradedKey]);
         }
 
-        $sourcePath = $targetTier === 'upgraded' ? $genericPath : $upgradedPath;
-        $destPath = $targetTier === 'upgraded' ? $upgradedPath : $genericPath;
-        $destDir = $targetTier === 'upgraded' ? $upgradedDir : $genericDir;
+        $sourceKey = $targetTier === 'upgraded' ? $genericKey : $upgradedKey;
+        $destKey = $targetTier === 'upgraded' ? $upgradedKey : $genericKey;
 
-        if (!file_exists($sourcePath)) {
-            // Defensive — both shouldn't exist simultaneously, but if they do
-            // the destination already wins.
+        if (!$s3->exists($sourceKey)) {
             return response()->json([
                 'error' => 'variant_in_both_folders',
                 'detail' => 'Variant exists in both generic and upgraded folders. Resolve manually.',
             ], 409);
         }
 
-        if (!is_dir($destDir)) {
-            if (!mkdir($destDir, 0755, true) && !is_dir($destDir)) {
-                Log::error("AdminHeadshotController: failed to create directory {$destDir}");
-                return response()->json(['error' => 'mkdir_failed'], 500);
-            }
-        }
-
-        if (!rename($sourcePath, $destPath)) {
-            Log::error("AdminHeadshotController: rename failed {$sourcePath} -> {$destPath}");
+        if (!$s3->move($sourceKey, $destKey)) {
+            Log::error("AdminHeadshotController: S3 move failed {$sourceKey} -> {$destKey}");
             return response()->json(['error' => 'move_failed'], 500);
         }
 
-        $relPath = $targetTier === 'upgraded'
-            ? "headshot-layers-upgraded/{$layer}/{$filename}"
-            : "headshot-layers/{$layer}/{$filename}";
-
         return response()->json([
             'tier' => $targetTier,
-            'path' => $relPath,
+            'audience' => $audience,
+            'path' => $destKey,
         ]);
     }
 
     /**
-     * Write a headshot variant SVG to disk. Used by the admin variant editor's
-     * Save button to persist either an edited existing variant or a brand-new
-     * one (file_put_contents creates if missing). Mirrors setTier's auth + env
-     * gating exactly — production-safe (returns 503 with FRONTEND_ASSETS_PATH
-     * unset).
+     * Write a headshot variant SVG to the S3 bucket. Used by the admin
+     * variant editor's Save button.
      *
      * POST /api/admin/headshot-layers/save
-     * Body: { layer: 'hair', variant: 'mohawk', tier: 'generic'|'upgraded',
-     *         content: '<svg ...>...</svg>' }
+     * Body: { layer, variant, tier: 'generic'|'upgraded', content, audience?: 'player'|'coach' }
      */
     public function saveVariant(Request $request): JsonResponse
     {
@@ -131,21 +135,21 @@ class AdminHeadshotController extends Controller
             'layer' => 'required|string|alpha_dash',
             'variant' => ['required', 'string', 'regex:/^[a-z0-9-]+$/'],
             'tier' => 'required|in:generic,upgraded',
+            'audience' => 'sometimes|string|in:player,coach',
             // 100 KB cap — way more than any reasonable pixel-art variant
             // needs but cheap insurance against runaway client behavior.
             'content' => 'required|string|max:102400',
         ]);
+        $audience = $validated['audience'] ?? 'player';
 
-        $assetsRoot = env('FRONTEND_ASSETS_PATH');
-        if (!$assetsRoot || !is_dir($assetsRoot) || !is_writable($assetsRoot)) {
+        if ($this->s3Unavailable()) {
             return response()->json([
                 'error' => 'admin_save_endpoint_unavailable',
-                'detail' => 'FRONTEND_ASSETS_PATH is not set or not writable. This endpoint only operates in a dev environment with mutable frontend assets.',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
             ], 503);
         }
 
-        // Basic XML well-formedness check — reject obviously-broken payloads
-        // before writing them to disk where they'd break the next composer load.
+        // Basic XML well-formedness check.
         $previousErrors = libxml_use_internal_errors(true);
         $doc = simplexml_load_string($validated['content']);
         libxml_clear_errors();
@@ -157,62 +161,38 @@ class AdminHeadshotController extends Controller
         $tier = $validated['tier'];
         $layer = $validated['layer'];
         $variant = $validated['variant'];
-        $folder = $tier === 'upgraded' ? 'headshot-layers-upgraded' : 'headshot-layers';
-        $targetDir = rtrim($assetsRoot, '/') . "/{$folder}/{$layer}";
-        $targetPath = "{$targetDir}/{$variant}.svg";
+        $folder = $tier === 'upgraded' ? $this->upgradedPrefix($audience) : $this->genericPrefix($audience);
+        $targetKey = "{$folder}/{$layer}/{$variant}.svg";
 
-        // Path-traversal defense — realpath the resolved target dir's parent
-        // and confirm it sits under the assets root.
-        $assetsReal = realpath($assetsRoot);
-        $parentReal = realpath(dirname($targetDir)) ?: realpath($assetsRoot);
-        if (!$assetsReal || !$parentReal || strpos($parentReal, $assetsReal) !== 0) {
-            return response()->json(['error' => 'invalid_path'], 400);
-        }
-
-        if (!is_dir($targetDir)) {
-            if (!mkdir($targetDir, 0755, true) && !is_dir($targetDir)) {
-                Log::error("AdminHeadshotController: failed to create directory {$targetDir}");
-                return response()->json(['error' => 'mkdir_failed'], 500);
-            }
-        }
-
-        // Atomic write: write to temp then rename. Avoids leaving a half-
-        // written file if the process dies mid-save.
-        $tmpPath = $targetPath . '.tmp';
-        if (file_put_contents($tmpPath, $validated['content']) === false) {
-            Log::error("AdminHeadshotController: write failed {$tmpPath}");
+        $s3 = Storage::disk('assets');
+        if (!$s3->put($targetKey, $validated['content'])) {
+            Log::error("AdminHeadshotController: S3 put failed {$targetKey}");
             return response()->json(['error' => 'write_failed'], 500);
         }
-        if (!rename($tmpPath, $targetPath)) {
-            @unlink($tmpPath);
-            Log::error("AdminHeadshotController: rename failed {$tmpPath} -> {$targetPath}");
-            return response()->json(['error' => 'commit_failed'], 500);
-        }
 
-        // If we just saved to upgraded but a stale free copy exists with the
-        // same name (or vice versa), remove the other so the tier source-of-
-        // truth stays unambiguous.
-        $otherFolder = $tier === 'upgraded' ? 'headshot-layers' : 'headshot-layers-upgraded';
-        $otherPath = rtrim($assetsRoot, '/') . "/{$otherFolder}/{$layer}/{$variant}.svg";
-        if (file_exists($otherPath)) {
-            @unlink($otherPath);
+        // If a stale copy exists in the opposite tier WITHIN THE SAME AUDIENCE,
+        // remove it so the tier source-of-truth stays unambiguous. Cross-audience
+        // copies (player vs coach with same name) are independent and not touched.
+        $otherFolder = $tier === 'upgraded' ? $this->genericPrefix($audience) : $this->upgradedPrefix($audience);
+        $otherKey = "{$otherFolder}/{$layer}/{$variant}.svg";
+        if ($s3->exists($otherKey)) {
+            $s3->delete($otherKey);
         }
 
         return response()->json([
             'saved' => true,
             'tier' => $tier,
-            'path' => "{$folder}/{$layer}/{$variant}.svg",
+            'audience' => $audience,
+            'path' => $targetKey,
         ]);
     }
 
     /**
-     * Permanently delete a headshot variant SVG. Removes the file from
-     * whichever tier folder it lives in. Mirrors the auth + env preamble
-     * of the other admin endpoints — 403 for non-admins, 503 in prod where
-     * FRONTEND_ASSETS_PATH is unset.
+     * Permanently delete a headshot variant SVG from whichever tier folder
+     * it lives in.
      *
      * POST /api/admin/headshot-layers/delete
-     * Body: { layer: 'hair', variant: 'mohawk' }
+     * Body: { layer, variant, audience?: 'player'|'coach' }
      */
     public function deleteVariant(Request $request): JsonResponse
     {
@@ -224,42 +204,38 @@ class AdminHeadshotController extends Controller
         $validated = $request->validate([
             'layer' => 'required|string|alpha_dash',
             'variant' => ['required', 'string', 'regex:/^[a-z0-9-]+$/'],
+            'audience' => 'sometimes|string|in:player,coach',
         ]);
+        $audience = $validated['audience'] ?? 'player';
 
-        $assetsRoot = env('FRONTEND_ASSETS_PATH');
-        if (!$assetsRoot || !is_dir($assetsRoot) || !is_writable($assetsRoot)) {
+        if ($this->s3Unavailable()) {
             return response()->json([
                 'error' => 'admin_delete_endpoint_unavailable',
-                'detail' => 'FRONTEND_ASSETS_PATH is not set or not writable.',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
             ], 503);
         }
 
         $layer = $validated['layer'];
         $variant = $validated['variant'];
         $filename = "{$variant}.svg";
-        $genericPath = rtrim($assetsRoot, '/') . "/headshot-layers/{$layer}/{$filename}";
-        $upgradedPath = rtrim($assetsRoot, '/') . "/headshot-layers-upgraded/{$layer}/{$filename}";
+        $genericKey = "{$this->genericPrefix($audience)}/{$layer}/{$filename}";
+        $upgradedKey = "{$this->upgradedPrefix($audience)}/{$layer}/{$filename}";
 
+        $s3 = Storage::disk('assets');
         $removed = [];
-        // Path-traversal defense — confirm resolved paths sit under the assets root.
-        $assetsReal = realpath($assetsRoot);
-        foreach ([$genericPath, $upgradedPath] as $path) {
-            if (!file_exists($path)) continue;
-            $parentReal = realpath(dirname($path));
-            if (!$assetsReal || !$parentReal || strpos($parentReal, $assetsReal) !== 0) {
-                return response()->json(['error' => 'invalid_path'], 400);
-            }
-            if (!@unlink($path)) {
-                Log::error("AdminHeadshotController: delete failed {$path}");
+        foreach ([$genericKey, $upgradedKey] as $key) {
+            if (!$s3->exists($key)) continue;
+            if (!$s3->delete($key)) {
+                Log::error("AdminHeadshotController: S3 delete failed {$key}");
                 return response()->json(['error' => 'delete_failed'], 500);
             }
-            $removed[] = $path;
+            $removed[] = $key;
         }
 
         if (empty($removed)) {
             return response()->json([
                 'error' => 'variant_not_found',
-                'detail' => "Neither {$genericPath} nor {$upgradedPath} exists.",
+                'detail' => "Neither {$genericKey} nor {$upgradedKey} exists.",
             ], 404);
         }
 
@@ -267,14 +243,10 @@ class AdminHeadshotController extends Controller
     }
 
     /**
-     * Read the raw SVG content of a specific variant from disk. The admin
-     * variant strip uses this to bypass the bundled `import.meta.glob` map,
-     * which can serve stale content within the same session if Vite has
-     * already cached the asset transform — even after the file was just
-     * rewritten by saveVariant. Pulling from disk on demand guarantees the
-     * thumb reflects the latest saved content.
+     * Read the raw SVG content of a specific variant straight from S3.
+     * The admin variant strip uses this to bypass any stale bundle cache.
      *
-     * GET /api/admin/headshot-layers/variant?layer=face&variant=medium
+     * GET /api/admin/headshot-layers/variant?layer=face&variant=medium&audience=player|coach
      */
     public function getVariant(Request $request): JsonResponse
     {
@@ -286,46 +258,47 @@ class AdminHeadshotController extends Controller
         $validated = $request->validate([
             'layer' => 'required|string|alpha_dash',
             'variant' => ['required', 'string', 'regex:/^[a-z0-9-]+$/'],
+            'audience' => 'sometimes|string|in:player,coach',
         ]);
+        $audience = $validated['audience'] ?? 'player';
 
-        $assetsRoot = env('FRONTEND_ASSETS_PATH');
-        if (!$assetsRoot || !is_dir($assetsRoot)) {
+        if ($this->s3Unavailable()) {
             return response()->json([
                 'error' => 'admin_get_variant_endpoint_unavailable',
-                'detail' => 'FRONTEND_ASSETS_PATH is not set.',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
             ], 503);
         }
 
         $layer = $validated['layer'];
         $variant = $validated['variant'];
         $filename = "{$variant}.svg";
-        $genericPath = rtrim($assetsRoot, '/') . "/headshot-layers/{$layer}/{$filename}";
-        $upgradedPath = rtrim($assetsRoot, '/') . "/headshot-layers-upgraded/{$layer}/{$filename}";
+        $genericKey = "{$this->genericPrefix($audience)}/{$layer}/{$filename}";
+        $upgradedKey = "{$this->upgradedPrefix($audience)}/{$layer}/{$filename}";
 
-        $path = null;
+        $s3 = Storage::disk('assets');
+        $key = null;
         $tier = null;
-        if (file_exists($genericPath)) {
-            $path = $genericPath;
+        if ($s3->exists($genericKey)) {
+            $key = $genericKey;
             $tier = 'generic';
-        } elseif (file_exists($upgradedPath)) {
-            $path = $upgradedPath;
+        } elseif ($s3->exists($upgradedKey)) {
+            $key = $upgradedKey;
             $tier = 'upgraded';
         } else {
             return response()->json([
                 'error' => 'variant_not_found',
-                'detail' => "Neither {$genericPath} nor {$upgradedPath} exists.",
+                'detail' => "Neither {$genericKey} nor {$upgradedKey} exists.",
             ], 404);
         }
 
-        $assetsReal = realpath($assetsRoot);
-        $parentReal = realpath(dirname($path));
-        if (!$assetsReal || !$parentReal || strpos($parentReal, $assetsReal) !== 0) {
-            return response()->json(['error' => 'invalid_path'], 400);
+        try {
+            $content = $s3->get($key);
+        } catch (\Throwable $e) {
+            Log::error("AdminHeadshotController: S3 get failed {$key}: " . $e->getMessage());
+            return response()->json(['error' => 'read_failed'], 500);
         }
-
-        $content = @file_get_contents($path);
-        if ($content === false) {
-            Log::error("AdminHeadshotController: read failed {$path}");
+        if ($content === null) {
+            Log::error("AdminHeadshotController: S3 get returned null for {$key}");
             return response()->json(['error' => 'read_failed'], 500);
         }
 
@@ -338,12 +311,69 @@ class AdminHeadshotController extends Controller
     }
 
     /**
+     * Return the full layer-variant catalog for the given audience straight
+     * from S3. The admin editor calls this on mount to discover variants
+     * authored since the frontend bundle was built — without it, anything
+     * saved after the last deploy is invisible to the picker even though
+     * the file lives in S3.
+     *
+     * GET /api/admin/headshot-layers/manifest?audience=player|coach
+     * Returns: { audience, layers: { hair: [{name, tier}], eyes: [...], ... } }
+     */
+    public function listManifest(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->global_admin) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+
+        $audience = $request->query('audience', 'player');
+        if (!in_array($audience, ['player', 'coach'], true)) {
+            return response()->json(['error' => 'invalid_audience'], 422);
+        }
+
+        if ($this->s3Unavailable()) {
+            return response()->json([
+                'error' => 'admin_manifest_endpoint_unavailable',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
+            ], 503);
+        }
+
+        $genericPrefix = $this->genericPrefix($audience);
+        $upgradedPrefix = $this->upgradedPrefix($audience);
+        $s3 = Storage::disk('assets');
+
+        $layers = [];
+        foreach ([['generic', $genericPrefix], ['upgraded', $upgradedPrefix]] as [$tier, $prefix]) {
+            // allFiles recurses into <layer>/<variant>.svg subkeys; files() is
+            // top-level only and would miss everything.
+            foreach ($s3->allFiles($prefix) as $key) {
+                if (!preg_match('#^' . preg_quote($prefix, '#') . '/([^/]+)/([^/]+)\.svg$#', $key, $m)) {
+                    continue;
+                }
+                $layerId = $m[1];
+                $variant = $m[2];
+                if (!isset($layers[$layerId])) {
+                    $layers[$layerId] = [];
+                }
+                $layers[$layerId][] = ['name' => $variant, 'tier' => $tier];
+            }
+        }
+
+        // Stable order so the picker isn't visually noisy across refreshes.
+        foreach ($layers as $id => $list) {
+            usort($layers[$id], fn($a, $b) => strcmp($a['name'], $b['name']));
+        }
+
+        return response()->json(['audience' => $audience, 'layers' => $layers]);
+    }
+
+    /**
      * Rename a headshot variant SVG in place (within its current tier folder).
-     * Same auth + env gating as the siblings. Refuses to overwrite an existing
-     * variant in either tier folder.
+     * Refuses to overwrite an existing variant in either tier folder.
      *
      * POST /api/admin/headshot-layers/rename
-     * Body: { layer: 'hair', variant: 'mohawk', newName: 'tall-mohawk' }
+     * Body: { layer, variant, newName, audience?: 'player'|'coach' }
      */
     public function renameVariant(Request $request): JsonResponse
     {
@@ -356,13 +386,14 @@ class AdminHeadshotController extends Controller
             'layer' => 'required|string|alpha_dash',
             'variant' => ['required', 'string', 'regex:/^[a-z0-9-]+$/'],
             'newName' => ['required', 'string', 'regex:/^[a-z0-9-]+$/'],
+            'audience' => 'sometimes|string|in:player,coach',
         ]);
+        $audience = $validated['audience'] ?? 'player';
 
-        $assetsRoot = env('FRONTEND_ASSETS_PATH');
-        if (!$assetsRoot || !is_dir($assetsRoot) || !is_writable($assetsRoot)) {
+        if ($this->s3Unavailable()) {
             return response()->json([
                 'error' => 'admin_rename_endpoint_unavailable',
-                'detail' => 'FRONTEND_ASSETS_PATH is not set or not writable.',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
             ], 503);
         }
 
@@ -370,33 +401,33 @@ class AdminHeadshotController extends Controller
         $variant = $validated['variant'];
         $newName = $validated['newName'];
 
-        // No-op short circuit so a "rename to same name" doesn't 409 itself.
         if ($variant === $newName) {
             return response()->json(['renamed' => false, 'note' => 'no_change']);
         }
 
-        $genericDir = rtrim($assetsRoot, '/') . "/headshot-layers/{$layer}";
-        $upgradedDir = rtrim($assetsRoot, '/') . "/headshot-layers-upgraded/{$layer}";
+        $genericFolder = $this->genericPrefix($audience);
+        $upgradedFolder = $this->upgradedPrefix($audience);
         $oldFilename = "{$variant}.svg";
         $newFilename = "{$newName}.svg";
 
-        $genericOld = "{$genericDir}/{$oldFilename}";
-        $upgradedOld = "{$upgradedDir}/{$oldFilename}";
-        $genericNew = "{$genericDir}/{$newFilename}";
-        $upgradedNew = "{$upgradedDir}/{$newFilename}";
+        $genericOld = "{$genericFolder}/{$layer}/{$oldFilename}";
+        $upgradedOld = "{$upgradedFolder}/{$layer}/{$oldFilename}";
+        $genericNew = "{$genericFolder}/{$layer}/{$newFilename}";
+        $upgradedNew = "{$upgradedFolder}/{$layer}/{$newFilename}";
 
-        // Locate the source — variant must exist in exactly one of the tier
-        // folders (mirrors setTier's invariant).
-        $sourcePath = null;
-        $destPath = null;
-        if (file_exists($genericOld)) {
-            $sourcePath = $genericOld;
-            $destPath = $genericNew;
-            $folder = 'headshot-layers';
-        } elseif (file_exists($upgradedOld)) {
-            $sourcePath = $upgradedOld;
-            $destPath = $upgradedNew;
-            $folder = 'headshot-layers-upgraded';
+        $s3 = Storage::disk('assets');
+
+        $sourceKey = null;
+        $destKey = null;
+        $folder = null;
+        if ($s3->exists($genericOld)) {
+            $sourceKey = $genericOld;
+            $destKey = $genericNew;
+            $folder = $genericFolder;
+        } elseif ($s3->exists($upgradedOld)) {
+            $sourceKey = $upgradedOld;
+            $destKey = $upgradedNew;
+            $folder = $upgradedFolder;
         } else {
             return response()->json([
                 'error' => 'variant_not_found',
@@ -406,29 +437,222 @@ class AdminHeadshotController extends Controller
 
         // Refuse to overwrite — collision is reportable, not silently destructive.
         // Check BOTH folders since a name should be unique across tiers.
-        if (file_exists($genericNew) || file_exists($upgradedNew)) {
+        if ($s3->exists($genericNew) || $s3->exists($upgradedNew)) {
             return response()->json([
                 'error' => 'name_collision',
                 'detail' => "A variant named '{$newName}' already exists for {$layer}.",
             ], 409);
         }
 
-        // Path-traversal defense.
-        $assetsReal = realpath($assetsRoot);
-        $parentReal = realpath(dirname($destPath));
-        if (!$assetsReal || !$parentReal || strpos($parentReal, $assetsReal) !== 0) {
-            return response()->json(['error' => 'invalid_path'], 400);
-        }
-
-        if (!rename($sourcePath, $destPath)) {
-            Log::error("AdminHeadshotController: rename failed {$sourcePath} -> {$destPath}");
+        if (!$s3->move($sourceKey, $destKey)) {
+            Log::error("AdminHeadshotController: S3 move failed {$sourceKey} -> {$destKey}");
             return response()->json(['error' => 'rename_failed'], 500);
         }
 
         return response()->json([
             'renamed' => true,
             'newName' => $newName,
+            'audience' => $audience,
             'path' => "{$folder}/{$layer}/{$newFilename}",
         ]);
+    }
+
+    /**
+     * S3 prefix for "Create New Headshot" saves. Players write to
+     * headshots-premade/ (a swappable premade pool the user picks from);
+     * coaches write directly into coach-headshots/ (assigned to coaches at
+     * campaign creation, with no user swap UX).
+     */
+    private function premadePrefix(string $audience = 'player'): string
+    {
+        return $audience === 'coach' ? 'coach-headshots' : 'headshots-premade';
+    }
+
+    /**
+     * Filename prefix per audience. Players: `premade_NNN`. Coaches:
+     * `coach_NNN` to read as a finished coach headshot rather than a
+     * swappable premade slug.
+     */
+    private function premadeFilenamePrefix(string $audience): string
+    {
+        return $audience === 'coach' ? 'coach' : 'premade';
+    }
+
+    /**
+     * All audience prefixes used for premade saves. Used by deletePremade so
+     * we don't need the caller to know which audience a file belongs to.
+     */
+    private function allPremadePrefixes(): array
+    {
+        return [
+            'player' => $this->premadePrefix('player'),
+            'coach'  => $this->premadePrefix('coach'),
+        ];
+    }
+
+
+    /**
+     * List every premade headshot for the given audience with its inlined
+     * SVG content so the admin gallery can render thumbnails without a
+     * second round-trip per file.
+     *
+     * GET /api/admin/headshot-premades?audience=player|coach
+     */
+    public function listPremades(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->global_admin) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+
+        $audience = $request->query('audience', 'player');
+        if (!in_array($audience, ['player', 'coach'], true)) {
+            return response()->json(['error' => 'invalid_audience'], 422);
+        }
+
+        if ($this->s3Unavailable()) {
+            return response()->json([
+                'error' => 'admin_premades_endpoint_unavailable',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
+            ], 503);
+        }
+
+        $prefix = $this->premadePrefix($audience);
+        $filePrefix = $this->premadeFilenamePrefix($audience);
+        $s3 = Storage::disk('assets');
+
+        $keys = $s3->files($prefix);
+        sort($keys, SORT_NATURAL);
+
+        $items = [];
+        foreach ($keys as $key) {
+            $basename = basename($key);
+            if (!preg_match('/^(' . $filePrefix . '_\d+)\.svg$/', $basename, $m)) continue;
+            try {
+                $content = $s3->get($key);
+            } catch (\Throwable $e) {
+                continue;
+            }
+            if ($content === null) continue;
+            $items[] = ['name' => $m[1], 'svgContent' => $content];
+        }
+
+        return response()->json(['premades' => $items, 'audience' => $audience]);
+    }
+
+    /**
+     * Snapshot the admin catalog preview as a new premade headshot SVG.
+     * Auto-increments the file name (premade_001.svg, premade_002.svg, ...)
+     * based on the highest existing index in the AUDIENCE-SPECIFIC folder,
+     * so player and coach premades each have their own slot sequence.
+     *
+     * POST /api/admin/headshot-premades
+     * Body: { content: '<svg ...>...</svg>', audience?: 'player'|'coach' }
+     */
+    public function savePremade(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->global_admin) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+
+        // 250KB cap — composed headshots with piece-wrapped face variants
+        // (slim face alone is ~70KB) can easily exceed 100KB once you stack
+        // hair / eyes / headband on top.
+        $validated = $request->validate([
+            'content' => 'required|string|max:250000',
+            'audience' => 'sometimes|string|in:player,coach',
+        ]);
+        $audience = $validated['audience'] ?? 'player';
+
+        if ($this->s3Unavailable()) {
+            return response()->json([
+                'error' => 'admin_premades_endpoint_unavailable',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
+            ], 503);
+        }
+
+        // Basic XML well-formedness check — same defense as saveVariant.
+        $previousErrors = libxml_use_internal_errors(true);
+        $doc = simplexml_load_string($validated['content']);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previousErrors);
+        if ($doc === false) {
+            return response()->json(['error' => 'invalid_svg', 'detail' => 'Content is not well-formed XML.'], 422);
+        }
+
+        $prefix = $this->premadePrefix($audience);
+        $filePrefix = $this->premadeFilenamePrefix($audience);
+        $s3 = Storage::disk('assets');
+
+        // Find max existing index; next slot is max + 1 (never reuses a slot,
+        // even after manual deletion).
+        $maxIndex = 0;
+        foreach ($s3->files($prefix) as $key) {
+            $basename = basename($key);
+            if (preg_match('/^' . $filePrefix . '_(\d+)\.svg$/', $basename, $m)) {
+                $n = (int) $m[1];
+                if ($n > $maxIndex) $maxIndex = $n;
+            }
+        }
+        $nextIndex = $maxIndex + 1;
+        $name = sprintf('%s_%03d', $filePrefix, $nextIndex);
+        $targetKey = "{$prefix}/{$name}.svg";
+
+        if (!$s3->put($targetKey, $validated['content'])) {
+            Log::error("AdminHeadshotController: S3 put failed {$targetKey}");
+            return response()->json(['error' => 'write_failed'], 500);
+        }
+
+        return response()->json([
+            'saved' => true,
+            'name' => $name,
+            'audience' => $audience,
+            'svgContent' => $validated['content'],
+        ]);
+    }
+
+    /**
+     * Remove a premade headshot file by name. Scans both audience folders
+     * since the slug alone doesn't disclose the audience.
+     *
+     * DELETE /api/admin/headshot-premades/{name}
+     * `name` must match ^(premade|coach)_\d+$ — defense against path traversal.
+     */
+    public function deletePremade(Request $request, string $name): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->global_admin) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+
+        if (!preg_match('/^(premade|coach)_\d+$/', $name)) {
+            return response()->json(['error' => 'invalid_name'], 422);
+        }
+
+        if ($this->s3Unavailable()) {
+            return response()->json([
+                'error' => 'admin_premades_endpoint_unavailable',
+                'detail' => 'ASSETS_AWS_BUCKET is not configured.',
+            ], 503);
+        }
+
+        $s3 = Storage::disk('assets');
+        $deleted = [];
+        foreach ($this->allPremadePrefixes() as $audience => $prefix) {
+            $targetKey = "{$prefix}/{$name}.svg";
+            if (!$s3->exists($targetKey)) continue;
+            if (!$s3->delete($targetKey)) {
+                Log::error("AdminHeadshotController: S3 delete failed {$targetKey}");
+                return response()->json(['error' => 'delete_failed'], 500);
+            }
+            $deleted[] = $audience;
+        }
+
+        if (empty($deleted)) {
+            return response()->json(['error' => 'not_found'], 404);
+        }
+
+        return response()->json(['deleted' => true, 'name' => $name, 'audiences' => $deleted]);
     }
 }

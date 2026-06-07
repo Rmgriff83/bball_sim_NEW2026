@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch, onUnmounted } from 'vue'
+import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useAuthStore } from '@/stores/auth'
@@ -20,6 +20,11 @@ const walkthroughStore = useWalkthroughStore()
 // gates the onboarding walkthroughs — then navigate into the campaign.
 const showPlayedBeforeModal = ref(false)
 const pendingNavigation = ref(null)
+
+// Team-rename is bundled into the headshot_editor IAP so it's gated by the
+// same feature flag as the headshot customize tools. Locked users see the
+// input disabled with an upgrade prompt below it.
+const canRenameTeam = computed(() => authStore.hasFeature('headshot_editor'))
 
 function handlePlayedBeforeAnswer(playedBefore) {
   walkthroughStore.setHasPlayedBefore(playedBefore)
@@ -163,7 +168,11 @@ async function createCampaign() {
   audio.suppressClickSound() // affirmation on success instead of the generic tap
 
   try {
-    const renamedTeam = customTeamName.value.trim()
+    // Belt-and-suspenders gate: drop any custom team name if the user
+    // doesn't have the headshot_editor IAP. The input is disabled in the
+    // template, but a stale value (e.g. typed before the flag was checked
+    // or restored from form state) would otherwise sneak through.
+    const renamedTeam = canRenameTeam.value ? customTeamName.value.trim() : ''
     const effectiveTeamName = renamedTeam || selectedTeam.value.name
     const campaignName = newCampaignName.value.trim() || `${effectiveTeamName} Dynasty`
     const payload = {
@@ -471,8 +480,11 @@ function getDifficultyLabel(value) {
                 </div>
               </div>
 
-              <!-- Rename Your Team (optional) -->
-              <div v-if="selectedTeam" class="form-group">
+              <!-- Rename Your Team (optional) — gated by the headshot_editor
+                   IAP. Hidden entirely when the user doesn't own the unlock;
+                   createCampaign still strips any custom name from the
+                   payload defensively. -->
+              <div v-if="selectedTeam && canRenameTeam" class="form-group">
                 <label class="form-label">Rename your team (optional)</label>
                 <input
                   v-model="customTeamName"

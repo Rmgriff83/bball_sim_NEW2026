@@ -1,17 +1,9 @@
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
   <g data-piece="base" data-color="#dedddf" data-color-label="base" transform="translate(1 0)">
-    <rect x="23" y="23" width="1" height="1"/>
-    <rect x="24" y="23" width="1" height="1"/>
-    <rect x="25" y="23" width="1" height="1"/>
-    <rect x="26" y="23" width="1" height="1"/>
-    <rect x="21" y="24" width="1" height="1"/>
-    <rect x="22" y="24" width="1" height="1"/>
     <rect x="23" y="24" width="1" height="1"/>
     <rect x="24" y="24" width="1" height="1"/>
     <rect x="25" y="24" width="1" height="1"/>
     <rect x="26" y="24" width="1" height="1"/>
-    <rect x="27" y="24" width="1" height="1"/>
-    <rect x="28" y="24" width="1" height="1"/>
     <rect x="21" y="25" width="1" height="1"/>
     <rect x="22" y="25" width="1" height="1"/>
     <rect x="23" y="25" width="1" height="1"/>
@@ -20,23 +12,86 @@
     <rect x="26" y="25" width="1" height="1"/>
     <rect x="27" y="25" width="1" height="1"/>
     <rect x="28" y="25" width="1" height="1"/>
-    <rect x="21" y="26" width="1" height="1"/>
-    <rect x="22" y="26" width="1" height="1"/>
+    <rect x="21" y="25" width="1" height="1"/>
+    <rect x="22" y="25" width="1" height="1"/>
+    <rect x="23" y="25" width="1" height="1"/>
+    <rect x="24" y="25" width="1" height="1"/>
+    <rect x="25" y="25" width="1" height="1"/>
+    <rect x="26" y="25" width="1" height="1"/>
+    <rect x="27" y="25" width="1" height="1"/>
+    <rect x="28" y="25" width="1" height="1"/>
+    <rect x="21" y="25" width="1" height="1"/>
+    <rect x="22" y="25" width="1" height="1"/>
+    <rect x="23" y="25" width="1" height="1"/>
+    <rect x="24" y="25" width="1" height="1"/>
+    <rect x="25" y="25" width="1" height="1"/>
+    <rect x="26" y="25" width="1" height="1"/>
+    <rect x="27" y="25" width="1" height="1"/>
+    <rect x="28" y="25" width="1" height="1"/>
     <rect x="23" y="26" width="1" height="1"/>
     <rect x="24" y="26" width="1" height="1"/>
     <rect x="25" y="26" width="1" height="1"/>
     <rect x="26" y="26" width="1" height="1"/>
-    <rect x="27" y="26" width="1" height="1"/>
-    <rect x="28" y="26" width="1" height="1"/>
-    <rect x="23" y="27" width="1" height="1"/>
-    <rect x="24" y="27" width="1" height="1"/>
-    <rect x="25" y="27" width="1" height="1"/>
-    <rect x="26" y="27" width="1" height="1"/>
+    <rect x="33" y="24" width="1" height="1"/>
+    <rect x="34" y="24" width="1" height="1"/>
+    <rect x="35" y="24" width="1" height="1"/>
+    <rect x="36" y="24" width="1" height="1"/>
+    <rect x="37" y="24" width="1" height="1"/>
+    <rect x="31" y="25" width="1" height="1"/>
+    <rect x="32" y="25" width="1" height="1"/>
+    <rect x="33" y="25" width="1" height="1"/>
+    <rect x="34" y="25" width="1" height="1"/>
+    <rect x="35" y="25" width="1" height="1"/>
+    <rect x="36" y="25" width="1" height="1"/>
+    <rect x="37" y="25" width="1" height="1"/>
+    <rect x="38" y="25" width="1" height="1"/>
+    <rect x="39" y="25" width="1" height="1"/>
+    <rect x="31" y="25" width="1" height="1"/>
+    <rect x="32" y="25" width="1" height="1"/>
+    <rect x="33" y="25" width="1" height="1"/>
+    <rect x="34" y="25" width="1" height="1"/>
+    <rect x="35" y="25" width="1" height="1"/>
+    <rect x="36" y="25" width="1" height="1"/>
+    <rect x="37" y="25" width="1" height="1"/>
+    <rect x="38" y="25" width="1" height="1"/>
+    <rect x="39" y="25" width="1" height="1"/>
+    <rect x="31" y="25" width="1" height="1"/>
+    <rect x="32" y="25" width="1" height="1"/>
+    <rect x="33" y="25" width="1" height="1"/>
+    <rect x="34" y="25" width="1" height="1"/>
+    <rect x="35" y="25" width="1" height="1"/>
+    <rect x="36" y="25" width="1" height="1"/>
+    <rect x="37" y="25" width="1" height="1"/>
+    <rect x="38" y="25" width="1" height="1"/>
+    <rect x="39" y="25" width="1" height="1"/>
+    <rect x="33" y="26" width="1" height="1"/>
+    <rect x="34" y="26" width="1" height="1"/>
+    <rect x="35" y="26" width="1" height="1"/>
+    <rect x="36" y="26" width="1" height="1"/>
+    <rect x="37" y="26" width="1" height="1"/>
+  </g>
+  <g data-piece="eyelids" data-color-token="skin.hi" data-color-label="eyelids">
+    <rect x="23" y="23" width="1" height="1"/>
+    <rect x="24" y="23" width="1" height="1"/>
+    <rect x="25" y="23" width="1" height="1"/>
+    <rect x="26" y="23" width="1" height="1"/>
+    <rect x="27" y="23" width="1" height="1"/>
+    <rect x="28" y="23" width="1" height="1"/>
+    <rect x="22" y="24" width="1" height="1"/>
+    <rect x="23" y="24" width="1" height="1"/>
+    <rect x="24" y="24" width="1" height="1"/>
+    <rect x="25" y="24" width="1" height="1"/>
+    <rect x="26" y="24" width="1" height="1"/>
+    <rect x="27" y="24" width="1" height="1"/>
+    <rect x="28" y="24" width="1" height="1"/>
+    <rect x="29" y="24" width="1" height="1"/>
+    <rect x="33" y="23" width="1" height="1"/>
     <rect x="34" y="23" width="1" height="1"/>
     <rect x="35" y="23" width="1" height="1"/>
     <rect x="36" y="23" width="1" height="1"/>
     <rect x="37" y="23" width="1" height="1"/>
     <rect x="38" y="23" width="1" height="1"/>
+    <rect x="39" y="23" width="1" height="1"/>
     <rect x="32" y="24" width="1" height="1"/>
     <rect x="33" y="24" width="1" height="1"/>
     <rect x="34" y="24" width="1" height="1"/>
@@ -46,74 +101,19 @@
     <rect x="38" y="24" width="1" height="1"/>
     <rect x="39" y="24" width="1" height="1"/>
     <rect x="40" y="24" width="1" height="1"/>
-    <rect x="32" y="25" width="1" height="1"/>
-    <rect x="33" y="25" width="1" height="1"/>
-    <rect x="34" y="25" width="1" height="1"/>
-    <rect x="35" y="25" width="1" height="1"/>
+  </g>
+  <g data-piece="pupils" data-color-token="eye.pupil" data-color-label="pupils">
+    <rect x="26" y="25" width="1" height="1"/>
+    <rect x="26" y="26" width="1" height="1"/>
+    <rect x="27" y="26" width="1" height="1"/>
     <rect x="36" y="25" width="1" height="1"/>
-    <rect x="37" y="25" width="1" height="1"/>
-    <rect x="38" y="25" width="1" height="1"/>
-    <rect x="39" y="25" width="1" height="1"/>
-    <rect x="40" y="25" width="1" height="1"/>
-    <rect x="32" y="26" width="1" height="1"/>
-    <rect x="33" y="26" width="1" height="1"/>
-    <rect x="34" y="26" width="1" height="1"/>
-    <rect x="35" y="26" width="1" height="1"/>
+    <rect x="36" y="25" width="1" height="1"/>
     <rect x="36" y="26" width="1" height="1"/>
     <rect x="37" y="26" width="1" height="1"/>
     <rect x="38" y="26" width="1" height="1"/>
-    <rect x="39" y="26" width="1" height="1"/>
-    <rect x="40" y="26" width="1" height="1"/>
-    <rect x="34" y="27" width="1" height="1"/>
-    <rect x="35" y="27" width="1" height="1"/>
-    <rect x="36" y="27" width="1" height="1"/>
-    <rect x="37" y="27" width="1" height="1"/>
-    <rect x="38" y="27" width="1" height="1"/>
-  </g>
-  <g data-piece="eyelids" data-color-token="skin.hi" data-color-label="eyelids">
-    <rect x="23" y="22" width="1" height="1"/>
-    <rect x="24" y="22" width="1" height="1"/>
-    <rect x="25" y="22" width="1" height="1"/>
-    <rect x="26" y="22" width="1" height="1"/>
-    <rect x="27" y="22" width="1" height="1"/>
-    <rect x="28" y="22" width="1" height="1"/>
-    <rect x="22" y="23" width="1" height="1"/>
-    <rect x="23" y="23" width="1" height="1"/>
-    <rect x="24" y="23" width="1" height="1"/>
-    <rect x="25" y="23" width="1" height="1"/>
-    <rect x="26" y="23" width="1" height="1"/>
-    <rect x="27" y="23" width="1" height="1"/>
-    <rect x="28" y="23" width="1" height="1"/>
-    <rect x="29" y="23" width="1" height="1"/>
-    <rect x="34" y="22" width="1" height="1"/>
-    <rect x="35" y="22" width="1" height="1"/>
-    <rect x="36" y="22" width="1" height="1"/>
-    <rect x="37" y="22" width="1" height="1"/>
-    <rect x="38" y="22" width="1" height="1"/>
-    <rect x="39" y="22" width="1" height="1"/>
-    <rect x="40" y="22" width="1" height="1"/>
-    <rect x="33" y="23" width="1" height="1"/>
-    <rect x="34" y="23" width="1" height="1"/>
-    <rect x="35" y="23" width="1" height="1"/>
-    <rect x="36" y="23" width="1" height="1"/>
-    <rect x="37" y="23" width="1" height="1"/>
-    <rect x="38" y="23" width="1" height="1"/>
-    <rect x="39" y="23" width="1" height="1"/>
-    <rect x="40" y="23" width="1" height="1"/>
-    <rect x="41" y="23" width="1" height="1"/>
-  </g>
-  <g data-piece="pupils" data-color-token="eye.pupil" data-color-label="pupils">
-    <rect x="26" y="26" width="1" height="1"/>
-    <rect x="26" y="27" width="1" height="1"/>
-    <rect x="27" y="27" width="1" height="1"/>
+    <rect x="38" y="25" width="1" height="1"/>
     <rect x="37" y="25" width="1" height="1"/>
-    <rect x="37" y="26" width="1" height="1"/>
-    <rect x="37" y="27" width="1" height="1"/>
-    <rect x="38" y="27" width="1" height="1"/>
-    <rect x="39" y="27" width="1" height="1"/>
-    <rect x="39" y="26" width="1" height="1"/>
-    <rect x="38" y="26" width="1" height="1"/>
-    <rect x="39" y="25" width="1" height="1"/>
-    <rect x="27" y="26" width="1" height="1"/>
+    <rect x="38" y="25" width="1" height="1"/>
+    <rect x="27" y="25" width="1" height="1"/>
   </g>
 </svg>

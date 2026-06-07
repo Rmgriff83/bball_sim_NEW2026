@@ -155,6 +155,16 @@ const props = defineProps({
   canDraft: {
     type: Boolean,
     default: false
+  },
+  // True when this modal is being shown from any draft-room flow (rookie
+  // OR fantasy). Used to suppress contract actions (Sign / Re-sign / Drop)
+  // that don't make sense before the player has been drafted to a team.
+  // The rookie-draft caller can rely on `scoutingMode` for the same effect,
+  // but the fantasy-draft caller needs this explicit signal because its
+  // players already carry the free-agent flag.
+  inDraft: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -206,6 +216,7 @@ const router = useRouter()
 const headshotEditorReturnStore = useHeadshotEditorReturnStore()
 
 function openHeadshotEditor() {
+  if (!props.isUserPlayer) return
   if (!authStore.hasFeature('headshot_editor')) return
   const pid = normalizedPlayer.value?.id ?? props.player?.id
   if (!pid) return
@@ -815,7 +826,7 @@ function formatChange(change) {
                 <div class="modal-player-avatar">
                   <PlayerAvatar :player="normalizedPlayer" :size="84" class="avatar-icon" />
                   <button
-                    v-if="authStore.hasFeature('headshot_editor')"
+                    v-if="isUserPlayer && authStore.hasFeature('headshot_editor')"
                     type="button"
                     class="edit-headshot-overlay"
                     title="Edit headshot"
@@ -889,8 +900,9 @@ function formatChange(change) {
                     <span class="morale-chip-label">{{ getMoraleLabel(moraleValue) }}</span>
                     <span class="morale-chip-value">{{ moraleValue }}</span>
                   </div>
-                  <!-- Sign button (free agents) -->
-                  <div v-if="playerIsFreeAgent && !scoutingMode" class="header-contract-actions">
+                  <!-- Sign button (free agents) — suppressed in draft room
+                       contexts since the player hasn't been drafted yet. -->
+                  <div v-if="playerIsFreeAgent && !scoutingMode && !inDraft" class="header-contract-actions">
                     <button
                       class="header-action-btn sign"
                       @click.stop="emit('sign-player', player)"

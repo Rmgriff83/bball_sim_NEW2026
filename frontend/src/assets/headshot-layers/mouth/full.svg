@@ -1,6 +1,10 @@
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
-  <rect x="27" y="38" width="10" height="1" fill="#8a4a3c"/>
-  <rect x="28" y="39" width="8" height="2" fill="{{lip}}"/>
-  <rect x="29" y="37" width="6" height="1" fill="{{skin.hi}}"/>
-  <rect x="27" y="40" width="10" height="2" fill="{{skin.sh}}"/>
+  <g data-piece="color-1" data-color="#8a4a3c" data-color-label="Color 1">
+    <rect x="27" y="38" width="10" height="1"/>
+  </g>
+  <g data-piece="lip" data-color-token="lip" data-color-label="Lip">
+    <rect x="28" y="39" width="8" height="2"/>
+  </g>
+  <g data-piece="skin-hi" data-color-token="skin.hi" data-color-label="Skin Hi"></g>
+  <g data-piece="skin-sh" data-color-token="skin.sh" data-color-label="Skin Sh"></g>
 </svg>

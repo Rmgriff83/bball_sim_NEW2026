@@ -1172,7 +1172,7 @@ function formatSalary(salary) {
                     <!-- Coach Header -->
                     <div class="team-coach-header">
                       <div class="team-coach-avatar-wrap">
-                        <CoachAvatar :coach="selectedTeamCoach" :size="64" />
+                        <CoachAvatar :coach="selectedTeamCoach" :size="64" :campaign-id="campaignId" />
                       </div>
                       <div class="team-coach-info">
                         <p class="team-coach-name">{{ selectedTeamCoach.name }}</p>

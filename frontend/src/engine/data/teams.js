@@ -28,9 +28,9 @@ export const TEAMS = [
   { name: 'Utah Sundance', city: 'Utah', abbreviation: 'UTA', conference: 'west', division: 'Northwest', primary_color: '#002B5C', secondary_color: '#00471B', facilities: { training: 3, medical: 3, scouting: 4, analytics: 3 } },
 
   // WESTERN CONFERENCE - PACIFIC
-  { name: 'Golden State Wavebreakers', city: 'San Francisco', abbreviation: 'GSW', conference: 'west', division: 'Pacific', primary_color: '#1D428A', secondary_color: '#FFC72C', facilities: { training: 5, medical: 5, scouting: 4, analytics: 5 } },
+  { name: 'Golden State Wavebreakers', city: 'Golden State', abbreviation: 'GSW', conference: 'west', division: 'Pacific', primary_color: '#1D428A', secondary_color: '#FFC72C', facilities: { training: 5, medical: 5, scouting: 4, analytics: 5 } },
   { name: 'Los Angeles Showtime', city: 'Los Angeles', abbreviation: 'LAL', conference: 'west', division: 'Pacific', primary_color: '#552583', secondary_color: '#FDB927', facilities: { training: 5, medical: 5, scouting: 4, analytics: 4 } },
-  { name: 'Los Angeles Sailors', city: 'Los Angeles', abbreviation: 'LAC', conference: 'west', division: 'Pacific', primary_color: '#C8102E', secondary_color: '#1D428A', facilities: { training: 4, medical: 4, scouting: 3, analytics: 4 } },
+  { name: 'Los Angeles Cringers', city: 'Los Angeles', abbreviation: 'LAC', conference: 'west', division: 'Pacific', primary_color: '#C8102E', secondary_color: '#1D428A', facilities: { training: 4, medical: 4, scouting: 3, analytics: 4 } },
   { name: 'Phoenix Flares', city: 'Phoenix', abbreviation: 'PHX', conference: 'west', division: 'Pacific', primary_color: '#1D1160', secondary_color: '#E56020', facilities: { training: 4, medical: 4, scouting: 3, analytics: 4 } },
   { name: 'Sacramento Royals', city: 'Sacramento', abbreviation: 'SAC', conference: 'west', division: 'Pacific', primary_color: '#5A2D81', secondary_color: '#63727A', facilities: { training: 3, medical: 3, scouting: 3, analytics: 3 } },
 
@@ -38,8 +38,8 @@ export const TEAMS = [
   { name: 'Dallas Renegades', city: 'Dallas', abbreviation: 'DAL', conference: 'west', division: 'Southwest', primary_color: '#00538C', secondary_color: '#002B5E', facilities: { training: 4, medical: 4, scouting: 4, analytics: 5 } },
   { name: 'Houston Boosters', city: 'Houston', abbreviation: 'HOU', conference: 'west', division: 'Southwest', primary_color: '#CE1141', secondary_color: '#000000', facilities: { training: 3, medical: 3, scouting: 4, analytics: 4 } },
   { name: 'Memphis Howlers', city: 'Memphis', abbreviation: 'MEM', conference: 'west', division: 'Southwest', primary_color: '#5D76A9', secondary_color: '#12173F', facilities: { training: 3, medical: 4, scouting: 3, analytics: 3 } },
-  { name: 'New Orleans Voodoo', city: 'New Orleans', abbreviation: 'NOP', conference: 'west', division: 'Southwest', primary_color: '#0C2340', secondary_color: '#C8102E', facilities: { training: 3, medical: 4, scouting: 3, analytics: 3 } },
-  { name: 'San Antonio Rangers', city: 'San Antonio', abbreviation: 'SAS', conference: 'west', division: 'Southwest', primary_color: '#C4CED4', secondary_color: '#000000', facilities: { training: 4, medical: 4, scouting: 5, analytics: 4 } },
+  { name: 'New Orleans Preppers', city: 'New Orleans', abbreviation: 'NOP', conference: 'west', division: 'Southwest', primary_color: '#0C2340', secondary_color: '#C8102E', facilities: { training: 3, medical: 4, scouting: 3, analytics: 3 } },
+  { name: 'San Antonio Splits', city: 'San Antonio', abbreviation: 'SAS', conference: 'west', division: 'Southwest', primary_color: '#C4CED4', secondary_color: '#000000', facilities: { training: 4, medical: 4, scouting: 5, analytics: 4 } },
 ]
 
 export const SALARY_CAP = 136000000

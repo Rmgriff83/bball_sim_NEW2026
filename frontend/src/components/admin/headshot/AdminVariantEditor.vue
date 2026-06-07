@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { ArrowLeft, Save, AlertTriangle, Undo2, Trash2, ZoomIn, ZoomOut, Maximize, Focus, Edit3, Layers, X, Image as ImageIcon, Eye, EyeOff, Pipette, Crosshair, Move } from 'lucide-vue-next'
 
 import api from '@/composables/useApi'
@@ -33,6 +33,10 @@ const props = defineProps({
   config: { type: Object, required: true },
   // When true, this is a brand-new variant (no file on disk yet) — starts empty
   isNew: { type: Boolean, default: false },
+  // Audience tab the admin entered from. On the FIRST save of a brand-new
+  // variant we write this into the manifest so the asset only shows up in
+  // the tab it was authored in. No manual toggle UI — the tab IS the tag.
+  audience: { type: String, default: 'player' },
 })
 
 const emit = defineEmits(['exit', 'renamed', 'saved'])
@@ -140,11 +144,11 @@ function variantOptionsFor(layer) {
   // (eyebrows) in the user-facing config, but the composer's `*Override`
   // fields accept the raw filename so the picker just lists them as-is.
   if (layer.id === 'face' || layer.id === 'eyebrows') {
-    opts = listAllVariants(layer.id).map(v => ({ value: v, label: _titleCase(v) }))
+    opts = listAllVariants(layer.id, props.audience).map(v => ({ value: v, label: _titleCase(v) }))
   } else {
     // String-keyed layers — filenames are hyphenated; config keys are
     // underscored (configKeyFor reversed).
-    opts = listAllVariants(layer.id).map(v => ({
+    opts = listAllVariants(layer.id, props.audience).map(v => ({
       value: v.replace(/-/g, '_'),
       label: _titleCase(v),
     }))
@@ -173,7 +177,7 @@ function backdropValueFor(layer) {
     // facing fields currently resolve to — so the picker reads as the
     // same variant the canvas is actually rendering.
     return effectiveConfig.value[backdropFieldKey(layer)]
-      || getCurrentVariantKey(layer.id, effectiveConfig.value)
+      || getCurrentVariantKey(layer.id, effectiveConfig.value, props.audience)
   }
   return effectiveConfig.value[backdropFieldKey(layer)]
 }
@@ -544,7 +548,7 @@ watch(
 async function _loadVariantSource(layerId, variantName) {
   // Fast path: in-memory LAYER_CONTENT (the Vite-bundled glob plus any
   // in-session updates from save/delete/rename).
-  const cached = getVariantSource(layerId, variantName)
+  const cached = getVariantSource(layerId, variantName, props.audience)
   if (cached) return cached
   // Fallback: fetch the raw file from disk via the admin GET endpoint.
   // This catches variants that exist on disk but aren't in the bundled
@@ -554,11 +558,11 @@ async function _loadVariantSource(layerId, variantName) {
   // subsequent reads stay on the fast path.
   try {
     const { data } = await api.get('/api/admin/headshot-layers/variant', {
-      params: { layer: layerId, variant: variantName },
+      params: { layer: layerId, variant: variantName, audience: props.audience },
     })
     const fresh = data?.content || ''
     if (fresh) {
-      updateLayerVariantContent(layerId, variantName, fresh)
+      updateLayerVariantContent(layerId, variantName, fresh, props.audience)
       return fresh
     }
   } catch (err) {
@@ -568,6 +572,13 @@ async function _loadVariantSource(layerId, variantName) {
   }
   return ''
 }
+
+// True while onMounted is still seeding pieces from the variant source.
+// The deep watcher below would otherwise see the initial assignment as a
+// real edit and flip isDirty before the user has touched anything — that
+// false-positive was making the Unsaved Changes confirm pop on exit
+// straight from a clean open.
+let initializing = true
 
 onMounted(async () => {
   if (props.isNew) {
@@ -579,17 +590,68 @@ onMounted(async () => {
   if (pieces.value.length > 0) {
     activePieceId.value = pieces.value[0].id
   }
-  isDirty.value = false
   // Apply the per-user/per-variant working-state snapshot AFTER pieces
   // are loaded so selection IDs can be validated against the real pieces.
   _restoreEditorState()
+  // Drain any queued post-flush watchers from the seed assignments above
+  // before lifting the initializing guard, so they can't fire after the
+  // gate opens and re-dirty the editor.
+  await nextTick()
+  isDirty.value = false
+  initializing = false
 })
 
 // Mark dirty when pieces change after init. Watch deeply so any mutation
-// (paint, color, transform, etc.) flips the flag.
-watch(pieces, () => { isDirty.value = true }, { deep: true })
+// (paint, color, transform, etc.) flips the flag. Guarded against the
+// seed-load fires via `initializing`.
+watch(pieces, () => {
+  if (initializing) return
+  isDirty.value = true
+}, { deep: true })
 
 // ----- canvas event handlers -----
+//
+// IMPORTANT: the canvas dispatches pixels and rects in WORLD (canvas grid)
+// coordinates — i.e. where the cursor is on screen. But a piece's `rects`
+// array stores PIECE-LOCAL coordinates: the rendered position is
+// `transform.x + rect.x`, `transform.y + rect.y`. For pieces that have been
+// moved (translate tool, or the duplicate offset), world ≠ local. Every
+// rect-data handler must convert world → local using the piece's transform
+// before doing geometry, otherwise:
+//   - pencil paints at the wrong piece-local spot (visually offset by
+//     transform when rendered)
+//   - eraser/cut compares world-space cells against local-space rects and
+//     "misses" everywhere except where the piece's transform happens to be
+//     (0, 0) — the symptom that looks like "the eraser doesn't work on
+//     duplicated/moved pieces."
+//
+// Rotation is supported for 90° increments. For free-form rotation,
+// untransforming the cursor point produces a non-axis-aligned local point;
+// subtractRect/pushRect work on axis-aligned rects so non-zero rotations
+// won't produce ideal results, but the Rotate tool snaps to 90° anyway.
+
+function _worldToLocal(piece, x, y) {
+  const t = piece?.transform || { x: 0, y: 0, rotation: 0 }
+  const dx = x - (t.x || 0)
+  const dy = y - (t.y || 0)
+  const rot = ((t.rotation || 0) % 360 + 360) % 360
+  if (rot === 0) return { x: dx, y: dy }
+  // 90° / 180° / 270° — rotate (dx, dy) by -rot around the piece's local
+  // bbox center, exact same math as pixelDraw.js's hidden _untransformPoint.
+  const bbox = pieceBoundingBox(piece) || { x: 0, y: 0, w: 0, h: 0 }
+  const cx = bbox.x + bbox.w / 2
+  const cy = bbox.y + bbox.h / 2
+  const rad = -rot * Math.PI / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  const tx = dx - cx
+  const ty = dy - cy
+  return {
+    x: Math.round(cx + tx * cos - ty * sin),
+    y: Math.round(cy + tx * sin + ty * cos),
+  }
+}
+
 function handlePaint({ pieceId, pixels }) {
   // Broadcast across the multi-selection — same pixel goes into each
   // selected piece. Each piece dedupes independently against its own
@@ -603,29 +665,36 @@ function handlePaint({ pieceId, pixels }) {
       piece.rects.filter(r => r.w === 1 && r.h === 1).map(r => `${r.x},${r.y}`)
     )
     for (const px of pixels) {
-      const key = `${px.x},${px.y}`
+      const local = _worldToLocal(piece, px.x, px.y)
+      const key = `${local.x},${local.y}`
       if (existing.has(key)) continue
-      piece.rects.push({ x: px.x, y: px.y, w: 1, h: 1 })
+      piece.rects.push({ x: local.x, y: local.y, w: 1, h: 1 })
       existing.add(key)
     }
   }
 }
 
-function handleErase({ pieceId, x, y }) {
-  // Subtractive ops broadcast across the multi-selection — much more useful
-  // than additive paint (which would just create duplicate rects). Each
-  // piece independently removes its own topmost matching rect.
+function handleErase({ pieceId, pixels }) {
+  // Per-pixel subtractive eraser. Each footprint cell becomes a 1×1 erase
+  // rect; subtractRect carves it out of every overlapping piece rect (a
+  // larger rect that overlaps becomes 1-4 smaller strips, fully-covered
+  // rects drop out, non-overlapping rects pass through). This mirrors the
+  // pencil's pixel-level semantics — clicking inside a big rect removes
+  // ONE block, not the entire rect.
+  //
+  // Broadcasts across the multi-selection same as the old behavior.
+  if (!pixels || pixels.length === 0) return
   const targets = _targetsFor(pieceId)
   snapshot('erase')
   for (const piece of pieces.value) {
     if (!targets.includes(piece.id)) continue
-    for (let i = piece.rects.length - 1; i >= 0; i--) {
-      const r = piece.rects[i]
-      if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
-        piece.rects.splice(i, 1)
-        break
-      }
+    let next = piece.rects
+    for (const px of pixels) {
+      const local = _worldToLocal(piece, px.x, px.y)
+      const eraseRect = { x: local.x, y: local.y, w: 1, h: 1 }
+      next = next.flatMap(r => subtractRect(r, eraseRect))
     }
+    piece.rects = next
   }
 }
 
@@ -636,7 +705,10 @@ function handleAddRect({ pieceId, rect }) {
     if (!targets.includes(piece.id)) continue
     // Push a fresh copy per piece so subsequent edits to one piece's rect
     // don't accidentally mutate another piece's via shared reference.
-    piece.rects.push({ ...rect })
+    // World → piece-local for the rect's anchor; w/h are size-invariant
+    // under translation (and survive 90° rotation since we round to int).
+    const local = _worldToLocal(piece, rect.x, rect.y)
+    piece.rects.push({ x: local.x, y: local.y, w: rect.w, h: rect.h })
   }
 }
 
@@ -651,7 +723,11 @@ function handleCutRegion({ pieceId, rect }) {
   snapshot('cut')
   for (const piece of pieces.value) {
     if (!targets.includes(piece.id)) continue
-    piece.rects = piece.rects.flatMap(r => subtractRect(r, rect))
+    // World → piece-local for the cut rect's anchor (same reason as
+    // handleAddRect). w/h are translation-invariant.
+    const local = _worldToLocal(piece, rect.x, rect.y)
+    const localRect = { x: local.x, y: local.y, w: rect.w, h: rect.h }
+    piece.rects = piece.rects.flatMap(r => subtractRect(r, localRect))
   }
 }
 
@@ -779,18 +855,19 @@ const colorPickerInitial = computed(() => {
   // Eyedropper short-circuit: when set, open in Custom mode with the
   // picked hex pre-filled, regardless of the target piece's existing color.
   if (pendingEyedropHex.value) {
-    return { mode: 'literal', token: '', hex: pendingEyedropHex.value, label: '' }
+    return { mode: 'literal', token: '', hex: pendingEyedropHex.value, label: '', opacity: null }
   }
   if (colorPickerTarget.value === 'new' || !colorPickerTarget.value) {
-    return { mode: 'token', token: '', hex: '#a855f7', label: '' }
+    return { mode: 'token', token: '', hex: '#a855f7', label: '', opacity: null }
   }
   const piece = pieces.value.find(p => p.id === colorPickerTarget.value)
-  if (!piece) return { mode: 'token', token: '', hex: '#a855f7', label: '' }
+  if (!piece) return { mode: 'token', token: '', hex: '#a855f7', label: '', opacity: null }
   return {
     mode: piece.colorMode,
     token: piece.colorToken || '',
     hex: piece.colorHex || '#a855f7',
     label: piece.label || '',
+    opacity: piece.colorOpacity ?? null,
   }
 })
 
@@ -805,6 +882,7 @@ function handleColorConfirm(result) {
       colorMode: result.colorMode,
       colorToken: result.colorToken,
       colorHex: result.colorHex,
+      colorOpacity: result.colorOpacity ?? null,
       transform: { x: 0, y: 0, rotation: 0 },
       rects: [],
       visible: true,
@@ -823,6 +901,7 @@ function handleColorConfirm(result) {
       piece.colorMode = result.colorMode
       piece.colorToken = result.colorToken
       piece.colorHex = result.colorHex
+      piece.colorOpacity = result.colorOpacity ?? null
       if (result.label) piece.label = result.label
     }
   }
@@ -895,15 +974,31 @@ function applyRecentColor(entry) {
 function _clonePiece(piece, existingIds) {
   const id = generatePieceId(piece.label || piece.colorToken || 'piece', existingIds)
   existingIds.push(id)
+  // Nudge the clone a couple pixels off the source's transform so it
+  // doesn't sit perfectly on top of the original. Same-color pieces stacked
+  // pixel-for-pixel were producing a confusing "the eraser doesn't work"
+  // symptom — every erased pixel on the top piece was just revealing the
+  // identical pixel underneath. The 2-pixel offset matches the convention
+  // Figma/Photoshop use for duplicates: visible as a separate object,
+  // trivial to drag back into precise alignment if that's what the admin
+  // wanted. Clamped so the offset can't push the entire piece off the
+  // 64-grid in either axis.
+  const DUP_OFFSET = 2
+  const src = piece.transform || { x: 0, y: 0, rotation: 0 }
+  const bbox = pieceBoundingBox(piece) || { x: 0, y: 0, w: 0, h: 0 }
+  const maxDx = Math.max(0, 63 - ((src.x || 0) + bbox.x + bbox.w - 1))
+  const maxDy = Math.max(0, 63 - ((src.y || 0) + bbox.y + bbox.h - 1))
   return {
     id,
     label: piece.label,
     colorMode: piece.colorMode,
     colorToken: piece.colorToken,
     colorHex: piece.colorHex,
-    transform: piece.transform
-      ? { x: piece.transform.x || 0, y: piece.transform.y || 0, rotation: piece.transform.rotation || 0 }
-      : { x: 0, y: 0, rotation: 0 },
+    transform: {
+      x: (src.x || 0) + Math.min(DUP_OFFSET, maxDx),
+      y: (src.y || 0) + Math.min(DUP_OFFSET, maxDy),
+      rotation: src.rotation || 0,
+    },
     rects: (piece.rects || []).map(r => ({ ...r })),
     visible: true,
   }
@@ -1013,12 +1108,15 @@ async function handleSave(thenExit = false) {
       layer: props.layerId,
       variant: props.variantName,
       tier: serverTier,
+      audience: props.audience,
       content: svg,
     })
     // Patch the composer's in-memory variant library so the catalog view's
     // variant strip renders the new content immediately on remount. Without
     // this it would keep showing the stale pre-save SVG until a full reload.
-    updateLayerVariantContent(props.layerId, props.variantName, svg)
+    // Pass audience so the patch lands in the right per-audience map.
+    updateLayerVariantContent(props.layerId, props.variantName, svg, props.audience)
+
     audioStore.affirm()
     toastStore.showSuccess('Variant saved.')
     isDirty.value = false
@@ -1109,8 +1207,9 @@ async function confirmRename() {
       layer: props.layerId,
       variant: props.variantName,
       newName: next,
+      audience: props.audience,
     })
-    renameLayerVariantContent(props.layerId, props.variantName, next)
+    renameLayerVariantContent(props.layerId, props.variantName, next, props.audience)
     // Move the editor working-state snapshot to the new variant name so
     // the admin's tool/zoom/selection setup carries over.
     try {
@@ -1158,8 +1257,9 @@ async function confirmDelete() {
     await api.post('/api/admin/headshot-layers/delete', {
       layer: props.layerId,
       variant: props.variantName,
+      audience: props.audience,
     })
-    removeLayerVariantContent(props.layerId, props.variantName)
+    removeLayerVariantContent(props.layerId, props.variantName, props.audience)
     // Discard the editor working-state snapshot — the variant doesn't exist
     // anymore so the saved tool/selection/etc. for it is meaningless.
     try { localStorage.removeItem(_editorStorageKey()) } catch { /* ignore */ }
@@ -1264,6 +1364,7 @@ const headerTitle = computed(() =>
         <div class="ave-canvas-scroll">
           <AdminPixelCanvas
             :layer-id="layerId"
+            :audience="audience"
             :pieces="pieces"
             :config="effectiveConfig"
             :active-piece-id="activePieceId"
@@ -1348,8 +1449,25 @@ const headerTitle = computed(() =>
                 min="0"
                 max="100"
                 step="1"
+                :disabled="isolateLayer"
               />
               <span class="ave-backdrop-readout">{{ backdropOpacityPercent }}%</span>
+            </div>
+
+            <!-- Isolate overrides the opacity slider with display:none on
+                 every non-active layer, so a 100% slider can look like a
+                 bug ("backdrops gone but opacity is full"). Surface it
+                 with a one-click toggle-off so the user can recover. -->
+            <div v-if="isolateLayer" class="ave-isolate-warning">
+              <strong>Isolate is on</strong>
+              <span>
+                The Isolate toggle (bottom-left of the canvas) is hiding
+                every non-active layer. The opacity slider can't override
+                it.
+              </span>
+              <button class="ave-isolate-fix" @click="isolateLayer = false">
+                Turn off Isolate
+              </button>
             </div>
 
             <div
@@ -1533,11 +1651,13 @@ const headerTitle = computed(() =>
       :initial-token="colorPickerInitial.token"
       :initial-hex="colorPickerInitial.hex"
       :initial-label="colorPickerInitial.label"
+      :initial-opacity="colorPickerInitial.opacity"
+      :recents="recentColors"
       @close="colorPickerOpen = false; colorPickerTarget = null; pendingEyedropHex = null"
       @confirm="handleColorConfirm"
     />
 
-    <BaseModal :show="showExitConfirm" title="Unsaved Changes" size="sm" @close="showExitConfirm = false">
+    <BaseModal :show="showExitConfirm" title="Unsaved Changes" size="xs" @close="showExitConfirm = false">
       <div class="exit-modal-body">
         <div class="warn-icon"><AlertTriangle :size="28" /></div>
         <p>You have unsaved changes. What would you like to do?</p>
@@ -1901,11 +2021,60 @@ const headerTitle = computed(() =>
   cursor: pointer;
 }
 
+.ave-backdrop-opacity-row input[type="range"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .ave-backdrop-readout {
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
   font-weight: 600;
+}
+
+/* Isolate-active warning — shows in the backdrop panel when the user has
+   the isolate toggle on. Helps explain why backdrops are gone even though
+   the opacity slider reads 100%. */
+.ave-isolate-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: var(--radius-lg);
+  font-size: 0.72rem;
+  color: #fbbf24;
+  margin-bottom: 6px;
+}
+
+.ave-isolate-warning strong {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.65rem;
+}
+
+.ave-isolate-warning span {
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.ave-isolate-fix {
+  align-self: flex-start;
+  padding: 4px 10px;
+  background: rgba(251, 191, 36, 0.22);
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  color: #fbbf24;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ave-isolate-fix:hover {
+  background: rgba(251, 191, 36, 0.32);
 }
 
 /* Reference image controls — bottom-right corner pill + popover panel.

@@ -17,7 +17,7 @@ const props = defineProps({
   size: {
     type: String,
     default: 'md',
-    validator: (value) => ['sm', 'md', 'lg', 'xl', 'full'].includes(value)
+    validator: (value) => ['xs', 'sm', 'md', 'lg', 'xl', 'full'].includes(value)
   },
   closable: {
     type: Boolean,
@@ -60,6 +60,7 @@ onUnmounted(() => {
 })
 
 const sizeClasses = {
+  xs: 'max-w-sm',
   sm: 'max-w-md',
   md: 'max-w-lg',
   lg: 'max-w-2xl',

@@ -882,6 +882,7 @@ onUnmounted(() => {
       :show-growth="false"
       :show-history="false"
       :can-draft="canDraftCurrent"
+      :in-draft="true"
       @draft-player="handleDraftFromModal"
       @close="showPlayerModal = false"
     />

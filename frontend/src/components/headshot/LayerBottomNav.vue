@@ -36,7 +36,7 @@ function select(id) {
   bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
   transform: translateX(-50%);
   width: 92%;
-  max-width: 520px;
+  max-width: 720px;
   padding: 10px 12px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
@@ -57,14 +57,17 @@ function select(id) {
   display: none;
 }
 
+/* Pills match the admin variant strip's layer picker so the visual
+   language stays consistent across both editors. Inactive pills get a
+   subtle border + low-opacity background so they read as buttons. */
 .layer-chip {
   flex: 0 0 auto;
-  padding: 8px 14px;
-  background: transparent;
-  border: 1px solid transparent;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
   color: var(--color-text-secondary);
   border-radius: var(--radius-full);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -73,11 +76,12 @@ function select(id) {
 
 .layer-chip:hover {
   color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .layer-chip.active {
   color: var(--color-text-primary);
-  background: rgba(168, 85, 247, 0.18);
-  border-color: rgba(168, 85, 247, 0.4);
+  background: rgba(168, 85, 247, 0.22);
+  border-color: rgba(168, 85, 247, 0.55);
 }
 </style>

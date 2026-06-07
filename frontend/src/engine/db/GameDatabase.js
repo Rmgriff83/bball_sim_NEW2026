@@ -5,7 +5,13 @@ const DB_NAME = 'bball-sim'
 // whose DB ended up at version 2 with `playerHeadshots` missing (an upgrade
 // transaction that committed the version bump but not the store). The v3
 // block is idempotent and will no-op if the store is already there.
-const DB_VERSION = 3
+// v4 adds a parallel `coachHeadshots` store keyed by [campaignId, coachId]
+// for the coach customize flow (Phase 3 of the headshot project).
+// v5 generalizes coach storage to all personnel kinds: new
+// `personnelHeadshots` store keyed by [campaignId, kind, id] (kind ∈
+// 'coach' | 'scout' | 'physician' | 'staff_trainer'), with a migration
+// that copies existing coachHeadshots rows over with kind='coach'.
+const DB_VERSION = 5
 
 let dbPromise = null
 
@@ -26,7 +32,7 @@ function createDB() {
       // Browser abnormally closed the connection; reset so next call reopens
       dbPromise = null
     },
-    upgrade(db, oldVersion) {
+    upgrade(db, oldVersion, _newVersion, transaction) {
       if (oldVersion < 1) {
         // Campaigns store
         const campaigns = db.createObjectStore('campaigns', { keyPath: 'id' })
@@ -83,6 +89,54 @@ function createDB() {
         // never created the store (observed in dev), this rerun creates it.
         const headshots = db.createObjectStore('playerHeadshots', { keyPath: ['campaignId', 'playerId'] })
         headshots.createIndex('campaignId', 'campaignId')
+      }
+
+      if (oldVersion < 4 && !db.objectStoreNames.contains('coachHeadshots')) {
+        // Phase 3 of the headshot project: parallel store for coach custom
+        // edits. Mirrors playerHeadshots in shape — compound key by
+        // [campaignId, coachId], one row per coach with an `svgContent`
+        // string. Reads/writes go through CoachHeadshotRepository.
+        const coachHeadshots = db.createObjectStore('coachHeadshots', { keyPath: ['campaignId', 'coachId'] })
+        coachHeadshots.createIndex('campaignId', 'campaignId')
+      }
+
+      if (oldVersion < 5 && !db.objectStoreNames.contains('personnelHeadshots')) {
+        // Phase 4: generalize headshot storage to all personnel kinds.
+        // Compound key [campaignId, kind, id] so a single store covers
+        // coach / scout / physician / staff_trainer without naming
+        // collisions. Reads/writes go through PersonnelHeadshotRepository.
+        const personnel = db.createObjectStore('personnelHeadshots', { keyPath: ['campaignId', 'kind', 'id'] })
+        personnel.createIndex('campaignId', 'campaignId')
+        personnel.createIndex('kind', ['campaignId', 'kind'])
+
+        // Migrate existing coachHeadshots rows over with kind='coach'. Uses
+        // the upgrade transaction so the copy commits atomically with the
+        // store creation. If the source store doesn't exist (v4 was never
+        // reached, e.g. a fresh install), the migration silently no-ops.
+        if (db.objectStoreNames.contains('coachHeadshots')) {
+          const src = transaction.objectStore('coachHeadshots')
+          const dst = transaction.objectStore('personnelHeadshots')
+          src.openCursor().then(async function walk(cursor) {
+            while (cursor) {
+              const row = cursor.value
+              if (row && row.campaignId && row.coachId) {
+                dst.put({
+                  campaignId: row.campaignId,
+                  kind: 'coach',
+                  id: row.coachId,
+                  svgContent: row.svgContent,
+                  updatedAt: row.updatedAt || new Date().toISOString(),
+                })
+              }
+              cursor = await cursor.continue()
+            }
+          }).catch(err => {
+            // Migration is best-effort. Don't block the upgrade — users
+            // re-saving a coach headshot rewrites it into the new store
+            // on next edit.
+            console.warn('[GameDatabase v5] coachHeadshots → personnelHeadshots migration failed', err)
+          })
+        }
       }
     },
   })
@@ -159,7 +213,7 @@ export async function clearCampaignData(campaignId) {
   // a v1 connection, `playerHeadshots` won't exist yet and naming it in the
   // transaction would throw NotFoundError. Skipping it is safe: there can't be
   // headshot rows in a v1 store that doesn't exist.
-  const campaignStores = ['teams', 'players', 'seasons', 'news', 'trades', 'playerHeadshots']
+  const campaignStores = ['teams', 'players', 'seasons', 'news', 'trades', 'playerHeadshots', 'coachHeadshots', 'personnelHeadshots']
     .filter(name => db.objectStoreNames.contains(name))
   const tx = db.transaction(campaignStores, 'readwrite')
 

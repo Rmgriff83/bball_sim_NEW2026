@@ -29,9 +29,9 @@ const TIER_CONFIG = [
 const GENERATIONAL_TIER = {
   name: 'generational',
   ovrMin: 78, ovrMax: 82,
-  potMin: 99, potMax: 99,
+  potMin: 99, potMax: 100,
   ageMin: 18, ageMax: 19,
-  workEthicMin: 85, workEthicMax: 99,
+  workEthicMin: 85, workEthicMax: 100,
 }
 
 const POSITION_WEIGHTS = [

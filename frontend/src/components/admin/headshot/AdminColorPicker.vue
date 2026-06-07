@@ -10,6 +10,13 @@ const props = defineProps({
   initialToken: { type: String, default: '' },
   initialHex: { type: String, default: '#ffffff' },
   initialLabel: { type: String, default: '' },
+  // 0..1, null = fully opaque (the default). Pre-fills the opacity slider.
+  initialOpacity: { type: Number, default: null },
+  // MRU list from the editor's recentColors ref. Each entry:
+  //   { mode: 'token', token, hex, label } OR
+  //   { mode: 'literal', hex, label }
+  // The Custom tab surfaces literal entries as quick swatches.
+  recents: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['close', 'confirm'])
@@ -56,21 +63,76 @@ const literalHex = ref(props.initialHex)
 const literalLabel = ref(props.initialLabel)
 const labelTouched = ref(false)
 const labelError = ref('')
+// Opacity 0..1 — shared between both tabs (admin can tint either a palette
+// token or a custom hex). 1 = fully opaque (default + back-compat).
+const opacity = ref(1)
+
+// Convert literalHex's possible 8-digit form to a clean 6-digit value +
+// extract the alpha into `opacity`. Keeps the <input type="color"> happy
+// (it only accepts 6-digit) and centralizes opacity in one slider.
+function _normalizeIncomingHex(input) {
+  const s = String(input || '#ffffff').trim()
+  if (s.length === 9 && s.startsWith('#')) {
+    const a = parseInt(s.slice(7, 9), 16)
+    if (Number.isFinite(a)) return { hex6: s.slice(0, 7), alpha: a / 255 }
+  }
+  return { hex6: s, alpha: null }
+}
 
 // Reset internal state every time the modal opens with fresh props.
 watch(() => props.show, (visible) => {
   if (visible) {
     mode.value = props.initialMode || (props.initialToken ? 'token' : 'literal')
     selectedToken.value = props.initialToken
-    literalHex.value = props.initialHex || '#ffffff'
+    const norm = _normalizeIncomingHex(props.initialHex)
+    literalHex.value = norm.hex6 || '#ffffff'
+    // Explicit initialOpacity wins (e.g. from a piece in token mode where
+    // hex has no packed alpha); fall back to whatever was packed into a
+    // legacy 8-digit hex; default to opaque.
+    opacity.value = props.initialOpacity != null
+      ? props.initialOpacity
+      : (norm.alpha != null ? norm.alpha : 1)
     literalLabel.value = props.initialLabel
     labelTouched.value = false
     labelError.value = ''
   }
 })
 
+// Round-trip the slider as a 0..100 integer for crisp input UX. Storage
+// stays at 0..1 in `opacity`.
+const opacityPct = computed({
+  get: () => Math.round(opacity.value * 100),
+  set: (v) => {
+    const n = Math.max(0, Math.min(100, Number(v) || 0))
+    opacity.value = n / 100
+  },
+})
+
+function _packLiteralWithAlpha() {
+  const base = literalHex.value
+  if (opacity.value >= 1) return base
+  const aa = Math.round(opacity.value * 255).toString(16).padStart(2, '0')
+  return `${base.length === 7 ? base : base.slice(0, 7)}${aa}`
+}
+
 function pickToken(token) {
   selectedToken.value = token
+}
+
+// Literal-only slice of the recents MRU for the Custom tab. Token recents
+// already have homes in the Palette tab, so showing them here would just
+// duplicate. Caps at 10 for tight horizontal layout.
+const literalRecents = computed(() =>
+  (props.recents || []).filter(r => r?.mode === 'literal' && r.hex).slice(0, 10)
+)
+
+function applyRecent(entry) {
+  literalHex.value = entry.hex
+  // Prefill label if the recent carries one and the field hasn't been
+  // hand-edited yet (a non-touched + empty label is a clean swap target).
+  if (entry.label && (!literalLabel.value || !labelTouched.value)) {
+    literalLabel.value = entry.label
+  }
 }
 
 // Default label hint when in Palette mode — derived from the currently
@@ -106,6 +168,10 @@ function validateLabel() {
 }
 
 function confirm() {
+  // colorOpacity rides as a separate field on the piece model (svgPieces.js
+  // serializes it to data-color-opacity). Null when fully opaque keeps
+  // legacy pieces clean and consumers that ignore the field unaffected.
+  const colorOpacity = opacity.value >= 1 ? null : opacity.value
   if (mode.value === 'token') {
     if (!selectedToken.value) return
     const swatch = TOKEN_SWATCHES.find(s => s.token === selectedToken.value)
@@ -114,6 +180,7 @@ function confirm() {
       colorMode: 'token',
       colorToken: selectedToken.value,
       colorHex: null,
+      colorOpacity,
       // Admin's typed label wins; otherwise fall back to the swatch's
       // built-in name (e.g. "Hair Base"), then the raw token as last resort.
       label: typed || swatch?.label || selectedToken.value,
@@ -127,6 +194,7 @@ function confirm() {
       colorMode: 'literal',
       colorToken: null,
       colorHex: literalHex.value,
+      colorOpacity,
       label: literalLabel.value.trim(),
     })
   }
@@ -178,6 +246,41 @@ function confirm() {
             <label>Color</label>
             <input v-model="literalHex" type="color" class="acp-color-input" />
             <input v-model="literalHex" type="text" class="acp-hex-input" maxlength="7" />
+          </div>
+          <!-- Recently used custom colors — quick re-pick from the editor's
+               per-user MRU. Click loads the hex (and label if blank). Hidden
+               when there are no literal recents to surface. -->
+          <div v-if="literalRecents.length > 0" class="acp-recents">
+            <div class="acp-group-label">Recents</div>
+            <div class="acp-swatch-row">
+              <button
+                v-for="(entry, i) in literalRecents"
+                :key="`${entry.hex}:${entry.label}:${i}`"
+                type="button"
+                class="acp-swatch"
+                :class="{ active: literalHex.toLowerCase() === entry.hex.toLowerCase() }"
+                :style="{ background: entry.hex }"
+                :title="entry.label ? `${entry.label} (${entry.hex})` : entry.hex"
+                @click="applyRecent(entry)"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Shared opacity slider — applies to either tab. Storage is a
+             0..1 float (colorOpacity). The slider UI uses 0..100% for
+             clarity. -->
+        <div class="acp-shared-fields">
+          <div class="acp-field acp-opacity-field">
+            <label>Opacity <span class="acp-opacity-readout">{{ opacityPct }}%</span></label>
+            <input
+              v-model.number="opacityPct"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              class="acp-opacity-slider"
+            />
           </div>
         </div>
 
@@ -313,6 +416,10 @@ function confirm() {
   gap: 6px;
 }
 
+.acp-recents {
+  margin-top: 12px;
+}
+
 .acp-swatch {
   width: 28px;
   height: 28px;
@@ -347,6 +454,24 @@ function confirm() {
 
 .acp-field label .req {
   color: #f87171;
+}
+
+.acp-opacity-field label {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.acp-opacity-readout {
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary);
+}
+
+.acp-opacity-slider {
+  flex: 1;
+  cursor: pointer;
 }
 
 .acp-color-input {

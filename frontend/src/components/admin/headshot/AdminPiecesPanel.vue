@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue'
-import { Eye, EyeOff, Trash2, Plus, GripVertical, Pencil, ListChecks, Check, X } from 'lucide-vue-next'
+import { Eye, EyeOff, Trash2, Plus, GripVertical, Pencil, ListChecks, CheckCheck, Check, X } from 'lucide-vue-next'
 import { resolvePieceColor } from '@/services/headshotComposer'
 
 const props = defineProps({
@@ -67,6 +67,14 @@ const checkedCount = computed(() => checkedIds.value.size)
 function confirmMultiSelect() {
   emit('select-multi', { ids: [...checkedIds.value] })
   exitMultiSelect()
+}
+
+// "Select all" — commits every piece into the multi-selection in one click.
+// Exits multi-select mode if we're in it (the selection is finalized; no
+// need to leave the checkbox UI open).
+function selectAllPieces() {
+  emit('select-multi', { ids: props.pieces.map(p => p.id) })
+  if (multiSelectMode.value) exitMultiSelect()
 }
 
 // Pieces can be deleted while in multi-select mode — drop the corresponding
@@ -195,6 +203,18 @@ function colorSwatch(piece) {
           @click="multiSelectMode ? exitMultiSelect() : enterMultiSelect()"
         >
           <component :is="multiSelectMode ? X : ListChecks" :size="12" />
+        </button>
+        <!-- One-click "select all pieces" — commits every piece into the
+             multi-selection so tool/color ops apply across the whole variant
+             at once. Hidden when there are no pieces to select. -->
+        <button
+          v-if="pieces.length > 0"
+          type="button"
+          class="app-multi-toggle"
+          title="Select all pieces"
+          @click="selectAllPieces"
+        >
+          <CheckCheck :size="12" />
         </button>
         <span class="app-count">{{ pieces.length }}</span>
       </div>

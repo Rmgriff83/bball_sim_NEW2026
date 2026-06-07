@@ -129,8 +129,64 @@ ETHNICITY_PROFILES = {
 _LAYER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'headshot-layers')
 _layer_cache = {}
 
-JAW_NAMES = {0: 'narrow', 1: 'medium', 2: 'wide'}
 BROW_THICK_NAMES = {1: 'thin', 2: 'thick'}
+
+# Face variants are integer-keyed in config (jaw_width 0..N) but the actual
+# filename behind each integer is whatever's on disk in `headshot-layers/face/`.
+# Built dynamically so renaming/replacing variants (e.g. `medium` → `slim`)
+# in the admin editor doesn't strand the Python generator looking for a file
+# that no longer exists — which silently produced transparent face layers.
+#
+# Falls back to the canonical narrow / medium / wide ordering when the
+# folder is empty or missing, so a fresh checkout still works.
+_FACE_FALLBACK = ['narrow', 'medium', 'wide']
+
+def _build_jaw_names():
+    folder = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'headshot-layers', 'face')
+    if not os.path.isdir(folder):
+        names = _FACE_FALLBACK
+    else:
+        names = sorted(
+            fn[:-4] for fn in os.listdir(folder) if fn.endswith('.svg')
+        )
+        if not names:
+            names = _FACE_FALLBACK
+    return {i: name for i, name in enumerate(names)}
+
+JAW_NAMES = _build_jaw_names()
+
+# Eyebrow variants are combined `<thickness>-<angle>` filenames (e.g.
+# `thin-flat`, `thick-up`). Same idea as JAW_NAMES — scan disk so any
+# admin-added eyebrow variant joins the random pool automatically. The
+# filename is treated as opaque (no parsing needed) and the full string
+# is stored in config so the composer can render it directly. Falls back
+# to the canonical 6-variant set if the folder is empty.
+_BROW_FALLBACK = [
+    'thin-flat', 'thin-up', 'thin-down',
+    'thick-flat', 'thick-up', 'thick-down',
+]
+
+def _scan_brow_variants():
+    folder = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'headshot-layers', 'eyebrows')
+    if not os.path.isdir(folder):
+        return list(_BROW_FALLBACK)
+    names = sorted(fn[:-4] for fn in os.listdir(folder) if fn.endswith('.svg'))
+    return names if names else list(_BROW_FALLBACK)
+
+# Reverse-map a brow filename back into the canonical thickness/angle pair
+# so the metadata attributes on the <g data-layer="eyebrows"> wrapper stay
+# in lock-step with what the JS-side parseSvgConfig expects. Unrecognized
+# thickness slugs fall through to thickness=1 ('thin') — fine for the
+# bundled SVG since face content is already baked in.
+_BROW_THICK_LOOKUP = {'thin': 1, 'thick': 2}
+
+def _split_brow_name(name):
+    if '-' not in name:
+        return (1, name)
+    thick, angle = name.split('-', 1)
+    return (_BROW_THICK_LOOKUP.get(thick, 1), angle)
 
 
 def _load_layer(layer_id, variant_key):
@@ -306,7 +362,12 @@ def compose_svg(config):
 
     hair_file = config['hair_style'].replace('_', '-')
     face_file = JAW_NAMES[config['jaw_width']]
-    brow_file = f"{BROW_THICK_NAMES[config['brow_thickness']]}-{config['brow_angle']}"
+    # Brow file: trust the explicit `brow_file` field when set (lets the
+    # randomizer pick an admin-added variant whose thickness slug isn't
+    # in `BROW_THICK_NAMES`); fall back to composing thickness+angle for
+    # legacy configs without the field.
+    brow_file = config.get('brow_file') or \
+        f"{BROW_THICK_NAMES.get(config['brow_thickness'], 'thin')}-{config['brow_angle']}"
 
     # Stacking order mirrors headshotComposer.js exactly: later push = painted
     # on top. Headband sits on top of hair; hair sits on top of every face-
@@ -375,10 +436,11 @@ def random_headshot_svg(rng, ethnicity=None, headband_chance=0.11):
         'brow': hair_name,  # default eyebrow color follows hair until user edits
         'eye': eye_name,
         'lip': lip_name,
-        'jaw_width': rng.choice([0, 1, 2]),
+        # Pick from whatever face files actually exist on disk (via the
+        # dynamic JAW_NAMES map). Hardcoding [0, 1, 2] left half the pool
+        # generating transparent faces when the admin renamed `medium`.
+        'jaw_width': rng.choice(list(JAW_NAMES.keys())),
         'hair_style': rng.choice(_scan_layer_variants('hair')),
-        'brow_thickness': rng.choice([1, 2]),
-        'brow_angle': rng.choice(['flat', 'up', 'down']),
         'eye_shape': rng.choice(_scan_layer_variants('eyes')),
         'nose_shape': rng.choice(_scan_layer_variants('nose')),
         'mouth_fullness': rng.choice(_scan_layer_variants('mouth')),
@@ -395,6 +457,14 @@ def random_headshot_svg(rng, ethnicity=None, headband_chance=0.11):
         'headband': headband,
     }
     config['has_stubble'] = config['stubble_style'] != 'none'
+    # Eyebrows: pick a full filename from disk and back-fill the canonical
+    # thickness/angle pair for metadata + back-compat with consumers that
+    # branch on the integer thickness.
+    brow_name = rng.choice(_scan_brow_variants())
+    brow_thickness, brow_angle = _split_brow_name(brow_name)
+    config['brow_file'] = brow_name
+    config['brow_thickness'] = brow_thickness
+    config['brow_angle'] = brow_angle
 
     svg = compose_svg(config)
     meta = {
