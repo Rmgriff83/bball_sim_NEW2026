@@ -1022,11 +1022,19 @@ const cursorStyle = computed(() => {
   display: block;
 }
 
+/* All three drag/selection overlays need to render ABOVE .pc-svg
+   (z-index: 1). Without an explicit z-index they default to `auto`,
+   which sorts beneath any positioned sibling with a positive z-index
+   in the same stacking context — so the marquee/preview-rect outline
+   was getting painted under the composed headshot's pixels even
+   though it was emitted later in the DOM. 2 puts the outlines above
+   the headshot but still below the scale/rotate handles at z-index 5. */
 .pc-selection {
   position: absolute;
   border: 1.5px dashed #a855f7;
   pointer-events: none;
   background: rgba(168, 85, 247, 0.08);
+  z-index: 2;
 }
 
 .pc-marquee {
@@ -1034,6 +1042,7 @@ const cursorStyle = computed(() => {
   border: 1.5px dashed #60a5fa;
   background: rgba(96, 165, 250, 0.1);
   pointer-events: none;
+  z-index: 2;
 }
 
 .pc-preview-rect {
@@ -1041,6 +1050,7 @@ const cursorStyle = computed(() => {
   border: 1.5px dashed #fbbf24;
   background: rgba(251, 191, 36, 0.15);
   pointer-events: none;
+  z-index: 2;
 }
 
 .pc-preview-rect.cut {
