@@ -1,0 +1,35 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <g data-piece="skin-shadow" data-color-token="skin.sh" data-color-label="Skin Shadow">
+    <rect x="31" y="33" width="1" height="1"/>
+    <rect x="30" y="33" width="1" height="1"/>
+    <rect x="29" y="33" width="1" height="1"/>
+    <rect x="29" y="32" width="1" height="1"/>
+    <rect x="30" y="31" width="1" height="1"/>
+    <rect x="31" y="30" width="1" height="1"/>
+    <rect x="31" y="29" width="1" height="1"/>
+    <rect x="31" y="28" width="1" height="1"/>
+    <rect x="31" y="27" width="1" height="1"/>
+    <rect x="31" y="26" width="1" height="1"/>
+    <rect x="32" y="33" width="1" height="1"/>
+    <rect x="30" y="32" width="1" height="1"/>
+    <rect x="31" y="31" width="1" height="1"/>
+    <rect x="31" y="32" width="1" height="1"/>
+    <rect x="32" y="32" width="1" height="1"/>
+  </g>
+  <g data-piece="skin-deep" data-color-token="skin.hi" data-color-label="Skin highlight">
+    <rect x="31" y="28" width="1" height="1"/>
+    <rect x="31" y="26" width="1" height="1"/>
+    <rect x="32" y="27" width="1" height="1"/>
+    <rect x="32" y="26" width="1" height="1"/>
+    <rect x="32" y="28" width="1" height="1"/>
+    <rect x="32" y="29" width="1" height="1"/>
+    <rect x="32" y="31" width="1" height="1"/>
+    <rect x="32" y="30" width="1" height="1"/>
+    <rect x="30" y="33" width="1" height="1"/>
+  </g>
+  <g data-piece="skin-deep-2" data-color-token="skin.deep" data-color-label="Skin Deep">
+    <rect x="31" y="33" width="1" height="1"/>
+    <rect x="32" y="33" width="1" height="1"/>
+    <rect x="30" y="33" width="1" height="1"/>
+  </g>
+</svg>

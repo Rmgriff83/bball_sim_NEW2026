@@ -478,6 +478,28 @@ export const layerContentVersion = ref(0)
  * this only updates the tier (so a manifest tier change overrides what
  * was bundled at build time).
  */
+/**
+ * Push a newly-known variant name into VARIANTS[<layer>'s config key] so
+ * `normalizeConfig`'s `_allowNoneOrFallback` lookup accepts it on the
+ * next compose. Without this, anything that mutated LAYER_CONTENT at
+ * runtime (admin save, manifest hydration, rename) would show up in the
+ * picker but silently fall through to the layer's default variant the
+ * moment the user selected it, because VARIANTS arrays are built once at
+ * module init by `_deriveStringVariants` and never re-derived.
+ *
+ * No-op for layers that aren't string-keyed (face, eyebrows) — those use
+ * their own override fields (faceVariantOverride / browVariantOverride)
+ * and don't go through VARIANTS validation.
+ */
+function _syncStringVariantList(layerId, variantKey) {
+  const variantsKey = STRING_KEYED_LAYERS[layerId]
+  if (!variantsKey) return
+  const target = VARIANTS[variantsKey]
+  if (!target) return
+  const configKey = _filenameToConfigKey(variantKey)
+  if (!target.includes(configKey)) target.push(configKey)
+}
+
 export function registerLayerVariant(layerId, variantKey, tier, audience = 'player') {
   const map = _contentMapFor(audience)
   const key = `${layerId}/${variantKey}`
@@ -491,6 +513,7 @@ export function registerLayerVariant(layerId, variantKey, tier, audience = 'play
   if (tier === 'generic' || tier === 'paid') {
     layerTiers[audience][key] = tier
   }
+  _syncStringVariantList(layerId, variantKey)
   layerContentVersion.value++
 }
 
@@ -504,12 +527,18 @@ export function updateLayerVariantContent(layerId, variantKey, content, audience
   if (layerTiers[audience][`${layerId}/${variantKey}`] == null) {
     layerTiers[audience][`${layerId}/${variantKey}`] = 'generic'
   }
+  _syncStringVariantList(layerId, variantKey)
   layerContentVersion.value++
 }
 
 export function removeLayerVariantContent(layerId, variantKey, audience = 'player') {
   delete _contentMapFor(audience)[`${layerId}/${variantKey}`]
   delete layerTiers[audience][`${layerId}/${variantKey}`]
+  // We intentionally don't strip the key from VARIANTS here — another
+  // audience might still have a variant with the same name, and a stale
+  // entry in VARIANTS is harmless (normalizeConfig just accepts an
+  // already-defunct value and `_renderLayer`'s missing-file path returns
+  // an empty wrapper). Keeps removal idempotent + cheap.
   layerContentVersion.value++
 }
 
@@ -524,6 +553,7 @@ export function renameLayerVariantContent(layerId, oldKey, newKey, audience = 'p
     tierMap[`${layerId}/${newKey}`] = tierMap[k]
     delete tierMap[k]
   }
+  _syncStringVariantList(layerId, newKey)
   layerContentVersion.value++
 }
 

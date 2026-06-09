@@ -56,6 +56,39 @@ export function listAvailableHeadshotFilenames() {
   return _ALL_HEADSHOT_FILENAMES.slice()
 }
 
+/**
+ * Backwards-compat for legacy player.headshot references.
+ *
+ * Older procedural-pool filenames baked the ethnicity into the name —
+ * e.g. `headshot_037_white.svg`. The current generator emits
+ * `headshot_037.svg` (stable across regens) because including the
+ * ethnicity coupled the filename to a random draw: any layer-variant or
+ * palette change shifted the seeded RNG enough to flip the ethnicity for
+ * a given slot, which renamed the file and orphaned every player who'd
+ * saved the old name as their headshot pointer.
+ *
+ * Existing campaigns saved before that change still reference the
+ * `_<ethnicity>` form. This shim translates by stripping the trailing
+ * `_<ethnicity>` segment from `headshot_NNN_<ethnicity>.svg` and trying
+ * the lookup again. We strip ONLY this exact pattern so other naming
+ * conventions (premades, master coach headshots) are untouched.
+ *
+ * Returns the URL if either form resolves, null otherwise.
+ */
+const _LEGACY_HEADSHOT_NAME = /^(headshot_\d+)_[a-z]+(\.svg)$/i
+function _resolveBundledUrl(filename) {
+  const lower = String(filename).toLowerCase()
+  const direct = BASE_BY_FILENAME.get(lower)
+  if (direct) return direct
+  const match = lower.match(_LEGACY_HEADSHOT_NAME)
+  if (match) {
+    const stripped = `${match[1]}${match[2]}`
+    const legacyHit = BASE_BY_FILENAME.get(stripped)
+    if (legacyHit) return legacyHit
+  }
+  return null
+}
+
 // Cache of blob URLs we've minted for custom SVGs so repeated reads don't
 // re-create a Blob every render. Key: `${campaignId}:${playerId}`. Invalidated
 // explicitly by callers via invalidateCustomHeadshot() when a headshot is
@@ -95,7 +128,7 @@ export async function resolveHeadshotSrc(player, campaignId) {
   }
 
   if (player.headshot) {
-    return BASE_BY_FILENAME.get(String(player.headshot).toLowerCase()) ?? null
+    return _resolveBundledUrl(player.headshot)
   }
 
   return null
@@ -133,5 +166,5 @@ export function clearCustomHeadshotCache() {
  */
 export function resolveBaseHeadshotSrc(player) {
   if (!player?.headshot) return null
-  return BASE_BY_FILENAME.get(String(player.headshot).toLowerCase()) ?? null
+  return _resolveBundledUrl(player.headshot)
 }

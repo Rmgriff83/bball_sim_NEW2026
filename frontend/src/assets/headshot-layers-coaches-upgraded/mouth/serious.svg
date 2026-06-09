@@ -1,0 +1,8 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <g data-piece="lip-base" data-color-token="lip" data-color-label="Lip" transform="translate(-1 -10)">
+    <rect x="28" y="43" width="9" height="1"/>
+  </g>
+  <g data-piece="lip-sh" data-color-token="skin.hi" data-color-label="Lip highlight" transform="translate(-1 -10)">
+    <rect x="29" y="44" width="7" height="1"/>
+  </g>
+</svg>

@@ -77,16 +77,6 @@
             "base": "#9c4a26",
             "hi": "#bd6038",
             "sh": "#7c3818"
-        },
-        "gray": {
-            "base": "#8a8a8a",
-            "hi": "#a8a8a8",
-            "sh": "#6e6e6e"
-        },
-        "white": {
-            "base": "#d1cccc",
-            "hi": "#fafafa",
-            "sh": "#b3b3b3"
         }
     },
     "eye": {
@@ -117,6 +107,14 @@
         "teal": {
             "iris": "#85d1cf",
             "pupil": "#3f7073"
+        },
+        "violet": {
+            "iris": "#e292fe",
+            "pupil": "#2e063d"
+        },
+        "black": {
+            "iris": "#221c00",
+            "pupil": "#000000"
         }
     },
     "lip": {
@@ -124,7 +122,8 @@
         "rose": "#a05a4a",
         "blush": "#b5715e",
         "deep": "#7a4438",
-        "clay": "#9c5848"
+        "clay": "#9c5848",
+        "pale": "#ffa096"
     },
     "headband": {
         "none": null,
@@ -135,6 +134,14 @@
         "black": {
             "main": "#222222",
             "edge": "#000000"
+        },
+        "red": {
+            "main": "#ff3e2a",
+            "edge": "#870600"
+        },
+        "blue": {
+            "main": "#005edb",
+            "edge": "#000071"
         }
     },
     "ethnicity_profiles": {
@@ -145,8 +152,7 @@
             ],
             "hairs": [
                 "black",
-                "dark_brown",
-                "white"
+                "dark_brown"
             ]
         },
         "latino": {
@@ -158,8 +164,7 @@
             "hairs": [
                 "black",
                 "dark_brown",
-                "brown",
-                "white"
+                "brown"
             ]
         },
         "white": {
@@ -175,8 +180,7 @@
                 "light_brown",
                 "auburn",
                 "red",
-                "black",
-                "white"
+                "black"
             ]
         },
         "asian": {
@@ -187,8 +191,7 @@
             ],
             "hairs": [
                 "black",
-                "dark_brown",
-                "white"
+                "dark_brown"
             ]
         },
         "mixed": {
@@ -201,8 +204,7 @@
                 "black",
                 "dark_brown",
                 "brown",
-                "dirty_blonde",
-                "white"
+                "dirty_blonde"
             ]
         }
     }

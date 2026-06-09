@@ -514,7 +514,17 @@ def main():
     print(f"Generating {args.num} headshot(s) -> {args.out}/  ({suffix})")
     for i in range(1, args.num + 1):
         svg, meta = random_headshot_svg(rng, args.ethnicity, args.headband_chance)
-        name = f"headshot_{i:03d}_{meta['ethnicity']}"
+        # Filenames are STABLE by slot index — no ethnicity suffix. The
+        # ethnicity used to be baked into the name (`headshot_037_white.svg`)
+        # but that coupled the filename to a random draw: adding a new
+        # variant or palette entry shifted the seeded RNG enough to flip
+        # slot 37's ethnicity from white → latino, which renamed the file
+        # and broke every existing player who'd saved `headshot_037_white.svg`
+        # as their headshot pointer. With stable names the file persists
+        # across regens — only its INTERNAL content shifts when layers /
+        # palettes change. Ethnicity is still stamped in the SVG metadata
+        # (data-skin / data-hair / etc.) for any downstream parsers.
+        name = f"headshot_{i:03d}"
         with open(os.path.join(args.out, name + ".svg"), "w") as f:
             f.write(svg)
         if args.png:

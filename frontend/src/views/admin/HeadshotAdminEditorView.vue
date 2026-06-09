@@ -975,6 +975,31 @@ onUnmounted(() => {
             Cycle each slot to preview different colors with the active
             backdrop layer variants.
           </p>
+          <!-- Audience picker scoped to the Palettes tab. Drives which
+               layer variant pool (player vs coach) the preview + the
+               backdrop dropdowns use without forcing the admin to leave
+               Palettes and come back. Just flips activeAudience —
+               paletteTabActive stays true so the palette editor at the
+               bottom doesn't get swapped out for the variant strip. -->
+          <div class="ae-palette-slots-audience">
+            <label>Preview as</label>
+            <div class="ae-palette-slots-audience-toggle" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                :class="{ active: activeAudience === 'player' }"
+                :aria-selected="activeAudience === 'player'"
+                @click="activeAudience = 'player'"
+              >Player</button>
+              <button
+                type="button"
+                role="tab"
+                :class="{ active: activeAudience === 'coach' }"
+                :aria-selected="activeAudience === 'coach'"
+                @click="activeAudience = 'coach'"
+              >Coach</button>
+            </div>
+          </div>
           <div
             v-for="field in PALETTE_PREVIEW_FIELDS"
             :key="`palette-slot-${field.id}`"
@@ -1608,6 +1633,57 @@ onUnmounted(() => {
   font-size: 0.7rem;
   color: var(--color-text-tertiary);
   line-height: 1.4;
+}
+
+/* Audience picker — pill toggle scoped to the Palettes tab so flipping
+   between player and coach previews doesn't require leaving Palettes. */
+.ae-palette-slots-audience {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.ae-palette-slots-audience > label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.ae-palette-slots-audience-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+}
+
+.ae-palette-slots-audience-toggle button {
+  flex: 1;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  border-radius: var(--radius-full);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.ae-palette-slots-audience-toggle button:hover {
+  color: var(--color-text-primary);
+}
+
+.ae-palette-slots-audience-toggle button.active {
+  background: rgba(168, 85, 247, 0.28);
+  color: var(--color-text-primary);
 }
 
 .ae-palette-slots-row {
