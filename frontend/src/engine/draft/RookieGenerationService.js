@@ -8,7 +8,11 @@
 import { generatePlayer, FIRST_NAMES as FAKE_FIRST_NAMES, LAST_NAMES as FAKE_LAST_NAMES } from '../campaign/CampaignManager'
 import { PlayerRepository } from '../db/PlayerRepository'
 
-// Build list of available headshot filenames for random assignment to rookies
+// Rookie classes draw from the procedural pool ONLY (not the admin-authored
+// premades). Premades are reserved for the initial league roster pass in
+// CampaignManager.generatePlayer so they actually map 1:1 onto handcrafted
+// faces — pulling them into the rookie pool too would just guarantee
+// duplicates across draft classes.
 const headshotModules = import.meta.glob('@/assets/headshots/*.svg', { eager: true })
 const AVAILABLE_HEADSHOTS = Object.keys(headshotModules).map(k => k.split('/').pop())
 

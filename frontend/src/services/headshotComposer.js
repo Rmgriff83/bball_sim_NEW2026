@@ -958,6 +958,21 @@ export function composeSvg(config, overrides = null, audience = 'player') {
   // there regardless of whether the caller passed the config form or
   // the filename form.
   parts.push(_renderLayer('face', faceFile, tokens, { skin: c.skin, jaw: c.jawWidth, file: faceFile }, ov('face'), po('face'), audience))
+  // `data-file` records the exact eyebrow filename — needed so admin-
+  // authored variants whose names don't match the canonical thickness-angle
+  // pattern (e.g. "custom-arch") round-trip through saved SVGs and premades.
+  parts.push(_renderLayer('eyebrows', browFile, tokens, {
+    thickness: c.browThickness,
+    angle: c.browAngle,
+    color: c.eyebrowColor,
+    file: browFile,
+  }, ov('eyebrows'), po('eyebrows'), audience))
+  parts.push(_renderLayer('eyes', c.eyeShape, tokens, { shape: c.eyeShape, color: c.eye }, ov('eyes'), po('eyes'), audience))
+  parts.push(_renderLayer('nose', c.noseShape, tokens, { shape: c.noseShape }, ov('nose'), po('nose'), audience))
+  parts.push(_renderLayer('neck', c.neckStyle, tokens, { style: c.neckStyle }, ov('neck'), po('neck'), audience))
+  // Stubble paints AFTER neck so chinstrap-style variants that extend
+  // down past the jawline aren't clipped by the neck shape — neck would
+  // otherwise win on overlap and erase the lower portion of the stubble.
   parts.push(_renderLayer(
     'stubble',
     c.stubbleStyle === 'none' ? null : c.stubbleStyle,
@@ -970,19 +985,10 @@ export function composeSvg(config, overrides = null, audience = 'player') {
     },
     ov('stubble'), po('stubble'), audience,
   ))
-  // `data-file` records the exact eyebrow filename — needed so admin-
-  // authored variants whose names don't match the canonical thickness-angle
-  // pattern (e.g. "custom-arch") round-trip through saved SVGs and premades.
-  parts.push(_renderLayer('eyebrows', browFile, tokens, {
-    thickness: c.browThickness,
-    angle: c.browAngle,
-    color: c.eyebrowColor,
-    file: browFile,
-  }, ov('eyebrows'), po('eyebrows'), audience))
-  parts.push(_renderLayer('eyes', c.eyeShape, tokens, { shape: c.eyeShape, color: c.eye }, ov('eyes'), po('eyes'), audience))
-  parts.push(_renderLayer('nose', c.noseShape, tokens, { shape: c.noseShape }, ov('nose'), po('nose'), audience))
+  // Mouth paints AFTER stubble so the lips read on top of any beard /
+  // mustache that overlaps the upper-lip area — otherwise the stubble
+  // SVG would mask the mouth.
   parts.push(_renderLayer('mouth', c.mouthFullness, tokens, { fullness: c.mouthFullness, color: c.lip }, ov('mouth'), po('mouth'), audience))
-  parts.push(_renderLayer('neck', c.neckStyle, tokens, { style: c.neckStyle }, ov('neck'), po('neck'), audience))
   parts.push(_renderLayer('hair', hairFile, tokens, { style: c.hairStyle, color: c.hair }, ov('hair'), po('hair'), audience))
   parts.push(_renderLayer(
     'headband',

@@ -352,13 +352,6 @@ def compose_svg(config):
     # shoulders rather than being clipped behind them.
     parts.append(_render_layer('face', face_file, tokens,
         {'skin': config['skin'], 'jaw': config['jaw_width']}))
-    stubble_style = config.get('stubble_style', 'default' if has_stubble else 'none')
-    parts.append(_render_layer('stubble',
-        None if stubble_style == 'none' else stubble_style, tokens,
-        {
-            'style': stubble_style,
-            'enabled': 'true' if stubble_style != 'none' else 'false',
-        }))
     parts.append(_render_layer('eyebrows', brow_file, tokens, {
         'thickness': config['brow_thickness'],
         'angle': config['brow_angle'],
@@ -368,10 +361,22 @@ def compose_svg(config):
         {'shape': config['eye_shape'], 'color': config['eye']}))
     parts.append(_render_layer('nose', config['nose_shape'], tokens,
         {'shape': config['nose_shape']}))
-    parts.append(_render_layer('mouth', config['mouth_fullness'], tokens,
-        {'fullness': config['mouth_fullness'], 'color': config['lip']}))
     neck_style = config.get('neck_style', 'default')
     parts.append(_render_layer('neck', neck_style, tokens, {'style': neck_style}))
+    # Stubble paints AFTER neck so chinstrap-style variants that extend
+    # down past the jawline aren't clipped by the neck shape. Mirrors the
+    # JS composer's stacking order.
+    stubble_style = config.get('stubble_style', 'default' if has_stubble else 'none')
+    parts.append(_render_layer('stubble',
+        None if stubble_style == 'none' else stubble_style, tokens,
+        {
+            'style': stubble_style,
+            'enabled': 'true' if stubble_style != 'none' else 'false',
+        }))
+    # Mouth paints AFTER stubble so lips read on top of any beard /
+    # mustache that overlaps the upper-lip area.
+    parts.append(_render_layer('mouth', config['mouth_fullness'], tokens,
+        {'fullness': config['mouth_fullness'], 'color': config['lip']}))
     parts.append(_render_layer('hair', hair_file, tokens,
         {'style': config['hair_style'], 'color': config['hair']}))
     parts.append(_render_layer('headband',

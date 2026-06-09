@@ -34,6 +34,7 @@ import { selectBestCoachingScheme, isCoachingSchemeValid } from '../coaching/Coa
 import { coachBadges } from '../data/coachBadges'
 import { BADGES, BADGES_BY_POSITION } from '../data/badges'
 import { generateLeagueRosters, generateFreeAgentPool } from '../draft/LeagueRosterGenerator'
+import { listAvailableHeadshotFilenames } from '@/services/headshotResolver'
 import { CampaignRepository } from '../db/CampaignRepository'
 import { TeamRepository } from '../db/TeamRepository'
 import { PlayerRepository } from '../db/PlayerRepository'
@@ -59,6 +60,14 @@ import {
 // =============================================================================
 // HELPERS
 // =============================================================================
+
+// Combined headshot pool (procedural + admin-authored premades). Resolved
+// at module init since the underlying globs are eager-evaluated by the
+// resolver. generatePlayer / generateVeteran read this directly when
+// assigning each player's `headshot` filename — same pool the rookie
+// generator uses so premades flow through both campaign init and rookie
+// classes.
+const HEADSHOT_FILENAMES = listAvailableHeadshotFilenames()
 
 function randInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min
@@ -2618,6 +2627,15 @@ export function generatePlayer(options) {
   const firstName = FIRST_NAMES[nameIdx % FIRST_NAMES.length]
   const lastName = LAST_NAMES[(nameIdx + 7) % LAST_NAMES.length]
 
+  // Assign a random headshot from the combined catalog (procedural pool +
+  // admin-authored premades). Random per call — slight collision risk
+  // across a 225-player league but plenty of variety in the underlying
+  // pool. Null fallback only if both sources happen to be empty (would
+  // indicate a build pipeline issue, not a real-world scenario).
+  const headshot = HEADSHOT_FILENAMES.length > 0
+    ? HEADSHOT_FILENAMES[randInt(0, HEADSHOT_FILENAMES.length - 1)]
+    : null
+
   // Birth date: current year minus age, with random day offset
   const birthYear = 2025 - age
   const birthMonth = String(randInt(1, 12)).padStart(2, '0')
@@ -2654,6 +2672,10 @@ export function generatePlayer(options) {
     birthDate,
     birth_date: birthDate,
     age,
+    // Assigned at generation so the roster ships with faces. Resolved to
+    // an actual SVG URL by headshotResolver.resolveHeadshotSrc using the
+    // combined procedural + premade map.
+    headshot,
     // Stamp the season the player entered so the first birthday tick
     // doesn't immediately re-age them. Uses 2025 as the league baseline
     // (matches the birthYear math above).

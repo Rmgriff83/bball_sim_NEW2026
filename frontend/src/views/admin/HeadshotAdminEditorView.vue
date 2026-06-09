@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, AlertTriangle, Layers, Camera, Info, Trash2, X } from 'lucide-vue-next'
+import { ArrowLeft, AlertTriangle, Layers, Camera, Info, Trash2, X, RotateCcw } from 'lucide-vue-next'
 
 import api from '@/composables/useApi'
 import { useToastStore } from '@/stores/toast'
@@ -12,6 +12,8 @@ import {
   listAllVariantsForAudience, LAYERS,
   getCurrentVariantKey, getVariantSource, layerContentVersion,
   resolvePieceColor, registerLayerVariant, updateLayerVariantContent,
+  SKIN_TONES, HAIR_COLORS, EYE_COLORS, LIP_COLORS, HEADBAND_STYLES,
+  paletteVersion,
 } from '@/services/headshotComposer'
 import { parseVariantPieces } from '@/services/svgPieces'
 import HeadshotPreview from '@/components/headshot/HeadshotPreview.vue'
@@ -69,6 +71,51 @@ function selectAudienceTab(next) {
 
 function selectPalettesTab() {
   paletteTabActive.value = true
+}
+
+// Palette-entry preview controls. While the Palettes tab is active the
+// backdrop sidebar grows a "Palette Slot" section that lets the admin
+// pick which entry of each palette (skin/hair/eye/lip/headband) the
+// preview headshot is composed against — so they can cycle through
+// "what does Brown skin / Blue eyes / Warm lips look like with these
+// hexes?" without leaving the editor. Writes through the same
+// catalogBackdrop override pipeline the variant selectors use so the
+// preview reacts instantly.
+const PALETTE_PREVIEW_FIELDS = [
+  { id: 'skin',     label: 'Skin',     paletteKey: 'skin' },
+  { id: 'hair',     label: 'Hair',     paletteKey: 'hair' },
+  { id: 'eye',      label: 'Eye',      paletteKey: 'eye' },
+  { id: 'lip',      label: 'Lip',      paletteKey: 'lip' },
+  { id: 'headband', label: 'Headband', paletteKey: 'headband' },
+]
+
+const PALETTE_PREVIEW_SOURCES = {
+  skin: SKIN_TONES,
+  hair: HAIR_COLORS,
+  eye: EYE_COLORS,
+  lip: LIP_COLORS,
+  headband: HEADBAND_STYLES,
+}
+
+function paletteEntryOptionsFor(field) {
+  // Touch the reactive palette version so this re-evaluates when the admin
+  // saves a palette edit (new entry, deleted entry) — the dropdown should
+  // pick up the change immediately.
+  void paletteVersion.value
+  const source = PALETTE_PREVIEW_SOURCES[field.paletteKey]
+  if (!source) return []
+  return Object.keys(source).map(key => ({
+    value: key,
+    label: key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+  }))
+}
+
+function paletteEntryValueFor(field) {
+  return effectiveConfig.value[field.id]
+}
+
+function setPaletteEntryValue(field, value) {
+  catalogBackdrop.value = { ...catalogBackdrop.value, [field.id]: value }
 }
 
 // Per-audience preview state. Each tab has its own preview config (so the
@@ -795,13 +842,6 @@ onUnmounted(() => {
       <p>The admin editor requires a desktop viewport (≥ 1024px).</p>
     </div>
 
-    <!-- Palette editor mode: skin/hair/eye/lip/headband catalog editor.
-         Orthogonal to the variant tools, so it gets its own simple main
-         that doesn't render the preview column. -->
-    <main v-else-if="paletteTabActive" class="ae-main palette-mode">
-      <AdminPaletteEditor />
-    </main>
-
     <!-- Editor mode: full-page variant editor swaps in over the catalog -->
     <main v-else-if="editingVariant" class="ae-main editor-mode">
       <AdminVariantEditor
@@ -827,6 +867,21 @@ onUnmounted(() => {
           <header class="ae-backdrop-header">
             <Layers :size="13" />
             <span>Preview Backdrop</span>
+            <!-- Reset-all moved up here as an icon button so it's always
+                 visible (the old bottom-of-sidebar text button got pushed
+                 off-screen as backdrop rows grew, and using just the icon
+                 keeps the header compact). Conditional on having an active
+                 override so it doesn't show as a no-op control. -->
+            <button
+              v-if="Object.keys(catalogBackdrop).length > 0"
+              type="button"
+              class="ae-backdrop-header-action"
+              title="Reset all backdrop overrides"
+              aria-label="Reset all backdrop overrides"
+              @click="resetCatalogBackdrop"
+            >
+              <RotateCcw :size="13" />
+            </button>
           </header>
           <p class="ae-backdrop-hint">
             Swap any layer's variant in the preview. Saved locally so the
@@ -866,19 +921,16 @@ onUnmounted(() => {
               </select>
             </div>
           </div>
-          <button
-            v-if="Object.keys(catalogBackdrop).length > 0"
-            class="ae-backdrop-reset"
-            @click="resetCatalogBackdrop"
-          >
-            Reset all
-          </button>
         </aside>
 
         <section class="ae-center">
           <div class="ae-preview-wrap" :class="visibilityClasses">
             <HeadshotPreview :svg-string="displaySvg" :size="380" />
-            <div class="ae-premade-controls">
+            <!-- Premade authoring controls are catalog-mode only. The
+                 Palettes tab repurposes the same preview surface for
+                 visualizing palette edits, so the "Create New Headshot"
+                 button is irrelevant there. -->
+            <div v-if="!paletteTabActive" class="ae-premade-controls">
               <div class="ae-premade-row">
                 <button
                   class="ae-premade-btn"
@@ -909,10 +961,46 @@ onUnmounted(() => {
             </div>
           </div>
         </section>
+
+        <!-- Palette-slot dropdowns — floating panel to the right of the
+             preview while the Palettes tab is active. Used to be a section
+             inside the backdrop sidebar but that stack was tall enough to
+             squash the palette editor below. Splitting it out keeps each
+             column scannable and lets the editor breathe at full height. -->
+        <aside v-if="paletteTabActive" class="ae-palette-slots">
+          <header class="ae-palette-slots-header">
+            <span>Palette Slot</span>
+          </header>
+          <p class="ae-palette-slots-hint">
+            Cycle each slot to preview different colors with the active
+            backdrop layer variants.
+          </p>
+          <div
+            v-for="field in PALETTE_PREVIEW_FIELDS"
+            :key="`palette-slot-${field.id}`"
+            class="ae-palette-slots-row"
+          >
+            <label>{{ field.label }}</label>
+            <select
+              :value="paletteEntryValueFor(field)"
+              @change="setPaletteEntryValue(field, $event.target.value)"
+            >
+              <option
+                v-for="opt in paletteEntryOptionsFor(field)"
+                :key="opt.value"
+                :value="opt.value"
+              >{{ opt.label }}</option>
+            </select>
+          </div>
+        </aside>
       </div>
 
-      <!-- Variant strip spans the full screen width below the top row. -->
+      <!-- Bottom row: variant strip on Players/Coaches, palette editor on
+           the Palettes tab. Same span — both consume the full screen width
+           below the top row. -->
+      <AdminPaletteEditor v-if="paletteTabActive" class="ae-strip" />
       <AdminVariantStrip
+        v-else
         :key="`strip-${stripRefreshKey}-${activeAudience}`"
         :active-layer-id="activeLayerId"
         :layers="LAYERS"
@@ -930,7 +1018,7 @@ onUnmounted(() => {
            when toggled open via the View All button. Internal scroll keeps
            the page height stable no matter how many premades are saved. -->
       <aside
-        v-if="premadesPanelOpen && premades.length"
+        v-if="premadesPanelOpen && premades.length && !paletteTabActive"
         class="ae-premades-panel"
         role="dialog"
         aria-label="Premade headshots"
@@ -1245,7 +1333,7 @@ onUnmounted(() => {
 }
 
 .ae-backdrop-header {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
   font-size: 0.7rem;
@@ -1255,6 +1343,31 @@ onUnmounted(() => {
   color: var(--color-text-tertiary);
   padding-bottom: 6px;
   border-bottom: 1px solid var(--glass-border);
+}
+
+/* Icon-only action sitting at the right edge of the backdrop header.
+   `margin-left: auto` pushes it past the title text. Small click target
+   tightly sized to the icon since it's adjacent to other header chrome. */
+.ae-backdrop-header-action {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.ae-backdrop-header-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-primary);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .ae-backdrop-hint {
@@ -1434,23 +1547,6 @@ onUnmounted(() => {
   border-color: rgba(168, 85, 247, 0.5);
 }
 
-.ae-backdrop-reset {
-  margin-top: 6px;
-  padding: 6px 10px;
-  background: transparent;
-  border: 1px solid var(--glass-border);
-  color: var(--color-text-secondary);
-  border-radius: var(--radius-lg);
-  font-size: 0.72rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
-}
-
-.ae-backdrop-reset:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--color-text-primary);
-}
 
 /* Replace the HeadshotPreview's solid background with the same checkerboard
    pattern used by the pixel canvas + variant thumbs. Scoped to the admin
@@ -1477,15 +1573,69 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* Palette editor mode: single-column, takes the full main area. No
-   preview column / backdrop sidebar — palettes are global so there's
-   nothing per-audience or per-layer to mirror them against. */
-.ae-main.palette-mode {
+/* Palette-slot floating panel — sibling of .ae-center on the Palettes
+   tab. Mirrors the .ae-backdrop-sidebar's glass-surface look so the top
+   row reads as backdrop ↔ preview ↔ palette-slot columns. Width is
+   compact (220px) since the row content is just label + native select. */
+.ae-palette-slots {
+  width: 220px;
+  flex-shrink: 0;
+  align-self: stretch;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  overflow-y: auto;
   min-height: 0;
-  padding: 12px 16px;
-  gap: 12px;
+}
+
+.ae-palette-slots-header {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ae-palette-slots-hint {
+  margin: 0 0 4px;
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}
+
+.ae-palette-slots-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ae-palette-slots-row label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.ae-palette-slots-row select {
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-primary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+[data-theme="light"] .ae-palette-slots-row select {
+  background: rgba(0, 0, 0, 0.04);
 }
 
 /* New Variant modal */

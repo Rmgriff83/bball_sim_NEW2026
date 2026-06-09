@@ -12,7 +12,8 @@
     "audit:gameplay": "node scripts/audit-gameplay-coverage.js",
     "sync:headshots": "node scripts/sync-headshot-assets.mjs",
     "sync:headshots:upload": "node scripts/sync-headshot-assets.mjs upload",
-    "prebuild": "npm run sync:headshots && node scripts/audit-gameplay-coverage.js"
+    "regen:headshots": "node scripts/regenerate-headshot-pool.mjs",
+    "prebuild": "npm run sync:headshots && npm run regen:headshots && node scripts/audit-gameplay-coverage.js"
   },
   "dependencies": {
     "@capacitor/cli": "^8.3.4",

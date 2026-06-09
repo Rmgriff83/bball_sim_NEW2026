@@ -9,6 +9,13 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const isAuthenticated = computed(() => authStore.isAuthenticated)
+
+// VITE_NATIVE_BUILD is set by `npm run build:ios`. The App Store badge
+// only makes sense on the web build — inside the native app, users are
+// already on iOS, so the link is redundant. Build-time env is preferable
+// to a Capacitor.isNativePlatform() runtime check here because Vite
+// tree-shakes the branch entirely from the iOS bundle.
+const isNativeBuild = import.meta.env.VITE_NATIVE_BUILD
 </script>
 
 <template>
@@ -48,6 +55,66 @@ const isAuthenticated = computed(() => authStore.isAuthenticated)
             </button>
           </template>
         </div>
+
+        <!-- App Store badge — web build only. Inline SVG so we're not
+             hotlinking Apple's CDN; the design follows the official
+             "Download on the App Store" badge spec. Native iOS users are
+             already in the app, so VITE_NATIVE_BUILD strips this branch
+             entirely from the iOS bundle. -->
+        <a
+          v-if="!isNativeBuild"
+          class="app-store-badge"
+          href="https://apps.apple.com/us/app/bball-sim/id6774754906"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Download Bball Sim on the App Store"
+        >
+          <svg
+            class="app-store-badge-svg"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 160 50"
+            role="img"
+            aria-hidden="true"
+          >
+            <!-- Black rounded background + 1px subtle border -->
+            <rect width="160" height="50" rx="8" fill="#000" />
+            <rect
+              x="0.5"
+              y="0.5"
+              width="159"
+              height="49"
+              rx="7.5"
+              fill="none"
+              stroke="rgba(255, 255, 255, 0.18)"
+            />
+            <!-- Apple logo. Canonical Apple-style glyph with intrinsic
+                 bounds roughly (0,0)-(18,22). Translated into the badge's
+                 vertical center and the left padding column. -->
+            <g transform="translate(13, 13)" fill="#fff">
+              <path d="M14.94 11.38c-.02-2.13 1.74-3.16 1.82-3.21-1-1.46-2.55-1.66-3.1-1.68-1.32-.13-2.58.78-3.25.78-.68 0-1.71-.76-2.81-.74-1.45.02-2.78.84-3.52 2.15-1.5 2.6-.38 6.44 1.08 8.55.71 1.03 1.56 2.18 2.67 2.14 1.07-.04 1.48-.69 2.78-.69s1.66.69 2.79.66c1.15-.02 1.89-1.05 2.59-2.09.82-1.21 1.16-2.37 1.18-2.43-.03-.01-2.26-.86-2.28-3.44zM12.87 4.69c.58-.71.97-1.68.87-2.66-.84.03-1.86.56-2.46 1.27-.54.63-1.01 1.64-.88 2.58.94.07 1.88-.47 2.47-1.19z" />
+            </g>
+            <!-- Tagline above the wordmark -->
+            <text
+              x="42"
+              y="20"
+              fill="#fff"
+              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+              font-size="8"
+              font-weight="400"
+              letter-spacing="0.4"
+            >Download on the</text>
+            <!-- Wordmark -->
+            <text
+              x="42"
+              y="38"
+              fill="#fff"
+              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+              font-size="18"
+              font-weight="600"
+              letter-spacing="-0.3"
+            >App Store</text>
+          </svg>
+        </a>
       </div>
 
       <!-- Retro Effects -->
@@ -315,6 +382,41 @@ const isAuthenticated = computed(() => authStore.isAuthenticated)
   flex-wrap: wrap;
   gap: 1rem;
   justify-content: center;
+}
+
+/* Apple App Store badge — anchored below the hero CTAs. Width is held at
+   the Apple-spec aspect ratio (135:40); transform-only hover stays
+   GPU-friendly. focus-visible matches the rest of the hero's accent
+   color so keyboard nav remains visible against the dark background. */
+.app-store-badge {
+  display: inline-block;
+  margin-top: 1.5rem;
+  line-height: 0;
+  border-radius: 7px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.app-store-badge:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.app-store-badge:focus-visible {
+  outline: 2px solid var(--color-primary, #ffc125);
+  outline-offset: 3px;
+}
+
+.app-store-badge-svg {
+  display: block;
+  width: 180px;   /* 160 × 1.125 — well above Apple's 119px minimum */
+  height: 56px;
+}
+
+@media (max-width: 640px) {
+  .app-store-badge-svg {
+    width: 156px;
+    height: 49px;
+  }
 }
 
 /* Retro grid */

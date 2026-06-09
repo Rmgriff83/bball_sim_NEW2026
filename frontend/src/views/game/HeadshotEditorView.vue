@@ -519,7 +519,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         <ArrowLeft :size="18" />
         <span class="header-btn-label">Exit</span>
       </button>
-      <div class="editor-title-wrap">
+      <div class="editor-title-wrap" data-tour="editor-name">
         <template v-if="editingName">
           <input
             ref="nameInputRef"
@@ -579,8 +579,8 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         <section v-if="premades.length" class="he-premades">
           <header class="he-premades-header">
             <Sparkles :size="13" />
-            <span>Default Heads</span>
-            <span class="he-premades-hint">Tap to start from a premade — keep customizing</span>
+            <span>Defaults</span>
+            <span class="he-premades-hint">Tap to start from a premade head</span>
           </header>
           <div class="he-premades-scroll">
             <button

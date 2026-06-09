@@ -686,18 +686,29 @@ export const WALKTHROUGHS = {
       body: "Tweak any layer of this player's face — style, color, or toggle features on and off. Save when you like the look and it syncs across your devices.",
     },
     {
-      target: 'editor-layer-hair',
-      placement: 'left',
+      target: 'editor-name',
+      placement: 'bottom',
+      title: 'Rename the Player',
+      body: 'Tap the pencil next to the name up top to give this player a different one — useful if you want them to feel like your own. Press Enter or tap the check to save the new name.',
+    },
+    {
+      target: 'editor-layer-pills',
+      placement: 'bottom',
+      // The pill row only renders once the context menu is open, so make
+      // sure the editor opens the Hair menu before this step shows. The
+      // next step (Pick a Variant) re-issues the same enter action so the
+      // menu stays open across both spotlights — and stays open through
+      // the rest of the walkthrough too, since the layer pills live
+      // inside this menu and a leave-time closeContext would leave the
+      // user with no way back to them without exiting the editor.
+      action: { view: 'headshotEditor', enter: 'openHairContext' },
       title: 'Layers',
-      body: 'Each button on the side opens controls for one part of the face — hair, skin, eyes, mouth, and so on.',
+      body: 'Tap a pill to switch which part of the face you\'re editing — hair, eyes, mouth, headband, and so on.',
     },
     {
       target: 'editor-context-menu',
       placement: 'top',
-      // The context menu only renders when a layer is active. Have the editor
-      // open the Hair menu for this step so the user sees what we're spotlighting,
-      // then close it when the step leaves.
-      action: { view: 'headshotEditor', enter: 'openHairContext', leave: 'closeContext' },
+      action: { view: 'headshotEditor', enter: 'openHairContext' },
       title: 'Pick a Variant',
       body: 'Tap a thumbnail to swap that part. Color swatches under the styles let you change just the tint. The big preview updates instantly.',
     },

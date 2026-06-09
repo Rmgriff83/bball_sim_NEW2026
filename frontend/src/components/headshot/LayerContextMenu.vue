@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { RotateCcw, Palette } from 'lucide-vue-next'
+import { RotateCcw, Palette, ChevronDown } from 'lucide-vue-next'
 import {
   composeSvg, LAYERS,
   getCurrentVariantKey, getVariantSource, resolvePieceColor,
@@ -95,14 +95,6 @@ const layer = computed(() => LAYERS.find(l => l.id === props.layerId) ?? null)
 // body to show palette swatches instead of layer style/piece controls.
 const isPaletteMode = computed(() => props.layerId === PALETTE_LAYER_ID)
 
-// Header label that survives both modes — the LAYERS lookup above returns
-// null for the synthetic 'palette' id, so accessing layer.label directly
-// in the template would crash.
-const activeHeaderLabel = computed(() => {
-  if (isPaletteMode.value) return 'Palette'
-  return layer.value?.label ?? ''
-})
-
 // Which user-facing layers each palette field repaints. When the user
 // swaps a palette here we also clear any per-piece overrides on those
 // layers — literal-hex overrides (the kind the Custom tab of
@@ -126,6 +118,19 @@ const PALETTE_TO_BOUND_LAYERS = {
 function setPaletteValue(configKey, value) {
   if (props.config?.[configKey] === value) return
   const next = { ...props.config, [configKey]: value }
+  // Brows track hair by default — `normalizeConfig`'s
+  //   eyebrowColor: config.eyebrowColor in HAIR_COLORS ? config.eyebrowColor : hair
+  // only falls back to hair when eyebrowColor isn't a valid key, but on
+  // an existing player it almost always IS a valid key (seeded at save
+  // time), so without this explicit follow-through a Hair swap leaves
+  // brows stuck on the previous color. Picking Hair also re-points
+  // eyebrowColor so the brow palette tokens (brow.base/hi/sh) resolve
+  // through the new hair entry on the next composeSvg pass. Per-piece
+  // brow overrides are still cleared via PALETTE_TO_BOUND_LAYERS below,
+  // so any custom-tinted brow piece reverts to following the palette too.
+  if (configKey === 'hair') {
+    next.eyebrowColor = value
+  }
   const boundLayers = PALETTE_TO_BOUND_LAYERS[configKey] || []
   if (boundLayers.length > 0 && next.pieceColors) {
     const cleared = { ...next.pieceColors }
@@ -272,6 +277,15 @@ function setPieceColor(piece, value) {
 // ----- piece color picker modal state -----
 const pickerOpen = ref(false)
 const pickerPiece = ref(null)
+
+// Piece-colors dropdown collapsed state. Closed by default so the section
+// doesn't push the rest of the picker around — once the user expands it,
+// the list anchors absolute against the .ctx-pieces-toggle button so it
+// floats over the variant body instead of growing it.
+const piecesOpen = ref(false)
+function togglePieces() {
+  piecesOpen.value = !piecesOpen.value
+}
 const pickerInitial = computed(() => {
   if (!pickerPiece.value) return ''
   const override = props.config?.pieceColors?.[props.layerId]?.[pickerPiece.value.label]
@@ -334,7 +348,11 @@ function clearPieceColor(piece) {
            right edge of the (now-horizontally-scrolling) pill row,
            hinting that more pills exist if you scroll. Desktop is
            wrap-friendly so the wrapper is just a transparent passthrough. -->
-      <div v-if="layers.length > 0" class="ctx-pills-wrap">
+      <div
+        v-if="layers.length > 0"
+        class="ctx-pills-wrap"
+        data-tour="editor-layer-pills"
+      >
         <nav class="ctx-pills">
           <button
             v-for="l in layers"
@@ -362,7 +380,6 @@ function clearPieceColor(piece) {
           </button>
         </nav>
       </div>
-      <h3 class="ctx-active-label">{{ activeHeaderLabel }}</h3>
     </header>
 
     <!-- Style variants grid -->
@@ -385,32 +402,56 @@ function clearPieceColor(piece) {
     </section>
 
 
-    <!-- Per-piece colors — uses labels the admin set in the variant editor.
-         Each row shows the resolved color and lets the user pick a custom
-         hex. The undo button beside an overridden swatch removes the
-         override so the piece falls back to the palette/literal default. -->
-    <section v-if="!isPaletteMode && layerPieces.length > 0" class="ctx-section">
-      <h4>Piece Colors</h4>
-      <div class="piece-list">
-        <div v-for="piece in layerPieces" :key="piece.id" class="piece-row">
-          <button
-            type="button"
-            class="piece-swatch-btn"
-            :title="`Set color for ${piece.label}`"
-            @click="openPieceColorPicker(piece)"
-          >
-            <span class="piece-swatch" :style="{ background: pieceColorFor(piece) }" />
-            <span class="piece-label">{{ piece.label }}</span>
-          </button>
-          <button
-            v-if="hasOverride(piece)"
-            type="button"
-            class="piece-reset"
-            title="Reset to default color"
-            @click="clearPieceColor(piece)"
-          >
-            <RotateCcw :size="12" />
-          </button>
+    <!-- Per-piece colors — collapsed by default. The dropdown panel
+         absolute-positions over the section below so opening it doesn't
+         resize the menu or push the variant grid around. Tapping outside
+         closes it via the .ctx-pieces-backdrop scrim. -->
+    <section v-if="!isPaletteMode && layerPieces.length > 0" class="ctx-section ctx-pieces-section">
+      <button
+        type="button"
+        class="ctx-pieces-toggle"
+        :class="{ open: piecesOpen }"
+        :aria-expanded="piecesOpen"
+        @click="togglePieces"
+      >
+        <span>Piece Colors</span>
+        <span class="ctx-pieces-toggle-meta">
+          <span class="ctx-pieces-count">{{ layerPieces.length }}</span>
+          <ChevronDown :size="14" class="ctx-pieces-chev" />
+        </span>
+      </button>
+
+      <!-- Click-outside scrim. Behind the dropdown but in front of the
+           surrounding body so a tap anywhere outside the dropdown closes
+           it without firing the underlying control. -->
+      <div
+        v-if="piecesOpen"
+        class="ctx-pieces-backdrop"
+        @click="piecesOpen = false"
+      />
+
+      <div v-if="piecesOpen" class="ctx-pieces-dropdown" role="menu">
+        <div class="piece-list">
+          <div v-for="piece in layerPieces" :key="piece.id" class="piece-row">
+            <button
+              type="button"
+              class="piece-swatch-btn"
+              :title="`Set color for ${piece.label}`"
+              @click="openPieceColorPicker(piece)"
+            >
+              <span class="piece-swatch" :style="{ background: pieceColorFor(piece) }" />
+              <span class="piece-label">{{ piece.label }}</span>
+            </button>
+            <button
+              v-if="hasOverride(piece)"
+              type="button"
+              class="piece-reset"
+              title="Reset to default color"
+              @click="clearPieceColor(piece)"
+            >
+              <RotateCcw :size="12" />
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -672,13 +713,6 @@ function clearPieceColor(piece) {
   border-color: rgba(0, 0, 0, 0.12);
 }
 
-.ctx-active-label {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
 /* Padding lives on each non-header section so the header's edge-to-edge
    bottom border lines up flush with the rounded corners. Works for both
    right-sidebar and sheet modes. */
@@ -712,6 +746,34 @@ function clearPieceColor(piece) {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+}
+
+/* Sheet (mobile) — collapse the variant grid to a single horizontally-
+   scrollable row so the body keeps a flat layout that doesn't outgrow
+   the sheet's 60vh cap and force the picker to scroll past the preview.
+   Mirrors the ctx-pills mobile treatment above — same scrollbar hide
+   so the visual cue lives in horizontal momentum instead of a chrome
+   bar. */
+.context-menu.sheet .style-grid {
+  display: flex;
+  grid-template-columns: none;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-bottom: 4px;
+}
+
+.context-menu.sheet .style-grid::-webkit-scrollbar {
+  display: none;
+}
+
+.context-menu.sheet .style-cell {
+  flex: 0 0 auto;
+  /* Match the desktop column width so cells stay readable while
+     scrolling — without this they'd shrink to fit-content and the
+     thumbnails would feel cramped. */
+  width: 88px;
 }
 
 .style-cell {
@@ -808,6 +870,90 @@ function clearPieceColor(piece) {
   font-size: 0.8rem;
   color: var(--color-text-secondary);
   margin: 8px 0 0;
+}
+
+/* Piece-colors section becomes a collapsible dropdown — the section stays
+   in normal flow as just the toggle button, and the expanded list floats
+   over the surrounding body via absolute positioning so opening it never
+   re-flows the variant grid above. */
+.ctx-pieces-section {
+  position: relative;
+  padding: 8px 14px;
+}
+
+.ctx-pieces-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ctx-pieces-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.ctx-pieces-toggle.open {
+  background: rgba(168, 85, 247, 0.18);
+  border-color: rgba(168, 85, 247, 0.55);
+}
+
+.ctx-pieces-toggle-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ctx-pieces-count {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.ctx-pieces-chev {
+  transition: transform 0.18s ease;
+}
+
+.ctx-pieces-toggle.open .ctx-pieces-chev {
+  transform: rotate(180deg);
+}
+
+/* Tap-outside scrim — full-section overlay so the user can dismiss the
+   dropdown by tapping anywhere outside the panel itself. Sits BEHIND the
+   dropdown (z-index 1) so it doesn't eat clicks on the list rows. */
+.ctx-pieces-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+}
+
+.ctx-pieces-dropdown {
+  position: absolute;
+  top: calc(100% - 6px);
+  left: 14px;
+  right: 14px;
+  z-index: 2;
+  padding: 8px;
+  background: var(--color-bg-secondary, var(--glass-bg));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  max-height: 280px;
+  overflow-y: auto;
 }
 
 /* Piece-color list — one row per admin-labeled piece in the active variant.

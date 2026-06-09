@@ -131,7 +131,22 @@ function makeClient() {
   const forcePathStyle =
     (process.env.ASSETS_AWS_USE_PATH_STYLE_ENDPOINT || 'false').toLowerCase() ===
     'true';
-  return new S3Client({ region, credentials, endpoint, forcePathStyle });
+  // Recent @aws-sdk/client-s3 versions opt every PUT into "flexible
+  // checksums" by default (sending x-amz-checksum-crc32 headers). AWS
+  // proper supports that, but DigitalOcean Spaces — and several other
+  // S3-compatible services — reject the resulting signed requests with
+  // 403 AccessDenied even when the credentials are correct. Pinning both
+  // options to WHEN_REQUIRED restores the pre-flexible-checksum behavior
+  // so uploads through Spaces work again. Real AWS buckets are unaffected
+  // because they also accept the older request shape.
+  return new S3Client({
+    region,
+    credentials,
+    endpoint,
+    forcePathStyle,
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
+  });
 }
 
 async function streamToBuffer(stream) {

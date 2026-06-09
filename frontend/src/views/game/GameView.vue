@@ -5000,7 +5000,7 @@ onUnmounted(() => {
 .qb-modal-container {
   width: 100%;
   max-width: 560px;
-  max-height: 90vh;
+  max-height: 80vh;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-2xl);

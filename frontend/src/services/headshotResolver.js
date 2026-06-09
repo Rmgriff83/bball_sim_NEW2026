@@ -3,18 +3,58 @@ import { PlayerHeadshotRepository } from '@/engine/db/PlayerHeadshotRepository'
 // Eagerly-loaded bundled base SVG library. The map key is the absolute path
 // emitted by Vite (e.g. '/src/assets/headshots/headshot_001_black.svg'); the
 // value is the Vite-processed module whose `.default` is the asset URL.
-const BASE_SVGS = import.meta.glob('@/assets/headshots/*.svg', { eager: true })
+//
+// Two pools share the same filename → URL space:
+//   1. The procedural pool at `headshots/` (regenerated each build by
+//      `regen:headshots` against the latest layer SVGs + palettes.json).
+//   2. The admin-authored premades at `headshots-premade/` (hand-curated
+//      composed SVGs, see headshotPremades.js for the editor-side glob).
+//
+// Player generation picks filenames from EITHER pool (see
+// listAvailableHeadshotFilenames below), so the resolver has to be able to
+// look both up the same way. Premades are loaded WITHOUT `?raw` here — we
+// only need the URL for the <img src> path; the editor's separate raw glob
+// in headshotPremades.js still handles inline composition.
+const POOL_SVGS = import.meta.glob('@/assets/headshots/*.svg', { eager: true })
+const PREMADE_SVGS = import.meta.glob('@/assets/headshots-premade/*.svg', { eager: true })
 
 // Map filename → URL once at module load. Players store just the filename
-// (e.g. 'headshot_001_black.svg') in `player.headshot`.
+// (e.g. 'headshot_001_black.svg' or 'premade_005.svg') in `player.headshot`.
 const BASE_BY_FILENAME = (() => {
   const map = new Map()
-  for (const [path, mod] of Object.entries(BASE_SVGS)) {
-    const filename = path.split('/').pop()
-    if (filename) map.set(filename.toLowerCase(), mod.default)
+  for (const source of [POOL_SVGS, PREMADE_SVGS]) {
+    for (const [path, mod] of Object.entries(source)) {
+      const filename = path.split('/').pop()
+      if (filename) map.set(filename.toLowerCase(), mod.default)
+    }
   }
   return map
 })()
+
+/**
+ * Sorted list of every filename available for random assignment to a
+ * generated player — union of the procedural pool and the admin-authored
+ * premades. Used by CampaignManager's generatePlayer and the
+ * RookieGenerationService so both campaign init and rookie classes draw
+ * from the same combined catalog.
+ *
+ * Sorted so callers seeded by index get a deterministic mapping regardless
+ * of the underlying Vite glob iteration order.
+ */
+const _ALL_HEADSHOT_FILENAMES = (() => {
+  const names = new Set()
+  for (const source of [POOL_SVGS, PREMADE_SVGS]) {
+    for (const path of Object.keys(source)) {
+      const filename = path.split('/').pop()
+      if (filename) names.add(filename)
+    }
+  }
+  return [...names].sort()
+})()
+
+export function listAvailableHeadshotFilenames() {
+  return _ALL_HEADSHOT_FILENAMES.slice()
+}
 
 // Cache of blob URLs we've minted for custom SVGs so repeated reads don't
 // re-create a Blob every render. Key: `${campaignId}:${playerId}`. Invalidated

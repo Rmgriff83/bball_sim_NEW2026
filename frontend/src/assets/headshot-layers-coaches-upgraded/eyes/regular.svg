@@ -1,0 +1,66 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <g data-piece="base" data-color="#ffffff" data-color-label="Base" transform="rotate(2.314902166082547 26.5 23)">
+    <rect x="24" y="23" width="1" height="1"/>
+    <rect x="25" y="23" width="1" height="1"/>
+    <rect x="26" y="23" width="1" height="1"/>
+    <rect x="27" y="23" width="1" height="1"/>
+    <rect x="27" y="22" width="1" height="1"/>
+    <rect x="26" y="22" width="1" height="1"/>
+    <rect x="25" y="22" width="1" height="1"/>
+    <rect x="24" y="22" width="1" height="1"/>
+    <rect x="28" y="22" width="1" height="1"/>
+    <rect x="28" y="23" width="1" height="1"/>
+    <rect x="27" y="24" width="1" height="1"/>
+    <rect x="26" y="24" width="1" height="1"/>
+    <rect x="25" y="24" width="1" height="1"/>
+    <rect x="26" y="21" width="1" height="1"/>
+    <rect x="25" y="21" width="1" height="1"/>
+    <rect x="27" y="21" width="1" height="1"/>
+  </g>
+  <g data-piece="base-2" data-color="#ffffff" data-color-label="Base" transform="translate(9 0) rotate(-5.659787062408483 26.5 23)">
+    <rect x="24" y="22" width="1" height="1"/>
+    <rect x="25" y="22" width="1" height="1"/>
+    <rect x="26" y="22" width="1" height="1"/>
+    <rect x="27" y="22" width="1" height="1"/>
+    <rect x="27" y="23" width="1" height="1"/>
+    <rect x="26" y="23" width="1" height="1"/>
+    <rect x="25" y="23" width="1" height="1"/>
+    <rect x="24" y="23" width="1" height="1"/>
+    <rect x="28" y="23" width="1" height="1"/>
+    <rect x="28" y="22" width="1" height="1"/>
+    <rect x="27" y="21" width="1" height="1"/>
+    <rect x="26" y="21" width="1" height="1"/>
+    <rect x="25" y="21" width="1" height="1"/>
+    <rect x="26" y="24" width="1" height="1"/>
+    <rect x="25" y="24" width="1" height="1"/>
+    <rect x="27" y="24" width="1" height="1"/>
+  </g>
+  <g data-piece="exert" data-color-token="skin.base" data-color-label="Eyelid" transform="rotate(1.7173167250274446 26.5 22)">
+    <rect x="28" y="22" width="1" height="1"/>
+    <rect x="27" y="22" width="1" height="1"/>
+    <rect x="27" y="21" width="1" height="1"/>
+    <rect x="26" y="21" width="1" height="1"/>
+    <rect x="25" y="21" width="1" height="1"/>
+    <rect x="24" y="22" width="1" height="1"/>
+  </g>
+  <g data-piece="eyelid" data-color-token="skin.base" data-color-label="Eyelid" transform="translate(9 0) rotate(-5.810843088350225 26.5 22)">
+    <rect x="24" y="22" width="1" height="1"/>
+    <rect x="25" y="22" width="1" height="1"/>
+    <rect x="25" y="21" width="1" height="1"/>
+    <rect x="26" y="21" width="1" height="1"/>
+    <rect x="27" y="21" width="1" height="1"/>
+    <rect x="28" y="22" width="1" height="1"/>
+  </g>
+  <g data-piece="pupil" data-color-token="eye.pupil" data-color-label="Pupil">
+    <rect x="25" y="22" width="1" height="1"/>
+    <rect x="25" y="23" width="1" height="1"/>
+    <rect x="26" y="23" width="1" height="1"/>
+    <rect x="27" y="23" width="1" height="1"/>
+    <rect x="27" y="22" width="1" height="1"/>
+    <rect x="34" y="22" width="1" height="1"/>
+    <rect x="34" y="23" width="1" height="1"/>
+    <rect x="35" y="23" width="1" height="1"/>
+    <rect x="36" y="23" width="1" height="1"/>
+    <rect x="36" y="22" width="1" height="1"/>
+  </g>
+</svg>
