@@ -134,6 +134,20 @@ watch(delta, (next, prev) => {
   transition: box-shadow 0.3s ease-out;
 }
 
+/* Light mode — the white-on-white track and center marker disappear on a
+   light background. Swap to a translucent dark track + darker center line. */
+[data-theme="light"] .momentum-bar {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .momentum-bar-center {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="light"] .momentum-bar-title {
+  color: rgba(0, 0, 0, 0.55);
+}
+
 .momentum-bar.is-pulsing {
   box-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
   animation: momentum-pulse 0.6s ease-out;
