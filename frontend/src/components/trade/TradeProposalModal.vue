@@ -1,7 +1,8 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useTradeStore } from '@/stores/trade'
-import { X, ArrowLeftRight, Check, XCircle, AlertTriangle } from 'lucide-vue-next'
+import { useAudioStore } from '@/stores/audio'
+import { X, ArrowLeftRight, Check, XCircle, AlertTriangle, MessageSquare } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 
 const props = defineProps({
@@ -9,9 +10,10 @@ const props = defineProps({
   proposal: Object,
 })
 
-const emit = defineEmits(['close', 'accept', 'reject'])
+const emit = defineEmits(['close', 'accept', 'reject', 'negotiate'])
 
 const tradeStore = useTradeStore()
+const audio = useAudioStore()
 
 // Two-step accept: clicking "Accept Trade" surfaces a confirmation row in
 // the footer. The actual emit('accept') only fires after the user confirms.
@@ -67,7 +69,13 @@ function handleCancelAccept() {
 }
 
 function handleReject() {
+  audio.cancel()
   emit('reject', props.proposal)
+}
+
+function handleNegotiate() {
+  // Hands the assets to the trade wizard so the user can build a counter.
+  emit('negotiate', props.proposal)
 }
 
 function handleKeydown(e) {
@@ -121,6 +129,36 @@ function handleKeydown(e) {
                       <div class="player-contract">
                         {{ formatSalary(asset.player.contractSalary) }} | {{ asset.player.contractYearsRemaining ?? 1 }}yr
                       </div>
+                      <div v-if="asset.seasonStats" class="player-season-stats">
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.ppg.toFixed(1) }}</span>
+                          <span class="stat-label">PPG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.rpg.toFixed(1) }}</span>
+                          <span class="stat-label">RPG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.apg.toFixed(1) }}</span>
+                          <span class="stat-label">APG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.spg.toFixed(1) }}</span>
+                          <span class="stat-label">SPG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.bpg.toFixed(1) }}</span>
+                          <span class="stat-label">BPG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">
+                            {{ asset.seasonStats.tpPct == null ? '—' : asset.seasonStats.tpPct.toFixed(1) + '%' }}
+                          </span>
+                          <span class="stat-label">3P%</span>
+                        </span>
+                        <span class="stat-gp">{{ asset.seasonStats.gp }} GP</span>
+                      </div>
+                      <div v-else class="player-season-stats-empty">No games this season yet</div>
                     </template>
                     <template v-else-if="asset.type === 'pick' && asset.pick">
                       <div class="pick-info">
@@ -158,6 +196,36 @@ function handleKeydown(e) {
                       <div class="player-contract">
                         {{ formatSalary(asset.player.contractSalary) }} | {{ asset.player.contractYearsRemaining ?? 1 }}yr
                       </div>
+                      <div v-if="asset.seasonStats" class="player-season-stats">
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.ppg.toFixed(1) }}</span>
+                          <span class="stat-label">PPG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.rpg.toFixed(1) }}</span>
+                          <span class="stat-label">RPG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.apg.toFixed(1) }}</span>
+                          <span class="stat-label">APG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.spg.toFixed(1) }}</span>
+                          <span class="stat-label">SPG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">{{ asset.seasonStats.bpg.toFixed(1) }}</span>
+                          <span class="stat-label">BPG</span>
+                        </span>
+                        <span class="stat-block">
+                          <span class="stat-value">
+                            {{ asset.seasonStats.tpPct == null ? '—' : asset.seasonStats.tpPct.toFixed(1) + '%' }}
+                          </span>
+                          <span class="stat-label">3P%</span>
+                        </span>
+                        <span class="stat-gp">{{ asset.seasonStats.gp }} GP</span>
+                      </div>
+                      <div v-else class="player-season-stats-empty">No games this season yet</div>
                     </template>
                     <template v-else-if="asset.type === 'pick' && asset.pick">
                       <div class="pick-info">
@@ -184,13 +252,19 @@ function handleKeydown(e) {
           <!-- Footer -->
           <div class="modal-footer">
             <template v-if="!confirmingAccept">
-              <button class="btn-reject" @click="handleReject">
-                <XCircle :size="16" />
-                Reject
-              </button>
-              <button class="btn-accept" @click="handleAccept">
-                <Check :size="16" />
-                Accept Trade
+              <div class="modal-footer-row">
+                <button class="btn-reject" @click="handleReject">
+                  <XCircle :size="16" />
+                  Reject
+                </button>
+                <button class="btn-accept" @click="handleAccept">
+                  <Check :size="16" />
+                  Accept Trade
+                </button>
+              </div>
+              <button class="btn-negotiate" @click="handleNegotiate">
+                <MessageSquare :size="16" />
+                Negotiate
               </button>
             </template>
             <template v-else>
@@ -327,9 +401,7 @@ function handleKeydown(e) {
 }
 
 .trade-columns {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
+  
 }
 
 .trade-column {
@@ -362,7 +434,7 @@ function handleKeydown(e) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding-top: 40px;
+  padding: 20px;
   color: var(--color-text-tertiary);
   flex-shrink: 0;
 }
@@ -383,7 +455,7 @@ function handleKeydown(e) {
 .player-info-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
 }
 
@@ -420,12 +492,60 @@ function handleKeydown(e) {
   font-weight: 700;
   color: var(--color-primary);
   flex-shrink: 0;
+  margin-left:auto;
 }
 
 .player-contract {
   font-size: 0.7rem;
   color: var(--color-text-tertiary);
   margin-top: 4px;
+}
+
+.player-season-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content:space-between;
+  gap: 8px 10px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--glass-border);
+}
+
+.stat-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+
+.stat-value {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.stat-label {
+  font-size: 0.55rem;
+  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+
+.stat-gp {
+  font-size: 0.65rem;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+.player-season-stats-empty {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--glass-border);
+  font-size: 0.65rem;
+  color: var(--color-text-tertiary);
+  font-style: italic;
 }
 
 .pick-info {
@@ -472,9 +592,37 @@ function handleKeydown(e) {
 /* Footer */
 .modal-footer {
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  gap: 10px;
   padding: 16px 20px;
   border-top: 1px solid var(--glass-border);
+}
+
+.modal-footer-row {
+  display: flex;
+  gap: 12px;
+}
+
+.btn-negotiate {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--radius-xl);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--gradient-cosmic, linear-gradient(135deg, #E85A4F, #F59E0B));
+  border: none;
+  color: black;
+}
+
+.btn-negotiate:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
 }
 
 .btn-reject,

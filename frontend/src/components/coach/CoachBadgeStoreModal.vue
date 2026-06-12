@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { Coins, Check, Star, ChevronUp } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import { Coins, Check, Star, ChevronUp, Plus } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
@@ -22,6 +23,7 @@ const authStore = useAuthStore()
 const toastStore = useToastStore()
 const syncStore = useSyncStore()
 const audio = useAudioStore()
+const router = useRouter()
 
 const purchasing = ref(null) // badge id currently being purchased
 
@@ -169,6 +171,11 @@ async function purchase(badge) {
 function close() {
   emit('close')
 }
+
+function goToStore() {
+  emit('close')
+  router.push('/store')
+}
 </script>
 
 <template>
@@ -179,10 +186,16 @@ function close() {
     @close="close"
   >
     <div class="store-header">
-      <div class="token-balance">
-        <Coins :size="16" />
-        <span class="token-amount">{{ tokens.toLocaleString() }}</span>
-        <span class="token-label">tokens</span>
+      <div class="token-group">
+        <div class="token-balance">
+          <Coins :size="16" />
+          <span class="token-amount">{{ tokens.toLocaleString() }}</span>
+          <span class="token-label">tokens</span>
+        </div>
+        <button type="button" class="buy-tokens-btn" @click="goToStore" title="Buy more tokens in the Store">
+          <Plus :size="14" />
+          <span>Buy</span>
+        </button>
       </div>
       <p class="store-subtitle">Each badge upgrades through four tiers — bronze, silver, gold, HOF. Owned badges always apply.</p>
     </div>
@@ -275,12 +288,40 @@ function close() {
   border-bottom: 1px solid var(--glass-border);
 }
 
+.token-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .token-balance {
   display: flex;
   align-items: center;
   gap: 6px;
   color: #FFD700;
   font-weight: 600;
+}
+
+.buy-tokens-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.buy-tokens-btn:hover {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.06));
+  border-color: var(--color-primary);
 }
 
 .token-amount {

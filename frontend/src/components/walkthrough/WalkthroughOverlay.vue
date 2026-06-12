@@ -317,6 +317,23 @@ async function runStep() {
     return
   }
 
+  // 3b. `skipIfMissing` steps anchor to conditionally-rendered elements
+  // (e.g. the player-details upgrade-points banner that only appears when
+  // the player is on the user team and isn't already at potential cap).
+  // If the element is absent right now, advance instead of stalling for
+  // 3s in resolveTargets and then showing a centered fallback for content
+  // that doesn't apply to this view.
+  if (s.skipIfMissing) {
+    const present = targets.some((sel) => {
+      const el = document.querySelector(`[data-tour="${sel}"]`)
+      return el && isLaidOut(el)
+    })
+    if (!present) {
+      store.next()
+      return
+    }
+  }
+
   // 4. Resolve target(s) and position over their union. Fall back to centered
   // if none resolve.
   const els = await resolveTargets(targets)

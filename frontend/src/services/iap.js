@@ -61,6 +61,34 @@ export async function getCurrentOffering() {
 }
 
 /**
+ * Return a map of `{ productId: priceString }` for every product in the
+ * current RevenueCat offering. Used by the Store view to display live
+ * App-Store-Connect-driven prices instead of hardcoded placeholders, so
+ * a price change in App Store Connect propagates to the catalog without
+ * a code change or resubmission.
+ *
+ * Safe by design: returns `{}` (not a throw) when the SDK isn't configured,
+ * the offering hasn't loaded, or any other RevenueCat-side error fires.
+ * Callers fall back to their hardcoded `bundle.price` strings on `{}`.
+ */
+export async function getProductPrices() {
+  if (!configured) return {}
+  try {
+    const offering = await getCurrentOffering()
+    const out = {}
+    for (const pkg of offering.availablePackages ?? []) {
+      const id = pkg?.product?.identifier
+      const priceString = pkg?.product?.priceString
+      if (id && priceString) out[id] = priceString
+    }
+    return out
+  } catch (err) {
+    console.warn('[IAP] getProductPrices failed; falling back to placeholders', err)
+    return {}
+  }
+}
+
+/**
  * Open the StoreKit purchase sheet for the given App Store product id.
  *
  * @param {string} productId — e.g. 'tokens_1000' / 'tokens_6500'.

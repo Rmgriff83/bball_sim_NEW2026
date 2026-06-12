@@ -21,6 +21,7 @@ import {
   calculateCoachSalary,
   findCoachForTeam,
   getCoachActionBudget,
+  getCoachTrainBudget,
   computeCoachTier,
 } from '../data/coaches'
 // Pull scheme maps from the simulator's canonical source. The arrays exported
@@ -33,6 +34,8 @@ import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from '../simulation/CoachingEngi
 import { selectBestCoachingScheme, isCoachingSchemeValid } from '../coaching/CoachStrategyService'
 import { coachBadges } from '../data/coachBadges'
 import { BADGES, BADGES_BY_POSITION } from '../data/badges'
+import { BADGE_FITS } from '../data/badgeFits'
+import { detectArchetype } from '../data/archetypes'
 import { generateLeagueRosters, generateFreeAgentPool } from '../draft/LeagueRosterGenerator'
 import { listAvailableHeadshotFilenames } from '@/services/headshotResolver'
 import { CampaignRepository } from '../db/CampaignRepository'
@@ -166,7 +169,7 @@ const RAW_LAST_NAMES = [
   'Wembanyama', 'McCollum', 'Nance', 'Jones', 'Alvarado', 'Murphy', 'Valanciunas',
   'Gilgeous-Alexander', 'Dort', 'Giddey', 'Bazley', 'Pokusevski', 'Holmgren', 'Joe', 'Dieng',
   'Okongwu', 'Bogdanovic', 'Capela', 'Smith', 'Griffin', 'Suggs', 'Murray', 'Sabonis',
-  'Turner', 'Mathurin', 'Nesmith', 'McConnell', 'Nembhard', 'Duarte', 'Okeke',
+  'Turner', 'Mathurin', 'Nesmith', 'McConnell', 'Nembhard', 'Duarte', 'Okeke', 'Blue'
 ]
 
 // Split a name into [prefix, suffix] after the FIRST vowel cluster. The cluster
@@ -243,7 +246,8 @@ const NORMAL_FIRST_NAMES = [
   'Joe', 'Dylan', 'Lucas', 'Owen', 'Caleb', 'Connor', 'Wyatt', 'Hunter',
   'Mason', 'Logan', 'Ethan', 'Noah', 'Liam', 'Ian', 'Eli', 'Brett',
   'Cole', 'Sean', 'Travis', 'Shane', 'Hayden', 'Holden', 'Levi', 'Pierce',
-  'Wesley', 'Reid', 'Ross', 'Spencer', 'Garrett', 'Vincent', 'Theo', 'Max',
+  'Wesley', 'Reid', 'Ross', 'Spencer', 'Garrett', 'Vincent', 'Theo', 'Max', 'Harrison',
+  'AJ', 'PJ', 'CJ', 'DJ'
 ]
 
 const NORMAL_LAST_NAMES = [
@@ -257,7 +261,8 @@ const NORMAL_LAST_NAMES = [
   'Hughes', 'Foster', 'Sanders', 'Russell', 'Bryant', 'Murray', 'Webb', 'Snyder',
   'Hayes', 'Crawford', 'Knight', 'Lambert', 'Pierce', 'Burns', 'Stevens', 'Marshall',
   'Reynolds', 'Owens', 'Mason', 'Tucker', 'Hunter', 'Holland', 'Lawrence', 'Carter',
-  'Connelly', 'Henderson', 'Griffin', 'Stills', 'Maroney', 'Trevey', 'Brent', 'Bendt'
+  'Connelly', 'Henderson', 'Griffin', 'Stills', 'Maroney', 'Trevey', 'Brent', 'Bendt',
+  'Conner', 'Jerigan', 'Phillipson', 'Danielson', 'Daniels'
 ]
 
 // First names commonly used in Black American communities. Some overlap with
@@ -276,7 +281,8 @@ const BLACK_FIRST_NAMES = [
   'Marcellus', 'DeShawn', 'DeMarco', 'DeVonte', 'Jaheim', 'Keyshawn',
   'Rashawn', 'Tobias', 'Solomon', 'Terrell', 'Booker', 'Calvin', 'Gerald',
   'Leon', 'Lonnie', 'Rufus', 'Cyrus', 'Marquise', 'Demarius', 'Tyrese',
-  'Jaxson', 'Trayvon', 'Devontae', 'Jamel', 'Cleophus', 'Jerome',
+  'Jaxson', 'Trayvon', 'Devontae', 'Jamel', 'Cleophus', 'Jerome', 'Jerian',
+  'Jaleel', 'JaMarcus', 'DeMarcus'
 ]
 
 // Last names common across Black American communities. Many of these are
@@ -293,7 +299,8 @@ const BLACK_LAST_NAMES = [
   'Norris', 'Pace', 'Page', 'Paige', 'Pope', 'Prentice', 'Pryor',
   'Reese', 'Riggs', 'Roach', 'Rollins', 'Saunders', 'Shaw', 'Stafford',
   'Steele', 'Stokes', 'Sutton', 'Tate', 'Thurmond', 'Vance', 'Vaughn',
-  'Waters', 'Wells', 'Whitaker', 'Wilkins', 'Woodson', 'Drummond',
+  'Waters', 'Wells', 'Whitaker', 'Wilkins', 'Woodson', 'Drummond', 'Cousins',
+  'Orion', 'Essex', 'Bitamin', 'Betts', 'Baloney', 'Djboute', 'Djiat'
 ]
 
 // Each real-name bucket is repeated N times when concatenating with the
@@ -593,6 +600,165 @@ function getBadgeLevel(overall) {
   return 'bronze'
 }
 
+// =============================================================================
+// Attribute-driven badge assignment (replaces the old position-pool approach)
+// =============================================================================
+// Old generateBadges read only position + OVR. It pulled from a fixed
+// 10-badge position pool, so every SG in the league sampled from the same
+// list and synergies between teammates were nearly inevitable.
+//
+// pickBadgesByFit replaces that with a per-badge "fit recipe" (declared on
+// each badge in engine/data/badges.js). Each badge scores against the
+// player's attributes, vitals, position, and detected archetype. Badges
+// with hard prereqs (e.g., Rim Protector needs `block >= 65`) can't fire
+// when the player misses them; everything else is a soft weighted sample.
+//
+// Result: a 6'2" PG with low block/vertical can't get Rim Protector, while
+// a 6'9" PF with elite passIQ + passVision can pick up Floor General even
+// though it wasn't in the PF "pool" before. Cross-position outliers (point
+// forwards, stretch fives, slashing wings) now look like themselves.
+//
+// Tuning knobs (set conservatively for first ship; revisit after telemetry):
+const BADGE_FIT_BASELINE = 5            // tiny constant added to every badge's
+                                        // raw score so neutrals can still fire
+const BADGE_FIT_SAMPLE_EXP = 2          // weight exponent on the sampler; >1
+                                        // leans picks toward top-fit but keeps
+                                        // variety (Infinity → strict top-N)
+const ARCHETYPE_BONUS_MULT = 1.3        // score multiplier for badges tagged
+                                        // with the player's detected archetype
+
+/** Safe-read a dotted "category.attr" path off `player.attributes`. */
+function _readAttrPath(player, path) {
+  const [category, key] = String(path).split('.')
+  const v = player?.attributes?.[category]?.[key]
+  return Number.isFinite(v) ? v : 0
+}
+
+/** Returns true iff every prereq in the list is satisfied by the player. */
+function _meetsPrereqs(player, prereqs) {
+  if (!Array.isArray(prereqs) || prereqs.length === 0) return true
+  for (const req of prereqs) {
+    // Prereqs can target attributes (`offense.threePoint`) or vitals
+    // (`heightInches` / `weightLbs`). Inferred by the absence of a dot.
+    const isVital = !String(req.key).includes('.')
+    const value = isVital
+      ? (player?.[req.key] ?? player?.[req.key === 'heightInches' ? 'height_inches' : 'weight_lbs'] ?? 0)
+      : _readAttrPath(player, req.key)
+    if (req.min != null && value < req.min) return false
+    if (req.max != null && value > req.max) return false
+  }
+  return true
+}
+
+/** Vital contribution to a badge's fit score. Same shape as attribute
+ *  weights but with explicit `min`/`max` thresholds. Above `min` (or below
+ *  `max`) the per-unit weight is applied. */
+function _vitalScore(player, key, rule) {
+  const value = player?.[key] ?? player?.[key === 'heightInches' ? 'height_inches' : 'weight_lbs'] ?? 0
+  if (rule?.min != null && value >= rule.min) return (value - rule.min) * (rule.weight ?? 0)
+  if (rule?.max != null && value <= rule.max) return (rule.max - value) * (rule.weight ?? 0)
+  return 0
+}
+
+/** Weighted sample without replacement. `scored` is `[{ id, score }, ...]`
+ *  pre-filtered to score > 0. Returns up to `n` ids. Uses score^k as the
+ *  draw weight so higher k => more deterministic picks. */
+function _sampleNoReplace(scored, n, k = 2) {
+  const pool = scored.map(s => ({ id: s.id, w: Math.pow(s.score, k) }))
+  const picked = []
+  while (pool.length > 0 && picked.length < n) {
+    const total = pool.reduce((sum, p) => sum + p.w, 0)
+    if (total <= 0) break
+    let r = Math.random() * total
+    let chosenIdx = pool.length - 1
+    for (let i = 0; i < pool.length; i++) {
+      r -= pool[i].w
+      if (r <= 0) { chosenIdx = i; break }
+    }
+    picked.push(pool[chosenIdx].id)
+    pool.splice(chosenIdx, 1)
+  }
+  return picked
+}
+
+/** Badge count band keyed off OVR. Same buckets the legacy generateBadges
+ *  used, with the user-requested adjustment of `0–4` for sub-70 OVR. */
+function _badgeCountForOvr(overall) {
+  if (overall >= 90) return randInt(8, 12)
+  if (overall >= 85) return randInt(6, 10)
+  if (overall >= 80) return randInt(5, 8)
+  if (overall >= 75) return randInt(4, 7)
+  if (overall >= 70) return randInt(3, 5)
+  return randInt(0, 4)
+}
+
+/** Veteran count band — base + seasons-bonus, matching legacy
+ *  generateVeteranBadges. Sub-70 OVR floor is 0 here too. */
+function _veteranBadgeCountForOvr(overall, careerSeasons) {
+  let baseCount, bonusCap
+  if (overall >= 90)      { baseCount = randInt(7, 11); bonusCap = 5 }
+  else if (overall >= 85) { baseCount = randInt(5, 8);  bonusCap = 4 }
+  else if (overall >= 80) { baseCount = randInt(3, 6);  bonusCap = 3 }
+  else if (overall >= 75) { baseCount = randInt(2, 4);  bonusCap = 2 }
+  else if (overall >= 70) { baseCount = randInt(1, 3);  bonusCap = 2 }
+  else                    { baseCount = randInt(0, 2);  bonusCap = 1 }
+  const seasonBonus = Math.max(0, Math.min(bonusCap, Math.floor((careerSeasons ?? 0) / 2)))
+  return baseCount + seasonBonus
+}
+
+/**
+ * Attribute-driven badge picker. Returns `[{ id, level }, ...]`. Falls back
+ * to the legacy position-pool shuffle when a player has no canonical
+ * attributes (legacy/test data); production callers always pass a fully
+ * normalized player so this fallback rarely fires.
+ *
+ * @param {object} player - Player object with `attributes`, `position`,
+ *                          `overallRating`, `heightInches`, `weightLbs`.
+ * @param {object} opts - { count, tier, archetype? }
+ *   count   — how many badges to pick (already OVR-derived by caller)
+ *   tier    — single tier applied to all picks (legacy convention)
+ *   archetype — optional `{ id, name }` from detectArchetype; bumps tagged
+ *               badges by ARCHETYPE_BONUS_MULT.
+ */
+function pickBadgesByFit(player, { count, tier, archetype = null }) {
+  if (!Number.isFinite(count) || count <= 0) return []
+
+  // Soft fallback for malformed players (no attributes yet).
+  if (!player?.attributes || typeof player.attributes !== 'object') {
+    const pool = BADGES_BY_POSITION[player?.position] ?? BADGES_BY_POSITION.SF
+    return shuffleArray([...pool]).slice(0, count).map(id => ({ id, level: tier }))
+  }
+
+  const scored = []
+  const archetypeName = archetype?.name ?? null
+  for (const badge of BADGES) {
+    const fit = BADGE_FITS[badge.id]
+    if (!fit) continue   // badges without a fit recipe are skipped
+    if (!_meetsPrereqs(player, fit.prereqs)) continue
+
+    let s = BADGE_FIT_BASELINE
+    for (const [path, weight] of Object.entries(fit.weights ?? {})) {
+      const v = _readAttrPath(player, path)
+      // Only above-baseline (>50) attributes pull score up — keeps the
+      // sampler from being dominated by "nobody is bad enough at this".
+      if (v > 50) s += (v - 50) * weight
+    }
+    for (const [key, rule] of Object.entries(fit.vitals ?? {})) {
+      s += _vitalScore(player, key, rule)
+    }
+    const posMult = fit.positionMult?.[player.position] ?? 1.0
+    s *= posMult
+    if (archetypeName && Array.isArray(fit.archetypeTags) && fit.archetypeTags.includes(archetypeName)) {
+      s *= ARCHETYPE_BONUS_MULT
+    }
+    if (s > 0) scored.push({ id: badge.id, score: s })
+  }
+
+  if (scored.length === 0) return []
+  const ids = _sampleNoReplace(scored, count, BADGE_FIT_SAMPLE_EXP)
+  return ids.map(id => ({ id, level: tier }))
+}
+
 function generateBadges(position, overall) {
   const availableBadges = BADGES_BY_POSITION[position] ?? BADGES_BY_POSITION.SF
   let numBadges
@@ -601,7 +767,8 @@ function generateBadges(position, overall) {
   else if (overall >= 80) numBadges = randInt(5, 8)
   else if (overall >= 75) numBadges = randInt(4, 7)
   else if (overall >= 70) numBadges = randInt(3, 5)
-  else numBadges = randInt(1, 4)
+  else numBadges = randInt(0, 4)   // <70 OVR now starts at 0 — deepest bench
+                                   // players can have zero badges.
 
   const shuffled = shuffleArray([...availableBadges])
   const selected = shuffled.slice(0, Math.min(numBadges, shuffled.length))
@@ -905,6 +1072,8 @@ export async function createCampaign(options) {
     userTeam.coach.contract_years_remaining = 2
     userTeam.coach.hiredSeason = startYear
     userTeam.coach.actionsRemaining = getCoachActionBudget(userTeam.coach)
+    userTeam.coach.trainActionsRemaining = getCoachTrainBudget(userTeam.coach)
+    userTeam.coach.activeTraining = null
   }
 
   // Apply the optional user-team rename. Teams are persisted per-campaign,
@@ -1185,15 +1354,45 @@ export async function deleteCampaign(campaignId) {
  * Archive season data (player stats, team records, coach career stats) before resetting.
  * Called before processSeasonEnd to preserve historical data.
  *
+ * When `userTeamId` is provided, also returns a `newAchievements` array of
+ * any championship / conference / playoff-berth feats the user just earned —
+ * the caller writes those onto `campaign.achievements` and fires a toast.
+ *
  * @param {string} campaignId
  * @param {number} currentYear
  * @param {Array} teams
  * @param {Array} allPlayers
  * @returns {Promise<void>}
  */
-async function archiveSeasonData(campaignId, currentYear, teams, allPlayers) {
+async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, userTeamId = null) {
   const seasonData = await SeasonRepository.get(campaignId, currentYear)
-  if (!seasonData) return
+  if (!seasonData) return { newAchievements: [] }
+
+  // Pulled from the schedule's last completed game when we need to date-
+  // stamp an achievement; same fallback shape AwardService uses
+  // (`AwardService.js:76-77`).
+  const _schedule = seasonData?.schedule || []
+  const _lastPlayed = _schedule.filter(g => g.played).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0]
+  const seasonEndDate = _lastPlayed?.date || `${currentYear + 1}-04-15`
+
+  // Achievements accumulator — populated only for the user team (when
+  // `userTeamId` is non-null). Returned to the caller for persistence
+  // into campaign.achievements + toast surface.
+  const newAchievements = []
+  const _randomShort = () => Math.random().toString(36).slice(2, 8)
+  const _pushAchievement = (type, team, label) => {
+    newAchievements.push({
+      id: `ach_${Date.now()}_${_randomShort()}`,
+      type,
+      year: currentYear,
+      date: seasonEndDate,
+      teamId: team.id,
+      teamAbbreviation: team.abbreviation,
+      teamName: team.name,
+      label,
+      subtitle: `${currentYear}-${String((currentYear + 1) % 100).padStart(2, '0')} Season`,
+    })
+  }
 
   // 2A. Player season history
   const playerStats = seasonData.playerStats || {}
@@ -1402,6 +1601,16 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers) {
   // changes. Lazy-init to match how `team.seasonHistory` is handled above; no
   // backfill for existing campaigns. Increments by this season's totals only,
   // so callers must not run archiveSeasonData twice for the same year.
+  //
+  // 2E (interleaved) — per-player career counters. Mirrors `coach.career_stats`
+  // but scoped to the player's CURRENT team at archive time (matches what the
+  // seasonHistory write at the top of this function already does). Same
+  // `isChampion` / `isConfWinner` / `madePlayoffs` flags below feed both the
+  // franchise_history update and the per-player bumps, so there's no second
+  // bracket walk.
+  //
+  // 2F (interleaved) — for the user team only, push achievement entries the
+  // caller will persist onto `campaign.achievements` and surface as toasts.
   for (const team of teams) {
     const standing = allStandings.find(s =>
       (s.teamId ?? s.team_id) === team.id ||
@@ -1412,6 +1621,7 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers) {
     const fh = team.franchise_history || {
       championships: 0,
       conference_titles: 0,
+      playoff_appearances: 0,
       regular_season: { wins: 0, losses: 0 },
       playoffs: { wins: 0, losses: 0 },
     }
@@ -1425,22 +1635,74 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers) {
     fh.playoffs.wins = (fh.playoffs.wins ?? 0) + (pr?.wins ?? 0)
     fh.playoffs.losses = (fh.playoffs.losses ?? 0) + (pr?.losses ?? 0)
 
-    if (bracket?.champion?.teamId === team.id) {
+    // A team is "in the playoffs" iff the bracket walk above logged a
+    // game for them. Same flag drives the player.playerCareer bump and
+    // the franchise_history counter; cheap and avoids a second pass.
+    const madePlayoffs = !!pr
+
+    const isChampion = bracket?.champion?.teamId === team.id
+    if (isChampion) {
       fh.championships = (fh.championships ?? 0) + 1
     }
 
     const conf = team.conference
     const confFinalsWinnerId = bracket?.[conf]?.confFinals?.winner?.teamId ?? null
-    if (confFinalsWinnerId && confFinalsWinnerId === team.id) {
+    const isConfWinner = !!(confFinalsWinnerId && confFinalsWinnerId === team.id)
+    if (isConfWinner) {
       fh.conference_titles = (fh.conference_titles ?? 0) + 1
+    }
+    if (madePlayoffs) {
+      fh.playoff_appearances = (fh.playoff_appearances ?? 0) + 1
     }
 
     team.franchise_history = fh
+
+    // Per-player career counters. Iterate the team's CURRENT roster only —
+    // FAs and retirees skipped so they don't get credit for a team-wide
+    // feat earned after they left. Mid-season trades are attributed to the
+    // team the player is on at archive time (consistent with the
+    // seasonHistory write earlier in this function).
+    const roster = allPlayers.filter(p =>
+      (p.teamId ?? p.team_id) === team.id &&
+      !p.isRetired && !p.is_retired
+    )
+    for (const player of roster) {
+      const pc = player.playerCareer || {
+        championships: 0,
+        conference_championships: 0,
+        playoff_appearances: 0,
+        regular_season_wins: 0,
+        regular_season_losses: 0,
+        playoff_wins: 0,
+        playoff_losses: 0,
+      }
+      pc.regular_season_wins = (pc.regular_season_wins ?? 0) + (standing.wins ?? 0)
+      pc.regular_season_losses = (pc.regular_season_losses ?? 0) + (standing.losses ?? 0)
+      if (madePlayoffs) {
+        pc.playoff_wins = (pc.playoff_wins ?? 0) + (pr.wins ?? 0)
+        pc.playoff_losses = (pc.playoff_losses ?? 0) + (pr.losses ?? 0)
+        pc.playoff_appearances = (pc.playoff_appearances ?? 0) + 1
+      }
+      if (isConfWinner) pc.conference_championships = (pc.conference_championships ?? 0) + 1
+      if (isChampion) pc.championships = (pc.championships ?? 0) + 1
+      player.playerCareer = pc
+    }
+
+    // User-team achievements — pushed in display priority order
+    // (championship > conference > berth) so the toast queue + feed
+    // both show the highest feat first when multiple fire in one year.
+    if (userTeamId != null && team.id === userTeamId) {
+      if (isChampion) _pushAchievement('championship', team, 'NBA Champions')
+      if (isConfWinner) _pushAchievement('conference_championship', team, 'Conference Champions')
+      if (madePlayoffs) _pushAchievement('playoff_berth', team, 'Playoff Berth')
+    }
   }
 
   // Persist archived data
   await PlayerRepository.saveBulk(allPlayers)
   await TeamRepository.saveBulk(teams)
+
+  return { newAchievements }
 }
 
 /**
@@ -1622,6 +1884,122 @@ export async function backfillPlayerAwards(campaignId) {
 }
 
 /**
+ * Walk the user team's seasonHistory + per-year season records to derive
+ * campaign achievements that pre-date the always-on writes in
+ * `archiveSeasonData`. Idempotent — gated by
+ * `campaign.settings.achievementsBackfilled`, so calling this on the
+ * Dashboard or Campaigns view mount is safe / cheap on warm campaigns.
+ *
+ * Per-player career counters (`player.playerCareer.*`) are intentionally
+ * NOT backfilled: the data required to attribute a championship to the
+ * right players (roster snapshots per past season) was never captured.
+ * Counters start at zero for legacy data; new seasons populate them.
+ */
+export async function backfillCampaignAchievements(campaignId) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) return
+  if (campaign.settings?.achievementsBackfilled) return
+
+  const teams = await TeamRepository.getAllForCampaign(campaignId)
+  const userTeam = teams.find(t => t.id === campaign.teamId)
+  if (!userTeam) return
+
+  const history = Array.isArray(userTeam.seasonHistory) ? userTeam.seasonHistory : []
+  // Order-stable date stamps so the feed sorts cleanly even when multiple
+  // achievements share a year.
+  const randomShort = () => Math.random().toString(36).slice(2, 8)
+
+  const achievements = Array.isArray(campaign.achievements) ? campaign.achievements : []
+  const seenKey = new Set(achievements.map(a => `${a.year}|${a.type}`))
+
+  // Walk archived seasons for conference-title detection — best effort,
+  // skip if the season was already compacted (no playoffBracket).
+  const seasons = await SeasonRepository.getAllForCampaign(campaignId).catch(() => [])
+  const seasonByYear = {}
+  for (const s of seasons || []) {
+    if (s && s.year != null) seasonByYear[s.year] = s
+  }
+
+  let playoffAppearancesBackfill = 0
+  for (const entry of history) {
+    const year = entry.year
+    if (!year) continue
+    const date = `${year + 1}-04-15`
+    const subtitle = `${year}-${String((year + 1) % 100).padStart(2, '0')} Season`
+
+    // Championship
+    if (entry.champion && !seenKey.has(`${year}|championship`)) {
+      achievements.push({
+        id: `ach_${Date.now()}_${randomShort()}`,
+        type: 'championship',
+        year,
+        date,
+        teamId: userTeam.id,
+        teamAbbreviation: userTeam.abbreviation,
+        teamName: userTeam.name,
+        label: 'NBA Champions',
+        subtitle,
+      })
+      seenKey.add(`${year}|championship`)
+    }
+
+    // Conference championship — derive from per-year bracket if available.
+    const season = seasonByYear[year]
+    const bracket = season?.playoffBracket
+    if (bracket && userTeam.conference) {
+      const confWinnerId = bracket?.[userTeam.conference]?.confFinals?.winner?.teamId ?? null
+      if (confWinnerId && confWinnerId === userTeam.id && !seenKey.has(`${year}|conference_championship`)) {
+        achievements.push({
+          id: `ach_${Date.now()}_${randomShort()}`,
+          type: 'conference_championship',
+          year,
+          date,
+          teamId: userTeam.id,
+          teamAbbreviation: userTeam.abbreviation,
+          teamName: userTeam.name,
+          label: 'Conference Champions',
+          subtitle,
+        })
+        seenKey.add(`${year}|conference_championship`)
+      }
+    }
+
+    // Playoff berth (playoffSeed is non-null when the team qualified).
+    if (entry.playoffSeed != null) {
+      playoffAppearancesBackfill++
+      if (!seenKey.has(`${year}|playoff_berth`)) {
+        achievements.push({
+          id: `ach_${Date.now()}_${randomShort()}`,
+          type: 'playoff_berth',
+          year,
+          date,
+          teamId: userTeam.id,
+          teamAbbreviation: userTeam.abbreviation,
+          teamName: userTeam.name,
+          label: 'Playoff Berth',
+          subtitle,
+        })
+        seenKey.add(`${year}|playoff_berth`)
+      }
+    }
+  }
+
+  // Stamp the derived playoff_appearances onto franchise_history when the
+  // field is missing or zero (e.g. legacy campaigns that ran before the
+  // counter was added).
+  const fh = userTeam.franchise_history || null
+  if (fh && (fh.playoff_appearances ?? 0) === 0 && playoffAppearancesBackfill > 0) {
+    fh.playoff_appearances = playoffAppearancesBackfill
+    await TeamRepository.save(userTeam)
+  }
+
+  campaign.achievements = achievements
+  if (!campaign.settings) campaign.settings = {}
+  campaign.settings.achievementsBackfilled = true
+  await CampaignRepository.save(campaign)
+}
+
+/**
  * Enter the offseason phase: archive data, process season end, run AI contracts.
  * Does NOT start the new season — the user gets an interactive offseason period first.
  *
@@ -1649,6 +2027,7 @@ export async function enterOffseason(campaignId) {
       aiContractResults: { cuts: [], extensions: [], signings: [] },
       releasedUserPlayers: [],
       seasonAwards: null,
+      newAchievements: [],
       alreadyEntered: true,
     }
   }
@@ -1657,8 +2036,14 @@ export async function enterOffseason(campaignId) {
   const teams = await TeamRepository.getAllForCampaign(campaignId)
   const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
 
-  // 1. Archive season data (player/team history, coach career stats)
-  await archiveSeasonData(campaignId, currentYear, teams, allPlayers)
+  // 1. Archive season data (player/team history, coach career stats,
+  //    player career counters, user-team achievements).
+  const archiveResult = await archiveSeasonData(campaignId, currentYear, teams, allPlayers, campaign.teamId)
+  const newAchievements = archiveResult?.newAchievements ?? []
+  if (newAchievements.length > 0) {
+    if (!Array.isArray(campaign.achievements)) campaign.achievements = []
+    campaign.achievements.push(...newAchievements)
+  }
 
   // 1b. Compute end-of-season awards (before stats are reset)
   const seasonData = await SeasonRepository.get(campaignId, currentYear)
@@ -1866,6 +2251,8 @@ export async function enterOffseason(campaignId) {
     },
     releasedUserPlayers,
     seasonAwards,
+    // Surfaced via toast + persisted onto campaign.achievements above.
+    newAchievements,
     retirees: campaign.settings.pendingRetirements,
   }
 }
@@ -2003,6 +2390,10 @@ export async function startNewSeason(campaignId) {
       // Refill the per-season "Coach Meeting" action budget for the new
       // season. Tier-driven (free=1, good=3, really_good=5).
       userTeamForCoach.coach.actionsRemaining = getCoachActionBudget(userTeamForCoach.coach)
+      // Refill the per-season player-training budget (free=2, good=3,
+      // really_good=4). activeTraining is left alone — an in-flight
+      // training that started before season end can still be claimed.
+      userTeamForCoach.coach.trainActionsRemaining = getCoachTrainBudget(userTeamForCoach.coach)
     }
     await TeamRepository.save(userTeamForCoach)
   }
@@ -2618,7 +3009,17 @@ export function generatePlayer(options) {
   const secondaryPosition = getSecondaryPosition(position)
   const attributes = generateAttributes(position, overall)
   const tendencies = generateTendencies(position)
-  const badges = generateBadges(position, overall)
+  // Attribute-driven badge pick — detects archetype, scores all 76 badges
+  // by attribute + vital fit, samples weighted by score. Synthesizes a
+  // minimal player-shaped object since the broader player record below
+  // hasn't been assembled yet.
+  const fitPlayer = { attributes, position, heightInches, weightLbs, overallRating: overall }
+  const archetype = detectArchetype(fitPlayer)
+  const badges = pickBadgesByFit(fitPlayer, {
+    count: _badgeCountForOvr(overall),
+    tier: getBadgeLevel(overall),
+    archetype,
+  })
   const personality = generatePersonality()
   const contract = generateContract(overall, age)
 
@@ -2691,6 +3092,12 @@ export function generatePlayer(options) {
     attributes,
     tendencies,
     badges,
+    // Canonical NBA archetype detected from the attribute + vital
+    // fingerprint at generation time. Used by PlayerDetailModal's header
+    // chip and (optionally) by future UIs. Null when the player doesn't
+    // cleanly match any of the 14 archetypes in engine/data/archetypes.js
+    // — fine for league filler "role players without a label."
+    archetype: archetype?.name ?? null,
     personality,
 
     // Contract
@@ -2798,9 +3205,17 @@ export function generateVeteran(options) {
   const overall = base.overallRating
   const potentialRating = computePotentialFromAge(overall, age)
 
-  // 5. Badge sheet that scales with experience
+  // 5. Badge sheet that scales with experience — attribute-driven via
+  //    `pickBadgesByFit`. Veteran band uses _veteranBadgeCountForOvr
+  //    (base + seasons-bonus). Archetype detection runs against the
+  //    base player's attributes + vitals.
   const position = base.position
-  const badges = generateVeteranBadges(position, overall, careerSeasons)
+  const archetype = detectArchetype(base)
+  const badges = pickBadgesByFit(base, {
+    count: _veteranBadgeCountForOvr(overall, careerSeasons),
+    tier: getBadgeLevel(overall),
+    archetype,
+  })
 
   // 6. Contract using the canonical age-modulated salary formula
   const contract = generateContract(overall, age)
@@ -2848,6 +3263,10 @@ export function generateVeteran(options) {
     potentialRating,
     potential_rating: potentialRating,
     badges,
+    // Canonical archetype detected from the player's attribute + vital
+    // fingerprint. May differ from the base record's archetype if the
+    // veteran age-shifts revealed a clearer fit.
+    archetype: archetype?.name ?? null,
     motivations,
     contractYearsRemaining: contract.years,
     contract_years_remaining: contract.years,

@@ -205,6 +205,7 @@ function formatAttribute(attr) {
 .evolution-item {
   display: flex;
   align-items: center;
+  width:fit-content;
   gap: 8px;
   font-size: 0.8rem;
   padding: 6px 8px;

@@ -33,6 +33,30 @@ const scoutingPoints = computed(() => {
   return campaign.value?.settings?.scoutingPoints ?? 0
 })
 
+// Player training "claim ready" indicator. Drives a small dot on the GM
+// View nav link so the user knows a reward is waiting without having to
+// open the modal. Re-evaluates every 30s via the _trainingClockTick ref
+// below — keeps the predicate live without a hard refresh.
+const _trainingClockTick = ref(Date.now())
+let _trainingClockHandle = null
+const trainingReadyForClaim = computed(() => {
+  void _trainingClockTick.value
+  const t = teamStore.coach?.activeTraining
+  if (!t?.endsAt) return false
+  return new Date(t.endsAt).getTime() <= Date.now()
+})
+onMounted(() => {
+  if (_trainingClockHandle == null) {
+    _trainingClockHandle = setInterval(() => { _trainingClockTick.value = Date.now() }, 30 * 1000)
+  }
+})
+onUnmounted(() => {
+  if (_trainingClockHandle != null) {
+    clearInterval(_trainingClockHandle)
+    _trainingClockHandle = null
+  }
+})
+
 // Scouting is closed once the rookie draft begins and stays closed through
 // free agency, reopening when the next season starts. Mirrors BottomNav.
 const hideScout = computed(() => {
@@ -258,7 +282,7 @@ function closeMobileMenu() {
         </div>
 
         <!-- Center: Navigation (Desktop only) -->
-        <nav v-if="!isMobile" class="desktop-nav">
+        <nav v-if="!isMobile" class="desktop-nav" data-tour="home-top-nav">
           <router-link
             :to="`/campaign/${campaignId}`"
             class="nav-link"
@@ -268,11 +292,12 @@ function closeMobileMenu() {
           </router-link>
           <router-link
             :to="`/campaign/${campaignId}/team`"
-            class="nav-link"
+            class="nav-link nav-link-gm"
             :class="{ active: route.name === 'team-management' }"
             data-tour="nav-gm-view"
           >
             GM View
+            <span v-if="trainingReadyForClaim" class="train-ready-dot" :title="'Player training ready to claim'"></span>
           </router-link>
           <router-link
             :to="`/campaign/${campaignId}/league`"
@@ -530,6 +555,25 @@ function closeMobileMenu() {
 
 .nav-link-scout {
   position: relative;
+}
+
+.nav-link-gm {
+  position: relative;
+}
+
+/* "Training ready" dot — small accent on the GM View nav link when the
+   user's active player-training session has completed. Mirrors the
+   scout-pts-badge positioning but as a single green pulse dot since
+   there's only ever one active training at a time. */
+.train-ready-dot {
+  display: inline-block;
+  margin-left: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+  vertical-align: middle;
 }
 
 .scout-pts-badge {

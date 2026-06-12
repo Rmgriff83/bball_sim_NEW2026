@@ -28,7 +28,7 @@ const activeSubTab = ref('scouting')
 const upgrading = ref(false)
 const confirmingUpgrade = ref(false)
 
-const UPGRADE_COST = 1000
+const UPGRADE_COST = 500
 
 const facilityTypes = {
   scouting: {

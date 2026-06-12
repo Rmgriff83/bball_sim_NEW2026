@@ -16,17 +16,69 @@ import { applyCoachChangePenalty } from '@/engine/evolution/MoraleService'
 import { BADGES } from '@/engine/data/badges'
 import {
   PLAYER_BADGE_COSTS,
+  getBadgeStoreEntries,
   getMaxBadgeLevel,
   nextPlayerBadgeLevel,
   compareBadgeLevels,
 } from '@/engine/data/playerBadgeStore'
-import { getCoachActionBudget, getCoachResignCost, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
+import { getCoachActionBudget, getCoachTrainBudget, getCoachResignCost, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { selectBestCoachingScheme } from '@/engine/coaching/CoachStrategyService'
 import api from '@/composables/useApi'
 
 /**
+ * Convert a raw playerStats record (cumulative totals) into the per-game
+ * shape used by `player.season_stats` / `player.season_playoff_stats`.
+ * Returns `null` if the player hasn't played any games in the bucket.
+ */
+function _buildPerGameStats(raw) {
+  if (!raw || !raw.gamesPlayed || raw.gamesPlayed <= 0) return null
+  const gp = raw.gamesPlayed
+  const fgm = raw.fieldGoalsMade ?? raw.fgm ?? 0
+  const fga = raw.fieldGoalsAttempted ?? raw.fga ?? 0
+  const fg3m = raw.threePointersMade ?? raw.fg3m ?? 0
+  const fg3a = raw.threePointersAttempted ?? raw.fg3a ?? 0
+  const ftm = raw.freeThrowsMade ?? raw.ftm ?? 0
+  const fta = raw.freeThrowsAttempted ?? raw.fta ?? 0
+  const fgPctVal = fga > 0 ? Math.round((fgm / fga) * 1000) / 10 : 0
+  const threePctVal = fg3a > 0 ? Math.round((fg3m / fg3a) * 1000) / 10 : 0
+  const ftPctVal = fta > 0 ? Math.round((ftm / fta) * 1000) / 10 : 0
+  return {
+    games_played: gp,
+    gamesPlayed: gp,
+    ppg: Math.round((raw.points / gp) * 10) / 10,
+    rpg: Math.round((raw.rebounds / gp) * 10) / 10,
+    apg: Math.round((raw.assists / gp) * 10) / 10,
+    spg: Math.round((raw.steals / gp) * 10) / 10,
+    bpg: Math.round((raw.blocks / gp) * 10) / 10,
+    mpg: Math.round((raw.minutesPlayed / gp) * 10) / 10,
+    fg_pct: fgPctVal,
+    fgPct: fgPctVal,
+    three_pct: threePctVal,
+    threePct: threePctVal,
+    ft_pct: ftPctVal,
+    ftPct: ftPctVal,
+    // Raw totals for detail views
+    points: raw.points,
+    rebounds: raw.rebounds,
+    assists: raw.assists,
+    steals: raw.steals,
+    blocks: raw.blocks,
+    turnovers: raw.turnovers,
+    minutesPlayed: raw.minutesPlayed,
+    fgm,
+    fga,
+    fg3m,
+    fg3a,
+    ftm,
+    fta,
+  }
+}
+
+/**
  * Attach season_stats (per-game averages) to each player in an array.
- * Mutates player objects in place.
+ * Also attaches season_playoff_stats from the parallel playoff-only bucket
+ * on seasonData when present — null when the player hasn't played a playoff
+ * game yet. Mutates player objects in place.
  */
 async function _attachSeasonStats(players, campaignId) {
   if (!players || players.length === 0) return
@@ -36,55 +88,15 @@ async function _attachSeasonStats(players, campaignId) {
 
   const seasonYear = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? 2025
   const allPlayerStats = await SeasonRepository.getPlayerStats(campaignId, seasonYear)
-  if (!allPlayerStats || typeof allPlayerStats !== 'object') return
+  const allPlayoffStats = await SeasonRepository.getPlayoffPlayerStats(campaignId, seasonYear)
+  const hasRegular = allPlayerStats && typeof allPlayerStats === 'object'
+  const hasPlayoff = allPlayoffStats && typeof allPlayoffStats === 'object'
+  if (!hasRegular && !hasPlayoff) return
 
   for (const player of players) {
     if (!player) continue
-    const raw = allPlayerStats[player.id]
-    if (raw && raw.gamesPlayed > 0) {
-      const gp = raw.gamesPlayed
-      const fgm = raw.fieldGoalsMade ?? raw.fgm ?? 0
-      const fga = raw.fieldGoalsAttempted ?? raw.fga ?? 0
-      const fg3m = raw.threePointersMade ?? raw.fg3m ?? 0
-      const fg3a = raw.threePointersAttempted ?? raw.fg3a ?? 0
-      const ftm = raw.freeThrowsMade ?? raw.ftm ?? 0
-      const fta = raw.freeThrowsAttempted ?? raw.fta ?? 0
-      const fgPctVal = fga > 0 ? Math.round((fgm / fga) * 1000) / 10 : 0
-      const threePctVal = fg3a > 0 ? Math.round((fg3m / fg3a) * 1000) / 10 : 0
-      const ftPctVal = fta > 0 ? Math.round((ftm / fta) * 1000) / 10 : 0
-      player.season_stats = {
-        games_played: gp,
-        gamesPlayed: gp,
-        ppg: Math.round((raw.points / gp) * 10) / 10,
-        rpg: Math.round((raw.rebounds / gp) * 10) / 10,
-        apg: Math.round((raw.assists / gp) * 10) / 10,
-        spg: Math.round((raw.steals / gp) * 10) / 10,
-        bpg: Math.round((raw.blocks / gp) * 10) / 10,
-        mpg: Math.round((raw.minutesPlayed / gp) * 10) / 10,
-        fg_pct: fgPctVal,
-        fgPct: fgPctVal,
-        three_pct: threePctVal,
-        threePct: threePctVal,
-        ft_pct: ftPctVal,
-        ftPct: ftPctVal,
-        // Raw totals for detail views
-        points: raw.points,
-        rebounds: raw.rebounds,
-        assists: raw.assists,
-        steals: raw.steals,
-        blocks: raw.blocks,
-        turnovers: raw.turnovers,
-        minutesPlayed: raw.minutesPlayed,
-        fgm,
-        fga,
-        fg3m,
-        fg3a,
-        ftm,
-        fta,
-      }
-    } else {
-      player.season_stats = null
-    }
+    player.season_stats = hasRegular ? _buildPerGameStats(allPlayerStats[player.id]) : null
+    player.season_playoff_stats = hasPlayoff ? _buildPerGameStats(allPlayoffStats[player.id]) : null
   }
 }
 
@@ -689,11 +701,11 @@ export const useTeamStore = defineStore('team', () => {
   // ---------------------------------------------------------------------------
   // Users can buy offensive or defensive upgrade points with tokens. Each
   // pool is capped at 3 purchases per season (so 6 total per player, split
-  // 3/3). Pricing escalates within the pool: 3k / 4k / 5k. The counter resets
-  // every season — `seasonUpgradePurchases.year` is checked against the
-  // campaign's current season year on each purchase and zeroed if stale.
+  // 3/3). Pricing is a flat 500 tokens per point. The counter resets every
+  // season — `seasonUpgradePurchases.year` is checked against the campaign's
+  // current season year on each purchase and zeroed if stale.
 
-  const UPGRADE_POINT_PRICES = [3000, 4000, 5000]
+  const UPGRADE_POINT_PRICES = [500, 500, 500]
   const UPGRADE_POINT_MAX_PER_POOL = 3
 
   // Each spent upgrade point bumps the player's unrounded overall by this
@@ -970,6 +982,180 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   // ---------------------------------------------------------------------------
+  // Player Training (idler-style reward loop)
+  // ---------------------------------------------------------------------------
+  // Real-time training sessions that grant a random open badge or upgrade
+  // when the timer expires. Tied to the coach's per-season train budget
+  // (`coach.trainActionsRemaining`) and accelerated by the 4-star Staff
+  // Trainer "Accelerated Training" perk.
+
+  const TRAINING_BASE_MS = 1 * 60 * 60 * 1000          // 1 hour
+  const TRAINING_PERK_MS = 20 * 60 * 1000               // 20 minutes
+  const TRAINING_REWARD_WEIGHTS = { bronze: 100, silver: 40, gold: 15, hof: 5 }
+
+  /** Pick a single entry from `entries` with weight = TRAINING_REWARD_WEIGHTS[entry.nextLevel]. */
+  function _pickWeightedTrainingReward(entries) {
+    const weighted = entries
+      .filter(e => e?.nextLevel)
+      .map(e => ({ entry: e, w: TRAINING_REWARD_WEIGHTS[e.nextLevel] ?? 1 }))
+    const total = weighted.reduce((sum, x) => sum + x.w, 0)
+    if (total <= 0) return null
+    let r = Math.random() * total
+    for (const x of weighted) {
+      r -= x.w
+      if (r <= 0) return x.entry
+    }
+    return weighted[weighted.length - 1].entry
+  }
+
+  /** Returns true when the user's hired 4-star Staff Trainer has the
+   *  Accelerated Training perk unlocked at the team's current training
+   *  facility level. Mirrors the perk-gate check in `_getStaffTrainerPerks`
+   *  on the game store. */
+  function _hasAcceleratedTrainerPerk(campaign, teamFacilitiesLevel) {
+    const st = campaign?.settings?.staff_trainer
+    if (!st || !Array.isArray(st.perks)) return false
+    const facilityLevel = teamFacilitiesLevel ?? 1
+    return st.perks.some(p => p?.key === 'accelerated_training' && (p.requiredLevel ?? 0) <= facilityLevel)
+  }
+
+  /**
+   * Start a training session for a player. Consumes one
+   * `coach.trainActionsRemaining`. Refuses if budget is depleted, a session
+   * is already in flight, or the player has nothing left to learn.
+   */
+  async function startTrainingSession(campaignId, playerId) {
+    loading.value = true
+    error.value = null
+    try {
+      const player = roster.value.find(p => p?.id === playerId)
+        ?? await PlayerRepository.get(campaignId, playerId)
+      if (!player) throw new Error('Player not found')
+
+      // No reward available — caller should be hiding the button, but
+      // double-guard at the store level.
+      const eligible = getBadgeStoreEntries(player).filter(e => e.nextLevel)
+      if (eligible.length === 0) throw new Error('No badges or upgrades available for this player')
+
+      const campaign = await CampaignRepository.get(campaignId)
+      const teamData = await TeamRepository.get(campaignId, campaign?.teamId)
+      if (!teamData?.coach) throw new Error('No coach hired')
+
+      if (teamData.coach.activeTraining) {
+        throw new Error('A training session is already in progress')
+      }
+      const budget = teamData.coach.trainActionsRemaining ?? 0
+      if (budget <= 0) throw new Error('No training actions left this season')
+
+      const useFastTimer = _hasAcceleratedTrainerPerk(campaign, teamData?.facilities?.training)
+      const startedAt = new Date().toISOString()
+      const endsAt = new Date(Date.now() + (useFastTimer ? TRAINING_PERK_MS : TRAINING_BASE_MS)).toISOString()
+
+      teamData.coach.trainActionsRemaining = budget - 1
+      teamData.coach.activeTraining = {
+        playerId,
+        startedAt,
+        endsAt,
+        trainerSpeedupApplied: useFastTimer,
+      }
+      await TeamRepository.save(teamData)
+
+      // Mirror to in-memory caches so any open modal / nav badge picks up
+      // the new state without a refetch.
+      if (coach.value) {
+        coach.value.trainActionsRemaining = teamData.coach.trainActionsRemaining
+        coach.value.activeTraining = teamData.coach.activeTraining
+      }
+      if (team.value) team.value.coach = teamData.coach
+
+      useSyncStore().markDirty()
+      return { activeTraining: teamData.coach.activeTraining, trainActionsRemaining: teamData.coach.trainActionsRemaining }
+    } catch (err) {
+      error.value = err.message || 'Failed to start training session'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * Claim the reward for a completed training session. Picks a random
+   * badge/upgrade from the player's eligible pool (weighted toward bronze)
+   * and mutates `player.badges`. Mirrors `purchasePlayerBadge`'s mutation
+   * block — same shape, no token deduction.
+   */
+  async function claimTrainingReward(campaignId, playerId) {
+    loading.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      const teamData = await TeamRepository.get(campaignId, campaign?.teamId)
+      const active = teamData?.coach?.activeTraining
+      if (!active || active.playerId !== playerId) {
+        throw new Error('No active training for this player')
+      }
+      if (new Date(active.endsAt).getTime() > Date.now()) {
+        throw new Error('Training not yet complete')
+      }
+
+      const player = roster.value.find(p => p?.id === playerId)
+        ?? await PlayerRepository.get(campaignId, playerId)
+      if (!player) throw new Error('Player not found')
+
+      const eligible = getBadgeStoreEntries(player).filter(e => e.nextLevel)
+      // Pool may have emptied between start and claim (e.g. user spent
+      // tokens to buy everything mid-session). Fall back to clearing
+      // activeTraining without an award so the user isn't stuck.
+      if (eligible.length === 0) {
+        teamData.coach.activeTraining = null
+        await TeamRepository.save(teamData)
+        if (coach.value) coach.value.activeTraining = null
+        if (team.value) team.value.coach = teamData.coach
+        useSyncStore().markDirty()
+        return { badge: null, level: null }
+      }
+
+      const picked = _pickWeightedTrainingReward(eligible) ?? eligible[0]
+      const badge = BADGES.find(b => b.id === picked.badge.id)
+
+      // Apply the badge mutation — same shape as purchasePlayerBadge.
+      const existing = Array.isArray(player.badges) ? [...player.badges] : []
+      const idx = existing.findIndex(b => b?.id === picked.badge.id)
+      const newEntry = {
+        id: picked.badge.id,
+        level: picked.nextLevel,
+        source: 'trained',
+        trainedAt: new Date().toISOString(),
+      }
+      if (idx >= 0) {
+        const prev = existing[idx]
+        existing[idx] = { ...newEntry, source: prev.source === 'master' ? 'master' : 'trained' }
+      } else {
+        existing.push(newEntry)
+      }
+      player.badges = existing
+
+      teamData.coach.activeTraining = null
+
+      await Promise.all([
+        PlayerRepository.save(JSON.parse(JSON.stringify(player))),
+        TeamRepository.save(teamData),
+      ])
+
+      if (coach.value) coach.value.activeTraining = null
+      if (team.value) team.value.coach = teamData.coach
+
+      useSyncStore().markDirty()
+      return { badge, level: picked.nextLevel, badgeId: picked.badge.id }
+    } catch (err) {
+      error.value = err.message || 'Failed to claim training reward'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Coach hire / fire
   // ---------------------------------------------------------------------------
 
@@ -1022,8 +1208,15 @@ export const useTeamStore = defineStore('team', () => {
         // each season in CampaignManager.startNewSeason and on re-sign in
         // resignCoach below.
         actionsRemaining: 0,
+        // Separate per-season player-training budget — drives the
+        // idler-style "Train" reward loop on the badges tab.
+        trainActionsRemaining: 0,
+        // In-flight training session ({ playerId, startedAt, endsAt,
+        // trainerSpeedupApplied }) — null when no training running.
+        activeTraining: null,
       }
       newCoach.actionsRemaining = getCoachActionBudget(newCoach)
+      newCoach.trainActionsRemaining = getCoachTrainBudget(newCoach)
 
       // Mid-season coach replacement → small morale hit per player, scaled by
       // coachability/workEthic/personality. Skipped during offseason and when
@@ -1123,9 +1316,12 @@ export const useTeamStore = defineStore('team', () => {
       teamData.coach.contractYearsRemaining = 2
       teamData.coach.contract_years_remaining = 2
       teamData.coach.hiredSeason = currentSeason
-      // Renewing the contract restamps the per-season coach-meeting budget
-      // so the user gets a fresh allotment for the new deal.
+      // Renewing the contract restamps the per-season coach-meeting AND
+      // training budgets so the user gets a fresh allotment for the new
+      // deal. activeTraining is left untouched — a re-sign mid-season
+      // shouldn't kill an in-flight reward.
       teamData.coach.actionsRemaining = getCoachActionBudget(teamData.coach)
+      teamData.coach.trainActionsRemaining = getCoachTrainBudget(teamData.coach)
 
       await TeamRepository.save(teamData)
 
@@ -1305,6 +1501,8 @@ export const useTeamStore = defineStore('team', () => {
     purchaseUpgradePoint,
     getUpgradePointPurchaseInfo,
     purchasePlayerBadge,
+    startTrainingSession,
+    claimTrainingReward,
     hireCoach,
     resignCoach,
     fireCoach,

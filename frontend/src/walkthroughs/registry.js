@@ -27,18 +27,36 @@ export const WALKTHROUGHS = {
       body: "This banner is your franchise at a glance — logo, name, overall rating, and the current date. Let's break down the two key readouts.",
     },
     {
-      target: 'home-team-overall',
-      placement: 'bottom',
-      title: 'Team Overall',
-      body: "This badge is your team's overall rating — the average quality of your healthy roster, and the quickest read on how your franchise stacks up. Build it through smart lineups, player development, and trades.",
-    },
-    {
       // Desktop shows the date in the team header; mobile shows it in the
       // campaign top bar — spotlight whichever is visible at this breakpoint.
       target: ['home-date', 'home-date-mobile'],
       placement: 'bottom',
       title: "Today's Date",
       body: 'Your current spot on the calendar. The season plays out day by day — games, trades, scouting, and the draft all happen on this timeline, and playing or simulating games advances it.',
+    },
+    {
+      target: 'home-team-overall',
+      placement: 'bottom',
+      title: 'Team Overall',
+      body: "This badge is your team's overall rating — the average quality of your healthy roster, and the quickest read on how your franchise stacks up. Build it through smart lineups, player development, and trades.",
+    },
+    {
+      target: 'home-facilities',
+      placement: 'bottom',
+      title: 'Facilities',
+      body: 'A quick read on your four franchise facilities — Training, Medical, Scouting, and Analytics — each rated 1 to 5 stars. They degrade a step every offseason if you don\'t maintain them. Higher facility levels unlock the perks your hired staff can apply, so upgrading here is what turns a 4-star trainer or scout into their full-strength version.',
+      // Strip only renders once a team is loaded with facilities data —
+      // skip cleanly if it's not on screen (e.g. cold-load mid-tour).
+      skipIfMissing: true,
+    },
+    {
+      target: 'home-team-morale',
+      placement: 'bottom',
+      title: 'Team Morale',
+      body: 'Rolling average of every player\'s personal morale. Wins, losses, playing time, and re-sign drama all move this needle — green is a happy locker room, red is danger. Drill into any player\'s profile to see what\'s driving theirs and where a coach meeting could help.',
+      // Chip only renders once the team store has populated; skip cleanly
+      // if a cold-load fires the tour before that.
+      skipIfMissing: true,
     },
     {
       target: 'home-record-card',
@@ -83,15 +101,30 @@ export const WALKTHROUGHS = {
       body: 'Every couple of weeks we spotlight a standout on your roster with their recent form. Tap the card to open their full profile.',
     },
     {
+      target: 'home-upcoming-fa',
+      placement: 'top',
+      title: 'Expiring Contracts',
+      body: 'Players whose deals end this offseason show up here, sorted by overall — with a re-sign likelihood meter under each row. Tap any name to open their profile, or hit View all to jump to the full Expiring sub-tab where you can extend them.',
+      // The card only renders once a team has loaded; if it isn't on
+      // screen (cold load mid-tour, or the user hasn't entered season
+      // 1 yet) skip cleanly instead of stalling.
+      skipIfMissing: true,
+    },
+    {
       target: 'home-news',
       placement: 'top',
       title: 'Around the League',
       body: 'Trades, injuries, awards, and breaking storylines land here. Keep an eye out — they hint at trade targets and roster risks.',
     },
     {
-      placement: 'center',
-      title: "You're set",
-      body: 'That\'s the home base. Set your lineup, then play or sim your way to the playoffs. Good luck.',
+      // Desktop puts the nav in a horizontal strip in the campaign header;
+      // mobile uses the floating bottom-nav island. Spotlight whichever
+      // is visible at this breakpoint so the user knows where to jump
+      // around the franchise from here on.
+      target: ['home-top-nav', 'home-bottom-nav'],
+      placement: 'top',
+      title: 'Where To Next',
+      body: 'These tabs are how you actually run the franchise day-to-day. GM View is your roster, finances, and personnel hub. League shows standings, stat leaders, and other rosters. Scout opens the upcoming draft class. And Play takes you to your next game. Bounce around — every screen has more to offer than the homepage can show.',
     },
   ],
 
@@ -172,6 +205,14 @@ export const WALKTHROUGHS = {
       placement: 'right',
       title: 'Player Cards',
       body: "Each card shows a player's ratings, assigned minutes, and fatigue at a glance.",
+    },
+    {
+      target: 'gm-min-fatigue',
+      tab: { view: 'gm', tab: 'team' },
+      placement: 'right',
+      title: 'Minutes vs. Fatigue',
+      body: "Drag the MIN slider to set this player's rough minutes for the next game — but watch the FATIGUE bar underneath. Push tired starters too hard and their efficiency tanks AND they're far more likely to get hurt.",
+      skipIfMissing: true,
     },
     {
       target: ['gm-move-btn', 'gm-move-dropdown'],
@@ -600,12 +641,18 @@ export const WALKTHROUGHS = {
       placement: 'bottom',
       title: 'Upgrade Points',
       body: 'Two pools — offense and defense — earned through game performance. Every 1.0 points buys a +1 attribute bump.',
+      // Banner is only rendered when the player is on the user team and
+      // hasn't already capped their potential — skip the tip cleanly when
+      // it isn't on screen so the tour doesn't stall waiting for it.
+      skipIfMissing: true,
     },
     {
       target: ['pdm-buy-offense', 'pdm-buy-defense'],
       placement: 'bottom',
       title: 'Buy Points',
       body: 'Short on points? Spend tokens here to buy one outright for either pool.',
+      // Buy buttons live inside the upgrade banner — same gating.
+      skipIfMissing: true,
     },
     {
       target: 'pdm-attributes-list',
@@ -620,14 +667,24 @@ export const WALKTHROUGHS = {
       target: 'pdm-badges-list',
       placement: 'left',
       title: 'Badges',
-      body: "Every badge this player has earned, grouped by tier — Bronze, Silver, Gold, and Hall of Fame — unlocked as their attributes grow. A badge that's glowing with a ⚡ is firing an active synergy with a teammate on the floor.",
+      body: "Every badge this player has earned, grouped by tier — Bronze, Silver, Gold, and Hall of Fame. A badge that's glowing with a ⚡ is firing an active synergy with a teammate on the floor.",
       link: { label: 'See the full badge synergy database →', to: '/profile?tab=database' },
+    },
+    {
+      target: 'pdm-train-btn',
+      placement: 'bottom',
+      title: 'Train',
+      body: 'Each season your coach gets a handful of training actions (2 / 3 / 4 by tier). Tap Train, wait 3 hours real-time, then claim — you\'ll earn a random open badge or upgrade. Bronzes are most common, HoF the rarest. Hire a 4-Star Staff Trainer with the Accelerated Training perk to cut the timer to 45 minutes.',
+      // Train CTA is hidden when there's no eligible reward, no coach
+      // hired, or a training is already in flight. Skip cleanly in those
+      // states instead of stalling the tour.
+      skipIfMissing: true,
     },
     {
       target: 'pdm-badge-store-btn',
       placement: 'bottom',
       title: 'Badge Store',
-      body: 'You can also buy new badges and upgrade their tiers with tokens here.',
+      body: 'Need a specific badge or upgrade right now? The Badge Store lets you spend tokens to pick exactly what you want — a secondary route when you don\'t want to wait on the training cycle.',
     },
   ],
 

@@ -14,6 +14,7 @@ import { useSyncStore } from '@/stores/sync'
 import { useTeamStore } from '@/stores/team'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
 import {
   composeSvg,
@@ -32,6 +33,7 @@ const syncStore = useSyncStore()
 const teamStore = useTeamStore()
 const walkthroughStore = useWalkthroughStore()
 const toastStore = useToastStore()
+const audio = useAudioStore()
 const returnStore = useHeadshotEditorReturnStore()
 
 const campaignId = computed(() => route.params.id)
@@ -317,6 +319,9 @@ function selectPremade(p) {
 async function handleSave() {
   if (!isModified.value || saving.value) return
   saving.value = true
+  // Save fires from a click — suppress the generic tap so the affirm cue
+  // below isn't doubled up by the global click handler in main.js.
+  audio.suppressClickSound()
   try {
     const svg = composeSvg(config.value, null, audience.value)
     if (route.name === 'personnel-headshot-editor' && personnelKind.value !== 'coach') {
@@ -326,6 +331,7 @@ async function handleSave() {
     } else {
       await _savePlayer(svg)
     }
+    audio.affirm()
     toastStore.showSuccess('Headshot saved.')
     handleExit(true)
   } catch (err) {
@@ -443,6 +449,9 @@ function handleExit(skipDirtyCheck = false) {
 }
 
 function discardAndExit() {
+  // cancel() also calls suppressClickSound() internally so the discard
+  // button's generic tap doesn't ride on top of the dismissal cue.
+  audio.cancel()
   showExitConfirm.value = false
   handleExit(true)
 }

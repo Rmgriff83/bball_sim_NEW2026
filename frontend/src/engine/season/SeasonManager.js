@@ -35,6 +35,7 @@ export class SeasonManager {
       standings,
       schedule: [],
       playerStats: {},
+      playoffPlayerStats: {},
       teamStats,
       playoffBracket: null,
       news: [],
@@ -585,19 +586,37 @@ export class SeasonManager {
   // -----------------------------------------------------------------------
 
   /**
-   * Update player stats after a game.
-   * Mutates seasonData in place.
+   * Select the regular-season or playoff stats bucket on seasonData. Lazy-
+   * initializes `playoffPlayerStats` on legacy seasonData that pre-dates the
+   * split — `playerStats` itself is created by initializeSeason so it's always
+   * there.
    */
-  static updatePlayerStats(seasonData, playerId, playerName, teamId, gameStats) {
+  static _getStatsBucket(seasonData, isPlayoff) {
+    if (isPlayoff) {
+      if (!seasonData.playoffPlayerStats) seasonData.playoffPlayerStats = {}
+      return seasonData.playoffPlayerStats
+    }
+    return seasonData.playerStats
+  }
+
+  /**
+   * Update player stats after a game.
+   * Mutates seasonData in place. Playoff games are written to a separate
+   * `playoffPlayerStats` bucket so award eligibility (which gates on a % of
+   * max regular-season games) isn't distorted by deep-playoff teams piling
+   * up extra games.
+   */
+  static updatePlayerStats(seasonData, playerId, playerName, teamId, gameStats, { isPlayoff = false } = {}) {
     if (!seasonData) return
 
     const pid = String(playerId)
+    const bucket = SeasonManager._getStatsBucket(seasonData, isPlayoff)
 
-    if (!seasonData.playerStats[pid]) {
-      seasonData.playerStats[pid] = SeasonManager._createEmptyPlayerStats(pid, playerName, teamId)
+    if (!bucket[pid]) {
+      bucket[pid] = SeasonManager._createEmptyPlayerStats(pid, playerName, teamId)
     }
 
-    const stats = seasonData.playerStats[pid]
+    const stats = bucket[pid]
     const minutesPlayed = gameStats.minutes ?? 0
 
     // Only count as a game played if the player actually got minutes
@@ -653,60 +672,77 @@ export class SeasonManager {
   }
 
   /**
-   * Get a single player's stats.
+   * Get a single player's stats. Defaults to regular-season; pass
+   * `{ isPlayoff: true }` to read the playoff bucket.
    */
-  static getPlayerStats(seasonData, playerId) {
-    return seasonData?.playerStats?.[String(playerId)] ?? null
+  static getPlayerStats(seasonData, playerId, { isPlayoff = false } = {}) {
+    const bucket = isPlayoff ? seasonData?.playoffPlayerStats : seasonData?.playerStats
+    return bucket?.[String(playerId)] ?? null
   }
 
   /**
-   * Get all player stats for a season.
+   * Get all player stats for a season. Defaults to regular-season; pass
+   * `{ isPlayoff: true }` to read the playoff bucket.
    */
-  static getAllPlayerStats(seasonData) {
-    return seasonData?.playerStats ?? {}
+  static getAllPlayerStats(seasonData, { isPlayoff = false } = {}) {
+    return (isPlayoff ? seasonData?.playoffPlayerStats : seasonData?.playerStats) ?? {}
   }
 
   /**
    * Migrate player stats from one player ID to another (used during trades).
+   * Migrates both the regular-season and playoff buckets so a mid-playoff
+   * trade doesn't drop the new player's playoff record.
    */
   static migratePlayerStats(seasonData, oldPlayerId, newPlayerId, newTeamId, newPlayerName) {
     if (!seasonData) return false
 
     const oldKey = String(oldPlayerId)
     const newKey = String(newPlayerId)
+    let migrated = false
 
-    const oldStats = seasonData.playerStats[oldKey]
-    if (!oldStats) {
-      return true // No stats to migrate, not an error
+    for (const bucketKey of ['playerStats', 'playoffPlayerStats']) {
+      const bucket = seasonData[bucketKey]
+      if (!bucket) continue
+      const oldStats = bucket[oldKey]
+      if (!oldStats) continue
+
+      bucket[newKey] = {
+        ...oldStats,
+        playerId: newKey,
+        playerName: newPlayerName,
+        teamId: newTeamId,
+      }
+      delete bucket[oldKey]
+      migrated = true
     }
 
-    seasonData.playerStats[newKey] = {
-      ...oldStats,
-      playerId: newKey,
-      playerName: newPlayerName,
-      teamId: newTeamId,
+    if (migrated) {
+      seasonData.metadata.updatedAt = new Date().toISOString()
     }
-
-    delete seasonData.playerStats[oldKey]
-    seasonData.metadata.updatedAt = new Date().toISOString()
-
     return true
   }
 
   /**
-   * Update player's team ID in their stats (for AI-to-AI trades where ID doesn't change).
+   * Update player's team ID in their stats (for AI-to-AI trades where ID
+   * doesn't change). Touches both buckets so the team affiliation stays
+   * consistent across regular-season and playoff records.
    */
   static updatePlayerStatsTeam(seasonData, playerId, newTeamId) {
     if (!seasonData) return false
 
     const key = String(playerId)
-    if (seasonData.playerStats[key]) {
-      seasonData.playerStats[key].teamId = newTeamId
-      seasonData.metadata.updatedAt = new Date().toISOString()
-      return true
+    let updated = false
+    for (const bucketKey of ['playerStats', 'playoffPlayerStats']) {
+      const bucket = seasonData[bucketKey]
+      if (bucket?.[key]) {
+        bucket[key].teamId = newTeamId
+        updated = true
+      }
     }
-
-    return false
+    if (updated) {
+      seasonData.metadata.updatedAt = new Date().toISOString()
+    }
+    return updated
   }
 
   // -----------------------------------------------------------------------
@@ -729,7 +765,8 @@ export class SeasonManager {
    * Replaces multiple individual update cycles with a single pass.
    * @param {Object} seasonData - Mutated in place
    * @param {Array} results - Array of result objects with:
-   *   { gameId, homeTeamId, awayTeamId, homeScore, awayScore, boxScore, quarterScores, isUserGame }
+   *   { gameId, homeTeamId, awayTeamId, homeScore, awayScore, boxScore,
+   *     quarterScores, isUserGame, isPlayoff }
    */
   static bulkMergeResults(seasonData, results) {
     if (!seasonData || !results || results.length === 0) return
@@ -786,8 +823,11 @@ export class SeasonManager {
       SeasonManager._updateTeamStatsAfterGame(seasonData, result.homeTeamId, result.homeScore, result.awayScore, true)
       SeasonManager._updateTeamStatsAfterGame(seasonData, result.awayTeamId, result.awayScore, result.homeScore, false)
 
-      // Update player stats from full box score
+      // Update player stats from full box score. Route to regular-season or
+      // playoff bucket based on the per-result flag — playoff games are not
+      // counted toward MVP / All-NBA eligibility thresholds.
       const fullBox = result.boxScore // Use full (non-compacted) box score for stats
+      const bucket = SeasonManager._getStatsBucket(seasonData, !!result.isPlayoff)
       const sides = { home: result.homeTeamId, away: result.awayTeamId }
       for (const [side, teamId] of Object.entries(sides)) {
         for (const playerStats of (fullBox?.[side] ?? [])) {
@@ -796,11 +836,11 @@ export class SeasonManager {
           if (!playerId) continue
 
           const pid = String(playerId)
-          if (!seasonData.playerStats[pid]) {
-            seasonData.playerStats[pid] = SeasonManager._createEmptyPlayerStats(pid, playerName, teamId)
+          if (!bucket[pid]) {
+            bucket[pid] = SeasonManager._createEmptyPlayerStats(pid, playerName, teamId)
           }
 
-          const s = seasonData.playerStats[pid]
+          const s = bucket[pid]
           const mins = playerStats.minutes ?? 0
           if (mins > 0) {
             s.gamesPlayed++

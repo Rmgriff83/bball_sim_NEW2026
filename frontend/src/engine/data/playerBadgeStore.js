@@ -18,12 +18,11 @@ export { BADGES_BY_POSITION }
 
 export const PLAYER_BADGE_LEVELS = ['bronze', 'silver', 'gold', 'hof']
 
-// Premium token costs (~2× the coach badge store).
 export const PLAYER_BADGE_COSTS = {
-  bronze: 1500,
-  silver: 3000,
-  gold:   5000,
-  hof:    10000,
+  bronze: 1000,
+  silver: 1500,
+  gold:   2000,
+  hof:    2500,
 }
 
 // Map a badge's category to the player attribute keys most relevant for

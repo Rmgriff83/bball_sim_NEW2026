@@ -1,15 +1,20 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { StatBadge } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, UserPlus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check, Brush } from 'lucide-vue-next'
+import { StatBadge, BaseModal } from '@/components/ui'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, UserPlus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check, Brush, Dumbbell, Sparkles } from 'lucide-vue-next'
 import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
+import { detectArchetype } from '@/engine/data/archetypes'
 import CoachMeetingConfirmModal from './CoachMeetingConfirmModal.vue'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerBadgeStoreModal from '@/components/team/PlayerBadgeStoreModal.vue'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
 import { useAuthStore } from '@/stores/auth'
+import { useTeamStore } from '@/stores/team'
+import { useAudioStore } from '@/stores/audio'
+import { getBadgeStoreEntries } from '@/engine/data/playerBadgeStore'
+import { getCoachTrainBudget } from '@/engine/data/coaches'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
@@ -210,6 +215,8 @@ watch(() => props.show, (newVal) => {
 // Trade block
 const tradeStore = useTradeStore()
 const toastStore = useToastStore()
+const teamStore = useTeamStore()
+const audio = useAudioStore()
 const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
@@ -288,6 +295,13 @@ const normalizedPlayer = computed(() => {
     name: p.name || `${p.firstName || p.first_name} ${p.lastName || p.last_name}`,
     position: p.position,
     secondaryPosition: p.secondaryPosition || p.secondary_position,
+    // Recompute live from the player's CURRENT attributes/vitals so the chip
+    // promotes from "Role Player" to a specialist archetype the moment the
+    // user upgrades enough attribute points to clear a fingerprint
+    // threshold. Falls back to the snapshot stored at generation time
+    // (`p.archetype`) only if attributes aren't loaded yet — e.g., a stale
+    // player record from a cold sync.
+    archetype: detectArchetype(p)?.name || p.archetype || p.archetypeName || null,
     jerseyNumber: p.jerseyNumber || p.jersey_number || '00',
     overallRating: p.overallRating || p.overall_rating,
     potentialRating: p.potentialRating || p.potential_rating,
@@ -398,7 +412,7 @@ function handleUpgrade(category, attrKey) {
 // ----- Upgrade-point purchase (tokens → +1 to a pool) -----
 // Mirrors the team-store implementation. Keep in lockstep with
 // `MANUAL_UPGRADE_BUMP` / `UPGRADE_POINT_PRICES` in `frontend/src/stores/team.js`.
-const UPGRADE_POINT_PRICES = [3000, 4000, 5000]
+const UPGRADE_POINT_PRICES = [500, 500, 500]
 const UPGRADE_POINT_MAX_PER_POOL = 3
 const MANUAL_UPGRADE_BUMP = 0.4
 
@@ -453,14 +467,44 @@ const defensePurchaseInfo = computed(() =>
   _purchaseInfo(normalizedPlayer.value, 'defense', props.currentSeasonYear, props.userTokens)
 )
 
+// Pending purchase modal state. Set by handlePurchaseUpgradePoint when the
+// user taps Buy on an attribute pool; cleared on Cancel or after Confirm
+// fires the actual emit. Holds enough info to render the confirmation copy
+// without re-deriving from the original info object.
+const pendingUpgradePurchase = ref(null) // { pool, price, label }
+const upgradePurchaseInFlight = ref(false)
+
 function handlePurchaseUpgradePoint(pool) {
   const info = pool === 'defense' ? defensePurchaseInfo.value : offensePurchaseInfo.value
   if (!info?.canPurchase) return
-  emit('purchase-upgrade-point', {
-    playerId: props.player.id,
+  pendingUpgradePurchase.value = {
     pool,
     price: info.price,
+    label: pool === 'defense' ? 'Defense' : 'Offense',
+  }
+}
+
+function cancelUpgradePurchase() {
+  if (upgradePurchaseInFlight.value) return
+  pendingUpgradePurchase.value = null
+}
+
+function confirmUpgradePurchase() {
+  const pending = pendingUpgradePurchase.value
+  if (!pending || upgradePurchaseInFlight.value) return
+  upgradePurchaseInFlight.value = true
+  emit('purchase-upgrade-point', {
+    playerId: props.player.id,
+    pool: pending.pool,
+    price: pending.price,
   })
+  // Parent's handler is async-ish (token deduction → IDB save) but the
+  // child has no way to await it; close the modal immediately so the
+  // user gets snappy feedback. The button below them will reflect the
+  // new pool count + price as soon as the parent re-emits the updated
+  // player record.
+  pendingUpgradePurchase.value = null
+  upgradePurchaseInFlight.value = false
 }
 
 function purchaseTooltip(info) {
@@ -485,7 +529,8 @@ const seasonStatsRows = computed(() => {
     p.seasonHistory,
     p.season_stats,
     props.currentSeasonYear,
-    p.teamAbbreviation || p.team_abbreviation
+    p.teamAbbreviation || p.team_abbreviation,
+    p.season_playoff_stats
   )
 })
 
@@ -533,6 +578,135 @@ const coachMeetingLabel = computed(() => (
     ? `Coach Meeting · ${coachActionsLeft.value} left`
     : `Coach Meeting · ${COACH_MEETING_EXTRA_COST} tokens`
 ))
+
+// -----------------------------------------------------------------------
+// Player Training (idle-style badge reward)
+// -----------------------------------------------------------------------
+// Real-time tick. Bumping this ref every 30s causes the time-relative
+// computeds below (msUntilTrainingReady, trainingLabel, trainingReady)
+// to re-evaluate without manually forcing a refresh. The watcher on
+// `props.show` start/stops the interval so a closed modal isn't paying
+// the cost.
+const _trainingNow = ref(Date.now())
+let _trainingTickHandle = null
+
+const trainBudgetLeft = computed(() => props.coach?.trainActionsRemaining ?? 0)
+const trainBudgetTotal = computed(() => getCoachTrainBudget(props.coach))
+
+const activeTraining = computed(() => props.coach?.activeTraining ?? null)
+const trainingForThisPlayer = computed(() => (
+  !!activeTraining.value && activeTraining.value.playerId === props.player?.id
+))
+const trainingForOtherPlayer = computed(() => (
+  !!activeTraining.value && activeTraining.value.playerId !== props.player?.id
+))
+const trainingMsLeft = computed(() => {
+  if (!activeTraining.value?.endsAt) return null
+  void _trainingNow.value  // dependency for reactive re-evaluation
+  return Math.max(0, new Date(activeTraining.value.endsAt).getTime() - Date.now())
+})
+// Only fires when the FINISHED training belongs to the player whose modal
+// is open. Previously this ignored playerId, so any time the team had a
+// claim-ready session the dot appeared on every modal we opened.
+const trainingReady = computed(() => trainingForThisPlayer.value && trainingMsLeft.value === 0)
+
+// Pretty "Xh Ym" / "Xm Ys" countdown.
+function formatTrainingCountdown(ms) {
+  if (ms == null) return ''
+  if (ms <= 0) return 'Ready!'
+  const totalSeconds = Math.ceil(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  if (hours >= 1) return `${hours}h ${minutes}m`
+  const seconds = totalSeconds % 60
+  if (minutes >= 1) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
+// Pool of badges/upgrades available for the player. Used both by the
+// hide-when-empty gate and (server-side) by claimTrainingReward.
+const trainingPool = computed(() => {
+  if (!props.player) return []
+  return getBadgeStoreEntries(props.player).filter(e => e.nextLevel)
+})
+
+const canShowTrain = computed(() => (
+  props.isUserPlayer
+  && !props.scoutingMode
+  && !playerIsFreeAgent.value
+  && !!props.coach
+  && props.campaignId != null
+  && trainingPool.value.length > 0
+))
+
+const trainDisabledReason = computed(() => {
+  if (!props.coach) return 'Sign a coach first'
+  if (trainingForOtherPlayer.value) return 'Another training is in progress'
+  if (trainingForThisPlayer.value) return null  // handled by Claim/Countdown UI
+  if (trainBudgetLeft.value <= 0) return 'No training actions left this season'
+  if (trainingPool.value.length === 0) return 'No badges left to train into'
+  return null
+})
+
+const trainInProgress = ref(false)
+
+async function handleStartTraining() {
+  if (!props.campaignId || !props.player?.id) return
+  if (trainInProgress.value) return
+  trainInProgress.value = true
+  audio.suppressClickSound()
+  try {
+    await teamStore.startTrainingSession(props.campaignId, props.player.id)
+    toastStore.showSuccess('Training session started')
+  } catch (err) {
+    toastStore.showError(err?.message || 'Failed to start training')
+  } finally {
+    trainInProgress.value = false
+  }
+}
+
+async function handleClaimTraining() {
+  if (!props.campaignId || !props.player?.id) return
+  if (trainInProgress.value) return
+  trainInProgress.value = true
+  audio.suppressClickSound()
+  try {
+    const result = await teamStore.claimTrainingReward(props.campaignId, props.player.id)
+    if (result?.badge && result.level) {
+      audio.affirm()
+      const badgeName = result.badge.name ?? result.badgeId
+      toastStore.showSuccess(`🏅 Trained: ${badgeName} → ${String(result.level).toUpperCase()}`, 4500)
+    } else {
+      // No eligible pool remained — surface gracefully.
+      toastStore.showSuccess('Training complete (no eligible badges remained)')
+    }
+  } catch (err) {
+    toastStore.showError(err?.message || 'Failed to claim training reward')
+  } finally {
+    trainInProgress.value = false
+  }
+}
+
+// Start/stop the 30-second tick alongside the modal lifecycle so a
+// closed modal isn't paying the timer cost.
+watch(() => props.show, (open) => {
+  if (open) {
+    _trainingNow.value = Date.now()
+    if (_trainingTickHandle == null) {
+      _trainingTickHandle = setInterval(() => { _trainingNow.value = Date.now() }, 30 * 1000)
+    }
+  } else if (_trainingTickHandle != null) {
+    clearInterval(_trainingTickHandle)
+    _trainingTickHandle = null
+  }
+}, { immediate: true })
+
+onUnmounted(() => {
+  if (_trainingTickHandle != null) {
+    clearInterval(_trainingTickHandle)
+    _trainingTickHandle = null
+  }
+})
 
 function openCoachMeetingModal() {
   if (coachMeetingDisabledReason.value) return
@@ -887,18 +1061,34 @@ function formatChange(change) {
                   <div class="player-card-bio">
                     {{ normalizedPlayer.height }} · {{ normalizedPlayer.weight }} lbs · Age {{ normalizedPlayer.age || 25 }}
                   </div>
-                  <!-- Morale chip — face icon + label + score. Hidden in
-                       scouting mode until the user unlocks personality via
-                       the scout perk (mirrors the morale tab's gating). -->
+                  <!-- Archetype + morale row. Archetype chip (populated by
+                       `pickBadgesByFit` at generation time, sourced from
+                       `engine/data/archetypes.js`) reads as the player's
+                       canonical NBA identity; morale chip rides on the
+                       right of the same row so both quick-read indicators
+                       sit between the vitals and the action buttons.
+                       Morale's scouting-gate behavior is unchanged. -->
                   <div
-                    v-if="!scoutingMode || moraleRevealed"
-                    class="morale-chip"
-                    :style="{ '--morale-color': getMoraleColor(moraleValue) }"
-                    :title="`Morale: ${getMoraleLabel(moraleValue)} (${moraleValue}/100)`"
+                    v-if="normalizedPlayer.archetype || !scoutingMode || moraleRevealed"
+                    class="archetype-row"
                   >
-                    <component :is="getMoraleIcon(moraleValue)" :size="12" :stroke-width="2.25" />
-                    <span class="morale-chip-label">{{ getMoraleLabel(moraleValue) }}</span>
-                    <span class="morale-chip-value">{{ moraleValue }}</span>
+                    <span
+                      v-if="normalizedPlayer.archetype"
+                      class="archetype-chip"
+                      :title="`Player archetype: ${normalizedPlayer.archetype}`"
+                    >
+                      {{ normalizedPlayer.archetype }}
+                    </span>
+                    <div
+                      v-if="!scoutingMode || moraleRevealed"
+                      class="morale-chip"
+                      :style="{ '--morale-color': getMoraleColor(moraleValue) }"
+                      :title="`Morale: ${getMoraleLabel(moraleValue)} (${moraleValue}/100)`"
+                    >
+                      <component :is="getMoraleIcon(moraleValue)" :size="12" :stroke-width="2.25" />
+                      <span class="morale-chip-label">{{ getMoraleLabel(moraleValue) }}</span>
+                      <span class="morale-chip-value">{{ moraleValue }}</span>
+                    </div>
                   </div>
                   <!-- Sign button (free agents) — suppressed in draft room
                        contexts since the player hasn't been drafted yet. -->
@@ -1028,6 +1218,7 @@ function formatChange(change) {
                 @click="activeTab = 'badges'"
               >
                 Badges
+                <span v-if="trainingReady" class="train-ready-dot" :title="'Training ready to claim'"></span>
               </button>
               <button
                 v-if="showGrowth && !scoutingMode"
@@ -1069,22 +1260,38 @@ function formatChange(change) {
                         </tr>
                       </thead>
                       <tbody>
-                        <tr v-for="row in seasonStatsRows" :key="row.year" :class="{ 'current-season-row': row.isCurrent }">
-                          <td class="season-year-cell">
-                            {{ row.year }}<span v-if="row.isCurrent" class="current-tag">*</span>
-                          </td>
-                          <td>{{ row.team }}</td>
-                          <td>{{ row.gp }}</td>
-                          <td class="game-log-pts">{{ row.ppg }}</td>
-                          <td>{{ row.rpg }}</td>
-                          <td>{{ row.apg }}</td>
-                          <td>{{ row.spg }}</td>
-                          <td>{{ row.bpg }}</td>
-                          <td>{{ row.fg_pct }}%</td>
-                          <td>{{ row.three_pct }}%</td>
-                          <td>{{ row.ft_pct }}%</td>
-                          <td>{{ row.mpg }}</td>
-                        </tr>
+                        <template v-for="row in seasonStatsRows" :key="row.year">
+                          <tr :class="{ 'current-season-row': row.isCurrent }">
+                            <td class="season-year-cell">
+                              {{ row.year }}<span v-if="row.isCurrent" class="current-tag">*</span>
+                            </td>
+                            <td>{{ row.team }}</td>
+                            <td>{{ row.gp }}</td>
+                            <td class="game-log-pts">{{ row.ppg }}</td>
+                            <td>{{ row.rpg }}</td>
+                            <td>{{ row.apg }}</td>
+                            <td>{{ row.spg }}</td>
+                            <td>{{ row.bpg }}</td>
+                            <td>{{ row.fg_pct }}%</td>
+                            <td>{{ row.three_pct }}%</td>
+                            <td>{{ row.ft_pct }}%</td>
+                            <td>{{ row.mpg }}</td>
+                          </tr>
+                          <tr v-if="row.playoffStats" class="playoff-subrow">
+                            <td class="playoff-label">↳ Playoffs</td>
+                            <td>{{ row.playoffStats.team }}</td>
+                            <td>{{ row.playoffStats.gp }}</td>
+                            <td class="game-log-pts">{{ row.playoffStats.ppg }}</td>
+                            <td>{{ row.playoffStats.rpg }}</td>
+                            <td>{{ row.playoffStats.apg }}</td>
+                            <td>{{ row.playoffStats.spg }}</td>
+                            <td>{{ row.playoffStats.bpg }}</td>
+                            <td>{{ row.playoffStats.fg_pct }}%</td>
+                            <td>{{ row.playoffStats.three_pct }}%</td>
+                            <td>{{ row.playoffStats.ft_pct }}%</td>
+                            <td>{{ row.playoffStats.mpg }}</td>
+                          </tr>
+                        </template>
                       </tbody>
                     </table>
                   </div>
@@ -1391,6 +1598,49 @@ function formatChange(change) {
                 </div>
                 <template v-else>
                   <div v-if="isUserPlayer && !scoutingMode && campaignId" class="badges-store-row">
+                    <!-- Train button — opens a real-time idler that grants a
+                         random open badge/upgrade when claimed. Primary
+                         path to growing a player's badge sheet. Hidden when
+                         there's nothing to award OR when no coach is hired.
+                         Three states: idle (Train · N left), counting down
+                         for THIS player (countdown), counting down for
+                         ANOTHER player (disabled chip), and ready-to-claim. -->
+                    <template v-if="canShowTrain">
+                      <button
+                        v-if="!activeTraining"
+                        class="badges-train-btn"
+                        data-tour="pdm-train-btn"
+                        :disabled="!!trainDisabledReason || trainInProgress"
+                        :title="trainDisabledReason || 'Start a real-time training session — earn a random badge or upgrade'"
+                        @click="handleStartTraining"
+                      >
+                        <Dumbbell :size="14" />
+                        <span>Train · {{ trainBudgetLeft }} left</span>
+                      </button>
+                      <template v-else-if="trainingForThisPlayer">
+                        <button
+                          v-if="trainingReady"
+                          class="badges-train-btn is-ready"
+                          :disabled="trainInProgress"
+                          @click="handleClaimTraining"
+                        >
+                          <Sparkles :size="14" />
+                          <span>Claim Reward</span>
+                        </button>
+                        <span v-else class="badges-train-countdown" :title="`Training in progress · ${formatTrainingCountdown(trainingMsLeft)} remaining`">
+                          <Dumbbell :size="14" />
+                          <span>Training · {{ formatTrainingCountdown(trainingMsLeft) }}</span>
+                        </span>
+                      </template>
+                      <span
+                        v-else
+                        class="badges-train-blocked"
+                        :title="'A training is already in progress for another player on the roster.'"
+                      >
+                        <Dumbbell :size="14" />
+                        <span>Trainer busy</span>
+                      </span>
+                    </template>
                     <button class="badges-store-btn" data-tour="pdm-badge-store-btn" @click="showPlayerBadgeStore = true">
                       <ShoppingBag :size="14" />
                       <span>Badge Store</span>
@@ -1846,6 +2096,36 @@ function formatChange(change) {
     @close="showCoachMeetingModal = false"
     @confirm="confirmCoachMeeting"
   />
+
+  <!-- Upgrade-point purchase confirmation. Triggered by the +Buy chip on
+       either attribute pool — gives the user a chance to bail on a 500-
+       token spend before tokens leave their balance. -->
+  <BaseModal
+    :show="!!pendingUpgradePurchase"
+    :title="`Buy ${pendingUpgradePurchase?.label} Upgrade Point?`"
+    @close="cancelUpgradePurchase"
+  >
+    <div v-if="pendingUpgradePurchase" class="upgrade-confirm-body">
+      <p class="upgrade-confirm-line">
+        Spend <strong>{{ pendingUpgradePurchase.price.toLocaleString() }} tokens</strong>
+        to buy one <strong>{{ pendingUpgradePurchase.label }}</strong> upgrade point for
+        <strong>{{ normalizedPlayer?.name }}</strong>?
+      </p>
+      <p class="upgrade-confirm-hint">
+        The point lands in the {{ pendingUpgradePurchase.label.toLowerCase() }} pool and can be
+        spent on any eligible attribute below. This action can't be undone.
+      </p>
+      <div class="upgrade-confirm-actions">
+        <button class="btn-cancel" :disabled="upgradePurchaseInFlight" @click="cancelUpgradePurchase">
+          Cancel
+        </button>
+        <button class="btn-confirm" :disabled="upgradePurchaseInFlight" @click="confirmUpgradePurchase">
+          <Coins :size="14" />
+          Confirm · {{ pendingUpgradePurchase.price.toLocaleString() }}
+        </button>
+      </div>
+    </div>
+  </BaseModal>
 </template>
 
 <style scoped>
@@ -2097,8 +2377,8 @@ function formatChange(change) {
 
 .header-rating-corner {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 2px;
+  right: 2px;
   z-index: 2;
   display: flex;
   flex-direction: column;
@@ -2317,6 +2597,31 @@ function formatChange(change) {
   opacity: 0.7;
 }
 
+/* Archetype + morale row — sits on its own line under the vitals
+   (.player-card-bio). Two chips side by side: archetype left, morale
+   right. Wraps to a second line on cramped widths so neither chip gets
+   truncated. */
+.archetype-row {
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Archetype chip — quiet outline-style so it reads as a label rather than
+   a colored tag like the position badges. */
+.archetype-chip {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-primary);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  white-space: nowrap;
+}
 
 .injury-tag {
   padding: 2px 6px;
@@ -2494,6 +2799,20 @@ function formatChange(change) {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   font-size: 0.875rem;
+}
+
+/* Training-ready pulse dot on the Badges tab button — mirrors the
+   PlayerCard avatar dot and the GM-nav dot so the indicator reads the
+   same everywhere. Anchored top-right of the tab pill. */
+.tab-btn .train-ready-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
 }
 
 .tab-badge {
@@ -2749,6 +3068,74 @@ function formatChange(change) {
   cursor: not-allowed;
 }
 
+/* Upgrade-point purchase confirmation modal body. Drops on top of the
+   BaseModal's default content area; layout is a stacked sentence + hint
+   + action row. */
+.upgrade-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 0;
+}
+
+.upgrade-confirm-line {
+  font-size: 0.92rem;
+  color: var(--color-text-primary);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.upgrade-confirm-hint {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.upgrade-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.upgrade-confirm-actions .btn-cancel,
+.upgrade-confirm-actions .btn-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--glass-border);
+}
+
+.upgrade-confirm-actions .btn-cancel {
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.upgrade-confirm-actions .btn-cancel:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+}
+
+.upgrade-confirm-actions .btn-confirm {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+
+.upgrade-confirm-actions .btn-confirm:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.upgrade-confirm-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* "MAX" indicator shown in place of the + button when an attribute has hit
    the player's potential cap. Sits in the same 32px column as the button
    so the row layout stays consistent. */
@@ -2783,7 +3170,10 @@ function formatChange(change) {
 .badges-store-row {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .badges-store-btn {
@@ -2805,6 +3195,59 @@ function formatChange(change) {
 
 .badges-store-btn:hover {
   background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+/* Train button + countdown widget. Quiet outline-style when idle, accent
+   glow when ready to claim, muted chip when blocked / in-progress for
+   another player. */
+.badges-train-btn,
+.badges-train-countdown,
+.badges-train-blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.badges-train-btn {
+  background: var(--color-bg-tertiary);
+  border: 1px solid #22c55e;
+  color: #22c55e;
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.badges-train-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, #22c55e 15%, transparent);
+}
+
+.badges-train-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.badges-train-btn.is-ready {
+  background: color-mix(in srgb, #22c55e 22%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, #22c55e 18%, transparent);
+}
+
+.badges-train-countdown {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.badges-train-blocked {
+  background: transparent;
+  border: 1px dashed var(--glass-border);
+  color: var(--color-text-tertiary);
 }
 
 .badges-tab-content {
@@ -3206,6 +3649,22 @@ function formatChange(change) {
   opacity: 0.45;
   cursor: not-allowed;
   transform: none;
+}
+
+/* On mobile, drop the Coach Meeting button to its own row beneath the
+   morale icon / number / label row and stretch it edge-to-edge so it
+   reads as a clear primary action instead of getting squeezed against
+   the label column. */
+@media (max-width: 640px) {
+  .morale-header-row {
+    flex-wrap: wrap;
+  }
+  .coach-meeting-btn {
+    flex-basis: 100%;
+    width: 100%;
+    margin-left: 0;
+    justify-content: center;
+  }
 }
 
 .morale-face-icon {
@@ -3800,6 +4259,29 @@ function formatChange(change) {
 
 .current-season-row:hover {
   background: rgba(139, 92, 246, 0.14) !important;
+}
+
+.playoff-subrow {
+  background: rgba(139, 92, 246, 0.04);
+}
+
+.playoff-subrow:hover {
+  background: rgba(139, 92, 246, 0.04) !important;
+}
+
+.playoff-subrow td {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.playoff-label {
+  padding-left: 18px !important;
+  text-align: left !important;
+  white-space: nowrap;
+  font-style: italic;
 }
 
 .season-year-cell {

@@ -7,7 +7,7 @@ import { useAudioStore } from '@/stores/audio'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { GlassCard, BaseButton, LoadingSpinner } from '@/components/ui'
 import HasPlayedBeforeModal from '@/components/walkthrough/HasPlayedBeforeModal.vue'
-import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2 } from 'lucide-vue-next'
+import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2, Trophy } from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
@@ -45,7 +45,6 @@ const showCreateModal = ref(false)
 const newCampaignName = ref('')
 const selectedTeam = ref(null)
 const customTeamName = ref('')
-const selectedDifficulty = ref('pro')
 const selectedDraftMode = ref('standard')
 const creating = ref(false)
 const createError = ref(null)
@@ -94,7 +93,6 @@ function openCreateModal() {
   newCampaignName.value = ''
   selectedTeam.value = null
   customTeamName.value = ''
-  selectedDifficulty.value = 'pro'
   selectedDraftMode.value = 'standard'
   document.body.style.overflow = 'hidden'
 }
@@ -178,7 +176,11 @@ async function createCampaign() {
     const payload = {
       name: campaignName,
       team_abbreviation: selectedTeam.value.abbreviation,
-      difficulty: selectedDifficulty.value,
+      // Difficulty is locked at All-Star for all new campaigns. The picker
+      // was removed from the create modal so users can't stack tokens on a
+      // Rookie campaign to spend elsewhere; the engine's per-difficulty
+      // development/regression curves only kick in from this single setting.
+      difficulty: 'all_star',
     }
     if (renamedTeam) {
       payload.custom_team_name = renamedTeam
@@ -299,7 +301,16 @@ function getDifficultyLabel(value) {
             <div class="campaign-header">
               <div class="campaign-info">
                 <h3 class="campaign-name">{{ campaign.name }}</h3>
-                <p class="campaign-team">{{ campaign.team?.name }}</p>
+                <div class="campaign-team-row">
+                  <p class="campaign-team">{{ campaign.team?.name }}</p>
+                  <span
+                    v-if="campaign.team?.franchise_history?.regular_season"
+                    class="campaign-team-record"
+                    :title="`All-time regular season: ${campaign.team.franchise_history.regular_season.wins ?? 0}-${campaign.team.franchise_history.regular_season.losses ?? 0}`"
+                  >
+                    {{ campaign.team.franchise_history.regular_season.wins ?? 0 }}-{{ campaign.team.franchise_history.regular_season.losses ?? 0 }}
+                  </span>
+                </div>
               </div>
               <div class="campaign-header-actions">
                 <button
@@ -337,6 +348,16 @@ function getDifficultyLabel(value) {
                 </span>
                 <span class="meta-divider">·</span>
                 <span class="meta-item difficulty">{{ getDifficultyLabel(campaign.difficulty) }}</span>
+                <template v-if="(campaign.team?.franchise_history?.championships ?? 0) > 0">
+                  <span class="meta-divider">·</span>
+                  <span
+                    class="meta-item meta-trophy"
+                    :title="`${campaign.team.franchise_history.championships} championship${campaign.team.franchise_history.championships === 1 ? '' : 's'}`"
+                  >
+                    <Trophy :size="14" />
+                    {{ campaign.team.franchise_history.championships }}
+                  </span>
+                </template>
               </div>
 
               <div class="campaign-footer">
@@ -379,23 +400,11 @@ function getDifficultyLabel(value) {
                 <span>{{ createError }}</span>
               </div>
 
-              <!-- Difficulty Selection -->
-              <div class="form-group">
-                <label class="form-label">Difficulty</label>
-                <div class="difficulty-grid">
-                  <button
-                    v-for="diff in difficulties"
-                    :key="diff.value"
-                    type="button"
-                    class="difficulty-option"
-                    :class="{ selected: selectedDifficulty === diff.value }"
-                    @click="selectedDifficulty = diff.value"
-                  >
-                    <span class="difficulty-name">{{ diff.label }}</span>
-                    <span class="difficulty-desc">{{ diff.description }}</span>
-                  </button>
-                </div>
-              </div>
+              <!-- Difficulty Selection — removed. All new campaigns are
+                   locked to All-Star (see payload below). The `difficulties`
+                   array is kept around for `getDifficultyLabel` so existing
+                   campaigns saved at other difficulties still render the
+                   right label on the campaign list. -->
 
               <!-- Draft Mode Selection -->
               <div class="form-group">
@@ -466,20 +475,6 @@ function getDifficultyLabel(value) {
                 </div>
               </div>
 
-              <!-- Selected Team Preview -->
-              <div v-if="selectedTeam" class="selected-team-preview">
-                <div
-                  class="preview-badge"
-                  :style="{ backgroundColor: selectedTeam.primary_color }"
-                >
-                  {{ selectedTeam.abbreviation }}
-                </div>
-                <div class="preview-info">
-                  <h4 class="preview-name">{{ customTeamName.trim() || selectedTeam.name }}</h4>
-                  <p class="preview-meta">{{ selectedTeam.division }} Division</p>
-                </div>
-              </div>
-
               <!-- Rename Your Team (optional) — gated by the headshot_editor
                    IAP. Hidden entirely when the user doesn't own the unlock;
                    createCampaign still strips any custom name from the
@@ -495,6 +490,24 @@ function getDifficultyLabel(value) {
                 />
               </div>
             </main>
+
+            <!-- Selected Team Preview — pinned full-width banner at the bottom
+                 of the modal-content area (above the action footer) so the
+                 user's current selection stays visible as they scroll the
+                 team list. Lives outside .modal-content so the scrolling
+                 content doesn't ride underneath it. -->
+            <div v-if="selectedTeam" class="selected-team-preview">
+              <div
+                class="preview-badge"
+                :style="{ backgroundColor: selectedTeam.primary_color }"
+              >
+                {{ selectedTeam.abbreviation }}
+              </div>
+              <div class="preview-info">
+                <h4 class="preview-name">{{ customTeamName.trim() || selectedTeam.name }}</h4>
+                <p class="preview-meta">{{ selectedTeam.division }} Division</p>
+              </div>
+            </div>
 
             <!-- Footer -->
             <footer class="modal-footer">
@@ -709,6 +722,30 @@ function getDifficultyLabel(value) {
 .campaign-team {
   font-size: 0.85rem;
   color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* Team name + all-time record on one line. Record sits flush-right of the
+   name and reads as a quick at-a-glance "how's this franchise doing
+   historically" stat. Hidden entirely on legacy campaigns whose teams
+   have no `franchise_history` yet — see template v-if. */
+.campaign-team-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.campaign-team-record {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  white-space: nowrap;
 }
 
 .team-badge {
@@ -745,6 +782,19 @@ function getDifficultyLabel(value) {
 
 .meta-item.difficulty {
   text-transform: capitalize;
+}
+
+/* Trophy chip — only renders when the franchise has at least one title.
+   Slightly elevated background + gold accent so it draws the eye in the
+   meta row without overwhelming the difficulty chip. */
+.meta-item.meta-trophy {
+  color: #facc15;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.meta-item.meta-trophy :deep(svg) {
+  color: #facc15;
 }
 
 .campaign-footer {
@@ -1096,15 +1146,18 @@ function getDifficultyLabel(value) {
   text-overflow: ellipsis;
 }
 
-/* Selected Team Preview */
+/* Selected Team Preview — full-width pinned banner between the scrolling
+   .modal-content and the action .modal-footer. No border-radius / no
+   horizontal margin so it spans edge-to-edge of the modal container. */
 .selected-team-preview {
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding: 1rem;
+  padding: 1rem 20px;
   background: var(--color-bg-tertiary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-xl);
+  border-top: 1px solid var(--glass-border);
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
 }
 
 .preview-badge {

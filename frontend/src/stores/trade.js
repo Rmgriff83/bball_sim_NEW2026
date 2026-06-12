@@ -43,6 +43,13 @@ export const useTradeStore = defineStore('trade', () => {
   // Trading block
   const userTradingBlock = ref([])
 
+  // Negotiation prefill — set when the user clicks "Negotiate" on an inbound
+  // AI proposal. TradesTab watches this and forwards it to TradeCenter, which
+  // opens the wizard prefilled with the proposal's asset breakdown so the user
+  // can adjust and counter-propose. Shape:
+  //   { teamId, receiving: [proposal.ai_gives assets], giving: [proposal.ai_receives assets] }
+  const negotiationPrefill = ref(null)
+
   const loading = ref(false)
   const proposing = ref(false)
   const error = ref(null)
@@ -585,10 +592,29 @@ export const useTradeStore = defineStore('trade', () => {
 
       // 7. Enrich all pending proposals for the UI and set state
       // Use == for ID comparisons to handle number/string mismatches from IndexedDB
+      const playerStatsBucket = seasonData?.playerStats ?? {}
+      const buildSeasonStats = (playerId) => {
+        const raw = playerStatsBucket[String(playerId)]
+        const gp = raw?.gamesPlayed ?? 0
+        if (!raw || gp <= 0) return null
+        const round1 = v => Math.round(v * 10) / 10
+        const tpa = raw.threePointersAttempted ?? 0
+        const tpm = raw.threePointersMade ?? 0
+        return {
+          gp,
+          ppg: round1((raw.points ?? 0) / gp),
+          rpg: round1((raw.rebounds ?? 0) / gp),
+          apg: round1((raw.assists ?? 0) / gp),
+          spg: round1((raw.steals ?? 0) / gp),
+          bpg: round1((raw.blocks ?? 0) / gp),
+          tpPct: tpa > 0 ? Math.round((tpm / tpa) * 1000) / 10 : null,
+        }
+      }
       const enrichAsset = (asset, proposalTeamId) => {
         if (asset.type === 'player') {
           const player = getPlayerFn(asset.playerId)
-          return { ...asset, player: player || null }
+          const seasonStats = buildSeasonStats(asset.playerId)
+          return { ...asset, player: player || null, seasonStats }
         }
         if (asset.type === 'pick') {
           const team = allTeams.find(t => String(t.id) === String(proposalTeamId))
@@ -898,6 +924,68 @@ export const useTradeStore = defineStore('trade', () => {
     selectedTeamPicks.value = []
   }
 
+  // Map a proposal's player/pick asset (from fetchPendingProposals.enrichAsset)
+  // into the shape the trade wizard expects. Shape mirrors what
+  // TradeCenter.addPlayerToOffer/addPickToOffer assemble.
+  function _proposalAssetToWizardAsset(asset) {
+    if (asset?.type === 'player' && asset.player) {
+      const p = asset.player
+      return {
+        type: 'player',
+        id: p.id,
+        firstName: p.firstName ?? p.first_name,
+        lastName: p.lastName ?? p.last_name,
+        position: p.position,
+        secondaryPosition: p.secondaryPosition ?? p.secondary_position,
+        overallRating: p.overallRating ?? p.overall_rating,
+        contractSalary: p.contractSalary ?? p.contract_salary,
+        contractYearsRemaining: p.contractYearsRemaining ?? p.contract_years_remaining,
+        tradeValue: p.tradeValue ?? p.trade_value,
+        age: p.age,
+        height: p.height,
+        headshot: p.headshot,
+      }
+    }
+    if (asset?.type === 'pick' && asset.pick) {
+      const k = asset.pick
+      return {
+        type: 'pick',
+        id: k.id,
+        year: k.year,
+        round: k.round,
+        displayName: k.display_name ?? k.displayName,
+        tradeValue: k.trade_value ?? k.tradeValue,
+        originalTeamAbbreviation: k.original_team_abbreviation ?? k.originalTeamAbbreviation,
+        projectedPosition: k.projected_position ?? k.projectedPosition,
+      }
+    }
+    return null
+  }
+
+  // Build a wizard-ready negotiation prefill from an inbound AI proposal.
+  // proposal.ai_gives = what the user would receive; proposal.ai_receives =
+  // what the user would give.
+  function setNegotiationFromProposal(proposal) {
+    if (!proposal) return
+    const receiving = (proposal.ai_gives || [])
+      .map(_proposalAssetToWizardAsset)
+      .filter(Boolean)
+    const giving = (proposal.ai_receives || [])
+      .map(_proposalAssetToWizardAsset)
+      .filter(Boolean)
+    negotiationPrefill.value = {
+      teamId: proposal.proposing_team_id ?? proposal.proposing_team?.id ?? null,
+      receiving,
+      giving,
+    }
+  }
+
+  function consumeNegotiationPrefill() {
+    const v = negotiationPrefill.value
+    negotiationPrefill.value = null
+    return v
+  }
+
   function clearSelectedTeam() {
     selectedTeam.value = null
     selectedTeamRoster.value = []
@@ -1003,6 +1091,7 @@ export const useTradeStore = defineStore('trade', () => {
     userRequesting,
     pendingProposals,
     userTradingBlock,
+    negotiationPrefill,
     loading,
     proposing,
     error,
@@ -1035,6 +1124,8 @@ export const useTradeStore = defineStore('trade', () => {
     clearTrade,
     selectTeam,
     clearSelectedTeam,
+    setNegotiationFromProposal,
+    consumeNegotiationPrefill,
     isInOffering,
     isInRequesting,
 

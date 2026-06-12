@@ -18,7 +18,7 @@ import { computeTeamOverall } from '@/utils/teamOverall'
 import { coachingEngine } from '@/engine/simulation/CoachingEngine'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
-import { SimulateConfirmModal, EvolutionSummary } from '@/components/game'
+import { SimulateConfirmModal, EvolutionSummary, MomentumBar } from '@/components/game'
 import { usePlayAnimation } from '@/composables/usePlayAnimation'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
@@ -54,6 +54,8 @@ const {
   completedQuarter,
   currentHomeScore,
   currentAwayScore,
+  currentHomeMomentum,
+  currentAwayMomentum,
   currentBoxScore,
   currentActivatedBadges,
   currentActivatedSynergies,
@@ -146,6 +148,10 @@ const selectedLineup = localLineup
 const expandedSwapPlayer = ref(null)
 // Track if substitutions view is open in quarter break modal
 const showSubstitutionsView = ref(false)
+// Strategy card is collapsed by default at quarter breaks — the strategy
+// panel is now a secondary affordance hidden behind a toggle, so the user
+// can hit Continue in the header without scrolling past it.
+const qbStrategyExpanded = ref(false)
 // Contextual dropdown under the new court-card Substitutions button.
 // Distinct from `showSubstitutionsView` (which still drives the live-game
 // quarter-break subs view) so the pre-game flow opens an inline panel
@@ -459,6 +465,34 @@ function sortByPoints(players) {
     return ptsB - ptsA
   })
 }
+
+// Fantasy-style impact score used to pick the "top player" for the
+// quarter-break readout. Weighted to match the rough shape of a per-game
+// dominance score so a 5-block performance reads as elite even with
+// modest scoring.
+function impactScore(p) {
+  if (!p) return 0
+  const pts = Number(p.points) || 0
+  const reb = Number(p.rebounds) || 0
+  const ast = Number(p.assists) || 0
+  const stl = Number(p.steals) || 0
+  const blk = Number(p.blocks) || 0
+  const to  = Number(p.turnovers) || 0
+  return pts + reb * 1.2 + ast * 1.5 + stl * 2 + blk * 2 - to * 0.5
+}
+
+function pickTopPlayer(players) {
+  if (!Array.isArray(players) || players.length === 0) return null
+  // Require at least a point or board played — silences the "no stats yet"
+  // edge case at game start where every player is a tied zero.
+  const ranked = [...players]
+    .filter(p => (Number(p.points) || 0) + (Number(p.rebounds) || 0) + (Number(p.assists) || 0) + (Number(p.steals) || 0) + (Number(p.blocks) || 0) > 0)
+    .sort((a, b) => impactScore(b) - impactScore(a))
+  return ranked[0] || null
+}
+
+const topHomePlayer = computed(() => pickTopPlayer(boxScore.value.home))
+const topAwayPlayer = computed(() => pickTopPlayer(boxScore.value.away))
 
 // Players currently on court for live stats
 // For user's team in live mode, use selectedLineup for guaranteed accuracy
@@ -1676,6 +1710,21 @@ watch(
   }
 )
 
+// Reset the stat-animation baselines whenever a new game's animation data
+// loads. Without this, prev* refs hold the PREVIOUS game's accumulated
+// stats; the new game's first emission has zeros, and the
+// `oldVal !== newVal` check fires the green stat-pop on stats that never
+// actually accrued. Bug only showed up at the very start of games and
+// "fixed itself" once enough new plays accumulated to wash out the stale
+// baseline.
+watch(animationData, () => {
+  prevPlayerStats.value = {}
+  prevAwayRanking.value = []
+  prevHomeRanking.value = []
+  animatingStats.value = {}
+  animatingStatPlayers.value = {}
+})
+
 // Watch for ranking changes in live stats and trigger animations
 watch(
   [topAwayScorers, topHomeScorers],
@@ -2042,6 +2091,8 @@ watch([isQuarterBreak, showAnimationMode], ([isBreak, isAnimating]) => {
     document.body.style.overflow = ''
     // Reset substitutions view when quarter break closes
     showSubstitutionsView.value = false
+    // Re-collapse the strategy card so the next break opens closed-by-default
+    qbStrategyExpanded.value = false
   }
 })
 
@@ -2118,7 +2169,11 @@ onUnmounted(() => {
                in-progress status badge lives in .game-header-top so we
                don't burn a center column on mobile (would squeeze the
                team logos and stacked scores). -->
-          <div v-if="!isComplete && !isInProgress" class="game-center">
+          <div
+            v-if="!isComplete && !isInProgress"
+            class="game-center"
+            :class="{ 'is-playoff-preview': game.is_playoff }"
+          >
             <p class="vs-text">VS</p>
           </div>
 
@@ -2233,6 +2288,17 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- Team Momentum Bar (live broadcast only) -->
+            <MomentumBar
+              v-if="hasAnimationData"
+              :home-momentum="currentHomeMomentum"
+              :away-momentum="currentAwayMomentum"
+              :home-color="homeTeam?.primary_color || '#6B7280'"
+              :away-color="awayTeam?.primary_color || '#6B7280'"
+              :home-abbr="homeTeam?.abbreviation || ''"
+              :away-abbr="awayTeam?.abbreviation || ''"
+            />
+
             <!-- Court and Live Stats Row -->
             <template v-if="hasAnimationData">
             <div class="court-stats-row">
@@ -2295,7 +2361,7 @@ onUnmounted(() => {
                 <div v-if="isQuarterBreak" class="qb-modal-overlay">
                   <div class="qb-modal-container">
                     <!-- Header -->
-                    <header class="qb-modal-header" :class="{ 'game-complete-header': gameJustCompleted || completedQuarter >= 4 }">
+                    <header class="qb-modal-header" :class="{ 'game-complete-header': gameJustCompleted || completedQuarter >= 4, 'qb-header-with-action': !(gameJustCompleted || completedQuarter >= 4) }">
                       <!-- Game Complete Header (use completedQuarter >= 4 as fallback) -->
                       <template v-if="gameJustCompleted || completedQuarter >= 4">
                         <h2 class="qb-modal-title game-complete">Final</h2>
@@ -2306,6 +2372,18 @@ onUnmounted(() => {
                       <!-- Quarter Break Header -->
                       <template v-else>
                         <h2 class="qb-modal-title">End of Q{{ completedQuarter }}</h2>
+                        <button
+                          v-if="isLiveMode && !showSubstitutionsView"
+                          class="qb-header-continue-btn"
+                          :disabled="simulating"
+                          @click="handleQuarterBreakContinue"
+                        >
+                          <span v-if="simulating" class="qb-btn-loading"></span>
+                          <template v-else>
+                            <span>Continue</span>
+                            <ChevronRight :size="18" />
+                          </template>
+                        </button>
                       </template>
                     </header>
 
@@ -2353,13 +2431,75 @@ onUnmounted(() => {
                         </div>
                       </div>
 
+                      <!-- Top Players (per team) — quick read of who's been
+                           carrying the night. Hidden in substitutions view
+                           and at game-complete to avoid duplicating the
+                           postgame leaders panel. -->
+                      <div
+                        v-if="!showSubstitutionsView && !gameJustCompleted && completedQuarter < 4 && (topAwayPlayer || topHomePlayer)"
+                        class="qb-top-players-card"
+                      >
+                        <div class="qb-top-players-label">Top Performers</div>
+                        <div class="qb-top-players-grid">
+                          <!-- Away top -->
+                          <div class="qb-top-player-block away" :style="{ '--team-color': awayTeam?.primary_color || '#666' }">
+                            <div class="qb-top-player-team">{{ awayTeam?.abbreviation }}</div>
+                            <template v-if="topAwayPlayer">
+                              <div class="qb-top-player-row">
+                                <PlayerAvatar :player="topAwayPlayer" :size="36" />
+                                <span class="qb-top-player-name">{{ topAwayPlayer.name }}</span>
+                              </div>
+                              <div class="qb-top-player-stats">
+                                <span class="qb-top-stat"><b>{{ topAwayPlayer.points || 0 }}</b>PTS</span>
+                                <span class="qb-top-stat"><b>{{ topAwayPlayer.rebounds || 0 }}</b>REB</span>
+                                <span class="qb-top-stat"><b>{{ topAwayPlayer.assists || 0 }}</b>AST</span>
+                                <span class="qb-top-stat"><b>{{ topAwayPlayer.steals || 0 }}</b>STL</span>
+                                <span class="qb-top-stat"><b>{{ topAwayPlayer.blocks || 0 }}</b>BLK</span>
+                              </div>
+                            </template>
+                            <div v-else class="qb-top-player-empty">—</div>
+                          </div>
+                          <!-- Home top -->
+                          <div class="qb-top-player-block home" :style="{ '--team-color': homeTeam?.primary_color || '#666' }">
+                            <div class="qb-top-player-team">{{ homeTeam?.abbreviation }}</div>
+                            <template v-if="topHomePlayer">
+                              <div class="qb-top-player-row">
+                                <PlayerAvatar :player="topHomePlayer" :size="36" />
+                                <span class="qb-top-player-name">{{ topHomePlayer.name }}</span>
+                              </div>
+                              <div class="qb-top-player-stats">
+                                <span class="qb-top-stat"><b>{{ topHomePlayer.points || 0 }}</b>PTS</span>
+                                <span class="qb-top-stat"><b>{{ topHomePlayer.rebounds || 0 }}</b>REB</span>
+                                <span class="qb-top-stat"><b>{{ topHomePlayer.assists || 0 }}</b>AST</span>
+                                <span class="qb-top-stat"><b>{{ topHomePlayer.steals || 0 }}</b>STL</span>
+                                <span class="qb-top-stat"><b>{{ topHomePlayer.blocks || 0 }}</b>BLK</span>
+                              </div>
+                            </template>
+                            <div v-else class="qb-top-player-empty">—</div>
+                          </div>
+                        </div>
+                      </div>
+
                       <!-- Coaching Adjustments (only in live mode during quarter breaks, not game complete) -->
                       <div v-if="isLiveMode && !gameJustCompleted && completedQuarter < 4" class="qb-coaching-section">
                         <!-- Main View -->
                         <template v-if="!showSubstitutionsView">
-                          <!-- Strategy Settings - Full Width -->
-                          <div class="qb-strategy-card">
-                            <div class="strategy-row">
+                          <!-- Strategy Settings - collapsible (closed by default) -->
+                          <div class="qb-strategy-card" :class="{ 'is-collapsed': !qbStrategyExpanded }">
+                            <button
+                              type="button"
+                              class="qb-strategy-toggle"
+                              :aria-expanded="qbStrategyExpanded"
+                              @click="qbStrategyExpanded = !qbStrategyExpanded"
+                            >
+                              <span class="qb-strategy-toggle-label">Coach Settings</span>
+                              <ChevronDown
+                                :size="18"
+                                class="qb-strategy-chevron"
+                                :class="{ 'is-open': qbStrategyExpanded }"
+                              />
+                            </button>
+                            <div v-show="qbStrategyExpanded" class="strategy-row">
                               <div class="strategy-group">
                                 <span class="strategy-label">Offense</span>
                                 <div class="strategy-pills">
@@ -2402,18 +2542,6 @@ onUnmounted(() => {
                             <span>Substitutions</span>
                           </button>
 
-                          <!-- Continue Button -->
-                          <button
-                            class="qb-continue-btn"
-                            :disabled="simulating"
-                            @click="handleQuarterBreakContinue"
-                          >
-                            <span v-if="simulating" class="qb-btn-loading"></span>
-                            <template v-else>
-                              <ChevronRight :size="20" />
-                              <span>Continue</span>
-                            </template>
-                          </button>
                           <button
                             class="qb-sim-to-end-btn"
                             :disabled="simulating"
@@ -3913,9 +4041,8 @@ onUnmounted(() => {
             </main>
 
             <footer class="inj-footer">
-              <button class="inj-btn-dismiss" @click="showInjuryModal = false">
-                Dismiss
-              </button>
+              <!-- Dismiss removed; X close + backdrop click both still
+                   exit the modal. Action buttons stay. -->
               <button class="inj-btn-cpu" @click="handleCpuSetLineup">
                 <Zap :size="16" />
                 CPU Set Lineup
@@ -3977,9 +4104,8 @@ onUnmounted(() => {
             </main>
 
             <footer class="inj-footer">
-              <button class="inj-btn-dismiss" @click="showRecoveryModal = false">
-                Dismiss
-              </button>
+              <!-- Dismiss removed; X close + backdrop click both still
+                   exit the modal. -->
               <button class="inj-btn-cpu" @click="handleCpuSetLineup">
                 <Zap :size="16" />
                 CPU Set Lineup
@@ -3998,6 +4124,12 @@ onUnmounted(() => {
 
 <style scoped>
 .game-view {
+  /* Match the homepage's 16px horizontal gutter so the game preview's
+     content cards line up with the floating bottom nav and the home
+     view's record / status row. Overrides the template's Tailwind `p-6`
+     (24px) on the horizontal axis; vertical padding from `p-6` stays. */
+  padding-left: 16px;
+  padding-right: 16px;
   padding-bottom: 100px;
   max-width: 1024px;
   margin: 0 auto;
@@ -4321,6 +4453,15 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   padding: 0 24px;
+}
+
+/* Desktop-only spacer for playoff previews: the round label + series-record
+   badge in .game-header-top overlap the VS text on wide layouts. Drop the
+   VS column down so it clears the badge. */
+@media (min-width: 1024px) {
+  .game-center.is-playoff-preview {
+    margin-top: 50px;
+  }
 }
 
 .vs-text {
@@ -5022,6 +5163,39 @@ onUnmounted(() => {
   justify-content: space-between;
 }
 
+/* Quarter-break header with the inline Continue action — title left,
+   Continue right (mirrors the game-complete layout). */
+.qb-modal-header.qb-header-with-action {
+  justify-content: space-between;
+}
+
+.qb-header-continue-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-lg);
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.qb-header-continue-btn:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.qb-header-continue-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .qb-header-btn {
   padding: 8px 16px;
   background: var(--color-primary);
@@ -5195,11 +5369,142 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+/* Top Performers card — one mini-block per team showing the highest-impact
+   player so far (and their key counting stats). Sits between the score
+   card and the coaching adjustments at every live-mode quarter break. */
+.qb-top-players-card {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+}
+
+.qb-top-players-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.qb-top-players-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.qb-top-player-block {
+  padding: 10px 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-left: 3px solid var(--team-color, #666);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.qb-top-player-team {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--team-color, var(--color-text-tertiary));
+}
+
+.qb-top-player-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.qb-top-player-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qb-top-player-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 0.65rem;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.04em;
+}
+
+.qb-top-stat b {
+  display: inline-block;
+  margin-right: 3px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.qb-top-player-empty {
+  font-size: 0.85rem;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  padding: 8px 0;
+}
+
+@media (max-width: 480px) {
+  .qb-top-players-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .qb-strategy-card {
   padding: 16px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
+}
+
+.qb-strategy-card.is-collapsed {
+  padding: 8px 16px;
+}
+
+.qb-strategy-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.qb-strategy-card:not(.is-collapsed) .qb-strategy-toggle {
+  margin-bottom: 12px;
+}
+
+.qb-strategy-toggle-label {
+  color: var(--color-text-secondary);
+}
+
+.qb-strategy-chevron {
+  transition: transform 0.2s ease;
+  color: var(--color-text-tertiary);
+}
+
+.qb-strategy-chevron.is-open {
+  transform: rotate(180deg);
 }
 
 .strategy-row {

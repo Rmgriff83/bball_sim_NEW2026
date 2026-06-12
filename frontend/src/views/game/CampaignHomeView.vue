@@ -32,12 +32,13 @@ import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
-import { FREE_AGENCY_DURATION_DAYS } from '@/engine/season/SeasonDeadlines'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase } from 'lucide-vue-next'
+import { FREE_AGENCY_DURATION_DAYS, isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase, Dumbbell, HeartPulse, Telescope, BarChart3, Clock, Smile, Meh, Frown } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
+import { calculateRetentionScore } from '@/engine/ai/MotivationService'
 import EndOfFreeAgencyModal from '@/components/team/EndOfFreeAgencyModal.vue'
 import UserFreeAgencyOffers from '@/components/team/UserFreeAgencyOffers.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
@@ -106,6 +107,117 @@ const campaign = computed(() => campaignStore.currentCampaign)
 const team = computed(() => campaign.value?.team)
 // Use teamStore roster which includes season_stats
 const roster = computed(() => teamStore.roster || [])
+
+// Facilities (training / medical / scouting / analytics, 1-5 scale).
+// Prefer teamStore.team — it's loaded straight from TeamRepository so
+// always carries facilities. Fall back to the campaign-attached team
+// during the initial hydrate window.
+const FACILITIES_ORDER = [
+  { key: 'training', label: 'Training', icon: Dumbbell },
+  { key: 'medical', label: 'Medical', icon: HeartPulse },
+  { key: 'scouting', label: 'Scouting', icon: Telescope },
+  { key: 'analytics', label: 'Analytics', icon: BarChart3 },
+]
+const facilities = computed(() => {
+  const src = teamStore.team?.facilities ?? team.value?.facilities ?? null
+  if (!src) return null
+  return FACILITIES_ORDER.map(({ key, label, icon }) => ({
+    key,
+    label,
+    icon,
+    level: Math.max(0, Math.min(5, Number(src[key] ?? 0))),
+  }))
+})
+
+// Upcoming free agents — roster players whose contracts expire this
+// offseason (`contractYearsRemaining === 1`). Same filter the finance
+// store uses in `playersEligibleForResign` (stores/finance.js:48);
+// inlined here so the home view doesn't pull the finance store in
+// just for one predicate. Sorted by OVR so the most valuable expiring
+// guys lead the at-a-glance list.
+const upcomingFreeAgents = computed(() =>
+  (teamStore.roster ?? [])
+    .filter(p => (p.contractYearsRemaining ?? p.contract_years_remaining ?? 0) === 1)
+    .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+)
+const upcomingFreeAgentsPreview = computed(() => upcomingFreeAgents.value.slice(0, 4))
+
+// Hide the home-view "Expiring Contracts" strip when re-signing is closed.
+// Two close states:
+//   1. In-season after Dec 15 — `resign_deadline_passed` is set; the user
+//      can no longer extend anyone until next offseason, so a teaser they
+//      can't act on is just noise.
+//   2. Any offseason phase — `isOffseason` covers 'offseason',
+//      'offseason_free_agency', and 'offseason_draft'. By the time the
+//      user lands in offseason, expiring contracts have already been
+//      flipped to FA so the list would be empty anyway; explicit gate keeps
+//      the card off the offseason hub regardless.
+const showUpcomingFreeAgents = computed(() => {
+  if (!teamStore.team) return false
+  if (isOffseason.value) return false
+  if (isPastResignDeadline(campaign.value)) return false
+  return true
+})
+
+function formatSalaryShort(salary) {
+  const n = Number(salary ?? 0)
+  if (!n) return '—'
+  return `$${(n / 1_000_000).toFixed(1)}M`
+}
+
+// Team morale = rounded average of roster `personality.morale` (with a few
+// fallback paths). Already aggregated by the team store as `teamChemistry`,
+// so just reuse it — null when no roster is loaded yet.
+const teamMorale = computed(() => {
+  if (!teamStore.team) return null
+  const value = Number(teamStore.teamChemistry ?? 0)
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : null
+})
+
+// Color + label thresholds match `PlayerDetailModal.vue:585-596` (the
+// same green/amber/orange/red bands used on the per-player morale tile).
+function moraleColor(pct) {
+  if (pct == null) return 'var(--color-text-tertiary)'
+  if (pct >= 80) return '#22c55e'
+  if (pct >= 50) return '#f59e0b'
+  if (pct >= 25) return '#f97316'
+  return '#ef4444'
+}
+function moraleLabel(pct) {
+  if (pct == null) return '—'
+  if (pct >= 80) return 'Excellent'
+  if (pct >= 50) return 'Good'
+  if (pct >= 25) return 'Low'
+  return 'Critical'
+}
+
+// Face icon tier matches `PlayerDetailModal.vue:594-598` so the home-view
+// at-a-glance read uses the same iconography as the per-player tile.
+function moraleIcon(pct) {
+  if (pct == null || pct >= 80) return Smile
+  if (pct >= 25) return Meh
+  return Frown
+}
+
+// Re-sign likelihood for an expiring player. Same scoring used by the
+// PlayerDetailModal / ResignModal / DropPlayerModal — see
+// `frontend/src/engine/ai/MotivationService.js:307` (calculateRetentionScore).
+// Returns null when the player has no motivations object so we can hide the
+// meter cleanly instead of showing a meaningless 50%.
+function resignLikelihood(player) {
+  if (!player?.motivations) return null
+  return calculateRetentionScore(player, {})
+}
+
+// Matches the green/amber/red breakpoints PlayerDetailModal uses at
+// PlayerDetailModal.vue:572 — keeps the visual language consistent across
+// the app.
+function resignColor(pct) {
+  if (pct == null) return 'var(--color-text-tertiary)'
+  if (pct >= 70) return '#22c55e'
+  if (pct >= 40) return '#f59e0b'
+  return '#ef4444'
+}
 
 // Live team-overall (avg OVR of healthy, non-FA, non-retired players).
 // Derived from the reactive roster so it updates immediately after trades /
@@ -991,7 +1103,11 @@ async function maybeAutoFinishRegularSeason() {
       !gameStore.backgroundSimulating
   ) {
     try {
-      await gameStore.simulateRemainingSeason(campaignId.value)
+      const response = await gameStore.simulateRemainingSeason(campaignId.value)
+      // If the run paused on a deadline/All-Star modal, leave playoff-status
+      // check to the resume completion — checkPlayoffStatus fires SeasonEndModal
+      // which would conflict with the SimPauseModal still on screen.
+      if (response?.paused) return
       await checkPlayoffStatus()
     } catch (err) {
       console.error('Failed to auto-finish regular season:', err)
@@ -1173,6 +1289,21 @@ async function handleEnterOffseason() {
 
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showSuccess('Welcome to the offseason!')
+
+    // Fire achievement toasts for anything the user team earned this season.
+    // `enterOffseason` already wrote these onto `campaign.achievements`
+    // (see `archiveSeasonData` in CampaignManager.js) — the toasts are the
+    // moment-of-earn callout; the persistent record drives the Dashboard
+    // Recent Activity feed and Campaign-card meta.
+    const earned = Array.isArray(result.newAchievements) ? result.newAchievements : []
+    for (const ach of earned) {
+      const prefix = ach.type === 'championship'
+        ? '🏆 '
+        : ach.type === 'conference_championship'
+          ? '👑 '
+          : '🎟️ '
+      toastStore.showSuccess(`${prefix}Achievement Unlocked: ${ach.label}`, 4500)
+    }
 
     // Surface MVP / All-NBA / All-Defense / All-Rookie selections in a popup
     // modal, mirroring the championship/series-result flow. Skipped if the
@@ -1581,7 +1712,14 @@ const showFeaturedPlayerModal = ref(false)
 
 function openPlayerDetails() {
   if (!featuredPlayer.value) return
-  modalPlayer.value = featuredPlayer.value
+  openPlayerInModal(featuredPlayer.value)
+}
+
+// Shared opener so the FA card rows (and any future card surface) can
+// reuse the same PlayerDetailModal mount the Featured Player click uses.
+function openPlayerInModal(player) {
+  if (!player) return
+  modalPlayer.value = player
   showFeaturedPlayerModal.value = true
 }
 
@@ -2084,6 +2222,20 @@ function handleCloseProposalModal() {
   currentProposal.value = null
 }
 
+function handleNegotiateProposal(proposal) {
+  // Stage the asset breakdown for the trade wizard, then route into the
+  // Trades tab. TradesTab consumes the store state on mount and forwards it
+  // to TradeCenter, which opens the wizard prefilled with both sides so the
+  // user can build a counter.
+  tradeStore.setNegotiationFromProposal(proposal)
+  if (currentProposal.value) {
+    dismissedProposalIds.value.add(currentProposal.value.id)
+  }
+  showTradeProposalModal.value = false
+  currentProposal.value = null
+  router.push(`/campaign/${campaignId.value}/team?tab=trades`)
+}
+
 // All-Star selection handling
 async function checkAllStarSelections() {
   const camp = campaignStore.currentCampaign
@@ -2336,6 +2488,59 @@ function handleCloseSimulateModal() {
             </div>
           </template>
         </TeamHeader>
+      </div>
+
+      <!-- Status row — pairs the facilities strip (85% width, deep-links
+           to Personnel) with a minimal morale chip (15% width, just a
+           face icon + percent). Both render their own card chrome so a
+           missing data state on either side still looks like an
+           intentional section break, not a broken layout. Sits above
+           the Record card so the at-a-glance "franchise health" line
+           (facilities + morale) is the first thing the user reads on
+           the home view. -->
+      <div v-if="facilities || teamMorale != null" class="home-status-row">
+        <router-link
+          v-if="facilities"
+          :to="`/campaign/${campaignId}/team?tab=personnel`"
+          class="facilities-card glass-card-nebula"
+          data-tour="home-facilities"
+          :aria-label="'Open Personnel tab'"
+        >
+          <div class="facilities-strip">
+            <div
+              v-for="f in facilities"
+              :key="f.key"
+              class="facility-tile"
+              :title="`${f.label}: ${f.level} / 5`"
+              :aria-label="`${f.label} ${f.level} of 5`"
+            >
+              <component :is="f.icon" :size="14" class="facility-icon" />
+              <span class="facility-label">{{ f.label }}</span>
+              <span class="facility-rating">
+                <span class="facility-value">{{ f.level }}</span>
+                <Star :size="11" class="facility-star" />
+              </span>
+            </div>
+          </div>
+        </router-link>
+
+        <!-- Team morale chip — just a face icon + numeric percent. Same
+             threshold bands as the per-player morale tile in
+             PlayerDetailModal so the visual language carries across. -->
+        <section
+          v-if="teamMorale != null"
+          class="team-morale-card glass-card-nebula"
+          data-tour="home-team-morale"
+          :title="`Team morale: ${teamMorale} / 100 (${moraleLabel(teamMorale)})`"
+        >
+          <component
+            :is="moraleIcon(teamMorale)"
+            :size="16"
+            class="team-morale-icon"
+            :style="{ color: moraleColor(teamMorale) }"
+          />
+          <span class="team-morale-pct" :style="{ color: moraleColor(teamMorale) }">{{ teamMorale }}%</span>
+        </section>
       </div>
 
       <!-- Record Card - Cosmic gradient -->
@@ -3128,6 +3333,65 @@ function handleCloseSimulateModal() {
         </div>
       </section>
 
+      <!-- Upcoming Free Agents — roster players whose contracts expire
+           this offseason. At-a-glance teaser that deep-links to the full
+           FinancesTab → Expiring sub-tab for actual re-sign work. Hidden
+           if there's no team to read a roster off; rendered with an empty
+           state when everyone's locked in. -->
+      <section v-if="showUpcomingFreeAgents" class="upcoming-fa-card glass-card-nebula" data-tour="home-upcoming-fa">
+        <div class="upcoming-fa-header">
+          <h3 class="section-header upcoming-fa-title">
+            <Clock :size="13" class="upcoming-fa-icon" />
+            EXPIRING CONTRACTS
+            <span v-if="upcomingFreeAgents.length > 0" class="upcoming-fa-count">{{ upcomingFreeAgents.length }}</span>
+          </h3>
+          <router-link
+            v-if="upcomingFreeAgents.length > 0"
+            :to="`/campaign/${campaignId}/team?tab=finances&sub=expiring`"
+            class="upcoming-fa-view-all"
+          >
+            View all →
+          </router-link>
+        </div>
+        <div v-if="upcomingFreeAgents.length === 0" class="upcoming-fa-empty">
+          All contracts locked in for next season.
+        </div>
+        <div v-else class="upcoming-fa-list">
+          <button
+            v-for="p in upcomingFreeAgentsPreview"
+            :key="p.id"
+            type="button"
+            class="fa-row"
+            @click="openPlayerInModal(p)"
+          >
+            <span class="fa-avatar">
+              <PlayerAvatar :player="p" :size="40" :campaign-id="campaignId" />
+              <span class="fa-avatar-position">{{ p.position }}</span>
+            </span>
+            <span class="fa-name">{{ p.name || `${p.firstName ?? p.first_name ?? ''} ${p.lastName ?? p.last_name ?? ''}`.trim() }}</span>
+            <span class="fa-ovr" :title="`Overall rating: ${p.overallRating ?? p.overall_rating ?? '—'}`">
+              <span class="fa-ovr-label">OVR</span>
+              <span class="fa-ovr-value">{{ p.overallRating ?? p.overall_rating ?? '—' }}</span>
+            </span>
+            <span class="fa-salary">{{ formatSalaryShort(p.contractSalary ?? p.contract_salary) }}</span>
+            <span
+              v-if="resignLikelihood(p) !== null"
+              class="fa-meter"
+              :title="`Re-sign likelihood: ${resignLikelihood(p)}%`"
+            >
+              <span class="fa-meter-label">Re-sign</span>
+              <span class="fa-meter-track">
+                <span
+                  class="fa-meter-fill"
+                  :style="{ width: resignLikelihood(p) + '%', background: resignColor(resignLikelihood(p)) }"
+                />
+              </span>
+              <span class="fa-meter-pct" :style="{ color: resignColor(resignLikelihood(p)) }">{{ resignLikelihood(p) }}%</span>
+            </span>
+          </button>
+        </div>
+      </section>
+
       <!-- News Feed Card -->
       <section class="news-card" data-tour="home-news">
         <h3 class="section-header">LATEST NEWS</h3>
@@ -3284,6 +3548,7 @@ function handleCloseSimulateModal() {
       @close="handleCloseProposalModal"
       @accept="handleAcceptProposal"
       @reject="handleRejectProposal"
+      @negotiate="handleNegotiateProposal"
     />
 
     <!-- All-Star Modal -->
@@ -3371,11 +3636,9 @@ function handleCloseSimulateModal() {
               <p class="inj-hint">Injured starters will be automatically benched. Update your lineup to set replacements.</p>
             </main>
 
-            <!-- Footer -->
+            <!-- Footer — Dismiss removed; the X in the header and the
+                 backdrop click both close the modal. Action buttons stay. -->
             <footer class="inj-footer">
-              <button class="inj-btn-dismiss" @click="showInjuryModal = false">
-                Dismiss
-              </button>
               <button class="inj-btn-cpu" @click="handleCpuSetLineup">
                 <Zap :size="16" />
                 CPU Set Lineup
@@ -3437,9 +3700,8 @@ function handleCloseSimulateModal() {
             </main>
 
             <footer class="inj-footer">
-              <button class="inj-btn-dismiss" @click="showRecoveryModal = false">
-                Dismiss
-              </button>
+              <!-- Dismiss removed; X close + backdrop click both still
+                   exit the modal. -->
               <button class="inj-btn-cpu" @click="handleCpuSetLineup">
                 <Zap :size="16" />
                 CPU Set Lineup
@@ -4222,6 +4484,382 @@ function handleCloseSimulateModal() {
   padding: 16px;
   margin-bottom: 16px;
   position: relative;
+}
+
+/* Facilities Card (sits between record-card and next-game-card) */
+/* Facilities strip — single tight row of 4 inline tiles. Target height
+   is roughly half the record-card so it reads as an accent line rather
+   than a section of its own. Rendered as a router-link to the Personnel
+   tab, so reset the anchor defaults and add a hover affordance. */
+.facilities-card {
+  display: block;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  padding: 6px 12px;
+  margin-bottom: 16px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.facilities-card:hover,
+.facilities-card:focus-visible {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+  border-color: var(--color-primary);
+}
+
+.facilities-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.facility-tile {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  min-width: 0;
+  color: var(--color-text-primary);
+}
+
+.facility-icon {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.facility-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.facility-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.facility-value {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.facility-star {
+  color: #fbbf24;
+  fill: #fbbf24;
+}
+
+/* Status row — pairs the facilities strip and the morale chip on one
+   line. Facilities takes ~90% via flex:9; morale takes ~10% via flex:1.
+   Each child still carries its own .glass-card-nebula chrome so a
+   single-side state (no morale or no facilities) doesn't collapse to a
+   bare bar — the visible card stretches to fill the row instead. */
+.home-status-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.home-status-row > .facilities-card {
+  flex: 85 1 0;
+  margin-bottom: 0;
+}
+
+.home-status-row > .team-morale-card {
+  flex: 15 1 0;
+  margin-bottom: 0;
+}
+
+/* Team Morale chip — face icon + numeric percent only. Thresholds /
+   colors match `PlayerDetailModal.vue:585-598`. */
+.team-morale-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  padding: 6px 10px;
+}
+
+.team-morale-icon {
+  flex-shrink: 0;
+}
+
+.team-morale-pct {
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Upcoming Free Agents Card (sits under featured-player-card) */
+.upcoming-fa-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.upcoming-fa-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.upcoming-fa-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.upcoming-fa-icon {
+  color: var(--color-text-secondary);
+}
+
+.upcoming-fa-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.upcoming-fa-view-all {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.upcoming-fa-view-all:hover {
+  text-decoration: underline;
+}
+
+.upcoming-fa-empty {
+  padding: 8px 4px;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.upcoming-fa-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fa-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto auto;
+  grid-template-areas:
+    "avatar name  ovr    salary"
+    "avatar meter meter  meter";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 8px 10px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-text-primary);
+  font: inherit;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.fa-row > .fa-avatar { grid-area: avatar; }
+.fa-row > .fa-name   { grid-area: name; }
+.fa-row > .fa-ovr    { grid-area: ovr; }
+.fa-row > .fa-salary { grid-area: salary; }
+.fa-row > .fa-meter  { grid-area: meter; }
+
+.fa-row:hover {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.06));
+  border-color: var(--color-primary);
+}
+
+/* Avatar wrapper hosts the round headshot and the absolutely-positioned
+   position badge that overlays the bottom-left corner. */
+.fa-avatar {
+  position: relative;
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.fa-avatar :deep(.player-headshot) {
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--color-bg-tertiary);
+}
+
+.fa-avatar-position {
+  position: absolute;
+  left: -8px;
+  bottom: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.fa-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Overall-rating badge — cosmic-gradient pill mirrors the `.top-player-ovr`
+   treatment used elsewhere on this page, so the user immediately reads it
+   as a player rating rather than a generic colored number. The tiny "OVR"
+   label inside removes any ambiguity. */
+.fa-ovr {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--gradient-cosmic);
+  color: #1a1520;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.fa-ovr-label {
+  font-size: 0.55rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.fa-ovr-value {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.fa-salary {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 50px;
+  text-align: right;
+}
+
+/* Re-sign likelihood meter — thin horizontal bar that sits beneath the
+   row's primary cells (spans the meter grid area). Color thresholds and
+   scoring match `getRetentionColor` / `calculateRetentionScore` in
+   PlayerDetailModal so the visual language stays consistent. */
+.fa-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.fa-meter-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.fa-meter-track {
+  position: relative;
+  flex: 1;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--glass-border);
+  overflow: hidden;
+}
+
+.fa-meter-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease, background 0.2s ease;
+}
+
+.fa-meter-pct {
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  /* Hide the verbose label on phones so all four tiles fit one line.
+     Icon + N★ is enough; the title attr still provides the full label
+     on long-press. */
+  .facility-label {
+    display: none;
+  }
+  .fa-row {
+    grid-template-columns: 44px 1fr auto;
+    grid-template-areas:
+      "avatar name   ovr"
+      "avatar salary salary"
+      "avatar meter  meter";
+    align-items: center;
+    row-gap: 2px;
+  }
+  .fa-avatar { align-self: center; }
+  .fa-salary { text-align: left; }
 }
 
 /* Pull-in-progress loader badge — shown on .record-card and .next-game-card

@@ -744,16 +744,25 @@ function _resolvePieceFills(text, tokens, layerOverrides = null) {
     //    original token/literal choice. The override value is either:
     //      - a hex string ("#ffaa00", or "#ffaa00cc" with packed alpha), OR
     //      - a palette token name ("hair.base", or "hair.base@0.5" with alpha).
+    //
+    //    A user override does NOT inherit the variant's `data-color-opacity`
+    //    baseline alpha — that sidecar is the author's intent for the default
+    //    shadow / highlight piece, NOT a property of the slot. When the user
+    //    explicitly picks `#ff8866` they want to see that color at full
+    //    strength; previously the baseline made it render at e.g. 52% which
+    //    washed out customized faces the moment any other edit (typically
+    //    adding a headband) triggered the first re-compose. Honor a packed
+    //    alpha if the override carries one, otherwise leave the override
+    //    opaque.
     if (layerOverrides) {
       const labelMatch = attrs.match(/data-color-label="([^"]+)"/)
       if (labelMatch) {
         const override = layerOverrides[labelMatch[1].trim()]
         if (override) {
           const { base, alpha } = _parseColorWithAlpha(override)
-          const effectiveAlpha = alpha != null ? alpha : baselineAlpha
           const baseHex = base?.startsWith('#') ? base : (tokens[String(base).trim()] || base)
           const fill = baseHex?.startsWith('#')
-            ? _hexWithAlpha(baseHex, effectiveAlpha)
+            ? _hexWithAlpha(baseHex, alpha)
             : baseHex
           if (fill) return match.replace(/>$/, ` fill="${fill}">`)
         }

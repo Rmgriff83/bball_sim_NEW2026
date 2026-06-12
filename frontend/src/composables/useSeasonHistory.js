@@ -67,8 +67,20 @@ export function formatSeasonHistoryRow(entry) {
 /**
  * Build a combined season stats table from past seasonHistory + current season_stats.
  * Returns array sorted by year descending.
+ *
+ * When `currentSeasonPlayoffStats` is provided and the player has played at
+ * least one playoff game, the current-season row gets a `playoffStats` field
+ * attached. The detail-modal template renders that as an indented sub-row
+ * beneath the parent. Archived prior seasons never get this — we don't
+ * persist per-player playoff history.
  */
-export function buildSeasonStatsTable(seasonHistory, currentSeasonStats, currentYear, currentTeamAbbr) {
+export function buildSeasonStatsTable(
+  seasonHistory,
+  currentSeasonStats,
+  currentYear,
+  currentTeamAbbr,
+  currentSeasonPlayoffStats = null
+) {
   const rows = []
   const yearsSeen = new Set()
 
@@ -90,7 +102,7 @@ export function buildSeasonStatsTable(seasonHistory, currentSeasonStats, current
   // season_stats hasn't been reset yet.
   if (currentSeasonStats && currentYear && !yearsSeen.has(currentYear)) {
     const cs = currentSeasonStats
-    rows.push({
+    const currentRow = {
       year: currentYear,
       team: currentTeamAbbr || '—',
       gp: cs.games_played ?? cs.gamesPlayed ?? 0,
@@ -104,7 +116,27 @@ export function buildSeasonStatsTable(seasonHistory, currentSeasonStats, current
       ft_pct: cs.ft_pct ?? cs.ftPct ?? 0,
       mpg: cs.mpg ?? 0,
       isCurrent: true,
-    })
+    }
+
+    const ps = currentSeasonPlayoffStats
+    const playoffGp = ps?.games_played ?? ps?.gamesPlayed ?? 0
+    if (ps && playoffGp > 0) {
+      currentRow.playoffStats = {
+        team: currentTeamAbbr || '—',
+        gp: playoffGp,
+        ppg: ps.ppg ?? 0,
+        rpg: ps.rpg ?? 0,
+        apg: ps.apg ?? 0,
+        spg: ps.spg ?? 0,
+        bpg: ps.bpg ?? 0,
+        fg_pct: ps.fg_pct ?? ps.fgPct ?? 0,
+        three_pct: ps.three_pct ?? ps.threePct ?? 0,
+        ft_pct: ps.ft_pct ?? ps.ftPct ?? 0,
+        mpg: ps.mpg ?? 0,
+      }
+    }
+
+    rows.push(currentRow)
   }
 
   // Sort by year descending (most recent first)

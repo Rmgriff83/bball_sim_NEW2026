@@ -372,9 +372,55 @@ export function generateLeagueRosters(campaignId, teams, opts = {}) {
   }
 
   validateAndRebalance(allPlayers)
+  tagInitialRookies(allPlayers, startYear)
   assignHeadshotsByOverall(allPlayers)
 
   return { players: allPlayers, modes }
+}
+
+/**
+ * Post-generation rookie tagging. The initial 450-player league is built
+ * entirely with `generateVeteran` calls, so no one ends up with
+ * `draftYear === startYear` — which means ROY / All-Rookie awards have no
+ * eligible candidates in the first season and the campaign's first
+ * postseason ceremony quietly skips them. (Previously deliberate — when
+ * the league seeded from real NBA names we didn't want to fake-flag a
+ * 26-year-old as a rookie. With pure procedural generation that
+ * concern's gone.)
+ *
+ * Picks up to `target` of the youngest players league-wide (age <=
+ * `maxAge`) and stamps them as current-year rookies. Tiebreak by overall
+ * descending so the highest-impact young players carry the tag — keeps
+ * the ROY race feeling competitive in year 1.
+ *
+ * Only mutates two fields:
+ *  - `draftYear` / `draft_year` → drives AwardService's ROY + All-Rookie
+ *    eligibility predicates (filters on `draftYear === currentSeasonYear`).
+ *  - `careerSeasons` / `career_seasons` → resets to 0 so age-banded
+ *    development helpers (PlayerEvolution / DevelopmentCalculator) treat
+ *    them as true year-one players.
+ *
+ * Attributes, contracts, salaries, and badges are intentionally left
+ * untouched — the underlying `generateVeteran` shape for a 19-22yr
+ * player already passes for a rookie. A future pass could swap in
+ * rookie-scale contracts if that's the next sore spot, but it isn't
+ * blocking ROY / All-Rookie surfacing today.
+ */
+function tagInitialRookies(allPlayers, startYear, { target = 30, maxAge = 22 } = {}) {
+  const eligible = allPlayers
+    .filter(p => (p?.age ?? 99) <= maxAge)
+    .sort((a, b) => {
+      const ageDelta = (a.age ?? 99) - (b.age ?? 99)
+      if (ageDelta !== 0) return ageDelta
+      return (b.overallRating ?? 0) - (a.overallRating ?? 0)
+    })
+  const toTag = eligible.slice(0, target)
+  for (const p of toTag) {
+    p.draftYear = startYear
+    p.draft_year = startYear
+    p.careerSeasons = 0
+    p.career_seasons = 0
+  }
 }
 
 /**

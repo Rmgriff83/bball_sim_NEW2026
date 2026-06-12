@@ -18,6 +18,18 @@ const purchasing = ref(false)
 const restoring = ref(false)
 const confirmBundle = ref(null)
 
+// Live prices fetched from RevenueCat (App Store Connect-driven) on mount.
+// Keyed by product id — empty until the offering loads. The `priceFor`
+// helper below picks the live value when available and falls back to the
+// hardcoded `bundle.price` placeholder, so an offline / un-configured /
+// SDK-errored state just keeps showing the static catalog price.
+const livePrices = ref({})
+
+function priceFor(bundle) {
+  if (!bundle) return ''
+  return livePrices.value[bundle.id] || bundle.price
+}
+
 const tokenBalance = computed(() => authStore.profile?.tokens ?? 0)
 const isNative = Capacitor.isNativePlatform()
 
@@ -63,22 +75,15 @@ const unlockBundles = [
     id: 'headshot_editor_unlock',
     kind: 'unlock',
     feature: 'headshot_editor',
-    price: '$5.99',
+    price: '$3.99',
     label: 'Headshot Editor',
-    description: 'Customize any player\'s, coach\'s, or other personnel\'s headshot. Also unlocks renaming your team on campaign creation. One-time purchase.'
+    description: 'Unlock full headshot customization for every player, coach, and staff member — plus team renaming on campaign creation. One-time purchase, applies across all your campaigns.'
   }
 ]
 
 function isUnlockOwned(bundle) {
   return bundle.kind === 'unlock' && authStore.hasFeature(bundle.feature)
 }
-
-// Show the sandbox banner whenever the publishable key is a Stripe test key,
-// regardless of whether this is a dev or prod build.
-const isStripeSandbox = computed(() => {
-  const key = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || ''
-  return !key || key.startsWith('pk_test_')
-})
 
 function promptPurchase(bundle) {
   if (isUnlockOwned(bundle)) return
@@ -174,6 +179,18 @@ onMounted(async () => {
     } catch (err) {
       console.error('initIAP failed', err)
     }
+    // Pull live prices from the configured RevenueCat offering so a
+    // catalog price change in App Store Connect propagates here without
+    // a code edit / resubmission. Failure is silent — the hardcoded
+    // `bundle.price` strings remain visible as fallback.
+    try {
+      const prices = await iap.getProductPrices()
+      if (prices && typeof prices === 'object') {
+        livePrices.value = prices
+      }
+    } catch (err) {
+      console.warn('getProductPrices failed; using hardcoded placeholders', err)
+    }
   }
 
   // Web only — Stripe redirects back to /store?checkout=success or
@@ -208,10 +225,6 @@ onMounted(async () => {
     <!-- Main Content -->
     <main class="store-main">
       <div class="store-container">
-        <!-- Sandbox Banner — Stripe sandbox banner is web-only -->
-        <div v-if="!isNative && isStripeSandbox" class="test-banner">
-          Sandbox Mode — use Stripe test cards
-        </div>
 
         <!-- Token Balance -->
         <div class="balance-section">
@@ -245,7 +258,7 @@ onMounted(async () => {
               </div>
               <div class="bundle-amount">{{ bundle.label }}</div>
               <div class="bundle-label">Award Tokens</div>
-              <div class="bundle-price">{{ bundle.price }}</div>
+              <div class="bundle-price">{{ priceFor(bundle) }}</div>
               <button
                 class="purchase-btn"
                 @click="promptPurchase(bundle)"
@@ -277,7 +290,7 @@ onMounted(async () => {
               </div>
               <div class="unlock-label">{{ bundle.label }}</div>
               <p class="unlock-description">{{ bundle.description }}</p>
-              <div class="bundle-price">{{ bundle.price }}</div>
+              <div class="bundle-price">{{ priceFor(bundle) }}</div>
               <button
                 class="purchase-btn"
                 :disabled="isUnlockOwned(bundle)"
@@ -315,7 +328,7 @@ onMounted(async () => {
         <div class="confirm-label">
           {{ confirmBundle.kind === 'unlock' ? 'One-Time Unlock' : 'Award Tokens' }}
         </div>
-        <div class="confirm-price">{{ confirmBundle.price }}</div>
+        <div class="confirm-price">{{ priceFor(confirmBundle) }}</div>
         <div v-if="confirmBundle.kind === 'tokens'" class="confirm-balance">
           Balance after purchase: <strong>{{ (tokenBalance + confirmBundle.amount).toLocaleString() }}</strong>
         </div>

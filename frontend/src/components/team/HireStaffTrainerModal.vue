@@ -46,7 +46,7 @@ const STAFF_TRAINER_TIERS = {
     rating: 85,
     perks: [
       { key: 'growth_boost', label: 'Elite Development', description: 'Players develop 10% faster from game performance', requiredLevel: 3 },
-      { key: 'fatigue_reduction', label: 'Conditioning Program', description: 'Players generate 5% less fatigue during games', requiredLevel: 4 },
+      { key: 'accelerated_training', label: 'Accelerated Training', description: 'Cuts player training time by 67% (1h → 20m)', requiredLevel: 4 },
     ]
   }
 }

@@ -1,18 +1,89 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useCampaignStore } from '@/stores/campaign'
 import { GlassCard, BaseButton } from '@/components/ui'
-import { Gamepad2, Plus, User, LogOut, LayoutDashboard, Trophy, ShoppingBag } from 'lucide-vue-next'
+import { Gamepad2, Plus, User, LogOut, LayoutDashboard, Trophy, ShoppingBag, Crown, CalendarCheck } from 'lucide-vue-next'
+import { backfillCampaignAchievements } from '@/engine/campaign/CampaignManager'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const campaignStore = useCampaignStore()
 const user = computed(() => authStore.user)
+
+// Aggregated achievement feed across every campaign the user has. Empty
+// until campaigns are fetched on mount. Sorted newest-first by the
+// achievement's stamped date; capped at 20 so a long-running dynasty
+// doesn't push the rest of the page off-screen.
+const recentActivity = computed(() => {
+  const all = []
+  for (const c of (campaignStore.campaigns || [])) {
+    if (!Array.isArray(c.achievements)) continue
+    for (const ach of c.achievements) {
+      all.push({ ...ach, campaignId: c.id, campaignName: c.name })
+    }
+  }
+  all.sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+  return all.slice(0, 20)
+})
+
+const ACHIEVEMENT_ICONS = {
+  championship: Trophy,
+  conference_championship: Crown,
+  playoff_berth: CalendarCheck,
+}
+function iconFor(type) {
+  return ACHIEVEMENT_ICONS[type] || Trophy
+}
+
+// Relative-date helper for the feed. Falls back to the raw YYYY-MM-DD if
+// the parse fails (shouldn't, but defensive — the stamp is engine-side).
+function formatRelative(dateStr) {
+  if (!dateStr) return ''
+  const ts = Date.parse(dateStr)
+  if (!Number.isFinite(ts)) return dateStr
+  const elapsedMs = Date.now() - ts
+  const day = 86400000
+  if (elapsedMs < day) return 'Today'
+  if (elapsedMs < 2 * day) return 'Yesterday'
+  if (elapsedMs < 7 * day) return `${Math.floor(elapsedMs / day)} days ago`
+  if (elapsedMs < 30 * day) return `${Math.floor(elapsedMs / (7 * day))} weeks ago`
+  if (elapsedMs < 365 * day) return `${Math.floor(elapsedMs / (30 * day))} months ago`
+  return `${Math.floor(elapsedMs / (365 * day))} years ago`
+}
+
+function openCampaign(campaignId) {
+  router.push(`/campaign/${campaignId}`)
+}
 
 async function handleLogout() {
   await authStore.logout()
   router.push('/login')
 }
+
+onMounted(async () => {
+  // Fetch campaigns so the Recent Activity feed populates without forcing
+  // a /campaigns trip first.
+  try {
+    await campaignStore.fetchCampaigns()
+  } catch (err) {
+    console.warn('[Dashboard] fetchCampaigns failed', err)
+    return
+  }
+  // Backfill achievements for legacy campaigns (idempotent — gated by
+  // `campaign.settings.achievementsBackfilled`). Fire-and-forget; the
+  // feed re-derives reactively when each campaign saves.
+  for (const c of campaignStore.campaigns || []) {
+    backfillCampaignAchievements(c.id).then(() => {
+      // Re-fetch the touched campaign so the recentActivity computed
+      // picks up the newly-derived entries. Cheaper than refetching all.
+      return campaignStore.fetchCampaigns()
+    }).catch(err => {
+      console.warn('[Dashboard] backfill failed for campaign', c.id, err)
+    })
+  }
+})
 </script>
 
 <template>
@@ -92,7 +163,7 @@ async function handleLogout() {
         <section class="activity-section">
           <h2 class="section-title">Recent Activity</h2>
           <GlassCard padding="lg" :hoverable="false" class="activity-card">
-            <div class="empty-activity">
+            <div v-if="recentActivity.length === 0" class="empty-activity">
               <Gamepad2 :size="40" class="empty-icon" />
               <p class="empty-text">No recent activity yet</p>
               <p class="empty-subtext">Start a campaign to begin your journey!</p>
@@ -100,6 +171,24 @@ async function handleLogout() {
                 Get Started
               </BaseButton>
             </div>
+            <ul v-else class="activity-feed">
+              <li
+                v-for="ach in recentActivity"
+                :key="ach.id"
+                class="activity-item"
+                :class="`activity-item--${ach.type}`"
+                @click="openCampaign(ach.campaignId)"
+              >
+                <span class="activity-icon" :class="`activity-icon--${ach.type}`">
+                  <component :is="iconFor(ach.type)" :size="18" />
+                </span>
+                <span class="activity-body">
+                  <span class="activity-label">{{ ach.label }}</span>
+                  <span class="activity-meta">{{ ach.campaignName }} · {{ ach.subtitle }}</span>
+                </span>
+                <span class="activity-time">{{ formatRelative(ach.date) }}</span>
+              </li>
+            </ul>
           </GlassCard>
         </section>
       </div>
@@ -292,6 +381,102 @@ async function handleLogout() {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* When a feed exists, stretch the card so the rows have room to breathe;
+   when empty the centered empty-state styling above takes over. */
+.activity-card:has(.activity-feed) {
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.activity-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.activity-item {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.activity-item:hover {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.06));
+  border-color: var(--color-primary);
+}
+
+.activity-item:active {
+  transform: translateY(1px);
+}
+
+.activity-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(124, 58, 237, 0.12);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.activity-icon--championship {
+  background: rgba(250, 204, 21, 0.16);
+  color: #facc15;
+}
+
+.activity-icon--conference_championship {
+  background: rgba(168, 85, 247, 0.16);
+  color: #a855f7;
+}
+
+.activity-icon--playoff_berth {
+  background: rgba(56, 189, 248, 0.16);
+  color: #38bdf8;
+}
+
+.activity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.activity-label {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.2;
+}
+
+.activity-meta {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-time {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .empty-activity {

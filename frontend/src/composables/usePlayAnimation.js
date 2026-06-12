@@ -26,6 +26,11 @@ export function usePlayAnimation() {
   const displayedHomeScore = ref(0)
   const displayedAwayScore = ref(0)
   const displayedBoxScore = ref(null)
+  // Momentum display refs — same staggered pattern as the scoreboard so the UI
+  // swings on the same beat as the +2/+3 animation rather than jumping the
+  // instant a possession's outcome is known.
+  const displayedHomeMomentum = ref(50)
+  const displayedAwayMomentum = ref(50)
   let scoreUpdateTimeout = null
 
   // Computed properties
@@ -76,6 +81,8 @@ export function usePlayAnimation() {
    */
   const currentHomeScore = computed(() => displayedHomeScore.value)
   const currentAwayScore = computed(() => displayedAwayScore.value)
+  const currentHomeMomentum = computed(() => displayedHomeMomentum.value)
+  const currentAwayMomentum = computed(() => displayedAwayMomentum.value)
 
   /**
    * Force the displayed scores to a specific value. Used after a sim-to-end
@@ -128,18 +135,28 @@ export function usePlayAnimation() {
     // Get the box score from the just-finished possession
     const targetBoxScore = justFinished.box_score || null
 
+    // Momentum is stamped on the just-finished possession too. Display it on
+    // the same beat as the scoreboard so the bar swings *with* the +2/+3
+    // animation rather than ahead of it.
+    const targetHomeMomentum = justFinished.momentum?.home ?? displayedHomeMomentum.value
+    const targetAwayMomentum = justFinished.momentum?.away ?? displayedAwayMomentum.value
+
     if (homeScored || awayScored) {
       // Scoring happened - delay update to sync with the +2/+3 animation
       scoreUpdateTimeout = setTimeout(() => {
         displayedHomeScore.value = targetHome
         displayedAwayScore.value = targetAway
         displayedBoxScore.value = targetBoxScore
+        displayedHomeMomentum.value = targetHomeMomentum
+        displayedAwayMomentum.value = targetAwayMomentum
       }, 250)
     } else {
       // No score change - update immediately
       displayedHomeScore.value = targetHome
       displayedAwayScore.value = targetAway
       displayedBoxScore.value = targetBoxScore
+      displayedHomeMomentum.value = targetHomeMomentum
+      displayedAwayMomentum.value = targetAwayMomentum
     }
   })
 
@@ -378,6 +395,9 @@ export function usePlayAnimation() {
       displayedHomeScore.value = 0
       displayedAwayScore.value = 0
     }
+    // Reset momentum to neutral on new animation load.
+    displayedHomeMomentum.value = 50
+    displayedAwayMomentum.value = 50
 
     // Initialize box score from starting box score or first possession
     if (options.startingBoxScore) {
@@ -626,6 +646,8 @@ export function usePlayAnimation() {
     currentQuarter,
     currentHomeScore,
     currentAwayScore,
+    currentHomeMomentum,
+    currentAwayMomentum,
     currentBoxScore,
     currentActivatedBadges,
     currentActivatedSynergies,

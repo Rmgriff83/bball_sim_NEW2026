@@ -1,8 +1,9 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { usePlayoffStore } from '@/stores/playoff'
 import { useCampaignStore } from '@/stores/campaign'
+import { useTeamStore } from '@/stores/team'
 import { Home, Users, Trophy, Play, Binoculars } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -15,9 +16,33 @@ const props = defineProps({
 const route = useRoute()
 const playoffStore = usePlayoffStore()
 const campaignStore = useCampaignStore()
+const teamStore = useTeamStore()
 
 const scoutingPoints = computed(() => {
   return campaignStore.currentCampaign?.settings?.scoutingPoints ?? 0
+})
+
+// "Training ready" indicator — mirrors the desktop top-nav. Drives a small
+// green dot on the GM tab when the user's active player-training session
+// has completed. Re-evaluates every 30s.
+const _trainTick = ref(Date.now())
+let _trainTickHandle = null
+const trainingReadyForClaim = computed(() => {
+  void _trainTick.value
+  const t = teamStore.coach?.activeTraining
+  if (!t?.endsAt) return false
+  return new Date(t.endsAt).getTime() <= Date.now()
+})
+onMounted(() => {
+  if (_trainTickHandle == null) {
+    _trainTickHandle = setInterval(() => { _trainTick.value = Date.now() }, 30 * 1000)
+  }
+})
+onUnmounted(() => {
+  if (_trainTickHandle != null) {
+    clearInterval(_trainTickHandle)
+    _trainTickHandle = null
+  }
 })
 
 const seasonPhase = computed(() => {
@@ -90,7 +115,7 @@ function isActive(routeName) {
 </script>
 
 <template>
-  <nav class="bottom-nav">
+  <nav class="bottom-nav" data-tour="home-bottom-nav">
     <router-link
       v-for="item in navItems"
       :key="item.name"
@@ -106,13 +131,16 @@ function isActive(routeName) {
         :fill="isActive(item.routeName) ? 'currentColor' : 'none'"
       />
 
-      <!-- Users Icon -->
-      <Users
-        v-else-if="item.icon === 'users'"
-        class="bottom-nav-icon"
-        :size="24"
-        :fill="isActive(item.routeName) ? 'currentColor' : 'none'"
-      />
+      <!-- Users Icon (GM View) — small green dot when a player training
+           session is ready to claim. Mirrors the desktop nav indicator. -->
+      <template v-else-if="item.icon === 'users'">
+        <Users
+          class="bottom-nav-icon"
+          :size="24"
+          :fill="isActive(item.routeName) ? 'currentColor' : 'none'"
+        />
+        <span v-if="trainingReadyForClaim" class="train-ready-dot" :title="'Player training ready to claim'"></span>
+      </template>
 
       <!-- Trophy Icon -->
       <Trophy
@@ -150,14 +178,16 @@ function isActive(routeName) {
      strip below the nav shows the page background — common pattern in native
      iOS apps and now consistent across all mobile clients. */
   bottom: env(safe-area-inset-bottom);
-  /* Centered floating "island" look on every mobile device. The 90% / 430px
-     pairing renders as ~88vw on phones and caps on tablets so the nav doesn't
-     stretch into a bar. */
+  /* Width-matched to the home view's content cards so the nav looks like a
+     paired strip rather than a narrower floating pill. Home (and the rest
+     of the campaign views) use `.campaign-home { max-width: 1024px;
+     padding: 8px 16px; }` — net inner width = viewport - 32px on phones,
+     capped at 1024 - 32 = 992px on tablets. Mirror those exact values. */
   left: 50%;
   right: auto;
   transform: translateX(-50%);
-  width: 90%;
-  max-width: 430px;
+  width: calc(100% - 32px);
+  max-width: 992px;
   z-index: 50;
   display: flex;
   justify-content: space-around;
@@ -264,6 +294,20 @@ function isActive(routeName) {
   font-weight: 700;
   line-height: 18px;
   text-align: center;
+}
+
+/* Player-training "ready to claim" indicator on the GM tab. Single dot
+   (there's only ever one active training at a time), positioned mirror
+   to .scout-badge. */
+.train-ready-dot {
+  position: absolute;
+  top: 4px;
+  right: 18px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
 }
 
 /* Hide on desktop */

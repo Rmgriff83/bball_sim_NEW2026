@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useFinanceStore } from '@/stores/finance'
 import { useTradeStore } from '@/stores/trade'
 import { GlassCard, LoadingSpinner } from '@/components/ui'
@@ -52,6 +52,20 @@ function handleStartTrade({ player, teamId }) {
   activeSubTab.value = 'center'
 }
 
+// Negotiation handoff from the inbound-proposal modal. The trade store carries
+// the asset breakdown across views/components, and we forward it to TradeCenter
+// via its existing `prefill` prop while forcing the user onto the wizard.
+function consumeNegotiationFromStore() {
+  const prefill = tradeStore.consumeNegotiationPrefill()
+  if (!prefill) return
+  tradePrefill.value = prefill
+  activeSubTab.value = 'center'
+}
+
+watch(() => tradeStore.negotiationPrefill, (val) => {
+  if (val) consumeNegotiationFromStore()
+})
+
 onMounted(async () => {
   try {
     await Promise.all([
@@ -64,6 +78,9 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  // Honor a negotiation handoff that arrived before this tab mounted
+  // (the user clicked Negotiate from CampaignHomeView and we're routing in).
+  if (tradeStore.negotiationPrefill) consumeNegotiationFromStore()
 })
 </script>
 

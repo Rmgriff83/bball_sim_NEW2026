@@ -176,9 +176,12 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * Update player season stats from a box score.
+   * Update player season stats from a box score. Playoff games are routed to
+   * a separate `playoffPlayerStats` bucket on seasonData so award-eligibility
+   * checks (which gate on a percentage of max regular-season games) aren't
+   * inflated by deep-playoff teams' extra game count.
    */
-  function _updatePlayerStatsFromBoxScore(seasonData, boxScore, homeTeamId, awayTeamId) {
+  function _updatePlayerStatsFromBoxScore(seasonData, boxScore, homeTeamId, awayTeamId, isPlayoff = false) {
     if (!boxScore) return
 
     const sides = { home: homeTeamId, away: awayTeamId }
@@ -187,7 +190,7 @@ export const useGameStore = defineStore('game', () => {
         const playerId = playerStats.player_id ?? playerStats.playerId ?? null
         const playerName = playerStats.name ?? 'Unknown'
         if (!playerId) continue
-        SeasonManager.updatePlayerStats(seasonData, playerId, playerName, teamId, playerStats)
+        SeasonManager.updatePlayerStats(seasonData, playerId, playerName, teamId, playerStats, { isPlayoff })
       }
     }
   }
@@ -255,9 +258,25 @@ export const useGameStore = defineStore('game', () => {
   }
 
   async function _awardScoutingPoints(campaign, newDate) {
-    // Only award scouting points during the regular season
+    // Only award scouting points during the regular season. There are two
+    // sources of truth: the explicit `phase` field (offseason / playoffs)
+    // AND the existence of a `playoffBracket` on this year's SeasonData
+    // (set the moment playoffs start, even before any phase field flips).
+    // We check both because the phase field defaults to `regular_season`
+    // when undefined, which previously let points keep accruing through
+    // the playoffs.
     const phase = campaign.settings?.season_phase ?? campaign.settings?.seasonPhase ?? campaign.phase ?? 'regular_season'
     if (phase !== 'regular_season') return 0
+
+    try {
+      const year = campaign.currentSeasonYear ?? campaign.year
+      if (year != null) {
+        const seasonData = await SeasonRepository.get(campaign.id, year)
+        if (seasonData?.playoffBracket) return 0
+      }
+    } catch (err) {
+      console.warn('[GameStore] Scout-point playoff check failed:', err)
+    }
 
     const prevDate = campaign.currentDate || `${campaign.currentSeasonYear ?? 2025}-10-21`
     const prevMs = new Date(prevDate).getTime()
@@ -321,7 +340,11 @@ export const useGameStore = defineStore('game', () => {
 
   /**
    * Compute active staff trainer perks for the user's team.
-   * Returns { growthBoost, fatigueReduction } based on hired staff_trainer and training facility level.
+   * Returns { growthBoost } based on hired staff_trainer and training
+   * facility level. The 4-star `accelerated_training` perk is read by the
+   * team store's training session helpers (not here) — it doesn't affect
+   * per-game state. The legacy `fatigue_reduction` perk was removed when
+   * Accelerated Training replaced Conditioning Program.
    */
   async function _getStaffTrainerPerks(campaign) {
     const staffTrainer = campaign.settings?.staff_trainer
@@ -334,7 +357,6 @@ export const useGameStore = defineStore('game', () => {
     const trainingLevel = userTeam?.facilities?.training ?? 1
 
     let growthBoost = 0
-    let fatigueReduction = 0
 
     for (const perk of (staffTrainer.perks || [])) {
       if (trainingLevel < perk.requiredLevel) continue
@@ -342,13 +364,10 @@ export const useGameStore = defineStore('game', () => {
       if (perk.key === 'growth_boost') {
         growthBoost = staffTrainer.tier === 4 ? 0.10 : 0.05
       }
-      if (perk.key === 'fatigue_reduction') {
-        fatigueReduction = 0.05
-      }
     }
 
-    if (growthBoost === 0 && fatigueReduction === 0) return {}
-    return { growthBoost, fatigueReduction }
+    if (growthBoost === 0) return {}
+    return { growthBoost }
   }
 
   /**
@@ -628,14 +647,11 @@ export const useGameStore = defineStore('game', () => {
 
       // --- Pre-deadline warning (1 week before trade/re-sign deadline) ---
       // Surface the warning to the user from any single-shot path (live play,
-      // single sim, simulateRemainingSeason). We route this through the
-      // BreakingNewsModal rather than SimPauseModal because (a) single-shot
-      // paths are mid-flight, so the modal would be informational only — there
-      // is no sim loop to pause/resume — and (b) the breaking-news queue is
-      // the reliable cross-route surface; the simulationPaused / pauseState
-      // pathway was previously inconsistent here. The day-by-day multi-sim
-      // path still uses _enterPause in simulateToGame because that path CAN
-      // actually halt and wait for user input.
+      // single sim, simulateRemainingSeason). We enqueue breaking news AND
+      // raise the SimPauseModal — multi-day sim loops (simulateToGame,
+      // simulateRemainingSeason) actively check `simulationPaused` to halt
+      // mid-flight; single-shot paths see it as an informational popup that
+      // the user dismisses via resumeSimulation()'s no-context branch.
       if (
         previousDate &&
         previousDate < warningDate &&
@@ -653,6 +669,17 @@ export const useGameStore = defineStore('game', () => {
         } catch (newsErr) {
           console.warn('[GameStore] Failed to enqueue trade-deadline warning:', newsErr)
         }
+        // Raise pause state so multi-day loops break out. simulateToGame has
+        // its own _enterPause that fires earlier (pre-day) and will overwrite
+        // this with a proper resume context — that's intentional. For
+        // simulateRemainingSeason and single-shot callers, this is the only
+        // signal that surfaces the modal.
+        pauseState.value = {
+          reason: 'trade_deadline',
+          payload: { deadlineDate, warningDate },
+        }
+        pauseResumeContext.value = null
+        simulationPaused.value = true
       }
 
       // --- Trade & re-sign deadlines (Dec 15) ---
@@ -938,7 +965,7 @@ export const useGameStore = defineStore('game', () => {
     }
 
     // Update player stats
-    _updatePlayerStatsFromBoxScore(seasonData, result.box_score, game?.homeTeamId, game?.awayTeamId)
+    _updatePlayerStatsFromBoxScore(seasonData, result.box_score, game?.homeTeamId, game?.awayTeamId, !!(game?.isPlayoff || game?.is_playoff))
 
     // Update each team's coach career record (regular-season W/L or playoff
     // W/L). Persists immediately so sync's normal team push picks it up.
@@ -2175,102 +2202,167 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * Simulate all remaining regular season games after the user has finished their schedule.
+   * Simulate all remaining regular-season games until either the season ends
+   * or the loop hits a pauseable event (trade/re-sign deadline warning,
+   * All-Star selections). Walks day-by-day rather than batching all user
+   * games then all AI games — the batched flavor couldn't observe the pause
+   * flag mid-flight, so deadline warnings fired only as post-sim breaking
+   * news, after the entire season was already played.
+   *
+   * Returns `{ paused: true }` when halted; the SimPauseModal surfaces and
+   * `resumeSimulation()` re-enters this function with `{ resume: true }`.
+   * Resumed runs read cursorDate + lastFiredPause off pauseResumeContext.
    */
-  async function simulateRemainingSeason(campaignId) {
+  async function simulateRemainingSeason(campaignId, { resume = false } = {}) {
+    if (!resume) {
+      pauseState.value = null
+      pauseResumeContext.value = null
+    }
+    simulationPaused.value = false
     simulating.value = true
     error.value = null
+
+    const toastStore = useToastStore()
+    let progressToastId = null
+
     try {
       const { year, userTeamId, userLineup, userTargetMinutes, campaign } = await _getCampaignContext(campaignId)
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData) throw new Error(`Season ${year} not found`)
 
-      const engineStore = useEngineStore()
-      const worker = engineStore.getWorker()
-      const toastStore = useToastStore()
-
-      // Find all remaining unplayed games
       const remainingGames = seasonData.schedule.filter(g => !g.isComplete && !g.isPlayoff)
-
       if (remainingGames.length === 0) {
         simulating.value = false
         return { message: 'No remaining games to simulate' }
       }
 
+      const lastGameDate = remainingGames.reduce(
+        (max, g) => (g.gameDate > max ? g.gameDate : max),
+        remainingGames[0].gameDate
+      )
+
+      const deadlines = getSeasonDeadlines(year)
+      const engineStore = useEngineStore()
+      const worker = engineStore.getWorker()
+      const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
+
+      // Resume context: lastFiredPause suppresses the matching pause-check on
+      // the first iteration after resume so we don't immediately re-trigger.
+      const lastFiredPause = resume ? (pauseResumeContext.value?.lastFiredPause ?? null) : null
+      let cursorDate = (resume && pauseResumeContext.value?.cursorDate)
+        ? pauseResumeContext.value.cursorDate
+        : (campaign.currentDate || `${year}-10-21`)
+
+      const totalRemaining = remainingGames.filter(g => g.gameDate >= cursorDate).length
+      let completedCount = 0
+
       backgroundSimulating.value = true
-      simulationProgress.value = { completed: 0, total: remainingGames.length }
-      const progressToastId = toastStore.showProgress('Simulating season', 0, remainingGames.length)
+      simulationProgress.value = { completed: 0, total: totalRemaining }
+      progressToastId = toastStore.showProgress('Simulating season', 0, totalRemaining)
 
-      try {
-        // Separate user games from AI games
-        const userGames = remainingGames.filter(
-          g => g.homeTeamId === userTeamId || g.awayTeamId === userTeamId
-        )
-        const aiGames = remainingGames.filter(
-          g => g.homeTeamId !== userTeamId && g.awayTeamId !== userTeamId
-        )
-
-        let completedCount = 0
-        const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
-
-        // Simulate user games one by one (for evolution tracking)
-        for (const game of userGames) {
-          const { homeTeam, awayTeam, homePlayers, awayPlayers } = await _loadGameSimData(campaignId, game)
-          const result = await worker.simulateGame(homeTeam, awayTeam, homePlayers, awayPlayers, {
-            generateAnimationData: false,
-            userTeamId,
-            userLineup,
-            targetMinutes: userTargetMinutes,
+      while (cursorDate <= lastGameDate) {
+        // 1. PRE-DAY pause: trade/re-sign deadline warning (one week before Dec 15)
+        if (
+          cursorDate === deadlines.tradeDeadlineWarning &&
+          !campaign.settings?.deadline_warning_shown &&
+          !campaign.settings?.trade_deadline_passed &&
+          lastFiredPause !== 'trade_deadline'
+        ) {
+          if (progressToastId != null) {
+            try { toastStore.removeMinimalToast(progressToastId) } catch (_) { /* noop */ }
+            progressToastId = null
+          }
+          if (!campaign.settings) campaign.settings = {}
+          campaign.settings.deadline_warning_shown = true
+          await CampaignRepository.save(campaign)
+          return _enterPause('trade_deadline', {
+            deadlineDate: deadlines.tradeDeadline,
+            warningDate: cursorDate,
+          }, {
+            campaignId,
+            resumeAction: 'simulateRemainingSeason',
+            cursorDate,
+            lastFiredPause: 'trade_deadline',
           })
-          const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
-            userTeamId,
-            homeTeamId: game.homeTeamId,
-            awayTeamId: game.awayTeamId,
-            difficulty: campaign.difficulty || 'pro',
-            gameDate: game.gameDate,
-            trainerPerks,
-          })
-          result.evolution = evolution
-          await _persistGameResult(campaignId, year, seasonData, game.id, result, true)
-          await _applyEvolutionToPlayers(evolution, game)
+        }
 
+        // 2. AI games on this day
+        const dayAiGames = seasonData.schedule.filter(g =>
+          g.gameDate === cursorDate &&
+          !g.isComplete && !g.isCancelled && !g.isPlayoff &&
+          g.homeTeamId !== userTeamId && g.awayTeamId !== userTeamId
+        )
+        if (dayAiGames.length > 0) {
+          await _simulateAiGamesBulk(campaignId, year, seasonData, dayAiGames, worker, (progress) => {
+            const c = completedCount + progress.completed
+            simulationProgress.value = { completed: c, total: totalRemaining }
+            if (progressToastId != null) toastStore.updateProgress(progressToastId, c, totalRemaining)
+          })
+          completedCount += dayAiGames.length
+        }
+
+        // 3. User game on this day?
+        const userGameToday = seasonData.schedule.find(g =>
+          g.gameDate === cursorDate &&
+          !g.isComplete &&
+          (g.homeTeamId === userTeamId || g.awayTeamId === userTeamId)
+        )
+        if (userGameToday) {
+          await _simulateOneUserGame(campaignId, year, seasonData, userGameToday, {
+            userTeamId, userLineup, userTargetMinutes, campaign, worker, trainerPerks,
+          })
           completedCount++
-          toastStore.updateProgress(progressToastId, completedCount, remainingGames.length)
-          simulationProgress.value = { completed: completedCount, total: remainingGames.length }
+          simulationProgress.value = { completed: completedCount, total: totalRemaining }
+          if (progressToastId != null) toastStore.updateProgress(progressToastId, completedCount, totalRemaining)
         }
 
-        // Simulate AI games in bulk
-        if (aiGames.length > 0) {
-          await _simulateAiGamesBulk(campaignId, year, seasonData, aiGames, worker, (progress) => {
-            const total = remainingGames.length
-            const completed = completedCount + progress.completed
-            simulationProgress.value = { completed, total }
-            toastStore.updateProgress(progressToastId, completed, total)
+        // 4. Advance the date — fires _processMidSeasonEvents (flag flips,
+        // news, All-Star roster gen). It may flip simulationPaused inline.
+        await _advanceDateIfNeeded(campaignId, cursorDate)
+
+        // 5. POST-DAY pause: _processMidSeasonEvents may have raised an
+        // inline pause (deadline warning when crossed via date advance, or
+        // All-Star roster generation). Convert to a proper halt with resume
+        // context so "Continue Sim" picks up on the following day.
+        if (
+          simulationPaused.value &&
+          !pauseResumeContext.value &&
+          pauseState.value
+        ) {
+          if (progressToastId != null) {
+            try { toastStore.removeMinimalToast(progressToastId) } catch (_) { /* noop */ }
+            progressToastId = null
+          }
+          return _enterPause(pauseState.value.reason, pauseState.value.payload, {
+            campaignId,
+            resumeAction: 'simulateRemainingSeason',
+            cursorDate: _addOneDay(cursorDate),
+            lastFiredPause: pauseState.value.reason,
           })
         }
 
-        // Advance date past the last game (before backgroundSimulating goes false)
-        const lastGame = remainingGames[remainingGames.length - 1]
-        if (lastGame) {
-          await _advanceDateIfNeeded(campaignId, lastGame.gameDate)
-        }
-      } finally {
-        toastStore.removeMinimalToast(progressToastId)
-        backgroundSimulating.value = false
-        simulationProgress.value = null
+        cursorDate = _addOneDay(cursorDate)
       }
 
-      // Refresh games list and invalidate league standings so UI picks up new results
+      if (progressToastId != null) {
+        try { toastStore.removeMinimalToast(progressToastId) } catch (_) { /* noop */ }
+        progressToastId = null
+      }
+      backgroundSimulating.value = false
+      simulationProgress.value = null
+
       await fetchGames(campaignId, { force: true })
       useLeagueStore().invalidate()
-
       simulating.value = false
-      return { completed: remainingGames.length }
+      return { completed: totalRemaining }
     } catch (err) {
       error.value = err.message || 'Failed to simulate remaining season'
       simulating.value = false
       backgroundSimulating.value = false
       simulationProgress.value = null
+      if (progressToastId != null) {
+        try { toastStore.removeMinimalToast(progressToastId) } catch (_) { /* noop */ }
+      }
       throw err
     }
   }
@@ -2621,13 +2713,16 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * Resume a paused sim. Re-enters simulateToGame with { resume: true } so the
-   * lastFiredPause suppression skips the immediate same-boundary trigger.
+   * Resume a paused sim. Dispatches based on `resumeAction` in the context:
+   *   - 'simulateRemainingSeason' → re-enters the season-long loop
+   *   - default → re-enters simulateToGame (target-game flow)
+   * The `lastFiredPause` flag carried in the context suppresses the
+   * immediate same-boundary trigger so the resumed run doesn't bounce off
+   * the pause that just fired.
    *
-   * For pauses raised by single-shot paths (live play, single sim,
-   * simulateRemainingSeason) there's no sim loop to resume — the pause is
-   * informational and pauseResumeContext is null. In that case just clear the
-   * pause state so the modal closes.
+   * For pauses raised by single-shot paths (live play, single sim) there's
+   * no sim loop to resume — pauseResumeContext is null. In that case just
+   * clear the pause state so the modal closes.
    */
   async function resumeSimulation() {
     if (!pauseResumeContext.value) {
@@ -2636,6 +2731,9 @@ export const useGameStore = defineStore('game', () => {
       return null
     }
     const ctx = pauseResumeContext.value
+    if (ctx.resumeAction === 'simulateRemainingSeason') {
+      return await simulateRemainingSeason(ctx.campaignId, { resume: true })
+    }
     return await simulateToGame(ctx.campaignId, ctx.targetGameId, { resume: true })
   }
 
@@ -2813,6 +2911,7 @@ export const useGameStore = defineStore('game', () => {
         boxScore: r.result.box_score,
         quarterScores: r.result.quarter_scores,
         isUserGame: false,
+        isPlayoff: !!(game?.isPlayoff || game?.is_playoff),
       }
     })
 

@@ -593,8 +593,8 @@ export class AwardService {
       const names = awards.allNba.first.map(p => p.playerName).join(', ')
       events.push({
         eventType: 'award',
-        headline: 'All-NBA teams announced',
-        body: `All-NBA First Team: ${names}.`,
+        headline: 'All-League teams announced',
+        body: `All-League First Team: ${names}.`,
         gameDate: date,
       })
     }
@@ -637,7 +637,7 @@ export class AwardService {
 
     // Check All-NBA, All-Defense, All-Rookie for user team players
     const teamAwards = [
-      { key: 'allNba', label: 'All-NBA' },
+      { key: 'allNba', label: 'All-League' },
       { key: 'allDefense', label: 'All-Defense' },
       { key: 'allRookie', label: 'All-Rookie' },
     ]

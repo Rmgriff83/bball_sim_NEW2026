@@ -37,6 +37,7 @@ const leagueBlockPlayers = ref([])
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 const playerStatsMap = ref({})
+const playoffStatsMap = ref({})
 const currentSeasonYear = ref(null)
 
 function getPlayerName(player) {
@@ -68,10 +69,9 @@ function getStatLine(playerId) {
   }
 }
 
-// Build a per-game season_stats object the PlayerDetailModal can render.
+// Build a per-game stats object the PlayerDetailModal can render.
 // Matches the shape produced by team store's _attachSeasonStats.
-function buildSeasonStats(playerId) {
-  const raw = playerStatsMap.value[playerId]
+function buildPerGameStats(raw) {
   if (!raw || !raw.gamesPlayed) return null
   const gp = raw.gamesPlayed
   const fgPct = raw.fieldGoalsAttempted > 0
@@ -112,11 +112,12 @@ function buildSeasonStats(playerId) {
 }
 
 function openPlayer(player) {
-  // Clone before attaching season_stats so we don't mutate the underlying
+  // Clone before attaching stats so we don't mutate the underlying
   // PlayerRepository record (which other tabs/store code may reference).
   selectedPlayer.value = {
     ...player,
-    season_stats: buildSeasonStats(player.id),
+    season_stats: buildPerGameStats(playerStatsMap.value[player.id]),
+    season_playoff_stats: buildPerGameStats(playoffStatsMap.value[player.id]),
   }
   showPlayerModal.value = true
 }
@@ -147,18 +148,25 @@ onMounted(async () => {
       SeasonRepository.get(props.campaignId, year),
     ])
 
-    // Build stats map
-    const statsArr = seasonData?.playerStats ?? []
-    const statsMap = {}
-    if (Array.isArray(statsArr)) {
-      for (const s of statsArr) {
-        const pid = s.playerId ?? s.player_id
-        if (pid) statsMap[pid] = s
+    // Build regular-season + playoff stats maps. Playoff stats are stored
+    // in a parallel bucket on seasonData so award eligibility isn't inflated
+    // by playoff games — surface them here so the player detail modal can
+    // render its current-year playoff sub-row.
+    const buildMap = (source) => {
+      const map = {}
+      if (!source) return map
+      if (Array.isArray(source)) {
+        for (const s of source) {
+          const pid = s.playerId ?? s.player_id
+          if (pid) map[pid] = s
+        }
+      } else if (typeof source === 'object') {
+        Object.assign(map, source)
       }
-    } else if (typeof statsArr === 'object') {
-      Object.assign(statsMap, statsArr)
+      return map
     }
-    playerStatsMap.value = statsMap
+    playerStatsMap.value = buildMap(seasonData?.playerStats)
+    playoffStatsMap.value = buildMap(seasonData?.playoffPlayerStats)
 
     // User trading block
     const userBlockIds = campaign?.settings?.tradingBlock ?? []

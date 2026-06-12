@@ -48,7 +48,7 @@ watch(() => props.show, (open) => {
 
 function tierLabelFor(cost) {
   if (cost === 0) return 'Free Hire'
-  if (cost >= 3500) return 'Premier'
+  if (cost >= 2500) return 'Premier'
   return 'Established'
 }
 
@@ -113,7 +113,7 @@ function confirmReplace() {
   <Teleport to="body">
     <Transition name="modal">
       <div v-if="show" class="modal-overlay" @click.self="close">
-        <div class="modal-container">
+        <div class="modal-container" :class="{ 'is-confirm': !!pendingHire }">
           <header class="modal-header">
             <h2 class="modal-title">{{ pendingHire ? 'Confirm Coach Change' : 'Hire a Head Coach' }}</h2>
             <button class="btn-close" @click="close" aria-label="Close" :disabled="hiringId !== null">
@@ -176,8 +176,8 @@ function confirmReplace() {
                 :key="candidate.id"
                 class="candidate-card"
                 :class="{
-                  'tier-premier': (candidate.hireCost ?? 0) >= 3500,
-                  'tier-established': (candidate.hireCost ?? 0) > 0 && (candidate.hireCost ?? 0) < 3500,
+                  'tier-premier': (candidate.hireCost ?? 0) >= 2500,
+                  'tier-established': (candidate.hireCost ?? 0) > 0 && (candidate.hireCost ?? 0) < 2500,
                   'tier-free': (candidate.hireCost ?? 0) === 0,
                 }"
               >
@@ -705,6 +705,19 @@ function confirmReplace() {
   .modal-container {
     min-height: 85vh;
     max-height: 85vh;
+  }
+}
+
+/* Confirm "Coach Change" view sizes to its content — the picker grid needs
+   the full-height container, but the small confirm pane shouldn't waste the
+   bottom 60% of the viewport. */
+.modal-container.is-confirm {
+  min-height: 0;
+}
+
+@media (max-width: 480px) {
+  .modal-container.is-confirm {
+    min-height: 0;
   }
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
@@ -47,6 +47,34 @@ const syncStore = useSyncStore()
 const walkthroughStore = useWalkthroughStore()
 const { loadSynergies, getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
 
+// Live 30s tick so the training-ready dot on lineup/bench player cards flips
+// to true the moment the timer expires without needing a forced re-render.
+const _trainClockTick = ref(Date.now())
+let _trainClockHandle = null
+onMounted(() => {
+  if (_trainClockHandle == null) {
+    _trainClockHandle = setInterval(() => { _trainClockTick.value = Date.now() }, 30 * 1000)
+  }
+})
+onUnmounted(() => {
+  if (_trainClockHandle != null) {
+    clearInterval(_trainClockHandle)
+    _trainClockHandle = null
+  }
+})
+
+// True when THIS player has a finished training session waiting to claim.
+// Surfaces a green dot in the top-left of each player-avatar block on the
+// starting-lineup and bench cards.
+function isTrainingReadyFor(player) {
+  void _trainClockTick.value
+  const t = teamStore.coach?.activeTraining
+  if (!t?.endsAt) return false
+  const pid = player?.id
+  if (pid == null || String(t.playerId) !== String(pid)) return false
+  return new Date(t.endsAt).getTime() <= Date.now()
+}
+
 // Each GM sub-tab has its own first-visit walkthrough. The engine drives the
 // active tab through this channel when a step needs a particular tab shown.
 const TAB_TOUR_KEYS = {
@@ -59,7 +87,13 @@ const TAB_TOUR_KEYS = {
 }
 function startTabTour(tab) {
   const key = TAB_TOUR_KEYS[tab]
-  if (key) walkthroughStore.maybeStart(key)
+  if (!key) return
+  // Skip the trades-tab tour when the user is in the middle of a Negotiate
+  // handoff from an inbound proposal — the wizard auto-opens and the tour
+  // would overlay it. The tour will fire on a normal future visit when no
+  // prefill is pending.
+  if (tab === 'trades' && tradeStore.negotiationPrefill) return
+  walkthroughStore.maybeStart(key)
 }
 
 // Only show loading if we don't have cached team data
@@ -1455,7 +1489,7 @@ const STAFF_TRAINER_PERK_LABELS = {
               <span class="team-chemistry-value" :style="{ color: chemistryColor }">{{ teamChemistry }}%</span>
             </span>
             <span class="header-metrics-divider">&middot;</span>
-            <span class="total-minutes-value" data-tour="gm-minutes">{{ totalMinutes }} / 200 MIN</span>
+            <span class="total-minutes-value" data-tour="gm-minutes">{{ totalMinutes }} / 200</span>
             <button
               class="cpu-adjust-btn"
               data-tour="gm-cpu-auto"
@@ -1541,6 +1575,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                 <div class="avatar-column">
                   <div class="player-avatar">
                     <PlayerAvatar :player="slot.player" :size="78" class="avatar-icon" />
+                    <span v-if="isTrainingReadyFor(slot.player)" class="train-ready-dot" :title="'Training ready to claim'"></span>
                     <span class="slot-position-label card-cosmic">{{ slot.position }}</span>
                   </div>
                 </div>
@@ -1569,40 +1604,45 @@ const STAFF_TRAINER_PERK_LABELS = {
                       Injured - {{ injuryDaysLabel(slot.player) }}
                     </span>
                   </div>
-                  <!-- Minutes Meter -->
-                  <div class="minutes-meter-row" @click.stop>
-                    <label class="meter-label">MIN</label>
-                    <div class="minutes-meter-bar"
-                      :class="{ disabled: slot.player.is_injured || slot.player.isInjured }"
-                      @mousedown="(e) => startMinutesDrag(e, slot.player.id, 8)"
-                      @touchstart="(e) => startMinutesDrag(e, slot.player.id, 8)"
-                    >
-                      <div
-                        class="minutes-meter-fill"
-                        :style="{
-                          width: (getPlayerMinutes(slot.player.id, 30) / 40 * 100) + '%',
-                          backgroundColor: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30))
-                        }"
+                  <!-- Minutes + Fatigue meters group (highlighted as a unit
+                       by the GM lineup walkthrough so the tip can talk about
+                       balancing rotation minutes against fatigue together). -->
+                  <div class="min-fatigue-group" data-tour="gm-min-fatigue">
+                    <!-- Minutes Meter -->
+                    <div class="minutes-meter-row" @click.stop>
+                      <label class="meter-label">MIN</label>
+                      <div class="minutes-meter-bar"
+                        :class="{ disabled: slot.player.is_injured || slot.player.isInjured }"
+                        @mousedown="(e) => startMinutesDrag(e, slot.player.id, 8)"
+                        @touchstart="(e) => startMinutesDrag(e, slot.player.id, 8)"
                       >
-                        <span class="minutes-thumb" :style="{ backgroundColor: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30)) }"></span>
+                        <div
+                          class="minutes-meter-fill"
+                          :style="{
+                            width: (getPlayerMinutes(slot.player.id, 30) / 40 * 100) + '%',
+                            backgroundColor: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30))
+                          }"
+                        >
+                          <span class="minutes-thumb" :style="{ backgroundColor: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30)) }"></span>
+                        </div>
                       </div>
+                      <span class="minutes-pct-value" :style="{ color: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30)) }">{{ getPlayerMinutes(slot.player.id, 30) }}</span>
                     </div>
-                    <span class="minutes-pct-value" :style="{ color: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30)) }">{{ getPlayerMinutes(slot.player.id, 30) }}</span>
-                  </div>
-                  <!-- Fatigue Meter -->
-                  <div class="fatigue-meter-row">
-                    <label class="meter-label fatigue-label">FATIGUE</label>
-                    <div class="fatigue-meter-bar">
-                      <div
-                        class="fatigue-meter-fill"
-                        :style="{
-                          width: Math.round(slot.player.fatigue || 0) + '%',
-                          backgroundColor: getFatigueColor(slot.player.fatigue || 0)
-                        }"
-                      ></div>
+                    <!-- Fatigue Meter -->
+                    <div class="fatigue-meter-row">
+                      <label class="meter-label fatigue-label">FATIGUE</label>
+                      <div class="fatigue-meter-bar">
+                        <div
+                          class="fatigue-meter-fill"
+                          :style="{
+                            width: Math.round(slot.player.fatigue || 0) + '%',
+                            backgroundColor: getFatigueColor(slot.player.fatigue || 0)
+                          }"
+                        ></div>
+                      </div>
+                      <span class="fatigue-value">{{ Math.round(slot.player.fatigue || 0) }}%</span>
+                      <AlertTriangle v-if="isOverFatigued(slot.player.fatigue || 0)" :size="12" class="fatigue-warning-icon" />
                     </div>
-                    <span class="fatigue-value">{{ Math.round(slot.player.fatigue || 0) }}%</span>
-                    <AlertTriangle v-if="isOverFatigued(slot.player.fatigue || 0)" :size="12" class="fatigue-warning-icon" />
                   </div>
                 </div>
                 <div class="rating-container">
@@ -1722,6 +1762,7 @@ const STAFF_TRAINER_PERK_LABELS = {
               <div class="avatar-column">
                 <div class="player-avatar">
                   <PlayerAvatar :player="player" :size="78" class="avatar-icon" />
+                  <span v-if="isTrainingReadyFor(player)" class="train-ready-dot" :title="'Training ready to claim'"></span>
                   <span class="slot-position-label bench-label">BENCH</span>
                 </div>
               </div>
@@ -3224,6 +3265,20 @@ const STAFF_TRAINER_PERK_LABELS = {
   color: var(--color-text-tertiary);
   flex-shrink: 0;
   position: relative;
+}
+
+/* Training-ready pulse dot — top-left of the lineup/bench avatar block,
+   mirrors PlayerCard.vue and the GM-nav dot for consistency. */
+.player-avatar .train-ready-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+  z-index: 2;
 }
 
 .avatar-icon {

@@ -22,12 +22,13 @@ watch(
 )
 
 onMounted(() => {
-  // Initialize theme from localStorage or system preference
+  // Initialize theme. Dark is the default — :root in _variables.css carries
+  // the dark palette and [data-theme="light"] overrides it. Honor an explicit
+  // user override from localStorage; ignore system color-scheme so the app
+  // doesn't flip to light just because the OS prefers it.
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme) {
     document.documentElement.setAttribute('data-theme', savedTheme)
-  } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
-    document.documentElement.setAttribute('data-theme', 'light')
   }
 })
 </script>

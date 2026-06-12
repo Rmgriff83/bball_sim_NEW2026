@@ -245,6 +245,11 @@ export const FREE_AGENT_COACH_TIERS = {
     // Number of free 1-on-1 "Coach Meeting" actions the coach can hold per
     // season before the user has to start spending tokens for extras.
     coachActionsPerSeason: 1,
+    // Per-season player training budget. Separate counter from
+    // `coachActionsPerSeason` (which is morale-meeting actions). Each
+    // training kicks off a real-time idle reward that grants a random
+    // open badge/upgrade for the chosen player.
+    playerTrainsPerSeason: 2,
   },
   good: {
     overallRange: [73, 82],
@@ -255,16 +260,18 @@ export const FREE_AGENT_COACH_TIERS = {
     resignCost: 1000,
     count: 3,
     coachActionsPerSeason: 3,
+    playerTrainsPerSeason: 3,
   },
   really_good: {
     overallRange: [83, 92],
     minBadges: 2,
     maxBadges: 3,
     badgeLevels: ["silver", "gold"],
-    hireCost: 3500,
+    hireCost: 2500,
     resignCost: 2200,
     count: 2,
     coachActionsPerSeason: 5,
+    playerTrainsPerSeason: 4,
   },
 };
 
@@ -315,6 +322,17 @@ export function getCoachTierKey(coach) {
 export function getCoachActionBudget(coach) {
   if (!coach) return 0;
   return FREE_AGENT_COACH_TIERS[getCoachTierKey(coach)].coachActionsPerSeason;
+}
+
+/**
+ * Per-season free PLAYER TRAINING budget for a hired coach. Separate from
+ * `getCoachActionBudget` — coach meetings (morale tool) and player trainings
+ * (badge tool) are independent resources so users don't have to choose
+ * between the two each season.
+ */
+export function getCoachTrainBudget(coach) {
+  if (!coach) return 0;
+  return FREE_AGENT_COACH_TIERS[getCoachTierKey(coach)].playerTrainsPerSeason;
 }
 
 /**

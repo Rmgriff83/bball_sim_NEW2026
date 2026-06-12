@@ -101,4 +101,9 @@ export const SeasonRepository = {
     const season = await this.get(campaignId, year)
     return season?.playerStats || null
   },
+
+  async getPlayoffPlayerStats(campaignId, year) {
+    const season = await this.get(campaignId, year)
+    return season?.playoffPlayerStats || null
+  },
 }

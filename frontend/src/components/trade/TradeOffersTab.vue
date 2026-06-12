@@ -62,6 +62,14 @@ async function handleReject(proposal) {
   }
 }
 
+function handleNegotiate(proposal) {
+  // Stash the asset breakdown into the store; TradesTab watches it and will
+  // forward to TradeCenter, opening the wizard prefilled with both sides.
+  tradeStore.setNegotiationFromProposal(proposal)
+  showProposalModal.value = false
+  selectedProposal.value = null
+}
+
 function getTeamColor(proposal) {
   return proposal?.proposing_team?.primary_color || '#E85A4F'
 }
@@ -143,6 +151,7 @@ function formatExpiration(expiresAt) {
       @close="closeProposal"
       @accept="handleAccept"
       @reject="handleReject"
+      @negotiate="handleNegotiate"
     />
   </div>
 </template>

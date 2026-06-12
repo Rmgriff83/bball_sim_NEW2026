@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTradeStore } from '@/stores/trade'
 import { useTeamStore } from '@/stores/team'
+import { useAudioStore } from '@/stores/audio'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
@@ -25,6 +26,7 @@ const emit = defineEmits(['trade-completed', 'prefill-consumed'])
 const router = useRouter()
 const tradeStore = useTradeStore()
 const teamStore = useTeamStore()
+const audio = useAudioStore()
 const breakingNewsStore = useBreakingNewsStore()
 
 // Wizard state
@@ -169,14 +171,18 @@ watch(() => tradeStore.selectedTeamId, async (teamId) => {
   }
 })
 
-// Handle prefill from trading block
+// Handle prefill from trading block OR an inbound proposal negotiation.
+// Two supported shapes:
+//   - { player, teamId }                         → single-player request prefill
+//   - { teamId, receiving: [], giving: [] }      → full negotiation prefill
 async function applyPrefill(prefill) {
   if (!prefill || loading.value) return
 
-  const { player, teamId } = prefill
+  const isNegotiation = Array.isArray(prefill.receiving) || Array.isArray(prefill.giving)
+  const teamId = prefill.teamId
 
   // Find team from tradeable teams
-  const team = tradeableTeams.value.find(t => t.id === teamId)
+  const team = tradeableTeams.value.find(t => String(t.id) === String(teamId))
   if (!team) return
 
   // Clear any existing trade state
@@ -186,25 +192,42 @@ async function applyPrefill(prefill) {
   // Select the team (triggers fetchTeamDetails via watcher)
   selectTeam(team)
 
-  // Add the player to requesting
-  tradeStore.addToUserRequesting({
-    type: 'player',
-    id: player.id,
-    firstName: player.firstName || player.first_name,
-    lastName: player.lastName || player.last_name,
-    position: player.position,
-    overallRating: player.overallRating ?? player.overall_rating,
-    contractSalary: player.contractSalary ?? player.contract_salary,
-    contractYearsRemaining: player.contractYearsRemaining ?? player.contract_years_remaining,
-    tradeValue: player.tradeValue ?? player.trade_value,
-    age: player.age,
-  })
+  if (isNegotiation) {
+    // Seed both sides of the wizard with the proposal's asset breakdown.
+    // The store helper has already mapped these into the wizard's expected
+    // shape, so we can hand them straight to add*.
+    for (const a of (prefill.giving || [])) {
+      tradeStore.addToUserOffering(a)
+    }
+    for (const a of (prefill.receiving || [])) {
+      tradeStore.addToUserRequesting(a)
+    }
+    // Land on the partner's-assets step so the user can immediately tweak
+    // what they're asking for in the counter.
+    wizardStep.value = 3
+    assetTab.value = 'players'
+  } else {
+    // Legacy: single-player request from trading block.
+    const player = prefill.player
+    if (player) {
+      tradeStore.addToUserRequesting({
+        type: 'player',
+        id: player.id,
+        firstName: player.firstName || player.first_name,
+        lastName: player.lastName || player.last_name,
+        position: player.position,
+        overallRating: player.overallRating ?? player.overall_rating,
+        contractSalary: player.contractSalary ?? player.contract_salary,
+        contractYearsRemaining: player.contractYearsRemaining ?? player.contract_years_remaining,
+        tradeValue: player.tradeValue ?? player.trade_value,
+        age: player.age,
+      })
+    }
+    wizardStep.value = 1
+    assetTab.value = 'players'
+  }
 
-  // Open wizard at step 1 so user picks what to offer
-  wizardStep.value = 1
-  assetTab.value = 'players'
   showTradeWizard.value = true
-
   emit('prefill-consumed')
 }
 
@@ -229,6 +252,7 @@ function startTradeWizard() {
 }
 
 function closeTradeWizard() {
+  audio.cancel()
   showTradeWizard.value = false
   tradeStore.clearTrade()
   tradeStore.clearSelectedTeam()

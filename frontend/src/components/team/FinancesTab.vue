@@ -249,6 +249,7 @@ function handleInfo(player) {
       ...teamPlayer,
       ...player,
       season_stats: teamPlayer.season_stats ?? null,
+      season_playoff_stats: teamPlayer.season_playoff_stats ?? null,
     }
   } else {
     detailPlayer.value = player

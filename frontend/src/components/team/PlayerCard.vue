@@ -1,6 +1,25 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { StatBadge, Badge } from '@/components/ui'
+import { useTeamStore } from '@/stores/team'
+
+const teamStore = useTeamStore()
+
+// Live 30s tick so `trainingReadyForPlayer` flips to true the moment the
+// timer expires without needing a full re-render trigger from the parent.
+const _trainClockTick = ref(Date.now())
+let _trainClockHandle = null
+onMounted(() => {
+  if (_trainClockHandle == null) {
+    _trainClockHandle = setInterval(() => { _trainClockTick.value = Date.now() }, 30 * 1000)
+  }
+})
+onUnmounted(() => {
+  if (_trainClockHandle != null) {
+    clearInterval(_trainClockHandle)
+    _trainClockHandle = null
+  }
+})
 
 const props = defineProps({
   player: {
@@ -34,6 +53,18 @@ const positionColors = {
 const positionColor = computed(() => positionColors[props.player.position] || '#6B7280')
 
 const isInjured = computed(() => props.player.is_injured || props.player.isInjured)
+
+// True when THIS player has a finished training session waiting to claim.
+// Drives a green dot in the top-left of the rating-container so users can
+// spot the right card at a glance from the roster grid.
+const trainingReadyForPlayer = computed(() => {
+  void _trainClockTick.value
+  const t = teamStore.coach?.activeTraining
+  if (!t?.endsAt) return false
+  const pid = props.player?.id
+  if (pid == null || String(t.playerId) !== String(pid)) return false
+  return new Date(t.endsAt).getTime() <= Date.now()
+})
 
 const ratingClass = computed(() => {
   const rating = props.player.overall_rating
@@ -91,6 +122,7 @@ function getBadgeLevelColor(level) {
       <div class="flex items-center gap-3 p-3">
         <div class="rating-wrapper">
           <StatBadge :value="player.overall_rating" size="sm" />
+          <span v-if="trainingReadyForPlayer" class="train-ready-dot" :title="'Training ready to claim'"></span>
           <span v-if="isInjured" class="injury-badge-sm" title="Injured">INJ</span>
         </div>
         <div class="flex-1 min-w-0">
@@ -122,6 +154,7 @@ function getBadgeLevelColor(level) {
       <div class="card-header">
         <div class="rating-container">
           <StatBadge :value="player.overall_rating" size="lg" />
+          <span v-if="trainingReadyForPlayer" class="train-ready-dot" :title="'Training ready to claim'"></span>
           <span v-if="isInjured" class="injury-badge" title="Injured">INJ</span>
         </div>
         <div class="player-info">
@@ -479,6 +512,21 @@ function getBadgeLevelColor(level) {
   right: -4px;
   padding: 2px 4px;
   font-size: 0.6rem;
+}
+
+/* Training-ready pulse dot — top-left of the rating badge. Mirrors the
+   GM-nav `.train-ready-dot` style so the indicator reads consistently
+   across surfaces. */
+.train-ready-dot {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+  z-index: 1;
 }
 
 .injury-badge-sm {

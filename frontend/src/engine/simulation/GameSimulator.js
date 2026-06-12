@@ -18,7 +18,7 @@ import { coachingEngine } from './CoachingEngine'
 import { evaluateSubstitutions, applyVariance, getDefaultTargetMinutes } from './SubstitutionEngine'
 import * as Config from '../config/GameConfig'
 import { BADGES } from '../data/badges'
-import { SYNERGIES } from '../data/synergies'
+import { SYNERGIES, CONDITION_TO_PHASE } from '../data/synergies'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -58,6 +58,9 @@ class GameSimulator {
 
     // Play execution engine instance
     this.playEngine = new PlayExecutionEngine()
+    // Back-reference so the engine can read fatigue, momentum, and cold-streak
+    // state from the simulator during per-action probability calculation.
+    this.playEngine.gameSimulator = this
 
     // ---- Substitution state ----
     this.homeTargetMinutes = {}
@@ -110,6 +113,23 @@ class GameSimulator {
     // Computed once at tip-off from the home team's average morale.
     // Applied to the home team's made-shot probability on every possession.
     this.homeCourtAdvantage = 0.0
+
+    // ---- Momentum mechanic ----
+    // Per-team momentum value, baseline 50, hard-capped to [20, 80]. Drifts
+    // toward 50 each possession (regression-to-mean cooldown floor) and gets
+    // a one-time dampener after a 3-in-a-row run via momentumCooldown.
+    this.momentum = { home: 50, away: 50 }
+    this.momentumCooldown = { home: 0, away: 0 }
+    // Rolling makes/misses windows (last 5 shots per team) used to detect
+    // hot runs and to drive recentMakeStreak(team).
+    this.recentShots = { home: [], away: [] }
+    // Per-shooter rolling shot window (last 5 attempts) for personal cold-streak
+    // detection. shooterId -> array of booleans (true = made).
+    this.recentAttemptsByShooter = {}
+    // Set of shooter IDs that have already burned their one-shot cold-streak
+    // bonus this game. Reset when the shooter gets a make so they can claim it
+    // again on a future cold spell.
+    this.coldStreakBonusUsed = new Set()
   }
 
   // =========================================================================
@@ -575,6 +595,7 @@ class GameSimulator {
    */
   simulateQuarter() {
     this.timeRemaining = this.currentQuarter <= 4 ? QUARTER_LENGTH_MINUTES : OVERTIME_LENGTH_MINUTES
+    this.applyBetweenQuarterMomentum()
     let possessionTeam = Math.random() < 0.5 ? 'home' : 'away'
     let minutesSinceLastRotation = 0
 
@@ -608,6 +629,7 @@ class GameSimulator {
    * timeRemaining and currentQuarter must be set before calling.
    */
   simulateQuarterOnly() {
+    this.applyBetweenQuarterMomentum()
     let possessionTeam = Math.random() < 0.5 ? 'home' : 'away'
     let minutesSinceLastRotation = 0
 
@@ -674,9 +696,16 @@ class GameSimulator {
 
     this.possessionCount++
 
+    // Transition-phase synergies (e.g. Fast Break Igniter, Block-to-Break)
+    // boost the offense's transition frequency before the per-possession roll.
+    const transitionSynergyActs = this.findSynergyActivations(offense, 'transition')
+    let fastBreakSynergyBonus = 0
+    for (const act of transitionSynergyActs) {
+      fastBreakSynergyBonus += act.boost?.fastBreakChance || 0
+    }
     // Determine if this is a transition opportunity
     const transitionFreq = coachingEngine.getTransitionFrequency(offensiveScheme)
-    const isTransition = transitionFreq > Math.random()
+    const isTransition = (transitionFreq + fastBreakSynergyBonus) > Math.random()
 
     // Select a play based on team, scheme, and game situation
     const context = {
@@ -709,51 +738,68 @@ class GameSimulator {
     // Detect clutch time BEFORE the play resolves so PlayExecutionEngine can
     // apply the offensive coach's gameManagement bias to the shot probability.
     const clutchTime = this.timeRemaining < 2.0 && this.currentQuarter >= 4
+    // Pre-compute synergy candidates so PlayExecutionEngine can apply them
+    // during shot resolution and rebound battles. Defense candidates fire on
+    // the DEFENSIVE lineup — finally letting the legacy defense-side
+    // synergies (Defensive Anchor, Lockdown Defense) trigger.
+    const shotSynergyMap = new Map()
+    for (const candidate of offense) {
+      if (!candidate || candidate.id == null) continue
+      const acts = this.findSynergyActivations(offense, 'shot', candidate)
+      if (acts.length > 0) shotSynergyMap.set(String(candidate.id), acts)
+    }
+    const defenseSynergyCandidates = this.findSynergyActivations(defense, 'defense')
+    const reboundSynergyCandidates = this.findSynergyActivations(offense, 'rebound')
+
     const playOptions = {
       offensiveModifiers,
       offensiveCoach,
       clutchTime,
+      // Used by PlayExecutionEngine to read this.momentum[offensiveTeamSide]
+      // when applying the per-shot momentum spillover.
+      offensiveTeamSide: team,
+      // Synergy data — PEE applies condition gating using full shot context
+      // (shotType, dribblesSincePass, play.category) that GameSimulator
+      // doesn't have at this point.
+      synergyShotMap: shotSynergyMap,
+      synergyDefenseCandidates: defenseSynergyCandidates,
+      synergyReboundCandidates: reboundSynergyCandidates,
+      gameSimulator: this,
     }
 
     // Execute the play with defensive context
     const playResult = this.playEngine.executePlay(play, offense, defense, defensiveScheme, defensiveModifiers, playOptions)
 
-    // Calculate synergies for this possession
-    let activatedSynergies = []
-    if (playResult.shotAttempt) {
-      const shooterId = playResult.shotAttempt.shooter || null
-      let shooter = null
-      for (const player of offense) {
-        if ((player.id || null) === shooterId) {
-          shooter = player
-          break
-        }
-      }
-      if (shooter) {
-        const shotType = (() => {
-          switch (playResult.shotAttempt.shotType || 'paint') {
-            case 'threePoint': return 'three_pointer'
-            case 'midRange': return 'mid_range'
-            default: return 'paint'
-          }
-        })()
-        const synergyResult = this.calculateSynergyBoostWithActivations(shooter, offense, shotType)
-        activatedSynergies = synergyResult.activatedSynergies
+    // Assemble the list of synergies that actually fired this possession
+    // (animation + season-end counter). Three sources:
+    //   1. Shot-phase synergies that PEE applied during shot resolution.
+    //      These are stamped onto `playResult.firedShotSynergies` by PEE.
+    //   2. Defense-phase synergies that PEE applied (`firedDefenseSynergies`).
+    //   3. Rebound-phase synergies that PEE applied (`firedReboundSynergies`).
+    //   4. Transition-phase synergies that fired pre-play.
+    const activatedSynergies = []
+    if (playResult.firedShotSynergies) activatedSynergies.push(...playResult.firedShotSynergies)
+    if (playResult.firedDefenseSynergies) activatedSynergies.push(...playResult.firedDefenseSynergies)
+    if (playResult.firedReboundSynergies) activatedSynergies.push(...playResult.firedReboundSynergies)
+    // Transition synergies fire on the offensive team that just got the
+    // transition opportunity, so include them only when isTransition was rolled
+    // in this possession.
+    if (isTransition) activatedSynergies.push(...transitionSynergyActs)
 
-        // Track synergies by team for rewards
-        if (activatedSynergies.length > 0) {
-          if (isHome) {
-            this.homeSynergiesActivated += activatedSynergies.length
-          } else {
-            this.awaySynergiesActivated += activatedSynergies.length
-          }
-        }
+    if (activatedSynergies.length > 0) {
+      if (isHome) {
+        this.homeSynergiesActivated += activatedSynergies.length
+      } else {
+        this.awaySynergiesActivated += activatedSynergies.length
       }
     }
     playResult.activatedSynergies = activatedSynergies
 
     // Process play result and update stats
     const gotOffensiveRebound = this.processPlayResult(playResult, offense, defense, isHome)
+
+    // Update momentum based on the outcome of this possession.
+    this.updateMomentum(playResult, team)
 
     // Record play-by-play and animation data (skip for AI-only games)
     if (this.generateAnimationData) {
@@ -786,6 +832,7 @@ class GameSimulator {
           },
           activated_badges: playResult.activatedBadges || [],
           activated_synergies: stampedSynergies,
+          momentum: { home: this.momentum.home, away: this.momentum.away },
         })
       }
     }
@@ -1360,64 +1407,292 @@ class GameSimulator {
   }
 
   /**
-   * Calculate synergy boost and return activated synergies for animation.
+   * Locate satisfied synergy pairs on a lineup for a given phase.
+   *
+   * Shot-phase evaluations are shooter-anchored: one of the two badges must
+   * be on the supplied `shooter`. Defense / rebound / transition phases are
+   * team-wide — any two distinct players holding the pair triggers the
+   * synergy. Condition matching is NOT performed here; this just returns
+   * candidates whose badge pair is present. The caller checks `condition`
+   * against the actual context (shotType, play.category, clutchTime, etc.).
+   *
+   * @param {Array} lineup
+   * @param {string} forPhase  'shot' | 'defense' | 'rebound' | 'transition'
+   * @param {Object|null} shooter  required for `forPhase === 'shot'`
+   * @returns {Array<{ synergy_name, badge1, badge2, condition, boost, player1, player2 }>}
    */
-  calculateSynergyBoostWithActivations(shooter, teammates, playType) {
-    let boost = 0
-    const activatedSynergies = []
-    const shooterBadgeIds = (shooter.badges || []).map(b => b.id)
-
+  findSynergyActivations(lineup, forPhase, shooter = null) {
+    const activations = []
     for (const synergy of this.badgeSynergies) {
-      // Check if shooter has one of the synergy badges
-      if (!shooterBadgeIds.includes(synergy.badge1_id) && !shooterBadgeIds.includes(synergy.badge2_id)) {
-        continue
+      const condition = synergy.effect?.condition
+      const phase = CONDITION_TO_PHASE[condition] || 'shot'
+      if (phase !== forPhase) continue
+
+      let p1 = null
+      let p2 = null
+
+      if (forPhase === 'shot' && shooter) {
+        const shooterIds = (shooter.badges || []).map(b => b.id)
+        const shooterHas1 = shooterIds.includes(synergy.badge1_id)
+        const shooterHas2 = shooterIds.includes(synergy.badge2_id)
+        if (!shooterHas1 && !shooterHas2) continue
+        const needBadge = shooterHas1 ? synergy.badge2_id : synergy.badge1_id
+        for (const t of lineup) {
+          if (!t || t === shooter) continue
+          if (t.id != null && shooter.id != null && t.id === shooter.id) continue
+          const ids = (t.badges || []).map(b => b.id)
+          if (ids.includes(needBadge)) {
+            p1 = shooterHas1 ? shooter : t
+            p2 = shooterHas1 ? t : shooter
+            break
+          }
+        }
+      } else {
+        for (const a of lineup) {
+          if (!a) continue
+          const ids = (a.badges || []).map(b => b.id)
+          if (!p1 && ids.includes(synergy.badge1_id)) p1 = a
+          if (!p2 && ids.includes(synergy.badge2_id) && a !== p1) p2 = a
+        }
+        // Self-match guard: if a single player holds both badges and no other
+        // player completes the pair, no synergy fires.
+        if (p1 && p2 && p1 === p2) p2 = null
       }
 
-      const shooterBadge = shooterBadgeIds.includes(synergy.badge1_id)
-        ? synergy.badge1_id
-        : synergy.badge2_id
-      const requiredBadge = shooterBadgeIds.includes(synergy.badge1_id)
-        ? synergy.badge2_id
-        : synergy.badge1_id
-
-      // Check if any teammate (NOT the shooter themselves) has the other
-      // badge. Reference + strict id check so falsy ids (0, '', null) can't
-      // accidentally let the shooter self-match against their own badges.
-      for (const teammate of teammates) {
-        if (!teammate) continue
-        if (teammate === shooter) continue
-        if (teammate.id != null && shooter.id != null && teammate.id === shooter.id) continue
-
-        const teammateBadgeIds = (teammate.badges || []).map(b => b.id)
-        if (teammateBadgeIds.includes(requiredBadge)) {
-          const effect = synergy.effect || {}
-          const boostValues = effect.boost || {}
-
-          let synergyBoost = 0
-          synergyBoost += boostValues.shotPercentage || 0
-          synergyBoost += boostValues.rollerFinishing || 0
-          boost += synergyBoost
-
-          activatedSynergies.push({
-            synergy_name: synergy.synergy_name || 'synergy',
-            badge1: shooterBadge,
-            badge2: requiredBadge,
-            effect: synergy.effect_type || synergy.synergy_name || 'synergy',
-            player1: {
-              id: shooter.id,
-              name: (shooter.firstName || shooter.first_name || '') + ' ' + (shooter.lastName || shooter.last_name || ''),
-            },
-            player2: {
-              id: teammate.id,
-              name: (teammate.firstName || teammate.first_name || '') + ' ' + (teammate.lastName || teammate.last_name || ''),
-            },
-          })
-          break
-        }
+      if (p1 && p2) {
+        activations.push({
+          synergy_name: synergy.synergy_name || 'synergy',
+          badge1: synergy.badge1_id,
+          badge2: synergy.badge2_id,
+          condition,
+          boost: synergy.effect?.boost || {},
+          effect: synergy.effect_type || synergy.synergy_name || 'synergy',
+          player1: { id: p1.id, name: this._fullName(p1) },
+          player2: { id: p2.id, name: this._fullName(p2) },
+        })
       }
     }
+    return activations
+  }
 
+  _fullName(p) {
+    if (!p) return ''
+    return (p.firstName || p.first_name || '') + ' ' + (p.lastName || p.last_name || '')
+  }
+
+  /**
+   * Test whether a shot-phase synergy's condition matches the current shot
+   * context. Used both by PlayExecutionEngine (during shot resolution) and
+   * by GameSimulator's animation-list assembly.
+   */
+  shotSynergyMatches(activation, ctx) {
+    switch (activation.condition) {
+      case 'always': return true
+      case 'three_pointer': return ctx.shotType === 'three_pointer'
+      case 'mid_range': return ctx.shotType === 'mid_range'
+      case 'paint': return ctx.shotType === 'paint'
+      case 'at_rim': return ctx.shotType === 'paint'
+      case 'catch_and_shoot': return ctx.dribblesSincePass === 0
+      case 'corner_three':
+        return ctx.shotType === 'three_pointer' && !!ctx.playId && ctx.playId.includes('corner')
+      case 'clutch': return !!ctx.clutchTime
+      case 'isolation': return ctx.playCategory === 'isolation'
+      case 'pick_and_roll': return ctx.playCategory === 'pick_and_roll'
+      case 'screen_play': return ctx.playCategory === 'pick_and_roll'
+      case 'cutting': return ctx.playCategory === 'cut'
+      case 'alley_oop': return !!ctx.isAlleyOop
+      case 'mismatch': return !!ctx.isMismatch
+      default: return false
+    }
+  }
+
+  /**
+   * Test whether a defense-phase synergy condition applies to the current
+   * shot context. Used by PlayExecutionEngine to gate the boost subtraction.
+   */
+  defenseSynergyMatches(activation, ctx) {
+    switch (activation.condition) {
+      case 'team_defense': return true
+      case 'interior_defense': return ctx.shotType === 'paint'
+      case 'paint_defense': return ctx.shotType === 'paint'
+      default: return false
+    }
+  }
+
+  /**
+   * Legacy entry point preserved for compatibility — `simulatePossession`
+   * still calls this to fetch shot-phase animation activations. Returns
+   * synergy activations for the supplied shooter that pass condition
+   * matching against the supplied shot context.
+   */
+  calculateSynergyBoostWithActivations(shooter, teammates, shotCtx) {
+    const candidates = this.findSynergyActivations(teammates, 'shot', shooter)
+    const activatedSynergies = []
+    let boost = 0
+    for (const act of candidates) {
+      if (!this.shotSynergyMatches(act, shotCtx)) continue
+      boost += act.boost?.shotPercentage || 0
+      boost += act.boost?.rollerFinishing || 0
+      boost += act.boost?.screenEffectiveness || 0
+      activatedSynergies.push(act)
+    }
     return { boost, activatedSynergies }
+  }
+
+  // =========================================================================
+  // MOMENTUM
+  // =========================================================================
+
+  /**
+   * Apply the between-quarters momentum adjustment. Called at the start of
+   * every quarter — bails out on Q1 (use the constructor's neutral 50/50).
+   *
+   * Real-life behavior we're modeling:
+   *  - Short breaks (between Q1↔Q2 and Q3↔Q4): teams keep most of their
+   *    swing but settle a notch toward neutral.
+   *  - Halftime (Q2↔Q3): long break, locker-room reset — momentum returns
+   *    to 50/50 and the rolling shot windows clear so post-half hot streaks
+   *    are detected fresh.
+   *
+   * Active boost cooldown (`momentumCooldown`) clears each quarter — three
+   * possessions of dampener doesn't carry across a break.
+   */
+  applyBetweenQuarterMomentum() {
+    const q = this.currentQuarter
+    if (q <= 1) return
+
+    // Halftime — full reset.
+    if (q === 3) {
+      this.momentum = { home: 50, away: 50 }
+      this.recentShots = { home: [], away: [] }
+      this.momentumCooldown = { home: 0, away: 0 }
+      return
+    }
+
+    // Short break (Q2, Q4) — 30% regression toward 50. Equivalent to ~4
+    // possessions of the normal 8%-per-possession decay.
+    const REGRESSION = 0.30
+    this.momentum.home += (50 - this.momentum.home) * REGRESSION
+    this.momentum.away += (50 - this.momentum.away) * REGRESSION
+    this.momentumCooldown = { home: 0, away: 0 }
+  }
+
+  /**
+   * Update per-team momentum after a possession resolves.
+   *
+   * Mechanics:
+   * - Regress both teams toward 50 by 8% each possession (the always-on
+   *   cooldown floor — ensures no team holds a hot/cold state forever).
+   * - A made shot boosts the scoring team (+4 for 2pt, +6 for 3pt) and dings
+   *   the opponent by half that. A 3-in-a-row hot run sets momentumCooldown
+   *   to 3 possessions, during which subsequent makes contribute 30% of
+   *   nominal — explicitly preventing runaway feedback loops.
+   * - A turnover or miss decays the offense's momentum slightly.
+   * - Hard caps [20, 80] so no team ever reaches 0/100.
+   */
+  updateMomentum(playResult, team) {
+    const opp = team === 'home' ? 'away' : 'home'
+
+    // Regression toward neutral (cooldown floor)
+    this.momentum.home += (50 - this.momentum.home) * 0.08
+    this.momentum.away += (50 - this.momentum.away) * 0.08
+
+    // Tick down active boost cooldowns
+    this.momentumCooldown.home = Math.max(0, this.momentumCooldown.home - 1)
+    this.momentumCooldown.away = Math.max(0, this.momentumCooldown.away - 1)
+
+    const scored = (playResult.points || 0) > 0
+    const wasThree = scored && playResult.points >= 3
+    const isTurnover = playResult.outcome === 'turnover' || playResult.outcome === 'stolen'
+
+    // Record per-shooter attempt so cold-streak detection has data next time.
+    const shotAttempt = playResult.shotAttempt
+    if (shotAttempt && shotAttempt.shooter && shotAttempt.shooter !== 'unknown') {
+      this.recordShooterAttempt(shotAttempt.shooter, !!shotAttempt.made)
+    }
+
+    if (scored) {
+      this._recordShotForTeam(team, true)
+      const cooled = this.momentumCooldown[team] > 0
+      const nominal = wasThree ? 6 : 4
+      const effective = cooled ? nominal * 0.3 : nominal
+      this.momentum[team] = Math.min(80, this.momentum[team] + effective)
+      this.momentum[opp]  = Math.max(20, this.momentum[opp]  - effective * 0.5)
+      // Hot-run dampener: 3-in-a-row triggers the cooldown
+      if (this._recentMakeStreak(team) >= 3) {
+        this.momentumCooldown[team] = 3
+      }
+    } else if (isTurnover) {
+      this.momentum[team] = Math.max(20, this.momentum[team] - 2)
+      this.momentum[opp]  = Math.min(80, this.momentum[opp]  + 1)
+    } else if (shotAttempt) {
+      // Missed shot (shotAttempt set but no points)
+      this._recordShotForTeam(team, false)
+      this.momentum[team] = Math.max(20, this.momentum[team] - 1)
+    }
+  }
+
+  /**
+   * Append a make/miss to the team's rolling 5-shot window.
+   */
+  _recordShotForTeam(team, made) {
+    const arr = this.recentShots[team]
+    arr.push(made)
+    if (arr.length > 5) arr.shift()
+  }
+
+  /**
+   * Count trailing consecutive makes in the team's rolling window.
+   */
+  _recentMakeStreak(team) {
+    const arr = this.recentShots[team]
+    let streak = 0
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i]) streak++
+      else break
+    }
+    return streak
+  }
+
+  /**
+   * Record a shooter's individual attempt for personal cold-streak tracking.
+   * Called by PlayExecutionEngine after each shot resolves.
+   */
+  recordShooterAttempt(shooterId, made) {
+    if (!shooterId) return
+    const arr = this.recentAttemptsByShooter[shooterId] ?? []
+    arr.push(!!made)
+    if (arr.length > 5) arr.shift()
+    this.recentAttemptsByShooter[shooterId] = arr
+    if (made) {
+      // A make resets the bonus-burned flag so future cold spells can claim it again
+      this.coldStreakBonusUsed.delete(shooterId)
+    }
+  }
+
+  /**
+   * True when the shooter has 5 recent attempts and made fewer than 25% of them
+   * AND their team momentum is ≥ 60. One-shot bonus — second call returns false
+   * until a make resets the flag.
+   */
+  shouldGrantColdStreakBonus(shooterId, team) {
+    if (!shooterId) return false
+    if (this.coldStreakBonusUsed.has(shooterId)) return false
+    const attempts = this.recentAttemptsByShooter[shooterId] || []
+    if (attempts.length < 5) return false
+    const makes = attempts.filter(Boolean).length
+    if (makes / attempts.length >= 0.25) return false
+    const teamMomentum = this.momentum[team] ?? 50
+    if (teamMomentum < 60) return false
+    return true
+  }
+
+  /**
+   * Mark the cold-streak bonus as burned for this shooter so it won't fire
+   * again until they hit a make.
+   */
+  consumeColdStreakBonus(shooterId) {
+    if (shooterId) this.coldStreakBonusUsed.add(shooterId)
   }
 
   // =========================================================================

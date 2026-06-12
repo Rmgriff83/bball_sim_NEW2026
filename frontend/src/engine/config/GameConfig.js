@@ -366,24 +366,32 @@ export const DIFFICULTY_SETTINGS = {
     regression_multiplier: 1.0,
   },
   all_star: {
-    // Challenging - need solid performances for growth
-    micro_dev_threshold_high: 19, // PER-scale: need good games for growth
-    micro_dev_threshold_low: 10, // Average-ish games trigger regression
-    micro_dev_gain_min: 0.08,
-    micro_dev_gain_max: 0.25,
-    micro_dev_loss_min: 0.06,
-    micro_dev_loss_max: 0.15,
+    // Canonical locked-in campaign difficulty. Tuned after the
+    // attribute-driven badge rework + defense magnitude reductions
+    // landed: the prior all_star numbers were producing players who
+    // saw mostly regression and almost no growth because the league's
+    // attribute floor moved up and defenders started forcing tougher
+    // shots. New shape: same PER bar as pro (achievable), gains tilted
+    // slightly higher, losses tilted slightly lower, dev multiplier
+    // gives a small structural boost so growth isn't gated entirely
+    // on elite performances.
+    micro_dev_threshold_high: 16,
+    micro_dev_threshold_low: 8,
+    micro_dev_gain_min: 0.10,
+    micro_dev_gain_max: 0.30,
+    micro_dev_loss_min: 0.05,
+    micro_dev_loss_max: 0.10,
     min_minutes_for_regression: 10,
     stat_thresholds: {
-      points: 16,
-      assists: 5,
-      rebounds: 6,
-      steals: 2,
-      blocks: 2,
+      points: 14,
+      assists: 4,
+      rebounds: 5,
+      steals: 1,
+      blocks: 1,
       threes: 2,
     },
-    development_multiplier: 0.85,
-    regression_multiplier: 1.15,
+    development_multiplier: 1.10,
+    regression_multiplier: 0.95,
   },
   hall_of_fame: {
     // Very challenging - need great performances for growth

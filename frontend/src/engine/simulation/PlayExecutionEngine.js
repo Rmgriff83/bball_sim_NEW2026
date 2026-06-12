@@ -70,6 +70,10 @@ class PlayExecutionEngine {
     this.offensiveModifiers = {};
     this.offensiveCoach = null;
     this.clutchTime = false;
+    // Set by GameSimulator after instantiation; lets the engine read momentum,
+    // fatigue, and cold-streak state during per-action probability resolution.
+    this.gameSimulator = null;
+    this.offensiveTeamSide = null;
   }
 
   /**
@@ -91,6 +95,20 @@ class PlayExecutionEngine {
     this.offensiveModifiers = options.offensiveModifiers ?? {};
     this.offensiveCoach = options.offensiveCoach ?? null;
     this.clutchTime = !!options.clutchTime;
+    // 'home' | 'away' — used to look up the offense's momentum value on the
+    // shared gameSimulator during shot-probability calculation.
+    this.offensiveTeamSide = options.offensiveTeamSide ?? null;
+
+    // Synergy candidates pre-computed by GameSimulator. Condition gating is
+    // deferred to here because PEE has the full shot context. PEE writes back
+    // the FIRED subset to playResult so the animation list reflects only
+    // synergies whose conditions actually matched.
+    this.synergyShotMap = options.synergyShotMap ?? null;            // Map<playerId, [act, ...]>
+    this.synergyDefenseCandidates = options.synergyDefenseCandidates ?? [];
+    this.synergyReboundCandidates = options.synergyReboundCandidates ?? [];
+    this.firedShotSynergies = [];
+    this.firedDefenseSynergies = [];
+    this.firedReboundSynergies = [];
 
     // Reset state
     this.resetState();
@@ -232,10 +250,12 @@ class PlayExecutionEngine {
     // Apply badge effects
     const badgeBoost = this.calculateBadgeBoost(action, actor, defender, play);
     // Effect-key magnitudes already match the per-percentage scale used by
-    // shot resolution (e.g. assistBoost: 0.15 HOF). Multiply by 100 to land
-    // on the same advantage-units scale as offense/defense ratings (where a
-    // 50-point swing = ±25 advantage = ±0.125 probability shift).
-    advantage += badgeBoost * 100;
+    // shot resolution. We scale to advantage-units, but at 60× rather than
+    // the original 100× — a single HoF defense badge now contributes ~10
+    // advantage units instead of ~17, softening the cumulative effect of
+    // stacked defensive lineups (further damped by the defense-side falloff
+    // inside calculateBadgeBoost).
+    advantage += badgeBoost * 60;
 
     // Apply defensive scheme modifiers
     const shotMod = this.defensiveModifiers.shotModifier ?? 0;
@@ -299,6 +319,66 @@ class PlayExecutionEngine {
           adjustedProbability += clutchShotBias;
           adjustedProbability += chemistryShotBonus;
           adjustedProbability += homeCourtBonus;
+
+          // Team momentum spillover. Range ±0.02 — small per shot but
+          // compounds visibly over a quarter, creating natural runs.
+          const momentumValue =
+            this.gameSimulator?.momentum?.[this.offensiveTeamSide] ?? 50;
+          adjustedProbability += (momentumValue - 50) / 1500;
+
+          // Personal cold-streak break-out: one-shot +0.03 bump when the
+          // shooter is below 25% over their last 5 attempts AND their team
+          // momentum is ≥ 60. Burns the bonus once; resets on next make.
+          const shooterId = actor?.id;
+          if (
+            shooterId &&
+            this.gameSimulator?.shouldGrantColdStreakBonus?.(
+              shooterId,
+              this.offensiveTeamSide
+            )
+          ) {
+            adjustedProbability += 0.03;
+            this.gameSimulator.consumeColdStreakBonus(shooterId);
+          }
+
+          // Fatigue penalty — multiplies the final made probability by the
+          // shooter's fatigue modifier (~0.84 at max gas, 1.0 at full rest).
+          // The formula already existed in GameSimulator but was never read.
+          const fatigueMod =
+            this.gameSimulator?.calculateFatigueModifier?.(actor) ?? 1;
+          adjustedProbability *= fatigueMod;
+
+          // Apply badge synergies. The condition gate runs here because PEE
+          // owns the full shot context (shotType, dribblesSincePass,
+          // play.category, clutchTime). Each fired synergy is stamped onto
+          // `firedShotSynergies` / `firedDefenseSynergies` so GameSimulator's
+          // animation list reflects only synergies that actually applied.
+          const shotType = this._normalizeShotType(action.shotType);
+          const synergyCtx = {
+            shotType,
+            dribblesSincePass: this.playResult.dribblesSincePass,
+            clutchTime: this.clutchTime,
+            playCategory: play?.category,
+            playId: play?.id,
+          };
+          if (this.gameSimulator && this.synergyShotMap && actor?.id != null) {
+            const shotCandidates = this.synergyShotMap.get(String(actor.id)) || [];
+            for (const cand of shotCandidates) {
+              if (!this.gameSimulator.shotSynergyMatches(cand, synergyCtx)) continue;
+              adjustedProbability += cand.boost?.shotPercentage || 0;
+              adjustedProbability += cand.boost?.rollerFinishing || 0;
+              adjustedProbability += cand.boost?.screenEffectiveness || 0;
+              this.firedShotSynergies.push(cand);
+            }
+          }
+          if (this.gameSimulator && this.synergyDefenseCandidates) {
+            for (const cand of this.synergyDefenseCandidates) {
+              if (!this.gameSimulator.defenseSynergyMatches(cand, synergyCtx)) continue;
+              adjustedProbability -= cand.boost?.paintDefense || 0;
+              adjustedProbability -= cand.boost?.forcedBadShots || 0;
+              this.firedDefenseSynergies.push(cand);
+            }
+          }
         }
       }
       // Negative outcomes reduced by positive advantage
@@ -452,7 +532,23 @@ class PlayExecutionEngine {
 
       if (defender) {
         const defEffects = aggregateBadgeEffects(defender, BADGE_DEFINITIONS);
-        boost -= sumActionBoost(defEffects, actionType, 'defense');
+        // Defensive-stack diminishing returns: rank the defender's contributing
+        // action-relevant effect-key values descending, then sum with
+        // [1.00, 0.60, 0.35, 0.20] multipliers (4th+ all at 0.20). A single
+        // elite defender still wins his matchup, but a defender carrying many
+        // stacked defense badges no longer compounds them linearly.
+        const defKeys = ACTION_EFFECT_KEYS[actionType].defense || [];
+        const contributions = defKeys
+          .map(k => defEffects[k] || 0)
+          .filter(v => v > 0)
+          .sort((a, b) => b - a);
+        const FALLOFF = [1.00, 0.60, 0.35, 0.20];
+        let damped = 0;
+        for (let i = 0; i < contributions.length; i++) {
+          const factor = FALLOFF[i] ?? FALLOFF[FALLOFF.length - 1];
+          damped += contributions[i] * factor;
+        }
+        boost -= damped;
       }
 
       // Track activation for any badge whose tier effects intersect this
@@ -804,6 +900,19 @@ class PlayExecutionEngine {
   }
 
   /**
+   * Normalize the shot-type tokens emitted by play definitions
+   * (`threePoint`, `midRange`, `paint`) to the snake_case form used by
+   * synergy condition matching.
+   */
+  _normalizeShotType(raw) {
+    switch (raw || 'paint') {
+      case 'threePoint': return 'three_pointer';
+      case 'midRange': return 'mid_range';
+      default: return 'paint';
+    }
+  }
+
+  /**
    * Get matching defender for a player.
    */
   getMatchingDefender(offensivePlayer, defensiveLineup) {
@@ -1138,9 +1247,29 @@ class PlayExecutionEngine {
     let offRebChance = offRebRating / totalWeighted;
     offRebChance = Math.max(0.15, Math.min(0.40, offRebChance));
 
-    if (Math.floor(Math.random() * 1000) + 1 <= Math.floor(offRebChance * 1000)) {
+    // Apply rebound-phase synergy boost (Board Dominance, Box Out Brigade,
+    // Second Chance Machine). `rebounding` fires unconditionally inside the
+    // rebound battle; `offensive_rebound` fires only when offense wins, so we
+    // bias the roll first and resolve the condition-gated synergy after.
+    const reboundCandidates = this.synergyReboundCandidates || [];
+    for (const cand of reboundCandidates) {
+      if (cand.condition === 'rebounding') {
+        offRebChance += cand.boost?.reboundRate || 0;
+        this.firedReboundSynergies.push(cand);
+      }
+    }
+    offRebChance = Math.max(0.15, Math.min(0.60, offRebChance));
+
+    const offenseWon = Math.floor(Math.random() * 1000) + 1 <= Math.floor(offRebChance * 1000);
+    if (offenseWon) {
       this.playResult.outcome = 'offensive_rebound';
       this.playResult.points = 0;
+      // `offensive_rebound` condition: only fires when offense wins the battle.
+      for (const cand of reboundCandidates) {
+        if (cand.condition === 'offensive_rebound') {
+          this.firedReboundSynergies.push(cand);
+        }
+      }
     } else {
       this.playResult.outcome = 'missed';
       this.playResult.points = 0;
@@ -1223,6 +1352,9 @@ class PlayExecutionEngine {
       keyframes: this.keyframes,
       roleAssignments: this.roleAssignments,
       activatedBadges: this.activatedBadges,
+      firedShotSynergies: this.firedShotSynergies,
+      firedDefenseSynergies: this.firedDefenseSynergies,
+      firedReboundSynergies: this.firedReboundSynergies,
     };
   }
 

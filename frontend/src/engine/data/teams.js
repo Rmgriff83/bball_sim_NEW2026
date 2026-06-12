@@ -29,7 +29,7 @@ export const TEAMS = [
 
   // WESTERN CONFERENCE - PACIFIC
   { name: 'Golden State Wavebreakers', city: 'Golden State', abbreviation: 'GSW', conference: 'west', division: 'Pacific', primary_color: '#1D428A', secondary_color: '#FFC72C', facilities: { training: 5, medical: 5, scouting: 4, analytics: 5 } },
-  { name: 'Los Angeles Showtime', city: 'Los Angeles', abbreviation: 'LAL', conference: 'west', division: 'Pacific', primary_color: '#552583', secondary_color: '#FDB927', facilities: { training: 5, medical: 5, scouting: 4, analytics: 4 } },
+  { name: 'Los Angeles Larpers', city: 'Los Angeles', abbreviation: 'LAL', conference: 'west', division: 'Pacific', primary_color: '#552583', secondary_color: '#FDB927', facilities: { training: 5, medical: 5, scouting: 4, analytics: 4 } },
   { name: 'Los Angeles Cringers', city: 'Los Angeles', abbreviation: 'LAC', conference: 'west', division: 'Pacific', primary_color: '#C8102E', secondary_color: '#1D428A', facilities: { training: 4, medical: 4, scouting: 3, analytics: 4 } },
   { name: 'Phoenix Flares', city: 'Phoenix', abbreviation: 'PHX', conference: 'west', division: 'Pacific', primary_color: '#1D1160', secondary_color: '#E56020', facilities: { training: 4, medical: 4, scouting: 3, analytics: 4 } },
   { name: 'Sacramento Royals', city: 'Sacramento', abbreviation: 'SAC', conference: 'west', division: 'Pacific', primary_color: '#5A2D81', secondary_color: '#63727A', facilities: { training: 3, medical: 3, scouting: 3, analytics: 3 } },

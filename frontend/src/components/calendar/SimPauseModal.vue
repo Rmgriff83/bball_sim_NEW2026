@@ -251,7 +251,10 @@ onUnmounted(() => {
           </main>
 
           <!-- Footer -->
-          <footer class="modal-footer">
+          <footer
+            class="modal-footer"
+            :class="{ 'modal-footer--injury': reason === 'user_injury' }"
+          >
             <!-- Trade Deadline footer -->
             <template v-if="reason === 'trade_deadline'">
               <button class="btn-cancel" @click="pauseSim">
@@ -746,16 +749,26 @@ onUnmounted(() => {
   opacity: 0;
 }
 
-/* Standardized modal heights (90vh desktop, 85vh mobile) */
+/* Cap the modal so it stays inside the viewport, but let it size down to
+   whatever its content actually needs (no fixed min-height floor). */
 .modal-container {
-  min-height: 90vh;
   max-height: 90vh;
 }
 
 @media (max-width: 480px) {
   .modal-container {
-    min-height: 85vh;
     max-height: 85vh;
+  }
+  /* Injury footer has 3 actions (Pause / CPU / Adjust) which is too tight
+     for a single horizontal row on phones — labels truncate and the icons
+     start fighting for breathing room. Stack them so each action gets the
+     full row width. Trade-deadline (2 buttons) and All-Star (1 button)
+     footers stay horizontal. */
+  .modal-footer--injury {
+    flex-direction: column;
+  }
+  .modal-footer--injury > button {
+    width: 100%;
   }
 }
 </style>

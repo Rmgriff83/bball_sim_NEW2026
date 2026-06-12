@@ -254,7 +254,8 @@ const seasonStatsRows = computed(() => {
     p.seasonHistory,
     p.season_stats,
     campaign.value?.currentSeasonYear,
-    p.teamAbbreviation || p.team_abbreviation
+    p.teamAbbreviation || p.team_abbreviation,
+    p.season_playoff_stats
   )
 })
 
@@ -1749,6 +1750,11 @@ function formatSalary(salary) {
 
 <style scoped>
 .league-view {
+  /* Match the homepage's 16px horizontal gutter so the league standings
+     and team grids line up with the floating bottom nav. Overrides the
+     template's Tailwind `p-6` (24px) on the horizontal axis only. */
+  padding-left: 16px;
+  padding-right: 16px;
   /* Floating bottom nav is 70px tall and sits at env(safe-area-inset-bottom).
      Reserve 70 + safe area + 16px breathing room so the last content row
      never gets covered on devices with a home indicator. */
