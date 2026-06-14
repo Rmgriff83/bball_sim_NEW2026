@@ -207,6 +207,16 @@ function setStyle(variant) {
     return
   }
   if (!styleConfigKey.value) return
+  // Face: composeSvg/configFromSvg round-trip a `data-file` attribute into
+  // `faceVariantOverride`, which then beats the integer jawWidth picker on
+  // every subsequent render. Clear the override when the user picks a new
+  // jaw so their selection actually takes effect.
+  if (props.layerId === 'face') {
+    const next = { ...props.config, [styleConfigKey.value]: variant }
+    delete next.faceVariantOverride
+    emit('update:config', next)
+    return
+  }
   emit('update:config', { ...props.config, [styleConfigKey.value]: variant })
 }
 
@@ -217,6 +227,14 @@ function thumbnailFor(variant) {
     return composeSvg({ ...props.config, browVariantOverride: variant }, null, props.audience)
   }
   if (!styleConfigKey.value) return ''
+  // Face thumbnails: strip faceVariantOverride from the preview config too,
+  // otherwise every thumb composes the same locked face regardless of which
+  // jawWidth integer we're previewing.
+  if (props.layerId === 'face') {
+    const previewConfig = { ...props.config, [styleConfigKey.value]: variant }
+    delete previewConfig.faceVariantOverride
+    return composeSvg(previewConfig, null, props.audience)
+  }
   return composeSvg({ ...props.config, [styleConfigKey.value]: variant }, null, props.audience)
 }
 

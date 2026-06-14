@@ -36,7 +36,21 @@ import { coachBadges } from '../data/coachBadges'
 import { BADGES, BADGES_BY_POSITION } from '../data/badges'
 import { BADGE_FITS } from '../data/badgeFits'
 import { detectArchetype } from '../data/archetypes'
-import { generateLeagueRosters, generateFreeAgentPool } from '../draft/LeagueRosterGenerator'
+import { generateLeagueRosters, generateFreeAgentPool, assignCampaignModes } from '../draft/LeagueRosterGenerator'
+
+// Maps the per-campaign campaignMode to a coach tier. Replaces the static
+// TEAM_TIERS lookup so a team's coach quality follows whatever role the
+// campaign rolled them into instead of being permanently fixed to e.g. GSW/
+// BOS/LAL = tier 1. Eliminates the double-stack where a TEAM_TIERS tier-1
+// team that also drew `campaignMode: 'contender'` got both an elite roster
+// AND an elite coach.
+const MODE_TO_COACH_TIER = {
+  contender: 1,
+  average_strong: 2,
+  middle: 2,
+  average_weak: 3,
+  rebuilder: 4,
+}
 import { listAvailableHeadshotFilenames } from '@/services/headshotResolver'
 import { CampaignRepository } from '../db/CampaignRepository'
 import { TeamRepository } from '../db/TeamRepository'
@@ -224,7 +238,18 @@ function _scrambleNamePool(rawNames) {
       pool.add(formatted)
     }
   }
-  return [...pool]
+  // Shuffle the pool — the `for (pre) for (suf)` loop above plus Set
+  // insertion-order iteration produces tight prefix clusters at the front
+  // of the array (the first ~20 entries are all M-prefix names, then C-,
+  // then B-, etc.). Without shuffling, any deterministic seed that walks
+  // the front of the pool (e.g. generatePlayer's nameIdx) produces rosters
+  // where every player's first name starts with the same letter.
+  const arr = [...pool]
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
 }
 
 // Real-feeling first / last names mixed into the exported pool below. Pure
@@ -282,7 +307,7 @@ const BLACK_FIRST_NAMES = [
   'Rashawn', 'Tobias', 'Solomon', 'Terrell', 'Booker', 'Calvin', 'Gerald',
   'Leon', 'Lonnie', 'Rufus', 'Cyrus', 'Marquise', 'Demarius', 'Tyrese',
   'Jaxson', 'Trayvon', 'Devontae', 'Jamel', 'Cleophus', 'Jerome', 'Jerian',
-  'Jaleel', 'JaMarcus', 'DeMarcus'
+  'Jaleel', 'JaMarcus', 'DeMarcus', 'Booby'
 ]
 
 // Last names common across Black American communities. Many of these are
@@ -300,7 +325,7 @@ const BLACK_LAST_NAMES = [
   'Reese', 'Riggs', 'Roach', 'Rollins', 'Saunders', 'Shaw', 'Stafford',
   'Steele', 'Stokes', 'Sutton', 'Tate', 'Thurmond', 'Vance', 'Vaughn',
   'Waters', 'Wells', 'Whitaker', 'Wilkins', 'Woodson', 'Drummond', 'Cousins',
-  'Orion', 'Essex', 'Bitamin', 'Betts', 'Baloney', 'Djboute', 'Djiat'
+  'Orion', 'Essex', 'Bitamin', 'Betts', 'Baloney', 'Djboute', 'Djiat', 'Prince'
 ]
 
 // Each real-name bucket is repeated N times when concatenating with the
@@ -979,14 +1004,14 @@ function pickDraftHistory(overall) {
  * @param {string} options.teamAbbreviation - User's chosen team abbreviation
  * @param {string} options.difficulty - 'rookie' | 'pro' | 'all_star' | 'hall_of_fame'
  * @param {string} [options.draftMode='standard'] - 'standard' | 'fantasy'
- * @param {number} [options.seasonLength=54] - Games per team in regular season
+ * @param {number} [options.seasonLength=82] - Games per team in regular season
  * @returns {Promise<Object>} The created campaign object
  */
 export async function createCampaign(options) {
   const {
     name,
     difficulty = 'pro',
-    seasonLength = 54,
+    seasonLength = 82,
   } = options
 
   // Accept both camelCase and snake_case parameter names
@@ -1017,7 +1042,7 @@ export async function createCampaign(options) {
       seasonLength,
       awardTokens: 0,
       scoutingPoints: 0,
-      lastScoutingWeek: 0,
+      lastScoutingBiweek: 0,
       scoutedPlayers: {},
     },
     lastPlayedAt: new Date().toISOString(),
@@ -1028,7 +1053,19 @@ export async function createCampaign(options) {
   // -------------------------------------------------------------------------
   // 2. Generate all 30 teams with coaches
   // -------------------------------------------------------------------------
-  const teams = generateTeams(campaignId)
+  // Pre-roll the per-campaign mode map BEFORE generating teams so coach tier
+  // can be driven by campaignMode instead of the static TEAM_TIERS table.
+  // We synthesize a lite "abbreviation only" team list from TEAMS since the
+  // real team records don't exist yet — assignCampaignModes only reads
+  // .abbreviation. The same modes map is later threaded into
+  // generateLeagueRosters so it doesn't re-roll a different assignment.
+  const teamModes = isFantasy
+    ? null
+    : assignCampaignModes(
+        TEAMS.map(t => ({ abbreviation: t.abbreviation })),
+        teamAbbreviation
+      )
+  const teams = generateTeams(campaignId, teamModes)
 
   // Seed the user-facing free-agent coach pool (8 candidates across 3 tiers).
   campaign.settings.availableCoaches = generateCoachPool(teams)
@@ -1097,6 +1134,11 @@ export async function createCampaign(options) {
     const result = generateLeagueRosters(campaignId, teams, {
       startYear,
       userTeamAbbreviation: teamAbbreviation,
+      // Reuse the same modes that drove coach tier assignment in
+      // generateTeams above. Without this, the roster generator would
+      // re-roll a different mode map, undoing the alignment between a
+      // team's coach quality and its roster blueprint.
+      modes: teamModes,
     })
     allPlayers = result.players
     // Persist the per-campaign mode map so it survives reload and is
@@ -2358,7 +2400,7 @@ export async function startNewSeason(campaignId) {
   // 3c. Reset scouting points and scouted players for the new season
   campaign.settings = campaign.settings ?? {}
   campaign.settings.scoutingPoints = 0
-  campaign.settings.lastScoutingWeek = 0
+  campaign.settings.lastScoutingBiweek = 0
   campaign.settings.scoutedPlayers = {}
 
   // 3c-bis. Clear any unviewed retirement list from the offseason that just
@@ -2503,14 +2545,23 @@ export async function startNewSeason(campaignId) {
  * Each team gets an ID, coach data, and default financial info.
  *
  * @param {string} campaignId
+ * @param {Object} [modes] - Optional pre-rolled `{abbreviation: campaignMode}`
+ *   map. When provided, coach tier is derived from the team's campaignMode
+ *   instead of the static TEAM_TIERS table — prevents elite teams from
+ *   double-stacking elite coaches every campaign.
  * @returns {Array} Array of 30 team objects ready for IndexedDB
  */
-export function generateTeams(campaignId) {
+export function generateTeams(campaignId, modes = null) {
   const usedCoachNames = new Set()
 
   const teams = TEAMS.map((template, index) => {
     const teamId = generateUUID()
-    const tier = getTeamTier(template.abbreviation)
+    // Prefer the campaignMode-driven coach tier when modes were pre-rolled
+    // by the caller. Fall back to the legacy static TEAM_TIERS lookup only
+    // when no modes are supplied (e.g. tests or callers that haven't migrated).
+    const tier = modes
+      ? (MODE_TO_COACH_TIER[modes[template.abbreviation]] ?? 3)
+      : getTeamTier(template.abbreviation)
 
     // Generate coach for this team. Pass the team's abbreviation so the coach
     // generator can look up a master-defined coach in coaches.js (carries

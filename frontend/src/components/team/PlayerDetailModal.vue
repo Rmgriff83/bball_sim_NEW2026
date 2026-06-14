@@ -1594,7 +1594,7 @@ function formatChange(change) {
                 <div v-if="scoutingMode && !badgesRevealed" class="scouting-locked-section">
                   <Lock :size="24" />
                   <p>Badge data is hidden for draft prospects</p>
-                  <span class="locked-hint">Hire a 4-Star Scout with Scouting Facility Lv 3 to unlock</span>
+                  <span class="locked-hint">Hire a 4-Star Scout with Scouting Facility Lv 4 to unlock</span>
                 </div>
                 <template v-else>
                   <div v-if="isUserPlayer && !scoutingMode && campaignId" class="badges-store-row">
@@ -1804,7 +1804,7 @@ function formatChange(change) {
                 <div class="scouting-locked-section">
                   <Lock :size="24" />
                   <p>Personality & motivation data is hidden for draft prospects</p>
-                  <span class="locked-hint">Hire a 4-Star Scout with Scouting Facility Lv 3 to unlock</span>
+                  <span class="locked-hint">Hire a 4-Star Scout with Scouting Facility Lv 4 to unlock</span>
                 </div>
               </div>
               <div v-else-if="activeTab === 'morale'" class="tab-panel">

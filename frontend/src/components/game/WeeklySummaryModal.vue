@@ -99,7 +99,7 @@ function getBadgeLevelColor(level) {
               <div class="scouting-earned">
                 <span class="earned-label">Your scouting department earned</span>
                 <span class="earned-value">{{ scoutingPointsEarned }}</span>
-                <span class="earned-label">scouting point{{ scoutingPointsEarned !== 1 ? 's' : '' }} this week</span>
+                <span class="earned-label">scouting point{{ scoutingPointsEarned !== 1 ? 's' : '' }} this period</span>
               </div>
             </section>
 

@@ -125,26 +125,14 @@ export class SeasonManager {
       teamAbbreviations[t.id] = t.abbreviation
     }
 
-    // Build matchups targeting 54 games per team
-    const targetGamesPerTeam = 54
+    // Build matchups for an 82-game NBA-style season:
+    //   • 30 non-conference games per team (2 vs each of 15 opponents)
+    //   • 52 same-conference games per team (mix of 3- and 4-game series)
+    // Total per team = 82. Total league games = 30 × 82 / 2 = 1230.
+    const targetGamesPerTeam = 82
+    const NON_CONF_GAMES_PER_PAIR = 2
+    const CONF_GAMES_PER_TEAM = 52
     const matchups = []
-
-    // Generate one game per unique pair with random home/away
-    for (let i = 0; i < teamIds.length; i++) {
-      for (let j = i + 1; j < teamIds.length; j++) {
-        if (Math.random() < 0.5) {
-          matchups.push({ homeTeamId: teamIds[i], awayTeamId: teamIds[j] })
-        } else {
-          matchups.push({ homeTeamId: teamIds[j], awayTeamId: teamIds[i] })
-        }
-      }
-    }
-
-    // Add extra same-conference games to reach 54 per team
-    const teamGameCounts = {}
-    for (const id of teamIds) {
-      teamGameCounts[id] = teamIds.length - 1
-    }
 
     // Group teams by conference
     const conferenceGroups = {}
@@ -154,36 +142,87 @@ export class SeasonManager {
       conferenceGroups[conf].push(id)
     }
 
+    // ─── Phase 1: Non-conference matchups ──────────────────────────────
+    // Every cross-conference pair plays exactly NON_CONF_GAMES_PER_PAIR
+    // times. We alternate home/away across the two games so each team
+    // hosts the other once (a "home-and-home"). With 2 games per pair
+    // and 15×15 = 225 pairs, that's 450 games — 30 per team.
+    for (let i = 0; i < teamIds.length; i++) {
+      for (let j = i + 1; j < teamIds.length; j++) {
+        if (teamConferences[teamIds[i]] === teamConferences[teamIds[j]]) continue
+        // First game: random home/away. Subsequent games swap.
+        let homeFirst = Math.random() < 0.5
+        for (let g = 0; g < NON_CONF_GAMES_PER_PAIR; g++) {
+          const home = homeFirst ? teamIds[i] : teamIds[j]
+          const away = homeFirst ? teamIds[j] : teamIds[i]
+          matchups.push({ homeTeamId: home, awayTeamId: away })
+          homeFirst = !homeFirst
+        }
+      }
+    }
+
+    // ─── Phase 2: Same-conference matchups ─────────────────────────────
+    // Each team plays 14 same-conference opponents. We need 52 games per
+    // team within conference. NBA-style split: 10 opponents @ 4 games
+    // (40) + 4 opponents @ 3 games (12) = 52. Selection of which
+    // opponents are "3-game" vs "4-game" is randomized but kept
+    // reciprocally consistent (if A plays B 3 times, B plays A 3 times).
+    const teamGameCounts = {}
+    for (const id of teamIds) teamGameCounts[id] = 0
+    // Initial counts include the non-conference games already pushed.
+    for (const m of matchups) {
+      teamGameCounts[m.homeTeamId]++
+      teamGameCounts[m.awayTeamId]++
+    }
+
     for (const confTeams of Object.values(conferenceGroups)) {
-      // Build all same-conference pairs
+      // Each team needs CONF_GAMES_PER_TEAM games across its same-conf
+      // opponents. NBA-style split: 10 opponents × 4 games (40) + 4 opponents
+      // × 3 games (12) = 52 per team.
+      const opponentsPerTeam = confTeams.length - 1 // 14
+      // Solve: 4·F + 3·T = 52, F + T = 14 → F = 10, T = 4.
+      const fourGameOpponents = CONF_GAMES_PER_TEAM - 3 * opponentsPerTeam // 10
+      const threeGameOpponents = opponentsPerTeam - fourGameOpponents      // 4
+
+      // Circulant-graph construction guarantees each team gets exactly
+      // threeGameOpponents (= 4) three-game opponents — equivalent to picking
+      // a 4-regular subgraph of K_n. For each i in 0..n, draw an edge to
+      // (i + d) mod n for each chosen distance d ∈ {1..⌊n/2⌋}. Two distances
+      // produce a 4-regular graph (each vertex picks up degree 2 per distance).
+      const threePairs = selectThreeGamePairs(confTeams, threeGameOpponents)
+
+      const seriesLength = new Map() // pairKey → 3 or 4
+      const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`)
+      // All conference pairs default to 4 games
+      for (let i = 0; i < confTeams.length; i++) {
+        for (let j = i + 1; j < confTeams.length; j++) {
+          seriesLength.set(pairKey(confTeams[i], confTeams[j]), 4)
+        }
+      }
+      // Override the 3-game pairs
+      for (const [a, b] of threePairs) {
+        seriesLength.set(pairKey(a, b), 3)
+      }
+
+      // Emit games. For each pair, alternate home/away across the
+      // series so series feel like real NBA home-and-homes.
       const pairs = []
       for (let i = 0; i < confTeams.length; i++) {
         for (let j = i + 1; j < confTeams.length; j++) {
           pairs.push([confTeams[i], confTeams[j]])
         }
       }
-
-      // Add extra games until all conference teams reach target
-      const maxPasses = 100
-      for (let pass = 0; pass < maxPasses; pass++) {
-        shuffleArray(pairs)
-        let addedAny = false
-        for (const pair of pairs) {
-          if (teamGameCounts[pair[0]] < targetGamesPerTeam &&
-              teamGameCounts[pair[1]] < targetGamesPerTeam) {
-            if (Math.random() < 0.5) {
-              matchups.push({ homeTeamId: pair[0], awayTeamId: pair[1] })
-            } else {
-              matchups.push({ homeTeamId: pair[1], awayTeamId: pair[0] })
-            }
-            teamGameCounts[pair[0]]++
-            teamGameCounts[pair[1]]++
-            addedAny = true
-          }
+      for (const [a, b] of pairs) {
+        const games = seriesLength.get(pairKey(a, b)) || 4
+        let homeFirst = Math.random() < 0.5
+        for (let g = 0; g < games; g++) {
+          const home = homeFirst ? a : b
+          const away = homeFirst ? b : a
+          matchups.push({ homeTeamId: home, awayTeamId: away })
+          teamGameCounts[home]++
+          teamGameCounts[away]++
+          homeFirst = !homeFirst
         }
-        if (!addedAny) break
-        const confCounts = confTeams.map(id => teamGameCounts[id])
-        if (Math.min(...confCounts) >= targetGamesPerTeam) break
       }
     }
 
@@ -1027,6 +1066,50 @@ function shuffleArray(arr) {
     ;[arr[i], arr[j]] = [arr[j], arr[i]]
   }
   return arr
+}
+
+/**
+ * Pick a set of pairs from `teamIds` such that every team appears in exactly
+ * `targetDegree` pairs — i.e. a `targetDegree`-regular subgraph of K_n.
+ *
+ * Construction: shuffle the team IDs onto a ring of n positions, then pick
+ * `targetDegree / 2` random distances d ∈ {1..⌊n/2⌋}. For each distance d,
+ * draw an edge from position i to position (i + d) mod n for every i. Each
+ * distance contributes degree 2 per vertex, so two distances give degree 4.
+ *
+ * Requires `targetDegree` to be even, and n × targetDegree to be even
+ * (which it always will be when targetDegree is even).
+ *
+ * Used by the schedule generator: the picked pairs become the 3-game series,
+ * everything else is a 4-game series — guaranteeing each team exactly
+ * `targetDegree` three-game opponents.
+ */
+function selectThreeGamePairs(teamIds, targetDegree) {
+  const n = teamIds.length
+  if (targetDegree % 2 !== 0) {
+    throw new Error(`selectThreeGamePairs requires even targetDegree, got ${targetDegree}`)
+  }
+  const distancesNeeded = targetDegree / 2
+  const maxDistance = Math.floor(n / 2)
+  if (distancesNeeded > maxDistance) {
+    throw new Error(`Cannot pick ${distancesNeeded} distances from {1..${maxDistance}}`)
+  }
+
+  const ring = shuffleArray([...teamIds])
+  const allDistances = Array.from({ length: maxDistance }, (_, i) => i + 1)
+  const distances = shuffleArray(allDistances).slice(0, distancesNeeded)
+
+  // Even n with distance n/2 doubles each edge — only safe when n is odd or
+  // when n/2 is not in the picked set. For the basketball case (n = 15) we
+  // can never pick d = 7.5, so this is structurally fine.
+  const pairs = []
+  for (let i = 0; i < n; i++) {
+    for (const d of distances) {
+      const j = (i + d) % n
+      pairs.push([ring[i], ring[j]])
+    }
+  }
+  return pairs
 }
 
 export default SeasonManager

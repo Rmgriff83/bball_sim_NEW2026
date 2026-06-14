@@ -39,7 +39,32 @@ let resolveToken = 0
 let pendingLeave = null
 
 const step = computed(() => store.currentStep)
-const counter = computed(() => `${store.stepIndex + 1} of ${store.totalSteps}`)
+// Counter displays the user-visible step position, not the raw array index.
+// `skipIfMissing` tips that aren't currently rendered (e.g. the upgrade
+// banner on a non-user-team player's detail modal) are dropped from both
+// numerator and denominator so the tour reads "1 of 1" instead of "3 of 3"
+// when the first two slots got skipped.
+const counter = computed(() => {
+  const steps = store.currentSteps || []
+  const currentIdx = store.stepIndex
+  let displayedNum = 0
+  let totalRenderable = 0
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i]
+    if (!s) continue
+    const targets = Array.isArray(s.target) ? s.target : [s.target]
+    const renderable = !s.skipIfMissing || targets.some((sel) => {
+      const el = document.querySelector(`[data-tour="${sel}"]`)
+      return el && isLaidOut(el)
+    })
+    if (renderable) {
+      totalRenderable++
+      if (i <= currentIdx) displayedNum++
+    }
+  }
+  if (totalRenderable === 0) return `${currentIdx + 1} of ${steps.length}`
+  return `${displayedNum} of ${totalRenderable}`
+})
 const nextLabel = computed(() => (store.isLastStep ? 'Done' : 'Next'))
 // An interactive step is advanced by the user clicking the highlighted element
 // (not the Next button) — used to hand off to a deeper tour.

@@ -9,8 +9,10 @@
 // Design:
 //   1. Randomly assign each team a campaign mode each new campaign:
 //      'contender' (4-6 teams), 'rebuilder' (3-4 teams), 'average_strong'
-//      and 'average_weak' (the rest). The user's team is always
-//      'average_strong' so they don't get handed a tanked roster.
+//      and 'average_weak' (the rest). The user's team is always 'middle'
+//      — a dedicated true-middle-of-the-pack blueprint sitting exactly
+//      between average_strong and average_weak, so the user doesn't get
+//      handed a tanked roster or a pre-baked contender.
 //   2. Each mode maps to a role-distribution blueprint over the 15-slot
 //      ROSTER_POSITIONS layout (1 superstar / N starters / N rotation /
 //      N bench). The mode also stamps team.aiDirection so the existing AI
@@ -66,30 +68,36 @@ function generateJerseyNumbers() {
 const MODE_TO_AI_DIRECTION = {
   contender: 'title_contender',
   average_strong: 'win_now',
+  // The user team's mode — sits between strong and weak. From an AI
+  // perspective treat it as 'win_now' so trade partners offer the same kind
+  // of deals they'd offer an average_strong team.
+  middle: 'win_now',
   average_weak: 'ascending',
   rebuilder: 'rebuilding',
 }
 
 /**
  * Randomly classify each team for THIS campaign. Returns
- * { [abbreviation]: 'contender' | 'average_strong' | 'average_weak' | 'rebuilder' }.
+ * { [abbreviation]: 'contender' | 'average_strong' | 'middle' | 'average_weak' | 'rebuilder' }.
  *
  *  - 4-6 random teams → contender
  *  - 3-4 random teams → rebuilder (different from contenders)
  *  - Remaining teams → split ~50/50 between average_strong / average_weak
- *  - The user's team (if provided) is always 'average_strong' so a new
- *    player isn't surprised by a Day-1 fire sale roster.
+ *  - The user's team (if provided) is always 'middle' — a dedicated tier
+ *    sitting exactly between average_strong and average_weak so a new
+ *    player isn't surprised by either a fire-sale roster or a pre-baked
+ *    contender.
  *
  * Re-rolls per campaign so two playthroughs of the same userTeam land
  * different "contender" pools — drives replayability.
  */
-function assignCampaignModes(teams, userTeamAbbreviation) {
+export function assignCampaignModes(teams, userTeamAbbreviation) {
   const modes = {}
   const numContenders = 4 + Math.floor(Math.random() * 3) // 4-6
   const numRebuilders = 3 + Math.floor(Math.random() * 2) // 3-4
 
   // Pool of teams eligible for random contender/rebuilder assignment.
-  // User team is reserved as average_strong below.
+  // User team is reserved as 'middle' below.
   const pool = teams
     .map(t => t.abbreviation)
     .filter(abbr => abbr !== userTeamAbbreviation)
@@ -109,7 +117,7 @@ function assignCampaignModes(teams, userTeamAbbreviation) {
   }
 
   if (userTeamAbbreviation) {
-    modes[userTeamAbbreviation] = 'average_strong'
+    modes[userTeamAbbreviation] = 'middle'
   }
 
   return modes
@@ -129,108 +137,149 @@ const ROSTER_POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C', 'PG', 'SG', 'SF', 'PF', '
  * to slot 0 and let the position template fill the rest.
  *
  * Modes:
- *   contender       — Tier 1: 1 superstar + star + 3 starters + 5 rotation + 5 bench
- *   average_strong  — Tier 2: 1 star + 3 starters + 5 rotation + 6 bench
- *   average_weak    — Tier 3: 1 borderline-star + 3 starters + 5 rotation + 6 bench
- *   rebuilder       — Tier 4: 0-1 star + 3 starters + 5 rotation + 6 bench
+ *   contender       — Tier 1: superstar + star + 3 starters + rotation + bench
+ *   average_strong  — Tier 2: 1 star + 3 starters + rotation + bench
+ *   middle          — Tier 2.5 (user team): 1 borderline star + 4 starters + rotation + bench
+ *   average_weak    — Tier 3: 1 borderline-star + 3 starters + rotation + bench
+ *   rebuilder       — Tier 4: 0-1 young star + 3 starters + rotation + bench
+ *
+ * Ranges were compressed in two passes during 2026. The second pass
+ * (this one) dropped Tier 1 every slot ~2 OVR after observing two
+ * contender teams in a single campaign reach 70+ wins — Warriors-2016
+ * territory, which should be a once-a-decade event, not a per-season
+ * equilibrium. Contender top-5 OVR mean now ~80 (was 83.4); rebuilder
+ * top-5 stays at ~73, so the contender→rebuilder spread closes from
+ * ~10 OVR to ~7 OVR. Real-NBA spread between BOS/OKC and POR/WAS is
+ * closer to 6-8 OVR across the rotation, which is what these bands
+ * now target.
  */
 function getRoleBlueprint(mode) {
   // Translate mode → legacy tier index used by the switch
   const tier = ({
     contender: 1,
     average_strong: 2,
+    middle: 2.5,
     average_weak: 3,
     rebuilder: 4,
   })[mode] ?? 3
 
   // Blueprints intentionally bottom-heavy: stars + a small starter cluster at
-  // the top, then a meaningful cliff into rotation (mostly 62-72) and a deep
-  // bench (mostly 56-66). Real NBA rosters work the same way — most teams
-  // have only 5-7 players above 75 OVR and a long tail of replacement-level
-  // depth. Without that cliff the procedural league produces too many
-  // "decent but unhappy" mid-tier players and the AI trade engine treats
-  // every team as a buyer for them.
+  // the top, then a meaningful cliff into rotation and a deep bench. Real
+  // NBA rosters work the same way — most teams have only 5-7 players above
+  // 75 OVR and a long tail of replacement-level depth.
   switch (tier) {
     case 1:
       return [
-        { role: 'superstar', min: 88, max: 94 },
-        { role: 'star',      min: 84, max: 88 },
-        { role: 'starter',   min: 77, max: 82 },
-        { role: 'starter',   min: 77, max: 82 },
-        { role: 'starter',   min: 77, max: 82 },
-        { role: 'rotation',  min: 69, max: 75 },
-        { role: 'rotation',  min: 69, max: 75 },
-        { role: 'rotation',  min: 69, max: 75 },
-        { role: 'rotation',  min: 69, max: 75 },
-        { role: 'rotation',  min: 69, max: 75 },
-        { role: 'bench',     min: 60, max: 67 },
-        { role: 'bench',     min: 60, max: 67 },
-        { role: 'bench',     min: 60, max: 67 },
-        { role: 'bench',     min: 60, max: 67 },
-        { role: 'bench',     min: 60, max: 67 },
+        { role: 'superstar', min: 85, max: 89 },
+        { role: 'star',      min: 81, max: 85 },
+        { role: 'starter',   min: 74, max: 78 },
+        { role: 'starter',   min: 74, max: 78 },
+        { role: 'starter',   min: 74, max: 78 },
+        { role: 'rotation',  min: 66, max: 72 },
+        { role: 'rotation',  min: 66, max: 72 },
+        { role: 'rotation',  min: 66, max: 72 },
+        { role: 'rotation',  min: 66, max: 72 },
+        { role: 'rotation',  min: 66, max: 72 },
+        { role: 'bench',     min: 58, max: 64 },
+        { role: 'bench',     min: 58, max: 64 },
+        { role: 'bench',     min: 58, max: 64 },
+        { role: 'bench',     min: 58, max: 64 },
+        { role: 'bench',     min: 58, max: 64 },
       ]
     case 2:
       return [
-        { role: 'star',      min: 82, max: 87 },
-        { role: 'starter',   min: 75, max: 81 },
-        { role: 'starter',   min: 75, max: 81 },
-        { role: 'starter',   min: 75, max: 81 },
-        { role: 'starter',   min: 73, max: 79 },
-        { role: 'rotation',  min: 66, max: 72 },
-        { role: 'rotation',  min: 66, max: 72 },
-        { role: 'rotation',  min: 66, max: 72 },
-        { role: 'rotation',  min: 66, max: 72 },
-        { role: 'rotation',  min: 66, max: 72 },
-        { role: 'bench',     min: 58, max: 65 },
-        { role: 'bench',     min: 58, max: 65 },
-        { role: 'bench',     min: 58, max: 65 },
-        { role: 'bench',     min: 58, max: 65 },
-        { role: 'bench',     min: 58, max: 65 },
+        { role: 'star',      min: 80, max: 84 },
+        { role: 'starter',   min: 73, max: 78 },
+        { role: 'starter',   min: 73, max: 78 },
+        { role: 'starter',   min: 73, max: 78 },
+        { role: 'starter',   min: 72, max: 77 },
+        { role: 'rotation',  min: 65, max: 71 },
+        { role: 'rotation',  min: 65, max: 71 },
+        { role: 'rotation',  min: 65, max: 71 },
+        { role: 'rotation',  min: 65, max: 71 },
+        { role: 'rotation',  min: 65, max: 71 },
+        { role: 'bench',     min: 58, max: 64 },
+        { role: 'bench',     min: 58, max: 64 },
+        { role: 'bench',     min: 58, max: 64 },
+        { role: 'bench',     min: 58, max: 64 },
+        { role: 'bench',     min: 58, max: 64 },
+      ]
+    case 2.5:
+      // USER TEAM — middle of the pack. Sits exactly between average_strong
+      // and average_weak. No "superstar" anchor and no rebuilder discount —
+      // a legitimate play-in / bubble team that the user can push toward
+      // contender via trades and development, or let drift toward rebuild.
+      return [
+        { role: 'star',      min: 79, max: 83 },
+        { role: 'starter',   min: 73, max: 78 },
+        { role: 'starter',   min: 73, max: 78 },
+        { role: 'starter',   min: 73, max: 78 },
+        { role: 'starter',   min: 71, max: 76 },
+        { role: 'rotation',  min: 64, max: 70 },
+        { role: 'rotation',  min: 64, max: 70 },
+        { role: 'rotation',  min: 64, max: 70 },
+        { role: 'rotation',  min: 64, max: 70 },
+        { role: 'rotation',  min: 64, max: 70 },
+        { role: 'bench',     min: 57, max: 63 },
+        { role: 'bench',     min: 57, max: 63 },
+        { role: 'bench',     min: 57, max: 63 },
+        { role: 'bench',     min: 57, max: 63 },
+        { role: 'bench',     min: 57, max: 63 },
       ]
     case 3:
       return [
-        { role: 'star',      min: 78, max: 83 },
-        { role: 'starter',   min: 72, max: 78 },
-        { role: 'starter',   min: 72, max: 78 },
-        { role: 'starter',   min: 72, max: 78 },
-        { role: 'starter',   min: 70, max: 76 },
-        { role: 'rotation',  min: 63, max: 70 },
-        { role: 'rotation',  min: 63, max: 70 },
-        { role: 'rotation',  min: 63, max: 70 },
-        { role: 'rotation',  min: 63, max: 70 },
-        { role: 'rotation',  min: 63, max: 70 },
-        { role: 'bench',     min: 56, max: 63 },
-        { role: 'bench',     min: 56, max: 63 },
-        { role: 'bench',     min: 56, max: 63 },
-        { role: 'bench',     min: 56, max: 63 },
-        { role: 'bench',     min: 56, max: 63 },
+        { role: 'star',      min: 77, max: 81 },
+        { role: 'starter',   min: 71, max: 76 },
+        { role: 'starter',   min: 71, max: 76 },
+        { role: 'starter',   min: 71, max: 76 },
+        { role: 'starter',   min: 69, max: 74 },
+        { role: 'rotation',  min: 63, max: 69 },
+        { role: 'rotation',  min: 63, max: 69 },
+        { role: 'rotation',  min: 63, max: 69 },
+        { role: 'rotation',  min: 63, max: 69 },
+        { role: 'rotation',  min: 63, max: 69 },
+        { role: 'bench',     min: 56, max: 62 },
+        { role: 'bench',     min: 56, max: 62 },
+        { role: 'bench',     min: 56, max: 62 },
+        { role: 'bench',     min: 56, max: 62 },
+        { role: 'bench',     min: 56, max: 62 },
       ]
     case 4:
     default:
+      // Rebuilders now get a young star "face of the franchise" (76-81)
+      // instead of just a low-end starter — real NBA rebuilders almost
+      // always have a young breakout player they're built around.
       return [
-        { role: 'starter',   min: 74, max: 79 },
-        { role: 'starter',   min: 68, max: 74 },
-        { role: 'starter',   min: 68, max: 74 },
-        { role: 'starter',   min: 68, max: 74 },
-        { role: 'starter',   min: 66, max: 72 },
-        { role: 'rotation',  min: 60, max: 66 },
-        { role: 'rotation',  min: 60, max: 66 },
-        { role: 'rotation',  min: 60, max: 66 },
-        { role: 'rotation',  min: 60, max: 66 },
-        { role: 'rotation',  min: 60, max: 66 },
-        { role: 'bench',     min: 54, max: 60 },
-        { role: 'bench',     min: 54, max: 60 },
-        { role: 'bench',     min: 54, max: 60 },
-        { role: 'bench',     min: 54, max: 60 },
-        { role: 'bench',     min: 54, max: 60 },
+        { role: 'star',      min: 76, max: 81 },
+        { role: 'starter',   min: 70, max: 75 },
+        { role: 'starter',   min: 70, max: 75 },
+        { role: 'starter',   min: 70, max: 75 },
+        { role: 'starter',   min: 68, max: 73 },
+        { role: 'rotation',  min: 62, max: 68 },
+        { role: 'rotation',  min: 62, max: 68 },
+        { role: 'rotation',  min: 62, max: 68 },
+        { role: 'rotation',  min: 62, max: 68 },
+        { role: 'rotation',  min: 62, max: 68 },
+        { role: 'bench',     min: 56, max: 62 },
+        { role: 'bench',     min: 56, max: 62 },
+        { role: 'bench',     min: 56, max: 62 },
+        { role: 'bench',     min: 56, max: 62 },
+        { role: 'bench',     min: 56, max: 62 },
       ]
   }
 }
 
 /**
  * Generate one team's 15-player roster using the per-campaign mode assignment.
+ *
+ * `teamIndex` is the team's position in the generation loop (0..29). It seeds
+ * `generatePlayer`'s deterministic name slot, so different teams start at
+ * different offsets in the FIRST_NAMES/LAST_NAMES pool. Without this, every
+ * team's pre-collision-dedup default names land on the same 15 entries and
+ * the first team generated ends up with all 15 players sharing whatever
+ * letter cluster sits at the front of the pool.
  */
-function generateTeamRoster({ campaignId, team, mode, startYear, usedNames }) {
+function generateTeamRoster({ campaignId, team, mode, startYear, usedNames, teamIndex = 0 }) {
   const blueprint = getRoleBlueprint(mode)
   const jerseyNumbers = generateJerseyNumbers()
   const players = []
@@ -263,7 +312,7 @@ function generateTeamRoster({ campaignId, team, mode, startYear, usedNames }) {
       overall,
       role,
       jerseyNumber: jerseyNumbers[posIndex],
-      teamIndex: 0,           // name seed isn't used in vet path (usedNames handles uniqueness)
+      teamIndex,              // seeds generatePlayer's name slot (offsets per team)
       posIndex,
       startYear,
       usedNames,
@@ -349,25 +398,29 @@ function assignHeadshotsByOverall(players) {
  * @param {Array} teams - The 30 generated teams (must have id + abbreviation)
  * @param {Object} [opts]
  * @param {number} [opts.startYear=2025]
- * @param {string} [opts.userTeamAbbreviation] - User's team is always 'average_strong'
+ * @param {string} [opts.userTeamAbbreviation] - User's team is always 'middle' (Tier 2.5)
  * @returns {{ players: Array, modes: Object }} Players (15×teams.length) and the mode map
  */
 export function generateLeagueRosters(campaignId, teams, opts = {}) {
-  const { startYear = 2025, userTeamAbbreviation = null } = opts
+  const { startYear = 2025, userTeamAbbreviation = null, modes: providedModes = null } = opts
   const usedNames = new Set()
   const allPlayers = []
 
   // Per-campaign mode assignment — different teams are contenders/rebuilders
-  // every playthrough so the league doesn't feel scripted.
-  const modes = assignCampaignModes(teams, userTeamAbbreviation)
+  // every playthrough so the league doesn't feel scripted. Caller may pre-roll
+  // and pass `opts.modes` so the coach generator (which runs earlier in the
+  // campaign-creation pipeline) can derive its tier from the same map. If not
+  // provided, fall back to rolling fresh here.
+  const modes = providedModes ?? assignCampaignModes(teams, userTeamAbbreviation)
 
-  for (const team of teams) {
+  for (let teamIndex = 0; teamIndex < teams.length; teamIndex++) {
+    const team = teams[teamIndex]
     const mode = modes[team.abbreviation] ?? 'average_weak'
     // Stamp the team record so AI + UI can read campaign mode directly
     team.campaignMode = mode
     team.aiDirection = MODE_TO_AI_DIRECTION[mode] ?? 'ascending'
 
-    const roster = generateTeamRoster({ campaignId, team, mode, startYear, usedNames })
+    const roster = generateTeamRoster({ campaignId, team, mode, startYear, usedNames, teamIndex })
     allPlayers.push(...roster)
   }
 
@@ -406,7 +459,7 @@ export function generateLeagueRosters(campaignId, teams, opts = {}) {
  * rookie-scale contracts if that's the next sore spot, but it isn't
  * blocking ROY / All-Rookie surfacing today.
  */
-function tagInitialRookies(allPlayers, startYear, { target = 30, maxAge = 22 } = {}) {
+function tagInitialRookies(allPlayers, startYear, { target = 60, maxAge = 22 } = {}) {
   const eligible = allPlayers
     .filter(p => (p?.age ?? 99) <= maxAge)
     .sort((a, b) => {
@@ -459,6 +512,7 @@ export function generateFreeAgentPool(campaignId, { startYear = 2025, count = 53
       mode: modeLayout[i],
       startYear,
       usedNames,
+      teamIndex: i,
     })
     for (const p of roster) {
       // Detach from the placeholder team, but PRESERVE the contract that

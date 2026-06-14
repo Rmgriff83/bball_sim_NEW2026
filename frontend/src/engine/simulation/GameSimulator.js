@@ -25,9 +25,11 @@ import { SYNERGIES, CONDITION_TO_PHASE } from '../data/synergies'
 // ---------------------------------------------------------------------------
 
 const QUARTERS = Config.QUARTERS // 4
-const QUARTER_LENGTH_MINUTES = Config.QUARTER_LENGTH_MINUTES // 10
+const QUARTER_LENGTH_MINUTES = Config.QUARTER_LENGTH_MINUTES // 12
 const SHOT_CLOCK_SECONDS = Config.SHOT_CLOCK_SECONDS // 24
 const OVERTIME_LENGTH_MINUTES = Config.OVERTIME_LENGTH_MINUTES || 5
+const TOTAL_GAME_MINUTES = Config.TOTAL_GAME_MINUTES // 48
+const ROTATION_BUDGET = TOTAL_GAME_MINUTES * 5 // 5 players on court → 240 player-minutes per game
 
 // ---------------------------------------------------------------------------
 // Helper: build a badge definition lookup keyed by badge id
@@ -39,6 +41,37 @@ function buildBadgeDefinitionMap(badges) {
     map[badge.id] = badge
   }
   return map
+}
+
+// ---------------------------------------------------------------------------
+// Helper: scale a team's targetMinutes so they fill exactly 5 × game-minutes
+// of court time. Stale campaigns from the 40-min era persisted minutes that
+// sum to ~200; this rescales them to 240 so the sub engine's percentage
+// math comes out right. New campaigns already sum to 240 — no-op.
+// ---------------------------------------------------------------------------
+
+function normalizeTargetMinutesToBudget(targetMinutes) {
+  const ids = Object.keys(targetMinutes)
+  if (ids.length === 0) return targetMinutes
+
+  const total = ids.reduce((s, id) => s + (targetMinutes[id] || 0), 0)
+  if (total <= 0) return targetMinutes
+  // Within 1 minute of budget → no scaling. Rounding residual that close
+  // doesn't materially shift rotations.
+  if (Math.abs(total - ROTATION_BUDGET) <= 1) return targetMinutes
+
+  const factor = ROTATION_BUDGET / total
+  const scaled = {}
+  for (const id of ids) {
+    scaled[id] = Math.max(0, Math.min(TOTAL_GAME_MINUTES, Math.round((targetMinutes[id] || 0) * factor)))
+  }
+  // Fix rounding residual on the highest-minutes player.
+  const rounded = ids.reduce((s, id) => s + scaled[id], 0)
+  if (rounded !== ROTATION_BUDGET) {
+    const topId = ids.reduce((a, b) => (scaled[a] >= scaled[b] ? a : b))
+    scaled[topId] = Math.max(0, Math.min(TOTAL_GAME_MINUTES, scaled[topId] + (ROTATION_BUDGET - rounded)))
+  }
+  return scaled
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +472,13 @@ class GameSimulator {
       targetMinutes = getDefaultTargetMinutes(players, starterIds)
     }
 
+    // Back-compat for campaigns created under the old 40-minute game length:
+    // their persisted target_minutes sum to ~200, but a 48-minute game has
+    // 240 player-minutes of court time to fill. Scale the team up so the
+    // sub engine's percentage math (mins / TOTAL_GAME_MINUTES) hits 5.0
+    // total across the roster. New campaigns already total 240 → no-op.
+    targetMinutes = normalizeTargetMinutesToBudget(targetMinutes)
+
     return targetMinutes
   }
 
@@ -591,6 +631,35 @@ class GameSimulator {
   // =========================================================================
 
   /**
+   * Roll a possession duration (in minutes) for the team currently on offense.
+   * Possession length scales by the team's offensive scheme tempo modifier:
+   *   - Base mean = 11.9 seconds → ~121 possessions per team in a 48-min game
+   *     when both teams run a tempo-neutral scheme (balanced, motion-ish).
+   *     Bumped iteratively: 14.4 (100 poss) → 13.1 (110 poss) → 11.9 (121 poss).
+   *   - effectiveMean = baseMean / schemeTempo (run_and_gun 1.3 → 9.2s,
+   *     post_centric 0.85 → 14.0s, etc.)
+   *   - Uniform random within effectiveMean ± 5s, clamped to a realistic
+   *     [4s, 24s] range (24 = shot clock).
+   *
+   * The alternating-possession loop means both teams' schemes contribute to
+   * the actual game pace — a fast team paired with a slow team lands the
+   * game roughly between their two paces.
+   */
+  _rollPossessionMinutes(offensiveScheme) {
+    const BASE_MEAN_SECONDS = 11.9
+    const VARIANCE_SECONDS = 5
+    const MIN_SECONDS = 4
+    const MAX_SECONDS = 24
+
+    const tempoMod = coachingEngine.getTempoModifier(offensiveScheme) || 1.0
+    const effectiveMean = BASE_MEAN_SECONDS / tempoMod
+    const lo = Math.max(MIN_SECONDS, effectiveMean - VARIANCE_SECONDS)
+    const hi = Math.min(MAX_SECONDS, effectiveMean + VARIANCE_SECONDS)
+    const possessionSeconds = lo + Math.random() * (hi - lo)
+    return possessionSeconds / 60
+  }
+
+  /**
    * Simulate a single quarter.
    */
   simulateQuarter() {
@@ -600,8 +669,8 @@ class GameSimulator {
     let minutesSinceLastRotation = 0
 
     while (this.timeRemaining > 0) {
-      // Realistic possession time: 10-24 seconds = 0.17 to 0.4 minutes
-      let possessionTime = (Math.floor(Math.random() * 15) + 10) / 60
+      const scheme = possessionTeam === 'home' ? this.homeOffensiveScheme : this.awayOffensiveScheme
+      let possessionTime = this._rollPossessionMinutes(scheme)
 
       if (possessionTime > this.timeRemaining) {
         possessionTime = this.timeRemaining
@@ -634,7 +703,8 @@ class GameSimulator {
     let minutesSinceLastRotation = 0
 
     while (this.timeRemaining > 0) {
-      let possessionTime = (Math.floor(Math.random() * 15) + 10) / 60
+      const scheme = possessionTeam === 'home' ? this.homeOffensiveScheme : this.awayOffensiveScheme
+      let possessionTime = this._rollPossessionMinutes(scheme)
 
       if (possessionTime > this.timeRemaining) {
         possessionTime = this.timeRemaining

@@ -228,7 +228,7 @@ export const useFinanceStore = defineStore('finance', () => {
       if (!player) throw new Error('Player not found in roster')
 
       // Re-sign deadline gate. The campaign flag is flipped by
-      // _processMidSeasonEvents on Dec 15 alongside trade_deadline_passed.
+      // _processMidSeasonEvents on Feb 5 alongside trade_deadline_passed.
       const campaign = await CampaignRepository.get(campaignId)
       const resignDeadlinePassed = isPastResignDeadline(campaign)
       if (resignDeadlinePassed) {

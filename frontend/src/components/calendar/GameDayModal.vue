@@ -66,8 +66,8 @@ function validateRoster() {
 
   // Check minutes total
   const totalMins = teamStore.totalTargetMinutes
-  if (totalMins !== 200) {
-    warningMessage.value = `Your rotation minutes total ${totalMins} — they must equal exactly 200.`
+  if (totalMins !== 240) {
+    warningMessage.value = `Your rotation minutes total ${totalMins} — they must equal exactly 240.`
     warningHint.value = 'Go to the Team tab to adjust your player minutes before playing.'
     showWarning.value = true
     return false
@@ -84,7 +84,10 @@ function goToTeamTab() {
 
 async function handleCpuSetLineup() {
   try {
-    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const [{ selectBestLineup }, { generateRoleAwareTargetMinutes }] = await Promise.all([
+      import('@/engine/ai/AILineupService'),
+      import('@/engine/simulation/SubstitutionEngine'),
+    ])
     const roster = teamStore.roster
     if (!roster || roster.length < 5) {
       toastStore.showError('Not enough players to set lineup')
@@ -93,35 +96,11 @@ async function handleCpuSetLineup() {
     const newLineup = selectBestLineup(roster)
     await teamStore.updateLineup(props.campaignId, newLineup)
 
-    // Recompute target minutes so the rotation totals 200 again. Mirrors the
-    // distribution used in CampaignHomeView's handler: starters split 160 mins
-    // (max 40 each), top healthy bench players get [16,12,8,4], everyone else 0.
-    const starterSet = new Set(newLineup.filter(id => id !== null))
-    const newMinutes = {}
-    const healthyStarters = newLineup.filter(id => id !== null)
-    const starterMins = healthyStarters.length > 0 ? Math.min(Math.floor(160 / healthyStarters.length), 40) : 0
-    let starterTotal = 0
-    for (const id of healthyStarters) {
-      newMinutes[id] = starterMins
-      starterTotal += starterMins
-    }
-    const benchPlayers = roster
-      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
-      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
-    let benchBudget = 200 - starterTotal
-    const benchSlots = [16, 12, 8, 4]
-    for (let i = 0; i < benchPlayers.length; i++) {
-      if (i < benchSlots.length && benchBudget > 0) {
-        const mins = Math.min(benchSlots[i], benchBudget)
-        newMinutes[benchPlayers[i].id] = mins
-        benchBudget -= mins
-      } else {
-        newMinutes[benchPlayers[i].id] = 0
-      }
-    }
-    for (const p of roster) {
-      if (p && !(p.id in newMinutes)) newMinutes[p.id] = 0
-    }
+    // Distribute 240 minutes per the team's substitution strategy
+    // (deep_bench, tight_rotation, etc).
+    const strategy = teamStore.team?.coaching_scheme?.substitution || 'staggered'
+    const starterIds = newLineup.filter(id => id !== null)
+    const newMinutes = generateRoleAwareTargetMinutes(roster, starterIds, strategy)
     await teamStore.updateTargetMinutes(props.campaignId, newMinutes)
 
     showWarning.value = false

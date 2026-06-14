@@ -13,6 +13,41 @@ import { ACTION_EFFECT_KEYS, aggregateBadgeEffects, sumActionBoost } from '@/eng
 // Module-level lookup so we don't rebuild this map per call.
 const BADGE_DEFINITIONS = Object.fromEntries(BADGES.map(b => [b.id, b]));
 
+// Synergy and probability-stacking guard rails. Without these, multiple
+// synergies firing simultaneously plus stacked badge / coach / momentum /
+// home-court bumps could push raw shot probability above 1.0 before the
+// [0.05, 0.95] safety clamp truncated it — producing 127-56 blowouts and
+// near-deterministic possessions for contender teams. These caps preserve
+// meaningful per-modifier impact while preventing runaway combinations.
+const MAX_OFFENSIVE_SYNERGY_BOOST = 0.12;   // one strong synergy's worth
+const MAX_DEFENSIVE_SYNERGY_PENALTY = 0.10;
+const MAX_DEVIATION_FROM_BASE = 0.35;
+// Negative outcomes (turnover / blocked / stolen) need a tighter deviation
+// cap than `made` shots — those probabilities don't have headroom to absorb
+// large modifiers (base ~0.10) and a spike there suppresses `made` via the
+// normalize-to-1 step. Capping each at ±0.15 keeps worst-case rates
+// realistic (e.g., turnover base 0.10 → max 0.25).
+const MAX_NEGATIVE_OUTCOME_DEVIATION = 0.15;
+
+// Shot-type-aware default base probabilities. Real NBA: ~62% close shots,
+// ~42% mid-range, ~37% threes. These are used when a play's outcome
+// doesn't explicitly set a probability — preventing the historic flat-0.5
+// default from forcing modifiers to do all the differentiation work.
+const DEFAULT_PROB_THREE = 0.37;
+const DEFAULT_PROB_CLOSE = 0.60;
+const DEFAULT_PROB_MID_RANGE = 0.42;
+
+function _defaultBaseProbability(key, outcome, action) {
+  if (key === 'made') {
+    if (outcome?.points === 3) return DEFAULT_PROB_THREE;
+    const shotType = action?.shotType;
+    if (shotType === 'midRange' || shotType === 'mid_range') return DEFAULT_PROB_MID_RANGE;
+    // 'paint', 'close', 'at_rim', layups, dunks — all treated as close shots.
+    return DEFAULT_PROB_CLOSE;
+  }
+  return 0.5;
+}
+
 // Always-on attribute contributors per action type. These layer on top of the
 // explicit `attributes.offense` / `attributes.defense` arrays in plays.js so
 // every defined attribute appears in at least one rating computation. Because
@@ -303,7 +338,17 @@ class PlayExecutionEngine {
     const negativeOutcomes = ['stolen', 'turnover', 'blocked', 'deflected', 'covered'];
 
     for (const [key, outcome] of Object.entries(outcomes)) {
-      const baseProbability = outcome.probability ?? 0.5;
+      // Resolve the base probability. If the play didn't set one explicitly,
+      // fall back to a shot-type-aware default so threes start at ~37%,
+      // close shots at ~60%, and mid-range at ~42% — close to real NBA
+      // baselines per shot type. Previously every shot defaulted to 0.50,
+      // which meant the modifier stack had to do disproportionate work to
+      // differentiate shot quality, and the negative side of the stack
+      // dragged scoring well below realistic levels.
+      let baseProbability = outcome.probability;
+      if (baseProbability == null) {
+        baseProbability = _defaultBaseProbability(key, outcome, action);
+      }
       const modifier = outcome.modifier ?? 0;
 
       // Adjust probability based on advantage
@@ -341,12 +386,11 @@ class PlayExecutionEngine {
             this.gameSimulator.consumeColdStreakBonus(shooterId);
           }
 
-          // Fatigue penalty — multiplies the final made probability by the
-          // shooter's fatigue modifier (~0.84 at max gas, 1.0 at full rest).
-          // The formula already existed in GameSimulator but was never read.
-          const fatigueMod =
-            this.gameSimulator?.calculateFatigueModifier?.(actor) ?? 1;
-          adjustedProbability *= fatigueMod;
+          // Fatigue is applied AFTER the deviation cap below — see the
+          // post-cap block. Order matters: applying it here would compound
+          // fatigue with the additive modifier stack, then the cap would
+          // clamp the residue, producing inconsistent ceilings depending on
+          // the shooter's gas.
 
           // Apply badge synergies. The condition gate runs here because PEE
           // owns the full shot context (shotType, dribblesSincePass,
@@ -361,23 +405,34 @@ class PlayExecutionEngine {
             playCategory: play?.category,
             playId: play?.id,
           };
+          // Accumulate offensive synergy boosts into a local total, then cap
+          // before adding to adjustedProbability. Without the cap, 3+ shot-
+          // phase synergies firing on the same possession could stack to
+          // +0.30 or more on shot probability — the single biggest amplifier
+          // behind contender-vs-rebuilder blowouts. Each fired synergy still
+          // gets pushed onto `firedShotSynergies` so the on-court animation
+          // banner shows them.
           if (this.gameSimulator && this.synergyShotMap && actor?.id != null) {
             const shotCandidates = this.synergyShotMap.get(String(actor.id)) || [];
+            let synergyOffenseBoost = 0;
             for (const cand of shotCandidates) {
               if (!this.gameSimulator.shotSynergyMatches(cand, synergyCtx)) continue;
-              adjustedProbability += cand.boost?.shotPercentage || 0;
-              adjustedProbability += cand.boost?.rollerFinishing || 0;
-              adjustedProbability += cand.boost?.screenEffectiveness || 0;
+              synergyOffenseBoost += cand.boost?.shotPercentage || 0;
+              synergyOffenseBoost += cand.boost?.rollerFinishing || 0;
+              synergyOffenseBoost += cand.boost?.screenEffectiveness || 0;
               this.firedShotSynergies.push(cand);
             }
+            adjustedProbability += Math.min(synergyOffenseBoost, MAX_OFFENSIVE_SYNERGY_BOOST);
           }
           if (this.gameSimulator && this.synergyDefenseCandidates) {
+            let synergyDefensePenalty = 0;
             for (const cand of this.synergyDefenseCandidates) {
               if (!this.gameSimulator.defenseSynergyMatches(cand, synergyCtx)) continue;
-              adjustedProbability -= cand.boost?.paintDefense || 0;
-              adjustedProbability -= cand.boost?.forcedBadShots || 0;
+              synergyDefensePenalty += cand.boost?.paintDefense || 0;
+              synergyDefensePenalty += cand.boost?.forcedBadShots || 0;
               this.firedDefenseSynergies.push(cand);
             }
+            adjustedProbability -= Math.min(synergyDefensePenalty, MAX_DEFENSIVE_SYNERGY_PENALTY);
           }
         }
       }
@@ -418,7 +473,35 @@ class PlayExecutionEngine {
       // Apply action-specific modifier
       adjustedProbability += modifier;
 
-      // Clamp probability
+      // Cap cumulative deviation from baseProbability so the [0.05, 0.95]
+      // safety clamp below stops being the primary limiter. Tighter cap on
+      // negative outcomes (turnover/blocked/stolen): those bases are small
+      // (~0.10) and a wide cap would let modifiers double them, then the
+      // normalize-to-1 step would squeeze `made` way down — invisible
+      // suppression that the positive-side cap can't see.
+      const maxDeviation = negativeOutcomes.includes(key)
+        ? MAX_NEGATIVE_OUTCOME_DEVIATION
+        : MAX_DEVIATION_FROM_BASE;
+      const deviation = adjustedProbability - baseProbability;
+      const cappedDeviation = Math.max(
+        -maxDeviation,
+        Math.min(maxDeviation, deviation)
+      );
+      adjustedProbability = baseProbability + cappedDeviation;
+
+      // Fatigue multiplier — applied AFTER the cap so a fatigued shooter's
+      // ceiling is cleanly (capped × fatigue) rather than compounding with
+      // the additive negative stack underneath the cap. Only the `made`
+      // outcome takes the penalty; turnovers/blocks/steals don't get a
+      // bonus from a tired shooter.
+      if (key === 'made') {
+        const fatigueMod =
+          this.gameSimulator?.calculateFatigueModifier?.(actor) ?? 1;
+        adjustedProbability *= fatigueMod;
+      }
+
+      // Final safety clamp — should now rarely engage, just protects
+      // against any unforeseen path that produces a value outside [0.05, 0.95].
       adjustedProbability = Math.max(0.05, Math.min(0.95, adjustedProbability));
 
       modified[key] = { ...outcome, probability: adjustedProbability };

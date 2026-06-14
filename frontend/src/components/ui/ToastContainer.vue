@@ -89,7 +89,7 @@ function isWin(toast) {
               <Binoculars :size="20" />
             </div>
             <div class="toast-content">
-              <div class="game-result-header">WEEKLY REPORT</div>
+              <div class="game-result-header">SCOUTING REPORT</div>
               <div class="weekly-summary-body">
                 <span class="weekly-summary-value">+{{ toast.scoutingPointsEarned }}</span>
                 <span class="weekly-summary-label">

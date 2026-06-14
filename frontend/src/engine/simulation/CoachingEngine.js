@@ -94,7 +94,7 @@ export const DEFENSIVE_SCHEMES = {
     name: '2-3 Zone',
     description: 'Zone defense protecting the paint with two guards up top and three bigs below',
     modifiers: {
-      paint_protection: 0.12,
+      paint_protection: 0.10,
       corner_three_weakness: -0.10,
       block_boost: 0.06,
     },
@@ -127,7 +127,7 @@ export const DEFENSIVE_SCHEMES = {
     description: 'High-pressure full court defense forcing turnovers but risky in transition',
     modifiers: {
       turnover_boost: 0.10,
-      transition_weakness: -0.17,
+      transition_weakness: -0.12,
       steal_boost: 0.06,
     },
     weaknesses: ['transition', 'fastbreak'],
@@ -144,6 +144,57 @@ export const DEFENSIVE_SCHEMES = {
     weaknesses: ['spot_up', 'corner_three'],
     strengths: ['isolation'],
   },
+}
+
+// ---------------------------------------------------------------------------
+// Defensive scheme position requirements
+// ---------------------------------------------------------------------------
+// Roster shape penalties applied to scheme effectiveness so a team without
+// the right position breakdown (e.g. five PGs running zone_2_3) doesn't get
+// the same effectiveness rating as a properly-shaped team. Soft penalty —
+// floor of 0.5 — so the scheme is always playable, just suboptimal. Drives
+// the AI's auto-scheme picker and the lineup UI's recommendation surfacing.
+
+const SCHEME_POSITION_REQUIREMENTS = {
+  man: {},
+  zone_2_3: { minFrontcourt: 3 },                       // 3 SF/PF/C
+  zone_3_2: { minPerimeter: 3 },                        // 3 PG/SG/SF
+  zone_1_3_1: { minPerimeter: 2, minFrontcourt: 2 },    // balanced
+  press: { minPerimeter: 3, minSpeed: 75 },             // quick guards
+  trap: { minPerimeter: 3, minSpeed: 70 },              // pressure guards
+  drop_coverage: { minFrontcourt: 2 },                  // need bigs to drop back
+}
+
+function calculatePositionFitScore(scheme, roster) {
+  const reqs = SCHEME_POSITION_REQUIREMENTS[scheme] || {}
+  if (!roster || roster.length === 0) return 1.0
+
+  let frontcourt = 0
+  let perimeter = 0
+  for (const p of roster) {
+    const pos = p?.position
+    if (pos === 'SF' || pos === 'PF' || pos === 'C') frontcourt++
+    if (pos === 'PG' || pos === 'SG' || pos === 'SF') perimeter++
+  }
+
+  let score = 1.0
+  if (reqs.minFrontcourt && frontcourt < reqs.minFrontcourt) {
+    score *= 0.5 + (frontcourt / reqs.minFrontcourt) * 0.5
+  }
+  if (reqs.minPerimeter && perimeter < reqs.minPerimeter) {
+    score *= 0.5 + (perimeter / reqs.minPerimeter) * 0.5
+  }
+  if (reqs.minSpeed) {
+    // Average speed across the top of the rotation (up to 8 players).
+    const top = roster.slice(0, 8)
+    const totalSpeed = top.reduce((s, p) => s + (p?.attributes?.physical?.speed ?? 70), 0)
+    const avgSpeed = top.length > 0 ? totalSpeed / top.length : 70
+    if (avgSpeed < reqs.minSpeed) {
+      score *= 0.7 + (avgSpeed / reqs.minSpeed) * 0.3
+    }
+  }
+
+  return Math.max(0.5, score)
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +492,16 @@ export class CoachingEngine {
     modifiers.blockModifier *= iqMult
     modifiers.stealModifier *= iqMult
 
+    // Floor the shot penalty. Worst-case stack (post-up vs 2-3 zone with an
+    // elite defensive coach) reached -0.247 in the audit — large enough that
+    // a single coach matchup could suppress an entire game's scoring on its
+    // own. Capping at -0.15 still lets a great defense meaningfully reduce
+    // shot quality (15% per possession is enormous in aggregate) but rules
+    // out the runaway combo. The positive side stays uncapped — favorable
+    // matchups can still favor the offense.
+    const MAX_DEFENSIVE_SHOT_PENALTY = 0.15
+    modifiers.shotModifier = Math.max(modifiers.shotModifier, -MAX_DEFENSIVE_SHOT_PENALTY)
+
     return modifiers
   }
 
@@ -459,11 +520,15 @@ export class CoachingEngine {
     if (!coach) return { shotQualityBonus: baseShot, turnoverPenalty: baseTo }
 
     const iq = getEffectiveCoachAttribute(coach, 'offensiveIQ')
-    // Centered at 75 → 0%. Linear ±~3.2% at the extremes (IQ 25 → -2%, IQ 99 → +3.2%).
+    // Centered at 75 → 0%. Linear ±~5% on shot quality at the extremes (IQ
+    // 25 → -2.5%, IQ 99 → +4.8%). Coefficients raised from the legacy
+    // 0.04/0.025 (which produced a 20× asymmetry vs the defensive coach's
+    // IQ-scaled shotModifier) so offensive coach quality finally matters in
+    // the same ballpark as defensive coach quality.
     const offset = (iq - 75) / 100
     return {
-      shotQualityBonus: offset * 0.04,
-      turnoverPenalty: -offset * 0.025,
+      shotQualityBonus: offset * 0.20,
+      turnoverPenalty: -offset * 0.10,
     }
   }
 
@@ -649,6 +714,14 @@ export class CoachingEngine {
         break
       }
     }
+
+    // Apply roster position-fit multiplier — a team without the right
+    // position breakdown (or speed/size baseline) running a scheme it doesn't
+    // fit gets a softer effectiveness rating. Floor is 0.5 so the scheme is
+    // never fully shut off, just suboptimal. Drives AI scheme picking and
+    // surfaces in the lineup UI's recommendation logic.
+    const fit = calculatePositionFitScore(scheme, roster)
+    effectiveness *= fit
 
     return Math.max(30, Math.min(100, effectiveness))
   }

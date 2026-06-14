@@ -16,7 +16,7 @@
 const CHECK_INTERVAL_MINUTES = 2.0;
 const VARIANCE_RANGE = 0.15;
 const CLOSE_GAME_THRESHOLD = 6;
-const TOTAL_GAME_MINUTES = 40.0;
+const TOTAL_GAME_MINUTES = 48.0;
 
 const STRATEGIES = {
   staggered: {
@@ -63,6 +63,21 @@ const STRATEGIES = {
     pace_threshold: 1.0,
     max_subs_per_check: 3,
   },
+  load_management: {
+    name: 'Load Management',
+    description:
+      'Aggressively bench any player at 75%+ fatigue so they fully rest and recover. Stars protected from burnout but the team plays short-handed when key guys are tired.',
+    type: 'passive',
+    rotation_depth: '9-12 players',
+    strengths: ['Star Health', 'Long-term Conditioning'],
+    weaknesses: ['Short-handed Stretches', 'Bench-heavy Lineups'],
+    pace_threshold: 1.0,
+    max_subs_per_check: 3,
+    // User-only strategy. selectSubstitutionStrategy (AILineupService) never
+    // returns this — AI teams can't get stuck in a "sit stars, never put them
+    // back" loop because they never pick it in the first place.
+    user_only: true,
+  },
 };
 
 // ============================================================
@@ -79,10 +94,10 @@ function isPlayerInjured(player) {
 
 /**
  * Calculate total game minutes elapsed.
- * Uses 10-minute quarters.
+ * Uses 12-minute quarters.
  */
 function calculateGameElapsed(currentQuarter, timeRemaining) {
-  const quarterLength = 10.0;
+  const quarterLength = 12.0;
   const completedQuarters = currentQuarter - 1;
   const elapsedInCurrent = quarterLength - timeRemaining;
   return completedQuarters * quarterLength + elapsedInCurrent;
@@ -170,10 +185,17 @@ function findBenchReplacement(
       continue;
     }
 
+    // Effective rating subtracts a fatigue penalty (0.15 per fatigue point)
+    // so a fresh 75-rated backup beats a tired 78-rated bench player. At
+    // fatigue 80, the penalty is -12 effective rating — enough to swing
+    // the ranking against a meaningfully gassed alternative.
+    const fatiguePenalty = (player.fatigue ?? 0) * 0.15;
+    const effectiveRating = getPlayerRating(player) - fatiguePenalty;
+
     candidates.push({
       player,
       id: player.id,
-      rating: getPlayerRating(player),
+      rating: effectiveRating,
       minutesRemaining: remaining,
     });
   }
@@ -182,7 +204,7 @@ function findBenchReplacement(
     return null;
   }
 
-  // Prefer highest-rated
+  // Prefer highest-rated (now fatigue-adjusted)
   candidates.sort((a, b) => b.rating - a.rating);
 
   return candidates[0].player;
@@ -195,9 +217,21 @@ function findBenchReplacement(
 function getDistributionTemplate(strategy) {
   const templates = {
     staggered: [34, 32, 30, 28, 26, 18, 14, 10, 8, 0, 0, 0, 0, 0, 0],
-    tight_rotation: [36, 34, 32, 30, 28, 16, 12, 8, 4, 0, 0, 0, 0, 0, 0],
+    // Pulled the top of the rotation down (was [36, 34, 32, 30, 28, 16,
+    // 12, 8, 4, 0, ...]) — combined with the +2 quality bonus for 90+
+    // starters and the normalize-to-240 step, the previous template
+    // produced a 45-minute top starter (93.75% of game). Now lands ~41
+    // min and the 6th-9th men get a few more minutes each, which still
+    // reads as "tight" relative to staggered / deep_bench while staying
+    // within real-NBA top-end-load territory.
+    tight_rotation: [32, 30, 28, 26, 24, 18, 14, 10, 6, 0, 0, 0, 0, 0, 0],
     deep_bench: [30, 28, 26, 24, 22, 18, 16, 14, 12, 10, 0, 0, 0, 0, 0],
     platoon: [32, 30, 28, 26, 24, 18, 16, 12, 8, 6, 0, 0, 0, 0, 0],
+    // load_management: identical baseline to deep_bench. Actual minutes are
+    // dominated by the fatigue-gate in evaluateSubstitutions (any player at
+    // ≥75 fatigue gets 0 minutes regardless of template), so this template
+    // just shapes the rotation when nobody is gassed yet.
+    load_management: [30, 28, 26, 24, 22, 18, 16, 14, 12, 10, 0, 0, 0, 0, 0],
   };
 
   return (
@@ -274,17 +308,35 @@ export function evaluateSubstitutions(
     targetPcts[playerId] = mins / TOTAL_GAME_MINUTES;
   }
 
+  // Load Management's load-management threshold. Players at this fatigue
+  // level or higher get fully benched until they recover. Both gates the
+  // benchPlayers list (can't be subbed in while gassed) and triggers
+  // immediate sit on any on-floor player at ≥ threshold.
+  const LOAD_MANAGEMENT_FATIGUE_THRESHOLD = 75;
+  const isLoadManagement = strategy === 'load_management';
+
   // Build bench (players not in current lineup, not injured)
   let benchPlayers = [];
   for (const player of fullRoster) {
     if (!currentLineupIds.includes(player.id)) {
       if (!isPlayerInjured(player)) {
+        // Load management: never sub in a player whose fatigue is at or above
+        // the threshold. Let them sit and recover.
+        if (isLoadManagement && (player.fatigue ?? 0) >= LOAD_MANAGEMENT_FATIGUE_THRESHOLD) {
+          continue;
+        }
         benchPlayers.push(player);
       }
     }
   }
 
   // --- Pass 1: Find players ahead of pace (candidates to sit) ---
+  // The pace threshold is scaled by per-player fatigue so a gassed star
+  // gets flagged for sub at a tighter delta than a fresh starter would.
+  // Range: fatigue 0 → 1.0× threshold (legacy behavior); fatigue 100 →
+  // 0.5× threshold. Linear interpolation in between. Without this, a
+  // 90-fatigue star and a fresh backup were weighted identically when
+  // deciding who to keep on the floor.
   let sitCandidates = [];
   for (const playerId of currentLineupIds) {
     const actualMinutes = boxScore[playerId]?.minutes ?? 0;
@@ -292,7 +344,26 @@ export function evaluateSubstitutions(
     const expectedMinutes = gameElapsed * targetPct;
     const paceDelta = actualMinutes - expectedMinutes;
 
-    if (paceDelta >= strategyData.pace_threshold) {
+    const fatigue = playerMap[playerId]?.fatigue ?? 0;
+
+    // Load management: any on-floor player at or above the fatigue
+    // threshold gets force-sat regardless of pace. Push with a huge
+    // synthetic paceDelta so they sort to the front of the sit list and
+    // get pulled first when subs are limited per check.
+    if (isLoadManagement && fatigue >= LOAD_MANAGEMENT_FATIGUE_THRESHOLD) {
+      sitCandidates.push({
+        id: playerId,
+        paceDelta: 999,
+        position: playerMap[playerId]?.position ?? 'SF',
+        secondary_position: playerMap[playerId]?.secondary_position ?? null,
+      });
+      continue;
+    }
+
+    const fatigueFactor = Math.max(0.5, 1.0 - fatigue / 200);
+    const effectiveThreshold = strategyData.pace_threshold * fatigueFactor;
+
+    if (paceDelta >= effectiveThreshold) {
       sitCandidates.push({
         id: playerId,
         paceDelta,
@@ -482,8 +553,16 @@ export function applyCloseGameOverride(
     })
     .sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
 
-  // Take best 5
-  const best5 = healthy.slice(0, 5);
+  // Fatigue gate — a gassed star is worse on the floor than a fresh backup.
+  // Skip anyone whose fatigue is past the threshold so the closeout lineup
+  // isn't a tired hero-ball stack. If too few eligible remain to fill 5
+  // (deep injury report, etc.), fall back to the legacy "best 5 healthy"
+  // selection rather than returning null and stranding the team.
+  const FATIGUE_CLOSEOUT_THRESHOLD = 80;
+  const fresh = healthy.filter((p) => (p.fatigue ?? 0) < FATIGUE_CLOSEOUT_THRESHOLD);
+  const eligible = fresh.length >= 5 ? fresh : healthy;
+
+  const best5 = eligible.slice(0, 5);
 
   if (best5.length < 5) {
     return null;
@@ -527,26 +606,114 @@ export function generateAITargetMinutes(roster, starterIds, strategy) {
       minuteSlot += 1;
     }
 
-    targetMinutes[playerId] = Math.max(0, Math.min(40, minuteSlot));
+    targetMinutes[playerId] = Math.max(0, Math.min(48, minuteSlot));
   }
 
-  // Normalize to exactly 200 total (5 players × 40 minute game)
+  // Normalize to exactly 240 total (5 players × 48 minute game)
   const total = Object.values(targetMinutes).reduce((sum, m) => sum + m, 0);
-  if (total > 0 && total !== 200) {
-    const factor = 200 / total;
+  if (total > 0 && total !== 240) {
+    const factor = 240 / total;
     for (const id of Object.keys(targetMinutes)) {
       targetMinutes[id] = Math.max(
         0,
-        Math.min(40, Math.round(targetMinutes[id] * factor))
+        Math.min(48, Math.round(targetMinutes[id] * factor))
       );
     }
     // Fix rounding residual — adjust the highest-minutes player
     const rounded = Object.values(targetMinutes).reduce((s, m) => s + m, 0);
-    if (rounded !== 200) {
+    if (rounded !== 240) {
       const topId = Object.keys(targetMinutes).reduce((a, b) =>
         targetMinutes[a] >= targetMinutes[b] ? a : b
       );
-      targetMinutes[topId] = Math.max(0, Math.min(40, targetMinutes[topId] + (200 - rounded)));
+      targetMinutes[topId] = Math.max(0, Math.min(48, targetMinutes[topId] + (240 - rounded)));
+    }
+  }
+
+  return targetMinutes;
+}
+
+/**
+ * Role-aware target minutes generator for the USER team's "CPU auto-set"
+ * buttons. Differs from generateAITargetMinutes (which assigns by pure
+ * rating rank): here, the user's explicitly chosen starters always claim
+ * the top 5 template slots — even if a bench player outrates them.
+ *
+ * Honors the team's substitution strategy (deep_bench gives starters
+ * ~26-36 mins, tight_rotation gives ~34-43 mins, etc.) and normalizes
+ * to exactly 240 player-minutes per game.
+ *
+ * @param {Array}  roster     - Full roster of player objects
+ * @param {Array}  starterIds - Array of 5 starter player IDs (user-chosen)
+ * @param {string} strategy   - 'staggered' | 'platoon' | 'tight_rotation' | 'deep_bench'
+ * @returns {Object} { [playerId]: targetMinutesNumber }
+ */
+export function generateRoleAwareTargetMinutes(roster, starterIds, strategy) {
+  const templates = getDistributionTemplate(strategy);
+  const targetMinutes = {};
+  const starterSet = new Set((starterIds || []).filter((id) => id != null));
+
+  // Load Management: any healthy player whose fatigue is at or above the
+  // 75% threshold gets zero pregame minutes regardless of starter/bench
+  // status. The in-game SubstitutionEngine already force-sits these
+  // players at the first sub-check, but without zeroing their target
+  // minutes here, the CPU Adjust button would still assign a fatigued
+  // bench player ~18-20 mpg (their template slot's share), giving the
+  // user the impression load_management did nothing.
+  const LOAD_MANAGEMENT_FATIGUE_THRESHOLD = 75;
+  const isLoadManagement = strategy === 'load_management';
+  const isFatigueSat = (p) =>
+    isLoadManagement && (p?.fatigue ?? 0) >= LOAD_MANAGEMENT_FATIGUE_THRESHOLD;
+
+  // Initialize every player to 0 (injured players stay at 0 since the
+  // distribution loops below skip them).
+  for (const p of roster) {
+    if (p?.id) targetMinutes[p.id] = 0;
+  }
+
+  // Healthy starters, sorted by rating descending — highest-rated starter
+  // gets template slot 0 (the largest starter share). Load Management
+  // filters out gassed players here so the template assigns their slot
+  // to the next-best available player instead of stranding it.
+  const healthyStarters = roster
+    .filter((p) => p?.id && starterSet.has(p.id) && !isPlayerInjured(p) && !isFatigueSat(p))
+    .sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
+
+  // Healthy bench, sorted by rating descending — highest-rated bench
+  // player gets template slot 5 (the 6th man's share). Same Load
+  // Management fatigue gate as the starter loop above.
+  const healthyBench = roster
+    .filter((p) => p?.id && !starterSet.has(p.id) && !isPlayerInjured(p) && !isFatigueSat(p))
+    .sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
+
+  // Top 5 template slots → starters, with quality bumps for stars.
+  for (let i = 0; i < healthyStarters.length && i < 5; i++) {
+    let mins = templates[i] ?? 0;
+    const rating = getPlayerRating(healthyStarters[i]);
+    if (rating >= 90) mins += 2;
+    else if (rating >= 80) mins += 1;
+    targetMinutes[healthyStarters[i].id] = Math.max(0, Math.min(48, mins));
+  }
+
+  // Remaining template slots → bench by rating rank.
+  for (let i = 0; i < healthyBench.length; i++) {
+    const mins = templates[5 + i] ?? 0;
+    targetMinutes[healthyBench[i].id] = Math.max(0, Math.min(48, mins));
+  }
+
+  // Normalize to exactly 240 (5 × 48 player-minutes per game).
+  const total = Object.values(targetMinutes).reduce((sum, m) => sum + m, 0);
+  if (total > 0 && total !== 240) {
+    const factor = 240 / total;
+    for (const id of Object.keys(targetMinutes)) {
+      targetMinutes[id] = Math.max(0, Math.min(48, Math.round(targetMinutes[id] * factor)));
+    }
+    // Fix rounding residual — adjust the highest-minutes player.
+    const rounded = Object.values(targetMinutes).reduce((s, m) => s + m, 0);
+    if (rounded !== 240) {
+      const topId = Object.keys(targetMinutes).reduce((a, b) =>
+        targetMinutes[a] >= targetMinutes[b] ? a : b
+      );
+      targetMinutes[topId] = Math.max(0, Math.min(48, targetMinutes[topId] + (240 - rounded)));
     }
   }
 
@@ -574,11 +741,11 @@ export function applyVariance(targetMinutes) {
     const variance = 1.0 + randomFactor;
     let newMins = mins * variance;
 
-    // Clamp: starters (>= 20 min target) min 8, bench min 0, max 40
+    // Clamp: starters (>= 20 min target) min 8, bench min 0, max 48
     if (mins >= 20) {
-      newMins = Math.max(8, Math.min(40, newMins));
+      newMins = Math.max(8, Math.min(48, newMins));
     } else {
-      newMins = Math.max(0, Math.min(40, newMins));
+      newMins = Math.max(0, Math.min(48, newMins));
     }
 
     varied[playerId] = Math.round(newMins);
@@ -589,7 +756,7 @@ export function applyVariance(targetMinutes) {
 
 /**
  * Returns default target minutes based on rating tiers.
- * Starters split 160 minutes, bench gets 16/12/8/4 by rating rank.
+ * Starters split 192 minutes, bench gets 19/14/10/5 by rating rank.
  *
  * @param {Array} roster     - Full roster of player objects
  * @param {Array} starterIds - Array of starter player IDs
@@ -619,25 +786,28 @@ export function getDefaultTargetMinutes(roster, starterIds) {
     }
   }
 
-  // Healthy starters split 160 minutes evenly
-  const starterMins =
-    healthyStarterCount > 0
-      ? Math.min(Math.floor(160 / healthyStarterCount), 40)
-      : 0;
+  // Healthy starters split 192 minutes evenly. 192 / 5 = 38.4 — distribute
+  // the remainder across the first N starters so the total lands at 192.
+  const baseStarterMins =
+    healthyStarterCount > 0 ? Math.floor(192 / healthyStarterCount) : 0;
+  const starterRemainder = 192 - baseStarterMins * healthyStarterCount;
   let starterTotal = 0;
+  let starterIdx = 0;
   for (const id of Object.keys(targetMinutes)) {
     if (targetMinutes[id] === null) {
-      targetMinutes[id] = starterMins;
-      starterTotal += starterMins;
+      const extra = starterIdx < starterRemainder ? 1 : 0;
+      targetMinutes[id] = Math.min(baseStarterMins + extra, 48);
+      starterTotal += targetMinutes[id];
+      starterIdx++;
     }
   }
 
   // Sort bench by rating descending
   bench.sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
 
-  // Top healthy bench players get remaining minutes: 16, 12, 8, 4
-  const benchDistribution = [16, 12, 8, 4];
-  let benchBudget = 200 - starterTotal;
+  // Top healthy bench players get remaining minutes: 19, 14, 10, 5
+  const benchDistribution = [19, 14, 10, 5];
+  let benchBudget = 240 - starterTotal;
   let benchSlot = 0;
 
   for (const player of bench) {

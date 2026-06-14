@@ -153,7 +153,7 @@ function formatPickYear(year) {
   return year < 100 ? 2024 + year : year
 }
 
-// Re-sign deadline gate. Flipped by _processMidSeasonEvents on Dec 15 alongside
+// Re-sign deadline gate. Flipped by _processMidSeasonEvents on Feb 5 alongside
 // trade_deadline_passed. When true, ContractCard hides the Re-sign button and
 // FinancesTab shows a "Re-signing closed" banner above the expiring list.
 const resignDeadlinePassed = computed(() => isPastResignDeadline(campaignStore.currentCampaign))
@@ -666,7 +666,7 @@ onMounted(() => {
 
       <!-- Expiring Contracts View -->
       <div v-else-if="activeSubTab === 'expiring'" class="expiring-section">
-        <!-- Re-sign deadline banner — shown after the in-season deadline passes (Dec 15) -->
+        <!-- Re-sign deadline banner — shown after the in-season deadline passes (Feb 5) -->
         <div v-if="resignDeadlinePassed" class="resign-closed-banner">
           <Calendar :size="16" />
           <span>Re-signing is closed for this season — the deadline has passed. Expiring players will hit free agency at season end.</span>

@@ -16,6 +16,7 @@ import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { computeTeamOverall } from '@/utils/teamOverall'
 import { coachingEngine } from '@/engine/simulation/CoachingEngine'
+import { QUARTER_LENGTH_MINUTES } from '@/engine/config/GameConfig'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
 import { SimulateConfirmModal, EvolutionSummary, MomentumBar } from '@/components/game'
@@ -1536,15 +1537,20 @@ const hasAnimationData = computed(() => {
          animationData.value?.possessions?.length > 0
 })
 
-// Game clock - convert possession progress to time (12:00 countdown to 0:00)
+// Game clock - convert possession progress to time, counting down from
+// QUARTER_LENGTH_MINUTES:00 to 0:00. Pulls quarter length from GameConfig
+// so the live UI matches what the simulator actually plays.
+const QUARTER_SECONDS = QUARTER_LENGTH_MINUTES * 60
+const QUARTER_CLOCK_LABEL = `${QUARTER_LENGTH_MINUTES}:00`
+
 const gameClock = computed(() => {
-  if (!hasAnimationData.value || totalPossessions.value === 0) return '12:00'
+  if (!hasAnimationData.value || totalPossessions.value === 0) return QUARTER_CLOCK_LABEL
 
   // Calculate progress through the quarter (0 to 1)
   const quarterProgress = (currentPossessionIndex.value + progress.value) / totalPossessions.value
 
-  // Convert to remaining time (600 seconds = 10 minutes, counting down)
-  const totalSeconds = Math.max(0, Math.floor(600 * (1 - quarterProgress)))
+  // Convert to remaining time (counting down from quarter length to 0)
+  const totalSeconds = Math.max(0, Math.floor(QUARTER_SECONDS * (1 - quarterProgress)))
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
 

@@ -21,7 +21,7 @@ export const ACHIEVEMENTS = [
   // MASTERY ACHIEVEMENTS
   { id: 'three_championships', name: 'Three-Peat', description: 'Win 3 championships.', category: 'mastery', points: 150, criteria: { type: 'championships', value: 3 } },
   { id: 'five_championships', name: 'Dynasty', description: 'Win 5 championships.', category: 'mastery', points: 250, criteria: { type: 'championships', value: 5 } },
-  { id: 'perfect_season', name: 'Perfect Season', description: 'Go undefeated in the regular season (54-0).', category: 'mastery', points: 500, criteria: { type: 'perfect_regular_season', value: 1 } },
+  { id: 'perfect_season', name: 'Perfect Season', description: 'Go undefeated in the regular season (82-0).', category: 'mastery', points: 500, criteria: { type: 'perfect_regular_season', value: 1 } },
   { id: 'perfect_playoffs', name: 'Playoff Perfection', description: 'Go undefeated in the playoffs (16-0).', category: 'mastery', points: 300, criteria: { type: 'perfect_playoff_run', value: 1 } },
   { id: 'hof_induction', name: 'Hall of Famer', description: 'Have a player inducted into the Hall of Fame.', category: 'mastery', points: 200, criteria: { type: 'hof_inductions', value: 1 } },
   { id: 'five_hof', name: 'Legacy Builder', description: 'Have 5 players inducted into the Hall of Fame.', category: 'mastery', points: 400, criteria: { type: 'hof_inductions', value: 5 } },

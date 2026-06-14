@@ -189,8 +189,8 @@ export const WALKTHROUGHS = {
       target: 'gm-minutes',
       tab: { view: 'gm', tab: 'team' },
       placement: 'bottom',
-      title: '200 Minutes',
-      body: 'Rotation minutes must total exactly 200 (five players over 40 minutes). The meter turns green when you\'re balanced — red means the game will reject your lineup.',
+      title: '240 Minutes',
+      body: 'Rotation minutes must total exactly 240 (five players over 48 minutes). The meter turns green when you\'re balanced — red means the game will reject your lineup.',
     },
     {
       target: 'gm-cpu-auto',
@@ -321,7 +321,7 @@ export const WALKTHROUGHS = {
       target: 'gm-player-actions',
       placement: 'bottom',
       title: 'Re-sign or Drop',
-      body: 'Re-sign keeps a player on a new multi-year deal; Drop releases them now to free up cap space and a roster spot. Re-signing closes at the Dec 15 deadline.',
+      body: 'Re-sign keeps a player on a new multi-year deal; Drop releases them now to free up cap space and a roster spot. Re-signing closes at the Feb 5 deadline.',
     },
   ],
 
@@ -331,7 +331,7 @@ export const WALKTHROUGHS = {
       tab: { view: 'gm', tab: 'trades' },
       placement: 'bottom',
       title: 'Trades',
-      body: 'Build and propose trades with other teams here — until the in-season trade deadline (Dec 15), after which this tab closes for the season.',
+      body: 'Build and propose trades with other teams here — until the in-season trade deadline (Feb 5), after which this tab closes for the season.',
     },
     {
       target: 'gm-trades-content',
@@ -483,7 +483,7 @@ export const WALKTHROUGHS = {
       target: 'scout-points',
       placement: 'bottom',
       title: 'Scout Points',
-      body: "Scout Points are your scouting currency. You earn them weekly — a sharper scout and better scouting facility earn more. Spend them to reveal prospects' hidden ratings.",
+      body: "Scout Points are your scouting currency. You earn them every two weeks — a sharper scout and better scouting facility earn more. Spend them to reveal prospects' hidden ratings.",
     },
     {
       target: 'scout-tab-rookies',

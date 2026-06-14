@@ -33,13 +33,13 @@ const UPGRADE_COST = 500
 const facilityTypes = {
   scouting: {
     name: 'Scouting',
-    description: 'Reveals hidden attributes on draft prospects. Higher levels earn more scouting points per week.',
+    description: 'Reveals hidden attributes on draft prospects. Higher levels earn more scouting points every two weeks.',
     perks: [
-      'Level 1: 1 scouting point per week',
-      'Level 2: 2 scouting points per week',
-      'Level 3: 3 scouting points per week',
-      'Level 4: 4 scouting points per week',
-      'Level 5: 5 scouting points per week',
+      'Level 1: 1 scouting point every two weeks',
+      'Level 2: 2 scouting points every two weeks',
+      'Level 3: 3 scouting points every two weeks',
+      'Level 4: 4 scouting points every two weeks',
+      'Level 5: 5 scouting points every two weeks',
     ]
   },
   training: {
