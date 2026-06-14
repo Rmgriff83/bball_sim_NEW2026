@@ -24,6 +24,91 @@ import {
   formatTradeForDisplay,
 } from '@/engine/finance/TradeExecutor'
 
+/**
+ * Move draft picks between teams during a trade and persist the changed
+ * teams. Uses a global pickId lookup across every team's draftPicks
+ * array — picks SHOULD live on exactly one team at any moment, so this
+ * find-anywhere approach is more robust than guessing the source team
+ * from the trade asset's `from` field, which can be stale if a prior
+ * AI-side trade moved the pick out from under the wizard's snapshot.
+ *
+ * Replaces an earlier inline pattern in executeTrade / acceptProposal
+ * that did `findIndex` on the expected source team only and silently
+ * skipped picks it couldn't find — that was the root cause of a bug
+ * where users acquired picks that never landed in their draftPicks
+ * array (the trade appeared to succeed but the pick stayed put).
+ *
+ * @param {Object} args
+ * @param {Array}  args.pickAssets  - The `pick` assets from buildTradeDetails
+ * @param {Array}  args.allTeams    - All teams in the campaign (will be mutated for the touched ones)
+ * @throws if any pick can't be located on any team, OR if the
+ *   destination team id doesn't resolve to a known team. Failing
+ *   loudly stops a trade from committing with a ghost asset.
+ */
+async function _movePicksBetweenTeams({ pickAssets, allTeams }) {
+  if (!pickAssets || pickAssets.length === 0) return
+
+  // Build pickId → { team, indexInDraftPicks } lookup once per trade.
+  // For a 30-team league with ~10 picks each this is ~300 entries —
+  // negligible cost and saves us repeated O(team × picks) scans.
+  const pickLocations = new Map()
+  for (const team of allTeams) {
+    const picks = team.draftPicks || []
+    for (let i = 0; i < picks.length; i++) {
+      pickLocations.set(picks[i].id, { team, indexInTeam: i })
+    }
+  }
+
+  const updatedTeamIds = new Set()
+  for (const asset of pickAssets) {
+    const located = pickLocations.get(asset.pickId)
+    if (!located) {
+      throw new Error(`Draft pick ${asset.pickId} not found on any team — trade aborted.`)
+    }
+
+    const sourceTeam = located.team
+    const destTeam = allTeams.find(t => t.id === asset.to)
+    if (!destTeam) {
+      throw new Error(`Destination team ${asset.to} not found — trade aborted.`)
+    }
+
+    // splice() invalidates other indexes into the same array, so we
+    // splice in place. The pickLocations map is regenerated below for
+    // any subsequent picks in the same trade (e.g. a multi-pick deal
+    // where pick #2's source team might be the same as pick #1's).
+    const [pick] = sourceTeam.draftPicks.splice(located.indexInTeam, 1)
+    pick.currentOwnerId = destTeam.id
+    pick.current_owner_id = destTeam.id
+    pick.isTraded = true
+    pick.is_traded = true
+    if (!destTeam.draftPicks) destTeam.draftPicks = []
+    destTeam.draftPicks.push(pick)
+
+    updatedTeamIds.add(sourceTeam.id)
+    updatedTeamIds.add(destTeam.id)
+
+    // Rebuild the index map for the source team since splice shifted
+    // every subsequent pick's index. Cheap — only touches the one team
+    // we just mutated, not the whole league.
+    const refreshedPicks = sourceTeam.draftPicks
+    for (let i = 0; i < refreshedPicks.length; i++) {
+      pickLocations.set(refreshedPicks[i].id, { team: sourceTeam, indexInTeam: i })
+    }
+    pickLocations.delete(asset.pickId)
+    // The dest team's index map entry for the new pick gets added at
+    // the array's tail; only matters if a later asset in this trade
+    // moves the same pick back out, which shouldn't happen but is safe.
+    pickLocations.set(asset.pickId, { team: destTeam, indexInTeam: destTeam.draftPicks.length - 1 })
+  }
+
+  const teamsToSave = [...updatedTeamIds]
+    .map(id => allTeams.find(t => t.id === id))
+    .filter(Boolean)
+  if (teamsToSave.length > 0) {
+    await TeamRepository.saveBulk(teamsToSave)
+  }
+}
+
 export const useTradeStore = defineStore('trade', () => {
   // State
   const tradeableTeams = ref([])
@@ -49,6 +134,14 @@ export const useTradeStore = defineStore('trade', () => {
   // can adjust and counter-propose. Shape:
   //   { teamId, receiving: [proposal.ai_gives assets], giving: [proposal.ai_receives assets] }
   const negotiationPrefill = ref(null)
+  // Tracks the inbound AI proposal that seeded the current negotiation
+  // session, so a successful executeTrade can mark that source proposal
+  // accepted instead of leaving it pending. Without this, a trade
+  // negotiated through the wizard goes through correctly but the stale
+  // offer is re-served the next day because `executeTrade` doesn't know
+  // it originated from a proposal. Set in setNegotiationFromProposal;
+  // consumed and cleared inside executeTrade.
+  const pendingNegotiationProposalId = ref(null)
 
   const loading = ref(false)
   const proposing = ref(false)
@@ -353,47 +446,28 @@ export const useTradeStore = defineStore('trade', () => {
         await PlayerRepository.saveBulk(playersToSave)
       }
 
-      // Persist draft pick ownership changes: move picks between teams
+      // Persist draft pick ownership changes via the shared helper. Uses
+      // a global pickId lookup across every team's draftPicks so a pick
+      // that's drifted out of aiTeamObj.draftPicks (e.g. moved to a
+      // third team between wizard load and trade execute) still resolves
+      // correctly. Throws if a pick is genuinely missing — no more
+      // silent "successful" trades that omit the pick move.
       const pickAssets = details.assets.filter(a => a.type === 'pick')
       if (pickAssets.length > 0) {
-        const userPicks = [...(userTeam.draftPicks || [])]
-        const aiPicks = [...(aiTeamObj?.draftPicks || [])]
+        const allTeamsForPickMove = await TeamRepository.getAllForCampaign(campaignId)
+        await _movePicksBetweenTeams({ pickAssets, allTeams: allTeamsForPickMove })
 
+        // Belt-and-suspenders: re-read the user's team and confirm every
+        // expected received pick actually landed. Logs a warning if not
+        // (Fix 1 makes this unreachable in normal flow, but cloud-sync
+        // races could still produce a divergence).
+        const persistedUserTeam = await TeamRepository.get(campaignId, userTeamId)
         for (const asset of pickAssets) {
-          const pickId = asset.pickId
-          const fromId = asset.from
-          const toId = asset.to
-
-          // Find and remove pick from source team
-          let pick = null
-          const fromUserTeam = fromId == userTeamId
-          const sourceArr = fromUserTeam ? userPicks : aiPicks
-          const destArr = fromUserTeam ? aiPicks : userPicks
-          const destTeamId = toId
-
-          const idx = sourceArr.findIndex(p => (p.id ?? '') == pickId)
-          if (idx >= 0) {
-            pick = { ...sourceArr[idx] }
-            sourceArr.splice(idx, 1)
-
-            // Update ownership fields
-            pick.currentOwnerId = destTeamId
-            pick.current_owner_id = destTeamId
-            pick.isTraded = true
-            pick.is_traded = true
-
-            // Add to destination team
-            destArr.push(pick)
+          if (asset.to !== userTeamId) continue
+          const owns = (persistedUserTeam?.draftPicks || []).some(p => p.id === asset.pickId)
+          if (!owns) {
+            console.warn('[trade] post-execute verification: user did not end up owning expected pick', asset.pickId)
           }
-        }
-
-        // Save both teams with updated draftPicks
-        userTeam.draftPicks = userPicks
-        await TeamRepository.save(userTeam)
-
-        if (aiTeamObj) {
-          aiTeamObj.draftPicks = aiPicks
-          await TeamRepository.save(aiTeamObj)
         }
       }
 
@@ -452,6 +526,22 @@ export const useTradeStore = defineStore('trade', () => {
         otherTeamName: selectedTeam.value?.name || 'Unknown',
         userTeamName: userTeam?.name || 'Unknown',
         date: currentDate,
+      }
+
+      // If this wizard session was seeded by an inbound AI proposal,
+      // mark that source proposal accepted so it doesn't get re-served
+      // tomorrow as a stale offer. Guard with a team-match check: if
+      // the user switched the other team mid-wizard, the executed trade
+      // isn't with the original proposer, so leave the source pending.
+      const sourceProposalId = pendingNegotiationProposalId.value
+      pendingNegotiationProposalId.value = null
+      if (sourceProposalId) {
+        const sourceProposal = pendingProposals.value.find(p => p.id === sourceProposalId)
+        const sourceTeamId = sourceProposal?.proposing_team_id ?? sourceProposal?.proposing_team?.id ?? null
+        if (sourceProposal && String(sourceTeamId) === String(selectedTeam.value.id)) {
+          pendingProposals.value = pendingProposals.value.filter(p => p.id !== sourceProposalId)
+          await _updateProposalStatus(campaignId, sourceProposalId, 'accepted')
+        }
       }
 
       // Clear the trade after successful execution
@@ -726,43 +816,21 @@ export const useTradeStore = defineStore('trade', () => {
         await PlayerRepository.saveBulk(playersToSave)
       }
 
-      // Persist draft pick ownership changes: move picks between teams
+      // Persist draft pick ownership changes via the shared helper.
+      // Same robust find-anywhere lookup + loud failure as executeTrade.
       const pickAssets = details.assets.filter(a => a.type === 'pick')
       if (pickAssets.length > 0) {
-        const userPicks = [...(userTeam.draftPicks || [])]
-        const aiPicks = [...(aiTeamObj?.draftPicks || [])]
+        const allTeamsForPickMove = await TeamRepository.getAllForCampaign(campaignId)
+        await _movePicksBetweenTeams({ pickAssets, allTeams: allTeamsForPickMove })
 
+        // Post-execute verification — see executeTrade for rationale.
+        const persistedUserTeam = await TeamRepository.get(campaignId, userTeamId)
         for (const asset of pickAssets) {
-          const pickId = asset.pickId
-          const fromId = asset.from
-          const toId = asset.to
-
-          let pick = null
-          const fromUserTeam = fromId == userTeamId
-          const sourceArr = fromUserTeam ? userPicks : aiPicks
-          const destArr = fromUserTeam ? aiPicks : userPicks
-          const destTeamId = toId
-
-          const idx = sourceArr.findIndex(p => (p.id ?? '') == pickId)
-          if (idx >= 0) {
-            pick = { ...sourceArr[idx] }
-            sourceArr.splice(idx, 1)
-
-            pick.currentOwnerId = destTeamId
-            pick.current_owner_id = destTeamId
-            pick.isTraded = true
-            pick.is_traded = true
-
-            destArr.push(pick)
+          if (asset.to !== userTeamId) continue
+          const owns = (persistedUserTeam?.draftPicks || []).some(p => p.id === asset.pickId)
+          if (!owns) {
+            console.warn('[trade] acceptProposal post-execute: user did not end up owning expected pick', asset.pickId)
           }
-        }
-
-        userTeam.draftPicks = userPicks
-        await TeamRepository.save(userTeam)
-
-        if (aiTeamObj) {
-          aiTeamObj.draftPicks = aiPicks
-          await TeamRepository.save(aiTeamObj)
         }
       }
 
@@ -978,6 +1046,9 @@ export const useTradeStore = defineStore('trade', () => {
       receiving,
       giving,
     }
+    // Remember which proposal this negotiation came from so a successful
+    // executeTrade can clear it from the inbound-offers list.
+    pendingNegotiationProposalId.value = proposal.id ?? null
   }
 
   function consumeNegotiationPrefill() {

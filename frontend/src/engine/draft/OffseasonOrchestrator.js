@@ -11,6 +11,7 @@ import { PlayerRepository } from '../db/PlayerRepository'
 import { SeasonRepository } from '../db/SeasonRepository'
 import { generateAndSaveRookieClass, shouldGenerateGenerational } from './RookieGenerationService'
 import { buildRookieDraftOrder } from './DraftOrderService'
+import { runDraftLottery } from './DraftLotteryService'
 import { assignRookieContract, assignUndraftedContract } from './RookieContractService'
 import { rollDraftPicks } from './DraftPickService'
 import { selectRookieDraftPick } from '../../services/AIDraftService'
@@ -99,7 +100,13 @@ export async function simFullOffseason(campaignId) {
   const seasonYear = campaign.currentSeasonYear ?? 2025
   const seasonData = await SeasonRepository.get(campaignId, seasonYear)
   const standings = seasonData?.standings || { east: [], west: [] }
-  const draftOrder = buildRookieDraftOrder(teams, standings, gameYear)
+  // Honor the lottery result if one was run earlier in the offseason — the
+  // user clicks the Draft Lottery CTA before free agency, which persists the
+  // result onto campaign.settings.draftLottery. When present, round 1 fires
+  // in the lottery-determined order instead of reverse standings. When
+  // absent (legacy campaigns / sim-skip flows), behavior is unchanged.
+  const lotteryResult = campaign?.settings?.draftLottery ?? null
+  const draftOrder = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
 
   // 3. Compute team directions for AI
   const context = buildContext({ standings, teams, seasonPhase: 'offseason' })
@@ -631,4 +638,53 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
 
   await CampaignRepository.save(campaign)
   return campaign
+}
+
+/**
+ * Run the rookie draft lottery for the current offseason. Persists the
+ * result on the campaign so subsequent reads (results view, the actual
+ * draft trigger) all see the same outcome. Idempotent — if the lottery
+ * has already been run this offseason, returns the cached result.
+ *
+ * Guarded so the lottery can only run during the offseason and only
+ * once per year. The user is gated into running it before free agency
+ * by the CampaignHomeView CTA (replaces "Enter Free Agency" while
+ * draftLotteryCompleted is false).
+ *
+ * @param {string} campaignId
+ * @returns {Promise<Object>} The lottery result ({ actualOrder, runAt, year })
+ */
+export async function runDraftLotteryForCampaign(campaignId) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
+
+  // Idempotency: return the cached lottery if one already ran this offseason.
+  if (campaign.settings?.draftLotteryCompleted && campaign.settings?.draftLottery) {
+    return campaign.settings.draftLottery
+  }
+
+  // Phase guard: lottery should only fire in the offseason proper, before
+  // free agency. After FA the phase shifts to 'offseason_free_agency' /
+  // 'offseason_draft' and the lottery action button is hidden anyway, but
+  // the guard prevents accidental console-triggered runs at the wrong time.
+  if (campaign.phase !== 'offseason') {
+    throw new Error(`Draft lottery can only be run during the offseason (current phase: ${campaign.phase})`)
+  }
+
+  const teams = await TeamRepository.getAllForCampaign(campaignId)
+  const seasonYear = campaign.currentSeasonYear ?? 2025
+  const seasonData = await SeasonRepository.get(campaignId, seasonYear)
+  const standings = seasonData?.standings || { east: [], west: [] }
+
+  // gameYear here is the upcoming draft's year (the year the rookies enter
+  // the league), matching simFullOffseason's convention.
+  const gameYear = seasonYear + 1
+  const lotteryResult = runDraftLottery(teams, standings, gameYear)
+
+  campaign.settings = campaign.settings ?? {}
+  campaign.settings.draftLottery = lotteryResult
+  campaign.settings.draftLotteryCompleted = true
+  await CampaignRepository.save(campaign)
+
+  return lotteryResult
 }

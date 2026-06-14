@@ -11,6 +11,17 @@ const MVP_MIN_GAMES_PCT = 0.75
 const ROTY_MIN_GAMES_PCT = 0.50
 const DEFENSE_MIN_GAMES_PCT = 0.60
 
+// Module-level exports so the live in-season MVP Race tab (League page)
+// can score candidates with the exact same formula + min-games gate
+// that the end-of-season MVP selection uses. Single source of truth:
+// whoever is leading the in-season race on the final day matches the
+// AwardService's actual MVP pick.
+export { MVP_MIN_GAMES_PCT }
+
+export function scoreMVPCandidate(stats, teamWinPct) {
+  return AwardService._scoreMVP(stats, teamWinPct)
+}
+
 export class AwardService {
 
   // -----------------------------------------------------------------------

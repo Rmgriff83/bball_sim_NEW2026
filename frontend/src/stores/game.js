@@ -1278,6 +1278,7 @@ export const useGameStore = defineStore('game', () => {
         userTeamId,
         userLineup,
         targetMinutes: userTargetMinutes,
+        isPlayoff: !!game.isPlayoff,
       })
 
       // Process post-game evolution
@@ -1289,6 +1290,7 @@ export const useGameStore = defineStore('game', () => {
         difficulty: campaign.difficulty || 'pro',
         gameDate: game.gameDate,
         trainerPerks,
+        isPlayoff: !!game.isPlayoff,
       })
       result.evolution = evolution
 
@@ -1420,6 +1422,7 @@ export const useGameStore = defineStore('game', () => {
           userTeamId,
           userLineup,
           targetMinutes: userTargetMinutes,
+          isPlayoff: !!userGame.isPlayoff,
         })
 
         // Post-game evolution
@@ -1431,6 +1434,7 @@ export const useGameStore = defineStore('game', () => {
           difficulty: campaign.difficulty || 'pro',
           gameDate: userGame.gameDate,
           trainerPerks,
+          isPlayoff: !!userGame.isPlayoff,
         })
         result.evolution = evolution
 
@@ -1542,6 +1546,7 @@ export const useGameStore = defineStore('game', () => {
           userTeamId,
           userLineup,
           targetMinutes: userTargetMinutes,
+          isPlayoff: !!game.isPlayoff,
           ...(settings || {}),
         },
       })
@@ -1840,6 +1845,7 @@ export const useGameStore = defineStore('game', () => {
         difficulty: campaign.difficulty || 'pro',
         gameDate: game.gameDate,
         trainerPerks,
+        isPlayoff: !!game.isPlayoff,
       })
       result.evolution = evolution
 
@@ -2075,6 +2081,7 @@ export const useGameStore = defineStore('game', () => {
           userTeamId,
           userLineup,
           targetMinutes: userTargetMinutes,
+          isPlayoff: !!nextUserGame.isPlayoff,
         })
 
         // Post-game evolution for user game
@@ -2086,6 +2093,7 @@ export const useGameStore = defineStore('game', () => {
           difficulty: campaign.difficulty || 'pro',
           gameDate: nextUserGame.gameDate,
           trainerPerks,
+          isPlayoff: !!nextUserGame.isPlayoff,
         })
         result.evolution = evolution
 
@@ -2402,6 +2410,7 @@ export const useGameStore = defineStore('game', () => {
       userTeamId,
       userLineup,
       targetMinutes: userTargetMinutes,
+      isPlayoff: !!game.isPlayoff,
     })
 
     const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
@@ -2902,9 +2911,15 @@ export const useGameStore = defineStore('game', () => {
         homePlayers,
         awayPlayers,
         gameDate: game.gameDate,
+        // Carry isPlayoff into the per-game options. The simulator's
+        // AI fatigue caps (pregame minute haircut, 38-MPG ceiling,
+        // ≥85 hard sit) skip when isPlayoff is true so AI teams can
+        // push stars in postseason games.
+        isPlayoff: !!game.isPlayoff,
         options: {
           generateAnimationData: false,
           isLiveGame: false,
+          isPlayoff: !!game.isPlayoff,
         },
       })
     }

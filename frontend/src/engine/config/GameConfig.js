@@ -780,7 +780,7 @@ export const SUBSTITUTION_STRATEGIES = {
     description:
       "Stars rest in shifts. At least one playmaker always on floor. Max 2 subs at a time.",
     type: "balanced",
-    rotation_depth: "8-9 players",
+    rotation_depth: "9-10 players",
     strengths: ["Continuity", "Matchup Flexibility"],
     weaknesses: ["Star Fatigue Risk"],
     pace_threshold: 1.5,
@@ -791,7 +791,7 @@ export const SUBSTITUTION_STRATEGIES = {
     description:
       "Swap groups of 2-3 players at defined intervals. Unit chemistry over individual matchups.",
     type: "balanced",
-    rotation_depth: "8-10 players",
+    rotation_depth: "9-11 players",
     strengths: ["Unit Chemistry", "Predictable Rhythm"],
     weaknesses: ["Transition Gaps"],
     pace_threshold: 2.0,
@@ -800,9 +800,9 @@ export const SUBSTITUTION_STRATEGIES = {
   tight_rotation: {
     name: "Tight Rotation",
     description:
-      "Lean heavily on top 7 players. Stars play big minutes. Bench only for short rest.",
+      "Lean heavily on top 8 players. Stars play big minutes. Bench only for short rest.",
     type: "aggressive",
-    rotation_depth: "7-8 players",
+    rotation_depth: "8-9 players",
     strengths: ["Star Maximization", "Closing Lineup"],
     weaknesses: ["Fatigue Risk", "Thin Depth"],
     pace_threshold: 2.5,
@@ -811,9 +811,9 @@ export const SUBSTITUTION_STRATEGIES = {
   deep_bench: {
     name: "Deep Bench",
     description:
-      "Spread minutes across 9-10 players. Everyone contributes. Fresh legs all game.",
+      "Spread minutes across 10-11 players. Everyone contributes. Fresh legs all game.",
     type: "passive",
-    rotation_depth: "9-10 players",
+    rotation_depth: "10-11 players",
     strengths: ["Fresh Legs", "Injury Insurance"],
     weaknesses: ["Fewer Star Minutes", "Less Continuity"],
     pace_threshold: 1.0,
@@ -824,7 +824,7 @@ export const SUBSTITUTION_STRATEGIES = {
     description:
       "Aggressively bench any player at 75%+ fatigue so they fully rest and recover. Stars protected from burnout but the team plays short-handed when key guys are tired.",
     type: "passive",
-    rotation_depth: "9-12 players",
+    rotation_depth: "10-13 players",
     strengths: ["Star Health", "Long-term Conditioning"],
     weaknesses: ["Short-handed Stretches", "Bench-heavy Lineups"],
     pace_threshold: 1.0,

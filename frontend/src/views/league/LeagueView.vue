@@ -126,6 +126,12 @@ watch(activeTab, async (newTab) => {
     } catch (err) {
       console.error('Failed to fetch rookie rankings:', err)
     }
+  } else if (newTab === 'mvp') {
+    try {
+      await leagueStore.fetchMVPRace(campaignId.value, { force: true })
+    } catch (err) {
+      console.error('Failed to fetch MVP race:', err)
+    }
   }
 })
 
@@ -237,6 +243,21 @@ const selectedPlayer = ref(null)
 const playerModalTab = ref('stats')
 const playerModalOrigin = ref('team') // 'team' or 'leaders'
 const loadingPlayerFromLeaders = ref(false)
+
+// Origin (school or international club) shown in the History tab. Mirrors
+// the same computed in PlayerDetailModal.vue — the league view has its own
+// inline player modal rather than reusing PlayerDetailModal, so the same
+// logic has to live in both places. Reads both camelCase and snake_case
+// fields; returns null when neither is populated so the section hides
+// cleanly on a legacy player record that pre-dates the field.
+const playerOrigin = computed(() => {
+  const p = selectedPlayer.value
+  if (!p) return null
+  const school = p.college ?? p.school ?? null
+  const country = p.country ?? null
+  if (!school && !country) return null
+  return { school: school || '—', country }
+})
 
 // Evolution history display state
 const showAllRecentEvolution = ref(false)
@@ -673,6 +694,13 @@ function formatSalary(salary) {
             </button>
             <button
               class="tab-btn"
+              :class="{ active: activeTab === 'mvp' }"
+              @click="activeTab = 'mvp'"
+            >
+              MVP Race
+            </button>
+            <button
+              class="tab-btn"
               :class="{ active: activeTab === 'rookies' }"
               @click="activeTab = 'rookies'"
             >
@@ -956,6 +984,78 @@ function formatSalary(salary) {
             <div v-if="sortedLeaders.length === 0 && !leagueStore.loadingLeaders" class="empty-state">
               <p>No stats available yet.</p>
               <p class="text-sm text-secondary">Play some games to see league leaders.</p>
+            </div>
+          </div>
+        </GlassCard>
+      </template>
+
+      <!-- MVP Race View -->
+      <template v-else-if="activeTab === 'mvp'">
+        <GlassCard padding="none" :hoverable="false">
+          <div class="leaders-header">
+            <h3 class="h4">MVP Race</h3>
+            <p class="text-secondary text-sm">Live in-season rankings using the same formula that selects the season MVP. Click a row for player details.</p>
+          </div>
+
+          <!-- Loading state -->
+          <div v-if="leagueStore.loadingMvpRace" class="loading-state opacity-60">
+            <LoadingSpinner size="md" />
+          </div>
+
+          <!-- MVP Race Table -->
+          <div v-else class="table-container">
+            <table class="leaders-table">
+              <thead>
+                <tr>
+                  <th class="rank-col">#</th>
+                  <th class="player-col">Player</th>
+                  <th class="team-col-sm">Team</th>
+                  <th class="stat-col highlight">Score</th>
+                  <th class="stat-col">PPG</th>
+                  <th class="stat-col">RPG</th>
+                  <th class="stat-col">APG</th>
+                  <th class="stat-col">FG%</th>
+                  <th class="stat-col">W-L</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(player, index) in leagueStore.mvpRace"
+                  :key="player.playerId"
+                  class="leader-row-table clickable"
+                  :class="{ 'user-team': isUserTeam(player.teamId), 'mvp-leader': index === 0 }"
+                  @click="openPlayerFromLeaders(player)"
+                >
+                  <td class="rank-col">{{ index + 1 }}</td>
+                  <td class="player-col">
+                    <div class="player-info-cell">
+                      <span class="player-name">{{ player.name }}</span>
+                    </div>
+                  </td>
+                  <td class="team-col-sm">
+                    <div class="team-cell">
+                      <div
+                        class="team-logo-mini"
+                        :style="{ backgroundColor: player.teamColor || '#6B7280' }"
+                      >
+                        {{ player.teamAbbreviation }}
+                      </div>
+                    </div>
+                  </td>
+                  <td class="stat-col highlight">{{ player.mvpScore?.toFixed(1) || '0.0' }}</td>
+                  <td class="stat-col">{{ player.ppg?.toFixed(1) || '0.0' }}</td>
+                  <td class="stat-col">{{ player.rpg?.toFixed(1) || '0.0' }}</td>
+                  <td class="stat-col">{{ player.apg?.toFixed(1) || '0.0' }}</td>
+                  <td class="stat-col">{{ player.fgPct?.toFixed(1) || '0.0' }}%</td>
+                  <td class="stat-col">{{ player.teamWins }}-{{ player.teamLosses }}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- Empty state -->
+            <div v-if="leagueStore.mvpRace.length === 0 && !leagueStore.loadingMvpRace" class="empty-state">
+              <p>Not enough games played yet.</p>
+              <p class="text-sm text-secondary">The MVP race opens up once players have hit the 75% min-games threshold.</p>
             </div>
           </div>
         </GlassCard>
@@ -1681,6 +1781,15 @@ function formatSalary(salary) {
                     </div>
                   </div>
 
+                  <!-- Origin (school or international club + country) -->
+                  <div v-if="playerOrigin" class="player-history-section">
+                    <div class="origin-card">
+                      <span class="origin-label">From</span>
+                      <span class="origin-value">{{ playerOrigin.school }}</span>
+                      <span v-if="playerOrigin.country" class="origin-country">{{ playerOrigin.country }}</span>
+                    </div>
+                  </div>
+
                   <!-- Awards -->
                   <div class="player-history-section">
                     <h4 class="player-attr-title">Awards</h4>
@@ -2355,6 +2464,21 @@ function formatSalary(salary) {
 
 .leader-row-table.user-team:hover {
   background: rgba(232, 90, 79, 0.15);
+}
+
+/* Gold tint for the #1 MVP race row. Layers above .user-team so the
+   leader is still distinguishable when the user's player is leading. */
+.leader-row-table.mvp-leader {
+  background: rgba(251, 191, 36, 0.12);
+  font-weight: 600;
+}
+
+.leader-row-table.mvp-leader:hover {
+  background: rgba(251, 191, 36, 0.18);
+}
+
+.leader-row-table.mvp-leader.user-team {
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.14), rgba(232, 90, 79, 0.12));
 }
 
 .player-info-cell {
@@ -4652,6 +4776,37 @@ function formatSalary(salary) {
 .draft-info-team {
   font-size: 0.7rem;
   color: var(--color-text-tertiary);
+}
+
+.origin-card {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md, 8px);
+}
+
+.origin-label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.origin-value {
+  font-size: 0.95rem;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.origin-country {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  font-style: italic;
 }
 
 .current-season-row {

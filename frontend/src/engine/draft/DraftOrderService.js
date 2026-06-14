@@ -4,16 +4,25 @@
 // Builds 60-pick rookie draft order from standings and traded draft picks.
 // =============================================================================
 
+import { lotteryPositionMap } from './DraftLotteryService'
+
 /**
  * Build the full 60-pick rookie draft order based on standings.
  * Worst team picks first; traded picks go to the current owner.
  *
+ * When `lotteryResult` is supplied (from runDraftLottery), the round-1
+ * team order is taken from the lottery result instead of reverse standings
+ * — this is how the NBA-style lottery randomizes picks 1-14 while leaving
+ * picks 15-30 in reverse standings. Round 2 stays pure reverse standings
+ * since real NBA lottery only affects round 1.
+ *
  * @param {Array} teams - All 30 teams
  * @param {Object} standings - { east: [...], west: [...] }
  * @param {number} gameYear - The draft year
+ * @param {Object|null} [lotteryResult] - Optional output of runDraftLottery
  * @returns {Array} 60-slot array matching draft store format
  */
-export function buildRookieDraftOrder(teams, standings, gameYear) {
+export function buildRookieDraftOrder(teams, standings, gameYear, lotteryResult = null) {
   // 1. Combine all standings into one list
   const allStandings = [
     ...(standings.east || []),
@@ -43,13 +52,33 @@ export function buildRookieDraftOrder(teams, standings, gameYear) {
     return a.pointDiff - b.pointDiff
   })
 
+  // 3b. Lottery reorder for round 1. The lottery moves teams within the
+  // 30-slot round-1 order; round 2 stays in reverse standings unchanged.
+  // We sort a copy of teamRecords using the lottery's actualPick as the
+  // primary key — teams not present in the lottery (shouldn't happen for
+  // a properly constructed result, but defensive) fall back to their
+  // reverse-standings index. Round 2 still walks teamRecords in standings
+  // order, so we keep the original array intact.
+  const round1Order = (() => {
+    if (!lotteryResult?.actualOrder) return teamRecords
+    const lotteryMap = lotteryPositionMap(lotteryResult)
+    return [...teamRecords].sort((a, b) => {
+      const aPick = lotteryMap.get(a.team.id) ?? 999
+      const bPick = lotteryMap.get(b.team.id) ?? 999
+      return aPick - bPick
+    })
+  })()
+
   // 4. Build draft order: for each standing position, look up who owns the pick
   const draftOrder = []
   let pickNumber = 1
 
   for (let round = 1; round <= 2; round++) {
-    for (let i = 0; i < teamRecords.length; i++) {
-      const { team: originalTeam } = teamRecords[i]
+    // Round 1 follows the lottery order (when present); round 2 follows
+    // the unmodified reverse-standings order.
+    const orderForRound = round === 1 ? round1Order : teamRecords
+    for (let i = 0; i < orderForRound.length; i++) {
+      const { team: originalTeam } = orderForRound[i]
 
       // Find the draft pick for this original team + year + round
       const pick = findDraftPick(teams, originalTeam.abbreviation, gameYear, round)
@@ -119,9 +148,10 @@ function findDraftPick(teams, originalAbbr, year, round) {
  * @param {Array} teams
  * @param {Object} standings
  * @param {number} gameYear
+ * @param {Object|null} [lotteryResult] - Pass-through to buildRookieDraftOrder.
  */
-export function assignDraftPickNumbers(teams, standings, gameYear) {
-  const order = buildRookieDraftOrder(teams, standings, gameYear)
+export function assignDraftPickNumbers(teams, standings, gameYear, lotteryResult = null) {
+  const order = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
 
   for (const slot of order) {
     if (!slot.pickId) continue

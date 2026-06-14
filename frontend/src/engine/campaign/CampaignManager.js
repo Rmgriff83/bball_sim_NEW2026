@@ -65,7 +65,12 @@ import { generateAITargetMinutes } from '../simulation/SubstitutionEngine'
 import { processSeasonEnd, processRetirements } from '../evolution/PlayerEvolution'
 import { runAIRosterManagement, ensureMinimumRosters } from '../ai/AIContractService'
 import { generateMotivations, getMarketSize } from '../ai/MotivationService'
-import { generateAndSaveRookieClass, shouldGenerateGenerational } from '../draft/RookieGenerationService'
+import {
+  generateAndSaveRookieClass,
+  shouldGenerateGenerational,
+  US_COLLEGES,
+  INTERNATIONAL_ORIGINS,
+} from '../draft/RookieGenerationService'
 import { AwardService } from '../season/AwardService'
 import { AllStarService } from '../season/AllStarService'
 import { listCoachHeadshots } from '../../services/headshotPremades'
@@ -307,7 +312,7 @@ const BLACK_FIRST_NAMES = [
   'Rashawn', 'Tobias', 'Solomon', 'Terrell', 'Booker', 'Calvin', 'Gerald',
   'Leon', 'Lonnie', 'Rufus', 'Cyrus', 'Marquise', 'Demarius', 'Tyrese',
   'Jaxson', 'Trayvon', 'Devontae', 'Jamel', 'Cleophus', 'Jerome', 'Jerian',
-  'Jaleel', 'JaMarcus', 'DeMarcus', 'Booby'
+  'Jaleel', 'JaMarcus', 'DeMarcus', 'Booby', 'Saddiq'
 ]
 
 // Last names common across Black American communities. Many of these are
@@ -325,7 +330,8 @@ const BLACK_LAST_NAMES = [
   'Reese', 'Riggs', 'Roach', 'Rollins', 'Saunders', 'Shaw', 'Stafford',
   'Steele', 'Stokes', 'Sutton', 'Tate', 'Thurmond', 'Vance', 'Vaughn',
   'Waters', 'Wells', 'Whitaker', 'Wilkins', 'Woodson', 'Drummond', 'Cousins',
-  'Orion', 'Essex', 'Bitamin', 'Betts', 'Baloney', 'Djboute', 'Djiat', 'Prince'
+  'Orion', 'Essex', 'Bitamin', 'Betts', 'Baloney', 'Djboute', 'Djiat', 'Prince',
+  'Strawberry', 'Bey'
 ]
 
 // Each real-name bucket is repeated N times when concatenating with the
@@ -3094,6 +3100,22 @@ export function generatePlayer(options) {
   const birthDay = String(randInt(1, 28)).padStart(2, '0')
   const birthDate = `${birthYear}-${birthMonth}-${birthDay}`
 
+  // Origin (college or international club + country). Matches the rookie
+  // class's ~25% international rate so the season-1 league mix has the same
+  // domestic/international ratio as the rookie classes that follow.
+  // RookieGenerationService also fills these fields for new draftees, so
+  // every player in the system carries `country` + `college`.
+  let country
+  let college
+  if (Math.random() < 0.25) {
+    const origin = INTERNATIONAL_ORIGINS[randInt(0, INTERNATIONAL_ORIGINS.length - 1)]
+    country = origin.country
+    college = origin.clubs[randInt(0, origin.clubs.length - 1)]
+  } else {
+    country = 'United States'
+    college = US_COLLEGES[randInt(0, US_COLLEGES.length - 1)]
+  }
+
   const playerId = generateUUID()
 
   return {
@@ -3124,6 +3146,8 @@ export function generatePlayer(options) {
     birthDate,
     birth_date: birthDate,
     age,
+    country,
+    college,
     // Assigned at generation so the roster ships with faces. Resolved to
     // an actual SVG URL by headshotResolver.resolveHeadshotSrc using the
     // combined procedural + premade map.

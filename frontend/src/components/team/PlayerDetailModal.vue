@@ -534,6 +534,20 @@ const seasonStatsRows = computed(() => {
   )
 })
 
+// Origin (school or international club) shown in the History tab. Reads
+// both camelCase and snake_case in case a legacy IndexedDB record still
+// has the underscore variant from an older write path. Returns null when
+// neither field is populated so the History section hides cleanly on a
+// player who pre-dates the country/college fields.
+const playerOrigin = computed(() => {
+  const p = props.player
+  if (!p) return null
+  const school = p.college ?? p.school ?? null
+  const country = p.country ?? null
+  if (!school && !country) return null
+  return { school: school || '—', country }
+})
+
 // Fatigue helpers
 const fatiguePercent = computed(() => Math.round(normalizedPlayer.value?.fatigue ?? 0))
 const isOverFatigued = computed(() => fatiguePercent.value >= 70)
@@ -681,7 +695,16 @@ async function handleClaimTraining() {
       toastStore.showSuccess('Training complete (no eligible badges remained)')
     }
   } catch (err) {
-    toastStore.showError(err?.message || 'Failed to claim training reward')
+    // Cross-device claim race: another device already claimed this reward
+    // while this tab was backgrounded. The store has already silently
+    // refreshed the in-memory coach.activeTraining so the button will
+    // disappear. Show an informational toast rather than a red "failed"
+    // error since the user's data is fine, just out of date.
+    if (err?.code === 'ALREADY_CLAIMED') {
+      toastStore.showSuccess('This reward was already claimed on another device')
+    } else {
+      toastStore.showError(err?.message || 'Failed to claim training reward')
+    }
   } finally {
     trainInProgress.value = false
   }
@@ -1949,6 +1972,15 @@ function formatChange(change) {
                       </span>
                       <span class="draft-info-team">Drafted by {{ normalizedPlayer.draftInfo.teamAbbreviation }}</span>
                     </div>
+                  </div>
+                </div>
+
+                <!-- Origin (school or international club + country) -->
+                <div v-if="playerOrigin" class="history-section origin-section">
+                  <div class="origin-card">
+                    <span class="origin-label">From</span>
+                    <span class="origin-value">{{ playerOrigin.school }}</span>
+                    <span v-if="playerOrigin.country" class="origin-country">{{ playerOrigin.country }}</span>
                   </div>
                 </div>
 
@@ -4251,6 +4283,37 @@ function formatChange(change) {
 .draft-info-team {
   font-size: 0.7rem;
   color: var(--color-text-tertiary);
+}
+
+.origin-card {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md, 8px);
+}
+
+.origin-label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.origin-value {
+  font-size: 0.95rem;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.origin-country {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  font-style: italic;
 }
 
 .current-season-row {

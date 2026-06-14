@@ -31,7 +31,7 @@ import { aiFinishUserTeamSetup } from '@/engine/campaign/UserTeamFinalizer'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
-import { simFullOffseason } from '@/engine/draft/OffseasonOrchestrator'
+import { simFullOffseason, runDraftLotteryForCampaign } from '@/engine/draft/OffseasonOrchestrator'
 import { FREE_AGENCY_DURATION_DAYS, isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
 import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase, Dumbbell, HeartPulse, Telescope, BarChart3, Clock, Smile, Meh, Frown } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -399,6 +399,18 @@ const freeAgencyCompleted = computed(() => {
 // Pre-FA: in offseason but free agency hasn't been opened yet
 const freeAgencyNotStarted = computed(() => {
   return campaign.value?.phase === 'offseason' && !freeAgencyCompleted.value
+})
+
+// Draft lottery pending — gates the Free Agency CTA. While this is true,
+// the next-game card shows "Draft Lottery" instead. Once the lottery has
+// run for this offseason, the settings flag flips and the FA button takes
+// over again. Mirrors the freeAgencyCompleted pattern so the same UI slot
+// transitions through Lottery → FA → Draft.
+const draftLotteryCompleted = computed(() => {
+  return campaign.value?.settings?.draftLotteryCompleted === true
+})
+const draftLotteryPending = computed(() => {
+  return campaign.value?.phase === 'offseason' && !draftLotteryCompleted.value
 })
 
 // End-of-FA wrap-up modal state
@@ -1005,10 +1017,24 @@ onMounted(async () => {
   // (before free agency starts) so the ENTER FREE AGENCY anchor is visible
   // for its step. maybeStart() is a safe no-op if conditions aren't met
   // or the tour has already been completed/skipped.
-  if (isOffseason.value && freeAgencyNotStarted.value) {
-    walkthroughStore.maybeStart('campaignOffseason')
-  }
+  maybeStartOffseasonTour()
 })
+
+// Centralized trigger for the offseason walkthrough. Gated on three
+// conditions so the overlay doesn't render on top of a blocking modal:
+//  1. Phase is `offseason` proper (not mid-FA / post-draft sub-phases)
+//  2. FA hasn't started yet (so the lottery / FA anchor is on screen)
+//  3. No All-Star selection modal is open — that modal can carry over
+//     into the offseason if the user simmed past the All-Star break
+//     without dismissing it; without this guard the tour fired
+//     beneath/over the modal instead of waiting for it to close.
+// The watch on `showAllStarModal` below re-runs this when the modal
+// dismisses so the tour fires immediately on close instead of being lost.
+function maybeStartOffseasonTour() {
+  if (!isOffseason.value || !freeAgencyNotStarted.value) return
+  if (showAllStarModal.value) return
+  walkthroughStore.maybeStart('campaignOffseason')
+}
 
 // Live transition into the offseason hub: if the user is already on this
 // page when the championship resolves and the phase flips, fire the tour
@@ -1017,11 +1043,17 @@ onMounted(async () => {
 // `flush: 'post'` makes the callback run after Vue applies DOM updates so
 // the v-if for the offseason buttons has rendered them by the time the
 // walkthrough overlay tries to find its targets.
-watch([isOffseason, freeAgencyNotStarted], ([off, faNotStarted]) => {
-  if (off && faNotStarted) {
-    walkthroughStore.maybeStart('campaignOffseason')
-  }
+watch([isOffseason, freeAgencyNotStarted], () => {
+  maybeStartOffseasonTour()
 }, { flush: 'post' })
+
+// Re-fire the tour the instant the All-Star modal dismisses — covers the
+// case where the user landed in the offseason with the modal still open,
+// the tour was blocked by the modal guard, and then they closed the modal.
+// Without this re-check, the tour would silently never fire that session.
+watch(showAllStarModal, (open, prev) => {
+  if (prev && !open) maybeStartOffseasonTour()
+})
 
 onUnmounted(() => {
   stopIdleDetection()
@@ -1321,9 +1353,11 @@ async function handleEnterOffseason() {
     // phase to 'offseason', and the offseason hub buttons are now in the
     // DOM. nextTick is the belt to the post-flush watch's suspenders —
     // guarantees layout is settled before the overlay measures the
-    // spotlight anchors. maybeStart is a no-op if already done.
+    // spotlight anchors. maybeStartOffseasonTour also guards on the
+    // All-Star modal so the overlay doesn't render on top of a
+    // still-open mid-season modal that carried into the offseason.
     await nextTick()
-    walkthroughStore.maybeStart('campaignOffseason')
+    maybeStartOffseasonTour()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Failed to enter offseason')
@@ -1602,6 +1636,36 @@ async function handleEnterFreeAgency() {
     console.error('Failed to start free agency:', err)
   } finally {
     enteringFreeAgency.value = false
+  }
+}
+
+// Runs the rookie draft lottery for the current offseason. Instant (no
+// staged reveal animation); the user sees a toast with a "View Results"
+// link to the dedicated lottery results page. After this completes, the
+// next-game card's CTA reverts to "Enter Free Agency" because the
+// draftLotteryPending guard flips to false.
+const runningLottery = ref(false)
+async function handleRunDraftLottery() {
+  if (runningLottery.value) return
+  runningLottery.value = true
+  const loadingToastId = toastStore.showLoading('Running draft lottery...')
+  try {
+    await runDraftLotteryForCampaign(campaignId.value)
+    await campaignStore.fetchCampaign(campaignId.value, true)
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showSuccess('Draft Lottery complete!', {
+      duration: 6000,
+      link: {
+        to: `/campaign/${campaignId.value}/draft-lottery`,
+        label: 'View Results',
+      },
+    })
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError(err.message || 'Failed to run draft lottery')
+    console.error('Failed to run draft lottery:', err)
+  } finally {
+    runningLottery.value = false
   }
 }
 
@@ -2965,10 +3029,22 @@ function handleCloseSimulateModal() {
                 <Binoculars class="btn-icon" :size="16" />
                 SCOUTING
               </button>
-              <!-- Enter Free Agency takes Begin Draft's slot until FA resolves; once
-                   resolved (`freeAgencyCompleted`) it flips back to Begin Draft. -->
+              <!-- Offseason primary CTA cycles through three states:
+                   1. Draft Lottery (must run before FA opens)
+                   2. Enter Free Agency (after lottery, before FA)
+                   3. Begin Draft (after FA resolves) -->
               <button
-                v-if="freeAgencyNotStarted"
+                v-if="draftLotteryPending"
+                class="btn-play-game"
+                data-tour="offseason-draft-lottery"
+                @click="handleRunDraftLottery"
+                :disabled="runningLottery"
+              >
+                <Star class="btn-icon" :size="16" />
+                {{ runningLottery ? 'RUNNING...' : 'DRAFT LOTTERY' }}
+              </button>
+              <button
+                v-else-if="freeAgencyNotStarted"
                 class="btn-play-game"
                 data-tour="offseason-enter-fa"
                 @click="handleEnterFreeAgency"

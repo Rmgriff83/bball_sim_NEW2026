@@ -397,8 +397,14 @@ onMounted(async () => {
         const seasonData = await SeasonRepository.get(campaignId.value, seasonYear)
         const standings = seasonData?.standings || { east: [], west: [] }
 
-        // Build draft order from standings
-        const draftOrderSlots = buildRookieDraftOrder(teamsList, standings, gameYear)
+        // Build draft order from standings. Honor the draft lottery result
+        // when one was run earlier in the offseason — without this, the
+        // interactive draft fires in pre-lottery reverse-standings order
+        // even though the lottery picked a different sequence (and the
+        // auto-sim path was already using the lottery, so the two flows
+        // would disagree).
+        const lotteryResult = campaign?.settings?.draftLottery ?? null
+        const draftOrderSlots = buildRookieDraftOrder(teamsList, standings, gameYear, lotteryResult)
 
         // Compute team directions for AI drafting
         const context = buildContext({ standings, teams: teamsList, seasonPhase: 'offseason' })

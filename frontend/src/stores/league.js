@@ -4,21 +4,25 @@ import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { scoreMVPCandidate, MVP_MIN_GAMES_PCT } from '@/engine/season/AwardService'
 
 export const useLeagueStore = defineStore('league', () => {
   // State
   const standings = ref({ east: [], west: [] })
   const playerLeaders = ref([])
   const rookieLeaders = ref([])
+  const mvpRace = ref([])
   const schedule = ref([])
   const loading = ref(false)
   const loadingLeaders = ref(false)
   const loadingRookies = ref(false)
+  const loadingMvpRace = ref(false)
   const error = ref(null)
 
   // Cache tracking
   const _standingsCampaignId = ref(null)
   const _leadersCampaignId = ref(null)
+  const _mvpRaceCampaignId = ref(null)
 
   // Getters
   const eastStandings = computed(() => standings.value.east || [])
@@ -224,6 +228,132 @@ export const useLeagueStore = defineStore('league', () => {
     }
   }
 
+  async function fetchMVPRace(campaignId, { force = false } = {}) {
+    // Return cached if already loaded for this campaign.
+    if (!force && _mvpRaceCampaignId.value === campaignId && mvpRace.value.length > 0) {
+      return mvpRace.value
+    }
+
+    loadingMvpRace.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+
+      const seasonYear = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? new Date().getFullYear()
+
+      const [playerStats, teams, seasonData] = await Promise.all([
+        SeasonRepository.getPlayerStats(campaignId, seasonYear),
+        TeamRepository.getAllForCampaign(campaignId),
+        SeasonRepository.get(campaignId, seasonYear),
+      ])
+
+      if (!playerStats || typeof playerStats !== 'object') {
+        mvpRace.value = []
+        _mvpRaceCampaignId.value = campaignId
+        return mvpRace.value
+      }
+
+      // Build team lookup and team-id → win% map from standings.
+      // Combine east + west into one lookup since the MVP race is
+      // league-wide (no conference filter).
+      const teamsById = {}
+      for (const t of (teams || [])) teamsById[t.id] = t
+      const teamWinPctById = {}
+      const allStandings = [
+        ...(seasonData?.standings?.east || []),
+        ...(seasonData?.standings?.west || []),
+      ]
+      for (const s of allStandings) {
+        const tid = s.teamId ?? s.team_id
+        const w = s.wins ?? 0
+        const l = s.losses ?? 0
+        const games = w + l
+        teamWinPctById[tid] = games > 0 ? w / games : 0
+      }
+
+      // Compute max games played → min-games eligibility floor.
+      // Mirrors AwardService._selectMVP exactly so the live leader
+      // matches the end-of-season MVP winner.
+      let maxGames = 0
+      for (const stats of Object.values(playerStats)) {
+        const gp = stats.gamesPlayed ?? stats.games_played ?? 0
+        if (gp > maxGames) maxGames = gp
+      }
+      const minGames = Math.ceil(maxGames * MVP_MIN_GAMES_PCT)
+
+      const candidates = []
+      for (const [playerId, stats] of Object.entries(playerStats)) {
+        const gamesPlayed = stats.gamesPlayed ?? stats.games_played ?? 0
+        if (gamesPlayed < minGames) continue
+
+        // Normalize key names AwardService._scoreMVP expects.
+        // (it reads stats.fieldGoalsMade / fieldGoalsAttempted; the
+        // playerStats records use fgm/fga in some paths.)
+        const normalized = {
+          gamesPlayed,
+          points: stats.points ?? 0,
+          rebounds: stats.rebounds ?? 0,
+          assists: stats.assists ?? 0,
+          steals: stats.steals ?? 0,
+          blocks: stats.blocks ?? 0,
+          turnovers: stats.turnovers ?? 0,
+          fieldGoalsMade: stats.fgm ?? stats.fieldGoalsMade ?? 0,
+          fieldGoalsAttempted: stats.fga ?? stats.fieldGoalsAttempted ?? 0,
+        }
+
+        const teamId = stats.teamId ?? null
+        const teamWinPct = teamWinPctById[teamId] ?? 0
+        const mvpScore = scoreMVPCandidate(normalized, teamWinPct)
+
+        const team = teamsById[teamId] || null
+        const wins = allStandings.find(s => (s.teamId ?? s.team_id) === teamId)?.wins ?? 0
+        const losses = allStandings.find(s => (s.teamId ?? s.team_id) === teamId)?.losses ?? 0
+        const ppg = gamesPlayed > 0 ? (stats.points ?? 0) / gamesPlayed : 0
+        const rpg = gamesPlayed > 0 ? (stats.rebounds ?? 0) / gamesPlayed : 0
+        const apg = gamesPlayed > 0 ? (stats.assists ?? 0) / gamesPlayed : 0
+        const fga = stats.fga ?? stats.fieldGoalsAttempted ?? 0
+        const fgPct = fga > 0
+          ? ((stats.fgm ?? stats.fieldGoalsMade ?? 0) / fga) * 100
+          : 0
+
+        candidates.push({
+          playerId,
+          name: stats.playerName ?? stats.player_name ?? 'Unknown',
+          teamId,
+          teamAbbreviation: team?.abbreviation ?? stats.teamAbbreviation ?? stats.team_abbreviation ?? '',
+          teamColor: team?.primary_color ?? '#6B7280',
+          position: stats.position ?? '',
+          gamesPlayed,
+          mvpScore: Math.round(mvpScore * 10) / 10,
+          ppg: Math.round(ppg * 10) / 10,
+          rpg: Math.round(rpg * 10) / 10,
+          apg: Math.round(apg * 10) / 10,
+          fgPct: Math.round(fgPct * 10) / 10,
+          teamWins: wins,
+          teamLosses: losses,
+        })
+      }
+
+      candidates.sort((a, b) => b.mvpScore - a.mvpScore)
+
+      // Top 15 — covers all serious candidates, keeps the list scannable.
+      mvpRace.value = candidates.slice(0, 15)
+      _mvpRaceCampaignId.value = campaignId
+      return mvpRace.value
+    } catch (err) {
+      error.value = err.message || 'Failed to fetch MVP race'
+      throw err
+    } finally {
+      loadingMvpRace.value = false
+    }
+  }
+
+  function clearMvpRace() {
+    mvpRace.value = []
+    _mvpRaceCampaignId.value = null
+  }
+
   function clearPlayerLeaders() {
     playerLeaders.value = []
     _leadersCampaignId.value = null
@@ -322,6 +452,7 @@ export const useLeagueStore = defineStore('league', () => {
   function invalidate() {
     _standingsCampaignId.value = null
     _leadersCampaignId.value = null
+    _mvpRaceCampaignId.value = null
   }
 
   return {
@@ -329,10 +460,12 @@ export const useLeagueStore = defineStore('league', () => {
     standings,
     playerLeaders,
     rookieLeaders,
+    mvpRace,
     schedule,
     loading,
     loadingLeaders,
     loadingRookies,
+    loadingMvpRace,
     error,
     // Getters
     eastStandings,
@@ -345,6 +478,7 @@ export const useLeagueStore = defineStore('league', () => {
     fetchStandings,
     fetchPlayerLeaders,
     fetchRookieLeaders,
+    fetchMVPRace,
     updateStandings,
     getTeamRank,
     getWinPercentage,
@@ -352,6 +486,7 @@ export const useLeagueStore = defineStore('league', () => {
     clearStandings,
     clearPlayerLeaders,
     clearRookieLeaders,
+    clearMvpRace,
     invalidate,
   }
 })

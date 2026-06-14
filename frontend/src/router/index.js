@@ -107,6 +107,12 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/campaign/:id/draft-lottery',
+    name: 'draft-lottery-results',
+    component: lazyLoad(() => import('@/views/draft/DraftLotteryResultsView.vue')),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/campaign/:id',
     name: 'campaign',
     component: lazyLoad(() => import('@/views/game/CampaignView.vue')),

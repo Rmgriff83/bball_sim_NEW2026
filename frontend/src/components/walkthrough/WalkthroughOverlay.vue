@@ -348,11 +348,21 @@ async function runStep() {
   // If the element is absent right now, advance instead of stalling for
   // 3s in resolveTargets and then showing a centered fallback for content
   // that doesn't apply to this view.
+  //
+  // Brief polling window before the skip decision: on sub-tab tours that
+  // fire the instant the tab activates (e.g. Player Details → Attributes),
+  // Vue may not have rendered the conditionally-mounted element yet when
+  // the first step starts. Without the wait the tour silently skips tips
+  // 1+2, lands on tip 3, and the user only sees the earlier tips by
+  // hitting Back (by which time the element has rendered). 500ms is long
+  // enough to catch the deferred render, short enough that genuinely-
+  // missing targets don't stall the tour noticeably.
   if (s.skipIfMissing) {
-    const present = targets.some((sel) => {
-      const el = document.querySelector(`[data-tour="${sel}"]`)
-      return el && isLaidOut(el)
-    })
+    const els = await Promise.all(
+      targets.map((sel) => waitForElement(`[data-tour="${sel}"]`, 500))
+    )
+    if (token !== resolveToken) return
+    const present = els.some((el) => el && isLaidOut(el))
     if (!present) {
       store.next()
       return

@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTradeStore } from '@/stores/trade'
 import { useTeamStore } from '@/stores/team'
+import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
@@ -26,6 +27,7 @@ const emit = defineEmits(['trade-completed', 'prefill-consumed'])
 const router = useRouter()
 const tradeStore = useTradeStore()
 const teamStore = useTeamStore()
+const toastStore = useToastStore()
 const audio = useAudioStore()
 const breakingNewsStore = useBreakingNewsStore()
 
@@ -438,6 +440,29 @@ async function confirmAndProposeTrade() {
 async function executeTrade() {
   try {
     confirmModalState.value = 'loading'
+
+    // Pre-flight freshness check: re-fetch the AI team so we catch any
+    // pick that's drifted out of their draftPicks between wizard mount
+    // and now (e.g. an AI-side internal trade fired during pause). The
+    // store now throws on a missing pick instead of silently dropping
+    // it, so without this guard the user would get a generic "Trade
+    // execution failed" error mid-execute. Catching it here lets us
+    // show a useful "rebuild your offer" message and clear the stale
+    // request list cleanly.
+    if (tradeStore.userRequesting?.some(a => a.type === 'pick')) {
+      await tradeStore.fetchTeamDetails(props.campaignId, tradeStore.selectedTeam.id)
+      const stillAvailable = new Set((tradeStore.selectedTeamPicks || []).map(p => p.id))
+      const missing = tradeStore.userRequesting
+        .filter(a => a.type === 'pick' && !stillAvailable.has(a.id))
+        .map(a => a.id)
+      if (missing.length > 0) {
+        toastStore.showError('One or more requested picks are no longer available. Please rebuild your offer.')
+        tradeStore.clearTrade()
+        confirmModalState.value = 'confirm'
+        return
+      }
+    }
+
     const result = await tradeStore.executeTrade(props.campaignId)
 
     // Enqueue breaking news for the trade
@@ -3155,7 +3180,7 @@ function formatAge(age) {
 .wizard-modal-container {
   width: 100%;
   max-width: 900px;
-  max-height: 85vh;
+  max-height: 90vh;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-2xl);
@@ -3902,7 +3927,6 @@ function formatAge(age) {
 @media (max-width: 768px) {
   .wizard-modal-container {
     max-width: 100%;
-    max-height: 100%;
     border-radius: 0;
   }
 

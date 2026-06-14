@@ -267,6 +267,7 @@ function updateFatigue(player, minutes, options = {}) {
   if (minutes === 0) {
     const recovery = getAttributeWeightedRecovery(player, config.rest_day_recovery);
     player.fatigue = Math.max(0, current - recovery);
+    _updateRestModeFlag(player);
     return player;
   }
 
@@ -317,6 +318,7 @@ function updateFatigue(player, minutes, options = {}) {
     player.fatigue = Math.min(config.max_fatigue, current + gain);
   }
 
+  _updateRestModeFlag(player);
   return player;
 }
 
@@ -329,7 +331,29 @@ function recoverFatigue(player) {
   const current = player.fatigue ?? 0;
   const recovery = getAttributeWeightedRecovery(player, config.weekly_recovery);
   player.fatigue = Math.max(0, current - recovery);
+  _updateRestModeFlag(player);
   return player;
+}
+
+/**
+ * Hysteretic rest-mode transition. Stamps player.restMode = true when
+ * fatigue crosses ≥ 75 and clears it only once fatigue has dropped to
+ * ≤ 15 (full refresh). Without hysteresis the AI minute allocator
+ * would alternate stars between 46-min games and 0-min DNPs because
+ * the stateless tier thresholds re-fired every game; this flag holds
+ * a fatigued star out across multiple consecutive games until they're
+ * genuinely refreshed.
+ *
+ * Consumed by SubstitutionEngine.computeAITargetMinutes — when true,
+ * the player's per-game target is zeroed regardless of strategy.
+ */
+function _updateRestModeFlag(player) {
+  const f = player.fatigue ?? 0;
+  if (f >= 75) {
+    player.restMode = true;
+  } else if (player.restMode === true && f <= 15) {
+    player.restMode = false;
+  }
 }
 
 // =============================================================================
@@ -1631,8 +1655,11 @@ export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro', 
 
     // Injuries carry over — heal game-by-game next season via processRecovery()
 
-    // Reset fatigue
+    // Reset fatigue (and clear rest mode — offseason wipes the slate
+    // so a star who ended last season in rest mode comes into the new
+    // year fully available).
     player.fatigue = 0;
+    player.restMode = false;
 
     // Increment career seasons
     player.career_seasons = (player.career_seasons ?? player.careerSeasons ?? 0) + 1;
@@ -1765,6 +1792,7 @@ export function processRestDayRecovery(players, teamsWithGames = []) {
     const player = clonePlayer(rawPlayer);
     const recovery = getAttributeWeightedRecovery(player, restRecovery);
     player.fatigue = Math.max(0, currentFatigue - recovery);
+    _updateRestModeFlag(player);
     return player;
   });
 }
@@ -1807,6 +1835,7 @@ export function processMultiDayRestRecovery(players, teamsPerDay = []) {
       totalRecovery += getAttributeWeightedRecovery(player, restRecovery);
     }
     player.fatigue = Math.max(0, currentFatigue - totalRecovery);
+    _updateRestModeFlag(player);
     return player;
   });
 }

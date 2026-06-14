@@ -46,7 +46,7 @@ const POSITION_WEIGHTS = [
   { position: 'C',  weight: 0.15 },
 ]
 
-const US_COLLEGES = [
+export const US_COLLEGES = [
   // Power 5
   'Duke', 'Kentucky', 'North Carolina', 'Kansas', 'UCLA', 'Michigan State', 'Gonzaga',
   'Villanova', 'Louisville', 'Syracuse', 'Indiana', 'Connecticut', 'Arizona', 'Florida',
@@ -66,7 +66,7 @@ const US_COLLEGES = [
   'Kennesaw State', 'UNC Asheville', 'Fairleigh Dickinson', 'Montana State', 'Liberty',
 ]
 
-const INTERNATIONAL_ORIGINS = [
+export const INTERNATIONAL_ORIGINS = [
   { country: 'France',    clubs: ['ASVEL (France)', 'Paris Basketball (France)', 'Metropolitans 92 (France)', 'Limoges CSP (France)'] },
   { country: 'Spain',     clubs: ['Real Madrid (Spain)', 'FC Barcelona (Spain)', 'Baskonia (Spain)', 'Valencia Basket (Spain)'] },
   { country: 'Australia', clubs: ['Melbourne United (Australia)', 'Sydney Kings (Australia)', 'Perth Wildcats (Australia)', 'NBL Academy (Australia)'] },

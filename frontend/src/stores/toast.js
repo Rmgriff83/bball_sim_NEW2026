@@ -116,11 +116,18 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
-  function showSuccess(message, duration = 2000) {
+  // Accepts either a duration number (legacy) or an options object with
+  // { duration, link: { to, label } }. Backward-compatible — all existing
+  // showSuccess('msg') and showSuccess('msg', 3000) calls keep working.
+  function showSuccess(message, durationOrOpts = 2000) {
+    const opts = typeof durationOrOpts === 'object' && durationOrOpts !== null
+      ? durationOrOpts
+      : { duration: durationOrOpts }
     return addMinimalToast({
       type: 'success',
       message,
-      duration
+      link: opts.link ?? null,
+      duration: opts.duration ?? 2000
     })
   }
 

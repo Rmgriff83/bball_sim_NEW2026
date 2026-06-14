@@ -429,7 +429,12 @@ onMounted(async () => {
     const standings = seasonData?.standings || { east: [], west: [] }
 
     if (teams.length > 0) {
-      mockDraftOrder.value = buildRookieDraftOrder(teams, standings, gameYear)
+      // Honor the draft lottery result so the Draft tab shows the same
+      // order the actual draft will run in. Without this the tab kept
+      // showing the pre-lottery reverse-standings projection even after
+      // the user had run the lottery.
+      const lotteryResult = camp?.settings?.draftLottery ?? null
+      mockDraftOrder.value = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
     }
   } catch (e) {
     console.error('Failed to load scouting data:', e)

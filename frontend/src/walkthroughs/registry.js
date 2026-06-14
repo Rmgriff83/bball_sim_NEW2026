@@ -131,12 +131,12 @@ export const WALKTHROUGHS = {
   // Offseason tour — fires once when the user first hits the offseason hub
   // on Campaign Home (after the championship is decided). Walks the user
   // through the reshape-the-franchise phase: staff, facilities, then the
-  // two big offseason events (free agency + rookie draft).
+  // three big offseason events (draft lottery → free agency → rookie draft).
   campaignOffseason: [
     {
       placement: 'center',
       title: 'Welcome to the Offseason',
-      body: "The season's over and the franchise is yours to reshape. You'll have time to hire or fire staff, upgrade your facilities, work the free-agent market, and draft the next class of rookies before next year tips off. Let's walk through the moves you've got.",
+      body: "The season's over and the franchise is yours to reshape. You'll have time to hire or fire staff, upgrade your facilities, run the draft lottery, work the free-agent market, and draft the next class of rookies before next year tips off. Let's walk through the moves you've got.",
     },
     {
       target: 'offseason-manage-roster',
@@ -145,10 +145,24 @@ export const WALKTHROUGHS = {
       body: "Manage Roster drops you into the GM Desk — your roster page, plus the Personnel tab where you can fire your head coach, replace your scouts, or bring in new trainers, and the Facilities tab where you spend tokens to upgrade Training, Medical, Scouting, and Analytics. Smart investments here pay dividends all next season.",
     },
     {
+      target: 'offseason-draft-lottery',
+      placement: 'top',
+      title: 'Draft Lottery',
+      body: "First stop: the lottery decides this year's draft order. The 14 worst teams enter a weighted drawing for the top 4 picks — the worst three each have a 14% shot at #1, with odds tapering down from there. A bad season doesn't guarantee the top pick anymore; it just gives you the best odds. Click to run it and see who climbed up the board (and who got jumped).",
+      // After the lottery runs, this button is replaced by Enter Free Agency.
+      // Skip cleanly on second visits so the tour doesn't try to spotlight
+      // an element that's no longer in the DOM.
+      skipIfMissing: true,
+    },
+    {
       target: 'offseason-enter-fa',
       placement: 'top',
       title: 'Free Agency Window',
-      body: "When you're ready, this kicks off the free-agency period. You'll see every unsigned player league-wide, place bids on the ones who fit your roster, and watch other teams move alongside you. Bench depth, role players, and the occasional veteran cornerstone all come from here.",
+      body: "After the lottery, this kicks off the free-agency period. You'll see every unsigned player league-wide, place bids on the ones who fit your roster, and watch other teams move alongside you. Bench depth, role players, and the occasional veteran cornerstone all come from here.",
+      // FA button only appears after the lottery has run; before that, the
+      // Draft Lottery button takes its slot. Skip cleanly during the lottery
+      // window so the tour doesn't fall back to a centered card.
+      skipIfMissing: true,
     },
     {
       target: 'offseason-scouting',
@@ -159,7 +173,7 @@ export const WALKTHROUGHS = {
     {
       placement: 'center',
       title: 'Tip-off the Next Season',
-      body: "Once free agency and the draft are both done, START SEASON launches year two. Until then, take your time — the offseason is where dynasties are built.",
+      body: "Once the lottery, free agency, and the draft are all done, START SEASON launches year two. Until then, take your time — the offseason is where dynasties are built.",
     },
   ],
 

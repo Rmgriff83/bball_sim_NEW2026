@@ -1,8 +1,16 @@
 <script setup>
 import { useToastStore } from '@/stores/toast'
 import { Loader2 } from 'lucide-vue-next'
+import { RouterLink } from 'vue-router'
 
 const toastStore = useToastStore()
+
+// Dismiss the toast when its link is clicked. Without this, navigating
+// away would still leave the toast in the queue until its duration
+// elapses, which feels stale once the user has already engaged.
+function handleLinkClick(toast) {
+  toastStore.removeMinimalToast(toast.id)
+}
 </script>
 
 <template>
@@ -27,6 +35,12 @@ const toastStore = useToastStore()
               <div class="toast-progress-fill" :style="{ width: `${(toast.completed / toast.total) * 100}%` }"></div>
             </div>
           </template>
+          <RouterLink
+            v-if="toast.link && toast.link.to"
+            :to="toast.link.to"
+            class="toast-link"
+            @click="handleLinkClick(toast)"
+          >{{ toast.link.label || 'View' }}</RouterLink>
         </div>
       </TransitionGroup>
     </div>
@@ -143,6 +157,21 @@ const toastStore = useToastStore()
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+
+.toast-link {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: white;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding-left: 4px;
+}
+
+.toast-link:hover {
+  opacity: 0.85;
 }
 
 /* Slide in from bottom animation */

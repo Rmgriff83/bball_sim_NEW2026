@@ -5403,6 +5403,7 @@ onUnmounted(() => {
 }
 
 .qb-top-player-block {
+  position:relative;
   padding: 10px 12px;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
@@ -5417,6 +5418,12 @@ onUnmounted(() => {
 .qb-top-player-team {
   font-size: 0.65rem;
   font-weight: 700;
+  position: absolute;
+  top: -5px;
+  right: 5px;
+  border-radius:6px;
+  background:white;
+  padding: 4px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--team-color, var(--color-text-tertiary));

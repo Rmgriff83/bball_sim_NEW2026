@@ -93,12 +93,40 @@ export const useSyncStore = defineStore('sync', () => {
   function startAutoSync() {
     if (_visibilityHandler.value) return
 
-    // Sync when tab becomes hidden (user switching away or closing).
-    // Bypasses the route-leave cooldown — closing a tab is a high-risk moment
-    // for losing unsynced data, so we always push if dirty.
-    _visibilityHandler.value = () => {
-      if (document.hidden && activeCampaignId.value && hasPendingChanges.value && !isSyncing.value) {
-        syncNow()
+    // Sync on visibility change:
+    //   - HIDDEN: push if dirty (catches tab-close / app-background scenarios).
+    //   - VISIBLE: pull from cloud. Catches the cross-device scenario where
+    //     the user took an action on another device while this tab was
+    //     backgrounded — without this pull, the in-memory stores keep showing
+    //     stale state (e.g. "training reward ready to claim") and clicking
+    //     fails with "No active training for this player" because the
+    //     IndexedDB write from the other device's claim hasn't propagated.
+    _visibilityHandler.value = async () => {
+      if (document.hidden) {
+        if (activeCampaignId.value && hasPendingChanges.value && !isSyncing.value) {
+          syncNow()
+        }
+      } else if (activeCampaignId.value && !isPulling.value && !isSyncing.value) {
+        // Tab regained focus. Pull cloud state silently — failures here are
+        // non-fatal (offline, transient API error). On success the team/
+        // player stores hydrate from the freshly-written IndexedDB so any
+        // claim/action buttons reflect the actual current state.
+        try {
+          await pullChanges(activeCampaignId.value)
+          // Re-hydrate the team store's reactive refs from the freshly-
+          // updated IndexedDB. Without this, UI keeps rendering from the
+          // memory snapshot loaded at original page mount.
+          try {
+            const { useTeamStore } = await import('@/stores/team')
+            const teamStore = useTeamStore()
+            await teamStore.fetchTeam(activeCampaignId.value, { force: true })
+          } catch (refreshErr) {
+            console.warn('[Sync] Team store refresh after visibility pull failed:', refreshErr)
+          }
+        } catch (pullErr) {
+          // Silent — pull-on-focus is best-effort.
+          console.warn('[Sync] Pull on visibility-visible failed:', pullErr?.message ?? pullErr)
+        }
       }
     }
     document.addEventListener('visibilitychange', _visibilityHandler.value)

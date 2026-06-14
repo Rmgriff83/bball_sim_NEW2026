@@ -1110,11 +1110,25 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true
     error.value = null
     try {
+      // Pre-flight: if we have a stale in-memory snapshot from before another
+      // device claimed the reward, this read returns the post-claim state (no
+      // activeTraining). Distinguish "already claimed elsewhere" from a true
+      // input error so the UI can react gracefully — show a friendly toast
+      // and silently refresh state instead of a generic red "failed" toast.
       const campaign = await CampaignRepository.get(campaignId)
       const teamData = await TeamRepository.get(campaignId, campaign?.teamId)
       const active = teamData?.coach?.activeTraining
       if (!active || active.playerId !== playerId) {
-        throw new Error('No active training for this player')
+        // Force the in-memory store to match IndexedDB so the claim button
+        // disappears immediately — the UI was showing a stale ready-to-claim
+        // state from before the sync race.
+        try {
+          if (coach.value) coach.value.activeTraining = teamData?.coach?.activeTraining ?? null
+          if (team.value) team.value.coach = teamData?.coach ?? team.value.coach
+        } catch (_) { /* non-fatal */ }
+        const err = new Error('Reward was already claimed on another device')
+        err.code = 'ALREADY_CLAIMED'
+        throw err
       }
       if (new Date(active.endsAt).getTime() > Date.now()) {
         throw new Error('Training not yet complete')

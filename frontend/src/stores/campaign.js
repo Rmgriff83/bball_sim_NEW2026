@@ -8,6 +8,7 @@ import {
 } from '@/engine/campaign/CampaignManager'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { backfillBirthDates, catchUpPlayerAging } from '@/engine/migrations/backfillBirthDates'
+import { backfillOrigins } from '@/engine/migrations/backfillOrigins'
 import { TEAMS } from '@/engine/data/teams'
 import { useSyncStore } from '@/stores/sync'
 import { usePlayoffStore } from '@/stores/playoff'
@@ -190,6 +191,16 @@ export const useCampaignStore = defineStore('campaign', () => {
         await catchUpPlayerAging(id)
       } catch (catchUpErr) {
         console.warn('[Campaign] player-aging catchup failed:', catchUpErr)
+      }
+
+      // One-shot legacy migration: fill `country` + `college` on any player
+      // generated before generatePlayer started stamping them. Deterministic
+      // per-player so re-runs produce the same origin. Guarded internally by
+      // campaign.settings.originsBackfillDone.
+      try {
+        await backfillOrigins(id)
+      } catch (originsErr) {
+        console.warn('[Campaign] origins backfill failed:', originsErr)
       }
 
       const { campaign, teams, userTeam, seasonData, year } = result

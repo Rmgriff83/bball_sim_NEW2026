@@ -264,7 +264,7 @@ async function handleSimulateBulk(messageId, payload) {
         result.box_score,
         homeRoster, awayRoster,
         difficulty || 'pro',
-        false,
+        !!game.isPlayoff,
         game.gameDate || null
       )
       // Accumulate evolved player state

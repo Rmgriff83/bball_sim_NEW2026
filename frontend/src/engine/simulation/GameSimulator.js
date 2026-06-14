@@ -15,7 +15,7 @@
 import PlayExecutionEngine from './PlayExecutionEngine'
 import { selectPlay } from './PlayService'
 import { coachingEngine } from './CoachingEngine'
-import { evaluateSubstitutions, applyVariance, getDefaultTargetMinutes } from './SubstitutionEngine'
+import { evaluateSubstitutions, applyVariance, getDefaultTargetMinutes, computeAITargetMinutes, aiStarterCapFor } from './SubstitutionEngine'
 import * as Config from '../config/GameConfig'
 import { BADGES } from '../data/badges'
 import { SYNERGIES, CONDITION_TO_PHASE } from '../data/synergies'
@@ -30,6 +30,13 @@ const SHOT_CLOCK_SECONDS = Config.SHOT_CLOCK_SECONDS // 24
 const OVERTIME_LENGTH_MINUTES = Config.OVERTIME_LENGTH_MINUTES || 5
 const TOTAL_GAME_MINUTES = Config.TOTAL_GAME_MINUTES // 48
 const ROTATION_BUDGET = TOTAL_GAME_MINUTES * 5 // 5 players on court → 240 player-minutes per game
+
+// Engine-controlled per-player MPG cap. Used by loadTargetMinutes (the
+// restMode post-processing path) and the post-variance _clampTargets
+// step in initializeGameFromData. The value matches SubstitutionEngine's
+// AI_MAX_MPG so the two layers agree on the ceiling. Skipped on playoffs
+// and user-live games.
+const AI_MAX_MPG_POST_VARIANCE = 38
 
 // ---------------------------------------------------------------------------
 // Helper: build a badge definition lookup keyed by badge id
@@ -72,6 +79,50 @@ function normalizeTargetMinutesToBudget(targetMinutes) {
     scaled[topId] = Math.max(0, Math.min(TOTAL_GAME_MINUTES, scaled[topId] + (ROTATION_BUDGET - rounded)))
   }
   return scaled
+}
+
+/**
+ * Clamp every target in a {playerId: minutes} map to `maxPerPlayer`,
+ * then renormalize back to the 240-player-minute budget WHILE preserving
+ * the per-player cap. Iterates clamp+renormalize because a naive single
+ * renormalize would push capped values back above maxPerPlayer (a 38-min
+ * starter scaled by factor 1.33 becomes 50.5, which the budget
+ * normalizer would clamp at 48, not at 38). The iteration distributes
+ * freed minutes among non-capped players and stops once everyone is
+ * either at maxPerPlayer or no further redistribution is possible.
+ */
+function _clampTargets(targetMinutes, maxPerPlayer) {
+  if (!targetMinutes) return targetMinutes
+  const ids = Object.keys(targetMinutes)
+  if (ids.length === 0) return targetMinutes
+
+  let working = {}
+  for (const id of ids) {
+    working[id] = Math.max(0, Math.min(maxPerPlayer, targetMinutes[id] || 0))
+  }
+
+  // Up to 5 iterations is plenty in practice — usually converges in 1-2.
+  for (let iter = 0; iter < 5; iter++) {
+    const total = ids.reduce((s, id) => s + working[id], 0)
+    if (total <= 0 || Math.abs(total - ROTATION_BUDGET) <= 1) break
+    // Identify players who still have headroom (below the per-player
+    // cap). Freed minutes go to them; players already at the cap are
+    // frozen at maxPerPlayer.
+    const headroomIds = ids.filter(id => working[id] < maxPerPlayer && working[id] > 0)
+    if (headroomIds.length === 0) break
+    const headroomTotal = headroomIds.reduce((s, id) => s + working[id], 0)
+    const otherTotal = total - headroomTotal
+    const targetForHeadroom = ROTATION_BUDGET - otherTotal
+    if (targetForHeadroom <= headroomTotal) break  // already exceeded budget elsewhere
+    const factor = targetForHeadroom / headroomTotal
+    const next = { ...working }
+    for (const id of headroomIds) {
+      next[id] = Math.min(maxPerPlayer, Math.round(working[id] * factor))
+    }
+    working = next
+  }
+
+  return working
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +392,11 @@ class GameSimulator {
     this.lastClutchPlay = null
     this.generateAnimationData = options.generateAnimationData !== false
     this.userTeamId = options.userTeamId || null
+    // Playoff context — feeds into AI fatigue management. When true, the
+    // AI's per-game minute haircut + 38-MPG cap + ≥85 in-game force-sit
+    // are all skipped so AI teams can play stars heavy minutes when it
+    // matters. Sourced from the schedule's game record (game.isPlayoff).
+    this.isPlayoff = !!options.isPlayoff
 
     // Accept userLineup directly, or home_lineup/away_lineup from game settings
     let userLineup = options.userLineup || null
@@ -362,6 +418,20 @@ class GameSimulator {
 
     this.homePlayers = homeRoster
     this.awayPlayers = awayRoster
+
+    // Initialize in-game energy (NOT persisted — resets every game).
+    // Energy drives the per-stint sub triggers in evaluateSubstitutions so
+    // stars naturally play in 6-8 minute bursts with breathers rather than
+    // 48 unbroken minutes. Every player starts at full reserves (100) —
+    // cross-game fatigue is reflected in the depletion RATE (fatigued
+    // stars drain faster, see evaluateSubstitutions' drainRate formula:
+    // multiplied by `1 + max(0, fatigue-50)/100`), not in starting energy.
+    // A fatigue-75 star still tips off at 100 energy, but runs out of
+    // gas in ~6 min instead of ~9.
+    for (const p of [...this.homePlayers, ...this.awayPlayers]) {
+      p.energy = 100
+      p.lastEnergyTickGameMinutes = 0
+    }
 
     // Determine if user's team is home or away
     const isUserHomeTeam = this.userTeamId && homeTeam.id === this.userTeamId
@@ -434,13 +504,37 @@ class GameSimulator {
     this.homeSubStrategy = homeScheme.substitution || 'staggered'
     this.awaySubStrategy = awayScheme.substitution || 'staggered'
 
-    // Apply variance so minutes differ game-to-game
-    // Skip variance for user team when they've explicitly set target minutes
-    if (!(isUserHomeTeam && options.targetMinutes)) {
+    // Apply variance for game-to-game variation. Skipped for AI teams
+    // (whose targets come straight from computeAITargetMinutes already
+    // capped at the strategy ceiling — variance would just compound
+    // leak risk for marginal added realism) AND for the user team when
+    // they've explicitly set target minutes via CPU Adjust.
+    if (!isUserHomeTeam && !options.isPlayoff) {
+      // AI home team: skip variance entirely. Game-to-game variation
+      // for AI now comes from fatigue accumulation + restMode
+      // transitions, which is more realistic than ±15% RNG.
+    } else if (!(isUserHomeTeam && options.targetMinutes)) {
       this.homeTargetMinutes = applyVariance(this.homeTargetMinutes)
     }
-    if (!(isUserAwayTeam && options.targetMinutes)) {
+    if (!isUserAwayTeam && !options.isPlayoff) {
+      // AI away team: same as above.
+    } else if (!(isUserAwayTeam && options.targetMinutes)) {
       this.awayTargetMinutes = applyVariance(this.awayTargetMinutes)
+    }
+
+    // Post-process clamp ONLY applies to user-team fast-sim, where the
+    // user's stored targets could exceed the league cap. AI teams are
+    // already capped per-strategy inside computeAITargetMinutes and
+    // skip variance, so no further clamp needed. User-live games keep
+    // full freedom — the user is picking subs manually.
+    const isUserLive = options.isLiveGame === true
+    if (!options.isPlayoff && !isUserLive) {
+      if (isUserHomeTeam) {
+        this.homeTargetMinutes = _clampTargets(this.homeTargetMinutes, AI_MAX_MPG_POST_VARIANCE)
+      }
+      if (isUserAwayTeam) {
+        this.awayTargetMinutes = _clampTargets(this.awayTargetMinutes, AI_MAX_MPG_POST_VARIANCE)
+      }
     }
 
     // Calculate team chemistry modifiers from roster morale
@@ -463,6 +557,20 @@ class GameSimulator {
 
     if (isUserTeam && options.targetMinutes) {
       targetMinutes = options.targetMinutes
+    } else if (!isUserTeam) {
+      // AI team: recompute targets every game so fatigue accumulation
+      // from prior games rolls into reduced per-game minutes for tired
+      // starters. The previous behavior reused the persisted
+      // team.lineup_settings.target_minutes from season init unchanged,
+      // which is why AI stars drifted to 40+ MPG and red-zone fatigue
+      // — they got the same big targets every night regardless of how
+      // worn down they were. computeAITargetMinutes also clamps to 38
+      // MPG and zeroes out players at ≥85 fatigue. All caps skip when
+      // isPlayoff is true.
+      const strategy = team.coaching_scheme?.substitution || 'staggered'
+      targetMinutes = computeAITargetMinutes(players, starterIds, strategy, {
+        isPlayoff: !!options.isPlayoff,
+      })
     } else if (team.lineup_settings && team.lineup_settings.target_minutes) {
       targetMinutes = team.lineup_settings.target_minutes
     }
@@ -472,12 +580,70 @@ class GameSimulator {
       targetMinutes = getDefaultTargetMinutes(players, starterIds)
     }
 
+    // restMode post-processing for the user's team during fast-sim.
+    // The user's stored target allocation (CPU Adjust output) doesn't
+    // know about the new restMode flag — without this step, a tired
+    // user star with restMode=true would still get their stored 36-min
+    // target during fast-sim, defeating the hysteresis entirely.
+    // Skipped on user-live games (manual control) and in playoffs (let
+    // stars play). The AI-team branch above already handles restMode
+    // via computeAITargetMinutes, so this only matters for user team.
+    const isUserLive = isUserTeam && options.isLiveGame === true
+    const skipRestModeHaircut = isUserLive || !!options.isPlayoff
+    if (isUserTeam && !skipRestModeHaircut) {
+      let modified = false
+      const adjusted = { ...targetMinutes }
+      for (const p of players) {
+        if (!p?.id) continue
+        if (p.restMode === true && (adjusted[p.id] ?? 0) > 0) {
+          adjusted[p.id] = 0
+          modified = true
+        }
+      }
+      if (modified) {
+        // Renormalize to 240 so freed minutes from sat-out stars
+        // redistribute proportionally to fresh teammates. Uses the
+        // user team's strategy-specific cap (not the legacy AI_MAX_
+        // MPG_POST_VARIANCE constant) so a user on load_management
+        // honors a 30-MPG ceiling while a user on tight_rotation
+        // honors 38. When the total still falls short of 240 after
+        // capped scaling, the Tier-4 cross-position fallback in
+        // evaluateSubstitutions fills the in-game gap.
+        const userStrategy = team.coaching_scheme?.substitution || 'staggered'
+        const USER_STARTER_CAP = aiStarterCapFor(userStrategy)
+        const total = Object.values(adjusted).reduce((s, m) => s + m, 0)
+        if (total > 0 && total !== 240) {
+          const factor = 240 / total
+          for (const id of Object.keys(adjusted)) {
+            adjusted[id] = Math.max(0, Math.min(USER_STARTER_CAP, Math.round(adjusted[id] * factor)))
+          }
+          const rounded = Object.values(adjusted).reduce((s, m) => s + m, 0)
+          if (rounded !== 240) {
+            const topId = Object.keys(adjusted).reduce((a, b) =>
+              adjusted[a] >= adjusted[b] ? a : b
+            )
+            adjusted[topId] = Math.max(0, Math.min(USER_STARTER_CAP, adjusted[topId] + (240 - rounded)))
+          }
+        }
+        targetMinutes = adjusted
+      }
+    }
+
     // Back-compat for campaigns created under the old 40-minute game length:
     // their persisted target_minutes sum to ~200, but a 48-minute game has
     // 240 player-minutes of court time to fill. Scale the team up so the
     // sub engine's percentage math (mins / TOTAL_GAME_MINUTES) hits 5.0
     // total across the roster. New campaigns already total 240 → no-op.
-    targetMinutes = normalizeTargetMinutesToBudget(targetMinutes)
+    //
+    // Skipped for AI teams because computeAITargetMinutes deliberately
+    // caps every value at the strategy ceiling and accepts a sum less
+    // than 240 in shorthanded games (multiple restMode players). The
+    // back-compat normalize step would push the highest-minutes player
+    // back up to 48 by ignoring the per-player cap — the very leak
+    // this rewrite is closing.
+    if (isUserTeam) {
+      targetMinutes = normalizeTargetMinutesToBudget(targetMinutes)
+    }
 
     return targetMinutes
   }
@@ -1821,6 +1987,14 @@ class GameSimulator {
    * Rotate players using the substitution engine.
    */
   rotatePlayers() {
+    // Overtime is treated as "gloves off" — same semantics as playoffs.
+    // Energy gates, restMode haircuts, and the strategy MPG cap all
+    // lift in OT because the regulation budget is already spent and
+    // coaches play their best lineup to win. Mirrors how real NBA
+    // coaches handle OT (stars play the full overtime) and how this
+    // engine already handles playoff games.
+    const isHighStakes = this.isPlayoff || this.currentQuarter > 4
+
     // Home team
     const isUserHomeLive = this.isLiveGame && this.homeTeam && this.homeTeam.id === this.userTeamId
     const homeResult = evaluateSubstitutions(
@@ -1832,7 +2006,8 @@ class GameSimulator {
       this.currentQuarter,
       this.timeRemaining,
       this.homeScore - this.awayScore,
-      isUserHomeLive
+      isUserHomeLive,
+      isHighStakes
     )
     if (homeResult) {
       this.homeLineup = this.rebuildLineupFromIds(homeResult, this.homePlayers)
@@ -1849,7 +2024,8 @@ class GameSimulator {
       this.currentQuarter,
       this.timeRemaining,
       this.awayScore - this.homeScore,
-      isUserAwayLive
+      isUserAwayLive,
+      isHighStakes
     )
     if (awayResult) {
       this.awayLineup = this.rebuildLineupFromIds(awayResult, this.awayPlayers)
