@@ -14,11 +14,16 @@
 // =============================================================================
 
 export const QUARTERS = 4;
-export const QUARTER_LENGTH_MINUTES = 10;
-export const POSSESSIONS_PER_MINUTE = 2.2; // ~100 possessions per game
+export const QUARTER_LENGTH_MINUTES = 12;
+// Reference target for tempo tuning — the sim doesn't read this constant
+// directly; possession lengths are now driven by GameSimulator._rollPossessionMinutes,
+// which scales by the offensive team's coaching scheme tempo modifier
+// (TEMPO_MODIFIERS in this file / CoachingEngine.js). At baseline tempo
+// (balanced), expect ~121 possessions per team in a 48-min game.
+export const POSSESSIONS_PER_MINUTE = 2.52; // ~121 per team × 2 teams / 96 player-minutes
 export const SHOT_CLOCK_SECONDS = 24;
 export const OVERTIME_LENGTH_MINUTES = 5;
-export const TOTAL_GAME_MINUTES = 40.0;
+export const TOTAL_GAME_MINUTES = 48.0;
 
 // =============================================================================
 // AGE BRACKETS
@@ -319,14 +324,18 @@ export const DEVELOPMENT = {
 // DIFFICULTY-BASED DEVELOPMENT SETTINGS
 // =============================================================================
 // Per-game micro-development thresholds and gains vary by difficulty.
-// Performance rating uses a PER-inspired formula (average ~15).
+// Performance rating uses a PER-inspired formula (league average ≈ 18 at the
+// current ~100 possessions/team/48-min pace; was tuned for ~15 at the
+// pre-pace-bump 85 poss/team. PER scales linearly with counting stats, so
+// thresholds were scaled by 1.18 alongside the pace change to preserve the
+// same growth/regression cadence per game).
 // Stat thresholds are per-36-minute baselines, auto-scaled by actual minutes.
 
 export const DIFFICULTY_SETTINGS = {
   rookie: {
     // Very achievable growth - most decent performances trigger development
-    micro_dev_threshold_high: 13, // PER-scale: slightly below average triggers growth
-    micro_dev_threshold_low: 6, // Only truly bad games regress
+    micro_dev_threshold_high: 15, // PER-scale: slightly below average triggers growth
+    micro_dev_threshold_low: 7, // Only truly bad games regress
     micro_dev_gain_min: 0.15, // Higher gains
     micro_dev_gain_max: 0.4,
     micro_dev_loss_min: 0.04, // Lower losses
@@ -334,9 +343,9 @@ export const DIFFICULTY_SETTINGS = {
     min_minutes_for_regression: 12, // Need 12+ min for regression to apply
     // Per-36-minute stat thresholds (auto-scaled by actual minutes played)
     stat_thresholds: {
-      points: 12,
-      assists: 3,
-      rebounds: 5,
+      points: 14,
+      assists: 4,
+      rebounds: 6,
       steals: 1,
       blocks: 1,
       threes: 2,
@@ -347,17 +356,17 @@ export const DIFFICULTY_SETTINGS = {
   },
   pro: {
     // Balanced - above-average performances trigger development
-    micro_dev_threshold_high: 16, // PER-scale: above average triggers growth
-    micro_dev_threshold_low: 8, // Below average triggers regression
+    micro_dev_threshold_high: 19, // PER-scale: above average triggers growth
+    micro_dev_threshold_low: 9, // Below average triggers regression
     micro_dev_gain_min: 0.1,
     micro_dev_gain_max: 0.3,
     micro_dev_loss_min: 0.05,
     micro_dev_loss_max: 0.1,
     min_minutes_for_regression: 10,
     stat_thresholds: {
-      points: 14,
-      assists: 4,
-      rebounds: 5,
+      points: 17,
+      assists: 5,
+      rebounds: 6,
       steals: 1,
       blocks: 1,
       threes: 2,
@@ -366,26 +375,22 @@ export const DIFFICULTY_SETTINGS = {
     regression_multiplier: 1.0,
   },
   all_star: {
-    // Canonical locked-in campaign difficulty. Tuned after the
-    // attribute-driven badge rework + defense magnitude reductions
-    // landed: the prior all_star numbers were producing players who
-    // saw mostly regression and almost no growth because the league's
-    // attribute floor moved up and defenders started forcing tougher
-    // shots. New shape: same PER bar as pro (achievable), gains tilted
-    // slightly higher, losses tilted slightly lower, dev multiplier
-    // gives a small structural boost so growth isn't gated entirely
-    // on elite performances.
-    micro_dev_threshold_high: 16,
-    micro_dev_threshold_low: 8,
+    // Canonical locked-in campaign difficulty. Thresholds re-scaled by 1.18
+    // alongside the 85 → 100 possessions/team pace bump so league-average
+    // PER (now ~18) still falls between threshold_low (9) and threshold_high
+    // (19) — the same gating shape as before, just measured against the new
+    // inflated PER scale.
+    micro_dev_threshold_high: 19,
+    micro_dev_threshold_low: 9,
     micro_dev_gain_min: 0.10,
     micro_dev_gain_max: 0.30,
     micro_dev_loss_min: 0.05,
     micro_dev_loss_max: 0.10,
     min_minutes_for_regression: 10,
     stat_thresholds: {
-      points: 14,
-      assists: 4,
-      rebounds: 5,
+      points: 17,
+      assists: 5,
+      rebounds: 6,
       steals: 1,
       blocks: 1,
       threes: 2,
@@ -395,20 +400,20 @@ export const DIFFICULTY_SETTINGS = {
   },
   hall_of_fame: {
     // Very challenging - need great performances for growth
-    micro_dev_threshold_high: 22, // PER-scale: need great games for growth
-    micro_dev_threshold_low: 12, // Below-average games trigger regression
+    micro_dev_threshold_high: 26, // PER-scale: need great games for growth
+    micro_dev_threshold_low: 14, // Below-average games trigger regression
     micro_dev_gain_min: 0.05,
     micro_dev_gain_max: 0.2,
     micro_dev_loss_min: 0.08,
     micro_dev_loss_max: 0.2,
     min_minutes_for_regression: 8,
     stat_thresholds: {
-      points: 18,
-      assists: 6,
-      rebounds: 7,
+      points: 21,
+      assists: 7,
+      rebounds: 8,
       steals: 2,
       blocks: 2,
-      threes: 3,
+      threes: 4,
     },
     development_multiplier: 0.7,
     regression_multiplier: 1.3,
@@ -465,18 +470,22 @@ export const RETIREMENT = {
 
 export const FATIGUE = {
   minute_thresholds: [
-    // 0-8 mins: light duty -- player stays loose, net fatigue RECOVERY
-    { min: 0, max: 8, type: "recovery", base: 6.4 },
-    // 9-20 mins: rotation role -- marginal fatigue gain
-    { min: 9, max: 20, type: "gain", base: 1.0 },
-    // 21-30 mins: significant role -- moderate fatigue gain
-    { min: 21, max: 30, type: "gain", base: 2.2 },
+    // 0-18 mins: light duty / bench role -- player stays loose, net fatigue
+    // RECOVERY. Real benchwarmers playing under ~20 min/game don't
+    // accumulate noticeable wear across an 82-game season.
+    { min: 0, max: 18, type: "recovery", base: 6.4 },
+    // 19-30 mins: significant role -- moderate fatigue gain
+    { min: 19, max: 30, type: "gain", base: 2.2 },
     // 31+ mins: heavy minutes -- significant fatigue gain
-    { min: 31, max: 48, type: "gain", base: 3.5 },
+    { min: 31, max: 48, type: "gain", base: 3.0 },
   ],
   max_fatigue: 100,
-  weekly_recovery: 21.5,
+  weekly_recovery: 23.0,
   rest_day_recovery: 23.0,
+  // The in-game performance penalty is computed in GameSimulator
+  // (calculateFatigueModifier): (fatigue/100) * (1 - stamina/200) * 0.25.
+  // These two legacy keys are kept for backward compat with anything that
+  // reads them via destructure, but the live formula no longer consults them.
   performance_penalty_start: 50,
   max_performance_penalty: 0.25,
 };
@@ -522,7 +531,16 @@ export const UPGRADE_POINTS = {
   enabled: true,
   points_per_growth: 4, // Base: 4 points per 1.0 growth (scaled by potential/75)
   min_growth_threshold: 0.1, // Need 0.1+ total growth to earn any points
-  max_weekly_points: 3, // Cap at 3 points per week (4 for 90+ potential)
+  // Per-game cap on combined offense+defense points. Without this, a youth
+  // player with elite potential having a great game could earn ~1.79 raw
+  // points, and 3 such games would accumulate ~5.4 points — far too fast.
+  max_per_game_points: 0.5,
+  max_per_game_points_elite: 0.75, // potential >= 90
+  // Per-week cap on combined offense+defense points. Was 3/4 in the legacy
+  // config but the live award path never enforced it. Tightened to 2/3 as
+  // part of wiring up real enforcement.
+  max_weekly_points: 2,
+  max_weekly_points_elite: 3, // potential >= 90
   max_stored_points: 99, // Cap total stored points
 };
 
@@ -800,5 +818,17 @@ export const SUBSTITUTION_STRATEGIES = {
     weaknesses: ["Fewer Star Minutes", "Less Continuity"],
     pace_threshold: 1.0,
     max_subs_per_check: 3,
+  },
+  load_management: {
+    name: "Load Management",
+    description:
+      "Aggressively bench any player at 75%+ fatigue so they fully rest and recover. Stars protected from burnout but the team plays short-handed when key guys are tired.",
+    type: "passive",
+    rotation_depth: "9-12 players",
+    strengths: ["Star Health", "Long-term Conditioning"],
+    weaknesses: ["Short-handed Stretches", "Bench-heavy Lineups"],
+    pace_threshold: 1.0,
+    max_subs_per_check: 3,
+    user_only: true,
   },
 };

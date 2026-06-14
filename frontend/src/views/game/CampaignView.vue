@@ -204,7 +204,10 @@ function handleSimPausePause() {
 
 async function handleSimPauseCpuLineup() {
   try {
-    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const [{ selectBestLineup }, { generateRoleAwareTargetMinutes }] = await Promise.all([
+      import('@/engine/ai/AILineupService'),
+      import('@/engine/simulation/SubstitutionEngine'),
+    ])
     const roster = teamStore.roster
     if (!roster || roster.length < 5) {
       toastStore.showError('Roster too small to set lineup')
@@ -220,20 +223,11 @@ async function handleSimPauseCpuLineup() {
       return
     }
     await teamStore.updateLineup(campaignId.value, newLineup, [])
-    // Recompute target minutes around the new starters (160 min split equally,
-    // bench top-4 share the remaining 40 in [16,12,8,4]).
+
+    // Distribute 240 minutes per the team's substitution strategy.
+    const strategy = teamStore.team?.coaching_scheme?.substitution || 'staggered'
     const newStarterIds = newLineup.filter(id => id !== null)
-    const newMinutes = {}
-    const starterShare = newStarterIds.length > 0 ? Math.floor(160 / newStarterIds.length) : 0
-    for (const id of newStarterIds) newMinutes[id] = Math.min(starterShare, 40)
-    const benchSlots = [16, 12, 8, 4]
-    const starterSet = new Set(newStarterIds)
-    const benchByRating = roster
-      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
-      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
-    for (let i = 0; i < benchByRating.length; i++) {
-      newMinutes[benchByRating[i].id] = i < benchSlots.length ? benchSlots[i] : 0
-    }
+    const newMinutes = generateRoleAwareTargetMinutes(roster, newStarterIds, strategy)
     await teamStore.updateTargetMinutes(campaignId.value, newMinutes)
     toastStore.showSuccess('Lineup updated by CPU')
   } catch (err) {
@@ -412,11 +406,12 @@ function closeMobileMenu() {
     <BottomNav v-if="isMobile && !hideBottomNav" :campaign-id="campaignId" />
 
     <!-- Sim Pause Modal — global across all campaign sub-routes. Shown whenever
-         simulateToGame halts (trade-deadline, All-Star, user injury). The
-         all_star variant renders both All-Star and Rising Stars rosters via
-         internal tabs; no secondary modal needed. -->
+         simulateToGame halts (All-Star, user injury). The trade-deadline
+         variant is handled by BreakingNewsModal in App.vue instead (single
+         modal carrying the news article AND the Pause/Continue buttons),
+         so we explicitly skip this modal for that reason. -->
     <SimPauseModal
-      :show="gameStore.simulationPaused"
+      :show="gameStore.simulationPaused && gameStore.pauseState?.reason !== 'trade_deadline'"
       :reason="gameStore.pauseState?.reason || ''"
       :payload="gameStore.pauseState?.payload || {}"
       @continue="handleSimPauseContinue"

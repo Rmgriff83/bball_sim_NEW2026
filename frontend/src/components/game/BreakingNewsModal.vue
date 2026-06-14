@@ -1,16 +1,25 @@
 <script setup>
 import { computed, watch, onMounted, onUnmounted } from 'vue'
-import { X, Repeat, Clock, Star, Trophy } from 'lucide-vue-next'
+import { X, Repeat, Clock, Star, Trophy, Pause, Play } from 'lucide-vue-next'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
   item: { type: Object, default: null },
 })
-const emit = defineEmits(['dismiss'])
+const emit = defineEmits(['dismiss', 'pause', 'continue'])
 
 const iconMap = { Repeat, Clock, Star, Trophy }
 
 const isChampion = computed(() => props.item?.category === 'CHAMPION')
+// Sim-pause variant: deadline warning that needs to halt a multi-day sim
+// run and force the user to choose Pause or Continue. Replaces the old
+// dual-modal flow (BreakingNews + SimPauseModal stacked).
+const isSimPause = computed(() => !!props.item?.simPause)
+
+function dismissOrPause() {
+  if (isSimPause.value) emit('pause')
+  else emit('dismiss')
+}
 
 function getIcon(name) {
   return iconMap[name] || Trophy
@@ -35,7 +44,7 @@ function formatDate(dateStr) {
 
 function onKeydown(e) {
   if (e.key === 'Escape' && props.show) {
-    emit('dismiss')
+    dismissOrPause()
   }
 }
 
@@ -56,7 +65,7 @@ onUnmounted(() => {
 <template>
   <Teleport to="body">
     <Transition name="bn-modal">
-      <div v-if="show && item" class="bn-overlay" @click.self="emit('dismiss')">
+      <div v-if="show && item" class="bn-overlay" @click.self="dismissOrPause">
         <div class="bn-container" :class="{ 'is-champion': isChampion }">
           <!-- Breaking News Banner -->
           <div class="bn-banner" :class="{ 'bn-banner-champion': isChampion }">
@@ -76,7 +85,7 @@ onUnmounted(() => {
                 <component :is="getIcon(item.icon)" :size="12" />
                 {{ item.category }}
               </span>
-              <button class="bn-close" @click="emit('dismiss')" aria-label="Close">
+              <button class="bn-close" @click="dismissOrPause" aria-label="Close">
                 <X :size="20" />
               </button>
             </div>
@@ -93,8 +102,20 @@ onUnmounted(() => {
           </div>
 
           <!-- Footer -->
-          <div class="bn-footer">
-            <button class="bn-btn-continue" @click="emit('dismiss')">CONTINUE</button>
+          <div class="bn-footer" :class="{ 'bn-footer-sim': isSimPause }">
+            <template v-if="isSimPause">
+              <button class="bn-btn-pause" @click="emit('pause')">
+                <Pause :size="14" />
+                PAUSE SIM
+              </button>
+              <button class="bn-btn-continue" @click="emit('continue')">
+                <Play :size="14" fill="currentColor" />
+                CONTINUE SIM
+              </button>
+            </template>
+            <template v-else>
+              <button class="bn-btn-continue" @click="emit('dismiss')">CONTINUE</button>
+            </template>
           </div>
         </div>
       </div>
@@ -314,6 +335,41 @@ onUnmounted(() => {
 .bn-btn-continue:hover {
   background: var(--color-primary-dark);
   transform: translateY(-1px);
+}
+
+/* Sim-pause footer: split layout with Pause + Continue side by side. */
+.bn-footer-sim {
+  display: flex;
+  gap: 10px;
+}
+
+.bn-footer-sim .bn-btn-continue,
+.bn-btn-pause {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 16px;
+  border-radius: var(--radius-xl);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: auto;
+}
+
+.bn-btn-pause {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.bn-btn-pause:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
 }
 
 /* Transitions */

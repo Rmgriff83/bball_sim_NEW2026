@@ -3155,7 +3155,7 @@ function formatAge(age) {
 .wizard-modal-container {
   width: 100%;
   max-width: 900px;
-  max-height: 90vh;
+  max-height: 85vh;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-2xl);

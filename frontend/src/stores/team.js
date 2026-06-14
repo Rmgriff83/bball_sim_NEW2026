@@ -110,6 +110,7 @@ export const useTeamStore = defineStore('team', () => {
   const allTeams = ref([])
   const coachingSchemes = ref({})
   const recommendedScheme = ref(null)
+  const recommendedDefensiveScheme = ref(null)
   const substitutionStrategies = ref({})
   const targetMinutes = ref({})
   const loading = ref(false)
@@ -525,11 +526,31 @@ export const useTeamStore = defineStore('team', () => {
       }
       coachingSchemes.value = schemes
 
-      // Recommend a scheme based on current roster
+      // "Best Fit" recommendation = the scheme with the highest effectiveness
+      // % we just computed. Previously the offensive side called
+      // `coachingEngine.recommendScheme(roster)`, which uses a decision-tree
+      // heuristic (avgSpeed, avgThreePoint, etc.) and could disagree with the
+      // numeric fit % shown on the card. Defensive had no recommendation at
+      // all. Picking the max from the already-computed per-scheme `effectiveness`
+      // values guarantees the badge always sits on the highest-fit card on
+      // both tabs.
+      const pickHighest = (schemeMap, fallback) => {
+        let best = null
+        let bestEff = -Infinity
+        for (const [id, s] of Object.entries(schemeMap ?? {})) {
+          if ((s.effectiveness ?? 0) > bestEff) {
+            bestEff = s.effectiveness
+            best = id
+          }
+        }
+        return best ?? fallback
+      }
       if (r.length > 0) {
-        recommendedScheme.value = coachingEngine.recommendScheme(r)
+        recommendedScheme.value = pickHighest(schemes.offensive, 'balanced')
+        recommendedDefensiveScheme.value = pickHighest(schemes.defensive, 'man')
       } else {
         recommendedScheme.value = 'balanced'
+        recommendedDefensiveScheme.value = 'man'
       }
 
       // Build substitution strategies from engine
@@ -847,6 +868,7 @@ export const useTeamStore = defineStore('team', () => {
     lineup.value = [null, null, null, null, null]
     coachingSchemes.value = {}
     recommendedScheme.value = null
+    recommendedDefensiveScheme.value = null
     substitutionStrategies.value = {}
     targetMinutes.value = {}
     _loadedCampaignId.value = null
@@ -1468,6 +1490,7 @@ export const useTeamStore = defineStore('team', () => {
     allTeams,
     coachingSchemes,
     recommendedScheme,
+    recommendedDefensiveScheme,
     substitutionStrategies,
     targetMinutes,
     loading,

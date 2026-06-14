@@ -144,7 +144,7 @@ const upcomingFreeAgentsPreview = computed(() => upcomingFreeAgents.value.slice(
 
 // Hide the home-view "Expiring Contracts" strip when re-signing is closed.
 // Two close states:
-//   1. In-season after Dec 15 — `resign_deadline_passed` is set; the user
+//   1. In-season after Feb 5 — `resign_deadline_passed` is set; the user
 //      can no longer extend anyone until next offseason, so a teaser they
 //      can't act on is just noise.
 //   2. Any offseason phase — `isOffseason` covers 'offseason',
@@ -612,8 +612,8 @@ function validateRosterForGame() {
   }
 
   const totalMins = teamStore.totalTargetMinutes
-  if (totalMins !== 200) {
-    rosterWarningMessage.value = `Your rotation minutes total ${totalMins} — they must equal exactly 200.`
+  if (totalMins !== 240) {
+    rosterWarningMessage.value = `Your rotation minutes total ${totalMins} — they must equal exactly 240.`
     rosterWarningHint.value = 'Go to the Team tab to adjust your player minutes before playing.'
     showRosterWarningModal.value = true
     return false
@@ -2096,7 +2096,7 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
 
 // Trade deadline check.
 // `_processMidSeasonEvents` in game.js enqueues the breaking news at the moment
-// the flag flips (Dec 15) AND sets a persistent `trade_deadline_news_shown`
+// the flag flips (Feb 5) AND sets a persistent `trade_deadline_news_shown`
 // flag. This fallback runs after sim flows for older campaigns that flipped
 // `trade_deadline_passed` before the news-shown flag existed (or for AI-trade
 // paths in `AITradeService` that auto-flip the deadline without enqueuing
@@ -2277,7 +2277,10 @@ function goToLineupFromRecovery() {
 
 async function handleCpuSetLineup() {
   try {
-    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const [{ selectBestLineup }, { generateRoleAwareTargetMinutes }] = await Promise.all([
+      import('@/engine/ai/AILineupService'),
+      import('@/engine/simulation/SubstitutionEngine'),
+    ])
     const roster = teamStore.roster
     if (!roster || roster.length < 5) {
       toastStore.showError('Not enough players to set lineup')
@@ -2286,39 +2289,11 @@ async function handleCpuSetLineup() {
     const newLineup = selectBestLineup(roster)
     await teamStore.updateLineup(campaignId.value, newLineup)
 
-    // Also recompute target minutes for the new lineup so minutes total 200
-    const starterSet = new Set(newLineup.filter(id => id !== null))
-    const newMinutes = {}
-
-    // Starters: split 160 minutes evenly (max 40 each)
-    const healthyStarters = newLineup.filter(id => id !== null)
-    const starterMins = healthyStarters.length > 0 ? Math.min(Math.floor(160 / healthyStarters.length), 40) : 0
-    let starterTotal = 0
-    for (const id of healthyStarters) {
-      newMinutes[id] = starterMins
-      starterTotal += starterMins
-    }
-
-    // Bench: top healthy bench players get remaining minutes [16, 12, 8, 4]
-    const benchPlayers = roster
-      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
-      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
-    let benchBudget = 200 - starterTotal
-    const benchSlots = [16, 12, 8, 4]
-    for (let i = 0; i < benchPlayers.length; i++) {
-      if (i < benchSlots.length && benchBudget > 0) {
-        const mins = Math.min(benchSlots[i], benchBudget)
-        newMinutes[benchPlayers[i].id] = mins
-        benchBudget -= mins
-      } else {
-        newMinutes[benchPlayers[i].id] = 0
-      }
-    }
-
-    // Everyone else (injured players, remaining bench) gets 0
-    for (const p of roster) {
-      if (p && !(p.id in newMinutes)) newMinutes[p.id] = 0
-    }
+    // Distribute 240 minutes per the team's substitution strategy
+    // (deep_bench, tight_rotation, etc).
+    const strategy = teamStore.team?.coaching_scheme?.substitution || 'staggered'
+    const starterIds = newLineup.filter(id => id !== null)
+    const newMinutes = generateRoleAwareTargetMinutes(roster, starterIds, strategy)
     await teamStore.updateTargetMinutes(campaignId.value, newMinutes)
 
     showInjuryModal.value = false

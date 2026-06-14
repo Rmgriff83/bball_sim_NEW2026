@@ -16,6 +16,7 @@ import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
+import { generateRoleAwareTargetMinutes } from '@/engine/simulation/SubstitutionEngine'
 import TradesTab from '@/components/trade/TradesTab.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
 import FacilitiesTab from '@/components/team/FacilitiesTab.vue'
@@ -103,7 +104,7 @@ const queryTab = route.query?.tab
 const hashTab = route.hash?.slice(1)
 const initialTab = queryTab || hashTab
 
-// Trades tab is hidden once the in-season trade deadline passes (Dec 15) — the
+// Trades tab is hidden once the in-season trade deadline passes (Feb 5) — the
 // trade UI would just toast "deadline passed" on every action otherwise. Same
 // flag drives the AI proposal generation gate in CampaignHomeView, so the
 // rest of the app stays consistent.
@@ -117,7 +118,7 @@ const activeTab = ref(
 )
 
 // If the deadline flips while the user is sitting on the trades tab (e.g. they
-// just simulated through Dec 15), kick them back to the team tab.
+// just simulated through Feb 5), kick them back to the team tab.
 watch(tradeDeadlinePassed, (passed) => {
   if (passed && activeTab.value === 'trades') {
     activeTab.value = 'team'
@@ -416,13 +417,14 @@ onMounted(async () => {
   startTabTour(activeTab.value)
 })
 
-// Initialize player minutes — defaults sum to exactly 200
+// Initialize player minutes — defaults sum to exactly 240, distributed by
+// the team's chosen substitution strategy (deep_bench, staggered, etc).
 function initPlayerMinutes() {
   // Don't run if roster hasn't loaded yet
   if (!roster.value || roster.value.length === 0) return
 
   const stored = teamStore.targetMinutes || {}
-  const lineupIds = new Set(teamStore.lineup?.filter(id => id !== null) || [])
+  const lineupIds = teamStore.lineup?.filter(id => id !== null) || []
   const hasStored = Object.keys(stored).length > 0
 
   // If we have stored values, use them (preserve user customizations)
@@ -437,59 +439,9 @@ function initPlayerMinutes() {
     return
   }
 
-  // Build fresh defaults that sum to 200
-  const startersList = []
-  const bench = []
-  for (const player of roster.value) {
-    if (!player) continue
-    if (lineupIds.has(player.id)) {
-      startersList.push(player)
-    } else {
-      bench.push(player)
-    }
-  }
-
-  // Sort bench by rating descending
-  bench.sort((a, b) => (b.overall_rating || 0) - (a.overall_rating || 0))
-
-  const newMinutes = {}
-
-  // Injured starters get 0
-  let healthyStarterCount = 0
-  for (const p of startersList) {
-    const isInjured = p.is_injured || p.isInjured
-    if (isInjured) {
-      newMinutes[p.id] = 0
-    } else {
-      healthyStarterCount++
-    }
-  }
-
-  // Distribute 200 mins: healthy starters get equal share of 160, bench gets rest
-  const starterMins = healthyStarterCount > 0 ? Math.floor(160 / healthyStarterCount) : 0
-  let starterTotal = 0
-  for (const p of startersList) {
-    if (newMinutes[p.id] === 0) continue // already set injured to 0
-    newMinutes[p.id] = Math.min(starterMins, 40)
-    starterTotal += newMinutes[p.id]
-  }
-
-  // Bench: top 4 healthy bench players split remaining minutes
-  let benchBudget = 200 - starterTotal
-  const benchSlots = [16, 12, 8, 4]
-  for (let i = 0; i < bench.length; i++) {
-    const p = bench[i]
-    const isInjured = p.is_injured || p.isInjured
-    if (isInjured || benchBudget <= 0 || i >= benchSlots.length) {
-      newMinutes[p.id] = 0
-    } else {
-      const mins = Math.min(benchSlots[i], benchBudget)
-      newMinutes[p.id] = mins
-      benchBudget -= mins
-    }
-  }
-
-  playerMinutes.value = newMinutes
+  // Build fresh defaults using the team's coaching substitution strategy.
+  const strategy = teamStore.team?.coaching_scheme?.substitution || 'staggered'
+  playerMinutes.value = generateRoleAwareTargetMinutes(roster.value, lineupIds, strategy)
 
   // Persist generated defaults to store and backend
   if (campaignId.value) {
@@ -520,8 +472,8 @@ const totalMinutes = computed(() =>
 
 const totalMinutesColor = computed(() => {
   const t = totalMinutes.value
-  if (t >= 195 && t <= 205) return '#22c55e'
-  if ((t >= 185 && t < 195) || (t > 205 && t <= 215)) return '#f59e0b'
+  if (t >= 235 && t <= 245) return '#22c55e'
+  if ((t >= 225 && t < 235) || (t > 245 && t <= 255)) return '#f59e0b'
   return '#ef4444'
 })
 
@@ -532,7 +484,7 @@ function getPlayerMinutes(playerId, fallback = 0) {
 function setPlayerMinutes(playerId, desired) {
   const current = playerMinutes.value[playerId] || 0
   const othersTotal = totalMinutes.value - current
-  const available = 200 - othersTotal
+  const available = 240 - othersTotal
   playerMinutes.value[playerId] = Math.max(0, Math.min(desired, available))
   debouncedSaveMinutes()
 }
@@ -544,9 +496,9 @@ function isPlayerInjured(playerId) {
 
 function getMinutesMeterColor(mins) {
   if (mins <= 0) return '#6b7280'
-  if (mins <= 20) return '#22c55e'
-  if (mins <= 32) return '#3b82f6'
-  if (mins <= 36) return '#f59e0b'
+  if (mins <= 24) return '#22c55e'
+  if (mins <= 38) return '#3b82f6'
+  if (mins <= 43) return '#f59e0b'
   return '#ef4444'
 }
 
@@ -556,7 +508,7 @@ function calcMinutesFromEvent(e, bar) {
   const rect = bar.getBoundingClientRect()
   const clientX = e.touches ? e.touches[0].clientX : e.clientX
   const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
-  return Math.round(ratio * 40)
+  return Math.round(ratio * 48)
 }
 
 function startMinutesDrag(e, playerId, minFloor) {
@@ -566,12 +518,12 @@ function startMinutesDrag(e, playerId, minFloor) {
   draggingMinFloor.value = minFloor
   const bar = e.currentTarget.closest('.minutes-meter-bar') || e.currentTarget
   bar.classList.add('dragging')
-  const mins = Math.max(minFloor, Math.min(40, calcMinutesFromEvent(e, bar)))
+  const mins = Math.max(minFloor, Math.min(48, calcMinutesFromEvent(e, bar)))
   setPlayerMinutes(playerId, mins)
 
   const onMove = (moveEvent) => {
     moveEvent.preventDefault()
-    const m = Math.max(minFloor, Math.min(40, calcMinutesFromEvent(moveEvent, bar)))
+    const m = Math.max(minFloor, Math.min(48, calcMinutesFromEvent(moveEvent, bar)))
     setPlayerMinutes(playerId, m)
   }
   const onUp = () => {
@@ -733,9 +685,11 @@ function closeMoveDropdown() {
   expandedMovePlayer.value = null
 }
 
-// Get swap candidates for a starter (bench players who can play this position)
+// Get swap candidates for a starter (bench players who can play this position).
+// Injured bench players are excluded — they can't be moved into the starting
+// lineup until they recover.
 function getStarterSwapCandidates(slotPosition) {
-  return benchPlayers.value.filter(p => canPlayPosition(p, slotPosition))
+  return benchPlayers.value.filter(p => canPlayPosition(p, slotPosition) && !isPlayerInjured(p.id))
 }
 
 // Get the starter that a bench player can swap with (based on position)
@@ -762,6 +716,14 @@ function getEmptySlotCandidates(benchPlayer) {
 // Swap a starter with a bench player
 async function swapPlayers(starterIndex, benchPlayerId) {
   if (swappingLineup.value) return
+  // Block injured bench players from being moved into the starting lineup.
+  // Defense-in-depth alongside the dropdown filter — covers any code path
+  // that calls swapPlayers directly (walkthrough action triggers, etc.).
+  if (isPlayerInjured(benchPlayerId)) {
+    toastStore.showError("Can't move an injured player into the starting lineup")
+    closeMoveDropdown()
+    return
+  }
   swappingLineup.value = true
   if (minutesSaveTimeout) { clearTimeout(minutesSaveTimeout); minutesSaveTimeout = null }
 
@@ -844,6 +806,12 @@ async function moveToBench(starterIndex) {
 // Promote bench player to starter (into empty slot or swap)
 async function promoteToStarter(benchPlayer, targetPosition) {
   if (swappingLineup.value) return
+  // Block injured bench players from being promoted to the starting lineup.
+  if (benchPlayer?.is_injured || benchPlayer?.isInjured) {
+    toastStore.showError("Can't move an injured player into the starting lineup")
+    closeMoveDropdown()
+    return
+  }
   swappingLineup.value = true
   if (minutesSaveTimeout) { clearTimeout(minutesSaveTimeout); minutesSaveTimeout = null }
 
@@ -891,9 +859,9 @@ async function promoteToStarter(benchPlayer, targetPosition) {
   }
 }
 
-// CPU-driven lineup auto-fill. Mirrors the SimPauseModal's CPU lineup handler:
-// pick the best 5 via AILineupService, then split 200 minutes around the new
-// starters (160 to starters, 40 spread across top-4 bench by rating).
+// CPU-driven lineup auto-fill. Picks the best 5 via AILineupService, then
+// distributes minutes according to the team's chosen substitution strategy
+// (deep_bench gives starters ~26-36 mins; tight_rotation gives ~34-43, etc).
 const cpuAdjusting = ref(false)
 async function cpuAdjustLineup() {
   if (cpuAdjusting.value || swappingLineup.value) return
@@ -906,7 +874,10 @@ async function cpuAdjustLineup() {
   if (minutesSaveTimeout) { clearTimeout(minutesSaveTimeout); minutesSaveTimeout = null }
 
   try {
-    const { selectBestLineup } = await import('@/engine/ai/AILineupService')
+    const [{ selectBestLineup }, { generateRoleAwareTargetMinutes }] = await Promise.all([
+      import('@/engine/ai/AILineupService'),
+      import('@/engine/simulation/SubstitutionEngine'),
+    ])
     const newLineup = selectBestLineup(rosterArr)
     if (!Array.isArray(newLineup) || newLineup.length !== 5) {
       toastStore.showError('CPU could not pick a lineup')
@@ -915,20 +886,9 @@ async function cpuAdjustLineup() {
     closeMoveDropdown()
     await teamStore.updateLineup(campaignId.value, newLineup, [])
 
-    // Distribute 200 minutes — 160 across starters, 40 across top-4 healthy
-    // bench by rating (16/12/8/4). Same shape as the SimPauseModal handler.
+    const strategy = teamStore.team?.coaching_scheme?.substitution || 'staggered'
     const newStarterIds = newLineup.filter(id => id !== null)
-    const newMinutes = {}
-    const starterShare = newStarterIds.length > 0 ? Math.floor(160 / newStarterIds.length) : 0
-    for (const id of newStarterIds) newMinutes[id] = Math.min(starterShare, 40)
-    const benchSlots = [16, 12, 8, 4]
-    const starterSet = new Set(newStarterIds)
-    const benchByRating = rosterArr
-      .filter(p => p && !starterSet.has(p.id) && !(p.is_injured || p.isInjured))
-      .sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
-    for (let i = 0; i < benchByRating.length; i++) {
-      newMinutes[benchByRating[i].id] = i < benchSlots.length ? benchSlots[i] : 0
-    }
+    const newMinutes = generateRoleAwareTargetMinutes(rosterArr, newStarterIds, strategy)
     await teamStore.updateTargetMinutes(campaignId.value, newMinutes)
     await teamStore.fetchTeam(campaignId.value, { force: true })
     toastStore.showSuccess('Lineup auto-set by CPU')
@@ -1489,7 +1449,7 @@ const STAFF_TRAINER_PERK_LABELS = {
               <span class="team-chemistry-value" :style="{ color: chemistryColor }">{{ teamChemistry }}%</span>
             </span>
             <span class="header-metrics-divider">&middot;</span>
-            <span class="total-minutes-value" data-tour="gm-minutes">{{ totalMinutes }} / 200</span>
+            <span class="total-minutes-value" data-tour="gm-minutes">{{ totalMinutes }} / 240</span>
             <button
               class="cpu-adjust-btn"
               data-tour="gm-cpu-auto"
@@ -1619,7 +1579,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                         <div
                           class="minutes-meter-fill"
                           :style="{
-                            width: (getPlayerMinutes(slot.player.id, 30) / 40 * 100) + '%',
+                            width: (getPlayerMinutes(slot.player.id, 30) / 48 * 100) + '%',
                             backgroundColor: getMinutesMeterColor(getPlayerMinutes(slot.player.id, 30))
                           }"
                         >
@@ -1795,7 +1755,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     <div
                       class="minutes-meter-fill"
                       :style="{
-                        width: (getPlayerMinutes(player.id, 0) / 40 * 100) + '%',
+                        width: (getPlayerMinutes(player.id, 0) / 48 * 100) + '%',
                         backgroundColor: getMinutesMeterColor(getPlayerMinutes(player.id, 0))
                       }"
                     >
@@ -1830,7 +1790,13 @@ const STAFF_TRAINER_PERK_LABELS = {
                     title="Upgrade points available"
                   />
                 </div>
-                <button class="move-btn" :class="{ active: expandedMovePlayer === `bench-${player.id}` }" @click.stop="toggleMoveDropdown(`bench-${player.id}`)" title="Adjust lineup">
+                <button
+                  class="move-btn"
+                  :class="{ active: expandedMovePlayer === `bench-${player.id}` }"
+                  :disabled="player.is_injured || player.isInjured"
+                  :title="(player.is_injured || player.isInjured) ? 'Injured players cannot be moved into the starting lineup' : 'Adjust lineup'"
+                  @click.stop="toggleMoveDropdown(`bench-${player.id}`)"
+                >
                   <ArrowUpDown :size="14" />
                 </button>
               </div>
@@ -2198,6 +2164,9 @@ const STAFF_TRAINER_PERK_LABELS = {
           <div v-else-if="activeCoachTab === 'defensive'">
             <div class="flex items-center justify-between mb-4">
               <h3 class="h4">Defensive Scheme</h3>
+              <div v-if="teamStore.recommendedDefensiveScheme" class="recommended-badge">
+                Recommended: {{ teamStore.coachingSchemes?.defensive?.[teamStore.recommendedDefensiveScheme]?.name }}
+              </div>
             </div>
 
             <p class="text-secondary text-sm mb-6">
@@ -2214,13 +2183,15 @@ const STAFF_TRAINER_PERK_LABELS = {
                 :key="schemeId"
                 class="scheme-card defensive"
                 :class="{
-                  active: (selectedDefensiveScheme || team?.coaching_scheme?.defensive || 'man') === schemeId
+                  active: (selectedDefensiveScheme || team?.coaching_scheme?.defensive || 'man') === schemeId,
+                  recommended: teamStore.recommendedDefensiveScheme === schemeId
                 }"
                 @click="updateDefensiveScheme(schemeId)"
               >
                 <div class="scheme-header">
                   <span class="scheme-name">{{ scheme.name }}</span>
-                  <span class="scheme-type-tag" :class="scheme.type">{{ scheme.type }}</span>
+                  <span v-if="teamStore.recommendedDefensiveScheme === schemeId" class="rec-tag">Best Fit</span>
+                  <span v-else class="scheme-type-tag" :class="scheme.type">{{ scheme.type }}</span>
                 </div>
 
                 <p class="scheme-desc">{{ scheme.description }}</p>

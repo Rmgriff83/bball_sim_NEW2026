@@ -36,6 +36,11 @@ export const BreakingNewsService = {
       category: 'DEADLINE',
       icon: 'Clock',
       date,
+      // Doubles as the sim-pause warning: when displayed mid-sim, the modal
+      // shows Pause Sim / Continue Sim buttons (in place of the standard
+      // CONTINUE), and any dismiss (X / overlay / Escape) is treated as Pause
+      // Sim so the user can't accidentally skip past the decision.
+      simPause: true,
     }
   },
 

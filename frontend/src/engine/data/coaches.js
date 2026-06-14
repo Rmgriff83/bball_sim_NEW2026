@@ -81,10 +81,10 @@ export const DEFENSIVE_SCHEMES = [
 ];
 
 export const COACH_TIER_RANGES = {
-  1: [78, 92],
+  1: [76, 87],
   2: [72, 85],
   3: [65, 78],
-  4: [58, 72],
+  4: [62, 74],
 };
 
 export const COACH_SALARY_RANGES = {

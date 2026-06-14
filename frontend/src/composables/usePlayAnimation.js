@@ -181,13 +181,20 @@ export function usePlayAnimation() {
   })
 
   /**
-   * Player ids participating in any due synergy on this possession. Used to
-   * SUPPRESS those players' individual badge animations — a synergy hit takes
-   * precedence over the base badge animations for the players involved.
+   * Player ids participating in ANY synergy fired on this possession. Used
+   * to SUPPRESS those players' individual badge animations — a synergy hit
+   * takes precedence over the base badge animations for the players involved.
+   *
+   * Uses the FULL possession synergy list (not time-filtered) so badges are
+   * suppressed for the entire play once we know a synergy will fire on it.
+   * Otherwise badges fire early in the play, then the synergy hits late, and
+   * the user has already seen a stream of triple-badge animations before the
+   * synergy purple flourish takes over.
    */
   const synergySuppressedPlayerIds = computed(() => {
     const set = new Set()
-    for (const s of currentActivatedSynergies.value) {
+    const all = currentPossession.value?.activated_synergies || []
+    for (const s of all) {
       if (s.player1?.id) set.add(String(s.player1.id))
       if (s.player2?.id) set.add(String(s.player2.id))
     }
@@ -201,17 +208,38 @@ export function usePlayAnimation() {
    * action has reached its end-of-action timestamp. Badges for players who
    * are part of an active synergy are filtered out so the synergy animation
    * is the sole effect shown for those players.
+   *
+   * Additionally, capped to ONE badge per player per possession — picking
+   * the latest in `time` so the animation lands near play resolution rather
+   * than firing at the start of an upstream pass/screen. Without this cap,
+   * a player with multiple relevant badges (e.g. catch_and_shoot +
+   * corner_specialist + deadeye on a corner three) would have all three
+   * pop in succession via the 550ms stagger in BasketballCourt, producing
+   * a noisy stream rather than a single readable beat.
    */
   const currentActivatedBadges = computed(() => {
     const all = currentPossession.value?.activated_badges || []
     if (all.length === 0) return all
     const cutoff = elapsedTime.value
     const suppressed = synergySuppressedPlayerIds.value
-    return all.filter(b => {
+
+    // First pass: filter to badges that are due AND not synergy-suppressed.
+    const due = all.filter(b => {
       if ((b.time ?? 0) > cutoff) return false
       if (suppressed.has(String(b.playerId))) return false
       return true
     })
+
+    // Second pass: keep only the latest-in-time badge per player.
+    const latestPerPlayer = new Map()
+    for (const b of due) {
+      const pid = String(b.playerId)
+      const existing = latestPerPlayer.get(pid)
+      if (!existing || (b.time ?? 0) >= (existing.time ?? 0)) {
+        latestPerPlayer.set(pid, b)
+      }
+    }
+    return [...latestPerPlayer.values()]
   })
 
   /**

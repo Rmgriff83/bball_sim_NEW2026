@@ -1,6 +1,22 @@
 <script setup>
 import { computed, ref, watch, onUnmounted } from 'vue'
 import { X, AlertTriangle, Calendar, Star, Zap, Users, Pause, Play } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+
+// PlayerAvatar expects `player.id` (headshot resolver keys on that). All-Star
+// roster entries carry `playerId` instead, so adapt to the avatar's contract.
+// Headshot pointers (`headshot` filename + `hasCustomHeadshot` flag) are
+// preserved by AllStarService._buildPlayerLookup and forwarded here so the
+// resolver can actually find an asset.
+function avatarPlayer(player) {
+  if (!player) return null
+  return {
+    id: player.playerId,
+    name: player.playerName,
+    headshot: player.headshot ?? null,
+    hasCustomHeadshot: player.hasCustomHeadshot ?? false,
+  }
+}
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -180,10 +196,13 @@ onUnmounted(() => {
                       :key="`${allStarTab}-${conf}-s-${player.playerId ?? player.playerName}`"
                       class="player-row"
                     >
-                      <span class="pos-tag" :style="{ background: player.teamColor || 'var(--color-bg-tertiary)' }">{{ player.position }}</span>
+                      <div class="p-avatar-wrap">
+                        <PlayerAvatar :player="avatarPlayer(player)" :size="42" class="p-avatar-icon" />
+                        <span class="p-pos-label card-cosmic">{{ player.position }}</span>
+                      </div>
                       <div class="player-id">
                         <span class="p-name">{{ player.playerName }}</span>
-                        <span class="p-team" :style="{ color: player.teamColor }">{{ player.teamAbbr }}</span>
+                        <span class="p-team-pill" :style="{ background: player.teamColor || 'var(--color-bg-tertiary)' }">{{ player.teamAbbr }}</span>
                       </div>
                       <div class="p-stats">
                         <span><b>{{ player.stats?.ppg ?? 0 }}</b> PTS</span>
@@ -202,10 +221,13 @@ onUnmounted(() => {
                       :key="`${allStarTab}-${conf}-r-${player.playerId ?? player.playerName}`"
                       class="player-row reserve"
                     >
-                      <span class="pos-tag small" :style="{ background: player.teamColor || 'var(--color-bg-tertiary)' }">{{ player.position }}</span>
+                      <div class="p-avatar-wrap small">
+                        <PlayerAvatar :player="avatarPlayer(player)" :size="36" class="p-avatar-icon" />
+                        <span class="p-pos-label card-cosmic">{{ player.position }}</span>
+                      </div>
                       <div class="player-id">
                         <span class="p-name">{{ player.playerName }}</span>
-                        <span class="p-team" :style="{ color: player.teamColor }">{{ player.teamAbbr }}</span>
+                        <span class="p-team-pill" :style="{ background: player.teamColor || 'var(--color-bg-tertiary)' }">{{ player.teamAbbr }}</span>
                       </div>
                       <div class="p-stats">
                         <span><b>{{ player.stats?.ppg ?? 0 }}</b> PTS</span>
@@ -522,10 +544,10 @@ onUnmounted(() => {
 
 .player-row {
   display: grid;
-  grid-template-columns: 36px 1fr auto;
+  grid-template-columns: 52px 1fr auto;
   align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
+  gap: 12px;
+  padding: 8px 10px;
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.02);
 }
@@ -534,28 +556,59 @@ onUnmounted(() => {
   background: transparent;
 }
 
-.pos-tag {
-  display: inline-flex;
+/* Avatar block — mirrors the lineup tab starter card: circular headshot with
+   a gold cosmic position label overlaid at the bottom-left. */
+.p-avatar-wrap {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+  display: flex;
   align-items: center;
   justify-content: center;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: white;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
 }
 
-.pos-tag.small {
-  height: 20px;
-  font-size: 0.65rem;
+.p-avatar-wrap.small {
+  width: 38px;
+  height: 38px;
+}
+
+.p-avatar-icon {
+  stroke-width: 1.5;
+}
+
+/* Cosmic-gradient position label — same vocab as .slot-position-label on
+   the starter cards. Positioned at the bottom-left corner of the avatar
+   so it reads as a flag on the player. */
+.p-pos-label {
+  position: absolute;
+  bottom: -6px;
+  left: -2px;
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: #1a1520;
+  padding: 1px 6px;
+  border-radius: var(--radius-md);
+  line-height: 1.25;
+  text-align: center;
+  z-index: 1;
+}
+
+.p-avatar-wrap.small .p-pos-label {
+  font-size: 0.62rem;
+  padding: 1px 5px;
+  bottom: -5px;
 }
 
 .player-id {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -568,10 +621,24 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.p-team {
-  font-size: 0.7rem;
+/* Team abbreviation as a pill with the team color as background and white
+   text — guarantees contrast on both dark backgrounds (modal default) and
+   the light-mode newspaper texture, regardless of how dark the team color
+   itself is. Replaces the old tinted-text approach that disappeared on
+   teams with near-black primary colors. */
+.p-team-pill {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
+  color: white;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .p-stats {
@@ -589,14 +656,14 @@ onUnmounted(() => {
 
 @media (max-width: 560px) {
   .player-row {
-    grid-template-columns: 32px 1fr;
+    grid-template-columns: 48px 1fr;
     grid-template-rows: auto auto;
   }
   .p-stats {
     grid-column: 1 / -1;
     flex-wrap: wrap;
     gap: 8px;
-    padding-left: 42px;
+    padding-left: 56px;
   }
 }
 

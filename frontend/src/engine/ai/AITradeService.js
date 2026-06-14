@@ -9,8 +9,8 @@
 
 import { calculateRetentionScore } from './MotivationService';
 
-const TRADE_DEADLINE_MONTH = 12; // December
-const TRADE_DEADLINE_DAY = 15;
+const TRADE_DEADLINE_MONTH = 2; // February
+const TRADE_DEADLINE_DAY = 5;
 
 // Regular season tips off Oct 21. Automated AI trade offers are suppressed for
 // the first week so users aren't flooded with proposals on opening night.
@@ -19,7 +19,7 @@ const SEASON_START_DAY = 21;
 const SEASON_OPENING_QUIET_DAYS = 7;
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
-const TOTAL_GAMES = 54;
+const TOTAL_GAMES = 82;
 
 // =============================================================================
 // DIFFICULTY CONFIGURATION
@@ -861,11 +861,12 @@ export function getTradeInterest(team, teamRoster, context) {
  * @returns {{ month: number, day: number, year: number }}
  */
 export function getTradeDeadline(seasonYear) {
-  // Season 2025 starts Oct 2025, deadline is Dec 15, 2025 (~2/3 through season)
+  // 82-game season starts Oct of seasonYear, deadline is Feb 5 of seasonYear+1
+  // (~2/3 through the season, matching real NBA timing).
   return {
     month: TRADE_DEADLINE_MONTH,
     day: TRADE_DEADLINE_DAY,
-    year: seasonYear,
+    year: seasonYear + 1,
   };
 }
 
@@ -1378,7 +1379,7 @@ export function processTradeDeadlineEvents({ currentDate, seasonYear, settings =
     newsEvents.push({
       event_type: 'trade',
       headline: 'Trade deadline approaching',
-      body: `The December 15th trade deadline is ${daysUntil} days away. Teams are expected to increase activity.`,
+      body: `The February 5th trade deadline is ${daysUntil} days away. Teams are expected to increase activity.`,
       game_date: currentDate,
     });
 

@@ -8,11 +8,16 @@ import { SeasonManager } from './SeasonManager'
 // as plain objects — no file I/O or database access.
 // ---------------------------------------------------------------------------
 
-// All-Star date now flows from SeasonDeadlines (currently Dec 15 alongside the
+// All-Star date now flows from SeasonDeadlines (currently Feb 5 alongside the
 // trade deadline). Callers gate on the season-day crossing themselves, so this
 // service no longer hard-codes a trigger date.
 const ALL_STAR_MIN_GAMES_PCT = 0.60
-const RISING_STARS_MIN_GAMES_PCT = 0.40
+// Rising Stars is an invitational showcase for young players — the prior
+// 0.40 gate filtered out bench rookies who DNP-CD early-season, leaving
+// some conferences with too few eligible candidates to fill 5 starters +
+// 5 reserves. 0.25 keeps a sanity floor (rookies still need to have played
+// ~12 games by the break) while letting rotation guys qualify.
+const RISING_STARS_MIN_GAMES_PCT = 0.25
 
 export class AllStarService {
 
@@ -163,6 +168,12 @@ export class AllStarService {
         teamColor: team.primary_color ?? team.primaryColor ?? '#6B7280',
         conference: team.conference ?? 'east',
         overallRating: player.overallRating ?? player.overall_rating ?? 70,
+        // Preserve headshot pointers so the All-Star modal's PlayerAvatar
+        // can resolve the actual portrait instead of falling back to the
+        // default User icon. Both forms supported because the underlying
+        // resolver reads either.
+        headshot: player.headshot ?? null,
+        hasCustomHeadshot: player.hasCustomHeadshot ?? player.has_custom_headshot ?? false,
       }
     }
 
@@ -311,6 +322,25 @@ export class AllStarService {
         bestForPos.starterPosition = pos
         starters[pos] = bestForPos
         delete orderedPool[bestId]
+      }
+    }
+
+    // Flex starter fallback — if the position-locked loop above couldn't
+    // fill all 5 starter slots (e.g. a Rising Stars conference with no
+    // eligible Centers), pad with the highest-score remaining players
+    // regardless of position. Without this, the modal would show 3-4
+    // starters and reserves drawn from an already-depleted pool. The
+    // modal iterates starters values, so flex keys render identically.
+    const filledCount = Object.keys(starters).length
+    if (filledCount < 5) {
+      const flexCandidates = Object.entries(orderedPool)
+        .sort(([, a], [, b]) => b.score - a.score)
+      const needed = 5 - filledCount
+      for (let i = 0; i < needed && i < flexCandidates.length; i++) {
+        const [id, player] = flexCandidates[i]
+        player.starterPosition = `FLEX${i + 1}`
+        starters[`FLEX${i + 1}`] = player
+        delete orderedPool[id]
       }
     }
 

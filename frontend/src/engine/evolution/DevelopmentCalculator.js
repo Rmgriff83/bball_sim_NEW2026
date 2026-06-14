@@ -337,21 +337,26 @@ function getAttributeChangesFromStats(boxScore, change, diffSettings = {}, minut
       changes['offense.passAccuracy'] = change * 0.3;
     }
 
+    // Defensive weights tightened so per-game defense ceiling matches the
+    // offense ceiling. Previous shape (rebounds 1.0 + steals 1.3 + blocks
+    // 1.3 = 3.6×) outpaced offense max of ~2.5×, compounded by the easy
+    // defensive thresholds (1 stl, 1 blk, 5 reb at all_star), so starters
+    // were accruing too much defensive growth every game.
     const scaledReb = thresholds.rebounds * minuteScale;
     if (rebounds >= scaledReb) {
-      changes['defense.defensiveRebound'] = change * 0.7;
-      changes['defense.offensiveRebound'] = change * 0.3;
+      changes['defense.defensiveRebound'] = change * 0.5;
+      changes['defense.offensiveRebound'] = change * 0.2;
     } else if (rebounds >= scaledReb * 0.6) {
-      changes['defense.defensiveRebound'] = change * 0.3;
+      changes['defense.defensiveRebound'] = change * 0.2;
     }
 
     if (steals >= thresholds.steals * minuteScale) {
-      changes['defense.steal'] = change;
-      changes['defense.perimeterDefense'] = change * 0.3;
+      changes['defense.steal'] = change * 0.7;
+      changes['defense.perimeterDefense'] = change * 0.15;
     }
     if (blocks >= thresholds.blocks * minuteScale) {
-      changes['defense.block'] = change;
-      changes['defense.interiorDefense'] = change * 0.3;
+      changes['defense.block'] = change * 0.7;
+      changes['defense.interiorDefense'] = change * 0.15;
     }
   } else {
     // --- REGRESSION: regress attributes in areas where player underperformed ---
@@ -416,8 +421,10 @@ function calculateMicroDevelopment(player, boxScore, difficulty = 'pro', options
   };
 
   // Minutes factor: scales gain/loss amount by playing time
-  // 28 min = baseline (1.0x), max 1.3x for heavy minutes, min 0.5x for low minutes
-  const minutesFactor = Math.max(0.5, Math.min(minutes / 28, 1.3));
+  // 34 min = baseline (1.0x), max 1.3x for heavy minutes, min 0.5x for low minutes.
+  // Baseline rebased for 48-min games — keeps per-game growth pace equivalent to
+  // the previous 28-min baseline under 40-min games (28 × 48/40 ≈ 34).
+  const minutesFactor = Math.max(0.5, Math.min(minutes / 34, 1.3));
 
   if (performance >= diffSettings.micro_dev_threshold_high) {
     // Good performance - development (scaled by minutes played)
@@ -438,8 +445,9 @@ function calculateMicroDevelopment(player, boxScore, difficulty = 'pro', options
       diffSettings.micro_dev_loss_min,
       diffSettings.micro_dev_loss_max
     );
-    // Gentler minutes scaling for regression (don't over-punish high-minutes players)
-    const regMinFactor = Math.max(0.6, Math.min(minutes / 30, 1.15));
+    // Gentler minutes scaling for regression (don't over-punish high-minutes players).
+    // 36 min baseline rebased for 48-min games (30 × 48/40 = 36).
+    const regMinFactor = Math.max(0.6, Math.min(minutes / 36, 1.15));
     const loss = baseLoss * regMinFactor;
     result.attributeChanges = getAttributeChangesFromStats(boxScore, -loss, diffSettings, minutes);
   }

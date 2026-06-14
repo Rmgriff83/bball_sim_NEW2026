@@ -116,6 +116,23 @@ function clonePlayer(player) {
 }
 
 /**
+ * Monday-aligned week index for a given date. Mirrors `_getMondayWeek` in
+ * `stores/game.js` — same Jan 5 1970 epoch so cross-system bookkeeping
+ * stays consistent. Used for the per-week upgrade-point cap (resets each
+ * Monday) and any other "what week is it" lookups inside this module.
+ *
+ * @param {string|Date|null} date  ISO date string or Date; falls back to now.
+ * @returns {number} Floor of weeks since the Monday epoch.
+ */
+function _getMondayWeekIndex(date) {
+  const ms = date == null
+    ? Date.now()
+    : (date instanceof Date ? date.getTime() : new Date(date).getTime());
+  const MONDAY_EPOCH = 4 * 24 * 60 * 60 * 1000; // 1970-01-05 = first Monday
+  return Math.floor((ms - MONDAY_EPOCH) / (7 * 24 * 60 * 60 * 1000));
+}
+
+/**
  * Calculate attribute-weighted recovery with ~15% natural variance.
  * Higher stamina/durability = faster recovery.
  */
@@ -408,6 +425,45 @@ function applyAttributeChanges(player, changes, gameDate = null) {
 
     offensePointsEarned *= ageMult * potentialMult;
     defensePointsEarned *= ageMult * potentialMult;
+
+    // Per-game cap — scale offense + defense proportionally so the combined
+    // award doesn't exceed the per-game ceiling. Without this, a youth +
+    // elite-potential player having a 25-PER game could earn ~1.8 points
+    // off a single game.
+    const isElite = potential >= 90;
+    const maxPerGame = isElite
+      ? Config.UPGRADE_POINTS.max_per_game_points_elite
+      : Config.UPGRADE_POINTS.max_per_game_points;
+    let totalEarned = offensePointsEarned + defensePointsEarned;
+    if (totalEarned > maxPerGame) {
+      const scale = maxPerGame / totalEarned;
+      offensePointsEarned *= scale;
+      defensePointsEarned *= scale;
+      totalEarned = maxPerGame;
+    }
+
+    // Per-week cap — clamp accumulation to the weekly budget. Tracks the
+    // current Monday-aligned week index on the player so the budget resets
+    // automatically when the week rolls over. Sources the week from
+    // gameDate (already in scope) so AI teams and user teams alike are
+    // covered without any caller plumbing.
+    const currentWeek = _getMondayWeekIndex(today);
+    if ((player.last_points_week ?? -1) !== currentWeek) {
+      player.points_earned_this_week = 0;
+      player.last_points_week = currentWeek;
+    }
+    const maxWeekly = isElite
+      ? Config.UPGRADE_POINTS.max_weekly_points_elite
+      : Config.UPGRADE_POINTS.max_weekly_points;
+    const earnedThisWeek = player.points_earned_this_week ?? 0;
+    const remainingWeekly = Math.max(0, maxWeekly - earnedThisWeek);
+    if (totalEarned > remainingWeekly) {
+      const scale = remainingWeekly / totalEarned;
+      offensePointsEarned *= scale;
+      defensePointsEarned *= scale;
+      totalEarned = remainingWeekly;
+    }
+    player.points_earned_this_week = earnedThisWeek + totalEarned;
   }
 
   // Accumulate earned points

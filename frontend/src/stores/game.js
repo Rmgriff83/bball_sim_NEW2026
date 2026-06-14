@@ -282,24 +282,32 @@ export const useGameStore = defineStore('game', () => {
     const prevMs = new Date(prevDate).getTime()
     const newMs = new Date(newDate).getTime()
 
-    const prevWeek = _getMondayWeek(prevMs)
-    const currentWeek = _getMondayWeek(newMs)
+    // Biweekly cadence: scout points now accrue every two Monday-aligned
+    // weeks (since the season expanded to 82 games — paying out weekly at
+    // the same rate would double seasonal totals). A "biweek" advances
+    // whenever Math.floor(week / 2) ticks up.
+    const prevBiweek = Math.floor(_getMondayWeek(prevMs) / 2)
+    const currentBiweek = Math.floor(_getMondayWeek(newMs) / 2)
 
-    const lastScoutingWeek = campaign.settings?.lastScoutingWeek ?? 0
-    const effectivePrevWeek = Math.max(prevWeek, lastScoutingWeek)
+    // Back-compat: pre-update campaigns only have lastScoutingWeek. If
+    // lastScoutingBiweek is missing, derive it so the first post-update
+    // payout doesn't double-fire.
+    const lastScoutingBiweek = campaign.settings?.lastScoutingBiweek
+      ?? Math.floor((campaign.settings?.lastScoutingWeek ?? 0) / 2)
+    const effectivePrevBiweek = Math.max(prevBiweek, lastScoutingBiweek)
 
-    if (currentWeek > effectivePrevWeek) {
+    if (currentBiweek > effectivePrevBiweek) {
       const userTeamId = campaign.teamId
       if (!userTeamId) return 0
 
       const userTeam = await TeamRepository.get(campaign.id, userTeamId)
       const scoutingLevel = userTeam?.facilities?.scouting ?? 1
-      const newWeeks = currentWeek - effectivePrevWeek
-      const pointsEarned = newWeeks * scoutingLevel
+      const newPeriods = currentBiweek - effectivePrevBiweek
+      const pointsEarned = newPeriods * scoutingLevel
 
       campaign.settings = campaign.settings ?? {}
       campaign.settings.scoutingPoints = (campaign.settings.scoutingPoints ?? 0) + pointsEarned
-      campaign.settings.lastScoutingWeek = currentWeek
+      campaign.settings.lastScoutingBiweek = currentBiweek
 
       return pointsEarned
     }
@@ -340,11 +348,11 @@ export const useGameStore = defineStore('game', () => {
 
   /**
    * Compute active staff trainer perks for the user's team.
-   * Returns { growthBoost } based on hired staff_trainer and training
-   * facility level. The 4-star `accelerated_training` perk is read by the
-   * team store's training session helpers (not here) — it doesn't affect
-   * per-game state. The legacy `fatigue_reduction` perk was removed when
-   * Accelerated Training replaced Conditioning Program.
+   * Returns { growthBoost, fatigueReduction } based on hired staff_trainer
+   * and training facility level. The 4-star `accelerated_training` perk is
+   * read by the team store's training session helpers (not here) — it
+   * doesn't affect per-game state. `fatigue_reduction` (4-star "Conditioning
+   * Program") multiplies post-game fatigue gain in PlayerEvolution.updateFatigue.
    */
   async function _getStaffTrainerPerks(campaign) {
     const staffTrainer = campaign.settings?.staff_trainer
@@ -357,6 +365,7 @@ export const useGameStore = defineStore('game', () => {
     const trainingLevel = userTeam?.facilities?.training ?? 1
 
     let growthBoost = 0
+    let fatigueReduction = 0
 
     for (const perk of (staffTrainer.perks || [])) {
       if (trainingLevel < perk.requiredLevel) continue
@@ -364,10 +373,16 @@ export const useGameStore = defineStore('game', () => {
       if (perk.key === 'growth_boost') {
         growthBoost = staffTrainer.tier === 4 ? 0.10 : 0.05
       }
+      if (perk.key === 'fatigue_reduction') {
+        // Mirrors the UI copy: "Players generate 5% less fatigue during games"
+        fatigueReduction = 0.05
+      }
     }
 
-    if (growthBoost === 0) return {}
-    return { growthBoost }
+    const out = {}
+    if (growthBoost > 0) out.growthBoost = growthBoost
+    if (fatigueReduction > 0) out.fatigueReduction = fatigueReduction
+    return out
   }
 
   /**
@@ -635,8 +650,8 @@ export const useGameStore = defineStore('game', () => {
       if (phase !== 'regular_season') return
 
       const year = campaign.currentSeasonYear ?? 2025
-      // Trade deadline, re-sign deadline, and All-Star all share Dec 15 (~2/3 of the way
-      // through a 54-game season). See engine/season/SeasonDeadlines.js for the canonical dates.
+      // Trade deadline, re-sign deadline, and All-Star all share Feb 5 (~2/3 of the way
+      // through an 82-game season). See engine/season/SeasonDeadlines.js for the canonical dates.
       const deadlines = getSeasonDeadlines(year)
       const deadlineDate = deadlines.tradeDeadline
       const allStarDate = deadlines.allStarDate
@@ -647,11 +662,12 @@ export const useGameStore = defineStore('game', () => {
 
       // --- Pre-deadline warning (1 week before trade/re-sign deadline) ---
       // Surface the warning to the user from any single-shot path (live play,
-      // single sim, simulateRemainingSeason). We enqueue breaking news AND
-      // raise the SimPauseModal — multi-day sim loops (simulateToGame,
-      // simulateRemainingSeason) actively check `simulationPaused` to halt
-      // mid-flight; single-shot paths see it as an informational popup that
-      // the user dismisses via resumeSimulation()'s no-context branch.
+      // single sim, simulateRemainingSeason). The breaking-news item carries
+      // simPause: true, which BreakingNewsModal renders with Pause Sim /
+      // Continue Sim buttons (replacing the old SimPauseModal for this
+      // reason — single consolidated modal). Multi-day sim loops still check
+      // `simulationPaused` to halt mid-flight; the breaking-news modal's
+      // Pause/Continue actions toggle that flag.
       if (
         previousDate &&
         previousDate < warningDate &&
@@ -682,7 +698,7 @@ export const useGameStore = defineStore('game', () => {
         simulationPaused.value = true
       }
 
-      // --- Trade & re-sign deadlines (Dec 15) ---
+      // --- Trade & re-sign deadlines (Feb 5) ---
       if (previousDate < deadlineDate && newDate >= deadlineDate && !campaign.settings?.trade_deadline_passed) {
         if (!seasonData) seasonData = await SeasonRepository.get(campaignId, year)
         if (seasonData) {
@@ -2261,7 +2277,7 @@ export const useGameStore = defineStore('game', () => {
       progressToastId = toastStore.showProgress('Simulating season', 0, totalRemaining)
 
       while (cursorDate <= lastGameDate) {
-        // 1. PRE-DAY pause: trade/re-sign deadline warning (one week before Dec 15)
+        // 1. PRE-DAY pause: trade/re-sign deadline warning (one week before Feb 5)
         if (
           cursorDate === deadlines.tradeDeadlineWarning &&
           !campaign.settings?.deadline_warning_shown &&
@@ -2475,9 +2491,9 @@ export const useGameStore = defineStore('game', () => {
    * campaign's current date through the target user game (inclusive).
    *
    * The loop iterates day-by-day so we can pause at three triggers:
-   *   1. Day before the trade/re-sign deadline (Dec 14) — pre-day check.
+   *   1. Day before the trade/re-sign deadline (Feb 4) — pre-day check.
    *   2. After a user game where any user-team player was injured.
-   *   3. The day All-Star rosters are generated (Dec 15) — post-day check.
+   *   3. The day All-Star rosters are generated (Feb 5) — post-day check.
    *
    * Pauses populate pauseState/pauseResumeContext; SimPauseModal in
    * CampaignHomeView surfaces them. The user clicks Continue → resumeSimulation()
@@ -2537,7 +2553,7 @@ export const useGameStore = defineStore('game', () => {
       progressToastId = toastStore.showProgress('Simulating', 0, totalRemaining)
 
       while (cursorDate <= target.gameDate) {
-        // 1. PRE-DAY pause: trade/re-sign deadline warning (one week before Dec 15)
+        // 1. PRE-DAY pause: trade/re-sign deadline warning (one week before Feb 5)
         if (
           cursorDate === deadlines.tradeDeadlineWarning &&
           !campaign.settings?.deadline_warning_shown &&
