@@ -1,10 +1,27 @@
 <script setup>
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
-import { X, ExternalLink, Trophy, XCircle, Binoculars } from 'lucide-vue-next'
+import { X, ExternalLink, Trophy, XCircle, Binoculars, BadgeCheck, Coins, Crown, CalendarCheck, Medal } from 'lucide-vue-next'
 
 const toastStore = useToastStore()
 const router = useRouter()
+
+// Achievement type → icon. Mirrors the Dashboard Recent Activity mapping.
+const ACHIEVEMENT_ICONS = {
+  championship: Trophy,
+  conference_championship: Crown,
+  playoff_berth: CalendarCheck,
+  gm_promotion: Medal,
+}
+function achievementIcon(type) {
+  return ACHIEVEMENT_ICONS[type] || Trophy
+}
+
+function formatSignedSalary(salary) {
+  if (!salary) return ''
+  if (salary >= 1_000_000) return `$${(salary / 1_000_000).toFixed(1)}M`
+  return `$${Math.round(salary / 1000)}K`
+}
 
 function goToBoxScore(toast) {
   router.push(`/campaign/${toast.campaignId}/game/${toast.gameId}`)
@@ -123,6 +140,51 @@ function isWin(toast) {
                 <span class="draft-pick-pos">{{ toast.position }}</span>
                 <span v-if="toast.overallRating != null" class="draft-pick-ovr">{{ toast.overallRating }} OVR</span>
               </div>
+            </div>
+            <button class="toast-close" @click="toastStore.removeToast(toast.id)">
+              <X :size="16" />
+            </button>
+          </template>
+
+          <template v-if="toast.type === 'token-award'">
+            <div class="token-badge">
+              <Coins :size="22" />
+            </div>
+            <div class="toast-content">
+              <div class="game-result-header token-header">{{ toast.label }}</div>
+              <div class="token-amount">+{{ Number(toast.amount || 0).toLocaleString() }} tokens</div>
+            </div>
+            <button class="toast-close" @click="toastStore.removeToast(toast.id)">
+              <X :size="16" />
+            </button>
+          </template>
+
+          <template v-if="toast.type === 'player-signed'">
+            <div class="signed-badge">
+              <BadgeCheck :size="24" />
+            </div>
+            <div class="toast-content">
+              <div class="game-result-header signed-header">Player Signed</div>
+              <div class="draft-pick-player">{{ toast.playerName }}</div>
+              <div class="draft-pick-meta">
+                <span v-if="toast.position" class="draft-pick-pos">{{ toast.position }}</span>
+                <span v-if="toast.overallRating != null" class="draft-pick-ovr">{{ toast.overallRating }} OVR</span>
+                <span v-if="toast.salary" class="signed-terms">{{ formatSignedSalary(toast.salary) }} · {{ toast.years }}yr</span>
+              </div>
+            </div>
+            <button class="toast-close" @click="toastStore.removeToast(toast.id)">
+              <X :size="16" />
+            </button>
+          </template>
+
+          <template v-if="toast.type === 'achievement'">
+            <div class="achievement-badge" :class="`achievement-badge--${toast.achievementType || 'default'}`">
+              <component :is="achievementIcon(toast.achievementType)" :size="22" />
+            </div>
+            <div class="toast-content">
+              <div class="game-result-header achievement-header">Achievement Unlocked</div>
+              <div class="achievement-label">{{ toast.label }}</div>
+              <div v-if="toast.subtitle" class="achievement-subtitle">{{ toast.subtitle }}</div>
             </div>
             <button class="toast-close" @click="toastStore.removeToast(toast.id)">
               <X :size="16" />
@@ -377,6 +439,101 @@ function isWin(toast) {
 
 .draft-pick-pos {
   font-weight: 600;
+}
+
+/* Token award toast (playoff payouts, etc.) */
+.toast-token-award {
+  border-left: 3px solid #f5c72c;
+}
+.token-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f5c72c;
+  background: rgba(245, 199, 44, 0.16);
+  box-shadow: 0 0 0 2px rgba(245, 199, 44, 0.25);
+  flex-shrink: 0;
+}
+.token-header {
+  color: #f5c72c;
+}
+.token-amount {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Achievement-unlocked toast (championships, playoff berths, GM promotions) */
+.toast-achievement {
+  border-left: 3px solid #facc15;
+}
+.achievement-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.16);
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.25);
+  flex-shrink: 0;
+}
+/* Per-type accents, matching the Dashboard Recent Activity colors. */
+.achievement-badge--conference_championship {
+  color: #a855f7;
+  background: rgba(168, 85, 247, 0.16);
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.25);
+}
+.achievement-badge--playoff_berth {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.16);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+}
+.achievement-badge--gm_promotion {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.16);
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.25);
+}
+.achievement-header {
+  color: #facc15;
+}
+.achievement-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.achievement-subtitle {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+/* Verified "Player Signed" toast */
+.toast-player-signed {
+  border-left: 3px solid var(--color-success);
+}
+.signed-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.16);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+  flex-shrink: 0;
+}
+.signed-header {
+  color: #22c55e;
+}
+.signed-terms {
+  font-weight: 600;
+  color: var(--color-text-secondary);
 }
 
 /* Animations */

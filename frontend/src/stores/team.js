@@ -21,7 +21,7 @@ import {
   nextPlayerBadgeLevel,
   compareBadgeLevels,
 } from '@/engine/data/playerBadgeStore'
-import { getCoachActionBudget, getCoachTrainBudget, getCoachResignCost, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
+import { getCoachActionBudget, getCoachTrainBudget, getCoachResignCost, getCoachTierKey, FREE_AGENT_COACH_TIERS, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { selectBestCoachingScheme } from '@/engine/coaching/CoachStrategyService'
 import api from '@/composables/useApi'
 
@@ -912,6 +912,31 @@ export const useTeamStore = defineStore('team', () => {
   // ---------------------------------------------------------------------------
 
   /**
+   * Increment the GM contract's `badgesAdded` sub-task counter when the user adds
+   * a player badge (purchase or training). Best-effort: never blocks the badge
+   * flow if persistence fails. Part 2 owner sub-tasks.
+   */
+  async function _bumpGmBadgeProgress(campaignId, count = 1) {
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      const gmc = campaign?.settings?.gmContract
+      if (!gmc || gmc.status !== 'active') return
+      if (!gmc.progress) {
+        gmc.progress = { allStarAppearances: 0, badgesAdded: 0, starPlayerIdsAtSign: [] }
+      }
+      gmc.progress.badgesAdded = (gmc.progress.badgesAdded ?? 0) + count
+      await CampaignRepository.updateSettings(campaignId, { gmContract: gmc })
+      // Optimistic mirror so the Owner tab reflects the new count immediately.
+      const cs = useCampaignStore()
+      if (cs.currentCampaign?.id === campaignId && cs.currentCampaign.settings?.gmContract?.progress) {
+        cs.currentCampaign.settings.gmContract.progress.badgesAdded = gmc.progress.badgesAdded
+      }
+    } catch {
+      /* non-fatal — sub-task progress is best-effort */
+    }
+  }
+
+  /**
    * Purchase or upgrade a badge for one of the user's players. Validates
    * eligibility (position + attribute fit + potential cap), debits tokens
    * via the auth API, mutates `player.badges` (level up or insert as bronze),
@@ -992,6 +1017,8 @@ export const useTeamStore = defineStore('team', () => {
       // (DataCloneError). Pass a plain deep clone to the repo so persistence
       // succeeds without disturbing the in-memory reactive entry.
       await PlayerRepository.save(JSON.parse(JSON.stringify(player)))
+
+      await _bumpGmBadgeProgress(campaignId, 1)
 
       useSyncStore().markDirty()
       return { player, level: next }
@@ -1181,6 +1208,8 @@ export const useTeamStore = defineStore('team', () => {
       if (coach.value) coach.value.activeTraining = null
       if (team.value) team.value.coach = teamData.coach
 
+      await _bumpGmBadgeProgress(campaignId, 1)
+
       useSyncStore().markDirty()
       return { badge, level: picked.nextLevel, badgeId: picked.badge.id }
     } catch (err) {
@@ -1257,7 +1286,8 @@ export const useTeamStore = defineStore('team', () => {
       // Mid-season coach replacement → small morale hit per player, scaled by
       // coachability/workEthic/personality. Skipped during offseason and when
       // team morale is already below 50 (firing is welcomed).
-      const isReplacement = !!teamData.coach
+      const outgoingCoach = teamData.coach || null
+      const isReplacement = !!outgoingCoach
       if (isReplacement) {
         const { updated } = applyCoachChangePenalty(roster.value, { phase: campaign.phase })
         if (updated.length > 0) {
@@ -1289,9 +1319,18 @@ export const useTeamStore = defineStore('team', () => {
 
       await TeamRepository.save(teamData)
 
-      // Remove from pool & save campaign
+      // Remove the hired coach from the pool, and return the REPLACED coach to
+      // it (stamp hireCost from tier, strip per-team-only fields) so a coach you
+      // replace re-enters the free-agent market instead of vanishing.
       campaign.settings = campaign.settings ?? {}
-      campaign.settings.availableCoaches = pool.filter(c => c.id !== coachId)
+      const nextPool = pool.filter(c => c.id !== coachId)
+      if (outgoingCoach && outgoingCoach.id !== coachId) {
+        const { actionsRemaining, trainActionsRemaining, activeTraining, hiredSeason, seasonsWithTeam, ...rest } =
+          JSON.parse(JSON.stringify(outgoingCoach))
+        const pooledOld = { ...rest, hireCost: FREE_AGENT_COACH_TIERS[getCoachTierKey(outgoingCoach)].hireCost }
+        if (!nextPool.some(c => c.id === pooledOld.id)) nextPool.push(pooledOld)
+      }
+      campaign.settings.availableCoaches = nextPool
       await CampaignRepository.save(campaign)
 
       // Update local refs so UI reacts immediately
@@ -1375,9 +1414,10 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   /**
-   * Release the user team's current head coach. Mirrors the scout fire flow —
-   * the coach is simply discarded (no buyout, no return-to-pool). The user
-   * must hire a replacement from the pool before the next season can start.
+   * Release the user team's current head coach. The fired coach is returned to
+   * the shared free-agent pool (with a hireCost stamped from their tier) so any
+   * team — incl. the user — can hire them later, mirroring the AI lifecycle.
+   * The user must hire a replacement from the pool before the next season starts.
    */
   async function fireCoach(campaignId) {
     loading.value = true
@@ -1390,9 +1430,11 @@ export const useTeamStore = defineStore('team', () => {
       const teamData = await TeamRepository.get(campaignId, userTeamId)
       if (!teamData) throw new Error('Team not found')
 
+      const firedCoach = teamData.coach
+
       // Mid-season firing → mild morale hit per player (skipped if team morale
       // already below 50, or during offseason).
-      if (teamData.coach) {
+      if (firedCoach) {
         const { updated } = applyCoachChangePenalty(roster.value, { phase: campaign.phase })
         if (updated.length > 0) {
           // Strip Vue reactive proxies before persisting — IDB structuredClone
@@ -1403,6 +1445,30 @@ export const useTeamStore = defineStore('team', () => {
 
       teamData.coach = null
       await TeamRepository.save(teamData)
+
+      // Return the coach to the shared pool so they re-enter the market. Strip
+      // per-team-only fields and stamp a hireCost from their tier.
+      if (firedCoach) {
+        const { actionsRemaining, trainActionsRemaining, activeTraining, hiredSeason, seasonsWithTeam, ...rest } =
+          JSON.parse(JSON.stringify(firedCoach))
+        const pooledCoach = { ...rest, hireCost: FREE_AGENT_COACH_TIERS[getCoachTierKey(firedCoach)].hireCost }
+        campaign.settings = campaign.settings ?? {}
+        const pool = campaign.settings.availableCoaches ?? []
+        if (!pool.some(c => c.id === pooledCoach.id)) pool.push(pooledCoach)
+        campaign.settings.availableCoaches = pool
+        await CampaignRepository.save(campaign)
+
+        // Optimistically refresh the in-memory campaign so the Hire Coach modal
+        // (which reads campaignStore.currentCampaign.settings.availableCoaches)
+        // shows the released coach immediately.
+        const campaignStore = useCampaignStore()
+        if (campaignStore.currentCampaign?.id === campaignId) {
+          campaignStore.currentCampaign.settings = {
+            ...campaignStore.currentCampaign.settings,
+            availableCoaches: pool,
+          }
+        }
+      }
 
       coach.value = null
       if (team.value) team.value.coach = null

@@ -57,12 +57,22 @@ onUnmounted(() => {
   }
 })
 
-// Scouting is closed once the rookie draft begins and stays closed through
-// free agency, reopening when the next season starts. Mirrors BottomNav.
+// Scouting stays available through the postseason and the entire offseason —
+// including the free-agency window AND the draft phase itself, since that's
+// exactly when prospects matter and the user wants to spend scout points right
+// before drafting. It's only hidden once THIS offseason's rookie draft is
+// completed, reopening when the next regular season starts. Mirrors BottomNav.
 const hideScout = computed(() => {
   const c = campaign.value
+  const gameYear = c?.gameYear ?? 1
+  return c?.[`rookieDraftCompleted_${gameYear}`] === true
+})
+
+// No games are playable during the offseason — hide the Play nav link there.
+const isOffseason = computed(() => {
+  const c = campaign.value
   const phase = c?.settings?.season_phase ?? c?.settings?.seasonPhase ?? c?.phase ?? 'regular_season'
-  return phase === 'offseason_draft' || phase === 'offseason_free_agency'
+  return phase === 'offseason' || phase === 'offseason_free_agency' || phase === 'offseason_draft'
 })
 
 // Some child routes (the headshot editor) provide their own bottom nav, so
@@ -319,6 +329,7 @@ function closeMobileMenu() {
             <span v-if="scoutingPoints > 0" class="scout-pts-badge">{{ scoutingPoints }}</span>
           </router-link>
           <router-link
+            v-if="!isOffseason"
             :to="`/campaign/${campaignId}/play`"
             class="nav-link nav-link-play"
             :class="{ active: route.name === 'game' || route.name === 'play' }"

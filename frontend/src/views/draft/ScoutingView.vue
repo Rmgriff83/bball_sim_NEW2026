@@ -14,7 +14,7 @@ import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
 import { useSyncStore } from '@/stores/sync'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { LoadingSpinner, StatBadge } from '@/components/ui'
-import { Search, Binoculars, User } from 'lucide-vue-next'
+import { Search, Binoculars, User, ArrowUp, ArrowDown } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import { SCOUTABLE_ATTRIBUTES, SCOUTABLE_ATTRIBUTE_CATEGORIES } from '@/engine/data/attributeSchema'
@@ -429,12 +429,35 @@ onMounted(async () => {
     const standings = seasonData?.standings || { east: [], west: [] }
 
     if (teams.length > 0) {
-      // Honor the draft lottery result so the Draft tab shows the same
-      // order the actual draft will run in. Without this the tab kept
-      // showing the pre-lottery reverse-standings projection even after
-      // the user had run the lottery.
-      const lotteryResult = camp?.settings?.draftLottery ?? null
-      mockDraftOrder.value = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
+      // Honor the draft lottery result so the Draft tab shows the same order
+      // the actual draft will run in — but ONLY when it's the lottery for THIS
+      // draft cycle. The lottery is stamped with `year = currentSeasonYear + 1`
+      // (the upcoming draft's year); a persisted lottery from a PRIOR season is
+      // stale, and honoring it would freeze the board at last year's order
+      // instead of projecting from this season's live standings.
+      const persistedLottery = camp?.settings?.draftLottery ?? null
+      const lotteryResult = persistedLottery?.year === prospectDraftYear ? persistedLottery : null
+      const order = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
+
+      // After the lottery, annotate each round-1 slot with how far the team
+      // moved from its pre-lottery projected pick (positive = jumped up). Keyed
+      // by the ORIGINAL team's abbreviation — the same key the lottery results
+      // modal uses (buildLotteryResultRows). Round 2 isn't lottery-affected, so
+      // only round-1 slots get movement. Movers render an up/down badge.
+      if (lotteryResult?.actualOrder?.length) {
+        const deltaByAbbr = new Map(
+          lotteryResult.actualOrder.map(s => [s.teamAbbr, s.delta])
+        )
+        for (const slot of order) {
+          if (slot.round !== 1) continue
+          const delta = deltaByAbbr.get(slot.originalTeamAbbr) ?? 0
+          slot.lotteryDelta = delta
+          slot.lotteryDeltaLabel = delta > 0 ? `+${delta}` : delta < 0 ? `${delta}` : null
+          slot.lotteryDeltaDir = delta > 0 ? 'up' : delta < 0 ? 'down' : null
+        }
+      }
+
+      mockDraftOrder.value = order
     }
   } catch (e) {
     console.error('Failed to load scouting data:', e)
@@ -578,7 +601,7 @@ onMounted(async () => {
                   class="scout-btn-card"
                   :data-tour="idx === 0 ? 'scout-card-btn' : null"
                   :disabled="scoutingPoints < 1 || scouting"
-                  @click.stop="scoutPlayer(player)"
+                  @click.stop="audio.navigate(); scoutPlayer(player)"
                 >
                   <Binoculars :size="13" />
                   Scout
@@ -657,6 +680,16 @@ onMounted(async () => {
                   </span>
                 </div>
               </div>
+              <span
+                v-if="slot.lotteryDeltaDir"
+                class="delta-badge"
+                :class="slot.lotteryDeltaDir === 'up' ? 'delta-badge--up' : 'delta-badge--down'"
+                :title="`Moved ${slot.lotteryDeltaDir} ${Math.abs(slot.lotteryDelta)} from projected pick via the lottery`"
+              >
+                <ArrowUp v-if="slot.lotteryDeltaDir === 'up'" :size="14" />
+                <ArrowDown v-else :size="14" />
+                {{ slot.lotteryDeltaLabel }}
+              </span>
             </div>
           </div>
         </div>
@@ -703,7 +736,7 @@ onMounted(async () => {
       :player="selectedPlayer"
       :campaign-id="campaignId"
       :show-growth="false"
-      :show-history="false"
+      :show-history="true"
       :scouting-mode="true"
       :revealed-attributes="selectedPlayer ? getRevealedAttributes(selectedPlayer.id) : []"
       :is-fully-scouted="selectedPlayer ? isFullyScouted(selectedPlayer.id) : false"
@@ -1336,6 +1369,31 @@ onMounted(async () => {
   color: var(--color-text-secondary);
   text-align: center;
   flex-shrink: 0;
+}
+
+/* Lottery movement badge — mirrors the draft-lottery results modal. Pushed to
+   the right edge of the row; only rendered for teams that moved. */
+.delta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--radius-full, 999px);
+  font-variant-numeric: tabular-nums;
+}
+
+.delta-badge--up {
+  background: rgba(34, 197, 94, 0.16);
+  color: #22c55e;
+}
+
+.delta-badge--down {
+  background: rgba(239, 68, 68, 0.16);
+  color: #ef4444;
 }
 
 .pick-team-info {

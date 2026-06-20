@@ -105,4 +105,50 @@ export const BreakingNewsService = {
       date,
     }
   },
+
+  coachFired({ coachName, teamName, reason, date }) {
+    const reasonCopy = {
+      missed_playoffs: 'after the team fell short of the playoffs despite expectations to contend',
+      underperformed: 'after a season that fell well short of expectations',
+      contract_expired: 'as the two sides parted ways at the end of his contract',
+    }[reason] || 'after a disappointing campaign'
+    return {
+      headline: `${teamName.toUpperCase()} PART WAYS WITH HEAD COACH ${coachName.toUpperCase()}`,
+      body: `The ${teamName} have relieved head coach ${coachName} of his duties ${reasonCopy}. The search for a replacement begins immediately, and ${coachName} now joins the open coaching market.`,
+      category: 'COACHING',
+      icon: 'UserCog',
+      date,
+    }
+  },
+
+  coachHired({ coachName, teamName, date }) {
+    return {
+      headline: `${teamName.toUpperCase()} NAME ${coachName.toUpperCase()} HEAD COACH`,
+      body: `The ${teamName} have hired ${coachName} as their new head coach. The front office is betting his approach is the right fit for the roster's direction.`,
+      category: 'COACHING',
+      icon: 'UserCog',
+      date,
+    }
+  },
+
+  coachExtended({ coachName, teamName, date }) {
+    return {
+      headline: `${teamName.toUpperCase()} EXTEND HEAD COACH ${coachName.toUpperCase()}`,
+      body: `The ${teamName} have signed head coach ${coachName} to a contract extension after a strong season, locking in their leadership rather than risk a lame-duck year.`,
+      category: 'COACHING',
+      icon: 'UserCog',
+      date,
+    }
+  },
+
+  coachRetired({ coachName, teamName, date }) {
+    const where = teamName ? `the ${teamName}'s ${coachName}` : coachName
+    return {
+      headline: `HEAD COACH ${coachName.toUpperCase()} ANNOUNCES RETIREMENT`,
+      body: `${where} has announced his retirement from coaching, closing the book on a long career on the sidelines. The franchise will look to the open market for its next leader.`,
+      category: 'COACHING',
+      icon: 'UserCog',
+      date,
+    }
+  },
 }

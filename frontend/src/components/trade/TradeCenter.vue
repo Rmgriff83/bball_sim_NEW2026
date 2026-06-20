@@ -7,6 +7,7 @@ import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
+import { validateSalaryCap } from '@/engine/finance/TradeExecutor'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowRight, ArrowLeft, X, Check, AlertCircle, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus, Package, Users, Repeat, AlertTriangle, CheckCircle, Info, Star, Calendar, DollarSign } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -103,19 +104,35 @@ const tradeValidation = computed(() => {
     issues.push('You must select at least one asset to receive')
   }
 
-  // Salary matching rules (NBA-style: within 125% + $100K for teams over cap)
+  // Trade deadline — block building a deal that the executor would reject.
+  if (tradeStore.tradeDeadlinePassed) {
+    issues.push('The trade deadline has passed — no more trades can be made this season.')
+  }
+
+  // Salary matching rules. Run the SAME engine validator the executor hard-blocks
+  // with (125% + $100K, capMode 'normal') so the wizard and the commit agree.
   const outgoingSalary = tradeStore.userOfferingSalary
   const incomingSalary = tradeStore.userRequestingSalary
   const salaryDiff = tradeStore.salaryDifference
 
   if (outgoingSalary > 0 || incomingSalary > 0) {
-    // Calculate allowed salary difference (simplified: 125% rule)
-    const maxIncoming = outgoingSalary * 1.25 + 100000
-    const minIncoming = outgoingSalary * 0.75 - 100000
-
-    if (incomingSalary > maxIncoming && outgoingSalary > 0) {
-      const overBy = incomingSalary - maxIncoming
-      issues.push(`Incoming salary exceeds limit by ${formatSalary(overBy)}. Add more outgoing salary or reduce incoming.`)
+    const toApi = (a) => a.type === 'player'
+      ? { type: 'player', playerId: a.id }
+      : { type: 'pick', pickId: a.id }
+    const salaryById = {}
+    for (const a of [...userOffering.value, ...userRequesting.value]) {
+      if (a.type === 'player') salaryById[String(a.id)] = a
+    }
+    const getPlayerFn = (id) => salaryById[String(id)] || null
+    const cap = validateSalaryCap({
+      userGiving: userOffering.value.map(toApi),
+      userReceiving: userRequesting.value.map(toApi),
+      capMode: 'normal',
+      getPlayerFn,
+    })
+    if (!cap.valid) {
+      const overBy = (cap.incoming_salary ?? incomingSalary) - (cap.max_incoming ?? 0)
+      issues.push(`Incoming salary exceeds limit by ${formatSalary(Math.max(0, overBy))}. Add more outgoing salary or reduce incoming.`)
     }
 
     // Warn about significant salary imbalance

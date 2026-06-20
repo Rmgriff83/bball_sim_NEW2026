@@ -132,6 +132,26 @@ const injuredPlayers = ref([])
 const showRecoveryModal = ref(false)
 const recoveredPlayers = ref([])
 
+// Surface players returning from injury. Date-advance ticks clear injuries
+// silently, so the game store queues the user's recovered players; once the sim
+// settles we show the Recovery Report (mirror of the injury modal) and drain it.
+function flushPendingRecoveries() {
+  const list = gameStore.pendingRecoveries
+  if (!Array.isArray(list) || list.length === 0) return
+  if (gameStore.simulating || gameStore.backgroundSimulating) return
+  recoveredPlayers.value = list.slice()
+  gameStore.pendingRecoveries = []
+  if (showInjuryModal.value) {
+    setTimeout(() => { showRecoveryModal.value = true }, 500)
+  } else {
+    showRecoveryModal.value = true
+  }
+}
+watch(
+  () => [gameStore.pendingRecoveries.length, gameStore.simulating, gameStore.backgroundSimulating],
+  flushPendingRecoveries
+)
+
 // Coaching style selections for quarter breaks
 const selectedOffense = ref('balanced')
 const selectedDefense = ref('man')

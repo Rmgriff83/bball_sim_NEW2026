@@ -10,6 +10,8 @@
 // =============================================================================
 
 import { TEAMS, SALARY_CAP, TEAM_TIERS } from '../data/teams'
+import { baseSalaryForRating, veteranMinSalary } from '../data/salaryScale'
+import { recomputeAllTimeHighs } from '../stats/careerHighs'
 import {
   COACH_FIRST_NAMES,
   COACH_LAST_NAMES,
@@ -23,6 +25,7 @@ import {
   getCoachActionBudget,
   getCoachTrainBudget,
   computeCoachTier,
+  getCoachTierKey,
 } from '../data/coaches'
 // Pull scheme maps from the simulator's canonical source. The arrays exported
 // from `data/coaches` use STRING values, so `Object.keys(arr)` returns "0",
@@ -32,10 +35,24 @@ import {
 // look up.
 import { OFFENSIVE_SCHEMES, DEFENSIVE_SCHEMES } from '../simulation/CoachingEngine'
 import { selectBestCoachingScheme, isCoachingSchemeValid } from '../coaching/CoachStrategyService'
+import {
+  ageCoachesAndRetire,
+  expectedWinsForDirection,
+  derivePlayoffDepth,
+  evaluateCoachDecision,
+  selectCoachForVacancy,
+} from '../coaching/CoachLifecycleService'
+import { analyzeTeamDirection, buildContext } from '../ai/AITradeService'
+import { BreakingNewsService } from '../season/BreakingNewsService'
 import { coachBadges } from '../data/coachBadges'
 import { BADGES, BADGES_BY_POSITION } from '../data/badges'
 import { BADGE_FITS } from '../data/badgeFits'
 import { detectArchetype } from '../data/archetypes'
+import {
+  HISPANIC_FIRST_NAMES,
+  HISPANIC_LAST_NAMES,
+  pickNameForCountry,
+} from '../data/playerNames'
 import { generateLeagueRosters, generateFreeAgentPool, assignCampaignModes } from '../draft/LeagueRosterGenerator'
 
 // Maps the per-campaign campaignMode to a coach tier. Replaces the static
@@ -73,6 +90,15 @@ import {
 } from '../draft/RookieGenerationService'
 import { AwardService } from '../season/AwardService'
 import { AllStarService } from '../season/AllStarService'
+import { starPlayerIds, evaluateSubtasks } from '../season/OwnerSubtaskService'
+import { combinedSatisfaction, EXTEND_THRESHOLD } from '../season/OwnerService'
+import { findOwnerForTeam, EXPECTATION_LABEL } from '../data/owners'
+import {
+  getEffectiveExpectation,
+  effectiveOwner,
+  updateOwnerExpectation,
+  initOwnerExpectation,
+} from '../season/OwnerExpectationService'
 import { listCoachHeadshots } from '../../services/headshotPremades'
 import {
   SCOUT_TIERS, PHYSICIAN_TIERS, STAFF_TRAINER_TIERS,
@@ -211,13 +237,23 @@ function _splitName(name) {
   return [name.slice(0, mid), name.slice(mid)]
 }
 
-// Reject candidates that look unnatural (3+ consonants in a row, etc.).
+// Reject candidates that look unnatural. Tightened to cut the occasional
+// awkward scrambler output: stricter length, must contain a vowel, no long
+// consonant/vowel runs, no triple-repeated letter, no awkward final letter.
 function _isPlausibleName(name) {
-  if (name.length < 4 || name.length > 13) return false
+  if (name.length < 5 || name.length > 12) return false
+  // Must contain at least one vowel
+  if (!/[aeiouy]/i.test(name)) return false
   // No four consonants in a row
   if (/[bcdfghjklmnpqrstvwxz]{4,}/i.test(name)) return false
+  // No three vowels in a row (reads as a typo)
+  if (/[aeiou]{3,}/i.test(name)) return false
+  // No same letter three times in a row
+  if (/(.)\1\1/i.test(name)) return false
   // No starting with apostrophe/hyphen
   if (/^[-']/.test(name)) return false
+  // Awkward final letters for an English-ish name
+  if (/[jqvwxz]$/i.test(name)) return false
   return true
 }
 
@@ -277,7 +313,7 @@ const NORMAL_FIRST_NAMES = [
   'Mason', 'Logan', 'Ethan', 'Noah', 'Liam', 'Ian', 'Eli', 'Brett',
   'Cole', 'Sean', 'Travis', 'Shane', 'Hayden', 'Holden', 'Levi', 'Pierce',
   'Wesley', 'Reid', 'Ross', 'Spencer', 'Garrett', 'Vincent', 'Theo', 'Max', 'Harrison',
-  'AJ', 'PJ', 'CJ', 'DJ'
+  'AJ', 'PJ', 'CJ', 'DJ', 'Billy'
 ]
 
 const NORMAL_LAST_NAMES = [
@@ -292,7 +328,7 @@ const NORMAL_LAST_NAMES = [
   'Hayes', 'Crawford', 'Knight', 'Lambert', 'Pierce', 'Burns', 'Stevens', 'Marshall',
   'Reynolds', 'Owens', 'Mason', 'Tucker', 'Hunter', 'Holland', 'Lawrence', 'Carter',
   'Connelly', 'Henderson', 'Griffin', 'Stills', 'Maroney', 'Trevey', 'Brent', 'Bendt',
-  'Conner', 'Jerigan', 'Phillipson', 'Danielson', 'Daniels'
+  'Conner', 'Jerigan', 'Phillipson', 'Danielson', 'Daniels', 'Bongo'
 ]
 
 // First names commonly used in Black American communities. Some overlap with
@@ -312,14 +348,14 @@ const BLACK_FIRST_NAMES = [
   'Rashawn', 'Tobias', 'Solomon', 'Terrell', 'Booker', 'Calvin', 'Gerald',
   'Leon', 'Lonnie', 'Rufus', 'Cyrus', 'Marquise', 'Demarius', 'Tyrese',
   'Jaxson', 'Trayvon', 'Devontae', 'Jamel', 'Cleophus', 'Jerome', 'Jerian',
-  'Jaleel', 'JaMarcus', 'DeMarcus', 'Booby', 'Saddiq'
+  'Jaleel', 'JaMarcus', 'DeMarcus', 'Booby', 'Saddiq', 'Tre'
 ]
 
 // Last names common across Black American communities. Many of these are
 // shared with the general American pool culturally — included here as a
 // second-bucket weight nudge rather than a strict ethnic divide.
 const BLACK_LAST_NAMES = [
-  'Washington', 'Jefferson', 'Jackson', 'Booker', 'Mosley', 'Cummings',
+  'Washington', 'Jefferson', 'Jackson', 'Jackson Jr.', 'Booker', 'Mosley', 'Cummings',
   'Pinkston', 'Frazier', 'Gaines', 'Witherspoon', 'Lassiter', 'Pittman',
   'McNair', 'Boyd', 'Boykin', 'Carver', 'Christian', 'Cleveland', 'Coles',
   'Crockett', 'Duke', 'Fletcher', 'Floyd', 'Freeman', 'Gantt', 'Garner',
@@ -331,7 +367,7 @@ const BLACK_LAST_NAMES = [
   'Steele', 'Stokes', 'Sutton', 'Tate', 'Thurmond', 'Vance', 'Vaughn',
   'Waters', 'Wells', 'Whitaker', 'Wilkins', 'Woodson', 'Drummond', 'Cousins',
   'Orion', 'Essex', 'Bitamin', 'Betts', 'Baloney', 'Djboute', 'Djiat', 'Prince',
-  'Strawberry', 'Bey'
+  'Strawberry', 'Bey', 'Delk', 'Henry Jr.', 'Django'
 ]
 
 // Each real-name bucket is repeated N times when concatenating with the
@@ -347,6 +383,11 @@ const BLACK_LAST_NAMES = [
 //                        for variety)
 const NORMAL_NAME_WEIGHT = 80
 const BLACK_NAME_WEIGHT = 80
+// Hispanic/Latino bucket (defined in ../data/playerNames). Weighted alongside
+// the other two real-name buckets so domestic rosters reflect that demographic.
+// A third real bucket also dilutes the scrambled share (~22% -> ~16%), which
+// further reduces the occasional awkward fictional name.
+const HISPANIC_NAME_WEIGHT = 55
 
 function _mixRealNames(scrambled, buckets) {
   const pool = [...scrambled]
@@ -363,15 +404,17 @@ function _mixRealNames(scrambled, buckets) {
 export const FIRST_NAMES = _mixRealNames(
   _scrambleNamePool([...RAW_FIRST_NAMES, ...COACH_FIRST_NAMES]),
   [
-    { names: NORMAL_FIRST_NAMES, weight: NORMAL_NAME_WEIGHT },
-    { names: BLACK_FIRST_NAMES,  weight: BLACK_NAME_WEIGHT },
+    { names: NORMAL_FIRST_NAMES,   weight: NORMAL_NAME_WEIGHT },
+    { names: BLACK_FIRST_NAMES,    weight: BLACK_NAME_WEIGHT },
+    { names: HISPANIC_FIRST_NAMES, weight: HISPANIC_NAME_WEIGHT },
   ],
 )
 export const LAST_NAMES = _mixRealNames(
   _scrambleNamePool([...RAW_LAST_NAMES, ...COACH_LAST_NAMES]),
   [
-    { names: NORMAL_LAST_NAMES, weight: NORMAL_NAME_WEIGHT },
-    { names: BLACK_LAST_NAMES,  weight: BLACK_NAME_WEIGHT },
+    { names: NORMAL_LAST_NAMES,   weight: NORMAL_NAME_WEIGHT },
+    { names: BLACK_LAST_NAMES,    weight: BLACK_NAME_WEIGHT },
+    { names: HISPANIC_LAST_NAMES, weight: HISPANIC_NAME_WEIGHT },
   ],
 )
 
@@ -824,29 +867,20 @@ function generatePersonality() {
 }
 
 function calculateSalary(overall, age) {
-  // Bands tuned so league avg payroll lands near the $136M cap with realistic
-  // spread. With the bottom-heavy talent distribution (more players in 56-69
-  // OVR, fewer in 70-82), the LOW-end salary tiers had to be pulled up to
-  // keep total payrolls realistic — real NBA bench guys earn $3-8M, not
-  // minimum, and there are a lot of bench guys per roster now.
-  let baseSalary
-  if (overall >= 92)      baseSalary = randInt(45000000, 55000000)
-  else if (overall >= 88) baseSalary = randInt(35000000, 47000000)
-  else if (overall >= 84) baseSalary = randInt(24000000, 36000000)
-  else if (overall >= 80) baseSalary = randInt(15000000, 25000000)
-  else if (overall >= 76) baseSalary = randInt(9000000, 17000000)
-  else if (overall >= 72) baseSalary = randInt(6000000, 12000000)
-  else if (overall >= 68) baseSalary = randInt(4000000, 8000000)
-  else if (overall >= 64) baseSalary = randInt(2500000, 5000000)
-  else if (overall >= 60) baseSalary = randInt(1800000, 3500000)
-  else                    baseSalary = randInt(1100000, 2500000)
+  // Derives from the single rating→salary curve in data/salaryScale.js (real
+  // 2025-26 scale) so generated/aging rosters share the SAME economy as free
+  // agency, re-signs, and trade valuation. A small ±12% spread keeps contracts
+  // from looking machine-stamped; age factors and a vet-min floor mirror the
+  // valuation layer.
+  let baseSalary = baseSalaryForRating(overall)
+  baseSalary *= randInt(88, 112) / 100 // ±12% contract-to-contract variance
 
   // Age adjustment — young stars sign cheaper extensions; aging vets give
-  // a modest discount but not as steep as before so 33+ vets still command
-  // real money.
-  if (age >= 33) baseSalary = Math.round(baseSalary * 0.90)
-  else if (age <= 23) baseSalary = Math.round(baseSalary * 0.75)
+  // a modest discount but still command real money.
+  if (age >= 33) baseSalary *= 0.90
+  else if (age <= 23) baseSalary *= 0.78
 
+  baseSalary = Math.max(veteranMinSalary({ careerSeasons: Math.max(0, age - 19) }), baseSalary)
   return Math.round(baseSalary / 10000) * 10000
 }
 
@@ -1050,6 +1084,10 @@ export async function createCampaign(options) {
       scoutingPoints: 0,
       lastScoutingBiweek: 0,
       scoutedPlayers: {},
+      // New campaigns are generated on the current salary scale already, so the
+      // one-shot cap/contract rebase (rescaleContracts) skips them — this also
+      // preserves the creation-time ±variance the migration would otherwise flatten.
+      salaryCapRebaseDone: true,
     },
     lastPlayedAt: new Date().toISOString(),
   }
@@ -1061,14 +1099,15 @@ export async function createCampaign(options) {
   // -------------------------------------------------------------------------
   // Pre-roll the per-campaign mode map BEFORE generating teams so coach tier
   // can be driven by campaignMode instead of the static TEAM_TIERS table.
-  // We synthesize a lite "abbreviation only" team list from TEAMS since the
-  // real team records don't exist yet — assignCampaignModes only reads
-  // .abbreviation. The same modes map is later threaded into
-  // generateLeagueRosters so it doesn't re-roll a different assignment.
+  // We synthesize a lite team list from TEAMS since the real team records
+  // don't exist yet — assignCampaignModes reads .abbreviation and .facilities
+  // (the latter gates which teams are eligible for the 'contender' boost). The
+  // same modes map is later threaded into generateLeagueRosters so it doesn't
+  // re-roll a different assignment.
   const teamModes = isFantasy
     ? null
     : assignCampaignModes(
-        TEAMS.map(t => ({ abbreviation: t.abbreviation })),
+        TEAMS.map(t => ({ abbreviation: t.abbreviation, facilities: t.facilities })),
         teamAbbreviation
       )
   const teams = generateTeams(campaignId, teamModes)
@@ -1133,10 +1172,11 @@ export async function createCampaign(options) {
 
   if (!isFantasy) {
     // Standard mode: generate ~450 procedural players (15 per team) with
-    // realistic mode-driven talent distribution. The user's chosen team is
-    // always 'average_strong' so a new player isn't handed a fire-sale
-    // roster; the other 29 teams are randomly bucketed into
-    // contender/average/rebuilder per-campaign for replay variety.
+    // realistic mode-driven talent distribution. Every team — including the
+    // user's chosen team — is bucketed into contender/average/rebuilder
+    // per-campaign for replay variety (contenders only from Elite/Strong-
+    // facility teams), so picking a strong franchise can hand the user a
+    // contender roster.
     const result = generateLeagueRosters(campaignId, teams, {
       startYear,
       userTeamAbbreviation: teamAbbreviation,
@@ -1193,6 +1233,37 @@ export async function createCampaign(options) {
   })
 
   campaign.currentSeasonYear = startYear
+
+  // The user signs a 2-year GM contract with the team's owner (instead of just
+  // "picking" a team). Years-remaining is derived from the season year, so this
+  // stays correct across seasons without a decrement step. The owner evaluates
+  // the GM at contract end — that lifecycle is Part 2; for now we just track it.
+  campaign.settings.gmContract = {
+    teamId: userTeam.id,
+    teamAbbreviation: userTeam.abbreviation,
+    signedSeasonYear: startYear,
+    // The season the GM first took over THIS team. Unlike signedSeasonYear it
+    // is preserved across re-signings (only resets on a team switch), so the
+    // owner check-in greets a re-signed GM as a returning partner, not a
+    // first-time hire.
+    tenureStartYear: startYear,
+    lengthYears: 2,
+    status: 'active',
+    // Part 2: running sub-task progress for the duration of this contract.
+    progress: {
+      allStarAppearances: 0,
+      badgesAdded: 0,
+      starPlayerIdsAtSign: starPlayerIds(allPlayers.filter(p => p.teamId === userTeam.id)),
+    },
+  }
+
+  // Owner expectation starts at the owner's static baseline and ratchets up at
+  // each season end (see enterOffseason). Seeded here for a clean start; older
+  // saves fall back via getEffectiveExpectation.
+  {
+    const seedOwner = findOwnerForTeam(userTeam.abbreviation)
+    if (seedOwner) campaign.settings.ownerExpectation = initOwnerExpectation(seedOwner)
+  }
 
   // -------------------------------------------------------------------------
   // 7. Initialize lineups + target minutes (standard mode only)
@@ -1472,7 +1543,23 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, use
         defensiveRebounds: stats.defensiveRebounds ?? 0,
         personalFouls: stats.personalFouls ?? 0,
       },
+      // This season's single-game bests (PTS/REB/AST/STL/BLK), archived alongside
+      // the totals. careerHighs (live on the player) persists across seasons.
+      seasonHighs: player.seasonHighs ?? {},
     })
+    // Reset the running season highs so the new season starts fresh.
+    player.seasonHighs = {}
+  }
+
+  // Campaign all-time highs: the best single game by ANYONE, derived from every
+  // player's (now-final) careerHighs. Returned to the caller (enterOffseason) so
+  // it persists on the campaign object IT saves — a separate write here would be
+  // clobbered by enterOffseason's later campaign save.
+  let allTimeHighs = null
+  try {
+    allTimeHighs = recomputeAllTimeHighs(allPlayers)
+  } catch (highsErr) {
+    console.warn('[CampaignManager] all-time highs recompute failed:', highsErr)
   }
 
   // 2B. Team season history
@@ -1750,7 +1837,7 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, use
   await PlayerRepository.saveBulk(allPlayers)
   await TeamRepository.saveBulk(teams)
 
-  return { newAchievements }
+  return { newAchievements, allTimeHighs }
 }
 
 /**
@@ -1792,6 +1879,7 @@ export async function advanceToNextSeason(campaignId) {
   // 2. Update campaign to next season
   // -------------------------------------------------------------------------
   campaign.gameYear = (campaign.gameYear ?? 1) + 1
+  campaign.game_year = campaign.gameYear // keep the snake-case mirror in sync (campaign-card "Year N")
   campaign.currentSeasonYear = nextYear
   campaign.currentDate = `${nextYear}-10-21`
 
@@ -2092,6 +2180,12 @@ export async function enterOffseason(campaignId) {
     if (!Array.isArray(campaign.achievements)) campaign.achievements = []
     campaign.achievements.push(...newAchievements)
   }
+  // Persist the recomputed campaign all-time highs on the campaign this function
+  // saves below (set here so it isn't clobbered by that save).
+  if (archiveResult?.allTimeHighs) {
+    campaign.settings = campaign.settings ?? {}
+    campaign.settings.allTimeHighs = archiveResult.allTimeHighs
+  }
 
   // 1b. Compute end-of-season awards (before stats are reset)
   const seasonData = await SeasonRepository.get(campaignId, currentYear)
@@ -2116,6 +2210,25 @@ export async function enterOffseason(campaignId) {
           if (!p.awards) p.awards = {}
           if (!Array.isArray(p.awards.all_star)) p.awards.all_star = []
           p.awards.all_star.push(currentYear)
+        }
+      }
+
+      // Part 2: tally the user team's All-Star selections toward the GM contract
+      // sub-task (one count per selection; the same player twice across seasons
+      // counts twice, per the owner's expectation spec).
+      const userTeamIdForAS = campaign.teamId ?? campaign.userTeamId ?? campaign.team_id
+      const gmcAS = campaign.settings?.gmContract
+      if (gmcAS && gmcAS.status === 'active' && userTeamIdForAS != null) {
+        let userAllStars = 0
+        for (const pid of ids) {
+          const p = playerMap[pid]
+          if (p && p.teamId === userTeamIdForAS) userAllStars++
+        }
+        if (userAllStars > 0) {
+          if (!gmcAS.progress) {
+            gmcAS.progress = { allStarAppearances: 0, badgesAdded: 0, starPlayerIdsAtSign: [] }
+          }
+          gmcAS.progress.allStarAppearances = (gmcAS.progress.allStarAppearances ?? 0) + userAllStars
         }
       }
     }
@@ -2266,6 +2379,11 @@ export async function enterOffseason(campaignId) {
     delete campaign.settings.resign_deadline_passed
     delete campaign.settings.trade_deadline_news_shown
     delete campaign.settings.deadline_warning_shown
+    // Clear the prior cycle's draft lottery so THIS offseason runs a fresh one.
+    // Without this, draftLotteryCompleted stays true season-over-season — the
+    // lottery prompt is skipped and the mock board freezes at last year's order.
+    delete campaign.settings.draftLottery
+    delete campaign.settings.draftLotteryCompleted
   }
 
   // Stash retirement summaries for the offseason RetirementModal. The modal
@@ -2286,6 +2404,116 @@ export async function enterOffseason(campaignId) {
   }))
   campaign.settings.pendingRetirementsYear = currentYear
 
+  // ---------------------------------------------------------------------------
+  // GM contract-end evaluation (Part 2). When the 2-year contract is up, the
+  // owner judges the GM on overall wins (60%) + sub-tasks (40%) and decides
+  // whether to extend. Stash the verdict for the offseason ContractDecisionModal
+  // (mirrors the pendingRetirements stash + fire-once-by-year pattern). The
+  // modal flow finalizes it (re-sign on extend, or team-switch if not).
+  try {
+    const gmc = campaign.settings.gmContract
+    const userTeamId = campaign.teamId
+    const userTeam = teams.find(t => t.id === userTeamId) ?? null
+    const owner = findOwnerForTeam(userTeam?.abbreviation)
+    if (owner) {
+      // Final-standings record for the user team this season.
+      const stEntry = allStandingsEntries.find(s => (s.teamId ?? s.team_id) === userTeamId)
+      const currentWins = stEntry?.wins ?? stEntry?.w ?? 0
+      const currentLosses = stEntry?.losses ?? stEntry?.l ?? 0
+
+      // The LIVE (pre-update) expectation drives both the contract judgment and
+      // the satisfaction blend; it's raised for next season further down.
+      const eff = getEffectiveExpectation(campaign, owner)
+      const effOwner = effectiveOwner(owner, eff.tier)
+
+      // --- Contract-end evaluation (only when the 2-year deal is up) ---
+      const signedYear = gmc?.signedSeasonYear ?? null
+      const lengthYears = gmc?.lengthYears ?? 2
+      const expired = signedYear != null && (currentYear - signedYear + 1) >= lengthYears
+      if (gmc && gmc.status === 'active' && expired) {
+        const userRoster = updatedPlayers.filter(p => p.teamId === userTeamId)
+        const payroll = userRoster.reduce(
+          (s, p) => s + (p.contract?.salary ?? p.salary ?? 0), 0
+        )
+        // Prior contract season (exclude the just-finished one to avoid double count).
+        const hist = userTeam?.seasonHistory ?? userTeam?.season_history ?? []
+        const lastSeason = (Array.isArray(hist) ? hist : [])
+          .filter(h => (h.year ?? 0) !== currentYear)
+          .sort((a, b) => (b.year ?? 0) - (a.year ?? 0))[0] ?? null
+
+        const subResult = evaluateSubtasks({
+          owner,
+          expectation: eff.tier,
+          roster: userRoster,
+          draftPicks: userTeam?.draftPicks ?? [],
+          facilities: userTeam?.facilities ?? null,
+          settings: campaign.settings,
+          payroll,
+          progress: gmc.progress ?? {},
+          userTeamId,
+          coach: userTeam?.coach ?? null,
+          salaryCap: SALARY_CAP,
+        })
+        const sat = combinedSatisfaction({
+          owner: effOwner,
+          expectedWins: eff.expectedWins,
+          currentWins,
+          currentLosses,
+          lastSeason,
+          subtaskScore: subResult.subtaskScore,
+        })
+
+        // Patience tilts the bar: a ruthless owner (1) demands more, a patient
+        // owner (5) forgives more.
+        const patience = Math.max(1, Math.min(5, owner.patience ?? 3))
+        const threshold = EXTEND_THRESHOLD + (3 - patience) * 5
+        const decision = sat.value >= threshold ? 'extend' : 'not_extended'
+
+        campaign.settings.pendingContractDecision = {
+          decision,
+          combined: sat.value,
+          satisfactionLabel: sat.label,
+          satisfactionColor: sat.color,
+          winsSatisfaction: sat.winsSatisfaction,
+          subtaskScore: sat.subtaskScore,
+          threshold,
+          ownerFirstName: owner.firstName,
+          ownerLastName: owner.lastName,
+          ownerName: `${owner.firstName} ${owner.lastName}`,
+          expectation: eff.tier,
+          expectationLabel: eff.label,
+          subtasks: subResult.subtasks.map(t => ({
+            id: t.id, label: t.label, met: t.met, global: !!t.global, progress: t.progress ?? null,
+          })),
+          metCount: subResult.metCount,
+          total: subResult.total,
+          year: currentYear,
+          teamId: userTeamId,
+          teamAbbreviation: userTeam?.abbreviation ?? gmc.teamAbbreviation,
+          signedYear,
+          lengthYears,
+        }
+        campaign.settings.pendingContractDecisionYear = currentYear
+        // Lock the contract so this fires once; the modal flow re-activates it
+        // (re-sign) or repoints the user to a new team (not extended).
+        gmc.status = decision === 'extend' ? 'extend_offered' : 'expired'
+      }
+
+      // --- Raise the owner's expectation for NEXT season (every season; only
+      // ratchets up). Fire-once-by-year so re-entry can't double-bump. ---
+      if (campaign.settings.ownerExpectation?.lastEvaluatedYear !== currentYear) {
+        const updated = updateOwnerExpectation(eff, currentWins)
+        campaign.settings.ownerExpectation = {
+          tier: updated.tier,
+          expectedWins: updated.expectedWins,
+          lastEvaluatedYear: currentYear,
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignManager] owner evaluation failed (non-fatal):', err?.message || err)
+  }
+
   await CampaignRepository.save(campaign)
 
   return {
@@ -2303,6 +2531,131 @@ export async function enterOffseason(campaignId) {
     newAchievements,
     retirees: campaign.settings.pendingRetirements,
   }
+}
+
+/**
+ * Build a fresh 2-year GM contract for `team`, seeding sub-task progress from the
+ * given roster. Used by both re-sign (extension) and team-switch. The contract is
+ * dated to the UPCOMING season (currentYear + 1) since this runs during the
+ * offseason before startNewSeason bumps the year.
+ *
+ * `tenureStartYear` marks the season the GM first took over THIS team. A re-sign
+ * passes the existing contract's value (continuation → "welcome back"); a team
+ * switch passes the upcoming year (new owner → first meeting). Defaults to the
+ * upcoming season when not supplied.
+ */
+function _buildFreshGmContract(team, userPlayers, currentYear, tenureStartYear = null) {
+  const signedSeasonYear = currentYear + 1
+  return {
+    teamId: team.id,
+    teamAbbreviation: team.abbreviation,
+    signedSeasonYear,
+    tenureStartYear: tenureStartYear ?? signedSeasonYear,
+    lengthYears: 2,
+    status: 'active',
+    progress: {
+      allStarAppearances: 0,
+      badgesAdded: 0,
+      starPlayerIdsAtSign: starPlayerIds(userPlayers),
+    },
+  }
+}
+
+/**
+ * Re-sign the user's GM contract with the SAME team after an extension offer
+ * (Part 2 contract-decision flow). Resets the contract window + sub-task progress
+ * and clears the pending decision. The +1 GM Level bump is handled by the caller
+ * (auth store) so this stays free of profile concerns.
+ *
+ * @param {string} campaignId
+ * @returns {Promise<{ campaign: object, gmContract: object }>}
+ */
+export async function resignGmContract(campaignId) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
+  const currentYear = campaign.currentSeasonYear ?? 2025
+  const userTeamId = campaign.teamId
+  const [team, userPlayers] = await Promise.all([
+    TeamRepository.get(campaignId, userTeamId),
+    PlayerRepository.getByTeam(campaignId, userTeamId),
+  ])
+  campaign.settings = campaign.settings ?? {}
+  // Re-sign = continuation with the SAME owner, so carry the existing tenure
+  // start forward (falls back to the prior signed year, then the upcoming
+  // season for older saves) instead of resetting it. This keeps the owner
+  // check-in greeting a returning GM as a partner, not a brand-new hire.
+  const priorContract = campaign.settings.gmContract ?? null
+  const tenureStartYear =
+    priorContract?.tenureStartYear ?? priorContract?.signedSeasonYear ?? (currentYear + 1)
+  campaign.settings.gmContract = _buildFreshGmContract(
+    team ?? { id: userTeamId, abbreviation: campaign.teamAbbreviation },
+    userPlayers ?? [],
+    currentYear,
+    tenureStartYear
+  )
+  delete campaign.settings.pendingContractDecision
+  delete campaign.settings.pendingContractDecisionYear
+  await CampaignRepository.save(campaign)
+  return { campaign, gmContract: campaign.settings.gmContract }
+}
+
+/**
+ * Repoint the user-GM to a NEW team in the same campaign after the owner declined
+ * to extend (Part 2). Inherits the new team's roster/coach/facilities, clears the
+ * user's hired staff (fresh start), resets the user lineup, and signs a fresh
+ * 2-year contract with the new owner. Tokens + GM Level (profile-global) are
+ * untouched. The old team simply reverts to AI control.
+ *
+ * @param {string} campaignId
+ * @param {string} newTeamAbbreviation
+ * @returns {Promise<{ campaign: object, team: object }>}
+ */
+export async function switchUserTeam(campaignId, newTeamAbbreviation) {
+  const campaign = await CampaignRepository.get(campaignId)
+  if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
+  const teams = await TeamRepository.getAllForCampaign(campaignId)
+  const newTeam = teams.find(t => t.abbreviation === newTeamAbbreviation)
+  if (!newTeam) throw new Error(`Team ${newTeamAbbreviation} not found in campaign`)
+  const currentYear = campaign.currentSeasonYear ?? 2025
+
+  // Repoint the user to the new franchise.
+  campaign.teamId = newTeam.id
+  campaign.teamAbbreviation = newTeam.abbreviation
+  campaign.settings = campaign.settings ?? {}
+
+  // Reset hired staff — fresh start with the new owner (tokens + GM Level live on
+  // the profile and are untouched).
+  delete campaign.settings.scout
+  delete campaign.settings.trainer
+  delete campaign.settings.staff_trainer
+
+  // Fresh user lineup from the inherited roster.
+  const userPlayers = await PlayerRepository.getByTeam(campaignId, newTeam.id)
+  const userStarters = initializeUserTeamLineup(userPlayers ?? [])
+  const userTargetMinutes = generateAITargetMinutes(userPlayers ?? [], userStarters, 'staggered')
+  campaign.settings.lineup = {
+    starters: userStarters,
+    target_minutes: userTargetMinutes,
+    rotation: [],
+  }
+
+  // New 2-year GM contract with the new owner.
+  campaign.settings.gmContract = _buildFreshGmContract(newTeam, userPlayers ?? [], currentYear)
+  delete campaign.settings.pendingContractDecision
+  delete campaign.settings.pendingContractDecisionYear
+
+  // Reset owner expectation to the NEW owner's baseline (it ratchets up over
+  // future seasons). Otherwise the prior franchise's expectation would carry
+  // over and the new owner's welcome / check-in would state the wrong mandate.
+  const newOwner = findOwnerForTeam(newTeam.abbreviation)
+  if (newOwner) campaign.settings.ownerExpectation = initOwnerExpectation(newOwner)
+  else delete campaign.settings.ownerExpectation
+
+  // Clear the new-job welcome marker so the new owner's welcome fires once.
+  delete campaign.settings.ownerWelcomeShownKey
+
+  await CampaignRepository.save(campaign)
+  return { campaign, team: newTeam }
 }
 
 /**
@@ -2377,6 +2730,7 @@ export async function startNewSeason(campaignId) {
 
   // 2. Update campaign to next season
   campaign.gameYear = (campaign.gameYear ?? 1) + 1
+  campaign.game_year = campaign.gameYear // keep the snake-case mirror in sync (campaign-card "Year N")
   campaign.currentSeasonYear = nextYear
   campaign.currentDate = `${nextYear}-10-21`
   campaign.phase = 'regular_season'
@@ -2385,21 +2739,19 @@ export async function startNewSeason(campaignId) {
   const teams = await TeamRepository.getAllForCampaign(campaignId)
   allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
 
-  // 3b. Degrade all teams' facilities by 1 (min 1) for the new season
-  const userTeamFacilitiesBefore = {}
-  for (const team of teams) {
-    if (team.facilities) {
-      if (team.id === campaign.teamId) {
-        Object.assign(userTeamFacilitiesBefore, team.facilities)
-      }
-      for (const key of ['training', 'medical', 'scouting', 'analytics']) {
-        if (team.facilities[key] > 1) {
-          team.facilities[key] = team.facilities[key] - 1
-        }
+  // 3b. Degrade ONLY the user's current team's facilities by 1 (min 1) each
+  // season. AI teams keep their facilities. After a team switch, campaign.teamId
+  // already points at the NEW team, so the new team starts degrading and the
+  // former user team (now an AI team) stops — automatically.
+  const userTeam = teams.find(t => t.id === campaign.teamId)
+  const userTeamFacilitiesBefore = userTeam?.facilities ? { ...userTeam.facilities } : {}
+  if (userTeam?.facilities) {
+    for (const key of ['training', 'medical', 'scouting', 'analytics']) {
+      if (userTeam.facilities[key] > 1) {
+        userTeam.facilities[key] = userTeam.facilities[key] - 1
       }
     }
   }
-  const userTeam = teams.find(t => t.id === campaign.teamId)
   const userTeamFacilitiesAfter = userTeam?.facilities ? { ...userTeam.facilities } : {}
   await TeamRepository.saveBulk(teams)
 
@@ -2423,34 +2775,153 @@ export async function startNewSeason(campaignId) {
     }
   }
 
-  // 3e. Decrement user-team coach contract. AI team coach contracts are NOT
-  //     decremented (frozen by design; only the user's coach uses the
-  //     hire/fire system). When a contract hits 0 the coach is cleared and
-  //     the user must hire a replacement before the next season can start.
-  const userTeamForCoach = teams.find(t => t.id === campaign.teamId)
-  if (userTeamForCoach?.coach) {
-    const remaining = (userTeamForCoach.coach.contractYearsRemaining ?? userTeamForCoach.coach.contract_years_remaining ?? 0) - 1
-    if (remaining <= 0) {
-      userTeamForCoach.coach = null
-    } else {
-      userTeamForCoach.coach.contractYearsRemaining = remaining
-      userTeamForCoach.coach.contract_years_remaining = remaining
-      // Refill the per-season "Coach Meeting" action budget for the new
-      // season. Tier-driven (free=1, good=3, really_good=5).
-      userTeamForCoach.coach.actionsRemaining = getCoachActionBudget(userTeamForCoach.coach)
-      // Refill the per-season player-training budget (free=2, good=3,
-      // really_good=4). activeTraining is left alone — an in-flight
-      // training that started before season end can still be claimed.
-      userTeamForCoach.coach.trainActionsRemaining = getCoachTrainBudget(userTeamForCoach.coach)
-    }
-    await TeamRepository.save(userTeamForCoach)
+  // 3e. HEAD-COACH LIFECYCLE — aging→retirement (applies to EVERYONE incl. the
+  //     user), AI fire/extend/retain decisions (AI-only; the user keeps manual
+  //     hire/fire/resign), and filling AI vacancies from the shared pool. Fired
+  //     and let-walk coaches return to `availableCoaches` so any team (incl. the
+  //     user) can hire them — coaches are persistent objects that live in exactly
+  //     one place: a team, or the pool.
+  const userTeamIdForCoach = campaign.teamId
+  const coachNewsDate = `${currentYear}-07-01`
+  const coachNews = []
+  let coachPool = campaign.settings.availableCoaches ?? []
+
+  // Just-completed season records + playoff depth for the evaluation blend.
+  const prevSeasonData = await SeasonRepository.get(campaignId, currentYear)
+  const prevStandings = prevSeasonData?.standings ?? { east: [], west: [] }
+  const { depthByTeamId: coachPlayoffDepth, playoffTeamIds: coachPlayoffTeams } =
+    derivePlayoffDepth(prevSeasonData?.playoffBracket ?? null)
+  const coachWinsByTeam = {}
+  for (const s of [...(prevStandings.east || []), ...(prevStandings.west || [])]) {
+    const tid = s.teamId ?? s.team_id
+    if (tid != null) coachWinsByTeam[tid] = s.wins ?? 0
+  }
+  const coachContext = buildContext({ standings: prevStandings, teams, seasonPhase: 'regular_season' })
+  const coachRostersByTeam = new Map()
+  for (const p of allPlayers) {
+    const tid = p.teamId ?? p.team_id
+    if (tid == null) continue
+    if (!coachRostersByTeam.has(tid)) coachRostersByTeam.set(tid, [])
+    coachRostersByTeam.get(tid).push(p)
+  }
+  const directionForTeam = (team) =>
+    analyzeTeamDirection(team, coachRostersByTeam.get(team.id) ?? [], coachContext)
+
+  // Return-to-pool shape: stamp a hireCost from tier, drop per-team-only fields.
+  const releaseToPool = (coach) => {
+    const { actionsRemaining, trainActionsRemaining, activeTraining, hiredSeason, seasonsWithTeam, ...rest } = coach
+    return { ...rest, hireCost: FREE_AGENT_COACH_TIERS[getCoachTierKey(coach)].hireCost }
+  }
+  // Hire shape: drop hireCost, give a fresh contract + reset per-season budgets.
+  const hydrateHire = (candidate) => {
+    const { hireCost: _drop, ...rest } = candidate
+    const term = randInt(3, 4)
+    const c = { ...rest, hiredSeason: nextYear, seasonsWithTeam: 0, activeTraining: null, contractYearsRemaining: term, contract_years_remaining: term }
+    c.actionsRemaining = getCoachActionBudget(c)
+    c.trainActionsRemaining = getCoachTrainBudget(c)
+    return c
+  }
+  const refillBudgets = (coach) => {
+    coach.actionsRemaining = getCoachActionBudget(coach)
+    coach.trainActionsRemaining = getCoachTrainBudget(coach)
   }
 
-  // 3f. Top up the free-agent coach pool back to its tier targets.
-  campaign.settings.availableCoaches = topUpCoachPool(
-    campaign.settings.availableCoaches ?? [],
-    teams
-  )
+  // (0) Seed existing-campaign coaches that pre-date the lifecycle fields. Coaches
+  //     generated before `age`/`seasonsWithTeam` existed get a one-time backfill
+  //     here (idempotent — only fills what's missing) so they don't all read as
+  //     the same default age and retire in lockstep. Age is anchored to how long
+  //     they've coached so veterans read older. New coaches already carry `age`.
+  const _coachSeasons = (c) => c?.career_stats?.seasons_coached ?? c?.seasons_coached ?? 0
+  const _seedCoachFields = (c) => {
+    if (!c) return
+    if (c.age == null) c.age = Math.max(40, Math.min(68, 46 + _coachSeasons(c) + randInt(-2, 2)))
+    if (c.seasonsWithTeam == null) c.seasonsWithTeam = Math.max(1, Math.min(_coachSeasons(c), 6))
+  }
+  for (const t of teams) if (t.coach) _seedCoachFields(t.coach)
+  for (const c of coachPool) _seedCoachFields(c)
+
+  // (1) Age all coaches (employed + pool) and process retirements.
+  const employedEntries = teams.filter(t => t.coach).map(t => ({ teamId: t.id, coach: t.coach }))
+  const { retiredEmployed, retiredPooledIds } = ageCoachesAndRetire({
+    employed: employedEntries,
+    pooled: coachPool,
+  })
+  coachPool = coachPool.filter(c => !retiredPooledIds.has(c.id))
+  for (const { teamId, coach } of retiredEmployed) {
+    const team = teams.find(t => t.id === teamId)
+    if (team) team.coach = null
+    coachNews.push(BreakingNewsService.coachRetired({ coachName: coach.name, teamName: team?.name ?? '', date: coachNewsDate }))
+  }
+
+  // (2) Contract decrement + AI fire/extend/retain. User team is manual-only.
+  for (const team of teams) {
+    if (!team.coach) continue
+    const coach = team.coach
+    const yearsLeft = (coach.contractYearsRemaining ?? coach.contract_years_remaining ?? 1) - 1
+
+    if (team.id === userTeamIdForCoach) {
+      if (yearsLeft <= 0) {
+        team.coach = null // expired → user must hire a replacement
+      } else {
+        coach.contractYearsRemaining = yearsLeft
+        coach.contract_years_remaining = yearsLeft
+        refillBudgets(coach)
+      }
+      continue
+    }
+
+    const direction = directionForTeam(team)
+    const { decision, reason } = evaluateCoachDecision({
+      direction,
+      actualWins: coachWinsByTeam[team.id] ?? 0,
+      expectedWins: expectedWinsForDirection(direction),
+      seasonHistory: team.seasonHistory ?? [],
+      madePlayoffs: coachPlayoffTeams.has(team.id),
+      playoffResult: coachPlayoffDepth[team.id] ?? null,
+      contractYearsLeft: yearsLeft,
+      seasonsWithTeam: coach.seasonsWithTeam ?? 1,
+    })
+
+    if (decision === 'fire') {
+      coachPool.push(releaseToPool(coach))
+      team.coach = null
+      coachNews.push(BreakingNewsService.coachFired({ coachName: coach.name, teamName: team.name, reason, date: coachNewsDate }))
+    } else if (decision === 'extend') {
+      const term = randInt(3, 4)
+      coach.contractYearsRemaining = term
+      coach.contract_years_remaining = term
+      coach.seasonsWithTeam = (coach.seasonsWithTeam ?? 1) + 1
+      refillBudgets(coach)
+      coachNews.push(BreakingNewsService.coachExtended({ coachName: coach.name, teamName: team.name, date: coachNewsDate }))
+    } else { // retain
+      const keep = Math.max(1, yearsLeft)
+      coach.contractYearsRemaining = keep
+      coach.contract_years_remaining = keep
+      coach.seasonsWithTeam = (coach.seasonsWithTeam ?? 1) + 1
+      refillBudgets(coach)
+    }
+  }
+
+  // (3) Fill AI vacancies from the pool (the user hires manually during offseason).
+  for (const team of teams) {
+    if (team.coach || team.id === userTeamIdForCoach) continue
+    const direction = directionForTeam(team)
+    let hired = selectCoachForVacancy({ direction, pool: coachPool })
+    if (hired) {
+      coachPool = coachPool.filter(c => c.id !== hired.id)
+    } else {
+      // Pool exhausted — generate a fresh first-time coach.
+      const usedNames = new Set(teams.filter(t => t.coach?.name).map(t => t.coach.name))
+      hired = generateFreeAgentCoach('good', usedNames, null)
+    }
+    team.coach = hydrateHire(hired)
+    coachNews.push(BreakingNewsService.coachHired({ coachName: team.coach.name, teamName: team.name, date: coachNewsDate }))
+  }
+
+  // 3f. Top up the free-agent coach pool back to its tier targets (and cap it so
+  //     accumulated fired coaches don't let it balloon over the seasons).
+  campaign.settings.availableCoaches = topUpCoachPool(coachPool, teams)
+  campaign.settings.pendingCoachChanges = coachNews
 
   // 4. Initialize new season (schedule + standings)
   const seasonData = SeasonManager.initializeSeason(teams, nextYear, campaignId)
@@ -2539,6 +3010,7 @@ export async function startNewSeason(campaignId) {
     releasedPlayers,
     facilitiesBefore: userTeamFacilitiesBefore,
     facilitiesAfter: userTeamFacilitiesAfter,
+    coachCarousel: coachNews,
   }
 }
 
@@ -2720,20 +3192,39 @@ function assignPersonnelHeadshots(teams, pools) {
  * @param {Set} usedNames - Set of already-used "first last" name strings
  * @returns {Object} Coach object
  */
-function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
-  const range = COACH_TIER_RANGES[tier] ?? COACH_TIER_RANGES[3]
-  const overall = randInt(range[0], range[1])
-  const attributes = generateCoachAttributes(overall)
-  const salary = calculateCoachSalary(overall)
-  const offensiveScheme = pickRandom(Object.keys(OFFENSIVE_SCHEMES))
-  const defensiveScheme = pickRandom(Object.keys(DEFENSIVE_SCHEMES))
+/**
+ * Random head-coach age. Clusters in the prime 45–60 band with rare young
+ * up-and-comers and older veterans. Age never degrades attributes — it only
+ * drives retirement in CoachLifecycleService.
+ */
+function generateCoachAge() {
+  const r = Math.random()
+  if (r < 0.10) return randInt(36, 44)   // young up-and-comer
+  if (r < 0.80) return randInt(45, 60)   // prime
+  if (r < 0.95) return randInt(61, 66)   // veteran
+  return randInt(67, 70)                 // elder
+}
 
+function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
   // If a master coach is defined for this team in coaches.js, use their
   // identity (name, headshot, starter badges) verbatim — that's the override
   // path for hand-curated coach personas. Otherwise fall back to the
   // scrambled FIRST_NAMES / LAST_NAMES pool (same fictional-name pool used
   // for players) so generated coaches don't ship real-world identities.
   const masterCoach = findCoachForTeam(teamAbbreviation)
+
+  // Prefer the master entry's authored overall / attributes when present so the
+  // set coach is fully deterministic (and the campaign-create modal can preview
+  // exactly what gets generated). Teams without a master entry — and free agents
+  // — keep the tier-driven random roll.
+  const range = COACH_TIER_RANGES[tier] ?? COACH_TIER_RANGES[3]
+  const overall = masterCoach?.overall ?? randInt(range[0], range[1])
+  const attributes = masterCoach?.attributes
+    ? { ...masterCoach.attributes }
+    : generateCoachAttributes(overall)
+  const salary = calculateCoachSalary(overall)
+  const offensiveScheme = pickRandom(Object.keys(OFFENSIVE_SCHEMES))
+  const defensiveScheme = pickRandom(Object.keys(DEFENSIVE_SCHEMES))
 
   let firstName, lastName, fullName
   if (masterCoach) {
@@ -2776,11 +3267,13 @@ function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
   // shuffle can spread the pool across every unassigned coach at once.
   const headshot = masterCoach?.headshot ?? null
 
+  const contractYears = randInt(1, 4)
   const coach = {
     id: generateUUID(),
     firstName,
     lastName,
     name: fullName,
+    age: generateCoachAge(),
     overallRating: overall,
     overall_rating: overall,
     attributes,
@@ -2788,8 +3281,8 @@ function generateCoach(tier, index, usedNames, teamAbbreviation = null) {
     offensive_scheme: offensiveScheme,
     defensiveScheme,
     defensive_scheme: defensiveScheme,
-    contractYearsRemaining: randInt(1, 4),
-    contract_years_remaining: randInt(1, 4),
+    contractYearsRemaining: contractYears,
+    contract_years_remaining: contractYears,
     contractSalary: salary,
     contract_salary: salary,
     headshot,
@@ -2883,6 +3376,7 @@ function generateFreeAgentCoach(tierKey, usedNames, masterCandidate = null) {
     firstName,
     lastName,
     name: fullName,
+    age: generateCoachAge(),
     overallRating: overall,
     overall_rating: overall,
     attributes,
@@ -2989,8 +3483,27 @@ function topUpCoachPool(existingPool, teams) {
     }
   }
 
-  return [...(existingPool || []), ...additions]
+  let pool = [...(existingPool || []), ...additions]
+
+  // Cap the pool. Fired coaches return to the market each offseason, so without
+  // a ceiling the unemployed list would balloon over many seasons. Keep the
+  // most desirable candidates (overall, lightly penalized by age — older
+  // unemployed coaches "step away") and drop the rest as quiet retirements.
+  if (pool.length > MAX_COACH_POOL) {
+    pool = pool
+      .map(c => ({ c, keep: (c.overallRating ?? c.overall_rating ?? 60) - Math.max(0, (c.age ?? 50) - 60) * 1.5 }))
+      .sort((a, b) => b.keep - a.keep)
+      .slice(0, MAX_COACH_POOL)
+      .map(x => x.c)
+  }
+
+  return pool
 }
+
+// Maximum size of the unemployed coach pool. The per-tier `count` targets in
+// FREE_AGENT_COACH_TIERS sum to 8 (the minimum supply); fired coaches push the
+// pool above that, and this caps the accumulation.
+const MAX_COACH_POOL = 16
 
 // =============================================================================
 // ROSTER GENERATION
@@ -3055,9 +3568,9 @@ export function generatePlayer(options) {
     position,
     overall,
     jerseyNumber = randInt(0, 99),
-    teamIndex = 0,
-    posIndex = 0,
   } = options
+  // (teamIndex/posIndex used to seed a deterministic name; names are now chosen
+  // by nationality via pickNameForCountry, so those options are no longer read.)
 
   const potential = Math.min(99, overall + randInt(-5, 15))
   const age = generateAge(overall)
@@ -3080,10 +3593,33 @@ export function generatePlayer(options) {
   const personality = generatePersonality()
   const contract = generateContract(overall, age)
 
-  // Generate name using deterministic seed based on team/position index
-  const nameIdx = teamIndex * 15 + posIndex
-  const firstName = FIRST_NAMES[nameIdx % FIRST_NAMES.length]
-  const lastName = LAST_NAMES[(nameIdx + 7) % LAST_NAMES.length]
+  // Origin (college or international club + country). Determined BEFORE the name
+  // so international players get a culturally-matching name. Matches the rookie
+  // class's ~25% international rate so the season-1 league mix has the same
+  // domestic/international ratio as the rookie classes that follow.
+  // RookieGenerationService also fills these fields for new draftees, so
+  // every player in the system carries `country` + `college`.
+  let country
+  let college
+  if (Math.random() < 0.25) {
+    const origin = INTERNATIONAL_ORIGINS[randInt(0, INTERNATIONAL_ORIGINS.length - 1)]
+    country = origin.country
+    college = origin.clubs[randInt(0, origin.clubs.length - 1)]
+  } else {
+    country = 'United States'
+    college = US_COLLEGES[randInt(0, US_COLLEGES.length - 1)]
+  }
+
+  // Nationality-aware name. International countries draw from their own pool;
+  // US (incl. the Hispanic bucket) draws from the mixed domestic pool. Dedup is
+  // handled here when a `usedNames` set is supplied (e.g. league generation);
+  // the scrambler is already shuffled so the old deterministic seed is obsolete.
+  const { firstName, lastName } = pickNameForCountry({
+    country,
+    usedNames: options.usedNames,
+    domesticFirst: FIRST_NAMES,
+    domesticLast: LAST_NAMES,
+  })
 
   // Assign a random headshot from the combined catalog (procedural pool +
   // admin-authored premades). Random per call — slight collision risk
@@ -3099,22 +3635,6 @@ export function generatePlayer(options) {
   const birthMonth = String(randInt(1, 12)).padStart(2, '0')
   const birthDay = String(randInt(1, 28)).padStart(2, '0')
   const birthDate = `${birthYear}-${birthMonth}-${birthDay}`
-
-  // Origin (college or international club + country). Matches the rookie
-  // class's ~25% international rate so the season-1 league mix has the same
-  // domestic/international ratio as the rookie classes that follow.
-  // RookieGenerationService also fills these fields for new draftees, so
-  // every player in the system carries `country` + `college`.
-  let country
-  let college
-  if (Math.random() < 0.25) {
-    const origin = INTERNATIONAL_ORIGINS[randInt(0, INTERNATIONAL_ORIGINS.length - 1)]
-    country = origin.country
-    college = origin.clubs[randInt(0, origin.clubs.length - 1)]
-  } else {
-    country = 'United States'
-    college = US_COLLEGES[randInt(0, US_COLLEGES.length - 1)]
-  }
 
   const playerId = generateUUID()
 
@@ -3197,6 +3717,10 @@ export function generatePlayer(options) {
     streak_data: null,
     recentPerformances: [],
     recent_performances: [],
+    // Single-game highs (PTS/REB/AST/STL/BLK). careerHighs persists across
+    // seasons; seasonHighs resets each offseason. Both fill in as games are played.
+    careerHighs: {},
+    seasonHighs: {},
     upgradePoints: 0,
     upgrade_points: 0,
     offenseUpgradePoints: 0,
@@ -3258,8 +3782,9 @@ export function generateVeteran(options) {
   const {
     role = 'rotation',
     startYear = 2025,
-    usedNames,
   } = options
+  // Note: `options.usedNames` (if present) is consumed by generatePlayer below,
+  // which now owns nationality-aware name selection + dedup.
 
   // 1. Base shape from generatePlayer
   const base = generatePlayer(options)
@@ -3309,20 +3834,12 @@ export function generateVeteran(options) {
   const { draftRound, draftPick } = pickDraftHistory(overall)
   const draftYear = startYear - careerSeasons
 
-  // 10. Name with collision avoidance against any caller-supplied set.
-  // generatePlayer's deterministic name seed can collide across many calls;
-  // for a 450-player league we want unique full names where feasible.
-  let firstName = base.firstName
-  let lastName = base.lastName
-  if (usedNames) {
-    let attempts = 0
-    while (usedNames.has(`${firstName} ${lastName}`) && attempts < 20) {
-      firstName = pickRandom(FIRST_NAMES)
-      lastName = pickRandom(LAST_NAMES)
-      attempts++
-    }
-    usedNames.add(`${firstName} ${lastName}`)
-  }
+  // 10. Name already chosen (nationality-aware + deduped) inside generatePlayer
+  // via pickNameForCountry, using the `usedNames` set passed through `options`.
+  // No second re-roll here — that used to re-pick from the US pool and undo an
+  // international player's culturally-matched name.
+  const firstName = base.firstName
+  const lastName = base.lastName
 
   return {
     ...base,
@@ -3379,6 +3896,29 @@ export async function listCampaigns() {
     if (!campaign.team && campaign.teamId) {
       const team = await TeamRepository.get(campaign.id, campaign.teamId)
       if (team) {
+        // All-time regular-season record across the WHOLE campaign: completed
+        // seasons (accumulated in franchise_history) PLUS the in-progress
+        // season's standings. The current season is only folded in OUTSIDE the
+        // offseason — once a season is archived into franchise_history its
+        // seasonData still exists, so adding it then would double-count.
+        const fhRs = team.franchise_history?.regular_season ?? { wins: 0, losses: 0 }
+        let wins = fhRs.wins ?? 0
+        let losses = fhRs.losses ?? 0
+        const isOffseason = String(campaign.phase || '').startsWith('offseason')
+        const seasonYear = campaign.currentSeasonYear ?? campaign.current_season_year ?? null
+        if (!isOffseason && seasonYear != null) {
+          try {
+            const seasonData = await SeasonRepository.get(campaign.id, seasonYear)
+            const standing = [
+              ...(seasonData?.standings?.east || []),
+              ...(seasonData?.standings?.west || []),
+            ].find(s => (s.teamId ?? s.team_id) === team.id || s.teamAbbreviation === team.abbreviation)
+            if (standing) {
+              wins += standing.wins ?? 0
+              losses += standing.losses ?? 0
+            }
+          } catch { /* best-effort — fall back to franchise_history only */ }
+        }
         campaign.team = {
           id: team.id,
           name: team.name,
@@ -3386,6 +3926,8 @@ export async function listCampaigns() {
           abbreviation: team.abbreviation,
           primary_color: team.primary_color ?? team.primaryColor,
           secondary_color: team.secondary_color ?? team.secondaryColor,
+          franchise_history: team.franchise_history ?? null,
+          allTimeRecord: { wins, losses },
         }
       }
     }

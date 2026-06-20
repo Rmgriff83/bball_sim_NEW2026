@@ -43,6 +43,12 @@ export const useDraftStore = defineStore('draft', () => {
   // Getters
   const currentPick = computed(() => draftOrder.value[currentPickIndex.value] || null)
   const isUserPick = computed(() => currentPick.value?.teamId === userTeamId.value)
+  // Does the user still have a pick coming up AFTER the current slot? Drives
+  // whether the "Skip to My Pick" control is shown — once the user's last pick
+  // is in, skipping to "my pick" is meaningless, so the button is hidden.
+  const hasUpcomingUserPick = computed(() =>
+    draftOrder.value.some((slot, i) => i > currentPickIndex.value && slot.teamId === userTeamId.value)
+  )
   const currentRound = computed(() => currentPick.value?.round || 1)
 
   const availablePlayers = computed(() => {
@@ -823,6 +829,7 @@ export const useDraftStore = defineStore('draft', () => {
     // Getters
     currentPick,
     isUserPick,
+    hasUpcomingUserPick,
     currentRound,
     availablePlayers,
     filteredPlayers,

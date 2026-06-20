@@ -177,6 +177,36 @@ export const WALKTHROUGHS = {
     },
   ],
 
+  // Free-agency tour — fires when the user closes the Draft Lottery results
+  // modal (the lottery is done, free agency is the very next move). Goes deeper
+  // on the FA mechanics than the offseason overview's single FA step, and lands
+  // at the exact moment the user is about to work the market.
+  freeAgency: [
+    {
+      placement: 'center',
+      title: 'Now: Free Agency',
+      body: "With the lottery settled, the free-agent market opens. For two in-game weeks you'll compete with every other team to sign unsigned players — bench depth, role players, and the occasional difference-maker. Here's how to work it.",
+    },
+    {
+      target: 'offseason-enter-fa',
+      placement: 'top',
+      title: 'Open the Window',
+      body: "Hit ENTER FREE AGENCY to start the period. It drops you straight onto the free-agent board in your GM Desk, where every available player is listed with their asking price.",
+      // The button is gone once FA has already started — skip cleanly then.
+      skipIfMissing: true,
+    },
+    {
+      placement: 'center',
+      title: 'Place Your Offers',
+      body: "On the board, make multi-year offers to players who fit your roster and cap space. Rival teams are bidding too — the winning offer balances money, role, and team fit, so a perfect-fit pitch can beat a richer one.",
+    },
+    {
+      placement: 'center',
+      title: 'Sim the Days',
+      body: "Back on the home page you'll sim free agency a day at a time — watching who signs where and adjusting your offers in response — or sim the rest of the window at once. When it wraps, you're on the clock for the rookie draft.",
+    },
+  ],
+
   gmTeam: [
     {
       placement: 'center',
@@ -276,6 +306,22 @@ export const WALKTHROUGHS = {
       body: 'Spend tokens here to buy new coach badges and sharpen your staff\'s edge.',
     },
     {
+      target: 'gm-coach-skills',
+      tab: { view: 'gm', tab: 'personnel' },
+      placement: 'top',
+      skipIfMissing: true,
+      title: 'Coaching Skills',
+      body: "Your head coach's skill ratings — their strengths across areas like player development, offense, defense, and motivation. A sharper coach squeezes more out of your roster.",
+    },
+    {
+      target: 'gm-coach-actions',
+      tab: { view: 'gm', tab: 'personnel' },
+      placement: 'top',
+      skipIfMissing: true,
+      title: 'Coach Actions',
+      body: "Your coach's per-season action pools — Coach Meetings (lift a player's morale) and Player Trainings — showing how many remain this season and what each one does. They reset every season, so spend them wisely.",
+    },
+    {
       target: 'gm-coach-schemes',
       tab: { view: 'gm', tab: 'personnel' },
       placement: 'left',
@@ -305,6 +351,10 @@ export const WALKTHROUGHS = {
       placement: 'right',
       title: 'Player Cards',
       body: "Each player on your roster shows up as a card — name, position, age, overall, salary, and contract length. Tap a card to open the full player profile.",
+      // Roster cards only render on the Roster sub-tab. If the tour fires while
+      // the user is on another finances sub-tab (e.g. Free Agents during the FA
+      // window), skip cleanly instead of stalling waiting for an absent element.
+      skipIfMissing: true,
     },
     {
       target: 'gm-player-actions',
@@ -312,6 +362,8 @@ export const WALKTHROUGHS = {
       placement: 'right',
       title: 'Re-sign or Drop',
       body: "Players in the final year of their deal get a Re-sign button to lock in a new multi-year contract before they walk in free agency. Drop releases a player outright to free up cap space and a roster spot.",
+      // Same as above — these actions live on roster cards (Roster sub-tab only).
+      skipIfMissing: true,
     },
     {
       target: 'gm-finances-subtabs',
@@ -394,6 +446,60 @@ export const WALKTHROUGHS = {
       placement: 'top',
       title: 'Plan Ahead',
       body: "Spot back-to-backs and rivalry games and plan rest around tough stretches. You can also simulate ahead from here — jump multiple games forward, or run the entire season at once. Heads up: tokens aren't granted when you sim several games at a time.",
+    },
+  ],
+
+  gmOwner: [
+    {
+      target: 'gm-tab-owner',
+      tab: { view: 'gm', tab: 'owner' },
+      placement: 'bottom',
+      title: 'The Owner',
+      body: "This is the Owner tab — your relationship with the person who signs your checks. Your standing here is what decides whether you keep the job.",
+    },
+    {
+      target: 'owner-identity',
+      tab: { view: 'gm', tab: 'owner' },
+      placement: 'bottom',
+      title: 'Meet the Owner',
+      body: "Who you answer to: their name, the franchise, and how they made their fortune — which hints at how freely they'll let you spend.",
+    },
+    {
+      target: 'owner-satisfaction',
+      tab: { view: 'gm', tab: 'owner' },
+      placement: 'bottom',
+      skipIfMissing: true,
+      title: 'Owner Satisfaction',
+      body: "Your overall standing — 60% how your record measures up to their expectations, 40% the sub-tasks below. Let it slide too far and your seat gets hot.",
+    },
+    {
+      target: 'owner-expectations',
+      tab: { view: 'gm', tab: 'owner' },
+      placement: 'top',
+      title: 'Expectations',
+      body: "The owner's mandate and expected wins, plus how Patient and money-conscious they are — all of which shape how harshly they judge you.",
+    },
+    {
+      target: 'owner-subtasks',
+      tab: { view: 'gm', tab: 'owner' },
+      placement: 'top',
+      title: 'Owner Sub-Tasks',
+      body: "Concrete goals the owner tracks across your whole contract. Knock these out to lift your satisfaction — they make up 40% of your evaluation.",
+    },
+    {
+      target: 'owner-gm-level',
+      tab: { view: 'gm', tab: 'owner' },
+      placement: 'top',
+      skipIfMissing: true,
+      title: 'Your GM Level',
+      body: "Your career rank as a GM. It climbs each time an owner re-signs you, and higher levels let you take over stronger, more prestigious franchises.",
+    },
+    {
+      target: 'owner-contract',
+      tab: { view: 'gm', tab: 'owner' },
+      placement: 'top',
+      title: 'Your GM Contract',
+      body: "Your deal: when you signed, its length, and the years remaining. The final year is your audition — deliver and the owner extends you (and bumps your GM Level).",
     },
   ],
 

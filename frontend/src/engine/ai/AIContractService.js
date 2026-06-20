@@ -7,7 +7,9 @@
 
 import { analyzeTeamDirection, buildContext } from './AITradeService';
 import { calculateRetentionScore, getMarketSize } from './MotivationService';
+import { playerMarketValue } from './ResignValuationService';
 import { FREE_AGENCY_DURATION_DAYS } from '../season/SeasonDeadlines';
+import { SALARY_CAP, LUXURY_TAX, veteranMinSalary } from '../data/salaryScale';
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
@@ -15,22 +17,13 @@ const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 // CONSTANTS
 // =============================================================================
 
-const SALARY_CAP = 136_000_000;
-const LUXURY_TAX_LINE = 165_000_000;
+// Economy thresholds come from data/salaryScale.js (real 2025-26 NBA). Aliased
+// here to the names this module already uses.
+const LUXURY_TAX_LINE = LUXURY_TAX;
 const MIN_ROSTER_SIZE = 10;
 const TARGET_ROSTER_SIZE = 14;
 const MAX_ROSTER_SIZE = 15;
 const MINIMUM_SEASON_ROSTER = 14;
-
-// NBA-style veteran minimum tiers. Teams over the cap can ALWAYS sign at
-// these salaries — they're the league's emergency-fill mechanism for roster
-// holes. Scaled (loosely) by years in the league:
-//   • 0–1 years   → rookie / new-vet min
-//   • 2–9 years   → mid-vet min
-//   • 10+ years   → max-vet min
-const VET_MIN_ROOKIE = 1_200_000;
-const VET_MIN_MID = 2_300_000;
-const VET_MIN_VETERAN = 3_300_000;
 
 // Bird-rights hard ceiling. Real NBA Bird rights have no per-deal cap (just
 // the league max), but teams can't recklessly stack maxes forever — we cap
@@ -38,11 +31,9 @@ const VET_MIN_VETERAN = 3_300_000;
 // don't produce $300M payrolls.
 const BIRD_RIGHTS_PAYROLL_CEILING = Math.floor(LUXURY_TAX_LINE * 1.2);
 
+// Re-exported for back-compat; delegates to the canonical vet-min helper.
 export function getVeteranMinSalary(player) {
-  const seasons = player.careerSeasons ?? player.career_seasons ?? 0;
-  if (seasons >= 10) return VET_MIN_VETERAN;
-  if (seasons >= 2) return VET_MIN_MID;
-  return VET_MIN_ROOKIE;
+  return veteranMinSalary(player);
 }
 
 /**
@@ -60,15 +51,9 @@ function isTeamIncumbent(player, teamId) {
 // SALARY LOOKUP
 // =============================================================================
 
-function calculateExpectedSalary(rating) {
-  if (rating >= 90) return 40_000_000;
-  if (rating >= 85) return 30_000_000;
-  if (rating >= 80) return 20_000_000;
-  if (rating >= 75) return 10_000_000;
-  if (rating >= 70) return 5_000_000;
-  if (rating >= 65) return 3_000_000;
-  return 2_000_000;
-}
+// Expected/market salary now comes from the shared production-aware valuation
+// (engine/ai/ResignValuationService.playerMarketValue), so AI free-agency and
+// re-sign offers stay consistent with what a player would ask the user team for.
 
 // =============================================================================
 // HELPERS
@@ -203,7 +188,7 @@ function evaluatePlayerContract(player, direction, stats, rosterContext) {
   const age = getPlayerAge(player);
   const salary = player.contractSalary ?? player.contract_salary ?? 0;
   const yearsRemaining = player.contractYearsRemaining ?? player.contract_years_remaining ?? 0;
-  const expectedSalary = calculateExpectedSalary(rating);
+  const expectedSalary = playerMarketValue(player, stats);
 
   // Base value score (0-100)
   let valueScore = rating * 0.6;
@@ -350,7 +335,7 @@ export function evaluateResigning(player, direction, stats, rosterCount = 12, ca
   const age = getPlayerAge(player);
   const salary = player.contractSalary ?? player.contract_salary ?? 0;
 
-  const expectedSalary = calculateExpectedSalary(rating);
+  const expectedSalary = playerMarketValue(player, stats);
 
   // Factor 1: Is player performing well?
   let isPerformingWell = rating >= 70;
@@ -470,19 +455,13 @@ export function evaluateFreeAgentSigning(player, direction, teamRoster, capSitua
 // CALCULATE CONTRACT OFFER (cap-aware)
 // =============================================================================
 
-export function calculateContractOffer(player, direction, capSituation = null) {
-  const rating = getPlayerRating(player);
+export function calculateContractOffer(player, direction, capSituation = null, stats = null) {
   const age = getPlayerAge(player);
 
-  // Base salary from rating
-  let baseSalary = calculateExpectedSalary(rating);
-
-  // Adjust for age
-  if (age <= 25) {
-    baseSalary *= 1.1; // Youth premium
-  } else if (age >= 32) {
-    baseSalary *= 0.85; // Age discount
-  }
+  // Base salary = the player's open-market value (smooth rating curve + this
+  // season's production + age, floored at the vet min). Age is already baked in,
+  // so don't re-apply it here.
+  let baseSalary = playerMarketValue(player, stats);
 
   // Motivation-aware salary adjustment
   if (player.motivations?.money) {
@@ -553,7 +532,7 @@ export function processTeamExtensions({
     const shouldResign = evaluateResigning(player, direction, playerStats, rosterCount, capSituation, draftCapital);
 
     if (shouldResign) {
-      const contract = calculateContractOffer(player, direction, capSituation);
+      const contract = calculateContractOffer(player, direction, capSituation, playerStats);
 
       // Update player in league players array
       for (let i = 0; i < updatedPlayers.length; i++) {
@@ -622,7 +601,7 @@ export function processTeamSignings({
     const shouldSign = incumbent || evaluateFreeAgentSigning(player, direction, teamRoster, capSituation);
 
     if (shouldSign) {
-      const contract = calculateContractOffer(player, direction, capSituation);
+      const contract = calculateContractOffer(player, direction, capSituation, getPlayerStatsFn(player.id));
 
       // Cap check: skip if signing would push team over luxury tax (unless
       // contending OR re-signing an incumbent via Bird rights OR open slot
@@ -1034,6 +1013,7 @@ export function generateAIFreeAgencyOffers({
   day,
   campaignId,
   gameYear = 1,
+  getPlayerStatsFn = () => null,
 }) {
   const placed = [];
   if (!offersMap) return placed;
@@ -1120,7 +1100,7 @@ export function generateAIFreeAgencyOffers({
       const wantsPlayer = incumbent || evaluateFreeAgentSigning(player, direction, teamRoster, adjustedCap);
       if (!wantsPlayer) continue;
 
-      const offer = calculateContractOffer(player, direction, adjustedCap);
+      const offer = calculateContractOffer(player, direction, adjustedCap, getPlayerStatsFn(player.id));
 
       // Cap-aware budgeting:
       //  • Contenders can dip into tax (with a $20M per-deal sanity cap).
@@ -1142,7 +1122,7 @@ export function generateAIFreeAgencyOffers({
           const currentPayroll = calculateTeamPayroll(teamRoster) + pendingCommitment;
           if (currentPayroll + offer.salary > BIRD_RIGHTS_PAYROLL_CEILING) continue;
         } else {
-          const expected = calculateExpectedSalary(rating);
+          const expected = playerMarketValue(player);
           const remainingRoom = Math.max(0, Math.max(0, adjustedCap.capRoom) - pendingCommitment);
           if (rating >= 80 && remainingRoom >= expected * 0.25) {
             // Elite-talent flier — fit into remaining room.

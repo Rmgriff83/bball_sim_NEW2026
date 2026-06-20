@@ -57,6 +57,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Token operations (spending only — credits flow via Stripe webhook)
     Route::post('/user/tokens', [UserController::class, 'updateTokens']);
 
+    // Career GM level (0-4). Persisted on contract extension / grandfathering.
+    Route::post('/user/gm-level', [UserController::class, 'updateGmLevel']);
+
     // Payments
     Route::post('/payments/checkout-session', [PaymentController::class, 'createCheckoutSession']);
 

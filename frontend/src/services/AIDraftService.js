@@ -173,54 +173,43 @@ export function selectAIPick(availablePlayers, teamPicks, currentRound, totalRou
  * @returns {number} Score
  */
 function scoreRookiePlayer(player, teamRoster, direction, pickNumber, round) {
-  let score = 0
-
   const ovr = player.overallRating || 60
   const pot = player.potentialRating || ovr
   const age = player.age || 20
   const position = player.position || 'SF'
-  const potentialGap = pot - ovr
+  const potentialGap = Math.max(0, pot - ovr)
   const workEthic = player.attributes?.mental?.workEthic ?? 70
 
-  // Direction-specific base scoring
-  if (direction === 'rebuilding') {
-    // Ceiling-weighted: potential matters more
-    score += pot * 0.25 + ovr * 0.15
-    // Heavy upside bonus
-    score += Math.min(12, potentialGap * 0.6)
-    // Age premium for youngest players
-    if (age === 19) score += 5
-    else if (age === 20) score += 3
-    else if (age === 21) score += 1
-  } else if (direction === 'title_contender' || direction === 'win_now') {
-    // Floor-weighted: NBA-readiness matters
-    score += ovr * 0.30 + pot * 0.10
-    // NBA-readiness bonus
-    score += Math.min(10, (ovr - 60) * 0.5)
-    // Capped upside
-    score += Math.min(direction === 'title_contender' ? 4 : 6, potentialGap * 0.3)
-    // Age less important for contenders
-    if (age <= 21) score += 1
-  } else {
-    // Ascending — balanced
-    score += ovr * 0.20 + pot * 0.20
-    // Moderate upside bonus
-    score += Math.min(10, potentialGap * 0.45)
-    // Moderate age premium
-    if (age === 19) score += 4
-    else if (age === 20) score += 2
-    else if (age === 21) score += 1
-  }
+  // --- Talent base (DOMINANT term, roughly 60-95). Direction sets the
+  //     floor-vs-ceiling blend, but raw talent always anchors the score so the
+  //     clearly-better prospects sit at the top of the board — the everything-
+  //     else terms below are tiebreakers, not overrides. This is the main fix
+  //     for AI teams "reaching" past obviously superior prospects.
+  let wPot, wOvr
+  if (direction === 'rebuilding') { wPot = 0.70; wOvr = 0.30 }            // ceiling-weighted
+  else if (direction === 'title_contender') { wPot = 0.30; wOvr = 0.70 }  // floor-weighted
+  else if (direction === 'win_now') { wPot = 0.40; wOvr = 0.60 }
+  else { wPot = 0.55; wOvr = 0.45 }                                       // ascending — balanced
+  let score = pot * wPot + ovr * wOvr
 
-  // Round 2 shift: extra upside swing
-  if (round === 2) {
-    score += Math.min(5, potentialGap * 0.2)
-  }
+  // --- Upside bonus (small): reward a developmental gap, weighted by direction.
+  const upsideMult = direction === 'rebuilding' ? 0.25
+    : direction === 'title_contender' ? 0.10
+    : direction === 'win_now' ? 0.15
+    : 0.18
+  score += Math.min(6, potentialGap * upsideMult)
+  // Round 2 — a touch more swing on raw projects, since the pick is cheap.
+  if (round === 2) score += Math.min(3, potentialGap * 0.15)
 
-  // Work ethic bonus (0-5)
-  score += Math.max(0, (workEthic - 60) * 0.15)
+  // --- Youth premium (small).
+  if (age <= 19) score += direction === 'rebuilding' ? 3 : 2
+  else if (age === 20) score += 1.5
+  else if (age >= 23) score -= 1.5
 
-  // Badge synergy (0-6)
+  // --- Work ethic (small, 0-3).
+  score += Math.min(3, Math.max(0, (workEthic - 65) * 0.1))
+
+  // --- Badge synergy (small, 0-4).
   const teamBadges = getTeamBadgeIds(teamRoster)
   const playerBadgeIds = (player.badges || []).map(b => b.id)
   let synergyPoints = 0
@@ -228,22 +217,26 @@ function scoreRookiePlayer(player, teamRoster, direction, pickNumber, round) {
     const playerHasOne = playerBadgeIds.includes(b1) || playerBadgeIds.includes(b2)
     const teamHasOther = (playerBadgeIds.includes(b1) && teamBadges.has(b2)) ||
                          (playerBadgeIds.includes(b2) && teamBadges.has(b1))
-    if (playerHasOne && teamHasOther) {
-      synergyPoints += 2
-    }
+    if (playerHasOne && teamHasOther) synergyPoints += 2
   }
-  score += Math.min(6, synergyPoints)
+  score += Math.min(4, synergyPoints)
 
-  // Positional need (0-15)
+  // --- Positional need — SCALED BY PICK SLOT. Near the top of the draft teams
+  //     take the best player available (need barely registers); by the late
+  //     first round and into round two, roster fit drives the pick. This is what
+  //     stops a top pick from reaching for a need over a far better prospect.
   const posCounts = getPositionCounts(teamRoster)
   const posCount = posCounts[position] || 0
-  const needWeight = (direction === 'title_contender' || direction === 'win_now') ? 1.2 : 1.0
-  if (posCount === 0) score += 15 * needWeight
-  else if (posCount <= 2) score += 8 * needWeight
-  else if (posCount <= 3) score += 3 * needWeight
+  let needBonus = 0
+  if (posCount === 0) needBonus = 10
+  else if (posCount <= 2) needBonus = 5
+  else if (posCount <= 3) needBonus = 2
+  const needScale = Math.min(1, 0.1 + (pickNumber - 1) * 0.06) // pick 1 ≈ 0.1 → ~1.0 by pick 16
+  const needWeight = (direction === 'title_contender' || direction === 'win_now') ? 1.15 : 1.0
+  score += needBonus * needScale * needWeight
 
-  // Random jitter (±3)
-  score += (Math.random() * 6) - 3
+  // --- Small jitter (±1.5): a little variety without flipping real talent gaps.
+  score += (Math.random() * 3) - 1.5
 
   return score
 }
@@ -268,9 +261,15 @@ export function selectRookieDraftPick(availablePlayers, teamRoster, teamDirectio
 
   scored.sort((a, b) => b.score - a.score)
 
-  // Weighted random among top 3 (65/25/10%)
-  const weights = [0.65, 0.25, 0.10]
-  const candidates = scored.slice(0, Math.min(3, scored.length))
+  // Weighted random among the top few. Top-of-the-draft picks are near-
+  // deterministic so an elite prospect doesn't slide on a coin flip; the spread
+  // widens later in the draft where talent is compressed and variety is fine.
+  let weights
+  if (pickNumber <= 3) weights = [0.85, 0.12, 0.03]
+  else if (round === 1) weights = [0.70, 0.22, 0.08]
+  else weights = [0.58, 0.27, 0.15]
+
+  const candidates = scored.slice(0, Math.min(weights.length, scored.length))
   const roll = Math.random()
 
   let cumulative = 0

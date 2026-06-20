@@ -44,6 +44,7 @@ class UserProfile extends Model
             'tokens' => 0,
             'lifetime_synergies' => 0,
             'unlocked_features' => [],
+            'gm_level' => 0,
         ];
     }
 
@@ -106,6 +107,30 @@ class UserProfile extends Model
         $this->save();
 
         return $newBalance;
+    }
+
+    /**
+     * Get the user's career GM level (0-4). Profile-global, like tokens; rises
+     * by +1 each time an owner extends the GM's contract. Backed by
+     * rewards.gm_level so no dedicated column is needed.
+     */
+    public function getGmLevel(): int
+    {
+        return max(0, min(4, (int) ($this->rewards['gm_level'] ?? 0)));
+    }
+
+    /**
+     * Set the user's career GM level, clamped to 0-4. Returns the stored value.
+     */
+    public function setGmLevel(int $level): int
+    {
+        $clamped = max(0, min(4, $level));
+        $rewards = $this->rewards ?? self::defaultRewards();
+        $rewards['gm_level'] = $clamped;
+        $this->rewards = $rewards;
+        $this->save();
+
+        return $clamped;
     }
 
     /**

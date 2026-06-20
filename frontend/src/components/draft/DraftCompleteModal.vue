@@ -342,15 +342,14 @@ onUnmounted(() => {
   to { opacity: 1; transform: scale(1); }
 }
 
-/* Standardized modal heights (90vh desktop, 85vh mobile) */
+/* Cap the height so tall content scrolls; let the modal shrink to fit short
+   content rather than forcing a full-height box. */
 .modal-container {
-  min-height: 90vh;
   max-height: 90vh;
 }
 
 @media (max-width: 480px) {
   .modal-container {
-    min-height: 85vh;
     max-height: 85vh;
   }
 }

@@ -22,6 +22,7 @@ import { checkForInjury, processRecovery, isInjured as checkIsInjured } from './
 import { updateAfterGame, updateWeekly } from './MoraleService';
 import PersonalityEffects from './PersonalityEffects';
 import BadgeSynergyService from './BadgeSynergyService';
+import { updateHighs, seasonYearFromDate } from '../stats/careerHighs';
 import EvolutionNewsService from './EvolutionNewsService';
 import { getCoachPerks, getEffectiveCoachAttribute } from '@/engine/coaching/CoachPerks';
 import * as Config from '../config/GameConfig';
@@ -695,6 +696,14 @@ function trackPerformance(player, rating, stats = {}, date = '', opponent = '', 
 
   player.recent_performances = trimmed;
   player.recentPerformances = trimmed;
+
+  // Single-game career & season highs (PTS/REB/AST/STL/BLK). Same per-game line,
+  // tagged with opponent + season year. Runs for every league player (user path
+  // and the AI bulk worker both call trackPerformance). The date+opponent dedup
+  // above means a re-processed game can't double-set a high.
+  const highCtx = { opp: opponent || null, year: seasonYearFromDate(date) };
+  player.careerHighs = updateHighs(player.careerHighs, entry, highCtx);
+  player.seasonHighs = updateHighs(player.seasonHighs, entry, highCtx);
 
   return player;
 }

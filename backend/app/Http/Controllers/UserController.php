@@ -42,6 +42,9 @@ class UserController extends Controller
                 'experience_points' => $user->profile->experience_points,
                 'tokens' => $user->profile->getTokens(),
                 'lifetime_synergies' => $user->profile->getLifetimeSynergies(),
+                // Career GM level (0-4), profile-global like tokens. Read by
+                // authStore as profile.gmLevel.
+                'gmLevel' => $user->profile->getGmLevel(),
                 // Frontend reads camelCase via authStore.hasFeature(); the
                 // storage column uses snake_case. Translate at the boundary.
                 'unlockedFeatures' => $user->profile->getUnlockedFeatures(),
@@ -270,6 +273,31 @@ class UserController extends Controller
 
         return response()->json([
             'tokens' => $newBalance,
+        ]);
+    }
+
+    /**
+     * Set the user's career GM level (0-4). Called when an owner extends the
+     * GM's contract (+1) or to grandfather a legacy GM up to a floor.
+     * POST /api/user/gm-level
+     */
+    public function updateGmLevel(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'level' => 'required|integer|between:0,4',
+        ]);
+
+        $user = $request->user();
+        $profile = $user->profile;
+
+        if (!$profile) {
+            return response()->json(['message' => 'Profile not found'], 404);
+        }
+
+        $finalLevel = $profile->setGmLevel($validated['level']);
+
+        return response()->json([
+            'gmLevel' => $finalLevel,
         ]);
     }
 

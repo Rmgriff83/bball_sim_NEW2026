@@ -52,6 +52,15 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
   const activeKey = ref(null)
   const stepIndex = ref(0)
 
+  // Hard suspend: while true, `maybeStart` is a no-op so NO tour can start. Used
+  // to hold back onboarding until the season's Owner Check-In modal is dismissed
+  // (the check-in must be the first thing the user sees). Runtime-only flag — not
+  // persisted; the caller flips it false again on dismiss and re-arms the tour.
+  const suspended = ref(false)
+  function setSuspended(value) {
+    suspended.value = !!value
+  }
+
   // Channel the overlay uses to ask a mounted view to switch its internal tab.
   // Views opt in via useWalkthroughTab(); shape: { view, tab } or null.
   const requestedTab = ref(null)
@@ -126,6 +135,7 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
   // The single entry point views call (e.g. onMounted). Safe no-op unless the
   // tour is enabled, not already running, and not previously completed/skipped.
   function maybeStart(key) {
+    if (suspended.value) return
     if (!enabled.value) return
     if (activeKey.value) return
     if (!WALKTHROUGHS[key]) return
@@ -210,6 +220,8 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
     userId,
     hasPlayedBefore,
     enabled,
+    suspended,
+    setSuspended,
     activeKey,
     stepIndex,
     requestedTab,

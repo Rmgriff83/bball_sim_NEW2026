@@ -5,8 +5,10 @@
 // Translated from PHP: backend/app/Services/FinanceService.php
 // =============================================================================
 
-const DEFAULT_SALARY_CAP = 136_000_000; // $136M default NBA cap
-const DEFAULT_FREE_AGENT_SALARY = 8_000_000; // $8M
+import { SALARY_CAP as DEFAULT_SALARY_CAP, veteranMinSalary } from '../data/salaryScale';
+import { playerMarketValue } from '../ai/ResignValuationService';
+
+const DEFAULT_FREE_AGENT_SALARY = 8_000_000; // $8M — last-ditch fallback only
 const DEFAULT_FREE_AGENT_YEARS = 2;
 const MAX_ROSTER_SIZE = 15;
 
@@ -356,27 +358,10 @@ export function validateSigning({ salary, capMode = 'normal', currentPayroll, sa
  * @param {number} params.salaryCap
  * @returns {{ success: boolean, player?: object, updatedLeaguePlayers?: Array, error?: string }}
  */
-export function signFreeAgent({ playerId, leaguePlayers, currentRoster, capMode = 'normal', salaryCap = DEFAULT_SALARY_CAP }) {
+export function signFreeAgent({ playerId, leaguePlayers, currentRoster, salary = null, years = null, salaryCap = DEFAULT_SALARY_CAP }) {
   // Validate roster size
   if (currentRoster.length >= MAX_ROSTER_SIZE) {
     return { success: false, error: 'Roster is full (15 players maximum)' };
-  }
-
-  // Calculate current payroll
-  const currentPayroll = currentRoster.reduce(
-    (sum, p) => sum + parseFloat(p.contractSalary ?? p.contract_salary ?? 0), 0
-  );
-
-  // Validate salary cap
-  const validation = validateSigning({
-    salary: DEFAULT_FREE_AGENT_SALARY,
-    capMode,
-    currentPayroll,
-    salaryCap,
-  });
-
-  if (!validation.valid) {
-    return { success: false, error: validation.reason };
   }
 
   // Find the free agent
@@ -407,11 +392,52 @@ export function signFreeAgent({ playerId, leaguePlayers, currentRoster, capMode 
     return { success: false, error: 'Player not found or not a free agent' };
   }
 
+  // Resolve the contract terms: honor the offered salary/years, defaulting to
+  // the player's market value when none is supplied.
+  const minSalary = veteranMinSalary(freeAgent);
+  const offerSalary = Math.max(
+    minSalary,
+    Math.round(salary ?? playerMarketValue(freeAgent) ?? DEFAULT_FREE_AGENT_SALARY)
+  );
+  const offerYears = Math.max(1, Math.min(5, Math.round(years ?? DEFAULT_FREE_AGENT_YEARS)));
+
+  // Cap rule: a minimum-salary contract is always allowed (the NBA minimum
+  // exception — even over the cap). Anything above the minimum requires real
+  // cap space, so an over-the-cap team can only add minimum-salary players.
+  const currentPayroll = currentRoster.reduce(
+    (sum, p) => sum + parseFloat(p.contractSalary ?? p.contract_salary ?? 0), 0
+  );
+  const isMinimumDeal = offerSalary <= minSalary;
+  if (!isMinimumDeal && currentPayroll + offerSalary > salaryCap) {
+    return {
+      success: false,
+      error: 'Over the cap — you can only sign minimum-salary players.',
+    };
+  }
+
+  // Per-year escalation (5%/yr), mirroring the other contract-building paths.
+  const salaries = [];
+  for (let i = 0; i < offerYears; i++) {
+    salaries.push(Math.round((offerSalary * (1 + 0.05 * i)) / 10000) * 10000);
+  }
+  const contractDetails = {
+    totalYears: offerYears,
+    salaries,
+    options: {},
+    noTradeClause: false,
+    minimumDeal: isMinimumDeal,
+    signedAsFreeAgent: true,
+  };
+
   // Build signed player data
   const signedPlayer = {
     ...freeAgent,
-    contractYearsRemaining: DEFAULT_FREE_AGENT_YEARS,
-    contractSalary: DEFAULT_FREE_AGENT_SALARY,
+    contractYearsRemaining: offerYears,
+    contract_years_remaining: offerYears,
+    contractSalary: offerSalary,
+    contract_salary: offerSalary,
+    contractDetails,
+    contract_details: contractDetails,
   };
 
   // Remove from league players list
@@ -428,9 +454,9 @@ export function signFreeAgent({ playerId, leaguePlayers, currentRoster, capMode 
       type: 'signing',
       playerName,
       playerId: freeAgent.id,
-      years: DEFAULT_FREE_AGENT_YEARS,
-      salary: DEFAULT_FREE_AGENT_SALARY,
-      totalValue: DEFAULT_FREE_AGENT_SALARY * DEFAULT_FREE_AGENT_YEARS,
+      years: offerYears,
+      salary: offerSalary,
+      totalValue: offerSalary * offerYears,
     },
     message: `Signed ${playerName}`,
   };

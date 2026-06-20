@@ -7,7 +7,13 @@ import { useAudioStore } from '@/stores/audio'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { GlassCard, BaseButton, LoadingSpinner } from '@/components/ui'
 import HasPlayedBeforeModal from '@/components/walkthrough/HasPlayedBeforeModal.vue'
-import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2, Trophy } from 'lucide-vue-next'
+import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2, Trophy, Star, Medal } from 'lucide-vue-next'
+import { gmLevelLabel, gmLevelColor } from '@/engine/data/gmLevels'
+import CoachAvatar from '@/components/common/CoachAvatar.vue'
+import TeamPicker from '@/components/team/TeamPicker.vue'
+import OwnerQuickInfo from '@/components/team/OwnerQuickInfo.vue'
+import { findCoachForTeam } from '@/engine/data/coaches'
+import { coachBadges } from '@/engine/data/coachBadges'
 
 const router = useRouter()
 const route = useRoute()
@@ -25,6 +31,15 @@ const pendingNavigation = ref(null)
 // same feature flag as the headshot customize tools. Locked users see the
 // input disabled with an upgrade prompt below it.
 const canRenameTeam = computed(() => authStore.hasFeature('headshot_editor'))
+
+// The user's career GM Level (profile-global) — surfaced in the create modal so
+// they know which Strong/Elite franchises they can sign with before picking.
+const gmLevelBadge = computed(() => ({
+  label: gmLevelLabel(authStore.gmLevel),
+  color: gmLevelColor(authStore.gmLevel),
+  // Dark text reads better on the lighter gold/platinum/silver tiers.
+  text: authStore.gmLevel >= 2 ? '#15171c' : '#ffffff',
+}))
 
 function handlePlayedBeforeAnswer(playedBefore) {
   walkthroughStore.setHasPlayedBefore(playedBefore)
@@ -64,6 +79,35 @@ const difficulties = [
   { value: 'all_star', label: 'All-Star', description: 'Challenging gameplay' },
   { value: 'hall_of_fame', label: 'Hall of Fame', description: 'Expert difficulty' },
 ]
+
+// --- Team-preview helpers (facilities tier + set coach) -------------------
+// Facilities live on the static TEAMS data and are copied verbatim into the
+// campaign, so previewing them here matches exactly what the campaign gets.
+const FACILITY_KEYS = ['training', 'medical', 'scouting', 'analytics']
+const FACILITY_SHORT = { training: 'TRN', medical: 'MED', scouting: 'SCT', analytics: 'ANL' }
+const COACH_ATTR_ORDER = ['offensiveIQ', 'defensiveIQ', 'playerDevelopment', 'strictness', 'gameManagement']
+const COACH_ATTR_ABBR = { offensiveIQ: 'OFF', defensiveIQ: 'DEF', playerDevelopment: 'DEV', strictness: 'STR', gameManagement: 'MGT' }
+const COACH_BADGE_TIER_COLORS = { bronze: '#CD7F32', silver: '#C0C0C0', gold: '#FFD700', hof: '#9333EA' }
+
+// The team's set coach (deterministic identity + authored overall/attributes/badges).
+function coachFor(team) {
+  return team ? findCoachForTeam(team.abbreviation) : null
+}
+const selectedCoach = computed(() => coachFor(selectedTeam.value))
+function coachBadgeName(id) {
+  return coachBadges.find(b => b.id === id)?.name ?? id
+}
+function coachBadgeDesc(badge) {
+  const def = coachBadges.find(b => b.id === badge.id)
+  return def ? `${def.name} — ${def.description} (${(badge.level || 'bronze').toUpperCase()})` : badge.id
+}
+function getAttrColor(value) {
+  if (value >= 90) return 'var(--color-success)'
+  if (value >= 80) return '#22D3EE'
+  if (value >= 70) return 'var(--color-primary)'
+  if (value >= 60) return 'var(--color-warning)'
+  return 'var(--color-error)'
+}
 
 onMounted(async () => {
   await campaignStore.fetchCampaigns()
@@ -215,10 +259,6 @@ function formatDate(dateString) {
   })
 }
 
-function getTeamsByConference(conference) {
-  return campaignStore.availableTeams.filter(t => t.conference === conference)
-}
-
 function getDifficultyLabel(value) {
   return difficulties.find(d => d.value === value)?.label || value
 }
@@ -300,15 +340,15 @@ function getDifficultyLabel(value) {
           >
             <div class="campaign-header">
               <div class="campaign-info">
-                <h3 class="campaign-name">{{ campaign.name }}</h3>
+                <h3 class="campaign-name">{{ campaign.team?.name || campaign.name }}</h3>
                 <div class="campaign-team-row">
-                  <p class="campaign-team">{{ campaign.team?.name }}</p>
+                  <p class="campaign-team">Overall Record</p>
                   <span
-                    v-if="campaign.team?.franchise_history?.regular_season"
+                    v-if="campaign.team?.allTimeRecord"
                     class="campaign-team-record"
-                    :title="`All-time regular season: ${campaign.team.franchise_history.regular_season.wins ?? 0}-${campaign.team.franchise_history.regular_season.losses ?? 0}`"
+                    :title="`Overall record: ${campaign.team.allTimeRecord.wins}-${campaign.team.allTimeRecord.losses}`"
                   >
-                    {{ campaign.team.franchise_history.regular_season.wins ?? 0 }}-{{ campaign.team.franchise_history.regular_season.losses ?? 0 }}
+                    {{ campaign.team.allTimeRecord.wins }}-{{ campaign.team.allTimeRecord.losses }}
                   </span>
                 </div>
               </div>
@@ -344,7 +384,7 @@ function getDifficultyLabel(value) {
               <div class="campaign-meta">
                 <span class="meta-item">
                   <Calendar :size="14" />
-                  Year {{ campaign.game_year }}
+                  Year {{ campaign.gameYear ?? campaign.game_year ?? 1 }}
                 </span>
                 <span class="meta-divider">·</span>
                 <span class="meta-item difficulty">{{ getDifficultyLabel(campaign.difficulty) }}</span>
@@ -386,7 +426,7 @@ function getDifficultyLabel(value) {
           <div class="modal-container">
             <!-- Header -->
             <header class="modal-header">
-              <h2 class="modal-title">Create New Campaign</h2>
+              <h2 class="modal-title">Sign a 2-Year GM Contract</h2>
               <button class="modal-close" @click="closeCreateModal" aria-label="Close">
                 <X :size="20" />
               </button>
@@ -424,55 +464,27 @@ function getDifficultyLabel(value) {
                 </div>
               </div>
 
+              <!-- GM Level (career, profile-global) -->
+              <div class="form-group gm-level-group">
+                <span class="gm-level-label">Your GM Level</span>
+                <span
+                  class="gm-level-badge"
+                  :style="{ backgroundColor: gmLevelBadge.color, color: gmLevelBadge.text }"
+                  :title="`Your GM career level: ${gmLevelBadge.label}`"
+                >
+                  <Medal :size="14" />
+                  {{ gmLevelBadge.label }}
+                </span>
+              </div>
+
               <!-- Team Selection -->
               <div class="form-group">
-                <label class="form-label">Select Your Team</label>
-
-                <!-- Eastern Conference -->
-                <div class="conference-section">
-                  <h4 class="conference-title">Eastern Conference</h4>
-                  <div class="teams-grid">
-                    <button
-                      v-for="team in getTeamsByConference('east')"
-                      :key="team.abbreviation"
-                      type="button"
-                      class="team-option"
-                      :class="{ selected: selectedTeam?.abbreviation === team.abbreviation }"
-                      @click="selectedTeam = team"
-                    >
-                      <div
-                        class="team-option-badge"
-                        :style="{ backgroundColor: team.primary_color }"
-                      >
-                        {{ team.abbreviation }}
-                      </div>
-                      <span class="team-option-city">{{ team.city }}</span>
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Western Conference -->
-                <div class="conference-section">
-                  <h4 class="conference-title">Western Conference</h4>
-                  <div class="teams-grid">
-                    <button
-                      v-for="team in getTeamsByConference('west')"
-                      :key="team.abbreviation"
-                      type="button"
-                      class="team-option"
-                      :class="{ selected: selectedTeam?.abbreviation === team.abbreviation }"
-                      @click="selectedTeam = team"
-                    >
-                      <div
-                        class="team-option-badge"
-                        :style="{ backgroundColor: team.primary_color }"
-                      >
-                        {{ team.abbreviation }}
-                      </div>
-                      <span class="team-option-city">{{ team.city }}</span>
-                    </button>
-                  </div>
-                </div>
+                <label class="form-label">Choose the team to sign with (2-year contract)</label>
+                <TeamPicker
+                  v-model="selectedTeam"
+                  :teams="campaignStore.availableTeams"
+                  :gm-level="authStore.gmLevel"
+                />
               </div>
 
               <!-- Rename Your Team (optional) — gated by the headshot_editor
@@ -497,15 +509,76 @@ function getDifficultyLabel(value) {
                  team list. Lives outside .modal-content so the scrolling
                  content doesn't ride underneath it. -->
             <div v-if="selectedTeam" class="selected-team-preview">
-              <div
-                class="preview-badge"
-                :style="{ backgroundColor: selectedTeam.primary_color }"
+              <button
+                type="button"
+                class="preview-deselect"
+                aria-label="Clear team selection"
+                @click="selectedTeam = null"
               >
-                {{ selectedTeam.abbreviation }}
+                <X :size="16" />
+              </button>
+              <div class="preview-top">
+                <div
+                  class="preview-badge"
+                  :style="{ backgroundColor: selectedTeam.primary_color }"
+                >
+                  {{ selectedTeam.abbreviation }}
+                </div>
+                <div class="preview-info">
+                  <h4 class="preview-name">{{ customTeamName.trim() || selectedTeam.name }}</h4>
+                  <p class="preview-meta">{{ selectedTeam.division }} Division</p>
+                  <OwnerQuickInfo :team-abbreviation="selectedTeam.abbreviation" />
+                </div>
+
+                <!-- Facilities stars — to the right of the team name on desktop,
+                     wrapping underneath on mobile. -->
+                <div class="pd-facilities">
+                  <span v-for="key in FACILITY_KEYS" :key="key" class="pd-fac">
+                    <span class="pd-fac-label">{{ FACILITY_SHORT[key] }}</span>
+                    <span class="facility-stars mini">
+                      <span
+                        v-for="i in 5"
+                        :key="i"
+                        class="star"
+                        :class="{ filled: i <= (selectedTeam.facilities?.[key] ?? 0) }"
+                      >&#9733;</span>
+                    </span>
+                  </span>
+                </div>
               </div>
-              <div class="preview-info">
-                <h4 class="preview-name">{{ customTeamName.trim() || selectedTeam.name }}</h4>
-                <p class="preview-meta">{{ selectedTeam.division }} Division</p>
+
+              <!-- Set head coach — deterministic; previews what the campaign
+                   will generate. -->
+              <div v-if="selectedCoach" class="preview-detail">
+                <div class="pd-coach">
+                  <CoachAvatar :coach="selectedCoach" :size="34" />
+                  <div class="pd-coach-info">
+                    <span class="pd-coach-top">
+                      <span class="pd-coach-name">{{ selectedCoach.firstName }} {{ selectedCoach.lastName }}</span>
+                      <span v-if="selectedCoach.overall != null" class="pd-coach-ovr">OVR {{ selectedCoach.overall }}</span>
+                    </span>
+                    <span v-if="selectedCoach.badges?.length" class="pd-badges">
+                      <span
+                        v-for="badge in selectedCoach.badges"
+                        :key="badge.id"
+                        class="pd-badge"
+                        :title="coachBadgeDesc(badge)"
+                      >
+                        <Star
+                          :size="10"
+                          :style="{ color: COACH_BADGE_TIER_COLORS[badge.level] || 'var(--color-text-secondary)' }"
+                          :fill="COACH_BADGE_TIER_COLORS[badge.level] || 'transparent'"
+                        />
+                        {{ coachBadgeName(badge.id) }}
+                      </span>
+                    </span>
+                    <span v-if="selectedCoach.attributes" class="pd-attrs">
+                      <span v-for="key in COACH_ATTR_ORDER" :key="key" class="pd-attr">
+                        {{ COACH_ATTR_ABBR[key] }}<b :style="{ color: getAttrColor(selectedCoach.attributes[key]) }">{{ selectedCoach.attributes[key] }}</b>
+                      </span>
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -520,7 +593,7 @@ function getDifficultyLabel(value) {
                 @click="createCampaign"
               >
                 <LoadingSpinner v-if="creating" size="sm" />
-                <template v-else>Create Campaign</template>
+                <template v-else>Sign 2-Year Contract</template>
               </button>
             </footer>
           </div>
@@ -1025,6 +1098,30 @@ function getDifficultyLabel(value) {
   margin-bottom: 0.5rem;
 }
 
+/* GM Level row in the create modal — label + colored tier badge inline. */
+.gm-level-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.gm-level-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.gm-level-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full, 999px);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 .form-input {
   width: 100%;
   padding: 0.75rem 1rem;
@@ -1146,18 +1243,178 @@ function getDifficultyLabel(value) {
   text-overflow: ellipsis;
 }
 
-/* Selected Team Preview — full-width pinned banner between the scrolling
-   .modal-content and the action .modal-footer. No border-radius / no
-   horizontal margin so it spans edge-to-edge of the modal container. */
-.selected-team-preview {
+/* Facilities tier on each team option (and reused star style in the detail panel) */
+.team-option-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  margin-top: 3px;
+}
+.tier-stars,
+.facility-stars {
+  display: inline-flex;
+  line-height: 1;
+}
+.tier-stars .star,
+.facility-stars .star {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.15);
+}
+.facility-stars .star {
+  font-size: 0.95rem;
+}
+.tier-stars .star.filled,
+.facility-stars .star.filled {
+  color: #FFC72C;
+  text-shadow: 0 0 6px rgba(255, 199, 44, 0.4);
+}
+.tier-label {
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  font-weight: 700;
+}
+
+/* Minimal facilities + coach detail, embedded inside the preview banner. */
+.facility-stars.mini .star {
+  font-size: 0.72rem;
+}
+.preview-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--glass-border);
+}
+.pd-facilities {
+  /* Desktop: 2-column grid (2x2) sitting to the right of the team name —
+     preview-info's flex:1 pushes this block to the right edge. */
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 4px 14px;
+}
+/* Mobile: drop to a full-width row stacked under the team name. */
+@media (max-width: 560px) {
+  .pd-facilities {
+    display: flex;
+    flex-wrap: wrap;
+    flex-basis: 100%;
+    gap: 5px 14px;
+    justify-content: flex-start;
+  }
+}
+.pd-fac {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pd-fac-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--color-text-tertiary);
+}
+.pd-coach {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 1rem 20px;
+  gap: 8px;
+}
+.pd-coach-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pd-coach-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pd-coach-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.pd-coach-ovr {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+.pd-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pd-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  background: var(--color-bg-elevated, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  font-size: 0.62rem;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+.pd-attrs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 0.62rem;
+  color: var(--color-text-tertiary);
+}
+.pd-attr b {
+  margin-left: 3px;
+  font-weight: 700;
+}
+
+/* Selected Team Preview — full-width pinned banner between the scrolling
+   .modal-content and the action .modal-footer. No border-radius / no
+   horizontal margin so it spans edge-to-edge of the modal container. The team
+   identity sits on top (.preview-top), with the minimal detail beneath it. */
+.selected-team-preview {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.85rem 20px;
   background: var(--color-bg-tertiary);
   border-top: 1px solid var(--glass-border);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
+}
+.preview-deselect {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: var(--color-bg-elevated, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.preview-deselect:hover {
+  background: var(--color-bg-secondary, rgba(255, 255, 255, 0.12));
+  color: var(--color-text-primary);
+}
+.preview-top {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  /* Leave room for the deselect X so the facilities grid doesn't slide under it. */
+  padding-right: 1.5rem;
 }
 
 .preview-badge {
@@ -1174,7 +1431,7 @@ function getDifficultyLabel(value) {
 }
 
 .preview-info {
-  flex: 1;
+  
 }
 
 .preview-name {

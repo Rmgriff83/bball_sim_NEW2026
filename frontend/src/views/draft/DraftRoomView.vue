@@ -829,6 +829,7 @@ onUnmounted(() => {
             Skip Pick
           </button>
           <button
+            v-if="draftStore.hasUpcomingUserPick"
             class="sim-btn"
             :disabled="draftStore.isSimming || draftStore.isDraftComplete"
             @click="handleSkipToMyPick"

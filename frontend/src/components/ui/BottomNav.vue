@@ -50,11 +50,23 @@ const seasonPhase = computed(() => {
   return c?.settings?.season_phase ?? c?.settings?.seasonPhase ?? c?.phase ?? 'regular_season'
 })
 
-// Scouting is closed once the rookie draft begins and stays closed through
-// free agency, reopening when the next season starts.
-const hideScout = computed(() =>
-  seasonPhase.value === 'offseason_draft' || seasonPhase.value === 'offseason_free_agency'
-)
+// Scouting stays available through the postseason and the entire offseason —
+// including the free-agency window AND the draft phase itself, since that's
+// exactly when prospects matter and the user wants to spend scout points right
+// before drafting. It's only hidden once THIS offseason's rookie draft is
+// completed, reopening when the next regular season starts (a new gameYear with
+// no completed draft).
+const hideScout = computed(() => {
+  const c = campaignStore.currentCampaign
+  const gameYear = c?.gameYear ?? 1
+  return c?.[`rookieDraftCompleted_${gameYear}`] === true
+})
+
+// No games are playable during the offseason — hide the Play tab there.
+const isOffseason = computed(() => {
+  const p = seasonPhase.value
+  return p === 'offseason' || p === 'offseason_free_agency' || p === 'offseason_draft'
+})
 
 const navItems = computed(() => {
   const showPlayoffs = playoffStore.isInPlayoffs && seasonPhase.value !== 'regular_season'
@@ -92,7 +104,7 @@ const navItems = computed(() => {
       routeName: 'scouting',
       icon: 'binoculars'
     },
-    {
+    isOffseason.value ? null : {
       name: 'play',
       to: `/campaign/${props.campaignId}/play`,
       routeName: 'game',

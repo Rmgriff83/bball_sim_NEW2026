@@ -85,8 +85,11 @@ export function selectBestLineup(roster) {
   // Sort by effective rating (highest first)
   rosterWithEffectiveRating.sort((a, b) => (b.effectiveRating ?? 0) - (a.effectiveRating ?? 0));
 
-  // First pass: assign players to their natural positions (skip those who should rest if alternatives exist)
-  for (const pos of POSITIONS) {
+  // Pick the best available player for `pos` among those satisfying `match`.
+  // Roster is pre-sorted by effective rating, so the first eligible non-resting
+  // player is the best. A player who should rest is held as a fallback and only
+  // used if no rested alternative exists.
+  function pickBest(pos, match) {
     let bestCandidate = null;
 
     for (const player of rosterWithEffectiveRating) {
@@ -94,24 +97,19 @@ export function selectBestLineup(roster) {
       if (!playerId) continue;
       if (isPlayerInjured(player)) continue;
       if (usedPlayerIds.includes(playerId)) continue;
+      if (!match(player, pos)) continue;
 
-      const primaryPos = getPlayerPosition(player);
-      const secondaryPos = getPlayerSecondaryPosition(player);
+      const shouldRest = player.shouldRest ?? false;
 
-      if (primaryPos === pos || secondaryPos === pos) {
-        const shouldRest = player.shouldRest ?? false;
+      // Hold a should-rest player as a fallback, but keep looking for a rested one.
+      if (shouldRest && !bestCandidate) {
+        bestCandidate = player;
+        continue;
+      }
 
-        // If this player should rest but we haven't found anyone yet, save as fallback
-        if (shouldRest && !bestCandidate) {
-          bestCandidate = player;
-          continue;
-        }
-
-        // Found a player who doesn't need rest - use them
-        if (!shouldRest) {
-          bestCandidate = player;
-          break;
-        }
+      if (!shouldRest) {
+        bestCandidate = player;
+        break;
       }
     }
 
@@ -121,19 +119,28 @@ export function selectBestLineup(roster) {
     }
   }
 
-  // Second pass: fill any remaining positions with best available
+  // Pass 1 — primary position. A player's PRIMARY always wins a slot before any
+  // secondary-eligible player can take it. Since each player has exactly one
+  // primary, this pass is order-independent: a high-rated C/PF can no longer be
+  // grabbed for the PF slot (filled before C) via its secondary, which is what
+  // caused bigs to swap into the wrong slot.
+  for (const pos of POSITIONS) {
+    pickBest(pos, (player, p) => getPlayerPosition(player) === p);
+  }
+
+  // Pass 2 — secondary position. Fill any slot still empty with the best player
+  // for whom this is a secondary position.
   for (const pos of POSITIONS) {
     if (!lineup[pos]) {
-      for (const player of rosterWithEffectiveRating) {
-        const playerId = player.id ?? null;
-        if (!playerId) continue;
-        if (isPlayerInjured(player)) continue;
-        if (usedPlayerIds.includes(playerId)) continue;
+      pickBest(pos, (player, p) => getPlayerSecondaryPosition(player) === p);
+    }
+  }
 
-        lineup[pos] = playerId;
-        usedPlayerIds.push(playerId);
-        break;
-      }
+  // Pass 3 — fallback: fill any remaining slot with the best available player
+  // regardless of position (roster short a position, etc.).
+  for (const pos of POSITIONS) {
+    if (!lineup[pos]) {
+      pickBest(pos, () => true);
     }
   }
 

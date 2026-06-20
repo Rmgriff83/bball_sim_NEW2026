@@ -1,25 +1,22 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { Dumbbell } from 'lucide-vue-next'
 import { StatBadge, Badge } from '@/components/ui'
 import { useTeamStore } from '@/stores/team'
 
 const teamStore = useTeamStore()
 
-// Live 30s tick so `trainingReadyForPlayer` flips to true the moment the
-// timer expires without needing a full re-render trigger from the parent.
+// 1-second tick that drives the live countdown / ready flip. Only runs while
+// THIS card's player has an active (unclaimed) training session, so the other
+// cards in a roster grid aren't paying for a per-second timer.
 const _trainClockTick = ref(Date.now())
 let _trainClockHandle = null
-onMounted(() => {
-  if (_trainClockHandle == null) {
-    _trainClockHandle = setInterval(() => { _trainClockTick.value = Date.now() }, 30 * 1000)
-  }
-})
-onUnmounted(() => {
+function _stopTrainClock() {
   if (_trainClockHandle != null) {
     clearInterval(_trainClockHandle)
     _trainClockHandle = null
   }
-})
+}
 
 const props = defineProps({
   player: {
@@ -54,17 +51,57 @@ const positionColor = computed(() => positionColors[props.player.position] || '#
 
 const isInjured = computed(() => props.player.is_injured || props.player.isInjured)
 
+// The active training session IF it belongs to THIS player (in progress OR
+// finished-but-unclaimed). Independent of the clock tick so the timer watcher
+// below has a stable on/off signal.
+const trainingSessionForPlayer = computed(() => {
+  const t = teamStore.coach?.activeTraining
+  if (!t?.endsAt) return null
+  const pid = props.player?.id
+  if (pid == null || String(t.playerId) !== String(pid)) return null
+  return t
+})
+
+const trainingMsLeft = computed(() => {
+  void _trainClockTick.value
+  const t = trainingSessionForPlayer.value
+  if (!t) return 0
+  return Math.max(0, new Date(t.endsAt).getTime() - Date.now())
+})
+
+// In progress = session exists and the clock hasn't run out → show countdown.
+const trainingInProgress = computed(() => !!trainingSessionForPlayer.value && trainingMsLeft.value > 0)
+
 // True when THIS player has a finished training session waiting to claim.
 // Drives a green dot in the top-left of the rating-container so users can
 // spot the right card at a glance from the roster grid.
-const trainingReadyForPlayer = computed(() => {
-  void _trainClockTick.value
-  const t = teamStore.coach?.activeTraining
-  if (!t?.endsAt) return false
-  const pid = props.player?.id
-  if (pid == null || String(t.playerId) !== String(pid)) return false
-  return new Date(t.endsAt).getTime() <= Date.now()
-})
+const trainingReadyForPlayer = computed(() => !!trainingSessionForPlayer.value && trainingMsLeft.value <= 0)
+
+// Pretty "Xh Ym" / "Xm Ys" / "Xs" countdown (mirrors the player-detail modal).
+function formatTrainingCountdown(ms) {
+  if (ms == null || ms <= 0) return 'Done'
+  const totalSeconds = Math.ceil(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  if (hours >= 1) return `${hours}h ${minutes}m`
+  const seconds = totalSeconds % 60
+  if (minutes >= 1) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
+// Run the 1s tick only while this card has an active session.
+watch(() => !!trainingSessionForPlayer.value, (active) => {
+  if (active) {
+    _trainClockTick.value = Date.now()
+    if (_trainClockHandle == null) {
+      _trainClockHandle = setInterval(() => { _trainClockTick.value = Date.now() }, 1000)
+    }
+  } else {
+    _stopTrainClock()
+  }
+}, { immediate: true })
+
+onUnmounted(_stopTrainClock)
 
 const ratingClass = computed(() => {
   const rating = props.player.overall_rating
@@ -122,7 +159,12 @@ function getBadgeLevelColor(level) {
       <div class="flex items-center gap-3 p-3">
         <div class="rating-wrapper">
           <StatBadge :value="player.overall_rating" size="sm" />
-          <span v-if="trainingReadyForPlayer" class="train-ready-dot" :title="'Training ready to claim'"></span>
+          <span
+            v-if="trainingInProgress"
+            class="train-countdown"
+            :title="`Training · ${formatTrainingCountdown(trainingMsLeft)} remaining`"
+          ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeft) }}</span></span>
+          <span v-else-if="trainingReadyForPlayer" class="train-ready-dot" :title="'Training ready to claim'"></span>
           <span v-if="isInjured" class="injury-badge-sm" title="Injured">INJ</span>
         </div>
         <div class="flex-1 min-w-0">
@@ -154,7 +196,12 @@ function getBadgeLevelColor(level) {
       <div class="card-header">
         <div class="rating-container">
           <StatBadge :value="player.overall_rating" size="lg" />
-          <span v-if="trainingReadyForPlayer" class="train-ready-dot" :title="'Training ready to claim'"></span>
+          <span
+            v-if="trainingInProgress"
+            class="train-countdown"
+            :title="`Training · ${formatTrainingCountdown(trainingMsLeft)} remaining`"
+          ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeft) }}</span></span>
+          <span v-else-if="trainingReadyForPlayer" class="train-ready-dot" :title="'Training ready to claim'"></span>
           <span v-if="isInjured" class="injury-badge" title="Injured">INJ</span>
         </div>
         <div class="player-info">
@@ -527,6 +574,32 @@ function getBadgeLevelColor(level) {
   background: #22c55e;
   box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
   z-index: 1;
+}
+
+/* Live training countdown — occupies the same top-left corner as the
+   ready dot, but as a small pill of remaining time while training is
+   in progress. */
+.train-countdown {
+  position: absolute;
+  top: -8px;
+  left: -6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px 1px 4px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: #3b82f6;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  white-space: nowrap;
+  z-index: 2;
+}
+.train-countdown svg {
+  flex-shrink: 0;
 }
 
 .injury-badge-sm {

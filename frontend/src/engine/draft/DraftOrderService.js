@@ -61,10 +61,13 @@ export function buildRookieDraftOrder(teams, standings, gameYear, lotteryResult 
   // order, so we keep the original array intact.
   const round1Order = (() => {
     if (!lotteryResult?.actualOrder) return teamRecords
+    // Keyed by abbreviation (stable) — see lotteryPositionMap. An id-keyed
+    // lookup can miss for every team and silently fall back to reverse
+    // standings (the "lottery did nothing" bug).
     const lotteryMap = lotteryPositionMap(lotteryResult)
     return [...teamRecords].sort((a, b) => {
-      const aPick = lotteryMap.get(a.team.id) ?? 999
-      const bPick = lotteryMap.get(b.team.id) ?? 999
+      const aPick = lotteryMap.get(a.team.abbreviation) ?? 999
+      const bPick = lotteryMap.get(b.team.abbreviation) ?? 999
       return aPick - bPick
     })
   })()
@@ -123,6 +126,54 @@ export function buildRookieDraftOrder(teams, standings, gameYear, lotteryResult 
   }
 
   return draftOrder
+}
+
+/**
+ * Build the round-1 display rows for the draft-lottery results modal.
+ * Each row carries the current pick owner (post-trades), the original team whose
+ * record entered the lottery, and the lottery delta (how far that original team
+ * moved from its pre-lottery projected pick — positive = moved up).
+ *
+ * @param {Array}  teams         All team objects
+ * @param {Object} standings     { east, west } final standings
+ * @param {Object} lotteryResult campaign.settings.draftLottery (has actualOrder + year)
+ * @returns {Array} rows: { pick, isLotteryTeam, isTraded, currentOwner, originalOwner, deltaLabel, deltaDir, delta }
+ */
+export function buildLotteryResultRows(teams, standings, lotteryResult, pickYear = null) {
+  if (!lotteryResult || !Array.isArray(teams) || teams.length === 0) return []
+  const safeStandings = standings || { east: [], west: [] }
+  // Pick OWNERSHIP (for traded-pick "via" credit) is keyed by the draft pick's
+  // `year`, which uses the campaign GAME-YEAR counter (1,2,3…) — NOT the calendar
+  // year on `lotteryResult.year`. Use the injected counter `pickYear` (the same
+  // value the draft room passes) so findDraftPick matches; fall back to
+  // lotteryResult.year for older callers.
+  const lookupYear = pickYear ?? lotteryResult.year
+  const fullOrder = buildRookieDraftOrder(teams, safeStandings, lookupYear, lotteryResult)
+  // Round 1 only — round 2 isn't lottery-affected (just reverse standings).
+  const round1 = fullOrder.filter(slot => slot.round === 1)
+
+  // The lottery operates on ORIGINAL teams (whoever's record finished bottom-14),
+  // so deltas key off the original team — by ABBREVIATION (stable, and always
+  // present on every slot, unlike originalTeamId which the no-pick-found branch
+  // of buildRookieDraftOrder omits).
+  const deltaByAbbr = new Map(
+    (lotteryResult.actualOrder || []).map(s => [s.teamAbbr, s.delta])
+  )
+  const teamById = new Map(teams.map(t => [t.id, t]))
+
+  return round1.map(slot => {
+    const delta = deltaByAbbr.get(slot.originalTeamAbbr) ?? 0
+    return {
+      pick: slot.pick,
+      isLotteryTeam: slot.pick <= 14,
+      isTraded: slot.isTraded,
+      currentOwner: teamById.get(slot.teamId) ?? null,
+      originalOwner: teamById.get(slot.originalTeamId) ?? null,
+      delta,
+      deltaLabel: delta > 0 ? `+${delta}` : delta < 0 ? `${delta}` : null,
+      deltaDir: delta > 0 ? 'up' : delta < 0 ? 'down' : null,
+    }
+  })
 }
 
 /**

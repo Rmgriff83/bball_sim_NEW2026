@@ -17,6 +17,7 @@ import { PlayoffManager } from '@/engine/season/PlayoffManager'
 import { processGameRewards, TOKENS_PER_SYNERGY, WIN_MULTIPLIER, WIN_BONUS_TOKENS } from '@/engine/rewards/RewardService'
 import { NewsService } from '@/engine/season/NewsService'
 import { processAiToAiTrades, computeAiTradingBlock, analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
+import { buildPickValueFn } from '@/engine/ai/PickValuationService'
 import { AllStarService } from '@/engine/season/AllStarService'
 import { getSeasonDeadlines } from '@/engine/season/SeasonDeadlines'
 import {
@@ -57,6 +58,13 @@ export const useGameStore = defineStore('game', () => {
 
   // Weekly summary state
   const weeklySummaryData = ref(null)
+
+  // User-team players who came back from injury during a date advance (day
+  // ticks, off days, between games). Surfaced by the views as a "Recovery
+  // Report" modal — the mirror of the injury modal — and drained once shown.
+  // Accumulates across a multi-tick sim so a long sim that spans several
+  // recoveries still reports them all at the end.
+  const pendingRecoveries = ref([])
 
   // Sim-to-game pause state. simulateToGame iterates day-by-day and halts when
   // it hits a trade-deadline / All-Star / user-injury trigger; the SimPauseModal
@@ -258,13 +266,14 @@ export const useGameStore = defineStore('game', () => {
   }
 
   async function _awardScoutingPoints(campaign, newDate) {
-    // Only award scouting points during the regular season. There are two
-    // sources of truth: the explicit `phase` field (offseason / playoffs)
-    // AND the existence of a `playoffBracket` on this year's SeasonData
-    // (set the moment playoffs start, even before any phase field flips).
-    // We check both because the phase field defaults to `regular_season`
-    // when undefined, which previously let points keep accruing through
-    // the playoffs.
+    // Scouting points accrue through the regular season AND the playoffs, then
+    // stop once the playoffs are over for the season. Two independent stops:
+    //   1. The `phase` field — flips to `offseason*` when the offseason begins,
+    //      halting all accrual. (During the playoffs it stays `regular_season`,
+    //      so this gate intentionally allows playoff accrual.)
+    //   2. A crowned champion on this year's SeasonData playoff bracket — stamped
+    //      the moment the finals wrap, covering the gap where the finals are done
+    //      but the user hasn't advanced to the offseason yet.
     const phase = campaign.settings?.season_phase ?? campaign.settings?.seasonPhase ?? campaign.phase ?? 'regular_season'
     if (phase !== 'regular_season') return 0
 
@@ -272,7 +281,7 @@ export const useGameStore = defineStore('game', () => {
       const year = campaign.currentSeasonYear ?? campaign.year
       if (year != null) {
         const seasonData = await SeasonRepository.get(campaign.id, year)
-        if (seasonData?.playoffBracket) return 0
+        if (seasonData?.playoffBracket?.champion) return 0
       }
     } catch (err) {
       console.warn('[GameStore] Scout-point playoff check failed:', err)
@@ -392,11 +401,12 @@ export const useGameStore = defineStore('game', () => {
    * resulting player updates in one IndexedDB write.
    */
   async function _tickInjuryRecovery(campaignId, daysElapsed) {
-    if (!Number.isFinite(daysElapsed) || daysElapsed <= 0) return
+    if (!Number.isFinite(daysElapsed) || daysElapsed <= 0) return []
     const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
-    if (!allPlayers || allPlayers.length === 0) return
+    if (!allPlayers || allPlayers.length === 0) return []
 
     const updates = []
+    const recovered = []
     for (const player of allPlayers) {
       if (!isPlayerInjured(player)) continue
       const next = processInjuryRecovery(player, daysElapsed)
@@ -404,11 +414,22 @@ export const useGameStore = defineStore('game', () => {
       // so a strict ref check is enough to know we need to persist.
       if (next !== player) {
         updates.push({ ...next, campaignId })
+        // Transitioned injured → healthy this tick: a recovery to report.
+        if (!isPlayerInjured(next)) {
+          const fullName = `${next.firstName ?? ''} ${next.lastName ?? ''}`.trim()
+          const name = next.name ?? (fullName || 'Player')
+          recovered.push({
+            player_id: next.id,
+            name,
+            teamId: next.teamId ?? player.teamId ?? null,
+          })
+        }
       }
     }
     if (updates.length > 0) {
       await PlayerRepository.saveBulk(updates)
     }
+    return recovered
   }
 
   /**
@@ -533,6 +554,13 @@ export const useGameStore = defineStore('game', () => {
         await TeamRepository.saveBulk(aiTeamsToSaveBlock)
       }
 
+      const getPickValueFn = buildPickValueFn({
+        allTeams,
+        standings: seasonData.standings || { east: [], west: [] },
+        allPlayers,
+        currentSeasonYear: year,
+      })
+
       const result = processAiToAiTrades({
         aiTeams,
         allPlayers,
@@ -541,6 +569,7 @@ export const useGameStore = defineStore('game', () => {
         currentDate,
         seasonYear: year,
         difficulty,
+        getPickValueFn,
       })
 
       if (result.trades.length === 0) return
@@ -868,7 +897,12 @@ export const useGameStore = defineStore('game', () => {
       // the same game count through the offseason and into the next year.
       const daysElapsed = Math.max(1, Math.round((newMs - prevMs) / (24 * 60 * 60 * 1000)))
       try {
-        await _tickInjuryRecovery(campaignId, daysElapsed)
+        const recovered = await _tickInjuryRecovery(campaignId, daysElapsed)
+        // Queue the user's own returning players for the Recovery Report modal.
+        const userRecovered = recovered.filter(r => r.teamId === campaign.teamId)
+        if (userRecovered.length > 0) {
+          pendingRecoveries.value = [...pendingRecoveries.value, ...userRecovered]
+        }
       } catch (err) {
         console.warn('[GameStore] Injury recovery tick failed:', err)
       }
@@ -3135,6 +3169,7 @@ export const useGameStore = defineStore('game', () => {
     pauseResumeContext,
     // Weekly summary
     weeklySummaryData,
+    pendingRecoveries,
     // Getters
     upcomingGames,
     completedGames,

@@ -5,6 +5,7 @@ import { useFinanceStore } from '@/stores/finance'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { useAuthStore } from '@/stores/auth'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { GlassCard, LoadingSpinner } from '@/components/ui'
@@ -30,6 +31,7 @@ const financeStore = useFinanceStore()
 const teamStore = useTeamStore()
 const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
+const audio = useAudioStore()
 const authStore = useAuthStore()
 const walkthroughStore = useWalkthroughStore()
 const route = useRoute()
@@ -130,6 +132,22 @@ const filteredFreeAgents = computed(() => {
   })
   return sorted
 })
+
+// Pagination for the free-agents list — the offseason pool is large, so we
+// render a page at a time with a "Show More" button (mirrors ScoutingView).
+const FA_PAGE_SIZE = 18
+const faPage = ref(1)
+function resetFaPage() { faPage.value = 1 }
+// Reset to the first page whenever the filter or sort changes so the user
+// isn't stranded on a now-too-high page.
+watch([faPositionFilter, faOvrSortDir], resetFaPage)
+
+const paginatedFreeAgents = computed(() =>
+  filteredFreeAgents.value.slice(0, faPage.value * FA_PAGE_SIZE)
+)
+const hasMoreFreeAgents = computed(() =>
+  paginatedFreeAgents.value.length < filteredFreeAgents.value.length
+)
 
 // Expiring contracts
 const expiringContracts = computed(() => {
@@ -313,20 +331,36 @@ async function handleSignConfirm(data) {
   signLoading.value = true
   try {
     if (data.mode === 'offer') {
+      audio.suppressClickSound() // affirmation chime instead of the generic tap
       await financeStore.makeFreeAgentOffer(props.campaignId, data.playerId, {
         years: data.years,
         salary: data.salary,
       })
+      audio.affirm()
       toastStore.showSuccess('Offer submitted')
       return
     }
-    await financeStore.signFreeAgent(props.campaignId, data.playerId)
+    audio.suppressClickSound() // affirmation chime on success instead of the generic tap
+    const result = await financeStore.signFreeAgent(props.campaignId, data.playerId, {
+      salary: data.salary,
+      years: data.years,
+    })
     // Refresh data
     await Promise.all([
       financeStore.fetchRosterContracts(props.campaignId, { force: true }),
       financeStore.fetchFreeAgents(props.campaignId, { force: true })
     ])
-    toastStore.showSuccess('Player signed')
+    // Verified "Player Signed" element + affirmation chime (handled in the store).
+    toastStore.showPlayerSigned({
+      playerName: result?.transaction?.playerName
+        || result?.player?.name
+        || `${result?.player?.firstName ?? ''} ${result?.player?.lastName ?? ''}`.trim()
+        || 'Player',
+      position: result?.player?.position,
+      overallRating: result?.player?.overallRating ?? result?.player?.overall_rating,
+      salary: result?.transaction?.salary ?? data.salary,
+      years: result?.transaction?.years ?? data.years,
+    })
   } catch (err) {
     console.error('Failed to sign free agent:', err)
     toastStore.showError(err.message || 'Failed to sign player')
@@ -366,6 +400,8 @@ async function handleDropConfirm(data) {
 
 async function handleSimFreeAgencyDay() {
   if (simmingFAday.value) return
+  audio.navigate() // generic tap; suppress the global one so it doesn't double
+  audio.suppressClickSound()
   simmingFAday.value = true
   const loadingToastId = toastStore.showLoading('Simulating free-agency day...')
   try {
@@ -397,6 +433,8 @@ async function handleSimFreeAgencyDay() {
 
 async function handleSimRestOfFreeAgency() {
   if (simmingFAday.value) return
+  audio.navigate() // generic tap; suppress the global one so it doesn't double
+  audio.suppressClickSound()
   simmingFAday.value = true
   const loadingToastId = toastStore.showLoading('Simulating remainder of free agency...')
   try {
@@ -748,17 +786,24 @@ onMounted(() => {
           <div v-if="filteredFreeAgents.length === 0" class="empty-state empty-state-inline">
             <p>No free agents match these filters.</p>
           </div>
-          <div v-else class="player-cards-grid">
-            <ContractCard
-              v-for="player in filteredFreeAgents"
-              :key="player.id"
-              :player="player"
-              :show-attributes="true"
-              :is-free-agent="true"
-              @sign="handleSign"
-              @info="handleInfo"
-            />
-          </div>
+          <template v-else>
+            <div class="player-cards-grid">
+              <ContractCard
+                v-for="player in paginatedFreeAgents"
+                :key="player.id"
+                :player="player"
+                :show-attributes="true"
+                :is-free-agent="true"
+                @sign="handleSign"
+                @info="handleInfo"
+              />
+            </div>
+            <div v-if="hasMoreFreeAgents" class="load-more-container">
+              <button class="load-more-btn" type="button" @click="faPage++">
+                Show More ({{ paginatedFreeAgents.length }} of {{ filteredFreeAgents.length }})
+              </button>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -805,6 +850,7 @@ onMounted(() => {
       :player="selectedPlayer"
       :cap-space="capSpace"
       :loading="resignLoading"
+      :team-context="financeStore.resignContext"
       @close="financeStore.closeResignModal()"
       @confirm="handleResignConfirm"
     />
@@ -841,6 +887,7 @@ onMounted(() => {
       :current-season-year="campaignStore.currentCampaign?.currentSeasonYear"
       :show-contract-actions="true"
       :is-expiring-contract="detailPlayer?.contractYearsRemaining === 1"
+      :resign-disabled="resignDeadlinePassed"
       :coach="teamStore.coach"
       :user-tokens="authStore.profile?.tokens ?? 0"
       @close="closePlayerInfoModal"
@@ -1337,6 +1384,41 @@ onMounted(() => {
   .player-cards-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* "Show More" pagination for the free-agents list — mirrors ScoutingView. */
+.load-more-container {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.load-more-btn {
+  padding: 10px 32px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.load-more-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .load-more-btn {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .load-more-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
 }
 
 /* Free Agents Section */

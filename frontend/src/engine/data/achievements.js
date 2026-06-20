@@ -38,4 +38,10 @@ export const ACHIEVEMENTS = [
   { id: 'cinderella_story', name: 'Cinderella Story', description: 'Win the championship as the 8th seed.', category: 'hidden', points: 200, criteria: { type: 'eight_seed_championship', value: 1 } },
   { id: 'tank_commander', name: 'Tank Commander', description: 'Finish with the worst record in the league.', category: 'hidden', points: 25, criteria: { type: 'worst_record', value: 1 } },
   { id: 'blockbuster_trade', name: 'Blockbuster', description: 'Complete a trade involving 5+ players.', category: 'hidden', points: 35, criteria: { type: 'large_trades', value: 1 } },
+
+  // GM CAREER ACHIEVEMENTS (GM Level — profile-global, earned via contract extensions)
+  { id: 'gm_first_extension', name: 'Re-Upped', description: 'Earn your first contract extension from a team owner.', category: 'veteran', points: 40, criteria: { type: 'gm_level', value: 1 } },
+  { id: 'gm_silver', name: 'Proven Operator', description: 'Reach GM Level Silver.', category: 'veteran', points: 75, criteria: { type: 'gm_level', value: 2 } },
+  { id: 'gm_gold', name: 'Gold-Standard GM', description: 'Reach GM Level Gold — the elite franchises open up.', category: 'mastery', points: 120, criteria: { type: 'gm_level', value: 3 } },
+  { id: 'gm_platinum', name: 'Platinum Pedigree', description: 'Reach GM Level Platinum, the pinnacle of the profession.', category: 'mastery', points: 250, criteria: { type: 'gm_level', value: 4 } },
 ]

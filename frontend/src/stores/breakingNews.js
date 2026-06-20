@@ -9,20 +9,18 @@ export const useBreakingNewsStore = defineStore('breakingNews', () => {
   const currentItem = ref(null)
   const isShowing = ref(false)
 
-  /**
-   * Enqueue a breaking news item for display and persist to seasonData.news
-   */
-  async function enqueue(item, campaignId) {
+  // Persist a news item into the current season's news feed. `isBreaking` flags
+  // it for the breaking-news styling (Zap icon + BREAKING tag); regular feed
+  // items omit it. Returns the persisted record (for the display queue id).
+  async function _persistNews(item, campaignId, isBreaking) {
     const newsRecord = {
-      id: `breaking_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-      event_type: item.category?.toLowerCase() || 'breaking',
+      id: `${isBreaking ? 'breaking' : 'news'}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      event_type: item.category?.toLowerCase() || (isBreaking ? 'breaking' : 'news'),
       headline: item.headline,
       body: item.body,
       date: item.date,
-      is_breaking: true,
+      is_breaking: isBreaking,
     }
-
-    // Persist to seasonData.news
     try {
       const campaign = await CampaignRepository.get(campaignId)
       const year = campaign?.currentSeasonYear ?? campaign?.gameYear ?? campaign?.settings?.currentYear ?? new Date().getFullYear()
@@ -34,8 +32,16 @@ export const useBreakingNewsStore = defineStore('breakingNews', () => {
         useSyncStore().markDirty()
       }
     } catch (err) {
-      console.error('Failed to persist breaking news:', err)
+      console.error('Failed to persist news:', err)
     }
+    return newsRecord
+  }
+
+  /**
+   * Enqueue a breaking news item for display and persist to seasonData.news.
+   */
+  async function enqueue(item, campaignId) {
+    const newsRecord = await _persistNews(item, campaignId, true)
 
     // Add to display queue
     const displayItem = { ...item, id: newsRecord.id }
@@ -45,6 +51,16 @@ export const useBreakingNewsStore = defineStore('breakingNews', () => {
     if (!isShowing.value) {
       showNext()
     }
+  }
+
+  /**
+   * Add a regular (non-breaking) item to the season news feed — persisted so it
+   * shows in the news list, but NOT surfaced as a breaking-news banner. For
+   * routine offseason items (e.g. AI coach hires/firings) that belong in the
+   * feed rather than the breaking ticker.
+   */
+  async function addToFeed(item, campaignId) {
+    await _persistNews(item, campaignId, false)
   }
 
   function showNext() {
@@ -76,6 +92,7 @@ export const useBreakingNewsStore = defineStore('breakingNews', () => {
     currentItem,
     isShowing,
     enqueue,
+    addToFeed,
     dismiss,
     clear,
   }

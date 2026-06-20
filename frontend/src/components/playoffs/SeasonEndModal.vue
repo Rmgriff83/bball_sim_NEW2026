@@ -408,7 +408,9 @@ onUnmounted(() => {
 
 .standouts-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* minmax(0, 1fr) lets a card shrink below a long unbreakable name so the
+     name's ellipsis can kick in instead of stretching the whole row. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -422,6 +424,8 @@ onUnmounted(() => {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   text-align: center;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .standout-label {
@@ -456,6 +460,8 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: block;
+  width: 100%;
   max-width: 100%;
 }
 
@@ -612,15 +618,14 @@ onUnmounted(() => {
   }
 }
 
-/* Standardized modal heights (90vh desktop, 85vh mobile) */
+/* Cap the height so tall content scrolls; let the modal shrink to fit short
+   content rather than forcing a full-height box. */
 .modal-container {
-  min-height: 90vh;
   max-height: 90vh;
 }
 
 @media (max-width: 480px) {
   .modal-container {
-    min-height: 85vh;
     max-height: 85vh;
   }
 }

@@ -1,10 +1,10 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { User, DollarSign, AlertTriangle, Check, X } from 'lucide-vue-next'
+import { User, DollarSign, AlertTriangle, Check, X, ArrowLeft } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { StatBadge, LoadingSpinner } from '@/components/ui'
-import { calculateRetentionScore, getMotivationLabel, getArchetypeLabel } from '@/engine/ai/MotivationService'
-import { calculateExpectedSalary } from '@/engine/ai/AITradeService'
+import { getMotivationLabel, getArchetypeLabel } from '@/engine/ai/MotivationService'
+import { resignAsk, evaluateResignOffer } from '@/engine/ai/ResignValuationService'
 
 const props = defineProps({
   show: {
@@ -35,33 +35,46 @@ const selectedYears = ref(2)
 const offeredSalary = ref(0)
 const negotiationResult = ref(null) // null | 'success' | 'declined'
 
-// Reset state when modal opens with new player
+// Context for the valuation: team/season dims + this player's season stats.
+const resignContext = computed(() => ({
+  ...(props.teamContext || {}),
+  stats: props.player?.stats ?? props.player?.season_stats ?? null,
+}))
+
+// The player's re-sign ask — open-market value, the floor they'll accept, the
+// incumbent (Bird-rights) ceiling, and the max length the current team may offer.
+const ask = computed(() => (props.player ? resignAsk(props.player, resignContext.value) : null))
+
+const marketValue = computed(() => ask.value?.marketValue ?? 0)
+const requiredSalary = computed(() => ask.value?.requiredSalary ?? 0)
+const incumbentMax = computed(() => ask.value?.incumbentMax ?? 0)
+const maxYears = computed(() => ask.value?.maxYears ?? 5)
+
+// Reset state when modal opens with new player — default to a fair market offer.
 watch(() => props.show, (isOpen) => {
   if (isOpen && props.player) {
     selectedYears.value = 2
-    offeredSalary.value = props.player.contractSalary ?? 0
+    offeredSalary.value = ask.value?.recommendedSalary ?? props.player.contractSalary ?? 0
     negotiationResult.value = null
   }
 })
 
-const yearOptions = [1, 2, 3, 4, 5]
+const yearOptions = computed(() => [1, 2, 3, 4, 5].filter(y => y <= maxYears.value))
 
-const baseSalary = computed(() => props.player?.contractSalary ?? 0)
-const maxOffer = computed(() => Math.round(baseSalary.value * 1.25))
+// Slider can dip below the floor (so a lowball visibly tanks the meter) up to
+// the incumbent ceiling above market.
+const sliderMin = computed(() => Math.max(900_000, Math.round((requiredSalary.value || 1_000_000) * 0.5)))
+const sliderMax = computed(() => incumbentMax.value || 5_000_000)
 const salaryStep = computed(() => {
-  if (baseSalary.value >= 10_000_000) return 500_000
-  if (baseSalary.value >= 1_000_000) return 100_000
+  if (sliderMax.value >= 10_000_000) return 500_000
+  if (sliderMax.value >= 1_000_000) return 100_000
   return 50_000
 })
 
-const expectedSalaryValue = computed(() => {
-  if (!props.player) return 0
-  const rating = props.player.overallRating ?? props.player.overall_rating ?? 75
-  return calculateExpectedSalary(null, rating)
-})
-
+const expectedSalaryValue = computed(() => marketValue.value) // informational display
 const totalContractValue = computed(() => offeredSalary.value * selectedYears.value)
-const salaryPremium = computed(() => offeredSalary.value - baseSalary.value)
+const belowFloor = computed(() => offeredSalary.value < requiredSalary.value)
+const overMarket = computed(() => offeredSalary.value - marketValue.value)
 const hasMotivations = computed(() => !!props.player?.motivations)
 
 const topMotivations = computed(() => {
@@ -72,15 +85,15 @@ const topMotivations = computed(() => {
     .slice(0, 4)
 })
 
-const retentionPct = computed(() => {
-  if (!props.player?.motivations) return 65
-  const context = {
-    ...(props.teamContext || {}),
-    contractSalary: baseSalary.value,
-    expectedSalary: expectedSalaryValue.value,
-  }
-  return calculateRetentionScore(props.player, context, offeredSalary.value)
+const offerEval = computed(() => {
+  if (!props.player?.motivations) return { retention: 65 }
+  return evaluateResignOffer(
+    props.player,
+    { salary: offeredSalary.value, years: selectedYears.value },
+    resignContext.value
+  )
 })
+const retentionPct = computed(() => offerEval.value.retention ?? 65)
 
 const retentionColor = computed(() => {
   if (retentionPct.value >= 70) return '#22c55e'
@@ -166,7 +179,7 @@ function handleTryAgain() {
               <!-- Player Header Card -->
               <div class="player-card">
                 <div class="player-avatar">
-                  <PlayerAvatar :player="player" :size="32" />
+                  <PlayerAvatar :player="player" :size="62" />
                 </div>
                 <div class="player-details">
                   <h3 class="player-name">{{ player.firstName }} {{ player.lastName }}</h3>
@@ -201,6 +214,18 @@ function handleTryAgain() {
                 </div>
               </div>
 
+              <!-- Market reference -->
+              <div v-if="!negotiationResult && hasMotivations" class="market-ref">
+                <div class="market-ref-item">
+                  <span class="market-ref-label">Market value</span>
+                  <span class="market-ref-value">{{ formatSalary(marketValue) }}/yr</span>
+                </div>
+                <div class="market-ref-item">
+                  <span class="market-ref-label">Re-signs for</span>
+                  <span class="market-ref-value">{{ formatSalary(requiredSalary) }}+</span>
+                </div>
+              </div>
+
               <!-- Salary Slider -->
               <div v-if="!negotiationResult" class="salary-slider-section">
                 <h4 class="section-title">Annual Salary Offer</h4>
@@ -208,14 +233,17 @@ function handleTryAgain() {
                   v-model.number="offeredSalary"
                   type="range"
                   class="salary-slider"
-                  :min="baseSalary"
-                  :max="maxOffer"
+                  :min="sliderMin"
+                  :max="sliderMax"
                   :step="salaryStep"
                 />
                 <div class="salary-display">
                   <span class="salary-amount">{{ formatSalary(offeredSalary) }} / year</span>
-                  <span v-if="salaryPremium > 0" class="salary-premium">
-                    +{{ formatSalary(salaryPremium) }} premium
+                  <span v-if="belowFloor" class="salary-below-floor">
+                    below his ask
+                  </span>
+                  <span v-else-if="overMarket > 0" class="salary-premium">
+                    +{{ formatSalary(overMarket) }} over market
                   </span>
                 </div>
               </div>
@@ -278,10 +306,16 @@ function handleTryAgain() {
               </div>
 
               <div v-if="negotiationResult === 'declined'" class="result-banner declined">
-                <X :size="24" />
-                <div class="result-text">
-                  <strong>Offer Declined</strong>
-                  <p>{{ player.firstName }} {{ player.lastName }} has turned down the offer. Try adjusting the terms.</p>
+                <button class="back-to-offer" @click="handleTryAgain">
+                  <ArrowLeft :size="16" />
+                  <span>Back to offer</span>
+                </button>
+                <div class="declined-body">
+                  <X :size="24" />
+                  <div class="result-text">
+                    <strong>Offer Declined</strong>
+                    <p>{{ player.firstName }} {{ player.lastName }} has turned down the offer — head back to adjust the terms.</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -299,13 +333,6 @@ function handleTryAgain() {
             >
               <Check :size="16" class="btn-icon" />
               Offer Contract
-            </button>
-            <button
-              v-if="negotiationResult === 'declined'"
-              class="btn-confirm"
-              @click="handleTryAgain"
-            >
-              Adjust Offer
             </button>
           </footer>
         </div>
@@ -421,8 +448,9 @@ function handleTryAgain() {
 }
 
 .player-avatar {
-  width: 56px;
-  height: 56px;
+  width: 76px;
+  height: 76px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -580,6 +608,39 @@ function handleTryAgain() {
   color: var(--color-success);
 }
 
+.salary-below-floor {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-error, #ef4444);
+}
+
+.market-ref {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 0.75rem;
+}
+.market-ref-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md, 8px);
+}
+.market-ref-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+.market-ref-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
 /* Retention */
 .retention-section {
   padding: 0.75rem;
@@ -702,9 +763,40 @@ function handleTryAgain() {
 }
 
 .result-banner.declined {
+  flex-direction: column;
+  gap: 0.75rem;
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
   color: var(--color-error);
+}
+
+.declined-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+/* Back-button affordance to return to the offer form after a decline. */
+.back-to-offer {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 6px 9px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full, 999px);
+  color: var(--color-text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.back-to-offer:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.back-to-offer svg {
+  margin-top: 0;
 }
 
 .result-banner svg {

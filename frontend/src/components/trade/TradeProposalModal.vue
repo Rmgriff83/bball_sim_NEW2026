@@ -8,6 +8,9 @@ import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 const props = defineProps({
   show: Boolean,
   proposal: Object,
+  // When the trade deadline has passed, accepting/negotiating is blocked (the
+  // store would hard-reject anyway). Reject stays available to clear the inbox.
+  deadlinePassed: Boolean,
 })
 
 const emit = defineEmits(['close', 'accept', 'reject', 'negotiate'])
@@ -55,6 +58,7 @@ function handleClose() {
 }
 
 function handleAccept() {
+  if (props.deadlinePassed) return
   // First click → arm the confirmation prompt.
   confirmingAccept.value = true
 }
@@ -74,6 +78,7 @@ function handleReject() {
 }
 
 function handleNegotiate() {
+  if (props.deadlinePassed) return
   // Hands the assets to the trade wizard so the user can build a counter.
   emit('negotiate', props.proposal)
 }
@@ -252,17 +257,21 @@ function handleKeydown(e) {
           <!-- Footer -->
           <div class="modal-footer">
             <template v-if="!confirmingAccept">
+              <div v-if="deadlinePassed" class="deadline-note">
+                <AlertTriangle :size="16" />
+                <span>The trade deadline has passed — this offer can no longer be accepted.</span>
+              </div>
               <div class="modal-footer-row">
                 <button class="btn-reject" @click="handleReject">
                   <XCircle :size="16" />
                   Reject
                 </button>
-                <button class="btn-accept" @click="handleAccept">
+                <button class="btn-accept" :disabled="deadlinePassed" @click="handleAccept">
                   <Check :size="16" />
                   Accept Trade
                 </button>
               </div>
-              <button class="btn-negotiate" @click="handleNegotiate">
+              <button class="btn-negotiate" :disabled="deadlinePassed" @click="handleNegotiate">
                 <MessageSquare :size="16" />
                 Negotiate
               </button>
@@ -660,6 +669,27 @@ function handleKeydown(e) {
 .btn-accept:hover {
   background: #16a34a;
   transform: translateY(-1px);
+}
+
+.btn-accept:disabled,
+.btn-negotiate:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.deadline-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-md);
+  color: #f59e0b;
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 /* Two-step accept confirmation */

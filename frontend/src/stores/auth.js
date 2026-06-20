@@ -4,6 +4,7 @@ import api from '@/composables/useApi'
 import { getToken, setToken, removeToken } from '@/composables/useTokenStorage'
 import { clearDatabase } from '@/engine/db/GameDatabase'
 import { useSyncStore } from '@/stores/sync'
+import { clampGmLevel, nextGmLevel } from '@/engine/data/gmLevels'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
@@ -13,6 +14,11 @@ export const useAuthStore = defineStore('auth', () => {
   const loading = ref(false)
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
+
+  // GM career level (0-4 → unranked/bronze/silver/gold/platinum). Profile-global
+  // like tokens; rises +1 when an owner extends the GM's contract. Reads tolerate
+  // pre-feature profiles (defaults to 0/unranked).
+  const gmLevel = computed(() => clampGmLevel(profile.value?.gmLevel ?? profile.value?.gm_level ?? 0))
 
   // Admin-only routes (e.g. /admin/headshots) gate on this flag, mirrored
   // from the users.global_admin DB column. Set manually via tinker; no UI
@@ -189,6 +195,70 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * Promote the GM one level (capped at platinum) after an owner extends the
+   * contract. Optimistic local set + best-effort server persist, mirroring the
+   * token flow. The server endpoint (`POST /api/user/gm-level { level }`) is
+   * wired separately; if it isn't present yet this still updates the client so
+   * the feature works end-to-end and reconciles on next `/api/user` fetch.
+   *
+   * @returns {{ previous: number, level: number, promoted: boolean }}
+   */
+  async function promoteGmLevel() {
+    if (!profile.value) return { previous: 0, level: 0, promoted: false }
+    const previous = clampGmLevel(profile.value.gmLevel ?? profile.value.gm_level ?? 0)
+    const level = nextGmLevel(previous)
+    // Optimistic local update (write both casings for safety).
+    profile.value.gmLevel = level
+    profile.value.gm_level = level
+    if (level !== previous) {
+      try {
+        const response = await api.post('/api/user/gm-level', { level })
+        const serverLevel = response?.data?.gmLevel ?? response?.data?.gm_level
+        if (serverLevel != null) {
+          const clamped = clampGmLevel(serverLevel)
+          profile.value.gmLevel = clamped
+          profile.value.gm_level = clamped
+        }
+      } catch (err) {
+        // Non-fatal: backend endpoint may not exist yet. Keep the optimistic
+        // value so the GM Level feature is fully functional client-side.
+        console.warn('[Auth] Failed to persist GM level to backend:', err?.message || err)
+      }
+    }
+    return { previous, level: clampGmLevel(profile.value.gmLevel), promoted: level !== previous }
+  }
+
+  /**
+   * Raise the GM level to at least `minLevel` if currently below it (a floor —
+   * never lowers). Used to grandfather legacy GMs who are already running a
+   * gated Strong/Elite franchise from before the GM-Level gate existed, so the
+   * gate stays consistent with the seat they already hold. Optimistic +
+   * best-effort persist, same as promoteGmLevel.
+   *
+   * @returns {Promise<{ raised: boolean, level: number }>}
+   */
+  async function ensureGmLevelAtLeast(minLevel) {
+    if (!profile.value) return { raised: false, level: 0 }
+    const current = clampGmLevel(profile.value.gmLevel ?? profile.value.gm_level ?? 0)
+    const target = clampGmLevel(minLevel)
+    if (current >= target) return { raised: false, level: current }
+    profile.value.gmLevel = target
+    profile.value.gm_level = target
+    try {
+      const response = await api.post('/api/user/gm-level', { level: target }, { skipErrorToast: true })
+      const serverLevel = response?.data?.gmLevel ?? response?.data?.gm_level
+      if (serverLevel != null) {
+        const clamped = clampGmLevel(serverLevel)
+        profile.value.gmLevel = clamped
+        profile.value.gm_level = clamped
+      }
+    } catch (err) {
+      console.warn('[Auth] Failed to persist GM level floor to backend:', err?.message || err)
+    }
+    return { raised: true, level: clampGmLevel(profile.value.gmLevel) }
+  }
+
   function updateSettings(settings) {
     if (user.value) {
       user.value.settings = { ...user.value.settings, ...settings }
@@ -203,6 +273,9 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     isAuthenticated,
     isGlobalAdmin,
+    gmLevel,
+    promoteGmLevel,
+    ensureGmLevelAtLeast,
     initialize,
     fetchUser,
     login,

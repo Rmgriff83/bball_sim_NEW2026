@@ -170,6 +170,68 @@ export function playRecipe(recipe) {
   }
 }
 
+// ---- Short sample playback via the AudioContext --------------------------
+// Plays a downloaded sound FILE (e.g. the affirmation chime) through the same
+// AudioContext as the synthesized sounds, rather than an HTMLAudioElement.
+// This matters on iOS: HTMLAudioElement uses the "playback" audio session,
+// which interrupts/ducks other apps' music; the AudioContext uses an ambient
+// session that MIXES, so a short SFX no longer pauses the user's background
+// music. Decoded buffers are cached so a sound only decodes once.
+const sampleCache = new Map()
+
+// Decode (and cache) a sample so the first `playSample` is instant. Best-effort.
+export async function preloadSample(url) {
+  if (!url) return null
+  if (sampleCache.has(url)) return sampleCache.get(url)
+  const c = ensureContext()
+  if (!c) return null
+  try {
+    const res = await fetch(url)
+    const arr = await res.arrayBuffer()
+    // decodeAudioData is callback- or promise-based depending on the engine.
+    const buffer = await new Promise((resolve, reject) => {
+      const p = c.decodeAudioData(arr, resolve, reject)
+      if (p?.then) p.then(resolve, reject)
+    })
+    sampleCache.set(url, buffer)
+    return buffer
+  } catch {
+    sampleCache.set(url, null) // remember the failure so we fall back next time
+    return null
+  }
+}
+
+// Play a short sample file through the AudioContext (mixes with external audio).
+// Falls back to playClip() if the file can't be decoded in this browser.
+export function playSample(url, { volume: sampleVolume = 1 } = {}) {
+  if (!url) return
+  const c = ensureContext()
+  if (!c || !masterGain) { playClip(url, { volume: sampleVolume }); return }
+
+  const start = (buffer) => {
+    if (!buffer) { playClip(url, { volume: sampleVolume }); return } // decode failed → HTMLAudio
+    try {
+      if (c.state === 'suspended') c.resume().catch(() => {})
+      const src = c.createBufferSource()
+      src.buffer = buffer
+      const env = c.createGain()
+      env.gain.value = Math.max(0, Math.min(1, sampleVolume))
+      src.connect(env)
+      env.connect(masterGain) // masterGain already applies user volume + mute
+      src.start()
+      src.onended = () => { try { src.disconnect(); env.disconnect() } catch { /* noop */ } }
+    } catch {
+      /* best-effort: never throw */
+    }
+  }
+
+  if (sampleCache.has(url)) {
+    start(sampleCache.get(url)) // instant (already decoded, or known-failed → fallback)
+  } else {
+    preloadSample(url).then(start).catch(() => playClip(url, { volume: sampleVolume }))
+  }
+}
+
 // ---- MP3 clip playback (music / game noises) -----------------------------
 // `url` is the resolved asset URL (or null if the file hasn't been added yet,
 // in which case this is a safe no-op). Returns a handle for stopClip().

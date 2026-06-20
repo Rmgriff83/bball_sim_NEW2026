@@ -10,7 +10,7 @@ import { useAudioStore } from '@/stores/audio'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
-import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp, Coins } from 'lucide-vue-next'
+import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp, Coins, Dumbbell, MessagesSquare } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
@@ -20,6 +20,7 @@ import { generateRoleAwareTargetMinutes } from '@/engine/simulation/Substitution
 import TradesTab from '@/components/trade/TradesTab.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
 import FacilitiesTab from '@/components/team/FacilitiesTab.vue'
+import OwnerTab from '@/components/team/OwnerTab.vue'
 import ScheduleTab from '@/components/team/ScheduleTab.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import HireScoutModal from '@/components/team/HireScoutModal.vue'
@@ -28,7 +29,7 @@ import HireStaffTrainerModal from '@/components/team/HireStaffTrainerModal.vue'
 import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import CoachBadgeStoreModal from '@/components/coach/CoachBadgeStoreModal.vue'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
-import { getCoachResignCost } from '@/engine/data/coaches'
+import { getCoachResignCost, getCoachActionBudget, getCoachTrainBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { useSyncStore } from '@/stores/sync'
 import { isPastTradeDeadline } from '@/engine/season/SeasonDeadlines'
@@ -48,32 +49,69 @@ const syncStore = useSyncStore()
 const walkthroughStore = useWalkthroughStore()
 const { loadSynergies, getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
 
-// Live 30s tick so the training-ready dot on lineup/bench player cards flips
-// to true the moment the timer expires without needing a forced re-render.
+// 1-second tick that drives the live training countdown / ready flip on the
+// lineup/bench player cards. Runs only while a training session is active so an
+// idle GM view isn't paying for a per-second timer. (One view-level interval —
+// not per card.)
 const _trainClockTick = ref(Date.now())
 let _trainClockHandle = null
-onMounted(() => {
-  if (_trainClockHandle == null) {
-    _trainClockHandle = setInterval(() => { _trainClockTick.value = Date.now() }, 30 * 1000)
-  }
-})
-onUnmounted(() => {
+function _stopTrainClock() {
   if (_trainClockHandle != null) {
     clearInterval(_trainClockHandle)
     _trainClockHandle = null
   }
-})
+}
+watch(() => !!teamStore.coach?.activeTraining?.endsAt, (active) => {
+  if (active) {
+    _trainClockTick.value = Date.now()
+    if (_trainClockHandle == null) {
+      _trainClockHandle = setInterval(() => { _trainClockTick.value = Date.now() }, 1000)
+    }
+  } else {
+    _stopTrainClock()
+  }
+}, { immediate: true })
+onUnmounted(_stopTrainClock)
+
+// The active session IF it belongs to `player` (in progress OR done-unclaimed).
+function _trainingSessionFor(player) {
+  const t = teamStore.coach?.activeTraining
+  if (!t?.endsAt) return null
+  const pid = player?.id
+  if (pid == null || String(t.playerId) !== String(pid)) return null
+  return t
+}
+
+// Milliseconds left on this player's training session (0 if none/finished).
+function trainingMsLeftFor(player) {
+  void _trainClockTick.value
+  const t = _trainingSessionFor(player)
+  if (!t) return 0
+  return Math.max(0, new Date(t.endsAt).getTime() - Date.now())
+}
+
+// In progress = session exists and the clock hasn't run out → show countdown.
+function isTrainingInProgressFor(player) {
+  return !!_trainingSessionFor(player) && trainingMsLeftFor(player) > 0
+}
 
 // True when THIS player has a finished training session waiting to claim.
 // Surfaces a green dot in the top-left of each player-avatar block on the
 // starting-lineup and bench cards.
 function isTrainingReadyFor(player) {
-  void _trainClockTick.value
-  const t = teamStore.coach?.activeTraining
-  if (!t?.endsAt) return false
-  const pid = player?.id
-  if (pid == null || String(t.playerId) !== String(pid)) return false
-  return new Date(t.endsAt).getTime() <= Date.now()
+  return !!_trainingSessionFor(player) && trainingMsLeftFor(player) <= 0
+}
+
+// Pretty "Xh Ym" / "Xm Ys" / "Xs" countdown (mirrors the player-detail modal).
+function formatTrainingCountdown(ms) {
+  if (ms == null || ms <= 0) return 'Done'
+  const totalSeconds = Math.ceil(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  if (hours >= 1) return `${hours}h ${minutes}m`
+  const seconds = totalSeconds % 60
+  if (minutes >= 1) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
 }
 
 // Each GM sub-tab has its own first-visit walkthrough. The engine drives the
@@ -84,6 +122,7 @@ const TAB_TOUR_KEYS = {
   finances: 'gmFinances',
   trades: 'gmTrades',
   facilities: 'gmFacilities',
+  owner: 'gmOwner',
   schedule: 'gmSchedule',
 }
 function startTabTour(tab) {
@@ -94,12 +133,20 @@ function startTabTour(tab) {
   // would overlay it. The tour will fire on a normal future visit when no
   // prefill is pending.
   if (tab === 'trades' && tradeStore.negotiationPrefill) return
+  // The Finances (roster) tour spotlights the Roster sub-tab. When the page is
+  // deep-linked to another finances sub-tab (e.g. ?sub=free-agents during the
+  // free-agency window), its roster steps have no targets — so defer the tour
+  // to a normal visit on the Roster sub-tab rather than firing it half-blind.
+  if (tab === 'finances') {
+    const sub = route.query?.sub
+    if (sub && sub !== 'team') return
+  }
   walkthroughStore.maybeStart(key)
 }
 
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
-const validTabs = ['team', 'personnel', 'finances', 'trades', 'facilities', 'schedule']
+const validTabs = ['team', 'personnel', 'finances', 'trades', 'facilities', 'owner', 'schedule']
 const queryTab = route.query?.tab
 const hashTab = route.hash?.slice(1)
 const initialTab = queryTab || hashTab
@@ -314,6 +361,13 @@ const chemistryIcon = computed(() => {
 })
 const expiringContractsCount = computed(() => roster.value.filter(p => p.contractYearsRemaining === 1).length)
 
+// During the offseason the Finances "Expiring" sub-tab is hidden (those
+// contracts only matter for the next season's planning), so the Roster tab's
+// expiring-count badge is suppressed too. Mirrors FinancesTab's isOffseason.
+const isOffseason = computed(() =>
+  (campaignStore.currentCampaign?.phase ?? '').startsWith('offseason')
+)
+
 // Starters in position order (PG, SG, SF, PF, C) - may contain nulls for empty slots
 const starters = computed(() => teamStore.starterPlayers)
 
@@ -413,6 +467,13 @@ onMounted(async () => {
     }
   }
 
+  // If the GM page opened directly on the Personnel tab, the activeTab watcher
+  // won't fire — load the coaching schemes here so the Offensive/Substitution
+  // grids and Fit % populate. (roster is loaded by the fetch above.)
+  if (activeTab.value === 'personnel') {
+    await loadCoachingSchemes()
+  }
+
   // First-visit walkthrough for whichever tab we landed on.
   startTabTour(activeTab.value)
 })
@@ -445,7 +506,7 @@ function initPlayerMinutes() {
 
   // Persist generated defaults to store and backend
   if (campaignId.value) {
-    teamStore.updateTargetMinutes(campaignId.value, newMinutes).catch(() => {})
+    teamStore.updateTargetMinutes(campaignId.value, playerMinutes.value).catch(() => {})
   }
 }
 
@@ -581,6 +642,25 @@ async function updateSubstitutionStrategy(strategy) {
 }
 
 // Watch for tab change to fetch coaching schemes and clear trade state
+// Load the coaching-scheme list + per-scheme Fit % for the Personnel tab. Used
+// by BOTH the activeTab watcher (on tab switch) AND onMounted (when the GM page
+// opens directly on Personnel — e.g. a reload or deep link — where the watcher
+// never fires and the Offensive/Substitution grids would otherwise stay empty).
+async function loadCoachingSchemes() {
+  if (schemesFetched.value) return
+  try {
+    await teamStore.fetchCoachingSchemes(campaignId.value)
+    // coaching_scheme is now {offensive, defensive} object
+    const scheme = team.value?.coaching_scheme
+    selectedScheme.value = scheme?.offensive || scheme || 'balanced'
+    selectedDefensiveScheme.value = scheme?.defensive || 'man'
+    selectedSubStrategy.value = scheme?.substitution || 'staggered'
+    schemesFetched.value = true
+  } catch (err) {
+    console.error('Failed to fetch coaching schemes:', err)
+  }
+}
+
 watch(activeTab, async (newTab, oldTab) => {
   // Clear trade state when leaving the trades tab
   if (oldTab === 'trades' && newTab !== 'trades') {
@@ -588,18 +668,8 @@ watch(activeTab, async (newTab, oldTab) => {
     tradeStore.clearSelectedTeam()
   }
 
-  if (newTab === 'personnel' && !schemesFetched.value) {
-    try {
-      await teamStore.fetchCoachingSchemes(campaignId.value)
-      // coaching_scheme is now {offensive, defensive} object
-      const scheme = team.value?.coaching_scheme
-      selectedScheme.value = scheme?.offensive || scheme || 'balanced'
-      selectedDefensiveScheme.value = scheme?.defensive || 'man'
-      selectedSubStrategy.value = scheme?.substitution || 'staggered'
-      schemesFetched.value = true
-    } catch (err) {
-      console.error('Failed to fetch coaching schemes:', err)
-    }
+  if (newTab === 'personnel') {
+    await loadCoachingSchemes()
   }
 
   // First-visit walkthrough for the tab the user just opened.
@@ -1195,6 +1265,14 @@ const showResignModal = ref(false)
 
 // Token cost to re-sign the current coach, scaled by their tier.
 const resignCost = computed(() => (coach.value ? getCoachResignCost(coach.value) : 0))
+
+// Coach action pools — meetings (morale) and trainings (badges/upgrades) are
+// separate per-season budgets. Surfaced on the coach tab so the user can see
+// what's left at a glance.
+const coachMeetingsLeft = computed(() => coach.value?.actionsRemaining ?? 0)
+const coachMeetingsTotal = computed(() => (coach.value ? getCoachActionBudget(coach.value) : 0))
+const coachTrainsLeft = computed(() => coach.value?.trainActionsRemaining ?? 0)
+const coachTrainsTotal = computed(() => (coach.value ? getCoachTrainBudget(coach.value) : 0))
 const canAffordResign = computed(() => (authStore.profile?.tokens ?? 0) >= resignCost.value)
 
 async function resignCoach() {
@@ -1401,7 +1479,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           @click="activeTab = 'finances'"
         >
           Roster
-          <span v-if="expiringContractsCount > 0" class="tab-badge">{{ expiringContractsCount }}</span>
+          <span v-if="!isOffseason && expiringContractsCount > 0" class="tab-badge">{{ expiringContractsCount }}</span>
         </button>
         <button
           v-if="!tradeDeadlinePassed"
@@ -1419,6 +1497,14 @@ const STAFF_TRAINER_PERK_LABELS = {
           @click="activeTab = 'facilities'"
         >
           Facilities
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: activeTab === 'owner' }"
+          data-tour="gm-tab-owner"
+          @click="activeTab = 'owner'"
+        >
+          Owner
         </button>
         <button
           class="tab-btn tab-btn-icon"
@@ -1535,7 +1621,12 @@ const STAFF_TRAINER_PERK_LABELS = {
                 <div class="avatar-column">
                   <div class="player-avatar">
                     <PlayerAvatar :player="slot.player" :size="78" class="avatar-icon" />
-                    <span v-if="isTrainingReadyFor(slot.player)" class="train-ready-dot" :title="'Training ready to claim'"></span>
+                    <span
+                      v-if="isTrainingInProgressFor(slot.player)"
+                      class="train-countdown"
+                      :title="`Training · ${formatTrainingCountdown(trainingMsLeftFor(slot.player))} remaining`"
+                    ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeftFor(slot.player)) }}</span></span>
+                    <span v-else-if="isTrainingReadyFor(slot.player)" class="train-ready-dot" :title="'Training ready to claim'"></span>
                     <span class="slot-position-label card-cosmic">{{ slot.position }}</span>
                   </div>
                 </div>
@@ -1689,6 +1780,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     />
                     <span class="badge-name" :class="{ 'synergy-active-text': isStarterBadgeActivated(slot.player, badge.id) }">{{ formatBadgeName(badge) }}</span>
                   </div>
+                  <span v-if="slot.player.badges.length > 3" class="badge-more-count">+{{ slot.player.badges.length - 3 }}</span>
                 </div>
                 <div v-if="getPlayerDuoPartner(slot.player)" class="dynamic-duo-badge">
                   <Users :size="12" />
@@ -1722,7 +1814,12 @@ const STAFF_TRAINER_PERK_LABELS = {
               <div class="avatar-column">
                 <div class="player-avatar">
                   <PlayerAvatar :player="player" :size="78" class="avatar-icon" />
-                  <span v-if="isTrainingReadyFor(player)" class="train-ready-dot" :title="'Training ready to claim'"></span>
+                  <span
+                    v-if="isTrainingInProgressFor(player)"
+                    class="train-countdown"
+                    :title="`Training · ${formatTrainingCountdown(trainingMsLeftFor(player))} remaining`"
+                  ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeftFor(player)) }}</span></span>
+                  <span v-else-if="isTrainingReadyFor(player)" class="train-ready-dot" :title="'Training ready to claim'"></span>
                   <span class="slot-position-label bench-label">BENCH</span>
                 </div>
               </div>
@@ -1879,6 +1976,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                   />
                   <span class="badge-name">{{ formatBadgeName(badge) }}</span>
                 </div>
+                <span v-if="player.badges.length > 3" class="badge-more-count">+{{ player.badges.length - 3 }}</span>
               </div>
             </div>
           </div>
@@ -1971,7 +2069,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           <h3 class="h4 mb-4">Head Coach</h3>
           <div class="coach-header">
             <div class="coach-avatar-wrap">
-              <CoachAvatar :coach="coach" :size="64" :campaign-id="campaignId" :editable="true" />
+              <CoachAvatar :coach="coach" :size="84" :campaign-id="campaignId" :editable="true" />
             </div>
             <div class="coach-info">
               <p class="coach-name">{{ coach.name }}</p>
@@ -2065,6 +2163,41 @@ const STAFF_TRAINER_PERK_LABELS = {
                   <div class="attr-fill" :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }" />
                 </div>
                 <span class="attr-val" :style="{ color: getAttrColor(value) }">{{ value }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Coach Actions — per-season pools + what each one does -->
+          <div class="coach-actions-info mt-4" data-tour="gm-coach-actions">
+            <h4 class="section-title">Coach Actions</h4>
+            <div class="coach-action-list">
+              <div class="coach-action-item">
+                <div class="coach-action-icon"><MessagesSquare :size="16" /></div>
+                <div class="coach-action-body">
+                  <div class="coach-action-head">
+                    <span class="coach-action-name">Coach Meetings</span>
+                    <span class="coach-action-count" :class="{ depleted: coachMeetingsLeft === 0 }">
+                      {{ coachMeetingsLeft }}<span class="coach-action-total">/{{ coachMeetingsTotal }}</span>
+                    </span>
+                  </div>
+                  <p class="coach-action-desc">
+                    Hold a 1-on-1 to lift a player's morale. Extras cost {{ COACH_MEETING_EXTRA_COST }} tokens.
+                  </p>
+                </div>
+              </div>
+              <div class="coach-action-item">
+                <div class="coach-action-icon"><Dumbbell :size="16" /></div>
+                <div class="coach-action-body">
+                  <div class="coach-action-head">
+                    <span class="coach-action-name">Player Trainings</span>
+                    <span class="coach-action-count" :class="{ depleted: coachTrainsLeft === 0 }">
+                      {{ coachTrainsLeft }}<span class="coach-action-total">/{{ coachTrainsTotal }}</span>
+                    </span>
+                  </div>
+                  <p class="coach-action-desc">
+                    Run a session to develop a player — earns a new badge or attribute upgrade.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -2636,6 +2769,11 @@ const STAFF_TRAINER_PERK_LABELS = {
       <!-- Facilities View -->
       <div v-else-if="activeTab === 'facilities'" class="facilities-content" data-tour="gm-facilities-content">
         <FacilitiesTab :campaign-id="campaignId" />
+      </div>
+
+      <!-- Owner View -->
+      <div v-else-if="activeTab === 'owner'" class="owner-content" data-tour="gm-owner-content">
+        <OwnerTab :campaign-id="campaignId" />
       </div>
 
       <!-- Schedule View -->
@@ -3252,6 +3390,31 @@ const STAFF_TRAINER_PERK_LABELS = {
   z-index: 2;
 }
 
+/* Live training countdown — same top-left corner as the ready dot, but a
+   small pill of remaining time while training is in progress. */
+.player-avatar .train-countdown {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 5px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: #3b82f6;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  white-space: nowrap;
+  z-index: 3;
+}
+.player-avatar .train-countdown svg {
+  flex-shrink: 0;
+}
+
 .avatar-icon {
   stroke-width: 1.5;
 }
@@ -3600,6 +3763,15 @@ const STAFF_TRAINER_PERK_LABELS = {
   color: var(--color-text-tertiary);
 }
 
+/* "+N" overflow chip for players with more than the 3 shown badges (mirrors
+   the scouting page's badge row). */
+.badge-more-count {
+  align-self: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
 .badge-dot.synergy-active {
   box-shadow: 0 0 4px 2px rgba(0, 229, 255, 0.6);
   animation: synergy-pulse 2s ease-in-out infinite;
@@ -3931,6 +4103,73 @@ const STAFF_TRAINER_PERK_LABELS = {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+/* Coach Actions — per-season pools + minimal explainer */
+.coach-actions-info {
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.coach-action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.coach-action-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+.coach-action-icon {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.14);
+  color: #3b82f6;
+}
+.coach-action-body {
+  flex: 1;
+  min-width: 0;
+}
+.coach-action-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.coach-action-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.coach-action-count {
+  font-size: 0.95rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #22c55e;
+  flex-shrink: 0;
+}
+.coach-action-count.depleted {
+  color: var(--color-text-tertiary);
+}
+.coach-action-total {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+.coach-action-desc {
+  margin: 2px 0 0;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: var(--color-text-tertiary);
+}
+
 .attr-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -4253,6 +4492,15 @@ const STAFF_TRAINER_PERK_LABELS = {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  /* Match the app's standard popup width so this confirm doesn't render narrow
+     like a bare dialog — BaseModal caps at max-w-lg, this sets the floor. */
+  min-width: 460px;
+}
+/* Drop the floor on small screens so it can't overflow a phone viewport. */
+@media (max-width: 540px) {
+  .resign-modal {
+    min-width: 0;
+  }
 }
 
 .resign-coach-summary {
@@ -4328,12 +4576,12 @@ const STAFF_TRAINER_PERK_LABELS = {
 }
 
 .btn-view-candidates {
-  padding: 6px 12px;
-  border-radius: var(--radius-lg);
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-primary);
   color: var(--color-primary);
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -4347,12 +4595,12 @@ const STAFF_TRAINER_PERK_LABELS = {
 }
 
 .btn-resign-coach {
-  padding: 6px 12px;
-  border-radius: var(--radius-lg);
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
   background: rgba(34, 197, 94, 0.12);
   border: 1px solid rgba(34, 197, 94, 0.5);
   color: #22c55e;
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;

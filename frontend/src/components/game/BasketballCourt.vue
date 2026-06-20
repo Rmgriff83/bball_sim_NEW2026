@@ -196,9 +196,6 @@ const animatedBadgeKeys = ref(new Set()) // Per-badge dedupe within a possession
 const synergyAnimations = ref([])
 const animatedSynergyKeys = ref(new Set())
 
-// Crowd celebration animation state
-const crowdCelebrations = ref([])  // Array of { emoji, x, y, progress, startTime }
-
 // On-court defensive animation state (emanates from player position)
 const defensiveAnimations = ref([])  // Array of { emoji, x, y, progress, startTime, dx, dy }
 
@@ -382,46 +379,9 @@ function animateSynergies() {
  * @param {boolean} isHomeTeam - Whether the scoring team is home
  */
 function triggerCrowdCelebration(isHomeTeam = true) {
-  const w = courtWidth.value
-  const h = courtHeight.value
-  const crowdH = crowdAreaHeight.value
-  const celebrationEmojis = ['🎉', '🙌', '👏', '💪', '⭐', '🏀']
-
-  // Both home and away fans show emojis ~75% of the time
-  const showEmojis = Math.random() < 0.75
-
-  if (showEmojis) {
-    // Fewer celebrations for away team (they have fewer fans)
-    const numCelebrations = isHomeTeam ? (4 + Math.floor(Math.random() * 3)) : (2 + Math.floor(Math.random() * 2))
-
-    for (let i = 0; i < numCelebrations; i++) {
-      const delay = i * 80  // Stagger the celebrations
-      setTimeout(() => {
-        let emojiX, emojiY
-        if (isMobile.value) {
-          // Mobile: crowd is on right side, so x is near right edge, y is random along height
-          emojiX = w - crowdH + (Math.random() * crowdH * 0.5)
-          emojiY = h * (0.1 + Math.random() * 0.8)
-        } else {
-          // Desktop: crowd is below baseline, so x is random across width
-          emojiX = w * (0.1 + Math.random() * 0.8)
-          emojiY = null  // Will be calculated in draw function
-        }
-        crowdCelebrations.value.push({
-          emoji: celebrationEmojis[Math.floor(Math.random() * celebrationEmojis.length)],
-          x: emojiX,
-          y: emojiY,
-          progress: 0,
-          startTime: performance.now()
-        })
-        if (crowdCelebrations.value.length === 1) {
-          animateCrowdCelebrations()
-        }
-      }, delay)
-    }
-  }
-
-  // Always trigger jumping fans for the scoring team
+  // Crowd celebrates a score by jumping. Emoji pop-ups were removed — on older
+  // phones the per-frame emoji draw loop (fillText + its own rAF) wasn't worth
+  // slowing the base game animation for. The jump motion is cheap and stays.
   triggerCrowdJump(isHomeTeam)
 }
 
@@ -510,78 +470,6 @@ function getJumpOffset(fanIndex) {
   // Sine wave for smooth up and down motion - smaller jump for smaller crowd
   const jumpHeight = isMobile.value ? 5 : 6
   return -Math.sin(progress * Math.PI) * jumpHeight
-}
-
-function animateCrowdCelebrations() {
-  if (crowdCelebrations.value.length === 0) return
-
-  const now = performance.now()
-  const duration = 1200  // 1.2 seconds
-
-  // Update all celebration animations
-  crowdCelebrations.value = crowdCelebrations.value.filter(anim => {
-    const elapsed = now - anim.startTime
-    anim.progress = Math.min(1, elapsed / duration)
-    return anim.progress < 1
-  })
-
-  drawCourt()
-
-  if (crowdCelebrations.value.length > 0) {
-    requestAnimationFrame(animateCrowdCelebrations)
-  } else {
-    drawCourt()
-  }
-}
-
-function drawCrowdCelebrations(c, courtH, crowdH) {
-  const w = courtWidth.value
-
-  crowdCelebrations.value.forEach(anim => {
-    const { emoji, x, y: storedY, progress } = anim
-
-    // Easing
-    const easeOutQuad = (t) => 1 - (1 - t) * (1 - t)
-
-    // Fade out in second half
-    const fadeProgress = Math.max(0, (progress - 0.4) / 0.6)
-    const opacity = 1 - fadeProgress
-
-    // Scale with slight bounce at start - smaller on mobile
-    const scaleProgress = Math.min(1, progress * 3)
-    const baseScale = isMobile.value ? 14 : 18
-    const scale = 0.5 + 0.5 * Math.min(1, scaleProgress * 1.2)
-
-    let drawX, drawY
-
-    if (isMobile.value) {
-      // Mobile: float leftward from right side (where fans are)
-      const floatAmount = 40 * easeOutQuad(progress)
-      drawX = x - floatAmount  // Float left toward court
-      drawY = storedY
-    } else {
-      // Desktop: float upward from bottom (baseline crowd area)
-      const riseAmount = 50 * easeOutQuad(progress)
-      drawX = x
-      drawY = courtH + crowdH * 0.3 - riseAmount
-    }
-
-    c.save()
-    c.translate(drawX, drawY)
-
-    // Counter-rotate on mobile so emoji appears upright after canvas rotation
-    if (isMobile.value) {
-      c.rotate(-Math.PI / 2)
-    }
-
-    c.globalAlpha = opacity
-    c.font = `${baseScale * scale}px Arial`
-    c.textAlign = 'center'
-    c.textBaseline = 'middle'
-    c.fillText(emoji, 0, 0)
-
-    c.restore()
-  })
 }
 
 function drawBadgeAnimations(c) {
@@ -851,11 +739,6 @@ function drawCourt() {
   const homeColor = props.homeTeam?.primary_color || '#3B82F6'
   const awayColor = props.awayTeam?.primary_color || '#EF4444'
   drawCrowdArea(c, w, h, crowdH, homeColor, awayColor)
-
-  // Draw crowd celebrations
-  if (crowdCelebrations.value.length > 0) {
-    drawCrowdCelebrations(c, h, crowdH)
-  }
 
   // Court markings
   c.strokeStyle = COURT_CANVAS.COLORS.COURT_LINES

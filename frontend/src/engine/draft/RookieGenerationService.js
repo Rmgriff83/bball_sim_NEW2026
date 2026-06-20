@@ -6,6 +6,7 @@
 // =============================================================================
 
 import { generatePlayer, FIRST_NAMES as FAKE_FIRST_NAMES, LAST_NAMES as FAKE_LAST_NAMES } from '../campaign/CampaignManager'
+import { pickNameForCountry } from '../data/playerNames'
 import { PlayerRepository } from '../db/PlayerRepository'
 
 // Rookie classes draw from the procedural pool ONLY (not the admin-authored
@@ -302,14 +303,33 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
       player.careerSeasons = 0
       player.career_seasons = 0
 
-      // Generate unique name
-      const { firstName, lastName } = generateUniqueName(isInternational, usedNames)
+      // College / international origin — determined BEFORE the name so an
+      // international rookie gets a culturally-matching name.
+      if (isInternational) {
+        const origin = pickRandom(INTERNATIONAL_ORIGINS)
+        player.country = origin.country
+        player.college = pickRandom(origin.clubs)
+        player.hometown = null
+      } else {
+        player.country = 'United States'
+        player.college = pickRandom(US_COLLEGES)
+      }
+
+      // Nationality-aware unique name. pickNameForCountry draws from the
+      // country's pool (or the domestic scrambled pool for US players, which now
+      // includes the Hispanic bucket), dedups against usedNames, and adds the
+      // chosen full name to it.
+      const { firstName, lastName } = pickNameForCountry({
+        country: player.country,
+        usedNames,
+        domesticFirst: getCombinedFirstNames(),
+        domesticLast: getCombinedLastNames(),
+      })
       player.firstName = firstName
       player.first_name = firstName
       player.lastName = lastName
       player.last_name = lastName
       player.name = `${firstName} ${lastName}`
-      usedNames.add(player.name)
 
       // Assign a random headshot, avoiding duplicates within this class
       if (availableHeadshotPool.length > 0) {
@@ -325,17 +345,6 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
         usedHeadshots.add(chosen)
       } else {
         player.headshot = null
-      }
-
-      // College / international origin
-      if (isInternational) {
-        const origin = pickRandom(INTERNATIONAL_ORIGINS)
-        player.country = origin.country
-        player.college = pickRandom(origin.clubs)
-        player.hometown = null
-      } else {
-        player.country = 'United States'
-        player.college = pickRandom(US_COLLEGES)
       }
 
       // Store tier info for scouting display
@@ -374,31 +383,6 @@ function getCombinedLastNames() {
     _combinedLastNames = [...(FAKE_LAST_NAMES ?? [])]
   }
   return _combinedLastNames
-}
-
-/**
- * Generate a unique name that doesn't collide with existing players.
- */
-function generateUniqueName(isInternational, usedNames) {
-  let attempts = 0
-  let firstName, lastName, fullName
-  const firstPool = getCombinedFirstNames()
-  const lastPool = getCombinedLastNames()
-
-  do {
-    firstName = pickRandom(firstPool)
-    lastName = pickRandom(lastPool)
-    fullName = `${firstName} ${lastName}`
-    attempts++
-  } while (usedNames.has(fullName) && attempts < 200)
-
-  // If still colliding after 200 attempts, add a suffix
-  if (usedNames.has(fullName)) {
-    lastName = lastName + ' Jr.'
-    fullName = `${firstName} ${lastName}`
-  }
-
-  return { firstName, lastName }
 }
 
 /**

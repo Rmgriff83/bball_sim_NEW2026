@@ -7,6 +7,7 @@ import { useTeamStore } from '@/stores/team'
 import { useGameStore } from '@/stores/game'
 import { useLeagueStore } from '@/stores/league'
 import { useToastStore } from '@/stores/toast'
+import { useAudioStore } from '@/stores/audio'
 import { usePlayoffStore } from '@/stores/playoff'
 import { useTradeStore } from '@/stores/trade'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
@@ -22,11 +23,21 @@ import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import SeasonAwardsModal from '@/components/playoffs/SeasonAwardsModal.vue'
 import RetirementModal from '@/components/team/RetirementModal.vue'
+import ContractDecisionModal from '@/components/team/ContractDecisionModal.vue'
+import OwnerCheckInModal from '@/components/team/OwnerCheckInModal.vue'
+import OwnerWelcomeModal from '@/components/team/OwnerWelcomeModal.vue'
+import DraftLotteryModal from '@/components/draft/DraftLotteryModal.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
 import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
 import StartSeasonBlockerModal from '@/components/game/StartSeasonBlockerModal.vue'
-import { enterOffseason, startNewSeason, backfillPlayerAwards } from '@/engine/campaign/CampaignManager'
+import { enterOffseason, startNewSeason, backfillPlayerAwards, resignGmContract, switchUserTeam } from '@/engine/campaign/CampaignManager'
+import { gmLevelLabel } from '@/engine/data/gmLevels'
+import { evaluateSubtasks } from '@/engine/season/OwnerSubtaskService'
+import { buildOwnerCheckIn } from '@/engine/season/OwnerCheckInService'
+import { findOwnerForTeam, EXPECTATION_BLURB_DEFAULT } from '@/engine/data/owners'
+import { getEffectiveExpectation, effectiveOwner } from '@/engine/season/OwnerExpectationService'
+import { SALARY_CAP } from '@/engine/data/teams'
 import { aiFinishUserTeamSetup } from '@/engine/campaign/UserTeamFinalizer'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
@@ -50,6 +61,7 @@ const teamStore = useTeamStore()
 const gameStore = useGameStore()
 const leagueStore = useLeagueStore()
 const toastStore = useToastStore()
+const audio = useAudioStore()
 const playoffStore = usePlayoffStore()
 const tradeStore = useTradeStore()
 const breakingNewsStore = useBreakingNewsStore()
@@ -98,6 +110,25 @@ const showSeasonAwardsModal = ref(false)
 const seasonAwardsForModal = ref(null)
 const showRetirementModal = ref(false)
 const seasonAwardsYear = ref(null)
+
+// GM contract-end decision modal (Part 2). Fired in the offseason chain after
+// awards + retirements. Mandatory — the user re-signs (extend) or picks a new
+// team to run (not extended) before reaching the offseason hub.
+const showContractDecisionModal = ref(false)
+const contractDecisionData = ref(null)
+const contractDecisionBusy = ref(false)
+
+// Owner Check-In modal (start of each season / right after campaign creation).
+// Fire-once-per-season via campaign.settings.ownerCheckInShownYear, and the very
+// first thing the user sees — onboarding tours are suspended until it's dismissed.
+const showOwnerCheckInModal = ref(false)
+const ownerCheckInData = ref(null)
+
+// Minimal owner "welcome" shown the moment a NEW GM job is accepted (a fresh
+// campaign or taking over a new franchise) — precedes the full season-start
+// Owner Check-In on a new campaign; on a mid-campaign switch it fires alone.
+const showOwnerWelcomeModal = ref(false)
+const ownerWelcomeData = ref(null)
 
 // Only show loading if we don't have cached campaign data
 const loading = ref(!campaignStore.currentCampaign)
@@ -244,24 +275,21 @@ const news = computed(() => (campaign.value?.news || []).slice().reverse())
 // selection was made at the start of the 14-day window.
 const featuredSelection = computed(() => campaign.value?.settings?.featuredPlayer ?? null)
 
-const featuredPlayer = computed(() => {
+// The selected featured player IF they're still on the user's roster. A stale
+// selection (player traded, cut, or released to free agency in the offseason)
+// resolves to null so the card falls back to a real current player instead of a
+// blank 0-OVR stub. The bi-weekly refresh only runs during the regular season,
+// so in the offseason a released player would otherwise linger here forever.
+const featuredRosterPlayer = computed(() => {
   const sel = featuredSelection.value
-  if (sel?.playerId) {
-    const live = roster.value.find(p => String(p?.id) === String(sel.playerId))
-    if (live) return live
-    // Selection points at a player no longer on the roster (trade / cut).
-    // Render a synthetic stub from the cached selection rather than a blank
-    // card so we don't lose history; next refresh tick will replace it.
-    return {
-      id: sel.playerId,
-      name: sel.playerName,
-      position: sel.position,
-      overall_rating: 0,
-      overallRating: 0,
-    }
-  }
-  // Cold-start fallback (no selection has been made yet — first ~2 weeks of
-  // the season): show the team's top player by OVR so the card isn't empty.
+  if (!sel?.playerId) return null
+  return roster.value.find(p => String(p?.id) === String(sel.playerId)) ?? null
+})
+
+const featuredPlayer = computed(() => {
+  if (featuredRosterPlayer.value) return featuredRosterPlayer.value
+  // No valid selection (none made yet, or the featured player left the roster):
+  // show the team's top current player by OVR so the card isn't empty/stale.
   if (!roster.value.length) return null
   return [...roster.value].sort((a, b) => b.overall_rating - a.overall_rating)[0]
 })
@@ -271,7 +299,9 @@ const featuredPlayer = computed(() => {
 // for the cold-start case when no selection exists yet.
 const featuredPlayerStats = computed(() => {
   const sel = featuredSelection.value
-  if (sel?.stats) {
+  // Only use the cached selection's stats while that player is still on the
+  // roster; otherwise show the fallback player's own season averages.
+  if (featuredRosterPlayer.value && sel?.stats) {
     const round1 = v => (v == null ? '0.0' : Number(v).toFixed(1))
     return {
       ppg: round1(sel.stats.ppg),
@@ -298,7 +328,9 @@ const featuredPlayerStats = computed(() => {
 const FEATURED_STRIP_MAX_ROWS = 6
 const featuredRecentGames = computed(() => {
   const sel = featuredSelection.value
-  if (Array.isArray(sel?.recentGames) && sel.recentGames.length > 0) {
+  // The cached window's game log only applies while the selected player is still
+  // on the roster; otherwise use the fallback player's own recent games.
+  if (featuredRosterPlayer.value && Array.isArray(sel?.recentGames) && sel.recentGames.length > 0) {
     return sel.recentGames.slice().reverse().slice(0, FEATURED_STRIP_MAX_ROWS)
   }
   const p = featuredPlayer.value
@@ -499,8 +531,10 @@ const previousSeasonFinish = computed(() => {
     const winnerId = String(series.winner?.teamId)
     if (winnerId === idStr) continue
     const opp = isT1 ? t2 : t1
+    // `name` already contains the full "City Nickname" (e.g. "Brooklyn Skylines"),
+    // so don't prefix the city again.
     const oppName = opp ? (
-      [opp.city, opp.name].filter(Boolean).join(' ') || opp.abbreviation || 'their opponent'
+      opp.name || opp.city || opp.abbreviation || 'their opponent'
     ) : 'their opponent'
     return {
       kind: 'lost',
@@ -611,9 +645,24 @@ const userEliminated = computed(() => {
 // Check if lineup is complete - use teamStore as single source of truth
 const isLineupComplete = computed(() => teamStore.isLineupComplete)
 
-// Validate roster before game: check injured starters and minutes total
+// Validate roster before game: check the lineup is complete (no traded/dropped
+// starters), then injured starters and minutes total.
 function validateRosterForGame() {
   const starters = teamStore.starterPlayers || []
+
+  // A starting-five slot that no longer resolves to a rostered player — e.g. you
+  // traded or dropped a starter — leaves the lineup incomplete. The minutes can
+  // still falsely total 240 (the gone player's minutes linger), so check this
+  // explicitly rather than relying on the minutes total.
+  const validStarters = starters.filter(Boolean)
+  if (validStarters.length < 5) {
+    const shortBy = 5 - validStarters.length
+    rosterWarningMessage.value = `Your starting lineup is missing ${shortBy} player${shortBy === 1 ? '' : 's'} — likely from a recent trade or drop.`
+    rosterWarningHint.value = 'Go to the Team tab to set a full starting five and rebalance your minutes to 240.'
+    showRosterWarningModal.value = true
+    return false
+  }
+
   const injuredStarters = starters.filter(p => p && (p.is_injured || p.isInjured))
   if (injuredStarters.length > 0) {
     const names = injuredStarters.map(p => p.name || `${p.first_name} ${p.last_name}`).join(', ')
@@ -980,6 +1029,20 @@ onMounted(async () => {
       // Re-pop the retirement modal on mount if the user landed on the
       // offseason hub via a refresh / cold load and hasn't dismissed it yet.
       maybeShowRetirementModal()
+      // ...and re-surface the GM contract-end (owner evaluation) decision.
+      // Retirements normally chain into it, but when retirements were already
+      // dismissed a refresh that closed the decision modal would otherwise
+      // strand an unresolved decision. `showRetirementModal` is set
+      // synchronously above, so this only fires when no retirement modal opened.
+      if (!showRetirementModal.value) maybeShowContractDecisionModal()
+      // Now that fetchCampaign has repointed the stores to THIS campaign, fire
+      // the owner check-in / onboarding tours with fresh data. The synchronous
+      // calls at the end of onMounted no-op on this cached/switch path (the
+      // identity guard sees the stale campaign), so this is where they actually
+      // run when switching between campaigns.
+      maybeShowOwnerCheckIn()
+      walkthroughStore.maybeStart('campaignHome')
+      maybeStartOffseasonTour()
     }).catch(err => console.error('Failed to refresh campaign:', err))
     // Also check playoff status in background
     checkPlayoffStatus()
@@ -1003,12 +1066,23 @@ onMounted(async () => {
       // Re-pop the retirement modal on first cold-load if we land on the
       // offseason hub with un-dismissed retirees.
       maybeShowRetirementModal()
+      // ...and re-surface the GM contract-end (owner evaluation) decision when
+      // retirements were already dismissed, so a refresh that closed the
+      // decision modal doesn't strand it. Synchronous ref check as above.
+      if (!showRetirementModal.value) maybeShowContractDecisionModal()
     } catch (err) {
       console.error('Failed to load campaign:', err)
     } finally {
       loading.value = false
     }
   }
+
+  // Owner Check-In — the FIRST thing the user sees on a fresh campaign / new
+  // season. The minimal owner-welcome is NOT shown here: a brand-new campaign
+  // already gets the full season-start check-in, so showing both would be a
+  // redundant double owner conversation. The quick welcome only fires when the
+  // user MOVES JOBS mid-campaign (handleSwitchTeam). Suspends tours until dismissed.
+  maybeShowOwnerCheckIn()
 
   // First-visit onboarding tour (no-op unless enabled and not yet seen).
   walkthroughStore.maybeStart('campaignHome')
@@ -1032,7 +1106,19 @@ onMounted(async () => {
 // dismisses so the tour fires immediately on close instead of being lost.
 function maybeStartOffseasonTour() {
   if (!isOffseason.value || !freeAgencyNotStarted.value) return
-  if (showAllStarModal.value) return
+  // Don't start the tour while any blocking offseason popup is still open — it
+  // would render on top of the modal. The watch below re-fires the tour once the
+  // last of these dismisses.
+  if (
+    showAllStarModal.value ||
+    showSeasonAwardsModal.value ||
+    showRetirementModal.value ||
+    showContractDecisionModal.value ||
+    showOwnerCheckInModal.value ||
+    showOwnerWelcomeModal.value
+  ) {
+    return
+  }
   walkthroughStore.maybeStart('campaignOffseason')
 }
 
@@ -1044,13 +1130,21 @@ function maybeStartOffseasonTour() {
 // the v-if for the offseason buttons has rendered them by the time the
 // walkthrough overlay tries to find its targets.
 watch([isOffseason, freeAgencyNotStarted], () => {
+  // Don't start the tour mid-transition. handleEnterOffseason flips the phase
+  // here, but the season-awards / retirement / contract chain hasn't opened yet,
+  // so the tour's modal guard would pass and the overlay would render over the
+  // awards modal that opens a tick later. The transition's own terminal call and
+  // each modal's close handler start the tour once the chain is fully dismissed.
+  if (advancingToNextSeason.value) return
   maybeStartOffseasonTour()
 }, { flush: 'post' })
 
-// Re-fire the tour the instant the All-Star modal dismisses — covers the
-// case where the user landed in the offseason with the modal still open,
-// the tour was blocked by the modal guard, and then they closed the modal.
-// Without this re-check, the tour would silently never fire that session.
+// Re-fire the tour the instant the All-Star modal dismisses — covers the case
+// where the user landed in the offseason with the All-Star modal still open (it's
+// a mid-season modal that can carry over), the tour was blocked by the modal
+// guard, and then they closed it. The awards/retirement/contract chain instead
+// fires the tour explicitly from each terminal close handler (past their awaits,
+// so there's no intermediate all-closed gap for the tour to slip through).
 watch(showAllStarModal, (open, prev) => {
   if (prev && !open) maybeStartOffseasonTour()
 })
@@ -1080,6 +1174,10 @@ watch(
 
       // Backfill: in offseason without a crowned champion → run the AI
       // playoffs now so the offseason hub can show the championship banner.
+      // handleEnterOffseason (via ensurePlayoffsComplete) is now the primary
+      // guard that crowns the champion before the offseason runs; this watcher
+      // is the legacy-repair fallback for pre-existing saves already stuck in
+      // the offseason without a champion.
       if (seasonData && !seasonData.playoffBracket?.champion &&
           !gameStore.simulating && !gameStore.backgroundSimulating) {
         try {
@@ -1120,6 +1218,28 @@ watch(currentDate, async (newDate, oldDate) => {
   await checkTradeDeadline()
   await checkAllStarSelections()
 })
+
+// Surface players returning from injury. Date-advance ticks clear injuries
+// silently, so the game store queues the user's recovered players; we wait for
+// the sim to settle (so the modal doesn't flash mid-run), then show the
+// Recovery Report — the mirror of the injury modal — and drain the queue.
+function flushPendingRecoveries() {
+  const list = gameStore.pendingRecoveries
+  if (!Array.isArray(list) || list.length === 0) return
+  if (gameStore.simulating || gameStore.backgroundSimulating) return
+  recoveredPlayers.value = list.slice()
+  gameStore.pendingRecoveries = []
+  // Stagger behind the injury modal if both fired this sim so they don't stack.
+  if (showInjuryModal.value) {
+    setTimeout(() => { showRecoveryModal.value = true }, 500)
+  } else {
+    showRecoveryModal.value = true
+  }
+}
+watch(
+  () => [gameStore.pendingRecoveries.length, gameStore.simulating, gameStore.backgroundSimulating],
+  flushPendingRecoveries
+)
 
 // Auto-finish the regular season once the user has played all of their own
 // games but the league still has AI games to simulate. The simulation itself
@@ -1202,16 +1322,9 @@ async function handleSeasonEndContinue() {
       toastStore.showError('Failed to generate bracket')
     }
   } else {
-    // Team didn't qualify — generate the bracket and sim all AI playoff rounds
-    // before entering offseason so a champion is crowned. Without this step the
-    // offseason hub has no champion banner and the season looks unfinished.
-    try {
-      await playoffStore.generateBracket(campaignId.value)
-      await gameStore.simulateToNextPlayoffRound(campaignId.value, { simAll: true })
-    } catch (err) {
-      console.error('Failed to sim AI playoffs after missed playoffs:', err)
-      toastStore.showError('Failed to simulate playoffs')
-    }
+    // Team missed the playoffs. handleEnterOffseason now guarantees the league
+    // playoffs are fully simmed and a champion crowned before the offseason /
+    // owner evaluation runs, so just hand off to it.
     await handleEnterOffseason()
   }
 }
@@ -1295,10 +1408,38 @@ function handleChampionshipClose() {
 }
 
 // Handle entering the offseason (after champion declared or non-qualifying)
+// Guarantee the league playoffs are fully simulated and a champion crowned.
+// Best-effort: in the normal case this crowns the champion before the offseason
+// runs; if a sim hiccup leaves no champion we log and fall through rather than
+// hard-locking the user out of the offseason (the backfill watcher remains the
+// final retroactive safety net, same as today).
+async function ensurePlayoffsComplete() {
+  if (playoffStore.champion) return
+  const year = campaign.value?.currentSeasonYear
+  if (!year || !campaignId.value) return
+  const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+  let seasonData = await SeasonRepository.get(campaignId.value, year)
+  if (seasonData?.playoffBracket?.champion) return
+  if (!seasonData?.playoffBracket) {
+    await playoffStore.generateBracket(campaignId.value)
+  }
+  await gameStore.simulateToNextPlayoffRound(campaignId.value, { simAll: true })
+  seasonData = await SeasonRepository.get(campaignId.value, year)
+  if (!seasonData?.playoffBracket?.champion) {
+    console.warn('[CampaignHome] entered offseason without a crowned champion; backfill will repair')
+  }
+}
+
 async function handleEnterOffseason() {
   advancingToNextSeason.value = true
   const loadingToastId = toastStore.showLoading('Processing offseason...')
   try {
+    // Invariant: the league playoffs must be fully simulated and a champion
+    // crowned BEFORE the offseason runs (owner evaluation / GM-contract decision
+    // / firing / retirements). Centralised here so every caller is safe — the
+    // missed-playoffs season-end branch and any future path — without relying on
+    // the retroactive backfill watcher.
+    await ensurePlayoffsComplete()
     const result = await enterOffseason(campaignId.value)
 
     // Store offseason data for the UI hub
@@ -1328,14 +1469,17 @@ async function handleEnterOffseason() {
     // moment-of-earn callout; the persistent record drives the Dashboard
     // Recent Activity feed and Campaign-card meta.
     const earned = Array.isArray(result.newAchievements) ? result.newAchievements : []
-    for (const ach of earned) {
-      const prefix = ach.type === 'championship'
-        ? '🏆 '
-        : ach.type === 'conference_championship'
-          ? '👑 '
-          : '🎟️ '
-      toastStore.showSuccess(`${prefix}Achievement Unlocked: ${ach.label}`, 4500)
-    }
+    earned.forEach((ach, i) => {
+      // Stagger so multiple unlocks (champion + conference title + berth) play
+      // in sequence rather than stacking and triple-firing the chime at once.
+      setTimeout(() => {
+        toastStore.showAchievement({
+          label: ach.label,
+          subtitle: ach.subtitle ?? '',
+          type: ach.type,
+        })
+      }, i * 900)
+    })
 
     // Surface MVP / All-NBA / All-Defense / All-Rookie selections in a popup
     // modal, mirroring the championship/series-result flow. Skipped if the
@@ -1346,6 +1490,10 @@ async function handleEnterOffseason() {
     // chains them when both fire, but this covers the no-awards path.
     if (!showSeasonAwardsModal.value) {
       await maybeShowRetirementModal()
+    }
+    // If neither info modal opened, still surface the GM contract decision.
+    if (!showSeasonAwardsModal.value && !showRetirementModal.value) {
+      await maybeShowContractDecisionModal()
     }
 
     // Fire the first-time offseason walkthrough at the canonical
@@ -1415,6 +1563,12 @@ async function handleCloseSeasonAwardsModal() {
   // and retirements both fire once per offseason, but retirements come second
   // so the user reads the season's wrap-up before seeing who hung it up.
   await maybeShowRetirementModal()
+  // If no retirements, chain straight to the GM contract decision.
+  if (!showRetirementModal.value) {
+    await maybeShowContractDecisionModal()
+  }
+  // Chain terminal: if nothing else opened, the offseason tour can run now.
+  maybeStartOffseasonTour()
 }
 
 // Snapshot retirees + year at the moment we open the modal so dismissal can
@@ -1479,6 +1633,322 @@ async function handleCloseRetirementModal() {
   } catch (err) {
     console.warn('[CampaignHome] failed to persist retirement dismissal:', err)
   }
+
+  // Retirements are the last info modal — chain the GM contract-end decision.
+  await maybeShowContractDecisionModal()
+  // Chain terminal: if no contract decision opened, the offseason tour can run.
+  maybeStartOffseasonTour()
+}
+
+// --- GM contract-end decision (Part 2) --------------------------------------
+// Opens the ContractDecisionModal if the owner evaluated the GM this offseason.
+// Fire-once-by-year, mirroring the retirement stash pattern.
+async function maybeShowContractDecisionModal() {
+  const camp = campaignStore.currentCampaign
+  if (!camp) return
+  const pending = camp.settings?.pendingContractDecision
+  if (!pending) return
+  if (camp.settings?.contractDecisionDismissedYear === pending.year) return
+  // The not-extended flow needs the team list for the picker.
+  if (!campaignStore.availableTeams?.length) {
+    try { await campaignStore.fetchAvailableTeams() } catch { /* picker still renders empty-safe */ }
+  }
+  contractDecisionData.value = pending
+  showContractDecisionModal.value = true
+}
+
+// Owner extends → re-sign the same team, bump GM Level (+achievement), continue.
+async function handleExtendContract() {
+  if (contractDecisionBusy.value) return
+  contractDecisionBusy.value = true
+  const loadingToastId = toastStore.showLoading('Re-signing your contract...')
+  try {
+    await resignGmContract(campaignId.value)
+    const { previous, level, promoted } = await authStore.promoteGmLevel()
+    await _stampContractDecisionDismissed()
+    await campaignStore.fetchCampaign(campaignId.value, true)
+
+    toastStore.removeMinimalToast(loadingToastId)
+    showContractDecisionModal.value = false
+    contractDecisionData.value = null
+    toastStore.showSuccess('Contract extended — your owner is keeping you on.', 4000)
+    if (promoted) {
+      await _recordGmPromotion(level)
+      toastStore.showAchievement({
+        label: `Promoted to GM Level ${gmLevelLabel(level)}`,
+        subtitle: `${gmLevelLabel(previous)} → ${gmLevelLabel(level)}`,
+        type: 'gm_promotion',
+      })
+    }
+    // Contract decision was the last modal in the offseason chain — tour can run.
+    maybeStartOffseasonTour()
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError('Failed to re-sign contract')
+    console.error('[CampaignHome] extend contract failed:', err)
+  } finally {
+    contractDecisionBusy.value = false
+  }
+}
+
+// Owner moves on → take over a newly chosen franchise (staff reset, fresh deal).
+async function handleSwitchTeam(newTeamAbbreviation) {
+  if (contractDecisionBusy.value || !newTeamAbbreviation) return
+  contractDecisionBusy.value = true
+  const loadingToastId = toastStore.showLoading('Taking over your new team...')
+  try {
+    await switchUserTeam(campaignId.value, newTeamAbbreviation)
+    await _stampContractDecisionDismissed()
+    // Repoint every store to the new team before continuing the offseason.
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value, true),
+      teamStore.fetchTeam(campaignId.value, { force: true }),
+    ])
+    financeStore.invalidate()
+
+    toastStore.removeMinimalToast(loadingToastId)
+    showContractDecisionModal.value = false
+    contractDecisionData.value = null
+    // Pop the new owner's welcome conversation right then. Its close handler
+    // resumes the offseason tour. Fall back to a toast + the tour only if no
+    // owner could be resolved for the new team.
+    if (!maybeShowOwnerWelcome()) {
+      toastStore.showSuccess(`You're now the GM of the ${teamStore.team?.name ?? 'new team'}.`, 4500)
+      maybeStartOffseasonTour()
+    }
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError('Failed to switch teams')
+    console.error('[CampaignHome] switch team failed:', err)
+  } finally {
+    contractDecisionBusy.value = false
+  }
+}
+
+// Persist the fire-once marker so the decision modal doesn't re-pop. (resign/
+// switch already clear pendingContractDecision; this stamps the year too.)
+async function _stampContractDecisionDismissed() {
+  const year = contractDecisionData.value?.year
+  if (year == null) return
+  try {
+    await CampaignRepository.updateSettings(campaignId.value, { contractDecisionDismissedYear: year })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        contractDecisionDismissedYear: year,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to stamp contract decision dismissal:', err)
+  }
+}
+
+// Append a GM-promotion entry to campaign.achievements (drives the Dashboard
+// Recent Activity feed + campaign-card meta, same as championship achievements).
+async function _recordGmPromotion(level) {
+  try {
+    // Load a fresh plain campaign (avoid structuredClone choking on reactive
+    // proxies) so the achievements write doesn't clobber other settings.
+    const camp = await CampaignRepository.get(campaignId.value)
+    if (!camp) return
+    const list = Array.isArray(camp.achievements) ? [...camp.achievements] : []
+    const entry = {
+      id: `ach_gm_${level}_${contractDecisionData.value?.year ?? ''}`,
+      type: 'gm_promotion',
+      // Numeric level reached, so the profile-global gmLevel can self-heal from
+      // recorded promotions if a backend persist was ever lost (see campaign.js).
+      level,
+      year: contractDecisionData.value?.year ?? camp.currentSeasonYear,
+      date: camp.currentDate ?? null,
+      teamId: camp.teamId,
+      teamAbbreviation: camp.teamAbbreviation,
+      label: `Promoted to GM Level ${gmLevelLabel(level)}`,
+      subtitle: `${contractDecisionData.value?.ownerName ?? 'Your owner'} extended your contract`,
+    }
+    list.push(entry)
+    camp.achievements = list
+    await CampaignRepository.save(camp)
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.achievements = list
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to record GM promotion achievement:', err)
+  }
+}
+
+// --- Owner Welcome (new GM job) ---------------------------------------------
+// Minimal welcome conversation the moment a user accepts a NEW GM job — a fresh
+// campaign or taking over a new franchise. Greeting + mandate (owner's tone) +
+// the franchise expectation; no sub-goal checklist. Fire-once per job, keyed to
+// the team + the contract's tenure start, so each new job triggers exactly once
+// (and the next season's full check-in doesn't re-pop it). Returns true if opened.
+function maybeShowOwnerWelcome() {
+  const camp = campaignStore.currentCampaign
+  // Identity guard (see maybeShowOwnerCheckIn): never greet for a campaign other
+  // than the one in the route, even if the stores are mid-switch.
+  if (!camp || camp.id !== campaignId.value) return false
+  const abbr = camp.teamAbbreviation ?? teamStore.team?.abbreviation ?? null
+  const owner = findOwnerForTeam(abbr)
+  if (!owner) return false
+
+  const year = camp.currentSeasonYear ?? camp.current_season_year
+  const gmc = camp.settings?.gmContract ?? null
+  const tenureStart = gmc?.tenureStartYear ?? gmc?.signedSeasonYear ?? year
+  // Only for a genuinely new job — the GM's first season with this team. Guards
+  // established campaigns (incl. pre-feature saves missing the marker) from
+  // popping a "welcome" to a GM who's been running the team for years.
+  if (year == null || year > tenureStart) return false
+  const key = `${camp.teamId}:${tenureStart}`
+  if (camp.settings?.ownerWelcomeShownKey === key) return false
+
+  const eff = getEffectiveExpectation(camp, owner)
+  const built = buildOwnerCheckIn({
+    owner: effectiveOwner(owner, eff.tier),
+    subtasks: [],
+    expectedWins: eff.expectedWins,
+    seasonYear: year,
+    isFirstSeason: true,
+    yearsRemaining: 0,
+  })
+  ownerWelcomeData.value = {
+    owner,
+    seasonYear: year,
+    expectation: { ...eff, blurb: EXPECTATION_BLURB_DEFAULT[eff.tier] ?? '' },
+    lines: [...built.greetingLines, ...built.closingLines],
+  }
+  showOwnerWelcomeModal.value = true
+  // Suspend onboarding tours while the welcome is up — otherwise the
+  // campaignHome walkthrough (started in onMounted) renders over this popup on a
+  // brand-new campaign. handleCloseOwnerWelcome re-arms them (or hands off to the
+  // check-in, which keeps them suspended until it's dismissed).
+  walkthroughStore.setSuspended(true)
+
+  // Stamp the fire-once marker immediately (best-effort), like the check-in.
+  try {
+    CampaignRepository.updateSettings(campaignId.value, { ownerWelcomeShownKey: key })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        ownerWelcomeShownKey: key,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to stamp owner welcome marker:', err)
+  }
+  return true
+}
+
+function handleCloseOwnerWelcome() {
+  showOwnerWelcomeModal.value = false
+  ownerWelcomeData.value = null
+  // On a fresh campaign the welcome precedes the season-start full check-in
+  // (which keeps tours suspended and re-arms them on its own close). After a
+  // mid-campaign switch (offseason) the check-in no-ops, so re-arm the tours the
+  // welcome suspended and resume the offseason tour instead.
+  if (!maybeShowOwnerCheckIn()) {
+    walkthroughStore.setSuspended(false)
+    walkthroughStore.maybeStart('campaignHome')
+    maybeStartOffseasonTour()
+  }
+}
+
+// --- Owner Check-In (Part 2 capstone) ---------------------------------------
+// The owner's start-of-season conversation. Fired as the FIRST thing the user
+// sees right after campaign creation and at the start of each new season.
+// Fire-once-per-season via settings.ownerCheckInShownYear; suspends onboarding
+// tours until dismissed. Returns true if the modal was opened.
+function maybeShowOwnerCheckIn() {
+  const camp = campaignStore.currentCampaign
+  // Identity guard: the stores are singletons, so on a campaign switch they may
+  // still hold the PREVIOUS campaign until its fetches resolve. Bail unless the
+  // loaded campaign matches the one in the route — otherwise we'd render (and
+  // mis-stamp) the old campaign's owner/coach intro.
+  if (!camp || camp.id !== campaignId.value) return false
+  // Only at the top of a regular season (covers fresh creation + new season).
+  if (camp.phase !== 'regular_season') return false
+  const year = camp.currentSeasonYear ?? camp.current_season_year
+  if (year == null) return false
+  if (camp.settings?.ownerCheckInShownYear === year) return false
+
+  const abbr = camp.teamAbbreviation ?? teamStore.team?.abbreviation ?? null
+  const owner = findOwnerForTeam(abbr)
+  if (!owner) return false
+
+  const gmc = camp.settings?.gmContract ?? null
+  // Live (ratcheted) expectation for this campaign — falls back to the owner's
+  // static baseline for older saves.
+  const eff = getEffectiveExpectation(camp, owner)
+  const subResult = evaluateSubtasks({
+    owner,
+    expectation: eff.tier,
+    roster: teamStore.roster ?? [],
+    draftPicks: teamStore.team?.draftPicks ?? [],
+    facilities: teamStore.team?.facilities ?? null,
+    settings: camp.settings ?? {},
+    payroll: teamStore.totalSalary ?? 0,
+    progress: gmc?.progress ?? {},
+    userTeamId: camp.teamId ?? teamStore.team?.id ?? null,
+    coach: teamStore.coach ?? teamStore.team?.coach ?? null,
+    salaryCap: SALARY_CAP,
+  })
+
+  const signedYear = gmc?.signedSeasonYear ?? year
+  const length = gmc?.lengthYears ?? 2
+  // First meeting = the GM's first season with THIS team. Keyed off tenure
+  // start (preserved across re-signings), not signedSeasonYear (which resets
+  // every time the contract is extended) — otherwise a re-signed GM gets the
+  // "welcome aboard, nice to meet you" greeting every renewal. Falls back to
+  // signedYear for saves created before tenureStartYear existed.
+  const tenureStart = gmc?.tenureStartYear ?? signedYear
+  const isFirstSeason = year <= tenureStart
+  const yearsRemaining = Math.max(0, length - Math.max(0, year - signedYear))
+
+  ownerCheckInData.value = {
+    owner,
+    seasonYear: year,
+    ...buildOwnerCheckIn({
+      owner: effectiveOwner(owner, eff.tier),
+      subtasks: subResult.subtasks,
+      expectedWins: eff.expectedWins,
+      seasonYear: year,
+      isFirstSeason,
+      yearsRemaining,
+    }),
+  }
+  showOwnerCheckInModal.value = true
+  walkthroughStore.setSuspended(true)
+
+  // Stamp the fire-once marker immediately (best-effort) so navigating away and
+  // back within the season doesn't re-pop it. Mirrors the retirement dismissal.
+  try {
+    CampaignRepository.updateSettings(campaignId.value, { ownerCheckInShownYear: year })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        ownerCheckInShownYear: year,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to stamp owner check-in marker:', err)
+  }
+  return true
+}
+
+function handleCloseOwnerCheckIn() {
+  showOwnerCheckInModal.value = false
+  ownerCheckInData.value = null
+  // Resume onboarding now that the check-in has been seen.
+  walkthroughStore.setSuspended(false)
+  walkthroughStore.maybeStart('campaignHome')
+  maybeStartOffseasonTour()
+}
+
+// New-season summary closed → the owner's check-in is the next (first) thing the
+// user sees as the new season opens.
+function handleCloseNewSeasonModal() {
+  showNewSeasonModal.value = false
+  newSeasonData.value = null
+  maybeShowOwnerCheckIn()
 }
 
 // Handle starting a new season from offseason hub
@@ -1509,6 +1979,12 @@ async function handleStartNewSeason() {
     ])
 
     toastStore.removeMinimalToast(loadingToastId)
+
+    // Surface the AI coach carousel (hires / firings / retirements / extensions)
+    // as regular news-feed items — not breaking-news banners.
+    for (const item of result.coachCarousel ?? []) {
+      breakingNewsStore.addToFeed(item, campaignId.value)
+    }
 
     // Show new season modal
     newSeasonData.value = {
@@ -1588,6 +2064,12 @@ async function handleSimOffseason() {
 
     toastStore.removeMinimalToast(loadingToastId)
 
+    // Surface the AI coach carousel (hires / firings / retirements / extensions)
+    // as regular news-feed items — not breaking-news banners.
+    for (const item of result.coachCarousel ?? []) {
+      breakingNewsStore.addToFeed(item, campaignId.value)
+    }
+
     // Show new season modal
     newSeasonData.value = {
       seasonYear: result.campaign.currentSeasonYear,
@@ -1620,6 +2102,8 @@ function navigateToFreeAgency() {
 }
 
 async function handleEnterFreeAgency() {
+  audio.suppressClickSound() // affirmation chime instead of the generic tap
+  audio.affirm()
   enteringFreeAgency.value = true
   const loadingToastId = toastStore.showLoading('Opening free agency...')
   try {
@@ -1645,6 +2129,7 @@ async function handleEnterFreeAgency() {
 // next-game card's CTA reverts to "Enter Free Agency" because the
 // draftLotteryPending guard flips to false.
 const runningLottery = ref(false)
+const showDraftLotteryModal = ref(false)
 async function handleRunDraftLottery() {
   if (runningLottery.value) return
   runningLottery.value = true
@@ -1653,13 +2138,9 @@ async function handleRunDraftLottery() {
     await runDraftLotteryForCampaign(campaignId.value)
     await campaignStore.fetchCampaign(campaignId.value, true)
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showSuccess('Draft Lottery complete!', {
-      duration: 6000,
-      link: {
-        to: `/campaign/${campaignId.value}/draft-lottery`,
-        label: 'View Results',
-      },
-    })
+    // Show the results immediately in a popup (with the up/down movement arrows)
+    // rather than a transient toast link to a separate page.
+    showDraftLotteryModal.value = true
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError(err.message || 'Failed to run draft lottery')
@@ -1669,7 +2150,18 @@ async function handleRunDraftLottery() {
   }
 }
 
+// Closing the lottery results modal is the natural hand-off into free agency —
+// kick off the FA walkthrough here. maybeStart is a safe no-op unless the user
+// has walkthroughs enabled (and hasn't already seen/skipped this one), so it
+// only fires "if they are viewing walkthroughs".
+function handleCloseDraftLotteryModal() {
+  showDraftLotteryModal.value = false
+  walkthroughStore.maybeStart('freeAgency')
+}
+
 async function handleSimFreeAgencyDay() {
+  audio.navigate() // generic tap; suppress the global one so it doesn't double
+  audio.suppressClickSound()
   simmingFAday.value = true
   const loadingToastId = toastStore.showLoading('Simulating free-agency day...')
   try {
@@ -1699,6 +2191,8 @@ async function handleSimFreeAgencyDay() {
 }
 
 async function handleSimRestOfFreeAgency() {
+  audio.navigate() // generic tap; suppress the global one so it doesn't double
+  audio.suppressClickSound()
   simmingFAday.value = true
   const loadingToastId = toastStore.showLoading('Simulating remainder of free agency...')
   try {
@@ -2540,10 +3034,10 @@ function handleCloseSimulateModal() {
       <div v-if="facilities || teamMorale != null" class="home-status-row">
         <router-link
           v-if="facilities"
-          :to="`/campaign/${campaignId}/team?tab=personnel`"
+          :to="`/campaign/${campaignId}/team?tab=facilities`"
           class="facilities-card glass-card-nebula"
           data-tour="home-facilities"
-          :aria-label="'Open Personnel tab'"
+          :aria-label="'Open Facilities tab'"
         >
           <div class="facilities-strip">
             <div
@@ -3029,6 +3523,14 @@ function handleCloseSimulateModal() {
                 <Binoculars class="btn-icon" :size="16" />
                 SCOUTING
               </button>
+              <button
+                v-if="draftLotteryCompleted && !rookieDraftCompleted && !isFreeAgencyActive"
+                class="btn-simulate-game"
+                @click="showDraftLotteryModal = true"
+              >
+                <Star class="btn-icon" :size="16" />
+                VIEW LOTTERY
+              </button>
               <!-- Offseason primary CTA cycles through three states:
                    1. Draft Lottery (must run before FA opens)
                    2. Enter Free Agency (after lottery, before FA)
@@ -3269,6 +3771,14 @@ function handleCloseSimulateModal() {
               <Trophy :size="24" />
             </div>
             <span class="action-label">Bracket</span>
+          </button>
+          <!-- Offseason: the regular season is over, so surface the playoff
+               bracket here instead of standings. -->
+          <button v-else-if="isOffseason" class="action-box playoffs" @click="router.push(`/campaign/${campaignId}/playoffs`)">
+            <div class="action-icon">
+              <Trophy :size="24" />
+            </div>
+            <span class="action-label">Playoffs</span>
           </button>
           <button v-else class="action-box" @click="router.push(`/campaign/${campaignId}/league`)">
             <div class="action-icon">
@@ -3533,15 +4043,19 @@ function handleCloseSimulateModal() {
         <p class="warning-hint">{{ rosterWarningHint }}</p>
       </div>
       <template #footer>
-        <button class="warning-btn-cancel" @click="showRosterWarningModal = false">Cancel</button>
-        <button class="warning-btn-cpu" @click="handleCpuSetLineup">
-          <Cpu :size="16" />
-          CPU Adjust
-        </button>
-        <button class="warning-btn-confirm" @click="goToTeamTabFromWarning">
-          <Users :size="16" />
-          View Lineup
-        </button>
+        <div class="lineup-warning-footer">
+          <div class="lineup-warning-btn-row">
+            <button class="warning-btn-cancel" @click="showRosterWarningModal = false">Cancel</button>
+            <button class="warning-btn-cpu" @click="handleCpuSetLineup">
+              <Cpu :size="16" />
+              CPU Adjust
+            </button>
+          </div>
+          <button class="warning-btn-confirm" @click="goToTeamTabFromWarning">
+            <Users :size="16" />
+            View Lineup
+          </button>
+        </div>
       </template>
     </StandardModal>
 
@@ -3592,6 +4106,17 @@ function handleCloseSimulateModal() {
       @close="handleCloseRetirementModal"
     />
 
+    <!-- GM contract-end decision (Part 2): extend (re-sign) or pick a new team -->
+    <ContractDecisionModal
+      :show="showContractDecisionModal"
+      :decision="contractDecisionData"
+      :teams="campaignStore.availableTeams"
+      :gm-level="authStore.gmLevel"
+      :busy="contractDecisionBusy"
+      @extend="handleExtendContract"
+      @switch="handleSwitchTeam"
+    />
+
     <!-- Trade Proposal Modal -->
     <TradeProposalModal
       :show="showTradeProposalModal"
@@ -3616,7 +4141,36 @@ function handleCloseSimulateModal() {
       :season-year="newSeasonData?.seasonYear"
       :facilities-before="newSeasonData?.facilitiesBefore"
       :facilities-after="newSeasonData?.facilitiesAfter"
-      @close="showNewSeasonModal = false; newSeasonData = null"
+      @close="handleCloseNewSeasonModal"
+    />
+
+    <!-- Owner Welcome (the moment a new GM job is accepted) -->
+    <OwnerWelcomeModal
+      :show="showOwnerWelcomeModal"
+      :owner="ownerWelcomeData?.owner"
+      :season-year="ownerWelcomeData?.seasonYear"
+      :expectation="ownerWelcomeData?.expectation"
+      :lines="ownerWelcomeData?.lines || []"
+      @close="handleCloseOwnerWelcome"
+    />
+
+    <!-- Owner Check-In (start of each season / after campaign creation) -->
+    <OwnerCheckInModal
+      :show="showOwnerCheckInModal"
+      :owner="ownerCheckInData?.owner"
+      :check-in="ownerCheckInData"
+      :season-year="ownerCheckInData?.seasonYear"
+      @close="handleCloseOwnerCheckIn"
+    />
+
+    <!-- Draft Lottery results (pops immediately after the lottery runs) -->
+    <DraftLotteryModal
+      :show="showDraftLotteryModal"
+      :teams="campaign?.allTeams || []"
+      :standings="campaign?.standings || { east: [], west: [] }"
+      :lottery-result="campaign?.settings?.draftLottery || null"
+      :pick-year="campaign?.gameYear ?? null"
+      @close="handleCloseDraftLotteryModal"
     />
 
     <!-- Start-of-season prerequisites gate -->
@@ -5925,6 +6479,21 @@ function handleCloseSimulateModal() {
 .warning-btn-confirm:hover {
   background: var(--color-primary-dark);
   transform: translateY(-1px);
+}
+
+/* Stack the footer: Cancel + CPU Adjust on one row, View Lineup full-width below. */
+.lineup-warning-footer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lineup-warning-btn-row {
+  display: flex;
+  gap: 12px;
+}
+.lineup-warning-footer .warning-btn-confirm {
+  flex: 0 0 auto;
 }
 
 /* Background Simulation Progress */

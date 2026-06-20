@@ -264,6 +264,7 @@ export const useSyncStore = defineStore('sync', () => {
         teamId: entry.teamId,
         teamAbbreviation: entry.teamAbbreviation,
         gamesPlayed: 0,
+        seasonHighs: entry.seasonHighs ?? {},
       }
     }
 
@@ -291,6 +292,8 @@ export const useSyncStore = defineStore('sync', () => {
       fgPct: fga > 0 ? round1((fgm / fga) * 100) : 0,
       threePct: tpa > 0 ? round1((tpm / tpa) * 100) : 0,
       ftPct: fta > 0 ? round1((ftm / fta) * 100) : 0,
+      // Preserve the season's single-game highs through sync compaction (tiny).
+      seasonHighs: entry.seasonHighs ?? {},
     }
   }
 

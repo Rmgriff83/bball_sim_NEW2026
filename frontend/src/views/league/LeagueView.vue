@@ -12,6 +12,7 @@ import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import TeamLogo from '@/components/common/TeamLogo.vue'
 import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
+import CareerHighsPanel from '@/components/team/CareerHighsPanel.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
@@ -131,6 +132,12 @@ watch(activeTab, async (newTab) => {
       await leagueStore.fetchMVPRace(campaignId.value, { force: true })
     } catch (err) {
       console.error('Failed to fetch MVP race:', err)
+    }
+  } else if (newTab === 'alltime') {
+    try {
+      await leagueStore.fetchCampaignRecords(campaignId.value, { force: true })
+    } catch (err) {
+      console.error('Failed to fetch campaign records:', err)
     }
   }
 })
@@ -286,6 +293,39 @@ const userTeam = computed(() => campaign.value?.team)
 
 const eastStandings = computed(() => leagueStore.eastStandings)
 const westStandings = computed(() => leagueStore.westStandings)
+
+// --- "All Time" tab: single-game record boards ---
+const HIGH_ROWS = [
+  { key: 'points', label: 'PTS' },
+  { key: 'rebounds', label: 'REB' },
+  { key: 'assists', label: 'AST' },
+  { key: 'steals', label: 'STL' },
+  { key: 'blocks', label: 'BLK' },
+]
+// abbr → primary color, for the opponent/player team logos on the record rows.
+const teamColorByAbbr = computed(() => {
+  const map = {}
+  for (const s of [...(leagueStore.eastStandings || []), ...(leagueStore.westStandings || [])]) {
+    const abbr = s.team?.abbreviation
+    if (abbr) map[abbr] = s.team?.primary_color || null
+  }
+  return map
+})
+function _highsRows(highsObj) {
+  return HIGH_ROWS.map((r) => {
+    const h = highsObj?.[r.key] ?? null
+    return {
+      label: r.label,
+      value: h?.value ?? null,
+      playerName: h?.playerName ?? null,
+      teamAbbr: h?.teamAbbr ?? null,
+      opp: h?.opp ?? null,
+      year: h?.year ?? null,
+    }
+  })
+}
+const allTimeHighRows = computed(() => _highsRows(leagueStore.allTimeHighs))
+const seasonHighRows = computed(() => _highsRows(leagueStore.seasonHighs))
 
 const sortByWinPct = (arr) => [...arr].sort((a, b) => {
   const totalA = a.wins + a.losses
@@ -624,6 +664,12 @@ const playerRecentPerformances = computed(() => {
   return [...perfs].reverse()
 })
 
+// Career highs for the player modal + which sub-tab (recent games / career highs).
+const playerCareerHighs = computed(() =>
+  selectedPlayer.value?.careerHighs || selectedPlayer.value?.career_highs || null
+)
+const leagueStatsTab = ref('recent')
+
 // Format category name for display
 function formatCategoryName(category) {
   return category.charAt(0).toUpperCase() + category.slice(1)
@@ -680,6 +726,13 @@ function formatSalary(salary) {
             </button>
             <button
               class="tab-btn"
+              :class="{ active: activeTab === 'playoffs' }"
+              @click="activeTab = 'playoffs'"
+            >
+              Playoff Picture
+            </button>
+            <button
+              class="tab-btn"
               :class="{ active: activeTab === 'games' }"
               @click="activeTab = 'games'"
             >
@@ -706,10 +759,17 @@ function formatSalary(salary) {
             >
               Rookie Rankings
             </button>
+            <button
+              class="tab-btn"
+              :class="{ active: activeTab === 'alltime' }"
+              @click="activeTab = 'alltime'"
+            >
+              All Time
+            </button>
           </div>
 
-          <!-- Conference Toggle (shown for standings, games & leaders) -->
-          <div v-if="activeTab === 'standings' || activeTab === 'leaders' || activeTab === 'games'" class="league-conf-filters">
+          <!-- Conference Toggle (shown for standings, playoffs, games & leaders) -->
+          <div v-if="activeTab === 'standings' || activeTab === 'playoffs' || activeTab === 'leaders' || activeTab === 'games'" class="league-conf-filters">
             <button
               class="conf-btn"
               :class="{ active: activeConference === null }"
@@ -813,18 +873,27 @@ function formatSalary(salary) {
           </div>
         </GlassCard>
 
-        <!-- Playoff Picture -->
-        <div class="grid gap-6 mt-6" :class="activeConference ? '' : 'md:grid-cols-2'">
+      </template>
+
+      <!-- Playoff Picture View -->
+      <template v-else-if="activeTab === 'playoffs'">
+        <div class="grid gap-6" :class="activeConference ? '' : 'md:grid-cols-2'">
           <GlassCard v-if="activeConference !== 'west'" padding="lg" :hoverable="false">
             <h3 class="h4 mb-4">Eastern Conference Playoff Picture</h3>
             <div class="playoff-bracket">
               <div
                 v-for="(standing, index) in eastStandings.slice(0, 8)"
                 :key="standing.teamId"
-                class="playoff-team"
+                class="playoff-team clickable"
                 :class="{ 'user-team': isUserTeam(standing.teamId) }"
+                @click="openTeamModal(standing)"
               >
                 <span class="seed">{{ index + 1 }}</span>
+                <TeamLogo
+                  :abbreviation="standing.team?.abbreviation"
+                  :color="standing.team?.primary_color"
+                  :size="26"
+                />
                 <span class="team-abbr">{{ standing.team?.abbreviation }}</span>
                 <span class="record">{{ standing.wins }}-{{ standing.losses }}</span>
               </div>
@@ -837,16 +906,123 @@ function formatSalary(salary) {
               <div
                 v-for="(standing, index) in westStandings.slice(0, 8)"
                 :key="standing.teamId"
-                class="playoff-team"
+                class="playoff-team clickable"
                 :class="{ 'user-team': isUserTeam(standing.teamId) }"
+                @click="openTeamModal(standing)"
               >
                 <span class="seed">{{ index + 1 }}</span>
+                <TeamLogo
+                  :abbreviation="standing.team?.abbreviation"
+                  :color="standing.team?.primary_color"
+                  :size="26"
+                />
                 <span class="team-abbr">{{ standing.team?.abbreviation }}</span>
                 <span class="record">{{ standing.wins }}-{{ standing.losses }}</span>
               </div>
             </div>
           </GlassCard>
         </div>
+      </template>
+
+      <!-- All Time View -->
+      <template v-else-if="activeTab === 'alltime'">
+        <div v-if="leagueStore.loadingRecords" class="loading-state opacity-60">
+          <LoadingSpinner size="md" />
+        </div>
+        <template v-else>
+          <!-- Single-Game Records -->
+          <div class="grid gap-6 md:grid-cols-2">
+            <GlassCard padding="lg" :hoverable="false">
+              <h3 class="h4 mb-4">All-Time Single-Game Records</h3>
+              <table class="records-table">
+                <tbody>
+                  <tr v-for="row in allTimeHighRows" :key="'all-' + row.label">
+                    <td class="rec-stat">{{ row.label }}</td>
+                    <td class="rec-value">{{ row.value != null ? row.value : '—' }}</td>
+                    <td class="rec-holder">
+                      <template v-if="row.value != null">
+                        <span class="team-cell">
+                          <TeamLogo v-if="row.teamAbbr" :abbreviation="row.teamAbbr" :color="teamColorByAbbr[row.teamAbbr]" :size="18" />
+                          <span class="rec-name">{{ row.playerName || '—' }}</span>
+                        </span>
+                        <span class="rec-context">vs {{ row.opp }} · {{ row.year }}</span>
+                      </template>
+                      <span v-else class="rec-empty">No record yet</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </GlassCard>
+
+            <GlassCard padding="lg" :hoverable="false">
+              <h3 class="h4 mb-4">This Season — Single-Game Highs</h3>
+              <table class="records-table">
+                <tbody>
+                  <tr v-for="row in seasonHighRows" :key="'ssn-' + row.label">
+                    <td class="rec-stat">{{ row.label }}</td>
+                    <td class="rec-value">{{ row.value != null ? row.value : '—' }}</td>
+                    <td class="rec-holder">
+                      <template v-if="row.value != null">
+                        <span class="team-cell">
+                          <TeamLogo v-if="row.teamAbbr" :abbreviation="row.teamAbbr" :color="teamColorByAbbr[row.teamAbbr]" :size="18" />
+                          <span class="rec-name">{{ row.playerName || '—' }}</span>
+                        </span>
+                        <span class="rec-context">vs {{ row.opp }} · {{ row.year }}</span>
+                      </template>
+                      <span v-else class="rec-empty">No record yet</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </GlassCard>
+          </div>
+
+          <!-- Champions -->
+          <GlassCard padding="lg" :hoverable="false" class="mt-6">
+            <h3 class="h4 mb-4">Champions</h3>
+            <div v-if="leagueStore.champions.length === 0" class="text-secondary">No champions yet — finish a season.</div>
+            <table v-else class="records-table history-table">
+              <thead>
+                <tr><th class="rec-year-col">Year</th><th>Champion</th><th>Finals MVP</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="c in leagueStore.champions" :key="'champ-' + c.year">
+                  <td class="rec-year">{{ c.year }}</td>
+                  <td>
+                    <span class="team-cell">
+                      <TeamLogo :abbreviation="c.abbreviation" :color="c.primaryColor" :size="24" />
+                      <span class="rec-name">{{ c.name }}</span>
+                    </span>
+                  </td>
+                  <td class="rec-context">{{ c.finalsMvpName || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </GlassCard>
+
+          <!-- MVP -->
+          <GlassCard padding="lg" :hoverable="false" class="mt-6">
+            <h3 class="h4 mb-4">Most Valuable Player</h3>
+            <div v-if="leagueStore.mvpHistory.length === 0" class="text-secondary">No MVPs yet — finish a season.</div>
+            <table v-else class="records-table history-table">
+              <thead>
+                <tr><th class="rec-year-col">Year</th><th>Player</th><th>Team</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="m in leagueStore.mvpHistory" :key="'mvp-' + m.year">
+                  <td class="rec-year">{{ m.year }}</td>
+                  <td class="rec-name">{{ m.playerName }}</td>
+                  <td>
+                    <span class="team-cell">
+                      <TeamLogo v-if="m.teamAbbr" :abbreviation="m.teamAbbr" :color="m.teamColor || teamColorByAbbr[m.teamAbbr]" :size="20" />
+                      <span>{{ m.teamAbbr || '—' }}</span>
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </GlassCard>
+        </template>
       </template>
 
       <!-- Games View -->
@@ -1232,7 +1408,7 @@ function formatSalary(salary) {
                         @click="openPlayerFromTeam(player)"
                       >
                         <div class="roster-player-main">
-                          <PlayerAvatar :player="player" :size="32" />
+                          <PlayerAvatar :player="player" :size="42" />
                           <div class="roster-player-rating">
                             <StatBadge :value="player.overall_rating" size="sm" />
                             <span v-if="player.is_injured || player.isInjured" class="roster-injury-badge">INJ</span>
@@ -1463,7 +1639,7 @@ function formatSalary(salary) {
               <!-- Player Card - Cosmic Style -->
               <div class="player-card-cosmic" :class="{ injured: selectedPlayer.is_injured || selectedPlayer.isInjured }">
                 <div class="player-avatar-circle">
-                  <PlayerAvatar :player="selectedPlayer" :size="64" />
+                  <PlayerAvatar :player="selectedPlayer" :size="84" />
                 </div>
                 <div class="player-card-rating-corner">
                   <span class="ovr-label">OVR</span>
@@ -1576,40 +1752,57 @@ function formatSalary(salary) {
                     <div v-else class="player-empty-state">
                       <p>No season stats yet</p>
                     </div>
-                    <!-- Recent Games (Game Log) -->
-                    <div v-if="playerRecentPerformances?.length > 0" class="recent-performances-section">
-                      <h4 class="recent-performances-title">Recent Games</h4>
-                      <div class="game-log-table-wrap">
-                        <table class="game-log-table">
-                          <thead>
-                            <tr>
-                              <th>Date</th><th>OPP</th><th>Result</th>
-                              <th>MIN</th><th>PTS</th><th>REB</th><th>AST</th>
-                              <th>STL</th><th>BLK</th><th>TO</th>
-                              <th>FG</th><th>3P</th><th>FT</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr v-for="(game, i) in playerRecentPerformances" :key="i">
-                              <td class="game-log-date">{{ typeof game === 'object' ? formatGameDate(game.date) : '—' }}</td>
-                              <td class="game-log-opp">{{ typeof game === 'object' ? game.opponent : '—' }}</td>
-                              <td :class="typeof game === 'object' && game.won ? 'game-log-win' : 'game-log-loss'">
-                                {{ typeof game === 'object' ? (game.won ? 'W' : 'L') : '—' }}
-                              </td>
-                              <td>{{ typeof game === 'object' ? game.min : '—' }}</td>
-                              <td class="game-log-pts">{{ typeof game === 'object' ? game.pts : Math.round(game) }}</td>
-                              <td>{{ typeof game === 'object' ? game.reb : '—' }}</td>
-                              <td>{{ typeof game === 'object' ? game.ast : '—' }}</td>
-                              <td>{{ typeof game === 'object' ? game.stl : '—' }}</td>
-                              <td>{{ typeof game === 'object' ? game.blk : '—' }}</td>
-                              <td>{{ typeof game === 'object' ? game.to : '—' }}</td>
-                              <td>{{ typeof game === 'object' ? `${game.fgm}-${game.fga}` : '—' }}</td>
-                              <td>{{ typeof game === 'object' ? `${game.tpm}-${game.tpa}` : '—' }}</td>
-                              <td>{{ typeof game === 'object' ? `${game.ftm}-${game.fta}` : '—' }}</td>
-                            </tr>
-                          </tbody>
-                        </table>
+                    <!-- Recent Games / Career Highs (secondary tabbed box) -->
+                    <div v-if="playerRecentPerformances?.length > 0 || playerCareerHighs" class="recent-performances-section">
+                      <div class="stat-subtabs">
+                        <button
+                          class="stat-subtab-btn"
+                          :class="{ active: leagueStatsTab === 'recent' }"
+                          @click="leagueStatsTab = 'recent'"
+                        >Recent Games</button>
+                        <button
+                          class="stat-subtab-btn"
+                          :class="{ active: leagueStatsTab === 'highs' }"
+                          @click="leagueStatsTab = 'highs'"
+                        >Career Highs</button>
                       </div>
+
+                      <div v-if="leagueStatsTab === 'recent'">
+                        <div v-if="playerRecentPerformances?.length > 0" class="game-log-table-wrap">
+                          <table class="game-log-table">
+                            <thead>
+                              <tr>
+                                <th>Date</th><th>OPP</th><th>Result</th>
+                                <th>MIN</th><th>PTS</th><th>REB</th><th>AST</th>
+                                <th>STL</th><th>BLK</th><th>TO</th>
+                                <th>FG</th><th>3P</th><th>FT</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="(game, i) in playerRecentPerformances" :key="i">
+                                <td class="game-log-date">{{ typeof game === 'object' ? formatGameDate(game.date) : '—' }}</td>
+                                <td class="game-log-opp">{{ typeof game === 'object' ? game.opponent : '—' }}</td>
+                                <td :class="typeof game === 'object' && game.won ? 'game-log-win' : 'game-log-loss'">
+                                  {{ typeof game === 'object' ? (game.won ? 'W' : 'L') : '—' }}
+                                </td>
+                                <td>{{ typeof game === 'object' ? game.min : '—' }}</td>
+                                <td class="game-log-pts">{{ typeof game === 'object' ? game.pts : Math.round(game) }}</td>
+                                <td>{{ typeof game === 'object' ? game.reb : '—' }}</td>
+                                <td>{{ typeof game === 'object' ? game.ast : '—' }}</td>
+                                <td>{{ typeof game === 'object' ? game.stl : '—' }}</td>
+                                <td>{{ typeof game === 'object' ? game.blk : '—' }}</td>
+                                <td>{{ typeof game === 'object' ? game.to : '—' }}</td>
+                                <td>{{ typeof game === 'object' ? `${game.fgm}-${game.fga}` : '—' }}</td>
+                                <td>{{ typeof game === 'object' ? `${game.tpm}-${game.tpa}` : '—' }}</td>
+                                <td>{{ typeof game === 'object' ? `${game.ftm}-${game.fta}` : '—' }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                        <div v-else class="text-secondary">No recent games yet.</div>
+                      </div>
+
+                      <CareerHighsPanel v-else :career-highs="playerCareerHighs" />
                     </div>
                   </template>
                   <div v-else class="player-empty-state">
@@ -2233,6 +2426,7 @@ function formatSalary(salary) {
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: var(--radius-md);
   transition: all 0.15s ease;
+  cursor: pointer;
 }
 
 .playoff-team:hover {
@@ -2383,6 +2577,75 @@ function formatSalary(salary) {
   align-items: center;
   padding: 16px 20px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* "All Time" tab — records / history tables */
+.records-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.records-table td,
+.records-table th {
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: middle;
+}
+.records-table tr:last-child td {
+  border-bottom: none;
+}
+.records-table th {
+  text-align: left;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  font-weight: 700;
+}
+.rec-stat {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  width: 46px;
+}
+.rec-value {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+  width: 56px;
+}
+.rec-holder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rec-name {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.rec-context {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.rec-empty {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+.rec-year,
+.rec-year-col {
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  width: 64px;
+}
+.records-table .team-cell {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
 }
 
 .leaders-table {
@@ -3751,8 +4014,8 @@ function formatSalary(salary) {
 }
 
 .player-avatar-circle {
-  width: 72px;
-  height: 72px;
+  width: 92px;
+  height: 92px;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.25);
   border: 2px solid rgba(255, 255, 255, 0.2);
@@ -4676,6 +4939,36 @@ function formatSalary(salary) {
   letter-spacing: 0.05em;
   color: var(--color-text-secondary);
   margin-bottom: 10px;
+}
+
+/* Secondary tab bar (Recent Games / Career Highs) in the player modal. */
+.stat-subtabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.stat-subtab-btn {
+  padding: 5px 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.stat-subtab-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--color-text-primary);
+}
+.stat-subtab-btn.active {
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
 }
 
 .game-log-table-wrap {

@@ -2,18 +2,20 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { StatBadge, BaseModal } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, UserPlus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check, Brush, Dumbbell, Sparkles } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, UserPlus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check, Brush, Dumbbell, Sparkles, ChevronDown } from 'lucide-vue-next'
 import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { detectArchetype } from '@/engine/data/archetypes'
 import CoachMeetingConfirmModal from './CoachMeetingConfirmModal.vue'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerBadgeStoreModal from '@/components/team/PlayerBadgeStoreModal.vue'
+import CareerHighsPanel from '@/components/team/CareerHighsPanel.vue'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
 import { useAuthStore } from '@/stores/auth'
 import { useTeamStore } from '@/stores/team'
 import { useAudioStore } from '@/stores/audio'
-import { getBadgeStoreEntries } from '@/engine/data/playerBadgeStore'
+import { getBadgeStoreEntries, PLAYER_BADGE_LEVELS } from '@/engine/data/playerBadgeStore'
+import { BADGES } from '@/engine/data/badges'
 import { getCoachTrainBudget } from '@/engine/data/coaches'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { useWalkthroughStore } from '@/stores/walkthrough'
@@ -92,6 +94,12 @@ const props = defineProps({
   },
   // Whether player is on an expiring contract (for showing resign button)
   isExpiringContract: {
+    type: Boolean,
+    default: false
+  },
+  // Whether in-season re-signing is closed (deadline passed). Hides the
+  // header Re-sign button, mirroring the ContractCard row button gating.
+  resignDisabled: {
     type: Boolean,
     default: false
   },
@@ -176,7 +184,76 @@ const props = defineProps({
 const emit = defineEmits(['close', 'upgrade-attribute', 'purchase-upgrade-point', 'resign-player', 'drop-player', 'sign-player', 'scout-player', 'hold-coach-meeting', 'draft-player'])
 
 const activeTab = ref('stats')
+// Sub-tab for the recent-games / career-highs box within the stats tab.
+const recentStatsTab = ref('recent')
 const showPlayerBadgeStore = ref(false)
+// Collapsible "badges this player could earn" list on the Badges tab — same
+// eligibility data the Badge Store uses, surfaced here for visibility.
+const showBadgeOptions = ref(false)
+const PLAYER_BADGE_TIER_COLORS = {
+  bronze: '#CD7F32', silver: '#C0C0C0', gold: '#FFD700', hof: '#9333EA',
+}
+const BADGE_CATEGORY_LABELS = {
+  shooting: 'Shooting', finishing: 'Finishing', playmaking: 'Playmaking', defense: 'Defense', physical: 'Physical',
+}
+function badgeLevelLabel(level) {
+  if (!level) return '—'
+  if (level === 'hof') return 'HOF'
+  return level.charAt(0).toUpperCase() + level.slice(1)
+}
+// Eligible badges + the per-player level ceiling (uses the raw player, same as
+// the Badge Store, so position/attribute/potential fit is evaluated identically),
+// MERGED with every badge the player already owns. getBadgeStoreEntries omits
+// badges the player no longer meets the eligibility fit for, but if they own one
+// it should still show here (as owned, maxed at the level they hold).
+const badgeOptions = computed(() => {
+  if (!props.player) return []
+  const entries = getBadgeStoreEntries(props.player)
+  const lvlIdx = (l) => PLAYER_BADGE_LEVELS.indexOf(l)
+  // An owned tier can sit above the player's current eligibility ceiling — show
+  // the ceiling as at least what they hold so the dots/label aren't misleading.
+  for (const e of entries) {
+    if (e.currentLevel && lvlIdx(e.currentLevel) > lvlIdx(e.maxLevel)) e.maxLevel = e.currentLevel
+  }
+  const seen = new Set(entries.map((e) => e.badge.id))
+  for (const ob of props.player.badges ?? []) {
+    if (!ob?.id || seen.has(ob.id)) continue
+    seen.add(ob.id)
+    const meta = BADGES.find((b) => b.id === ob.id)
+      || { id: ob.id, name: formatBadgeName(ob), category: 'other', description: '' }
+    entries.push({
+      badge: meta,
+      category: meta.category || 'other',
+      currentLevel: ob.level,
+      nextLevel: null,
+      nextCost: null,
+      maxLevel: ob.level,
+      isMaxedForPlayer: true,
+      attrFit: 0,
+    })
+  }
+  return entries
+})
+const badgeOptionsByCategory = computed(() => {
+  const by = {}
+  for (const e of badgeOptions.value) {
+    if (!by[e.category]) by[e.category] = []
+    by[e.category].push(e)
+  }
+  return Object.entries(by).map(([category, entries]) => ({ category, entries }))
+})
+// Dot state per tier: owned (already at/above), reachable (≤ ceiling, not yet
+// owned), or locked (above this player's ceiling).
+function badgeDotClass(entry, level) {
+  const lvlIdx = PLAYER_BADGE_LEVELS.indexOf(level)
+  const ownIdx = entry.currentLevel ? PLAYER_BADGE_LEVELS.indexOf(entry.currentLevel) : -1
+  const maxIdx = PLAYER_BADGE_LEVELS.indexOf(entry.maxLevel)
+  return {
+    owned: ownIdx >= lvlIdx,
+    reachable: lvlIdx <= maxIdx && ownIdx < lvlIdx,
+    locked: lvlIdx > maxIdx,
+  }
+}
 
 // Per-sub-tab onboarding walkthroughs. When the lineup opens this modal
 // (enableTabTours), the first visit to each sub-tab auto-starts its own tour.
@@ -223,8 +300,7 @@ const router = useRouter()
 const headshotEditorReturnStore = useHeadshotEditorReturnStore()
 
 function openHeadshotEditor() {
-  if (!props.isUserPlayer) return
-  if (!authStore.hasFeature('headshot_editor')) return
+  if (!canEditHeadshot.value) return
   const pid = normalizedPlayer.value?.id ?? props.player?.id
   if (!pid) return
   // Capture the host route so the editor can return us here and the host
@@ -338,6 +414,7 @@ const normalizedPlayer = computed(() => {
     defense_upgrade_points: p.defense_upgrade_points ?? p.defenseUpgradePoints ?? 0,
     // Recent performances
     recentPerformances: p.recent_performances || p.recentPerformances || [],
+    careerHighs: p.careerHighs || p.career_highs || null,
     // Morale & personality
     morale: p.morale ?? p.personality?.morale ?? 80,
     personality: p.personality || null,
@@ -578,6 +655,15 @@ const playerIsFreeAgent = computed(() => (
 const canShowCoachMeeting = computed(() =>
   props.isUserPlayer && !props.scoutingMode && !playerIsFreeAgent.value
 )
+// Headshot editing is only for players actually on the USER's roster — never
+// free agents or scouted AI players (the free-agents tab opens this modal with
+// isUserPlayer=true, so the free-agent guard is what keeps editing off them).
+const canEditHeadshot = computed(() =>
+  props.isUserPlayer
+  && !props.scoutingMode
+  && !playerIsFreeAgent.value
+  && authStore.hasFeature('headshot_editor')
+)
 const coachMeetingDisabledReason = computed(() => {
   if (!props.coach) return 'Sign a coach first'
   if (moraleValue.value >= 100) return 'Morale already maxed'
@@ -623,6 +709,8 @@ const trainingMsLeft = computed(() => {
 // is open. Previously this ignored playerId, so any time the team had a
 // claim-ready session the dot appeared on every modal we opened.
 const trainingReady = computed(() => trainingForThisPlayer.value && trainingMsLeft.value === 0)
+// In progress = this player's session is still counting down → show the timer.
+const trainingInProgress = computed(() => trainingForThisPlayer.value && trainingMsLeft.value > 0)
 
 // Pretty "Xh Ym" / "Xm Ys" countdown.
 function formatTrainingCountdown(ms) {
@@ -668,9 +756,10 @@ async function handleStartTraining() {
   if (!props.campaignId || !props.player?.id) return
   if (trainInProgress.value) return
   trainInProgress.value = true
-  audio.suppressClickSound()
+  audio.suppressClickSound() // affirmation on success instead of the generic tap
   try {
     await teamStore.startTrainingSession(props.campaignId, props.player.id)
+    audio.affirm()
     toastStore.showSuccess('Training session started')
   } catch (err) {
     toastStore.showError(err?.message || 'Failed to start training')
@@ -710,13 +799,14 @@ async function handleClaimTraining() {
   }
 }
 
-// Start/stop the 30-second tick alongside the modal lifecycle so a
-// closed modal isn't paying the timer cost.
+// Start/stop a 1-second tick alongside the modal lifecycle so the countdown
+// actually ticks down second-by-second while open (a closed modal stops the
+// timer so it isn't paying the cost).
 watch(() => props.show, (open) => {
   if (open) {
     _trainingNow.value = Date.now()
     if (_trainingTickHandle == null) {
-      _trainingTickHandle = setInterval(() => { _trainingNow.value = Date.now() }, 30 * 1000)
+      _trainingTickHandle = setInterval(() => { _trainingNow.value = Date.now() }, 1000)
     }
   } else if (_trainingTickHandle != null) {
     clearInterval(_trainingTickHandle)
@@ -1023,7 +1113,7 @@ function formatChange(change) {
                 <div class="modal-player-avatar">
                   <PlayerAvatar :player="normalizedPlayer" :size="84" class="avatar-icon" />
                   <button
-                    v-if="isUserPlayer && authStore.hasFeature('headshot_editor')"
+                    v-if="canEditHeadshot"
                     type="button"
                     class="edit-headshot-overlay"
                     title="Edit headshot"
@@ -1127,7 +1217,7 @@ function formatChange(change) {
                   <!-- Contract Action Buttons (finances page) -->
                   <div v-if="showContractActions && !playerIsFreeAgent" class="header-contract-actions">
                     <button
-                      v-if="isExpiringContract"
+                      v-if="isExpiringContract && !resignDisabled"
                       class="header-action-btn resign"
                       @click.stop="emit('resign-player', player)"
                     >
@@ -1241,7 +1331,12 @@ function formatChange(change) {
                 @click="activeTab = 'badges'"
               >
                 Badges
-                <span v-if="trainingReady" class="train-ready-dot" :title="'Training ready to claim'"></span>
+                <span
+                  v-if="trainingInProgress"
+                  class="train-countdown-tab"
+                  :title="`Training · ${formatTrainingCountdown(trainingMsLeft)} remaining`"
+                ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeft) }}</span></span>
+                <span v-else-if="trainingReady" class="train-ready-dot" :title="'Training ready to claim'"></span>
               </button>
               <button
                 v-if="showGrowth && !scoutingMode"
@@ -1252,7 +1347,7 @@ function formatChange(change) {
                 Growth
               </button>
               <button
-                v-if="showHistory && !scoutingMode"
+                v-if="showHistory"
                 class="tab-btn"
                 :class="{ active: activeTab === 'history' }"
                 @click="activeTab = 'history'"
@@ -1321,40 +1416,57 @@ function formatChange(change) {
                   <div v-else class="empty-state-inline">
                     <p>No season stats yet</p>
                   </div>
-                  <!-- Recent Games (Game Log) -->
-                  <div v-if="reversedPerformances.length > 0" class="recent-performances-section">
-                    <h4 class="recent-performances-title">Recent Games</h4>
-                    <div class="game-log-table-wrap">
-                      <table class="game-log-table">
-                        <thead>
-                          <tr>
-                            <th>Date</th><th>OPP</th><th>Result</th>
-                            <th>MIN</th><th>PTS</th><th>REB</th><th>AST</th>
-                            <th>STL</th><th>BLK</th><th>TO</th>
-                            <th>FG</th><th>3P</th><th>FT</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr v-for="(game, i) in reversedPerformances" :key="i">
-                            <td class="game-log-date">{{ typeof game === 'object' ? formatGameDate(game.date) : '—' }}</td>
-                            <td class="game-log-opp">{{ typeof game === 'object' ? game.opponent : '—' }}</td>
-                            <td :class="typeof game === 'object' && game.won ? 'game-log-win' : 'game-log-loss'">
-                              {{ typeof game === 'object' ? (game.won ? 'W' : 'L') : '—' }}
-                            </td>
-                            <td>{{ typeof game === 'object' ? game.min : '—' }}</td>
-                            <td class="game-log-pts">{{ typeof game === 'object' ? game.pts : Math.round(game) }}</td>
-                            <td>{{ typeof game === 'object' ? game.reb : '—' }}</td>
-                            <td>{{ typeof game === 'object' ? game.ast : '—' }}</td>
-                            <td>{{ typeof game === 'object' ? game.stl : '—' }}</td>
-                            <td>{{ typeof game === 'object' ? game.blk : '—' }}</td>
-                            <td>{{ typeof game === 'object' ? game.to : '—' }}</td>
-                            <td>{{ typeof game === 'object' ? `${game.fgm}-${game.fga}` : '—' }}</td>
-                            <td>{{ typeof game === 'object' ? `${game.tpm}-${game.tpa}` : '—' }}</td>
-                            <td>{{ typeof game === 'object' ? `${game.ftm}-${game.fta}` : '—' }}</td>
-                          </tr>
-                        </tbody>
-                      </table>
+                  <!-- Recent Games / Career Highs (secondary tabbed box) -->
+                  <div v-if="reversedPerformances.length > 0 || normalizedPlayer.careerHighs" class="recent-performances-section">
+                    <div class="stat-subtabs">
+                      <button
+                        class="stat-subtab-btn"
+                        :class="{ active: recentStatsTab === 'recent' }"
+                        @click="recentStatsTab = 'recent'"
+                      >Recent Games</button>
+                      <button
+                        class="stat-subtab-btn"
+                        :class="{ active: recentStatsTab === 'highs' }"
+                        @click="recentStatsTab = 'highs'"
+                      >Career Highs</button>
                     </div>
+
+                    <div v-if="recentStatsTab === 'recent'">
+                      <div v-if="reversedPerformances.length > 0" class="game-log-table-wrap">
+                        <table class="game-log-table">
+                          <thead>
+                            <tr>
+                              <th>Date</th><th>OPP</th><th>Result</th>
+                              <th>MIN</th><th>PTS</th><th>REB</th><th>AST</th>
+                              <th>STL</th><th>BLK</th><th>TO</th>
+                              <th>FG</th><th>3P</th><th>FT</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="(game, i) in reversedPerformances" :key="i">
+                              <td class="game-log-date">{{ typeof game === 'object' ? formatGameDate(game.date) : '—' }}</td>
+                              <td class="game-log-opp">{{ typeof game === 'object' ? game.opponent : '—' }}</td>
+                              <td :class="typeof game === 'object' && game.won ? 'game-log-win' : 'game-log-loss'">
+                                {{ typeof game === 'object' ? (game.won ? 'W' : 'L') : '—' }}
+                              </td>
+                              <td>{{ typeof game === 'object' ? game.min : '—' }}</td>
+                              <td class="game-log-pts">{{ typeof game === 'object' ? game.pts : Math.round(game) }}</td>
+                              <td>{{ typeof game === 'object' ? game.reb : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? game.ast : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? game.stl : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? game.blk : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? game.to : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? `${game.fgm}-${game.fga}` : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? `${game.tpm}-${game.tpa}` : '—' }}</td>
+                              <td>{{ typeof game === 'object' ? `${game.ftm}-${game.fta}` : '—' }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div v-else class="empty-state-inline"><p>No recent games yet</p></div>
+                    </div>
+
+                    <CareerHighsPanel v-else :career-highs="normalizedPlayer.careerHighs" />
                   </div>
               </div>
 
@@ -1669,6 +1781,7 @@ function formatChange(change) {
                       <span>Badge Store</span>
                     </button>
                   </div>
+
                   <div v-if="normalizedPlayer.badges?.length > 0" class="badges-tab-content" data-tour="pdm-badges-list">
                   <!-- HOF Badges -->
                   <div v-if="normalizedPlayer.badges.filter(b => b.level === 'hof').length > 0" class="badge-level-section">
@@ -1748,6 +1861,47 @@ function formatChange(change) {
                       <template v-if="isUserPlayer && !scoutingMode">Use the Badge Store above to purchase eligible badges.</template>
                       <template v-else>Badges are earned through gameplay performance.</template>
                     </p>
+                  </div>
+
+                  <!-- Available badges dropdown — every badge this player could
+                       earn and the tier ceiling for each (same data as the Badge
+                       Store). Pinned at the bottom of the Badges tab. -->
+                  <div v-if="badgeOptions.length" class="badge-options">
+                    <button class="badge-options-toggle" @click="showBadgeOptions = !showBadgeOptions">
+                      <span>Badge options — owned &amp; available ({{ badgeOptions.length }})</span>
+                      <ChevronDown :size="16" class="badge-options-chevron" :class="{ open: showBadgeOptions }" />
+                    </button>
+                    <div v-if="showBadgeOptions" class="badge-options-panel">
+                      <p class="badge-options-hint">
+                        Each badge's ceiling depends on this player's position fit, attribute fit, and
+                        potential. Filled dots are tiers they already hold, outlined dots are still
+                        reachable, and greyed dots are locked.
+                      </p>
+                      <div v-for="grp in badgeOptionsByCategory" :key="grp.category" class="badge-options-cat">
+                        <h5 class="badge-options-cat-title">{{ BADGE_CATEGORY_LABELS[grp.category] || grp.category }}</h5>
+                        <div
+                          v-for="entry in grp.entries"
+                          :key="entry.badge.id"
+                          class="badge-option-row"
+                          :title="entry.badge.description || ''"
+                        >
+                          <span class="badge-option-name">{{ entry.badge.name }}</span>
+                          <span class="badge-option-levels">
+                            <span
+                              v-for="lvl in PLAYER_BADGE_LEVELS"
+                              :key="lvl"
+                              class="badge-option-dot"
+                              :class="badgeDotClass(entry, lvl)"
+                              :style="badgeDotClass(entry, lvl).owned ? { backgroundColor: PLAYER_BADGE_TIER_COLORS[lvl], borderColor: PLAYER_BADGE_TIER_COLORS[lvl] } : {}"
+                              :title="badgeLevelLabel(lvl)"
+                            />
+                            <span class="badge-option-max" :style="{ color: PLAYER_BADGE_TIER_COLORS[entry.maxLevel] }">
+                              max {{ badgeLevelLabel(entry.maxLevel) }}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </template>
               </div>
@@ -1984,8 +2138,8 @@ function formatChange(change) {
                   </div>
                 </div>
 
-                <!-- Awards Section -->
-                <div class="history-section">
+                <!-- Awards Section — hidden for draft prospects (none yet) -->
+                <div v-if="!scoutingMode" class="history-section">
                   <h4 class="history-section-title">Awards</h4>
                   <div v-if="hasAwards" class="awards-grid">
                     <!-- Championships -->
@@ -2071,8 +2225,8 @@ function formatChange(change) {
                   </div>
                 </div>
 
-                <!-- News Section -->
-                <div class="history-section">
+                <!-- News Section — hidden for draft prospects (none yet) -->
+                <div v-if="!scoutingMode" class="history-section">
                   <h4 class="history-section-title">News</h4>
                   <div v-if="playerNews.length > 0" class="news-list">
                     <div v-for="news in playerNews" :key="news.id" class="news-item">
@@ -2847,6 +3001,32 @@ function formatChange(change) {
   box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
 }
 
+/* Live training countdown on the Badges tab button — same top-right corner as
+   the ready dot, but a small pill of remaining time while training runs. */
+.tab-btn .train-countdown-tab {
+  position: absolute;
+  top: -9px;
+  right: -8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 5px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #fff;
+  background: #3b82f6;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  white-space: nowrap;
+}
+.tab-btn .train-countdown-tab svg {
+  flex-shrink: 0;
+}
+
 .tab-badge {
   position: absolute;
   top: -6px;
@@ -3280,6 +3460,109 @@ function formatChange(change) {
   background: transparent;
   border: 1px dashed var(--glass-border);
   color: var(--color-text-tertiary);
+}
+
+/* Available-badges dropdown (what this player could earn) — pinned at the
+   bottom of the Badges tab. */
+.badge-options {
+  margin-top: 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg, 10px);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+}
+.badge-options-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.badge-options-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.badge-options-chevron {
+  color: var(--color-text-secondary);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+.badge-options-chevron.open {
+  transform: rotate(180deg);
+}
+.badge-options-panel {
+  padding: 4px 14px 12px;
+  border-top: 1px solid var(--glass-border);
+}
+.badge-options-hint {
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  margin: 8px 0 10px;
+}
+.badge-options-cat {
+  margin-bottom: 10px;
+}
+.badge-options-cat-title {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+  margin: 0 0 5px;
+}
+.badge-option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.badge-option-row:last-child {
+  border-bottom: none;
+}
+.badge-option-name {
+  font-size: 0.8rem;
+  color: var(--color-text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.badge-option-levels {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.badge-option-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-text-tertiary);
+  box-sizing: border-box;
+}
+.badge-option-dot.reachable {
+  border-color: var(--color-text-secondary);
+  background: transparent;
+}
+.badge-option-dot.locked {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+.badge-option-max {
+  font-size: 0.66rem;
+  font-weight: 700;
+  margin-left: 4px;
+  min-width: 64px;
+  text-align: right;
 }
 
 .badges-tab-content {
@@ -4187,6 +4470,36 @@ function formatChange(change) {
   letter-spacing: 0.05em;
   color: var(--color-text-secondary);
   margin-bottom: 10px;
+}
+
+/* Secondary tab bar inside the stats box (Recent Games / Career Highs). */
+.stat-subtabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.stat-subtab-btn {
+  padding: 5px 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.stat-subtab-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--color-text-primary);
+}
+.stat-subtab-btn.active {
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
 }
 
 .game-log-table-wrap {

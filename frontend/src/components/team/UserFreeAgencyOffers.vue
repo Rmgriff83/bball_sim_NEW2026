@@ -153,7 +153,7 @@ function playerName(p) {
         <PlayerAvatar
           v-if="offer.player"
           :player="offer.player"
-          :size="variant === 'compact' ? 28 : 36"
+          :size="variant === 'compact' ? 38 : 46"
           class="fa-offer-avatar"
         />
         <div class="fa-offer-info">

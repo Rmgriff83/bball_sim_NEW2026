@@ -67,6 +67,59 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
+  // Verified "Player Signed" confirmation — a richer element than the minimal
+  // success toast, with an affirmation chime on appearance.
+  function showPlayerSigned({ playerName, position, overallRating, salary, years }) {
+    try {
+      const audio = useAudioStore()
+      audio.play('affirm')
+    } catch { /* audio is best-effort */ }
+
+    return addToast({
+      type: 'player-signed',
+      playerName,
+      position,
+      overallRating,
+      salary,
+      years,
+      duration: 5000,
+    })
+  }
+
+  // Token reward (playoff payouts, etc.) — a richer element than the minimal
+  // success toast, with an affirmation chime on appearance.
+  function showTokenAward({ label, amount }) {
+    try {
+      const audio = useAudioStore()
+      audio.play('affirm')
+    } catch { /* audio is best-effort */ }
+
+    return addToast({
+      type: 'token-award',
+      label,
+      amount,
+      duration: 6000,
+    })
+  }
+
+  // Achievement unlocked (championship, conference title, playoff berth, GM
+  // promotion, …) — a rich callout mirroring the token-award toast, with an
+  // affirmation chime. `type` drives the icon/accent in ToastContainer.
+  function showAchievement({ label, subtitle = '', type = '' }) {
+    try {
+      const audio = useAudioStore()
+      audio.play('affirm')
+    } catch { /* audio is best-effort */ }
+
+    return addToast({
+      type: 'achievement',
+      label,
+      subtitle,
+      achievementType: type,
+      duration: 6000,
+    })
+  }
+
   function showDraftPick({ pickNumber, teamAbbr, teamColor, playerName, position, overallRating, isUserTeam }) {
     return addToast({
       type: 'draft-pick',
@@ -165,6 +218,9 @@ export const useToastStore = defineStore('toast', () => {
     showGameResult,
     showWeeklySummary,
     showDraftPick,
+    showPlayerSigned,
+    showTokenAward,
+    showAchievement,
     addMinimalToast,
     removeMinimalToast,
     showLoading,

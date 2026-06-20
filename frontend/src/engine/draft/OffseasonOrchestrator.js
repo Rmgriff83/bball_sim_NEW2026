@@ -22,8 +22,10 @@ import {
 } from '../ai/AILineupService'
 import { generateAITargetMinutes } from '../simulation/SubstitutionEngine'
 import { startNewSeason } from '../campaign/CampaignManager'
+import { aiFinishUserTeamSetup } from '../campaign/UserTeamFinalizer'
 import { generateAIFreeAgencyOffers } from '../ai/AIContractService'
 import { pickBestOffer } from '../ai/FreeAgentDecisionService'
+import { buildSeasonStatsLookup } from '../finance/FinanceManager'
 import { FREE_AGENCY_DURATION_DAYS } from '../season/SeasonDeadlines'
 import { SALARY_CAP } from '../data/teams'
 
@@ -100,12 +102,20 @@ export async function simFullOffseason(campaignId) {
   const seasonYear = campaign.currentSeasonYear ?? 2025
   const seasonData = await SeasonRepository.get(campaignId, seasonYear)
   const standings = seasonData?.standings || { east: [], west: [] }
-  // Honor the lottery result if one was run earlier in the offseason — the
-  // user clicks the Draft Lottery CTA before free agency, which persists the
-  // result onto campaign.settings.draftLottery. When present, round 1 fires
-  // in the lottery-determined order instead of reverse standings. When
-  // absent (legacy campaigns / sim-skip flows), behavior is unchanged.
-  const lotteryResult = campaign?.settings?.draftLottery ?? null
+  // Honor the lottery result if one was already run this cycle — the user
+  // clicks the Draft Lottery CTA before free agency, which persists it onto
+  // campaign.settings.draftLottery. If none exists for THIS draft year (e.g. the
+  // user skipped the whole offseason via Sim Offseason), roll a fresh one here
+  // so round 1 still gets real lottery randomization instead of flat reverse
+  // standings — and persist it so the order is recorded and viewable.
+  let lotteryResult = campaign?.settings?.draftLottery ?? null
+  if (!lotteryResult || lotteryResult.year !== rookieDraftYear) {
+    lotteryResult = runDraftLottery(teams, standings, rookieDraftYear)
+    campaign.settings = campaign.settings ?? {}
+    campaign.settings.draftLottery = lotteryResult
+    campaign.settings.draftLotteryCompleted = true
+    await CampaignRepository.save(campaign)
+  }
   const draftOrder = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
 
   // 3. Compute team directions for AI
@@ -240,6 +250,18 @@ export async function simFullOffseason(campaignId) {
   }
   await CampaignRepository.save(campaign)
 
+  // 8b. Finalize the USER team before the season starts. The one-click "sim the
+  // whole offseason" delegates everything to the AI, so we must fill the user's
+  // roster to the engine floor and hire a free coach if needed — startNewSeason's
+  // backfill excludes the user team and its coach gate would otherwise throw (or
+  // leave the user short-handed after expiry/retirements). Mirrors the manual
+  // "Let AI finish setup" path. Best-effort: never block the season on it.
+  try {
+    await aiFinishUserTeamSetup(campaignId)
+  } catch (err) {
+    console.warn('[Offseason] aiFinishUserTeamSetup failed:', err)
+  }
+
   // 9. Start new season
   return startNewSeason(campaignId)
 }
@@ -341,6 +363,10 @@ export async function simFreeAgencyDay(campaignId) {
   const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
   const seasonData = await SeasonRepository.get(campaignId, seasonYear)
   const standings = seasonData?.standings || { east: [], west: [] }
+  // Per-player season stats so AI offers reflect how the FA actually produced —
+  // keeps the FA market consistent with the production-aware re-sign valuation.
+  const faStatsLookup = buildSeasonStatsLookup(seasonData)
+  const getPlayerStatsFn = (id) => faStatsLookup[id] ?? null
 
   const aiTeams = teams.filter(t => t.id !== campaign.teamId)
 
@@ -353,6 +379,7 @@ export async function simFreeAgencyDay(campaignId) {
     day,
     campaignId,
     gameYear,
+    getPlayerStatsFn,
   })
 
   campaign.settings.freeAgencyDay = day
@@ -392,6 +419,8 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
   const championTeamId = seasonData?.playoffs?.championTeamId || null
   const offersMap = campaign.settings?.freeAgencyOffers || {}
   const userTeamId = campaign.teamId
+  // Production stats so each FA judges offers against their production-aware value.
+  const faStatsLookup = buildSeasonStatsLookup(seasonData)
 
   const resolveCtx = buildTeamLookup(teams, allPlayers, standings, championTeamId)
   const accepted = []
@@ -440,7 +469,7 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
       const previousTeamId = player.previousTeamId ?? null
       ctx.isIncumbent = previousTeamId && (teamId === previousTeamId || (teamId === 'user' && userTeamId === previousTeamId))
       return ctx
-    })
+    }, faStatsLookup[player.id] ?? null)
 
     if (!result || !result.offer) {
       // Player went unsigned — leave as FA
@@ -473,7 +502,7 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
         const previousTeamId = player.previousTeamId ?? null
         ctx.isIncumbent = previousTeamId && teamId === previousTeamId
         return ctx
-      })
+      }, faStatsLookup[player.id] ?? null)
       const fallbackOffer = fallbackResult?.offer || null
       const fallbackTeam = fallbackOffer ? teamFromId(teams, fallbackOffer.teamId) : null
       pendingUserSignings.push({
@@ -658,9 +687,17 @@ export async function runDraftLotteryForCampaign(campaignId) {
   const campaign = await CampaignRepository.get(campaignId)
   if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
 
-  // Idempotency: return the cached lottery if one already ran this offseason.
-  if (campaign.settings?.draftLotteryCompleted && campaign.settings?.draftLottery) {
-    return campaign.settings.draftLottery
+  // Idempotency: return the cached lottery if a VALID one already ran this
+  // offseason. A cached result with an empty/missing actualOrder (e.g. rolled
+  // before teams finished loading, or by an older build) is treated as invalid
+  // so the click re-rolls a real lottery instead of handing back a frozen board.
+  const cached = campaign.settings?.draftLottery
+  if (
+    campaign.settings?.draftLotteryCompleted &&
+    Array.isArray(cached?.actualOrder) &&
+    cached.actualOrder.length > 0
+  ) {
+    return cached
   }
 
   // Phase guard: lottery should only fire in the offseason proper, before

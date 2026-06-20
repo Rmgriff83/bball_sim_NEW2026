@@ -211,7 +211,7 @@ export const usePlayoffStore = defineStore('playoff', () => {
         authStore.profile.tokens = response.data.tokens
       }
       bracketObj.userPayouts[tierKey] = true
-      toastStore.showSuccess(`${PAYOUT_LABEL[tierKey]} — +${amount.toLocaleString()} tokens`)
+      toastStore.showTokenAward({ label: PAYOUT_LABEL[tierKey], amount })
       return true
     } catch (err) {
       console.error('Failed to award playoff tokens:', err)

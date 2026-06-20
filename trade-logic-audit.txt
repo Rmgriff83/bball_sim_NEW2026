@@ -1,0 +1,162 @@
+===============================================================================
+TRADE SYSTEM — FULL EXAMINATION
+===============================================================================
+
+
+1. ARCHITECTURE: THE TWO DIRECTIONS
+-------------------------------------------------------------------------------
+
+USER -> AI  (user builds an offer, AI accepts/rejects)
+  TradeCenter.vue wizard
+    -> tradeStore.proposeTrade()
+    -> evaluateTrade()  (pure value verdict)
+    -> if accepted, tradeStore.executeTrade()
+    -> TradeExecutor.executeTrade() moves players/picks, writes history, fires news.
+
+AI -> USER  (AI generates offers into your inbox)
+  Once per game day, tradeStore.fetchPendingProposals()
+    -> generateWeeklyProposals() rolls each AI team through:
+         gate -> need -> target -> build offer -> self-verify
+    -> saves <=1 new proposal/day to seasonData.tradeProposals.
+  You then accept (acceptProposal), reject (rejectProposal -> starts cooldowns),
+  or negotiate (prefills the wizard as a counter-offer).
+
+AI <-> AI  (background league activity)
+  processAiToAiTrades() from game.js, up to 3/week, bilateral accept required.
+
+The single brain for all three is evaluateTrade() — everything funnels through
+the same receiving-vs-giving value comparison.
+
+
+2. THE RULES & WEIGHTS (AI -> USER OFFERS)
+-------------------------------------------------------------------------------
+
+Gates before any offer is generated (generateWeeklyProposals):
+  - Before the Feb 5 trade deadline only.
+  - Opening week (first 7 days from Oct 21): silent.
+  - One pending proposal per team at a time.
+  - Cooldowns: rejected/expired team -> 30 days; any rejected player -> 14 days
+    blocks ALL teams from targeting them; exact team+player -> 30 days.
+  - Base probability 1.2%/team/day (~1-2 offers/week across 29 teams).
+    Deadline month: x2 for contenders/win-now, x1.5 others.
+  - Proposals expire after 3 days.
+
+Who the AI will target on your roster (isPlayerAvailableForTrade + retention filter):
+  - Rating < 82 -> always targetable.
+  - Rating >= 82 -> only if on your trading block, morale < 50, 1 year left,
+    or retention < 35.
+  - Then a second filter: retention <= 60. Net effect — the AI essentially
+    never pursues a happy, signed 82+ star.
+
+Difficulty weights (DIFFICULTY_CONFIGS) — acceptance generosity:
+
+  Difficulty     | threshold | fairness_mult | star_protection | pick_sensitivity
+  ---------------+-----------+---------------+-----------------+-----------------
+  rookie         |   0.25    |     1.6       |      0.8        |     0.85
+  pro            |   0.15    |     1.0       |      1.0        |     1.0
+  all_star       |   0.10    |     0.7       |      1.25       |     1.15
+  hall_of_fame   |   0.05    |     0.45      |      1.5        |     1.30
+
+  Acceptance rule:
+    receiving >= giving - max(giving x threshold x fairness, 1)
+  On rookie you can underpay ~40%; on HoF you must give ~98% fair value.
+
+Direction archetype (analyzeTeamDirection, blends record + roster, record weight
+grows over the season) drives DIRECTION_MULTIPLIERS — e.g. contenders pay a 1.25x
+premium for incoming stars and discount picks to 0.65x; rebuilders value youth
+1.25x and picks 1.4x.
+
+Per-player value stack (calculateReceivingValue / calculateGivingValue):
+  base tradeValue
+    x young-player premium
+    x contract bargain/overpaid multiplier
+    x timeline fit
+    x direction multipliers
+    x positional-need 1.15x
+    x retention-risk discount
+    + expiring-contract bonus for rebuilders.
+
+
+3. BUGS & ISSUES FOUND
+-------------------------------------------------------------------------------
+
+### HIGH SEVERITY
+
+1. Draft picks are valued at a flat 5 everywhere.
+   getPickValueFn defaults to () => 5 in AITradeService and is NEVER passed by
+   any caller (confirmed: zero call sites). Picks carry real trade_value data
+   (used in the UI), but the evaluation engine never reads it.
+   Consequences in BOTH directions:
+     - You can request a team's franchise pick and it counts as ~5 value — a
+       lopsided-trade exploit.
+     - The AI can't value picks, so it rarely manages to offer them and badly
+       undervalues picks you include.
+
+2. Cap-aware validateSalaryCap is imported but never called.
+   The only salary enforcement is a client-side check in TradeCenter.vue, which:
+     - Ignores capMode entirely — always applies the 125% rule, so easy mode's
+       "no cap" promise is broken and hard-cap mode is never enforced anywhere.
+     - Is completely bypassed on the acceptProposal path (AI offers aren't
+       cap-checked).
+     - Skips the check when outgoingSalary === 0 (line 116) — you can acquire a
+       max-salary player for picks-only with no salary matching.
+
+3. The trade deadline doesn't block user-initiated trades.
+   generateWeeklyProposals and processAiToAiTrades both gate on isBeforeDeadline,
+   but proposeTrade / executeTrade / acceptProposal have NO deadline check
+   (confirmed: no deadline references anywhere in the trade store or trade UI).
+   The game posts a "no more trades can be made this season" news item while the
+   user can keep trading freely.
+
+### MEDIUM SEVERITY
+
+4. recalculatePayrolls is never called.
+   After a trade, players get new teamId but team total_payroll is never updated.
+   That value feeds the Cap Space display (TradesTab.vue) and fetchTradeableTeams'
+   cap_space, so both drift after any trade until recomputed elsewhere.
+
+5. Asymmetric-trade risk on stale rosters.
+   Picks have a robust find-anywhere lookup that throws if missing — but players
+   don't. In movePlayer, a player who left the AI roster (e.g. an AI<->AI trade
+   between propose and execute) is silently skipped while the other side still
+   moves -> a one-sided trade. There's no re-validation at execution that the
+   requested assets still belong to the counterparty.
+
+6. Displayed team direction != evaluated direction.
+   fetchTradeableTeams computes a separate simple winPct heuristic (only
+   win_now/ascending/rebuilding — never title_contender) for the team-picker UI,
+   while evaluateTrade uses the 4-archetype blend. The "interest"/direction you
+   see can contradict how the AI actually values the deal.
+
+7. Trading-block type coercion gap.
+   isPlayerAvailableForTrade uses raw tradingBlock.includes(player.id), without
+   the String() coercion the store applies everywhere else (explicitly "to
+   prevent number vs string from IndexedDB"). A type mismatch would leave a
+   blocked player unprotected from AI targeting.
+
+### LOW / DESIGN NOTES
+
+8.  AI never chases your happy stars (gate #2 above) — realistic, but can feel
+    like the AI ignores your best players.
+9.  getPlayerStatsFn isn't passed in proposeTrade, so contract value uses
+    rating-only expected salary (no production adjustment) for user-initiated deals.
+10. evaluateTrade models salary only as a bargain/overpaid multiplier, never as
+    cap matching — AI "fairness" is pure talent value.
+11. Minor: redundant receivedName/receivedList recompute in processAiToAiTrades.
+
+
+-------------------------------------------------------------------------------
+The three high-severity items (flat pick value, unenforced cap rules, no
+user-side deadline) are the ones materially distorting trade outcomes and
+exploitable by the player.
+
+Next-step options:
+  (A) Draft fixes for the high-severity three (wire a real getPickValueFn, call
+      validateSalaryCap with the campaign's capMode on both execute paths, add a
+      deadline gate).
+  (B) Go deeper on any one area first (e.g. verify the pick trade_value data
+      shape, or trace the stale-roster race).
+  (C) Something else.
+
+No code has been changed — this is examination only.
+===============================================================================

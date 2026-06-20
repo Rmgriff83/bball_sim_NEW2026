@@ -4,6 +4,7 @@
 // Trade validation and execution logic.
 // Translated from PHP: backend/app/Services/TradeService.php
 // =============================================================================
+import { SALARY_CAP } from '../data/salaryScale';
 
 // =============================================================================
 // HELPERS
@@ -36,7 +37,7 @@ export function validateSalaryCap({
   capMode = 'normal',
   getPlayerFn,
   currentPayroll = 0,
-  salaryCap = 136_000_000,
+  salaryCap = SALARY_CAP,
 }) {
   if (capMode === 'easy') {
     return { valid: true };

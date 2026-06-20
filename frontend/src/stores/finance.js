@@ -18,6 +18,8 @@ import { useTeamStore } from '@/stores/team'
 import { useSyncStore } from '@/stores/sync'
 import { useToastStore } from '@/stores/toast'
 import { isPastResignDeadline, isInFreeAgencyPeriod } from '@/engine/season/SeasonDeadlines'
+import { resignAsk } from '@/engine/ai/ResignValuationService'
+import { getMarketSize } from '@/engine/ai/MotivationService'
 import {
   startFreeAgency as engineStartFreeAgency,
   simFreeAgencyDay as engineSimFreeAgencyDay,
@@ -42,6 +44,31 @@ export const useFinanceStore = defineStore('finance', () => {
   const showResignModal = ref(false)
   const showSignModal = ref(false)
   const showDropModal = ref(false)
+
+  // Build the re-sign valuation context for a player: their season stats plus the
+  // team situation (roster for co-star/star-pairing, market size, record). Used by
+  // BOTH the ResignModal (display + retention) and the floor check in resignPlayer,
+  // so the asking number the user sees matches what the store enforces.
+  function buildResignContext(player) {
+    if (!player) return { stats: null }
+    const teamStore = useTeamStore()
+    const team = teamStore.team
+    const roster = (teamStore.roster?.length ? teamStore.roster : rosterWithContracts.value) ?? []
+    const wins = team?.wins ?? team?.record?.wins
+    const losses = team?.losses ?? team?.record?.losses
+    const gp = (wins ?? 0) + (losses ?? 0)
+    const abbr = team?.abbreviation ?? player.teamAbbreviation ?? player.team_abbreviation
+    return {
+      stats: player.stats ?? player.season_stats ?? null,
+      teamRoster: roster,
+      teamMarketSize: getMarketSize(abbr),
+      ...(gp > 0 ? { teamWinPct: wins / gp } : {}),
+      yearsWithTeam: player.careerSeasons ?? player.career_seasons ?? undefined,
+    }
+  }
+
+  // Context for whichever player the re-sign modal currently has open.
+  const resignContext = computed(() => buildResignContext(selectedPlayer.value))
 
   // Getters
   const playersEligibleForResign = computed(() =>
@@ -236,6 +263,22 @@ export const useFinanceStore = defineStore('finance', () => {
         throw new Error('Re-sign deadline has passed')
       }
 
+      // Market-value floor: a player won't re-sign below their ask, and the
+      // incumbent can offer at most a 5-year deal. Enforced here (not just in the
+      // modal's RNG) so the offer can't be lowballed past what they'd accept.
+      const ask = resignAsk(player, buildResignContext(player))
+      if (salary != null && salary < ask.requiredSalary) {
+        const askM = `$${(ask.requiredSalary / 1_000_000).toFixed(1)}M`
+        useToastStore().showError(
+          `${player.name || 'He'} won't re-sign for that — he wants at least ${askM}/yr.`
+        )
+        throw new Error('Offer below the player\'s asking salary')
+      }
+      if (years > ask.maxYears) {
+        useToastStore().showError(`You can offer at most a ${ask.maxYears}-year re-sign.`)
+        throw new Error('Re-sign exceeds the maximum contract length')
+      }
+
       // Use FinanceManager to compute the re-sign result. Pass the flag so the
       // engine layer also short-circuits as defense in depth.
       const result = financeResignPlayer({ player, years, salary, resignDeadlinePassed })
@@ -332,7 +375,7 @@ export const useFinanceStore = defineStore('finance', () => {
     }
   }
 
-  async function signFreeAgent(campaignId, playerId) {
+  async function signFreeAgent(campaignId, playerId, offer = {}) {
     loading.value = true
     error.value = null
     try {
@@ -347,13 +390,15 @@ export const useFinanceStore = defineStore('finance', () => {
       const dbPlayer = await PlayerRepository.get(campaignId, playerId)
       if (!dbPlayer) throw new Error('Player not found')
 
-      // Use FinanceManager to compute the signing result
-      // Build a minimal league players list with just this free agent
+      // Use FinanceManager to compute the signing result. Honor the negotiated
+      // salary/years (defaults to the player's market value when omitted); the
+      // engine enforces the minimum-salary cap exception.
       const result = financeSignFreeAgent({
         playerId,
         leaguePlayers: [dbPlayer],
         currentRoster: rosterWithContracts.value,
-        capMode: campaign.settings?.capMode ?? 'normal',
+        salary: offer.salary ?? null,
+        years: offer.years ?? null,
         salaryCap: financeSummary.value?.salary_cap ?? DEFAULT_SALARY_CAP,
       })
 
@@ -378,6 +423,10 @@ export const useFinanceStore = defineStore('finance', () => {
       dbPlayer.contract_salary = result.player.contractSalary ?? 0
       dbPlayer.contractYearsRemaining = result.player.contractYearsRemaining ?? 0
       dbPlayer.contract_years_remaining = result.player.contractYearsRemaining ?? 0
+      if (result.player.contractDetails) {
+        dbPlayer.contractDetails = result.player.contractDetails
+        dbPlayer.contract_details = result.player.contractDetails
+      }
       await PlayerRepository.save(dbPlayer)
 
       // Remove from free agents list
@@ -845,6 +894,7 @@ export const useFinanceStore = defineStore('finance', () => {
     error,
     selectedPlayer,
     showResignModal,
+    resignContext,
     showSignModal,
     showDropModal,
     // Getters

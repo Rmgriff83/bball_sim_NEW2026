@@ -8,21 +8,13 @@
 // =============================================================================
 
 import { calculateRetentionScore, getMarketSize } from './MotivationService'
+import { playerMarketValue } from './ResignValuationService'
 
-const SALARY_BANDS = [
-  { rating: 90, salary: 40_000_000 },
-  { rating: 85, salary: 30_000_000 },
-  { rating: 80, salary: 20_000_000 },
-  { rating: 75, salary: 10_000_000 },
-  { rating: 70, salary: 5_000_000 },
-  { rating: 65, salary: 3_000_000 },
-]
-
-function expectedSalary(rating) {
-  for (const band of SALARY_BANDS) {
-    if (rating >= band.rating) return band.salary
-  }
-  return 2_000_000
+// Expected/market salary = the shared production-aware valuation (same one the
+// user-facing re-sign flow uses), so a free agent judges offers against the same
+// number they'd ask their old team for. `stats` is optional (per-game/totals).
+function expectedSalary(player, stats = null) {
+  return playerMarketValue(player, stats)
 }
 
 function getRating(player) {
@@ -82,8 +74,8 @@ function buildTeamContext({ team, teamRoster = [], coach = null, isIncumbent = f
  *  - small bonus when contract years matches age-appropriate target
  *  - small bonus when offered salary noticeably beats expected
  */
-export function scoreOfferForPlayer(player, offer, teamContext) {
-  const expected = expectedSalary(getRating(player))
+export function scoreOfferForPlayer(player, offer, teamContext, stats = null) {
+  const expected = expectedSalary(player, stats)
   const isIncumbent = teamContext.isIncumbent === true
 
   const retentionContext = buildTeamContext({
@@ -127,12 +119,12 @@ export function scoreOfferForPlayer(player, offer, teamContext) {
  * @param {Array} offers - pending Offer objects
  * @param {function} resolveTeamContext - (teamId) => { team, teamRoster, coach, hasChampionship, isIncumbent }
  */
-export function pickBestOffer(player, offers, resolveTeamContext) {
+export function pickBestOffer(player, offers, resolveTeamContext, stats = null) {
   if (!offers || offers.length === 0) return null
 
   const scored = offers.map(offer => {
     const ctx = resolveTeamContext(offer.teamId, offer) || {}
-    const score = scoreOfferForPlayer(player, offer, ctx)
+    const score = scoreOfferForPlayer(player, offer, ctx, stats)
     return { offer, score, ctx }
   })
 
@@ -152,7 +144,7 @@ export function pickBestOffer(player, offers, resolveTeamContext) {
     // require the salary to be at least 25% of expected so genuinely
     // insulting offers ($1M to a 90 OVR star) still get rejected; anything
     // above that floor is a prove-it deal a real player would sign.
-    const expected = expectedSalary(getRating(player))
+    const expected = expectedSalary(player, stats)
     const salaryFloor = expected * 0.25
     if ((best.offer?.salary ?? 0) >= salaryFloor) {
       return {

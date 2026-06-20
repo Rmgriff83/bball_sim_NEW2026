@@ -8,6 +8,8 @@
 // =============================================================================
 
 import { calculateRetentionScore } from './MotivationService';
+import { LUXURY_TAX } from '../data/salaryScale';
+import { findOwnerForTeam } from '../data/owners';
 
 const TRADE_DEADLINE_MONTH = 2; // February
 const TRADE_DEADLINE_DAY = 5;
@@ -148,8 +150,11 @@ function isPlayerAvailableForTrade(player, tradingBlock = []) {
   const rating = getPlayerRating(player);
   // Low-rated players are always available
   if (rating < 82) return true;
-  // Explicitly on the trading block
-  if (tradingBlock.includes(player.id)) return true;
+  // Explicitly on the trading block. Coerce both sides to String — player IDs
+  // can come back from IndexedDB as numbers while the persisted block list holds
+  // strings (or vice versa), and a raw includes() would silently fail to match,
+  // leaving a "protected" player exposed to AI targeting.
+  if (tradingBlock.map(String).includes(String(player.id))) return true;
   // Low morale makes them available
   if (getPlayerMorale(player) < 50) return true;
   // Expiring contract
@@ -186,6 +191,13 @@ export function computeAiTradingBlock({ roster, direction }) {
     if (years === 1 && ['rebuilding', 'ascending'].includes(direction)) {
       const retention = calculateRetentionScore(player, {});
       if (rating >= 78 && retention > 50) continue; // likely to re-sign, don't shop them
+      blockIds.push(player.id);
+      continue;
+    }
+    // Veteran stars on a rebuilding team — a rebuilder will dangle an aging star
+    // for a young-and-picks haul (the classic teardown). Young ascending stars
+    // stay protected; only age >= 28 stars are shopped.
+    if (direction === 'rebuilding' && age >= 28 && rating >= 82) {
       blockIds.push(player.id);
       continue;
     }
@@ -313,10 +325,55 @@ export function analyzeRoster(roster) {
   };
 }
 
+// Owner-mandate lean per expectation tier. Additive bias over the four direction
+// archetype scores so a franchise's MANDATE shapes its roster strategy, not just
+// its (noisy, especially-early) record. A championship/contender club leans
+// win-now even off a slow start; a develop/rebuild club leans long-term even if
+// it overperforms. Tunable.
+const EXPECTATION_DIRECTION_BIAS = {
+  championship: { title_contender: 0.30, win_now: 0.20, ascending: -0.05, rebuilding: -0.20 },
+  contender:    { title_contender: 0.18, win_now: 0.24, ascending: 0.02, rebuilding: -0.15 },
+  playoffs:     { title_contender: 0.05, win_now: 0.16, ascending: 0.10, rebuilding: -0.08 },
+  develop:      { title_contender: -0.08, win_now: 0.00, ascending: 0.22, rebuilding: 0.06 },
+  rebuild:      { title_contender: -0.18, win_now: -0.08, ascending: 0.10, rebuilding: 0.26 },
+};
+
+const FACILITY_KEYS = ['training', 'medical', 'scouting', 'analytics'];
+
+function facilityAvg(team) {
+  const f = team?.facilities;
+  if (!f) return 0;
+  return FACILITY_KEYS.reduce((s, k) => s + (f[k] ?? 0), 0) / FACILITY_KEYS.length;
+}
+
+/**
+ * Per-direction additive bias from the team's owner mandate + facility tier.
+ * Returns { title_contender, win_now, ascending, rebuilding }.
+ */
+function expectationDirectionBias(team) {
+  const owner = team ? findOwnerForTeam(team.abbreviation) : null;
+  const tier = owner?.expectation ?? 'playoffs';
+  const base = { ...(EXPECTATION_DIRECTION_BIAS[tier] ?? EXPECTATION_DIRECTION_BIAS.playoffs) };
+
+  // Facility nudge: strong facilities (avg > 3) add a small win-now lean; weak
+  // facilities lean toward rebuild. ~0 at an average tier (avg 3). Skipped when
+  // the team carries no facilities object.
+  const avg = facilityAvg(team);
+  if (avg > 0) {
+    const f = (avg - 3) * 0.04; // ~ -0.12 (avg 0) .. +0.08 (avg 5)
+    base.title_contender += f;
+    base.win_now += f;
+    base.ascending -= f * 0.5;
+    base.rebuilding -= f;
+  }
+  return base;
+}
+
 /**
  * Analyze team direction using 4 archetypes.
- * Blends roster analysis with record (record weight increases as season progresses).
- * @param {object} team - Team object with abbreviation
+ * Blends roster analysis with record (record weight increases as season progresses)
+ * and the franchise's owner mandate / facility tier.
+ * @param {object} team - Team object with abbreviation (and optional facilities)
  * @param {Array} teamRoster - Roster array for the team
  * @param {object} context - From buildContext()
  * @returns {string} 'title_contender' | 'win_now' | 'ascending' | 'rebuilding'
@@ -374,11 +431,18 @@ export function analyzeTeamDirection(team, teamRoster, context) {
     return 'title_contender';
   }
 
+  // Apply the owner-mandate / facility bias. Weighted stronger when the record is
+  // still noisy (early season / offseason, high rosterWeight) and lighter late
+  // when results dominate — but never enough to drag a clearly-stacked roster down
+  // (the hard overrides above already guarantee the clear cases).
+  const bias = expectationDirectionBias(team);
+  const mandateWeight = 0.25 + 0.45 * rosterWeight; // ~0.70 preseason → ~0.40 late season
+
   const scores = {
-    title_contender: contenderScore,
-    win_now: winNowScore,
-    ascending: ascendingScore,
-    rebuilding: rebuildingScore,
+    title_contender: contenderScore + bias.title_contender * mandateWeight,
+    win_now: winNowScore + bias.win_now * mandateWeight,
+    ascending: ascendingScore + bias.ascending * mandateWeight,
+    rebuilding: rebuildingScore + bias.rebuilding * mandateWeight,
   };
 
   // Pick the highest scoring direction
@@ -893,7 +957,12 @@ export function isBeforeDeadline(currentDate, seasonYear) {
  */
 export function isInFirstWeekOfSeason(currentDate, seasonYear) {
   const seasonStart = new Date(seasonYear, SEASON_START_MONTH - 1, SEASON_START_DAY);
-  const current = new Date(currentDate);
+  // Parse currentDate on the SAME local basis as seasonStart. `new Date('2025-10-21')`
+  // parses as UTC midnight while `new Date(y, m, d)` is LOCAL midnight; mixing the two
+  // makes daysElapsed = -1 on day 1 in timezones west of UTC, which let day-1 AI trade
+  // proposals slip through the opening-week quiet window.
+  const [y, m, d] = String(currentDate).split('T')[0].split('-').map(Number);
+  const current = new Date(y, (m || 1) - 1, d || 1);
   const daysElapsed = Math.floor((current - seasonStart) / (1000 * 60 * 60 * 24));
   return daysElapsed >= 0 && daysElapsed < SEASON_OPENING_QUIET_DAYS;
 }
@@ -1407,7 +1476,7 @@ export function processTradeDeadlineEvents({ currentDate, seasonYear, settings =
 // AI-TO-AI TRADING
 // =============================================================================
 
-const LUXURY_TAX_LINE = 165_000_000;
+const LUXURY_TAX_LINE = LUXURY_TAX;
 
 /**
  * Find target players from any roster that match a team's need.
@@ -1460,6 +1529,54 @@ function _calculateTeamPayroll(roster) {
 }
 
 /**
+ * Best AVAILABLE star (rating >= minRating) on a roster — used by a contender's
+ * "big swing." Availability respects the trading block (a healthy multi-year star
+ * is only here if the rebuilder has dangled them; see computeAiTradingBlock).
+ */
+function _findAvailableStar(roster, tradingBlock = [], minRating = 82) {
+  let best = null;
+  for (const p of roster) {
+    if (getPlayerRating(p) < minRating) continue;
+    if (!isPlayerAvailableForTrade(p, tradingBlock)) continue;
+    if (!best || getPlayerTradeValue(p) > getPlayerTradeValue(best)) best = p;
+  }
+  return best;
+}
+
+/**
+ * Best AVAILABLE veteran a rebuilder would proactively shop for picks: rating
+ * >= 76 and either on an expiring deal or aging (>= 29).
+ */
+function _findShoppableVet(roster, tradingBlock = []) {
+  let best = null;
+  for (const p of roster) {
+    if (getPlayerRating(p) < 76) continue;
+    const yrs = getPlayerContractYears(p);
+    const age = getPlayerAge(p);
+    if (!(yrs === 1 || age >= 29)) continue;
+    if (!isPlayerAvailableForTrade(p, tradingBlock)) continue;
+    if (!best || getPlayerTradeValue(p) > getPlayerTradeValue(best)) best = p;
+  }
+  return best;
+}
+
+/**
+ * A young, non-core player a contender can throw into a big swing as a sweetener
+ * (age <= 24, rating 70-79, outside the team's top 3).
+ */
+function _findYoungSweetener(roster) {
+  const sorted = [...roster].sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
+  let best = null;
+  for (const p of sorted.slice(3)) {
+    const rating = getPlayerRating(p);
+    if (getPlayerAge(p) <= 24 && rating >= 70 && rating <= 79) {
+      if (!best || getPlayerTradeValue(p) > getPlayerTradeValue(best)) best = p;
+    }
+  }
+  return best;
+}
+
+/**
  * Attempt to find a mutually acceptable AI-to-AI trade between two teams.
  * Returns trade object or null.
  */
@@ -1467,7 +1584,7 @@ function _findAiToAiTrade({
   team1, team1Roster, team1Dir, team1Picks,
   team2, team2Roster, team2Dir, team2Picks,
   team1TradingBlock = [], team2TradingBlock = [],
-  context, difficulty, getPlayerFn,
+  context, difficulty, getPlayerFn, getPickValueFn = () => 5,
 }) {
   const diffConfig = getDifficultyConfig(difficulty);
   const need1 = identifyNeed(team1Dir, team1Roster);
@@ -1514,6 +1631,57 @@ function _findAiToAiTrade({
   }
   if (targets2.length > 0 && targets1.length === 0 && team1Picks.length > 0) {
     patterns.push({ type: 'player_plus_pick', upgrader: 'team2', target: targets2[0] });
+  }
+
+  // Patterns D/E — contender "big swing" (multiple picks + youth for a star) and
+  // a rebuilder proactively shopping an aging vet for picks. Both are prebuilt
+  // here as fully-formed packages, appended AFTER the small-trade patterns so
+  // they only fire when the cheaper deals don't balance (they add deal types that
+  // simply didn't exist before, rather than crowding out the existing ones).
+  const addBigSwings = (conRoster, conPicks, rebRoster, rebBlock, conIsTeam1) => {
+    // Prefer first-round picks, highest projected value first.
+    const sortByVal = (a, b) => getPickValueFn(b.id) - getPickValueFn(a.id);
+    const firsts = conPicks.filter(pk => Number(pk.round ?? pk.round_number ?? 1) === 1).sort(sortByVal);
+    const pool = (firsts.length >= 2 ? firsts : [...conPicks].sort(sortByVal));
+    if (pool.length < 2) return;
+
+    const pushPkg = (conGives, rebGives) => {
+      patterns.push(conIsTeam1
+        ? { type: 'prebuilt', team1Gives: conGives, team2Gives: rebGives }
+        : { type: 'prebuilt', team1Gives: rebGives, team2Gives: conGives });
+    };
+    const pickAssets = (n) => pool.slice(0, n).map(pk => ({ type: 'pick', pickId: pk.id }));
+
+    // D — big swing for an available star (escalating cost: picks, then + youth)
+    const star = _findAvailableStar(rebRoster, rebBlock, 82);
+    if (star) {
+      const young = _findYoungSweetener(conRoster);
+      const youngAsset = young ? { type: 'player', playerId: young.id } : null;
+      const rebGives = [{ type: 'player', playerId: star.id }];
+      const p2 = pickAssets(2);
+      pushPkg(p2, rebGives);
+      if (pool.length >= 3) pushPkg(pickAssets(3), rebGives);
+      if (youngAsset) pushPkg([...p2, youngAsset], rebGives);
+      if (youngAsset && pool.length >= 3) pushPkg([...pickAssets(3), youngAsset], rebGives);
+    }
+
+    // E — rebuilder shop: aging/expiring vet for a pick package (2, escalating to 3
+    // for a star-level vet)
+    const vet = _findShoppableVet(rebRoster, rebBlock);
+    if (vet) {
+      const maxN = Math.min(getPlayerRating(vet) >= 82 ? 3 : 2, pool.length);
+      const rebGives = [{ type: 'player', playerId: vet.id }];
+      for (let n = 2; n <= maxN; n++) pushPkg(pickAssets(n), rebGives);
+    }
+  };
+
+  const isContender = (d) => ['title_contender', 'win_now'].includes(d);
+  const isTeardown = (d) => ['rebuilding', 'ascending'].includes(d);
+  if (isContender(team1Dir) && isTeardown(team2Dir)) {
+    addBigSwings(team1Roster, team1Picks, team2Roster, team2TradingBlock, true);
+  }
+  if (isContender(team2Dir) && isTeardown(team1Dir)) {
+    addBigSwings(team2Roster, team2Picks, team1Roster, team1TradingBlock, false);
   }
 
   // Try each pattern until one works
@@ -1587,6 +1755,10 @@ function _findAiToAiTrade({
         ];
         team1Gives = [{ type: 'player', playerId: pattern.target.id }];
       }
+    } else if (pattern.type === 'prebuilt') {
+      // Fully-formed package (contender big swing / rebuilder shop).
+      team1Gives = pattern.team1Gives;
+      team2Gives = pattern.team2Gives;
     }
 
     if (team1Gives.length === 0 || team2Gives.length === 0) continue;
@@ -1629,6 +1801,7 @@ function _findAiToAiTrade({
       difficulty,
       context,
       getPlayerFn,
+      getPickValueFn,
     });
 
     const eval2 = evaluateTrade({
@@ -1638,6 +1811,7 @@ function _findAiToAiTrade({
       difficulty,
       context,
       getPlayerFn,
+      getPickValueFn,
     });
 
     if (eval1.decision === 'accept' && eval2.decision === 'accept') {
@@ -1670,6 +1844,7 @@ export function processAiToAiTrades({
   currentDate,
   seasonYear,
   difficulty = 'pro',
+  getPickValueFn = () => 5,
 }) {
   const empty = { trades: [], playerMoves: [], pickMoves: [], newsEvents: [] };
 
@@ -1744,7 +1919,7 @@ export function processAiToAiTrades({
         team1: info1.team, team1Roster: info1.roster, team1Dir: info1.dir, team1Picks: info1.picks,
         team2: info2.team, team2Roster: info2.roster, team2Dir: info2.dir, team2Picks: info2.picks,
         team1TradingBlock: info1.tradingBlock, team2TradingBlock: info2.tradingBlock,
-        context, difficulty, getPlayerFn,
+        context, difficulty, getPlayerFn, getPickValueFn,
       });
 
       if (!deal) continue;

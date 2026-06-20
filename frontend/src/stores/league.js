@@ -5,6 +5,8 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { scoreMVPCandidate, MVP_MIN_GAMES_PCT } from '@/engine/season/AwardService'
+import { recomputeHighsLeaders } from '@/engine/stats/careerHighs'
+import { buildChampionsHistory, buildMvpHistory } from '@/engine/stats/campaignRecords'
 
 export const useLeagueStore = defineStore('league', () => {
   // State
@@ -18,6 +20,14 @@ export const useLeagueStore = defineStore('league', () => {
   const loadingRookies = ref(false)
   const loadingMvpRace = ref(false)
   const error = ref(null)
+
+  // "All Time" tab: single-game record boards + award/champion history.
+  const allTimeHighs = ref({})
+  const seasonHighs = ref({})
+  const champions = ref([])
+  const mvpHistory = ref([])
+  const loadingRecords = ref(false)
+  const _recordsCampaignId = ref(null)
 
   // Cache tracking
   const _standingsCampaignId = ref(null)
@@ -449,10 +459,40 @@ export const useLeagueStore = defineStore('league', () => {
     rookieLeaders.value = []
   }
 
+  /**
+   * Load the "All Time" tab data: campaign-wide single-game record boards
+   * (all-time + this-season) recomputed live from every player's highs, plus
+   * the champions and MVP history read from each archived season.
+   */
+  async function fetchCampaignRecords(campaignId, { force = false } = {}) {
+    if (!force && _recordsCampaignId.value === campaignId && (champions.value.length || mvpHistory.value.length || Object.keys(allTimeHighs.value).length)) {
+      return
+    }
+    loadingRecords.value = true
+    error.value = null
+    try {
+      const [players, seasons] = await Promise.all([
+        PlayerRepository.getAllForCampaign(campaignId),
+        SeasonRepository.getAllForCampaign(campaignId),
+      ])
+      allTimeHighs.value = recomputeHighsLeaders(players || [], 'careerHighs')
+      seasonHighs.value = recomputeHighsLeaders(players || [], 'seasonHighs')
+      champions.value = buildChampionsHistory(seasons || [])
+      mvpHistory.value = buildMvpHistory(seasons || [])
+      _recordsCampaignId.value = campaignId
+    } catch (err) {
+      console.error('Failed to fetch campaign records:', err)
+      error.value = err.message || 'Failed to load campaign records'
+    } finally {
+      loadingRecords.value = false
+    }
+  }
+
   function invalidate() {
     _standingsCampaignId.value = null
     _leadersCampaignId.value = null
     _mvpRaceCampaignId.value = null
+    _recordsCampaignId.value = null
   }
 
   return {
@@ -467,6 +507,11 @@ export const useLeagueStore = defineStore('league', () => {
     loadingRookies,
     loadingMvpRace,
     error,
+    allTimeHighs,
+    seasonHighs,
+    champions,
+    mvpHistory,
+    loadingRecords,
     // Getters
     eastStandings,
     westStandings,
@@ -479,6 +524,7 @@ export const useLeagueStore = defineStore('league', () => {
     fetchPlayerLeaders,
     fetchRookieLeaders,
     fetchMVPRace,
+    fetchCampaignRecords,
     updateStandings,
     getTeamRank,
     getWinPercentage,

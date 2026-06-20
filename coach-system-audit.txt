@@ -1,0 +1,130 @@
+===============================================================================
+AUDIT: HOW AI TEAMS MANAGE COACHES & COACH SETTINGS
+===============================================================================
+
+Two questions audited:
+  (A) Coach LIFECYCLE  — do AI teams extend/replace coaches based on results?
+  (B) Coach SETTINGS   — do AI coaches adapt schemes/rest per game & context?
+
+VERDICT
+  (A) CONFIRMED STATIC. AI coaches are assigned once at campaign start and are
+      never re-evaluated, extended, or replaced — it's frozen "by design"
+      (there's an explicit comment saying so).
+  (B) MOSTLY STATIC. Schemes DO refresh once per offseason to track roster
+      changes, but they are chosen on roster-fit ALONE — no opponent, no
+      standings, no season-timing. There is NO per-game gameplan, and rest is
+      driven only by raw fatigue, never by "we've clinched, rest the stars."
+
+
+-------------------------------------------------------------------------------
+PART A — COACH LIFECYCLE (static, confirmed)
+-------------------------------------------------------------------------------
+
+COACH DATA MODEL — frontend/src/engine/data/coaches.js, engine/data/coachBadges.js
+  - Attributes: offensiveIQ, defensiveIQ, playerDevelopment, strictness,
+    gameManagement; plus overallRating and a tier ('free' | 'good' | 'really_good').
+  - Badges (coachBadges.js): player_whisperer (development bonus), offensive_/
+    defensive_mastermind, late_game_genius, players_coach.
+  - Development IS modeled: the playerDevelopment attribute + player_whisperer
+    badge grant a development multiplier consumed by the evolution system. So
+    "a rebuilder targeting a development coach" is implementable with existing data.
+  - Contract: coach.contractYearsRemaining exists on the schema.
+
+ASSIGNMENT AT CAMPAIGN START — CampaignManager.js generateCoach() (~2745)
+  - Each team's coach tier comes from MODE_TO_COACH_TIER (contender=1 ... rebuilder=4),
+    i.e. tied to the team's preset campaignMode, not to performance.
+  - overallRating sampled from COACH_TIER_RANGES[tier]; contractYearsRemaining =
+    randInt(1,4) — set once, at generation.
+
+OFFSEASON HANDLING — CampaignManager.js (~2448)
+  Explicit comment + code:
+    "AI team coach contracts are NOT decremented (frozen by design; only the
+     user's coach uses the hire/fire system)."
+  - ONLY the user's coach contract is decremented and can expire -> forces a
+    hire. AI coach contractYearsRemaining is never touched.
+  - hire/fire/resign exist ONLY in the user UI (TeamManagementView.vue,
+    HireCoachModal.vue, stores/team.js). No AI service hires/fires/extends.
+  - A free-agent coach POOL exists and refills each offseason
+    (topUpCoachPool), but AI teams never draw from it.
+
+CONSEQUENCE
+  - A rebuilder that wins 60 games keeps its tier-4 coach. A contender that
+    collapses keeps its tier-1 coach. Coach quality is frozen at day 1 and
+    never reflects results or a shifted team direction.
+
+
+-------------------------------------------------------------------------------
+PART B — COACH SETTINGS / SCHEMES (roster-fit only; no game context)
+-------------------------------------------------------------------------------
+
+SCHEME MODEL — engine/simulation/CoachingEngine.js
+  - Offensive schemes: balanced, motion, iso_heavy, post_centric, three_point,
+    run_and_gun (drive pace, transition rate, play-type weights).
+  - Defensive schemes: man, zone_2_3, zone_3_2, zone_1_3_1, press, trap.
+  - Substitution strategy: staggered, platoon, tight_rotation, deep_bench
+    (drive per-player minute caps).
+
+HOW AI SETTINGS ARE CHOSEN — CampaignManager.js (~1241 at create, ~2510 each offseason)
+  - team.coaching_scheme = selectBestCoachingScheme(teamPlayers, team.coach, prev)
+  - AI teams ALWAYS get a fresh scheme each offseason, so trades/draft DO shift
+    their style year-over-year (this is the nuance: not 100% static).
+  - BUT selection (engine/coaching/CoachStrategyService.js _pickOffensive/_pickDefensive)
+    keys off ROSTER ATTRIBUTES ONLY (team speed, 3pt count, post scorer, etc.).
+    Zero inputs for opponent, standings, seed security, or season timing.
+
+HOW SETTINGS ARE USED IN A GAME — GameSimulator.js (~478)
+  - initializeGameFromData() loads home/away offensive+defensive+sub schemes
+    from the persisted team object ONCE, then they are fixed for the whole game.
+  - AI has NO per-game scheme re-selection and NO in-game adjustment. The only
+    mid-game scheme change path, applyAdjustments() (~2439), is USER-ONLY.
+
+THE ONLY CONTEXT ADAPTATION THAT EXISTS (player layer, not gameplan)
+  - Fatigue-based minutes: computeAITargetMinutes (SubstitutionEngine.js ~1057)
+    trims minutes ~15% for fatigue >= 50 and benches restMode players (0 min);
+    skipped entirely in the playoffs.
+  - restMode is set by PlayerEvolution.js (~339) HYSTERETICALLY off raw fatigue
+    (on at a high fatigue threshold, off when fatigue <= 15). Honored by AI.
+
+WHAT DOES NOT EXIST (the substance of the concern)
+  - No per-game gameplan: AI never evaluates its offensive/defensive settings
+    before a game against the actual opponent or its own available healthy players.
+  - No matchup awareness (e.g., switch to press vs a slow half-court team).
+  - No standings/clinch awareness: there is NO logic where a team locked into a
+    seed strategically rests fatigued (but not exhausted) stars down the stretch
+    and restores them for the playoffs. The only "clinch" code is a news headline
+    (BreakingNewsService) and playoff-series clinching (PlayoffManager) — neither
+    affects regular-season rotations. Rest is purely fatigue-reactive.
+
+SCENARIO CHECK (the 72-3, seed-locked example)
+  - Today: those stars only sit if their raw fatigue crosses the restMode
+    threshold; the engine does not proactively rest them because the seed is
+    secure, and does nothing special to ramp them back up for round 1.
+
+
+-------------------------------------------------------------------------------
+IMPROVEMENT DIRECTIONS (for discussion — not yet planned)
+-------------------------------------------------------------------------------
+
+A. AI COACH LIFECYCLE (offseason)
+   - Decrement AI coach contracts; at expiry (and/or after a bad year vs
+     expectations), evaluate extend-vs-replace using last 1-2 seasons' record
+     against the team's expectation (its mode/direction).
+   - Let AI teams hire from the existing free-agent coach pool (topUpCoachPool),
+     preferring fit-for-direction: rebuilders weight playerDevelopment /
+     player_whisperer; contenders weight gameManagement / late_game_genius /
+     scheme mastermind.
+
+B. CONTEXT-AWARE COACH SETTINGS
+   - Pre-game gameplan: let AI (re)select scheme + rotation depth using opponent
+     profile, its own available healthy players, and game importance, instead of
+     a single season-long setting.
+   - Standings/seed-aware rest: when a team is mathematically/near-locked into a
+     seed late in the season, proactively rest fatigued-but-not-exhausted stars
+     and ramp minutes back for the playoffs (extend the existing restMode/
+     targetMinutes machinery with a "seed security" input).
+
+Existing pieces to reuse: selectBestCoachingScheme / CoachStrategyService,
+computeAITargetMinutes + restMode (SubstitutionEngine/PlayerEvolution),
+generateCoach + topUpCoachPool + coach tiers/badges, analyzeTeamDirection
+(AITradeService) for a team's competitive window, and standings in seasonData.
+===============================================================================

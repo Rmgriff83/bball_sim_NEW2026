@@ -133,17 +133,25 @@ export function runDraftLottery(teams, standings, gameYear) {
 }
 
 /**
- * Build a Map from teamId to that team's actual lottery position (1-30).
- * Used by buildRookieDraftOrder to honor the lottery result.
+ * Build a Map from team ABBREVIATION to that team's actual lottery position
+ * (1-30). Used by buildRookieDraftOrder to honor the lottery result.
+ *
+ * Keyed by abbreviation rather than `teamId` on purpose: a team object's `id`
+ * can differ in type/representation between the persisted lottery snapshot and
+ * the live team list a consumer passes in (number vs string, stale vs fresh).
+ * When that happens an id-keyed lookup silently misses for every team and the
+ * board "freezes" at plain reverse standings with no movement. Abbreviations
+ * are stable strings present everywhere (teams, standings, the lottery result),
+ * so they match reliably.
  *
  * @param {Object} lotteryResult - The object returned by runDraftLottery
- * @returns {Map<string, number>} teamId → actual pick number (1-indexed)
+ * @returns {Map<string, number>} teamAbbr → actual pick number (1-indexed)
  */
 export function lotteryPositionMap(lotteryResult) {
   const map = new Map()
   if (!lotteryResult?.actualOrder) return map
   for (const slot of lotteryResult.actualOrder) {
-    map.set(slot.teamId, slot.actualPick)
+    if (slot.teamAbbr != null) map.set(slot.teamAbbr, slot.actualPick)
   }
   return map
 }

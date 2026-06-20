@@ -1,0 +1,81 @@
+================================================================
+  UPDATE NOTES — Owners, Coaching & Engine Overhaul
+================================================================
+
+A large update spanning new systems, a deep simulation audit, and
+a wide pass of bug fixes and polish.
+
+
+NEW: OWNER SYSTEM
+------------------------------------------------------------
+  • Owners set an expectation tier (rebuild → contend →
+    championship) based on market size, roster, and facilities,
+    with an expected-win target.
+  • Your GM contract carries season-long sub-tasks (All-Star
+    marks, development, cap management) that feed a satisfaction
+    score.
+  • At season's end the owner weighs wins vs. expected wins,
+    sub-task completion, prior-season history, and patience, then
+    decides to extend or move on.
+  • New Owner tab consolidates all of this, with a guided
+    walkthrough.
+  • Owner welcome conversation when you sign a new GM contract.
+
+
+COACHING
+------------------------------------------------------------
+  • Reworked coaching skills and scheme effectiveness so coach
+    fit affects results.
+  • Coach Actions overhauled and surfaced more clearly in the UI.
+  • Free-agent coaches are auto-hired when you sim the offseason.
+
+
+AI & TRADING
+------------------------------------------------------------
+  • AI teams evaluate their own direction (contend vs. rebuild)
+    and act on it — shopping veterans, pursuing stars, and making
+    larger trades rather than filler deals.
+  • AI-to-AI trades reshape the league over time.
+  • User-to-AI trading is open during the offseason (locked during
+    the live draft for now).
+  • Fixed a timezone bug that allowed AI trade offers in the
+    opening week; AI now holds off until Week 2.
+
+
+SIMULATION & LOGIC
+------------------------------------------------------------
+  • Full audit of systems affecting game outcomes: simulation,
+    substitutions, and ratings.
+  • Every player attribute and badge is now actually read by the
+    sim, enforced by an automated audit that fails the build on
+    drift.
+  • Playoffs fully play out and crown a champion before any owner
+    firing, retirements, or offseason decisions run.
+  • Rebuilt season-end → offseason sequencing (awards →
+    retirements → contract decision) so popups no longer stack or
+    race.
+  • Tuned playoff payouts, award eligibility (aligned the
+    All-Defensive / All-League games thresholds), and player
+    motivation.
+
+
+FACILITIES
+------------------------------------------------------------
+  • Retuned starting facility levels across the league.
+  • Only the user's team degrades over time; this now correctly
+    follows you if you switch teams (the old team reverts to AI
+    handling).
+
+
+POLISH & FIXES
+------------------------------------------------------------
+  • Corrected team names and records throughout (fixed the
+    duplicated-city "Brooklyn Brooklyn" display).
+  • Refreshed campaign UI, added GM-level badges, rookie history
+    in player cards, and recovery-report popups.
+  • Fixed a light-mode display bug.
+  • Removed a redundant API pull on every home-page navigation.
+
+
+------------------------------------------------------------
+Thanks for playing. Feedback continues to shape each release.

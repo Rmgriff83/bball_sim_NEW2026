@@ -1,0 +1,104 @@
+===============================================================================
+AUDIT: CAN AN INJURED AI PLAYER PLAY IN A GAME?
+===============================================================================
+
+RESULT: NO. Injured AI players are correctly prevented from playing.
+The injury system is sound at every layer (state -> roster load -> lineup ->
+rotation), for both "user vs AI" games and background "AI vs AI" games.
+
+
+1. CANONICAL INJURY STATE
+-------------------------------------------------------------------------------
+File: frontend/src/engine/evolution/InjuryService.js
+
+  isInjured(player) = player.is_injured ?? player.isInjured ?? false   (~line 174)
+
+  - Single source of truth for "is this player injured right now?"
+  - Two stored forms exist: snake_case (is_injured, injury_details) and
+    camelCase (isInjured, injuryDetails). They are ALWAYS written together
+    (PlayerEvolution.js, InjuryService.js), and sync.js backfills the camelCase
+    from snake_case on load, so they never diverge.
+  - No other/hidden injury fields exist (no injuryStatus, injuryGamesRemaining,
+    injuredUntil, etc. — searched, zero results).
+
+
+2. INJURIES APPLY TO AI TEAMS TOO
+-------------------------------------------------------------------------------
+File: frontend/src/engine/evolution/PlayerEvolution.js (processTeamPostGame)
+
+  - Post-game injury rolls run identically for the user's team and AI teams.
+  - When assigned, both is_injured/isInjured + injury_details/injuryDetails are
+    set, and the player is persisted to the DB.
+  - Injuries are rolled AFTER a game (based on minutes played), so a newly hurt
+    player played that game healthy and is then unavailable for FUTURE games —
+    no in-game contradiction.
+
+
+3. ALL GAMES RUN THROUGH ONE SIMULATOR (no quick-sim bypass)
+-------------------------------------------------------------------------------
+Files: frontend/src/engine/workers/simulation.worker.js
+       frontend/src/stores/game.js
+
+  - Every game (user-vs-AI and bulk AI-vs-AI) routes through
+    GameSimulator.simulateGame in the worker. There is NO separate "fast/quick
+    sim" path that skips lineup/rotation logic (the bulk path handleSimulateBulk
+    uses the same GameSimulator).
+  - Rosters are loaded via PlayerRepository.getByTeam(...) (game.js
+    _loadGameSimData, ~line 931) as FULL persisted records, so the injury flag
+    is present on the players handed to the simulator.
+
+
+4. EVERY PLAY-SELECTION PATH FILTERS INJURED PLAYERS
+-------------------------------------------------------------------------------
+File: frontend/src/engine/simulation/GameSimulator.js
+
+  _isInjured(player) = player.is_injured ?? player.isInjured ?? false   (~line 745)
+
+  - selectLineup() (~line 658): filters to healthy first —
+      const healthy = players.filter(p => !this._isInjured(p))
+      const pool = healthy.length >= 5 ? healthy : players
+  - buildLineupFromIds() (~line 703): if a preset starter is injured, it swaps
+    in a healthy replacement via _findHealthyReplacement() (~line 724).
+  - _findHealthyReplacement() (~line 749): skips injured players (lines ~756/770).
+
+File: frontend/src/engine/simulation/SubstitutionEngine.js
+
+  - Pre-game target minutes: injured players are set to 0 minutes
+    (generateRoleAwareTargetMinutes / getDefaultTargetMinutes).
+  - In-game bench pool (~line 128, isPlayerInjured): injured players are
+    excluded before any substitution logic runs.
+  - Last-resort force-sit fallback: still excludes injured.
+  - Q4 close-game / clutch override: still excludes injured.
+
+Conclusion: there is no normal code path by which an injured AI player takes
+the floor.
+
+
+5. THE ONE DELIBERATE EDGE CASE (not a bug)
+-------------------------------------------------------------------------------
+If a team has FEWER THAN 5 healthy players, selectLineup() falls back to the
+full roster so it can still field five:
+
+    const pool = healthy.length >= 5 ? healthy : players
+
+Injured players can appear ONLY in this extreme case (a team would need roughly
+9+ simultaneous injuries). This is intentional — a game must have 5 players —
+and is correct behavior, not a defect.
+
+
+6. OPTIONAL HARDENING (only if you want it; no behavior change in normal play)
+-------------------------------------------------------------------------------
+The sub-5-healthy fallback uses the ENTIRE roster as the pool, so when 1-4
+healthy players exist it can pick an injured player over an available healthy
+one at a different position (depends on array order). Small refinement: build
+the lineup from healthy players first and backfill from injured only to reach
+five.
+
+  - File: frontend/src/engine/simulation/GameSimulator.js, selectLineup() (~658)
+  - Optional: add a tiny regression check (node script under scripts/, like
+    audit-gameplay-coverage.js) asserting that with >=5 healthy players the
+    selected lineup contains zero injured players, for both selectLineup and
+    buildLineupFromIds.
+
+This is purely optional. For correctness, nothing needs to change.
+===============================================================================

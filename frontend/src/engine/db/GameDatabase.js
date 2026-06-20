@@ -11,7 +11,11 @@ const DB_NAME = 'bball-sim'
 // `personnelHeadshots` store keyed by [campaignId, kind, id] (kind ∈
 // 'coach' | 'scout' | 'physician' | 'staff_trainer'), with a migration
 // that copies existing coachHeadshots rows over with kind='coach'.
-const DB_VERSION = 5
+// v6 re-runs the personnelHeadshots creation for any DB that reached v5 with
+// the version bump committed but the store missing (observed in dev — same
+// failure mode the v3 block recovers for playerHeadshots). Idempotent: no-ops
+// when the store already exists.
+const DB_VERSION = 6
 
 let dbPromise = null
 
@@ -135,6 +139,41 @@ function createDB() {
             // re-saving a coach headshot rewrites it into the new store
             // on next edit.
             console.warn('[GameDatabase v5] coachHeadshots → personnelHeadshots migration failed', err)
+          })
+        }
+      }
+
+      if (oldVersion < 6 && !db.objectStoreNames.contains('personnelHeadshots')) {
+        // Recovery: some DBs reached v5 with the version bump committed but the
+        // `personnelHeadshots` store never created (the same dev failure mode the
+        // v3 block recovers for `playerHeadshots`). Reopening at v5 can't fix it
+        // — the `oldVersion < 5` guard is already false — so re-create the store
+        // synchronously here so headshot saves stop throwing "store is missing".
+        const personnel = db.createObjectStore('personnelHeadshots', { keyPath: ['campaignId', 'kind', 'id'] })
+        personnel.createIndex('campaignId', 'campaignId')
+        personnel.createIndex('kind', ['campaignId', 'kind'])
+
+        // Best-effort copy of any legacy coachHeadshots rows that never made it
+        // across (kind='coach'). Wrapped in catch so it can't abort the upgrade.
+        if (db.objectStoreNames.contains('coachHeadshots')) {
+          const src = transaction.objectStore('coachHeadshots')
+          const dst = transaction.objectStore('personnelHeadshots')
+          src.openCursor().then(async function walk(cursor) {
+            while (cursor) {
+              const row = cursor.value
+              if (row && row.campaignId && row.coachId) {
+                dst.put({
+                  campaignId: row.campaignId,
+                  kind: 'coach',
+                  id: row.coachId,
+                  svgContent: row.svgContent,
+                  updatedAt: row.updatedAt || new Date().toISOString(),
+                })
+              }
+              cursor = await cursor.continue()
+            }
+          }).catch(err => {
+            console.warn('[GameDatabase v6] coachHeadshots → personnelHeadshots recovery migration failed', err)
           })
         }
       }

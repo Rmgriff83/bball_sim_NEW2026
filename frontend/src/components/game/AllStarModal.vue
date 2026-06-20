@@ -22,8 +22,28 @@ const tabLabel = computed(() => activeTab.value === 'allStars' ? 'All-Star' : 'R
 const positions = ['PG', 'SG', 'SF', 'PF', 'C']
 
 function isUserPlayer(player) {
-  return player.teamId == props.userTeamId
+  return player != null && props.userTeamId != null && player.teamId == props.userTeamId
 }
+
+// All of the user's team players selected in the currently-shown roster (across
+// both conferences, starters + reserves) — drives the summary banner.
+const userSelections = computed(() => {
+  const r = currentRosters.value
+  if (!r) return []
+  const out = []
+  for (const conf of ['east', 'west']) {
+    const c = r[conf]
+    if (!c) continue
+    for (const pos of Object.keys(c.starters || {})) {
+      const p = c.starters[pos]
+      if (isUserPlayer(p)) out.push(p)
+    }
+    for (const p of c.reserves || []) {
+      if (isUserPlayer(p)) out.push(p)
+    }
+  }
+  return out
+})
 
 function close() {
   emit('close')
@@ -84,6 +104,16 @@ onUnmounted(() => {
               <Users :size="14" />
               Rising Stars
             </button>
+          </div>
+
+          <!-- Your-team selections summary -->
+          <div v-if="userSelections.length" class="user-selections-banner">
+            <Star :size="15" class="banner-star" />
+            <span class="banner-text">
+              <strong>{{ userSelections.length }}</strong>
+              of your players made the {{ tabLabel }} team:
+              <span class="banner-names">{{ userSelections.map(p => p.playerName).join(', ') }}</span>
+            </span>
           </div>
 
           <!-- Content -->
@@ -433,9 +463,55 @@ onUnmounted(() => {
 }
 
 .player-card.user-highlight {
-  background: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.25);
-  box-shadow: 0 0 8px rgba(99, 102, 241, 0.1);
+  position: relative;
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  border-left: 3px solid #f59e0b;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
+}
+/* Reserve room in the name row (only) so the corner badge never overlaps it. */
+.player-card.user-highlight .player-header {
+  padding-right: 72px;
+}
+.player-card.user-highlight::after {
+  content: 'YOUR PLAYER';
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 4px;
+  padding: 2px 5px;
+  pointer-events: none;
+}
+
+/* Your-team selections summary banner */
+.user-selections-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 24px;
+  padding: 9px 13px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-lg);
+  font-size: 0.82rem;
+  color: var(--color-text-secondary);
+}
+.banner-star {
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+.banner-text strong {
+  color: #f59e0b;
+}
+.banner-names {
+  color: var(--color-text-primary);
+  font-weight: 600;
 }
 
 .player-header {

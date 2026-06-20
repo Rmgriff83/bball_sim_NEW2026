@@ -681,15 +681,14 @@ function close() {
 .modal-enter-active .modal-container { animation: scaleIn 0.3s cubic-bezier(0, 0, 0.2, 1); }
 .modal-leave-active .modal-container { animation: scaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards; }
 
-/* Standardized modal heights (90vh desktop, 85vh mobile) */
+/* Cap the height so tall content scrolls; let the modal shrink to fit short
+   content rather than forcing a full-height box. */
 .modal-container {
-  min-height: 90vh;
   max-height: 90vh;
 }
 
 @media (max-width: 480px) {
   .modal-container {
-    min-height: 85vh;
     max-height: 85vh;
   }
 }

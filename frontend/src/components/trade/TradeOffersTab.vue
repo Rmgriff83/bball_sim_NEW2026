@@ -4,7 +4,7 @@ import { useTradeStore } from '@/stores/trade'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { GlassCard } from '@/components/ui'
-import { Inbox, ArrowLeftRight } from 'lucide-vue-next'
+import { Inbox, ArrowLeftRight, AlertTriangle } from 'lucide-vue-next'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 
 const props = defineProps({
@@ -20,6 +20,7 @@ const tradeStore = useTradeStore()
 const breakingNewsStore = useBreakingNewsStore()
 
 const proposals = computed(() => tradeStore.pendingProposals)
+const deadlinePassed = computed(() => tradeStore.tradeDeadlinePassed)
 const selectedProposal = ref(null)
 const showProposalModal = ref(false)
 
@@ -100,6 +101,12 @@ function formatExpiration(expiresAt) {
 
 <template>
   <div class="trade-offers-tab">
+    <!-- Deadline banner -->
+    <div v-if="deadlinePassed" class="deadline-banner">
+      <AlertTriangle :size="16" />
+      <span>The trade deadline has passed. Pending offers can be reviewed or rejected, but not accepted.</span>
+    </div>
+
     <!-- Empty State -->
     <GlassCard v-if="proposals.length === 0" padding="xl" :hoverable="false">
       <div class="empty-state">
@@ -148,6 +155,7 @@ function formatExpiration(expiresAt) {
     <TradeProposalModal
       :show="showProposalModal"
       :proposal="selectedProposal"
+      :deadline-passed="deadlinePassed"
       @close="closeProposal"
       @accept="handleAccept"
       @reject="handleReject"
@@ -161,6 +169,19 @@ function formatExpiration(expiresAt) {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.deadline-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-lg);
+  color: #f59e0b;
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .empty-state {

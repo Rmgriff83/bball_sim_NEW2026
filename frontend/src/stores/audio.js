@@ -45,15 +45,29 @@ export const useAudioStore = defineStore('audio', () => {
     engine.setMasterVolume(volume.value)
   }
 
-  // Play a UI sound by key. Prefers an MP3 override (`file`) if present,
-  // otherwise synthesizes the `synth` recipe.
+  // Warm-decode file-based UI sounds once (first gesture) so the first play
+  // isn't delayed by the fetch+decode.
+  let _samplesPreloaded = false
+  function _preloadFileSounds() {
+    if (_samplesPreloaded) return
+    _samplesPreloaded = true
+    for (const def of Object.values(UI_SOUNDS)) {
+      if (def?.file) engine.preloadSample(def.file)
+    }
+  }
+
+  // Play a UI sound by key. Prefers a downloaded sound file (`file`) if present,
+  // otherwise synthesizes the `synth` recipe. File sounds play through the
+  // AudioContext (via playSample) so they mix with — rather than interrupt —
+  // any background music playing on the device.
   function play(key) {
     if (!enabled.value) return
     const def = UI_SOUNDS[key]
     if (!def) return
     engine.unlock()
     if (def.file) {
-      engine.playClip(def.file, { volume: volume.value })
+      _preloadFileSounds()
+      engine.playSample(def.file)
     } else if (def.synth) {
       engine.playRecipe(def.synth)
     }

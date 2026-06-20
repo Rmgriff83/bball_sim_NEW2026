@@ -9,7 +9,9 @@ import { SeasonManager } from './SeasonManager'
 
 const MVP_MIN_GAMES_PCT = 0.75
 const ROTY_MIN_GAMES_PCT = 0.50
-const DEFENSE_MIN_GAMES_PCT = 0.60
+// Matches MVP_MIN_GAMES_PCT so a player can't qualify for an All-Defensive
+// team while being filtered out of the All-NBA pool on games played alone.
+const DEFENSE_MIN_GAMES_PCT = 0.75
 
 // Module-level exports so the live in-season MVP Race tab (League page)
 // can score candidates with the exact same formula + min-games gate

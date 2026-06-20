@@ -16,7 +16,9 @@ import {
   analyzeTeamDirection,
   buildContext,
   expireStaleProposals,
+  isBeforeDeadline,
 } from '@/engine/ai/AITradeService'
+import { buildPickValueFn } from '@/engine/ai/PickValuationService'
 import {
   validateSalaryCap,
   buildTradeDetails,
@@ -109,6 +111,23 @@ async function _movePicksBetweenTeams({ pickAssets, allTeams }) {
   }
 }
 
+// Whether the USER may propose/make trades right now. The in-season trade
+// deadline (Feb 5) only governs the regular season; once the playoffs are over
+// and the campaign enters any offseason phase, user→AI trades reopen. (AI-to-AI
+// trades and AI-generated proposals stay regular-season-only — those gates live
+// in AITradeService and are intentionally left unchanged.)
+function userTradingAllowed(campaign, currentDate, seasonYear) {
+  const phase = campaign?.phase ?? campaign?.settings?.season_phase ?? 'regular_season'
+  if (typeof phase === 'string' && phase.startsWith('offseason')) {
+    // Forbid trading during the live rookie draft for now — picks are being
+    // consumed there and the user is in the draft room, not the Trades tab.
+    // TODO: support draft-day trades (allow 'offseason_draft') in the future.
+    if (phase === 'offseason_draft') return false
+    return true
+  }
+  return isBeforeDeadline(currentDate, seasonYear)
+}
+
 export const useTradeStore = defineStore('trade', () => {
   // State
   const tradeableTeams = ref([])
@@ -127,6 +146,11 @@ export const useTradeStore = defineStore('trade', () => {
 
   // Trading block
   const userTradingBlock = ref([])
+
+  // Whether the season's trade deadline has passed. Set by fetchTradeableTeams /
+  // fetchPendingProposals so the UI can disable trade actions (the execute paths
+  // also hard-block, but disabling avoids a dead-end error after building a deal).
+  const tradeDeadlinePassed = ref(false)
 
   // Negotiation prefill — set when the user clicks "Negotiate" on an inbound
   // AI proposal. TradesTab watches this and forwards it to TradeCenter, which
@@ -216,6 +240,77 @@ export const useTradeStore = defineStore('trade', () => {
       ?? new Date().getFullYear()
   }
 
+  // Shared pre-execution guard for BOTH trade-commit paths (wizard executeTrade
+  // and inbound-offer acceptProposal). Throws a user-facing Error — surfaced via
+  // each caller's catch into `error` — if the trade can't legally commit:
+  //   1. past the Feb 5 trade deadline
+  //   2. fails the 125% + $100K salary-matching rule (hard block; capMode 'normal')
+  //   3. references a player that has changed hands since the offer was built
+  //      (prevents TradeExecutor.movePlayer from silently no-op'ing one side and
+  //      committing a lopsided trade).
+  // userGiving / userReceiving are API-format asset lists ({ type, playerId|pickId }).
+  function _assertTradeAllowed({ userGiving, userReceiving, getPlayerFn, currentDate, seasonYear, userTeamId, aiTeamId, campaign }) {
+    if (!userTradingAllowed(campaign, currentDate, seasonYear)) {
+      throw new Error('The trade deadline has passed — no more trades can be made this season.')
+    }
+
+    const capCheck = validateSalaryCap({ userGiving, userReceiving, capMode: 'normal', getPlayerFn })
+    if (!capCheck.valid) {
+      throw new Error(capCheck.reason || 'Trade violates salary-cap matching rules.')
+    }
+
+    const nameOf = (p) => p
+      ? `${p.firstName || p.first_name || ''} ${p.lastName || p.last_name || ''}`.trim()
+      : ''
+    const teamOf = (playerId) => {
+      const p = getPlayerFn(playerId)
+      return p ? (p.teamId ?? p.team_id ?? null) : null
+    }
+    for (const a of userGiving) {
+      if (a.type !== 'player') continue
+      if (String(teamOf(a.playerId)) !== String(userTeamId)) {
+        const who = nameOf(getPlayerFn(a.playerId)) || 'A player'
+        throw new Error(`${who} is no longer on your roster — the trade can't be completed.`)
+      }
+    }
+    for (const a of userReceiving) {
+      if (a.type !== 'player') continue
+      if (String(teamOf(a.playerId)) !== String(aiTeamId)) {
+        const who = nameOf(getPlayerFn(a.playerId)) || 'A requested player'
+        throw new Error(`${who} is no longer available — the other team's roster changed since this offer.`)
+      }
+    }
+  }
+
+  // Recompute and persist `total_payroll` for the two teams a trade touched, so
+  // Cap Space displays don't drift. Re-reads the teams fresh (AFTER any pick
+  // moves have saved them) to avoid clobbering draftPicks with a stale snapshot,
+  // and sums salaries by current teamId from the executor's post-trade arrays.
+  async function _persistPostTradePayrolls({ campaignId, userTeamId, aiTeamId, postTradePlayers }) {
+    const sumFor = (teamId) => postTradePlayers.reduce((sum, p) => {
+      const tid = p.teamId ?? p.team_id
+      return String(tid) === String(teamId)
+        ? sum + parseFloat(p.contractSalary ?? p.contract_salary ?? 0)
+        : sum
+    }, 0)
+
+    const [freshUserTeam, freshAiTeam] = await Promise.all([
+      TeamRepository.get(campaignId, userTeamId),
+      TeamRepository.get(campaignId, aiTeamId),
+    ])
+    const apply = (team, payroll) => {
+      if (!team) return null
+      team.total_payroll = payroll
+      team.totalPayroll = payroll
+      return team
+    }
+    const toSave = [
+      apply(freshUserTeam, sumFor(userTeamId)),
+      apply(freshAiTeam, sumFor(aiTeamId)),
+    ].filter(Boolean)
+    if (toSave.length > 0) await TeamRepository.saveBulk(toSave)
+  }
+
   // Actions
   async function fetchTradeableTeams(campaignId) {
     loading.value = true
@@ -224,9 +319,18 @@ export const useTradeStore = defineStore('trade', () => {
       const campaign = await CampaignRepository.get(campaignId)
       const userTeamId = campaign?.team_id ?? campaign?.teamId
       const allTeams = await TeamRepository.getAllForCampaign(campaignId)
+      const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
 
-      // Load standings to attach win/loss records
-      const year = campaign?.currentSeasonYear ?? campaign?.gameYear ?? 2025
+      // Load standings to attach win/loss records. Use the canonical season-year
+      // chain (matching the other trade.js callers) — NOT campaign.gameYear, which
+      // is a 1,2,3 counter and would yield a wrong year if currentSeasonYear is absent.
+      const year = campaign?.currentSeasonYear
+        ?? campaign?.current_season_year
+        ?? campaign?.settings?.currentYear
+        ?? campaign?.year
+        ?? new Date().getFullYear()
+      const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
+      tradeDeadlinePassed.value = !userTradingAllowed(campaign, currentDate, year)
       const seasonData = await SeasonRepository.get(campaignId, year)
       const standings = seasonData?.standings ?? { east: [], west: [] }
       const allStandings = [...(standings.east ?? []), ...(standings.west ?? [])]
@@ -237,6 +341,19 @@ export const useTradeStore = defineStore('trade', () => {
         standingsMap[s.teamId] = s
       }
 
+      // Group rosters by team so the displayed direction comes from the SAME
+      // canonical analyzer (analyzeTeamDirection) the trade evaluator uses —
+      // not a winPct-only heuristic that could never surface 'title_contender'
+      // and contradicted the verdict shown after proposing.
+      const rostersByTeamId = new Map()
+      for (const p of allPlayers) {
+        const tid = p.teamId ?? p.team_id
+        if (tid == null) continue
+        if (!rostersByTeamId.has(tid)) rostersByTeamId.set(tid, [])
+        rostersByTeamId.get(tid).push(p)
+      }
+      const context = buildContext({ standings, teams: allTeams, seasonPhase: 'regular_season' })
+
       // Filter out the user's team and enrich with record + direction
       tradeableTeams.value = allTeams
         .filter(t => t.id !== userTeamId)
@@ -244,12 +361,8 @@ export const useTradeStore = defineStore('trade', () => {
           const s = standingsMap[t.id]
           const wins = s?.wins ?? 0
           const losses = s?.losses ?? 0
-          const winPct = (wins + losses) > 0 ? wins / (wins + losses) : 0.5
-          // Simple direction heuristic based on record
-          let direction = 'ascending'
-          if (winPct >= 0.6) direction = 'win_now'
-          else if (winPct >= 0.5) direction = 'ascending'
-          else if (winPct < 0.35) direction = 'rebuilding'
+          const teamRoster = rostersByTeamId.get(t.id) ?? []
+          const direction = analyzeTeamDirection(t, teamRoster, context)
           const totalPayroll = t.total_payroll ?? t.totalPayroll ?? 0
           return {
             ...t,
@@ -348,11 +461,25 @@ export const useTradeStore = defineStore('trade', () => {
 
       const standings = seasonData?.standings ?? { east: [], west: [] }
       const context = buildContext({ standings, teams: allTeams, seasonPhase: 'regular_season' })
+      const getPickValueFn = buildPickValueFn({ allTeams, standings, allPlayers, currentSeasonYear: year })
 
       // Build the proposal in AI format: aiReceives = what user is offering, aiGives = what user is requesting
       const proposal = {
         aiReceives: userOffering.value.map(formatAssetForApi),
         aiGives: userRequesting.value.map(formatAssetForApi),
+      }
+
+      // Trade-deadline gate: surface a rejection rather than throwing here so the
+      // wizard can show the reason inline (execute paths hard-block separately).
+      const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
+      if (!userTradingAllowed(campaign, currentDate, year)) {
+        const result = {
+          decision: 'reject',
+          reason: 'The trade deadline has passed — no more trades can be made this season.',
+          deadlinePassed: true,
+        }
+        lastProposalResult.value = result
+        return result
       }
 
       const result = evaluateTrade({
@@ -362,7 +489,20 @@ export const useTradeStore = defineStore('trade', () => {
         difficulty,
         context,
         getPlayerFn,
+        getPickValueFn,
       })
+
+      // Attach the engine-backed salary-cap verdict (125% + $100K matching, hard
+      // block on the execute paths) so the wizard reflects the same rule the
+      // executor enforces rather than its own ad-hoc client check.
+      const capCheck = validateSalaryCap({
+        userGiving: proposal.aiReceives,
+        userReceiving: proposal.aiGives,
+        capMode: 'normal',
+        getPlayerFn,
+      })
+      result.capValid = capCheck.valid
+      result.capReason = capCheck.valid ? null : capCheck.reason
 
       lastProposalResult.value = result
       return result
@@ -410,6 +550,24 @@ export const useTradeStore = defineStore('trade', () => {
       })
 
       const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
+      const seasonYear = campaign?.currentSeasonYear
+        ?? campaign?.current_season_year
+        ?? campaign?.settings?.currentYear
+        ?? campaign?.year
+        ?? new Date().getFullYear()
+
+      // Hard gate: deadline, salary-cap matching, and asset ownership. Throws
+      // (caught below) before anything is mutated if the trade can't legally commit.
+      _assertTradeAllowed({
+        userGiving: userOffering.value.map(formatAssetForApi),
+        userReceiving: userRequesting.value.map(formatAssetForApi),
+        getPlayerFn,
+        currentDate,
+        seasonYear,
+        userTeamId,
+        aiTeamId: selectedTeam.value.id,
+        campaign,
+      })
 
       // Collect all draft picks from both teams for the executor
       const aiTeamObj = await TeamRepository.get(campaignId, selectedTeam.value.id)
@@ -446,6 +604,29 @@ export const useTradeStore = defineStore('trade', () => {
         await PlayerRepository.saveBulk(playersToSave)
       }
 
+      // Clean the user's saved lineup: any player traded AWAY must be pulled out
+      // of the starting five and target minutes. Otherwise the lineup keeps a
+      // dangling starter id (and the gone player's minutes still total 240), so
+      // the pre-game check would let you sim with a phantom starter.
+      const outgoingPlayerIds = new Set(
+        details.assets
+          .filter(a => a.type === 'player' && String(a.from) === String(userTeamId))
+          .map(a => String(a.playerId))
+      )
+      if (outgoingPlayerIds.size > 0 && campaign?.settings?.lineup) {
+        const lu = campaign.settings.lineup
+        const starters = Array.isArray(lu.starters)
+          ? lu.starters.map(id => (outgoingPlayerIds.has(String(id)) ? null : id))
+          : lu.starters
+        const target_minutes = { ...(lu.target_minutes || {}) }
+        for (const id of Object.keys(target_minutes)) {
+          if (outgoingPlayerIds.has(String(id))) delete target_minutes[id]
+        }
+        await CampaignRepository.updateSettings(campaignId, {
+          lineup: { ...lu, starters, target_minutes },
+        })
+      }
+
       // Persist draft pick ownership changes via the shared helper. Uses
       // a global pickId lookup across every team's draftPicks so a pick
       // that's drifted out of aiTeamObj.draftPicks (e.g. moved to a
@@ -471,18 +652,18 @@ export const useTradeStore = defineStore('trade', () => {
         }
       }
 
-      // Save trade to history in season data & update player stats team
-      // Canonical field set by CampaignManager is `currentSeasonYear`
-      // (NOT settings.currentYear or top-level `year`). Reading from the
-      // wrong field made `year` fall through to new Date().getFullYear(),
-      // which then mismatched against campaign.currentDate's actual year
-      // and broke the opening-week trade-quiet gate (`isInFirstWeekOfSeason`
-      // got the wrong seasonYear and returned false on day 1).
-      const year = campaign?.currentSeasonYear
-        ?? campaign?.current_season_year
-        ?? campaign?.settings?.currentYear
-        ?? campaign?.year
-        ?? new Date().getFullYear()
+      // Recompute both teams' payroll so Cap Space stays accurate post-trade.
+      await _persistPostTradePayrolls({
+        campaignId,
+        userTeamId,
+        aiTeamId: selectedTeam.value.id,
+        postTradePlayers: [...result.updatedUserRoster, ...result.updatedLeaguePlayers],
+      })
+
+      // Save trade to history in season data & update player stats team.
+      // `seasonYear` was resolved above (canonical currentSeasonYear) and reused
+      // here so the deadline gate and the season-data lookup never disagree.
+      const year = seasonYear
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (seasonData) {
         // Update team ID in player stats so league leaders / stats history reflect the new team
@@ -592,6 +773,7 @@ export const useTradeStore = defineStore('trade', () => {
         ?? new Date().getFullYear()
       const difficulty = campaign?.settings?.difficulty ?? 'pro'
       const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
+      tradeDeadlinePassed.value = !userTradingAllowed(campaign, currentDate, year)
 
       const allTeams = await TeamRepository.getAllForCampaign(campaignId)
       const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
@@ -630,6 +812,18 @@ export const useTradeStore = defineStore('trade', () => {
           })
         }
 
+        // Picks an AI team currently owns, so its return offers can include them.
+        const picksByOwner = new Map()
+        for (const t of allTeams) {
+          for (const pk of t.draftPicks || []) {
+            const owner = pk.currentOwnerId ?? pk.current_owner_id ?? t.id
+            if (!picksByOwner.has(owner)) picksByOwner.set(owner, [])
+            picksByOwner.get(owner).push(pk)
+          }
+        }
+        const getTeamPicksFn = (teamId) => picksByOwner.get(teamId) || []
+        const getPickValueFn = buildPickValueFn({ allTeams, standings, allPlayers, currentSeasonYear: year })
+
         newProposals = generateWeeklyProposals({
           aiTeams,
           userRoster,
@@ -642,6 +836,8 @@ export const useTradeStore = defineStore('trade', () => {
           pendingProposals: allProposals,
           getTeamRosterFn,
           getPlayerFn,
+          getTeamPicksFn,
+          getPickValueFn,
           userTradingBlock: tradingBlockIds,
         })
 
@@ -781,6 +977,25 @@ export const useTradeStore = defineStore('trade', () => {
       })
 
       const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
+      const seasonYear = campaign?.currentSeasonYear
+        ?? campaign?.current_season_year
+        ?? campaign?.settings?.currentYear
+        ?? campaign?.year
+        ?? new Date().getFullYear()
+
+      // Hard gate: deadline, salary-cap matching, and asset ownership. Even an
+      // AI-originated offer must pass cap matching and can go stale (the AI may
+      // have traded the player away in a prior sim day), so guard before mutating.
+      _assertTradeAllowed({
+        userGiving: proposal.proposal.aiReceives,  // AI receives = user gives
+        userReceiving: proposal.proposal.aiGives,   // AI gives = user receives
+        getPlayerFn,
+        currentDate,
+        seasonYear,
+        userTeamId,
+        aiTeamId: aiTeam.id,
+        campaign,
+      })
 
       // Collect all draft picks from both teams for the executor
       const aiTeamObj = await TeamRepository.get(campaignId, aiTeam.id)
@@ -816,6 +1031,28 @@ export const useTradeStore = defineStore('trade', () => {
         await PlayerRepository.saveBulk(playersToSave)
       }
 
+      // Strip any traded-away user player from the saved starting five + minutes
+      // (same as executeTrade) so the next game's lineup check isn't fooled by a
+      // phantom starter / lingering minutes.
+      const outgoingPlayerIds = new Set(
+        details.assets
+          .filter(a => a.type === 'player' && String(a.from) === String(userTeamId))
+          .map(a => String(a.playerId))
+      )
+      if (outgoingPlayerIds.size > 0 && campaign?.settings?.lineup) {
+        const lu = campaign.settings.lineup
+        const starters = Array.isArray(lu.starters)
+          ? lu.starters.map(id => (outgoingPlayerIds.has(String(id)) ? null : id))
+          : lu.starters
+        const target_minutes = { ...(lu.target_minutes || {}) }
+        for (const id of Object.keys(target_minutes)) {
+          if (outgoingPlayerIds.has(String(id))) delete target_minutes[id]
+        }
+        await CampaignRepository.updateSettings(campaignId, {
+          lineup: { ...lu, starters, target_minutes },
+        })
+      }
+
       // Persist draft pick ownership changes via the shared helper.
       // Same robust find-anywhere lookup + loud failure as executeTrade.
       const pickAssets = details.assets.filter(a => a.type === 'pick')
@@ -834,18 +1071,17 @@ export const useTradeStore = defineStore('trade', () => {
         }
       }
 
-      // Save trade to history & update player stats team
-      // Canonical field set by CampaignManager is `currentSeasonYear`
-      // (NOT settings.currentYear or top-level `year`). Reading from the
-      // wrong field made `year` fall through to new Date().getFullYear(),
-      // which then mismatched against campaign.currentDate's actual year
-      // and broke the opening-week trade-quiet gate (`isInFirstWeekOfSeason`
-      // got the wrong seasonYear and returned false on day 1).
-      const year = campaign?.currentSeasonYear
-        ?? campaign?.current_season_year
-        ?? campaign?.settings?.currentYear
-        ?? campaign?.year
-        ?? new Date().getFullYear()
+      // Recompute both teams' payroll so Cap Space stays accurate post-trade.
+      await _persistPostTradePayrolls({
+        campaignId,
+        userTeamId,
+        aiTeamId: aiTeam.id,
+        postTradePlayers: [...result.updatedUserRoster, ...result.updatedLeaguePlayers],
+      })
+
+      // Save trade to history & update player stats team. `seasonYear` was
+      // resolved above (canonical currentSeasonYear) and reused here.
+      const year = seasonYear
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (seasonData) {
         // Update team ID in player stats so league leaders / stats history reflect the new team
@@ -1162,6 +1398,7 @@ export const useTradeStore = defineStore('trade', () => {
     userRequesting,
     pendingProposals,
     userTradingBlock,
+    tradeDeadlinePassed,
     negotiationPrefill,
     loading,
     proposing,

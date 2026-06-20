@@ -8,11 +8,11 @@
 //
 // Design:
 //   1. Randomly assign each team a campaign mode each new campaign:
-//      'contender' (4-6 teams), 'rebuilder' (3-4 teams), 'average_strong'
-//      and 'average_weak' (the rest). The user's team is always 'middle'
-//      — a dedicated true-middle-of-the-pack blueprint sitting exactly
-//      between average_strong and average_weak, so the user doesn't get
-//      handed a tanked roster or a pre-baked contender.
+//      'contender' (4-6 teams, only from Elite/Strong-facility teams),
+//      'rebuilder' (3-4 teams), 'average_strong' and 'average_weak' (the rest).
+//      The user's team is treated like any other team — the franchise they pick
+//      determines their roster's strength (it can be a contender if its
+//      facilities qualify, or average/rebuilder otherwise).
 //   2. Each mode maps to a role-distribution blueprint over the 15-slot
 //      ROSTER_POSITIONS layout (1 superstar / N starters / N rotation /
 //      N bench). The mode also stamps team.aiDirection so the existing AI
@@ -78,46 +78,73 @@ const MODE_TO_AI_DIRECTION = {
 
 /**
  * Randomly classify each team for THIS campaign. Returns
- * { [abbreviation]: 'contender' | 'average_strong' | 'middle' | 'average_weak' | 'rebuilder' }.
+ * { [abbreviation]: 'contender' | 'average_strong' | 'average_weak' | 'rebuilder' }.
  *
- *  - 4-6 random teams → contender
+ *  - 4-6 contenders, drawn ONLY from teams whose facilities are Elite/Strong
+ *    (facility average >= 3.5)
  *  - 3-4 random teams → rebuilder (different from contenders)
  *  - Remaining teams → split ~50/50 between average_strong / average_weak
- *  - The user's team (if provided) is always 'middle' — a dedicated tier
- *    sitting exactly between average_strong and average_weak so a new
- *    player isn't surprised by either a fire-sale roster or a pre-baked
- *    contender.
+ *  - The user's team is treated like any other team — it can land any mode
+ *    (contender if its facilities qualify, or average/rebuilder otherwise), so
+ *    the franchise the user picks determines their roster's strength.
  *
- * Re-rolls per campaign so two playthroughs of the same userTeam land
- * different "contender" pools — drives replayability.
+ * Re-rolls per campaign so two playthroughs land different "contender" pools —
+ * drives replayability.
+ *
+ * @param {Array} teams - lite team objects with `.abbreviation` and `.facilities`
+ * @param {string} [userTeamAbbreviation] - retained for call-site compatibility;
+ *   no longer special-cased.
  */
-export function assignCampaignModes(teams, userTeamAbbreviation) {
+export function assignCampaignModes(teams, userTeamAbbreviation = null) { // eslint-disable-line no-unused-vars
   const modes = {}
   const numContenders = 4 + Math.floor(Math.random() * 3) // 4-6
   const numRebuilders = 3 + Math.floor(Math.random() * 2) // 3-4
 
-  // Pool of teams eligible for random contender/rebuilder assignment.
-  // User team is reserved as 'middle' below.
-  const pool = teams
-    .map(t => t.abbreviation)
-    .filter(abbr => abbr !== userTeamAbbreviation)
+  // Facilities gate for the 'contender' boost: only teams whose starting
+  // facilities read Elite or Strong (average level >= 3.5, matching the
+  // campaign-create tier labels) are eligible to be made contenders. Teams
+  // with weaker facilities can still be average/rebuilder, just never a
+  // pre-baked contender.
+  const FACILITY_KEYS = ['training', 'medical', 'scouting', 'analytics']
+  const byAbbr = new Map(teams.map(t => [t.abbreviation, t]))
+  const facilityAvg = (abbr) => {
+    const f = byAbbr.get(abbr)?.facilities
+    if (!f) return 0
+    return FACILITY_KEYS.reduce((s, k) => s + (f[k] ?? 0), 0) / FACILITY_KEYS.length
+  }
+  const contenderEligible = (abbr) => facilityAvg(abbr) >= 3.5
+
+  // Every team — INCLUDING the user's — competes for the same modes. The user's
+  // team is no longer special-cased: if its facilities qualify (Elite/Strong) it
+  // can be made a contender just like any AI team, and it can also land average
+  // or rebuilder. So the franchise the user picks determines their roster's
+  // strength rather than always being a forced middle-of-the-pack roster.
+  const pool = teams.map(t => t.abbreviation)
 
   shuffleArray(pool)
 
-  for (let i = 0; i < numContenders && i < pool.length; i++) {
-    modes[pool[i]] = 'contender'
-  }
-  for (let i = numContenders; i < numContenders + numRebuilders && i < pool.length; i++) {
-    modes[pool[i]] = 'rebuilder'
-  }
-  for (let i = numContenders + numRebuilders; i < pool.length; i++) {
-    // Even split: half average_strong, half average_weak — randomized so
-    // there's variety in which "average" teams skew good vs. mediocre
-    modes[pool[i]] = Math.random() < 0.5 ? 'average_strong' : 'average_weak'
+  // Contenders: drawn only from facilities-eligible teams (up to numContenders;
+  // fewer if not enough qualify).
+  const contenders = new Set()
+  for (const abbr of pool) {
+    if (contenders.size >= numContenders) break
+    if (contenderEligible(abbr)) {
+      modes[abbr] = 'contender'
+      contenders.add(abbr)
+    }
   }
 
-  if (userTeamAbbreviation) {
-    modes[userTeamAbbreviation] = 'middle'
+  // Everyone else (non-contender) splits into rebuilder / average tiers. `rest`
+  // keeps the shuffled order, so the rebuilder picks stay random.
+  const rest = pool.filter(abbr => !contenders.has(abbr))
+  for (let i = 0; i < rest.length; i++) {
+    if (i < numRebuilders) {
+      modes[rest[i]] = 'rebuilder'
+    } else {
+      // Even split: half average_strong, half average_weak — randomized so
+      // there's variety in which "average" teams skew good vs. mediocre
+      modes[rest[i]] = Math.random() < 0.5 ? 'average_strong' : 'average_weak'
+    }
   }
 
   return modes

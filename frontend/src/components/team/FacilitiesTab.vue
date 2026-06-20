@@ -1,6 +1,5 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
@@ -9,6 +8,7 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { useSyncStore } from '@/stores/sync'
 import api from '@/composables/useApi'
+import FacilityUpgradeConfirmModal from '@/components/team/FacilityUpgradeConfirmModal.vue'
 
 const props = defineProps({
   campaignId: {
@@ -17,7 +17,6 @@ const props = defineProps({
   }
 })
 
-const campaignStore = useCampaignStore()
 const teamStore = useTeamStore()
 const authStore = useAuthStore()
 const toastStore = useToastStore()
@@ -83,10 +82,6 @@ const facilities = computed(() => {
 
 const awardTokens = computed(() => {
   return authStore.profile?.tokens ?? 0
-})
-
-const scoutingPoints = computed(() => {
-  return campaignStore.currentCampaign?.settings?.scoutingPoints ?? 0
 })
 
 const currentFacility = computed(() => {
@@ -160,15 +155,23 @@ async function upgradeFacility() {
 
 <template>
   <div class="facilities-tab">
-    <!-- Token Balance -->
-    <div class="token-balance-bar">
-      <div class="token-info">
-        <span class="token-label">Award Tokens</span>
-        <span class="token-value">{{ awardTokens.toLocaleString() }}</span>
-      </div>
-      <div class="token-info">
-        <span class="token-label">Scout Points</span>
-        <span class="token-value scout">{{ scoutingPoints }}</span>
+    <!-- Facilities Overview — every facility and its current level at a glance -->
+    <div class="facilities-overview">
+      <div
+        v-for="(facility, key) in facilityTypes"
+        :key="key"
+        class="facility-overview-item"
+        :class="{ muted: key === 'analytics' }"
+      >
+        <span class="overview-name">{{ facility.name }}</span>
+        <div class="level-stars">
+          <span
+            v-for="i in 5"
+            :key="i"
+            class="star"
+            :class="{ filled: i <= (facilities[key] ?? 1) }"
+          >&#9733;</span>
+        </div>
       </div>
     </div>
 
@@ -178,10 +181,12 @@ async function upgradeFacility() {
         v-for="(facility, key) in facilityTypes"
         :key="key"
         class="facility-tab-btn"
-        :class="{ active: activeSubTab === key }"
+        :class="{ active: activeSubTab === key, disabled: key === 'analytics' }"
+        :disabled="key === 'analytics'"
+        :title="key === 'analytics' ? 'Analytics — coming soon' : null"
         @click="activeSubTab = key; confirmingUpgrade = false"
       >
-        {{ facility.name }}
+        {{ facility.name }}<span v-if="key === 'analytics'" class="facility-soon">Soon</span>
       </button>
     </div>
 
@@ -224,17 +229,6 @@ async function upgradeFacility() {
         <template v-if="isMaxLevel">
           <div class="max-level-badge">MAX LEVEL</div>
         </template>
-        <template v-else-if="confirmingUpgrade">
-          <div class="confirm-prompt">
-            <p class="confirm-text">Spend <strong>{{ UPGRADE_COST.toLocaleString() }}</strong> tokens to upgrade {{ currentFacility.name }} to Level {{ currentLevel + 1 }}?</p>
-            <div class="confirm-actions">
-              <button class="confirm-cancel-btn" @click="cancelUpgrade">Cancel</button>
-              <button class="confirm-yes-btn" :disabled="upgrading" @click="upgradeFacility">
-                {{ upgrading ? 'Upgrading...' : 'Confirm' }}
-              </button>
-            </div>
-          </div>
-        </template>
         <template v-else>
           <button
             class="upgrade-btn"
@@ -251,6 +245,18 @@ async function upgradeFacility() {
         </template>
       </div>
     </div>
+
+    <!-- Upgrade confirmation popup — consistent with other token-spend confirms -->
+    <FacilityUpgradeConfirmModal
+      :show="confirmingUpgrade"
+      :facility-name="currentFacility.name"
+      :next-level="currentLevel + 1"
+      :cost="UPGRADE_COST"
+      :user-tokens="awardTokens"
+      :loading="upgrading"
+      @close="cancelUpgrade"
+      @confirm="upgradeFacility"
+    />
   </div>
 </template>
 
@@ -259,9 +265,10 @@ async function upgradeFacility() {
   padding: 0;
 }
 
-.token-balance-bar {
-  display: flex;
-  gap: 24px;
+.facilities-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 24px;
   padding: 16px 20px;
   background: var(--color-bg-tertiary);
   border: 1px solid var(--glass-border);
@@ -269,33 +276,19 @@ async function upgradeFacility() {
   margin-bottom: 20px;
 }
 
-.token-info {
+.facility-overview-item {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
 }
 
-.token-label {
-  font-size: 0.7rem;
+.facility-overview-item.muted {
+  opacity: 0.5;
+}
+
+.overview-name {
+  font-size: 0.85rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-text-tertiary);
-}
-
-.token-value {
-  font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 1.6rem;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  color: var(--color-text-primary);
-}
-
-.token-value.scout {
-  background: var(--gradient-cosmic);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--color-text-secondary);
 }
 
 /* Sub-tab navigation - standard pill style */
@@ -330,6 +323,24 @@ async function upgradeFacility() {
   color: black;
   border-color: transparent;
   box-shadow: 0 0 12px rgba(232, 90, 79, 0.3);
+}
+
+/* Analytics is not wired to a gameplay effect yet — greyed out / not selectable. */
+.facility-tab-btn.disabled,
+.facility-tab-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.facility-tab-btn.disabled:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-text-secondary);
+}
+.facility-soon {
+  margin-left: 6px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
 }
 
 /* Facility Detail */
@@ -504,83 +515,8 @@ async function upgradeFacility() {
   color: var(--color-text-tertiary);
 }
 
-/* Confirm Prompt */
-.confirm-prompt {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  max-width: 320px;
-  padding: 16px 20px;
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-}
-
-.confirm-text {
-  font-size: 0.82rem;
-  color: var(--color-text-secondary);
-  text-align: center;
-  line-height: 1.4;
-}
-
-.confirm-text strong {
-  color: var(--color-text-primary);
-}
-
-.confirm-actions {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-}
-
-.confirm-cancel-btn,
-.confirm-yes-btn {
-  flex: 1;
-  padding: 10px 16px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.confirm-cancel-btn {
-  background: transparent;
-  border: 1px solid var(--glass-border);
-  color: var(--color-text-secondary);
-}
-
-.confirm-cancel-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--color-text-primary);
-}
-
-.confirm-yes-btn {
-  background: var(--gradient-cosmic);
-  border: none;
-  color: black;
-}
-
-.confirm-yes-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(232, 90, 79, 0.4);
-}
-
-.confirm-yes-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 /* Responsive */
 @media (max-width: 768px) {
-  .token-balance-bar {
-    flex-wrap: wrap;
-  }
-
   .facility-detail {
     padding: 16px;
   }

@@ -1,0 +1,211 @@
+================================================================================
+AI ROSTER DECISION-MAKING — AUDIT
+bball_sim_NEW2026  ·  read-only audit, no code changed
+================================================================================
+
+0. THE QUESTION
+--------------------------------------------------------------------------------
+Do AI teams make smart, direction-aware roster decisions throughout the WHOLE
+campaign -- e.g. a rebuilder accumulating first-round picks (thinking years
+ahead), a contender spending picks/youth to add a star for a playoff push -- or
+are they passive? The trigger: taking over a non-playoff team that had only 4
+rostered players.
+
+
+1. TL;DR
+--------------------------------------------------------------------------------
+* The decision FRAMEWORK is real and direction-aware. There IS a team-direction
+  model, direction-specific trade-value multipliers, projected draft-pick
+  valuation, and direction-weighted drafting. It is smarter than "random."
+
+* But the EXECUTION is thin in exactly the ways you noticed:
+  1. No "big-swing" trades. A contender cannot bundle multiple picks + youth for
+     one star. Trades are small, value-matched, capped at ~1-2 picks + 1
+     secondary player.
+  2. The trade market is quiet and regular-season-only. ~8% chance per team-pair
+     on weekly Monday ticks, max 3 trades/week, hard stop at the Feb 5 deadline,
+     and ZERO offseason / draft-day trades. Rebuilders never get to "stockpile
+     picks" at scale.
+  3. Rebuilders are reactive, not proactive. They value picks highly and give up
+     vets cheaply IF a contender comes calling, but never proactively shop their
+     veterans.
+  4. Every AI roster decision is expectation/prestige-BLIND. Direction is
+     inferred from record + roster only -- never the owner's mandate or the
+     franchise's facility tier.
+  5. Roster maintenance can fail. The roster-refill is deferred and has a quality
+     floor that, against a depleted free-agent pool, can leave AI teams below a
+     full roster -- the direct cause of the 4-player team you inherited.
+
+
+2. HOW AI TEAMS DECIDE TODAY (THE MACHINERY)
+--------------------------------------------------------------------------------
+
+2a. Team direction model -- analyzeTeamDirection()
+    frontend/src/engine/ai/AITradeService.js:328-399. Produces one of
+    title_contender | win_now | ascending | rebuilding by blending:
+    - Record (winPct from standings) -- weight ramps with games played, capped
+      at 0.7  (recordWeight = min(0.7, gamesPlayed/82 * 0.9)).
+    - Roster (star power: #players >=85 OVR =1, >=82 =0.5; youth score; avg
+      overall; core age).
+    - Hard overrides: mathematically eliminated (>=20 games, winsNeeded >
+      gamesRemaining) -> rebuilding; starPower >=0.8 & winPct >=0.65 & >=15 games
+      -> title_contender.
+    - Does NOT read: playoff seeding, owner expectation, facility tier, prestige.
+
+2b. Trade value perception -- direction multipliers
+    AITradeService.js:60-101  DIRECTION_MULTIPLIERS. Each direction perceives
+    assets differently. Representative values:
+    - rebuilding:    pickReceiveDiscount 1.4 (wants picks), vetGiveEase 0.75
+      (sheds vets), youngGiveEase 1.2 (hoards youth), starGiveProtection 0.85
+      (willing to move stars).
+    - title_contender: starReceivePremium 1.25, starGiveProtection 1.35 (guards
+      stars), pickReceiveDiscount 0.65 (picks matter little), pickGiveSensitivity
+      0.75 (will spend picks).
+    calculateReceivingValue / calculateGivingValue (lines ~645-766) apply these
+    plus young-player premium, contract value, expiring bonus, timeline fit,
+    positional need. evaluateTrade (lines ~783-835) accepts when
+    receiving - giving >= -fairnessThreshold. Direction-specific rejection copy
+    at lines ~587-631 ("We're looking to acquire draft picks in any deal", etc.).
+    VERDICT: the value model genuinely encodes rebuild vs. contend preferences.
+
+2c. Draft-pick valuation -- PickValuationService.js
+    computePickValue (lines ~215-238): slot base value (SLOT_ANCHORS #1~=22 ...
+    #30~=1.8, round-2 cliff), x draft-class-strength multiplier, x
+    future-uncertainty discount (yearsOut: 1y=0.9, 2y=0.82, 3y=0.74, 4y+=0.65).
+    Future picks regress toward league mean (25%/yr, cap 80%) since the owner's
+    future record is unknown, and projectPickSlot ranks by the ORIGINAL team's
+    record -- so a rebuilder's pick is correctly worth more (lottery odds).
+    VERDICT: pick valuation is sound -- but future picks are discounted, which
+    (with the trade caps below) suppresses multi-year pick stockpiling.
+
+2d. Draft selection -- frontend/src/services/AIDraftService.js
+    selectRookieDraftPick (lines ~183-284): talent base dominates (direction sets
+    potential-vs-overall blend: rebuilding 70/30 ceiling, contender 30/70 floor,
+    win_now 40/60, ascending 55/45), + small upside/youth/work-ethic/badge-
+    synergy bonuses, + positional need scaled by pick slot (negligible top 5,
+    dominant by round 2), + ±1.5 jitter, then weighted-random among top 3.
+    VERDICT: drafting is direction-aware best-player-available -- solid.
+
+2e. Offseason contract decisions -- AIContractService.js
+    Cuts (processTeamCuts), re-signings (evaluateResigning, Bird-rights aware),
+    FA signings (processTeamSignings, fill toward TARGET_ROSTER_SIZE = 14), and
+    assessDraftCapital (rebuilders with draftRichness > 0.5 cut more
+    aggressively). All read direction, draftCapital, capSituation -- none read
+    owner expectation/tier. Roster constants: MIN_ROSTER_SIZE 10,
+    TARGET_ROSTER_SIZE 14, MINIMUM_SEASON_ROSTER 14.
+
+
+3. DECISION CADENCE ACROSS ONE CAMPAIGN YEAR
+--------------------------------------------------------------------------------
+WHEN                              DECISION                            DIR-AWARE?
+In-season, every Mon (to Feb 5)   AI<->AI trades (processAiToAiTrades) Yes
+In-season, ~Feb 5                 Trade deadline -- ALL trading stops  n/a
+Season end                        Contract expiry -> FA, retirements   Retire:yes
+                                  (enterOffseason CampaignManager:2286-2349)
+Offseason step 1                  Cuts only; signings+backfill skipped Yes
+                                  (runAIRosterManagement{skip...:true} :2304-2315)
+Offseason, 14-day FA window       Re-signs + FA signings (fill to 14)  Yes
+                                  (generateAIFreeAgencyOffers, daily)
+Offseason, after FA               Rookie draft (all 60 picks)          Yes
+                                  (simFullOffseason / draft room)
+Offseason, startNewSeason         Backfill AI teams to 14              NO (qual.)
+                                  (ensureMinimumRosters CampaignManager:~2721)
+
+TAKEAWAY: roster work is concentrated in the ~2-week offseason, plus a low-volume
+weekly in-season trade trickle that hard-stops at Feb 5. There is NO offseason or
+draft-day trading at all, so "thinking years ahead" via pick accumulation can't
+really happen.
+
+
+4. THE GAPS (WHERE IT FALLS SHORT OF YOUR BAR)
+--------------------------------------------------------------------------------
+GAP 1 -- No big-swing star trades.
+  _findAiToAiTrade (AITradeService.js:~1470-1655) only generates: (a) player-for-
+  player swap, (b) player-for-picks (contender buys ONE vet from a rebuilder,
+  capped ~1-2 picks), (c) player + 1 pick upgrade. There is no "3 firsts + a young
+  player for a star" construction. So the marquee win-now move you described
+  doesn't exist.
+
+GAP 2 -- Quiet, regular-season-only market.
+  AI<->AI: base 8%/pair/Monday, x1.5-2 near the deadline, max 3 trades/week, min
+  roster 8 to trade, opening-week quiet, nothing after Feb 5, nothing in the
+  offseason. Net: a handful of small trades per season league-wide.
+
+GAP 3 -- Rebuilders are reactive.
+  Direction multipliers make a rebuilder ACCEPT a pick-heavy return, but nothing
+  makes a rebuilder INITIATE shopping its expiring vets. Pick stockpiling only
+  happens if a contender happens to roll a trade against them -- and only 1-2
+  picks at a time.
+
+GAP 4 -- Expectation/prestige blindness.
+  Confirmed across engine/ai/ and engine/season/: AI contract/trade/draft logic
+  never reads owner expectation, facility tier, or prestige. Direction is purely
+  record+roster. So a demanding-owner contender and a patient rebuild-owner behave
+  identically given the same roster/record, and a franchise's mandate never shapes
+  its roster strategy.
+
+GAP 5 -- Roster maintenance can silently fail.
+  Backfill is deferred (skipBackfill:true at enterOffseason) to the FA window +
+  startNewSeason. ensureMinimumRosters (AIContractService.js:846-912) fills only
+  from the free-agent pool and STOPS at a 50-OVR quality floor (minRating default
+  50). A team that sheds many aging contracts year over year, against a league-
+  wide FA pool that other teams have already picked over, can be left below 14
+  with no emergency generation (only the USER-team finalizer generates tryout
+  bodies). AI teams thus can persistently shrink.
+
+
+5. WHY THE TEAM YOU TOOK OVER HAD 4 PLAYERS
+--------------------------------------------------------------------------------
+Chain: every team starts with 15 (LeagueRosterGenerator.js). At enterOffseason the
+team's expiring contracts are released to FA and retirees removed, cuts run, but
+signings and backfill are intentionally skipped. The owner contract-decision /
+team-switch happens at THIS offseason-hub moment -- i.e. the single most depleted
+point of the year, before the FA window and before startNewSeason's backfill.
+switchUserTeam reads the roster as-is with no fill, and crucially
+ensureMinimumRosters EXCLUDES the user team -- so the team you adopt is never
+auto-filled. A non-playoff team (more expiring/aging deals) lands at the bottom of
+that range -- hence 4. It's a timing + coverage gap, amplified by the quality-floor
+depletion in Gap 5.
+
+
+6. RECOMMENDATIONS (FOR DISCUSSION -- NOT YET IMPLEMENTED)
+--------------------------------------------------------------------------------
+Ordered by impact-to-effort:
+
+1. Fix takeover/maintenance (bug-level, small): fill a taken-over team (and
+   guarantee AI teams) to a viable size at the moment of takeover and at the hub
+   -- reuse the existing aiFinishUserTeamSetup (FA pool -> emergency tryout
+   fillers) so no one inherits a skeleton; optionally lower/raise the minRating
+   floor with emergency generation so AI teams can never sit below the minimum.
+
+2. Make direction expectation-aware (medium): feed owner expectation + facility
+   tier into analyzeTeamDirection (or as a bias) so a championship-mandate
+   franchise leans win-now and a rebuild-mandate franchise leans long-term,
+   independent of a noisy early record.
+
+3. Open the trade market (medium): add offseason/draft-day AI trades and raise
+   in-season volume/cadence so pick movement actually happens across the year.
+
+4. Add big-swing patterns (larger): let contenders bundle multiple picks + a young
+   player for a star, and let rebuilders proactively shop expiring vets for pick
+   packages -- the two archetypal moves you described.
+
+
+7. REFERENCE MAP (FILES)
+--------------------------------------------------------------------------------
+frontend/src/engine/ai/AITradeService.js       direction model, trade value,
+                                               AI<->AI trades, cadence.
+frontend/src/engine/ai/PickValuationService.js draft-pick trade valuation.
+frontend/src/services/AIDraftService.js        AI rookie draft selection.
+frontend/src/engine/ai/AIContractService.js    cuts, re-signings, FA signings,
+                                               ensureMinimumRosters.
+frontend/src/engine/campaign/CampaignManager.js enterOffseason, startNewSeason,
+                                               switchUserTeam.
+frontend/src/engine/draft/OffseasonOrchestrator.js offseason sequence + FA window.
+frontend/src/engine/campaign/UserTeamFinalizer.js  aiFinishUserTeamSetup
+                                               (reusable roster-fill).
+frontend/src/engine/draft/LeagueRosterGenerator.js initial 15-man rosters.
+
+================================================================================
+End of audit.
+================================================================================

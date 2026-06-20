@@ -4,6 +4,8 @@ import { User, Calendar, DollarSign, AlertTriangle, Check, X, Users, Briefcase, 
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { StatBadge, LoadingSpinner } from '@/components/ui'
 import { useFreeAgentInterest } from '@/composables/useFreeAgentInterest'
+import { playerMarketValue } from '@/engine/ai/ResignValuationService'
+import { veteranMinSalary } from '@/engine/data/salaryScale'
 
 const props = defineProps({
   show: {
@@ -38,38 +40,27 @@ const props = defineProps({
 const emit = defineEmits(['close', 'confirm', 'withdraw'])
 
 // ---------------------------------------------------------------------------
-// Instant mode (Phase 1 / regular season + post-draft) — fixed terms
+// Both modes negotiate salary + years, anchored on the player's real MARKET
+// VALUE (production-aware, capped at the league max, floored at the vet min).
+//   • instant (regular season)  → signs immediately if the player accepts
+//   • offer   (offseason window) → submits a pending bid resolved at FA close
 // ---------------------------------------------------------------------------
-const FIXED_YEARS = 2
-const FIXED_SALARY = 8_000_000
+const SIGN_THRESHOLD = 30 // interest score below which the player won't sign
 
-// ---------------------------------------------------------------------------
-// Offer mode (offseason FA window) — negotiable terms
-// ---------------------------------------------------------------------------
-const SALARY_BANDS = [
-  { rating: 90, salary: 40_000_000 },
-  { rating: 85, salary: 30_000_000 },
-  { rating: 80, salary: 20_000_000 },
-  { rating: 75, salary: 10_000_000 },
-  { rating: 70, salary: 5_000_000 },
-  { rating: 65, salary: 3_000_000 },
-]
+const expectedSalary = computed(() =>
+  props.player ? playerMarketValue(props.player, props.player.stats ?? null) : 0
+)
+const minSalary = computed(() => (props.player ? veteranMinSalary(props.player) : 1_300_000))
 
-function expectedSalaryFor(rating) {
-  for (const band of SALARY_BANDS) {
-    if (rating >= band.rating) return band.salary
-  }
-  return 2_000_000
-}
-
-const expectedSalary = computed(() => expectedSalaryFor(props.player?.overallRating ?? 70))
-
-// ±25% range, $250K step
-const salaryMin = computed(() => Math.max(1_000_000, Math.floor(expectedSalary.value * 0.75 / 250_000) * 250_000))
-const salaryMax = computed(() => Math.ceil(expectedSalary.value * 1.25 / 250_000) * 250_000)
+// Slider reaches down to the veteran minimum (so the user can deliberately offer
+// a minimum deal) and up to ~25% over market. $250K step.
+const salaryMin = computed(() => Math.floor(minSalary.value / 250_000) * 250_000)
+const salaryMax = computed(() =>
+  Math.max(salaryMin.value + 250_000, Math.ceil((expectedSalary.value * 1.25) / 250_000) * 250_000)
+)
 
 const offerYears = ref(2)
-const offerSalary = ref(expectedSalary.value)
+const offerSalary = ref(0)
 
 const userExistingOffer = computed(() => props.player?.userOffer || null)
 const competingOfferCount = computed(() => {
@@ -79,14 +70,12 @@ const competingOfferCount = computed(() => {
 
 watch(() => props.show, (open) => {
   if (!open || !props.player) return
-  if (props.mode === 'offer') {
-    if (userExistingOffer.value) {
-      offerYears.value = userExistingOffer.value.years
-      offerSalary.value = userExistingOffer.value.salary
-    } else {
-      offerYears.value = 2
-      offerSalary.value = expectedSalary.value
-    }
+  if (props.mode === 'offer' && userExistingOffer.value) {
+    offerYears.value = userExistingOffer.value.years
+    offerSalary.value = userExistingOffer.value.salary
+  } else {
+    offerYears.value = 2
+    offerSalary.value = expectedSalary.value
   }
 }, { immediate: true })
 
@@ -95,22 +84,25 @@ const isUpdate = computed(() => props.mode === 'offer' && !!userExistingOffer.va
 // ---------------------------------------------------------------------------
 // Cap / roster validation
 // ---------------------------------------------------------------------------
-const proposedSalary = computed(() => {
-  if (props.mode === 'offer') return offerSalary.value
-  return FIXED_SALARY
-})
+const proposedSalary = computed(() => offerSalary.value)
 
 const exceedsCap = computed(() => proposedSalary.value > props.capSpace)
 const rosterFull = computed(() => props.rosterCount >= 15)
 
+// A minimum-salary contract is always allowed, even over the cap (the NBA
+// minimum exception). Anything above the minimum needs real cap space.
+const isMinimumDeal = computed(() => offerSalary.value <= minSalary.value)
+const capBlocked = computed(() => exceedsCap.value && !isMinimumDeal.value)
+
 // In offer mode, neither cap nor roster fullness is a hard block — the user
 // is allowed to take swings at multiple stars even if their combined offers
-// exceed cap, and if more than the cap can fit ultimately accept, the
-// EndOfFreeAgencyModal will surface a "Decision Required" step. Cap and
-// roster overage still render as visual warnings below.
+// exceed cap, and the EndOfFreeAgencyModal surfaces a "Decision Required" step.
+// In instant mode the signing resolves NOW, so the player must both clear the
+// cap rule (minimum-only over the cap) and actually be willing to sign.
 const canConfirm = computed(() => {
+  if (rosterFull.value) return false
   if (props.mode === 'offer') return true
-  return !exceedsCap.value && !rosterFull.value
+  return !capBlocked.value && (interestScore.value ?? 0) >= SIGN_THRESHOLD
 })
 
 // ---------------------------------------------------------------------------
@@ -133,20 +125,11 @@ function handleClose() {
 }
 
 function handleConfirm() {
-  if (props.mode === 'offer') {
-    emit('confirm', {
-      playerId: props.player.id,
-      years: offerYears.value,
-      salary: offerSalary.value,
-      mode: 'offer',
-    })
-    return
-  }
   emit('confirm', {
     playerId: props.player.id,
-    years: FIXED_YEARS,
-    salary: FIXED_SALARY,
-    mode: 'instant',
+    years: offerYears.value,
+    salary: offerSalary.value,
+    mode: props.mode,
   })
 }
 
@@ -154,7 +137,7 @@ function handleWithdraw() {
   emit('withdraw', { playerId: props.player.id })
 }
 
-const totalContractValue = computed(() => proposedSalary.value * (props.mode === 'offer' ? offerYears.value : FIXED_YEARS))
+const totalContractValue = computed(() => proposedSalary.value * offerYears.value)
 const modalTitle = computed(() => props.mode === 'offer' ? (isUpdate.value ? 'Update Offer' : 'Make Offer') : 'Sign Free Agent')
 const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? 'Update Offer' : 'Submit Offer') : 'Sign Player')
 
@@ -163,7 +146,7 @@ const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? '
 // as they tweak. Uses the same scoring fn the engine runs at resolution.
 const { score: scoreInterest, interestLevelForScore } = useFreeAgentInterest()
 const interestScore = computed(() => {
-  if (props.mode !== 'offer' || !props.player) return null
+  if (!props.player) return null
   return scoreInterest(props.player, {
     salary: offerSalary.value,
     years: offerYears.value,
@@ -264,10 +247,10 @@ const interestLevel = computed(() =>
         <span v-else>{{ competingOfferCount }} other teams have made offers.</span>
       </div>
 
-      <!-- Offer mode: how the player currently feels about THIS offer.
-           Updates live as the user drags the salary/year controls. -->
+      <!-- How the player currently feels about THIS offer. Updates live as the
+           user drags the salary/year controls. -->
       <div
-        v-if="mode === 'offer' && interestLevel"
+        v-if="interestLevel"
         class="interest-meter"
         :style="{ '--interest-color': interestLevel.color }"
       >
@@ -284,9 +267,14 @@ const interestLevel = computed(() =>
         <p class="interest-hint">{{ interestLevel.hint }}</p>
       </div>
 
-      <!-- Offer mode: salary + years controls -->
-      <div v-if="mode === 'offer'" class="offer-controls">
-        <h4>Your Offer</h4>
+      <!-- Salary + years controls (both modes) -->
+      <div class="offer-controls">
+        <div class="offer-controls-head">
+          <h4>Your Offer</h4>
+          <span v-if="isMinimumDeal" class="min-deal-badge" title="Minimum-salary contract — allowed even over the cap">
+            Minimum deal · cap-exempt
+          </span>
+        </div>
 
         <div class="control-row">
           <div class="control-label">
@@ -316,7 +304,7 @@ const interestLevel = computed(() =>
           </div>
           <div class="years-options">
             <button
-              v-for="y in [1, 2, 3, 4, 5]"
+              v-for="y in [1, 2, 3, 4]"
               :key="y"
               class="year-btn"
               :class="{ active: offerYears === y }"
@@ -334,40 +322,13 @@ const interestLevel = computed(() =>
         </div>
       </div>
 
-      <!-- Instant mode: fixed offer summary -->
-      <div v-else class="contract-offer">
-        <h4>Contract Offer</h4>
-        <p class="offer-note">Standard free agent contract</p>
-
-        <div class="offer-details">
-          <div class="offer-row">
-            <div class="offer-icon"><DollarSign :size="18" /></div>
-            <div class="offer-info">
-              <span class="offer-label">Annual Salary</span>
-              <span class="offer-value">{{ formatSalary(FIXED_SALARY) }}</span>
-            </div>
-          </div>
-          <div class="offer-row">
-            <div class="offer-icon"><Calendar :size="18" /></div>
-            <div class="offer-info">
-              <span class="offer-label">Contract Length</span>
-              <span class="offer-value">{{ FIXED_YEARS }} years</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="offer-total">
-          <span class="total-label">Total Value:</span>
-          <span class="total-value">{{ formatSalary(totalContractValue) }}</span>
-        </div>
-      </div>
-
       <!-- Team Status -->
       <div class="team-status">
-        <div class="status-item" :class="{ warning: exceedsCap }">
+        <div class="status-item" :class="{ warning: capBlocked }">
           <DollarSign :size="16" />
           <span>Cap Space: {{ formatSalary(capSpace) }}</span>
-          <span v-if="exceedsCap" class="status-badge error">Insufficient</span>
+          <span v-if="capBlocked" class="status-badge error">Insufficient</span>
+          <span v-else-if="exceedsCap && isMinimumDeal" class="status-badge success">Min exempt</span>
           <span v-else class="status-badge success">OK</span>
         </div>
         <div class="status-item" :class="{ warning: rosterFull }">
@@ -379,17 +340,25 @@ const interestLevel = computed(() =>
       </div>
 
       <!-- Warnings -->
-      <div v-if="exceedsCap && mode === 'instant'" class="warning-box">
-        <AlertTriangle :size="18" />
-        <span>You don't have enough cap space (need {{ formatSalary(proposedSalary) }})</span>
-      </div>
-      <div v-else-if="exceedsCap && mode === 'offer'" class="warning-box warning-box-soft">
-        <AlertTriangle :size="18" />
-        <span>This offer would put you over the cap. You can still submit it — if more bids than your cap can fit ultimately accept, you'll pick which signings to keep at the end of free agency.</span>
-      </div>
-      <div v-else-if="mode === 'instant' && rosterFull" class="warning-box">
+      <div v-if="rosterFull" class="warning-box">
         <AlertTriangle :size="18" />
         <span>Your roster is full. Release a player to make room.</span>
+      </div>
+      <div v-else-if="mode === 'instant' && capBlocked" class="warning-box">
+        <AlertTriangle :size="18" />
+        <span>Over the cap — you can only sign minimum-salary players. Lower the offer to the minimum ({{ formatSalary(minSalary) }}) or clear cap space.</span>
+      </div>
+      <div v-else-if="mode === 'instant' && (interestScore ?? 0) < SIGN_THRESHOLD" class="warning-box warning-box-soft">
+        <AlertTriangle :size="18" />
+        <span>This player won't sign for these terms. Raise the salary or contract length to win them over.</span>
+      </div>
+      <div v-else-if="mode === 'instant' && exceedsCap && isMinimumDeal" class="warning-box warning-box-soft">
+        <AlertTriangle :size="18" />
+        <span>Minimum-salary deal — allowed even though you're over the cap.</span>
+      </div>
+      <div v-else-if="mode === 'offer' && exceedsCap" class="warning-box warning-box-soft">
+        <AlertTriangle :size="18" />
+        <span>This offer would put you over the cap. You can still submit it — if more bids than your cap can fit ultimately accept, you'll pick which signings to keep at the end of free agency.</span>
       </div>
     </div>
           </main>
@@ -694,6 +663,31 @@ const interestLevel = computed(() =>
   font-weight: 600;
   color: var(--color-primary);
   margin-bottom: 0.75rem;
+}
+
+.offer-controls-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.offer-controls-head h4 {
+  margin-bottom: 0;
+}
+
+.min-deal-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.14);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: var(--radius-full, 999px);
+  padding: 2px 8px;
+  white-space: nowrap;
 }
 
 .control-row {

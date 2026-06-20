@@ -230,6 +230,11 @@ export class AllStarService {
         position: playerInfo.position,
         secondaryPosition: playerInfo.secondaryPosition,
         conference: playerInfo.conference,
+        // Forward the headshot pointers from the lookup so the All-Star pause
+        // modal's PlayerAvatar resolves the real portrait instead of the default
+        // icon. (Preserved in _buildPlayerLookup but previously dropped here.)
+        headshot: playerInfo.headshot ?? null,
+        hasCustomHeadshot: playerInfo.hasCustomHeadshot ?? false,
         stats: {
           gp,
           ppg: Math.round(((stats.points ?? 0) / gp) * 10) / 10,

@@ -9,6 +9,9 @@ import {
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { backfillBirthDates, catchUpPlayerAging } from '@/engine/migrations/backfillBirthDates'
 import { backfillOrigins } from '@/engine/migrations/backfillOrigins'
+import { backfillGmContract } from '@/engine/migrations/backfillGmContract'
+import { rescaleContracts } from '@/engine/migrations/rescaleContracts'
+import { useAuthStore } from '@/stores/auth'
 import { TEAMS } from '@/engine/data/teams'
 import { useSyncStore } from '@/stores/sync'
 import { usePlayoffStore } from '@/stores/playoff'
@@ -18,6 +21,25 @@ import { useFinanceStore } from '@/stores/finance'
 import { useLeagueStore } from '@/stores/league'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import api from '@/composables/useApi'
+
+// Highest GM level reached among a campaign's recorded `gm_promotion`
+// achievements. Reads the numeric `level` field, falling back to parsing the
+// legacy id form `ach_gm_<level>_<year>` for entries written before that field
+// existed. Returns 0 when there are none.
+function maxRecordedGmLevel(campaign) {
+  const list = Array.isArray(campaign?.achievements) ? campaign.achievements : []
+  let max = 0
+  for (const a of list) {
+    if (a?.type !== 'gm_promotion') continue
+    let lvl = Number.isInteger(a.level) ? a.level : null
+    if (lvl == null && typeof a.id === 'string') {
+      const m = a.id.match(/^ach_gm_(\d+)_/)
+      if (m) lvl = parseInt(m[1], 10)
+    }
+    if (lvl != null && lvl > max) max = lvl
+  }
+  return max
+}
 
 export const useCampaignStore = defineStore('campaign', () => {
   // State
@@ -129,6 +151,14 @@ export const useCampaignStore = defineStore('campaign', () => {
     try { useBreakingNewsStore().clear() } catch (_) { /* noop */ }
   }
 
+  // Per-campaign timestamp of the last cloud sync-pull. fetchCampaign runs on
+  // every navigation to a campaign view (the home view re-fetches on each
+  // mount), and pulling on every one is wasteful. We throttle the pull to at
+  // most once per cooldown per campaign — cross-device freshness is still caught
+  // separately by the visibility/focus pull in the sync store.
+  const _lastPullAt = new Map()
+  const PULL_COOLDOWN_MS = 120_000
+
   async function fetchCampaign(id) {
     loading.value = true
     error.value = null
@@ -152,14 +182,43 @@ export const useCampaignStore = defineStore('campaign', () => {
 
       let result
 
-      // Always check cloud for newer data before using local
-      try {
-        const pullResult = await syncStore.pullChanges(id)
-        if (pullResult.usedRemote) {
-          console.log('[Campaign] Remote data was newer, reloading from IndexedDB')
+      // Check cloud for newer data before using local — but throttle: skip the
+      // pull if this campaign was pulled within the cooldown (avoids a redundant
+      // /sync/pull on every re-navigation to the same campaign). Stamp the time
+      // up front so a failed pull (e.g. a fresh campaign that 404s) also throttles.
+      if (Date.now() - (_lastPullAt.get(id) ?? 0) > PULL_COOLDOWN_MS) {
+        _lastPullAt.set(id, Date.now())
+        try {
+          const pullResult = await syncStore.pullChanges(id)
+          if (pullResult.usedRemote) {
+            console.log('[Campaign] Remote data was newer, reloading from IndexedDB')
+          }
+        } catch (pullErr) {
+          console.warn('[Campaign] Cloud pull failed, will use local data:', pullErr.message)
         }
-      } catch (pullErr) {
-        console.warn('[Campaign] Cloud pull failed, will use local data:', pullErr.message)
+      }
+
+      // One-shot migration (Team Owners Part 2): backfill the GM contract +
+      // sub-task progress for campaigns that predate the lifecycle, and report
+      // whether the user's current team is a gated Strong/Elite franchise.
+      // Runs BEFORE engineLoadCampaign so the loaded campaign reflects the
+      // backfilled gmContract. The GM-Level grandfather floor is applied after.
+      let gmTeamRequiredLevel = 0
+      try {
+        const res = await backfillGmContract(id)
+        gmTeamRequiredLevel = res.requiredGmLevel ?? 0
+      } catch (gmErr) {
+        console.warn('[Campaign] GM contract backfill failed:', gmErr)
+      }
+
+      // One-shot salary-cap rebase: re-derive every player's contract onto the
+      // 2025-26 salary scale so the higher cap actually binds in pre-rebase
+      // campaigns. Runs BEFORE engineLoadCampaign so the loaded payrolls reflect
+      // the new numbers. Guarded by campaign.settings.salaryRescaleDone.
+      try {
+        await rescaleContracts(id)
+      } catch (rescaleErr) {
+        console.warn('[Campaign] salary rescale failed:', rescaleErr)
       }
 
       try {
@@ -168,8 +227,40 @@ export const useCampaignStore = defineStore('campaign', () => {
         throw loadErr
       }
 
+      // Grandfather legacy GMs already running a gated team up to that tier's
+      // floor (Silver for Strong, Gold for Elite) so the new GM-Level gate stays
+      // consistent with the seat they hold. Floor only — never lowers an earned
+      // level. Best-effort (profile-global).
+      if (gmTeamRequiredLevel > 0) {
+        try {
+          const authStore = useAuthStore()
+          if (authStore.gmLevel < gmTeamRequiredLevel) {
+            await authStore.ensureGmLevelAtLeast(gmTeamRequiredLevel)
+          }
+        } catch (floorErr) {
+          console.warn('[Campaign] GM level grandfather floor failed:', floorErr)
+        }
+      }
+
       if (!result || !result.campaign) {
         throw new Error('Failed to load campaign')
+      }
+
+      // Self-heal the profile-global GM level from this campaign's recorded
+      // promotions. The promotion ACHIEVEMENT is stored per-campaign (IndexedDB,
+      // durable), but the gmLevel itself lives on the user profile and is only
+      // persisted to the backend — so an earlier re-sign whose backend write was
+      // lost (e.g. before the /api/user/gm-level endpoint existed) leaves the
+      // owner card showing "Unranked" despite the unlocked achievement. Floor
+      // only — never lowers a higher career level earned elsewhere.
+      try {
+        const authStore = useAuthStore()
+        const recorded = maxRecordedGmLevel(result.campaign)
+        if (recorded > 0 && authStore.gmLevel < recorded) {
+          await authStore.ensureGmLevelAtLeast(recorded)
+        }
+      } catch (gmHealErr) {
+        console.warn('[Campaign] GM level self-heal failed:', gmHealErr)
       }
 
       // One-shot legacy migration: fill `birthDate` on any pre-existing
