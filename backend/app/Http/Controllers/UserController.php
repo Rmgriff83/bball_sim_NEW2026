@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Achievement;
+use App\Models\SocialAccount;
 use App\Models\User;
+use App\Services\SocialTokenVerifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -19,7 +21,7 @@ class UserController extends Controller
     public function show(Request $request): JsonResponse
     {
         $user = $request->user();
-        $user->load('profile');
+        $user->load('profile', 'socialAccounts');
 
         return response()->json([
             'user' => [
@@ -31,6 +33,8 @@ class UserController extends Controller
                 'email_verified' => $user->hasVerifiedEmail(),
                 'created_at' => $user->created_at,
                 'global_admin' => (bool) $user->global_admin,
+                'has_password' => (bool) $user->has_password,
+                'linked_providers' => $user->socialAccounts->pluck('provider')->unique()->values(),
             ],
             'profile' => $user->profile ? [
                 'total_games' => $user->profile->total_games,
@@ -126,6 +130,7 @@ class UserController extends Controller
 
         $request->user()->update([
             'password' => Hash::make($request->password),
+            'has_password' => true,
         ]);
 
         return response()->json([
@@ -187,6 +192,96 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'Account deleted successfully.',
+        ]);
+    }
+
+    /**
+     * Link a verified Apple/Google identity to the authenticated account.
+     * Keyed on the provider's stable user id (`sub`), so it works regardless of
+     * email (incl. Apple "Hide My Email"). Does not touch the user's email.
+     */
+    public function linkSocialAccount(Request $request, SocialTokenVerifier $verifier): JsonResponse
+    {
+        $data = $request->validate([
+            'provider' => ['required', 'in:apple,google'],
+            'credential' => ['required', 'string'],
+            'name' => ['nullable', 'string', 'max:255'],
+            'email' => ['nullable', 'email'],
+        ]);
+
+        try {
+            $claims = $verifier->verify($data['provider'], $data['credential']);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => 'Could not verify that '.ucfirst($data['provider']).' account.',
+                'error' => $e->getMessage(),
+            ], 401);
+        }
+
+        if (empty($claims['sub'])) {
+            return response()->json(['message' => 'Invalid identity token.'], 401);
+        }
+
+        $user = $request->user();
+
+        $existing = SocialAccount::where('provider', $data['provider'])
+            ->where('provider_id', $claims['sub'])
+            ->first();
+
+        if ($existing && $existing->user_id !== $user->id) {
+            return response()->json([
+                'message' => 'This '.ucfirst($data['provider']).' account is already linked to another user.',
+            ], 409);
+        }
+
+        if (! $existing) {
+            SocialAccount::create([
+                'user_id' => $user->id,
+                'provider' => $data['provider'],
+                'provider_id' => $claims['sub'],
+            ]);
+        }
+
+        return $this->socialStateResponse($user->fresh('socialAccounts'), 'Account linked.');
+    }
+
+    /**
+     * Unlink an Apple/Google identity from the authenticated account. Refuses to
+     * remove the user's only sign-in method when they have no password set.
+     */
+    public function unlinkSocialAccount(Request $request, string $provider): JsonResponse
+    {
+        if (! in_array($provider, ['apple', 'google'], true)) {
+            return response()->json(['message' => 'Unsupported provider.'], 422);
+        }
+
+        $user = $request->user();
+        $user->load('socialAccounts');
+
+        if ($user->socialAccounts->firstWhere('provider', $provider) === null) {
+            return response()->json(['message' => 'That account is not linked.'], 422);
+        }
+
+        if (! $user->has_password && $user->socialAccounts->count() <= 1) {
+            return response()->json([
+                'message' => 'Set a password before unlinking your only sign-in method.',
+            ], 422);
+        }
+
+        $user->socialAccounts()->where('provider', $provider)->delete();
+
+        return $this->socialStateResponse($user->fresh('socialAccounts'), 'Account unlinked.');
+    }
+
+    /**
+     * Standard payload describing the user's current sign-in linkage.
+     */
+    private function socialStateResponse(User $user, string $message): JsonResponse
+    {
+        return response()->json([
+            'message' => $message,
+            'linked_providers' => $user->socialAccounts->pluck('provider')->unique()->values(),
+            'has_password' => (bool) $user->has_password,
         ]);
     }
 

@@ -55,6 +55,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/user/avatar', [UserController::class, 'uploadAvatar']);
     Route::delete('/user', [UserController::class, 'destroy']);
 
+    // Link / unlink a social identity (Apple/Google) to the current account.
+    Route::post('/user/social/link', [UserController::class, 'linkSocialAccount']);
+    Route::delete('/user/social/{provider}', [UserController::class, 'unlinkSocialAccount']);
+
     // User stats and achievements
     Route::get('/user/stats', [UserController::class, 'stats']);
     Route::get('/user/achievements', [UserController::class, 'achievements']);

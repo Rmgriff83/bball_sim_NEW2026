@@ -81,8 +81,8 @@ curl -i -X POST https://api.bball-sim.com/api/auth/social/token \
 - **Email collision behavior:** an Apple-verified email matching an existing account
   auto-links + logs in (no password prompt). If you want the stricter "sign in then
   link" policy instead, change `resolveUserForSocial` before/after deploy (ask me).
-- **Web app (`app.bball-sim.com`) is separate:** the Google button there needs the
-  web origin added to the Google OAuth client's Authorized JS origins; the Apple web
+- **Web app (`bball-sim.com`) is separate:** the Google button there needs that
+  origin added to the Google OAuth client's Authorized JS origins; the Apple web
   button stays hidden/non-functional until `APPLE_WEB_SERVICES_ID` is set and the
   Services ID's domain + Return URL are configured.
 

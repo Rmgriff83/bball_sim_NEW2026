@@ -145,6 +145,9 @@ class SocialAuthController extends Controller
                 // unique non-routable address so the unique constraint holds.
                 'email' => $email ?: "{$provider}_{$providerId}@users.noreply.bballsim.app",
                 'password' => Hash::make(Str::random(32)),
+                // Random throwaway password — flag so we can require setting a real
+                // one before unlinking the only sign-in method.
+                'has_password' => false,
                 'avatar_url' => $avatar,
                 'email_verified_at' => now(), // social identities are pre-verified
                 'settings' => [

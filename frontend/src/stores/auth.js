@@ -25,6 +25,11 @@ export const useAuthStore = defineStore('auth', () => {
   // for granting since admin status is implicitly the project owner.
   const isGlobalAdmin = computed(() => !!user.value?.global_admin)
 
+  // Connected sign-in identities + whether a real password is set. Drives the
+  // Connected Accounts settings UI (and its "set a password first" guard).
+  const linkedProviders = computed(() => user.value?.linked_providers ?? [])
+  const hasPassword = computed(() => user.value?.has_password !== false)
+
   // One-time IAP unlocks (e.g. headshot_editor). Server-of-record:
   // RevenueCat / Stripe webhooks mirror fulfilled purchases into
   // `profile.unlockedFeatures` so this client check matches what the
@@ -114,6 +119,27 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  // Link a verified social identity (Apple/Google) to the CURRENT account.
+  // Unlike loginWithSocial: no clearDatabase, no token swap — the session is
+  // unchanged. payload = { provider, credential, name?, email? }.
+  async function linkSocial(payload) {
+    const response = await api.post('/api/user/social/link', payload)
+    if (user.value) {
+      user.value.linked_providers = response.data.linked_providers
+      user.value.has_password = response.data.has_password
+    }
+    return response.data
+  }
+
+  async function unlinkSocial(provider) {
+    const response = await api.delete(`/api/user/social/${provider}`)
+    if (user.value) {
+      user.value.linked_providers = response.data.linked_providers
+      user.value.has_password = response.data.has_password
+    }
+    return response.data
   }
 
   async function logout() {
@@ -292,6 +318,8 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     isAuthenticated,
     isGlobalAdmin,
+    linkedProviders,
+    hasPassword,
     gmLevel,
     promoteGmLevel,
     ensureGmLevelAtLeast,
@@ -300,6 +328,8 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     register,
     loginWithSocial,
+    linkSocial,
+    unlinkSocial,
     logout,
     updateProfile,
     updatePassword,

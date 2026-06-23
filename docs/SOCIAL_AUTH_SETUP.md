@@ -26,7 +26,8 @@ a Sanctum token — identical to email/password login.
    logo, the production domain under Authorized domains).
 3. **Create Credentials → OAuth client ID → Web application**.
    - **Authorized JavaScript origins:** your web origins, e.g.
-     `http://localhost:3000`, `https://app.bball-sim.com`.
+     `http://localhost:3000`, `https://bball-sim.com` (the public web app — note
+     this is the bare domain, NOT the `app.` subdomain used by the iOS WebView).
    - (No redirect URI needed — Google Identity Services uses the JS origin.)
 4. Copy the **Client ID** (looks like `xxxx.apps.googleusercontent.com`).
 
@@ -54,10 +55,15 @@ Set it in:
    This identifier is the **`aud`** of web identity tokens.
 2. Enable **Sign in with Apple** on it → **Configure**:
    - **Primary App ID:** `com.bballsim.app`.
-   - **Domains:** `app.bball-sim.com` (+ `localhost` won't work — for local testing
-     use a real https domain or a tunnel; Apple requires a verified domain).
-   - **Return URLs:** the page that hosts the button, e.g.
-     `https://app.bball-sim.com/login`.
+   - **Domains and Subdomains:** `bball-sim.com` (the public web app's domain — NOT
+     `app.bball-sim.com`, which is only the iOS WebView origin). `localhost` won't
+     work; Apple requires a verified https domain.
+   - **Return URLs:** must EXACTLY match `VITE_APPLE_WEB_REDIRECT_URI`, i.e.
+     `https://bball-sim.com/login` (and `https://bball-sim.com/register` if used).
+   - **Verify the domain:** host the downloaded
+     `apple-developer-domain-association.txt` at
+     `https://bball-sim.com/.well-known/apple-developer-domain-association.txt`,
+     then click Verify.
 
 Set it in:
 - **Frontend:** `VITE_APPLE_WEB_SERVICES_ID` = `com.bballsim.web`, and

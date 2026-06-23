@@ -21,6 +21,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'username',
         'email',
         'password',
+        'has_password',
         'avatar_url',
         'settings',
         'global_admin',
@@ -44,6 +45,7 @@ class User extends Authenticatable implements MustVerifyEmail
             'password' => 'hashed',
             'settings' => 'array',
             'global_admin' => 'boolean',
+            'has_password' => 'boolean',
         ];
     }
 

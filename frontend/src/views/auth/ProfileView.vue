@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, BaseButton, FormInput, Badge, BaseModal } from '@/components/ui'
+import ConnectedAccounts from '@/components/auth/ConnectedAccounts.vue'
 import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, CloudDownload, Trash2, AlertTriangle, Zap, Users, Volume2, VolumeX, RotateCcw, Check } from 'lucide-vue-next'
 import { useAudioStore } from '@/stores/audio'
 import { useLocalCache } from '@/composables/useLocalCache'
@@ -351,8 +352,6 @@ async function clearLocalCache() {
           <div class="user-details">
             <h2 class="user-name">{{ user?.username }}</h2>
             <p class="user-email">{{ user?.email }}</p>
-            <Badge v-if="user?.email_verified" variant="success" size="sm" class="mt-1">Verified</Badge>
-            <Badge v-else variant="warning" size="sm" class="mt-1">Email not verified</Badge>
           </div>
         </div>
       </div>
@@ -557,6 +556,9 @@ async function clearLocalCache() {
           </div>
         </div>
       </BaseModal>
+
+      <!-- Connected Accounts (Apple/Google linking) -->
+      <ConnectedAccounts />
 
       <!-- Update Profile Card -->
       <div class="profile-section">
