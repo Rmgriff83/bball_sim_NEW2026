@@ -1,0 +1,30 @@
+diff --git a/node_modules/@capgo/capacitor-social-login/Package.swift b/node_modules/@capgo/capacitor-social-login/Package.swift
+index 759c5ff..cce94e4 100644
+--- a/node_modules/@capgo/capacitor-social-login/Package.swift
++++ b/node_modules/@capgo/capacitor-social-login/Package.swift
+@@ -11,11 +11,10 @@ let package = Package(
+     ],
+     dependencies: [
+         .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", from: "8.0.0"),
+-        // FBSDKCoreKit and FBSDKLoginKit
+-        .package(url: "https://github.com/facebook/facebook-ios-sdk.git", .upToNextMajor(from: "18.0.3")),
+-        // Add Google Sign-In dependency
+-        .package(url: "https://github.com/google/GoogleSignIn-iOS.git", .upToNextMajor(from: "9.0.0")),
+-        // Alamofire
++        // Facebook & GoogleSignIn SDKs removed (patched): this app only uses the
++        // native Apple provider on iOS. capgo's `#if canImport(...)` guards compile
++        // the Facebook/Google providers out to no-op stubs when their modules are
++        // absent. Alamofire stays — the Apple provider requires it.
+         .package(url: "https://github.com/Alamofire/Alamofire.git", .upToNextMajor(from: "5.11.2"))
+     ],
+     targets: [
+@@ -24,9 +23,6 @@ let package = Package(
+             dependencies: [
+                 .product(name: "Capacitor", package: "capacitor-swift-pm"),
+                 .product(name: "Cordova", package: "capacitor-swift-pm"),
+-                .product(name: "FacebookCore", package: "facebook-ios-sdk"),
+-                .product(name: "FacebookLogin", package: "facebook-ios-sdk"),
+-                .product(name: "GoogleSignIn", package: "GoogleSignIn-iOS"),
+                 .product(name: "Alamofire", package: "Alamofire")
+             ],
+             path: "ios/Sources/SocialLoginPlugin"),

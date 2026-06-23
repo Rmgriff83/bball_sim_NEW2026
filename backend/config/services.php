@@ -14,6 +14,22 @@ return [
     |
     */
 
+    // Sign in with Google / Apple (native one-tap). Only the client ids are
+    // needed: the server verifies identity tokens against each provider's JWKS
+    // and checks the `aud` claim against these. No client secret / .p8 required
+    // for the id-token verification flow.
+    'google' => [
+        'web_client_id' => env('GOOGLE_WEB_CLIENT_ID'),
+        'ios_client_id' => env('GOOGLE_IOS_CLIENT_ID'),
+    ],
+
+    'apple' => [
+        // Apple Services ID — the `aud` of identity tokens minted by Apple JS on web.
+        'web_services_id' => env('APPLE_WEB_SERVICES_ID'),
+        // App bundle id — the `aud` of identity tokens from the iOS native flow.
+        'app_bundle_id' => env('APPLE_APP_BUNDLE_ID', 'com.bballsim.app'),
+    ],
+
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],

@@ -1759,7 +1759,10 @@ async function _recordGmPromotion(level) {
       // recorded promotions if a backend persist was ever lost (see campaign.js).
       level,
       year: contractDecisionData.value?.year ?? camp.currentSeasonYear,
+      // In-game date for context; createdAt (real wall-clock) drives the
+      // Recent Activity feed's "X ago" so recency reflects real time.
       date: camp.currentDate ?? null,
+      createdAt: new Date().toISOString(),
       teamId: camp.teamId,
       teamAbbreviation: camp.teamAbbreviation,
       label: `Promoted to GM Level ${gmLevelLabel(level)}`,

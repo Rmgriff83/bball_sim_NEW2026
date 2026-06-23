@@ -97,6 +97,25 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // Sign in / sign up via a verified social identity token (Apple/Google).
+  // Mirrors login(): the backend create-or-links the account and returns the
+  // same { user, token } shape. `payload` = { provider, credential, name?, email? }.
+  async function loginWithSocial(payload) {
+    loading.value = true
+    try {
+      await clearDatabase().catch(() => {})
+
+      const response = await api.post('/api/auth/social/token', payload)
+      token.value = response.data.token
+      user.value = response.data.user
+      await setToken(token.value)
+      await fetchUser()
+      return response.data
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function logout() {
     // Flush any pending campaign changes to the cloud BEFORE clearing IndexedDB,
     // otherwise unsynced gameplay (e.g. games played since the last sync) is lost.
@@ -280,6 +299,7 @@ export const useAuthStore = defineStore('auth', () => {
     fetchUser,
     login,
     register,
+    loginWithSocial,
     logout,
     updateProfile,
     updatePassword,

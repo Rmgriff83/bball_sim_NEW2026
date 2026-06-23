@@ -172,7 +172,7 @@ export const useTeamStore = defineStore('team', () => {
   })
 
   const totalSalary = computed(() =>
-    roster.value.reduce((sum, player) => sum + (player.contract?.salary || 0), 0)
+    roster.value.reduce((sum, player) => sum + (player.contractSalary ?? player.contract_salary ?? 0), 0)
   )
 
   const capSpace = computed(() =>

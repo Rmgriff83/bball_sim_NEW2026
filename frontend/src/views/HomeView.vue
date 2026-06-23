@@ -31,7 +31,7 @@ const isNativeBuild = import.meta.env.VITE_NATIVE_BUILD
 
       <div class="hero-content">
         <!-- Logo/Title -->
-        <div class="hero-badge">BASKETBALL SIMULATION</div>
+        <div class="hero-badge">DYNASTY BASKETBALL</div>
         <h1 class="hero-title">BBALL SIM</h1>
         <p class="hero-subtitle">
           Build your dynasty. Manage your roster. Chase championships.

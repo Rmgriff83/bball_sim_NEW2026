@@ -1504,7 +1504,11 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, use
       id: `ach_${Date.now()}_${_randomShort()}`,
       type,
       year: currentYear,
+      // In-game season-end date (context). The Recent Activity feed's "X ago"
+      // uses createdAt (real wall-clock) instead — `date` is an in-game date
+      // that sits ~months behind real time and would misreport recency.
       date: seasonEndDate,
+      createdAt: new Date().toISOString(),
       teamId: team.id,
       teamAbbreviation: team.abbreviation,
       teamName: team.name,
@@ -2197,40 +2201,34 @@ export async function enterOffseason(campaignId) {
     AwardService.applyAwardsToPlayers(allPlayers, awardResults, currentYear)
     seasonAwards = awardResults
 
-    // Also fix: increment allStarSelections (currently never done)
+    // Record per-player All-Star awards (career count, year, team history).
+    // Normally already done at selection time (mid-season, in stores/game.js);
+    // this is an idempotent end-of-season safety net (guarded by
+    // seasonData.allStarAwardsRecorded) for campaigns whose All-Star date was
+    // crossed before mid-season recording existed. Mutated players are persisted
+    // by the saveBulk below. Counts All-Star team selections only.
     const allStarRosters = seasonData?.allStarRosters?.allStars
     if (allStarRosters) {
-      const ids = AllStarService._collectSelectedPlayerIds(allStarRosters)
-      const playerMap = Object.fromEntries(allPlayers.map(p => [String(p.id), p]))
-      for (const pid of ids) {
-        const p = playerMap[pid]
-        if (p) {
-          p.allStarSelections = (p.allStarSelections ?? 0) + 1
-          p.all_star_selections = p.allStarSelections
-          if (!p.awards) p.awards = {}
-          if (!Array.isArray(p.awards.all_star)) p.awards.all_star = []
-          p.awards.all_star.push(currentYear)
-        }
-      }
+      AllStarService.recordAllStarSelectionsForPlayers({
+        seasonData,
+        allPlayers,
+        year: currentYear,
+      })
 
-      // Part 2: tally the user team's All-Star selections toward the GM contract
-      // sub-task (one count per selection; the same player twice across seasons
-      // counts twice, per the owner's expectation spec).
+      // Part 2: tally the user team's All-Star selections toward the GM
+      // contract "Produce All-Stars" sub-task. This is now normally done at
+      // selection time (mid-season, in stores/game.js) so the sub-task updates
+      // immediately; this end-of-season call is an idempotent safety net for
+      // campaigns whose All-Star date was crossed before mid-season tallying
+      // existed. seasonData.allStarGmTallied guards against double counting —
+      // in the normal flow it's already set and this is a no-op. Counts
+      // All-Star team selections only (not Rising Stars, not All-League).
       const userTeamIdForAS = campaign.teamId ?? campaign.userTeamId ?? campaign.team_id
-      const gmcAS = campaign.settings?.gmContract
-      if (gmcAS && gmcAS.status === 'active' && userTeamIdForAS != null) {
-        let userAllStars = 0
-        for (const pid of ids) {
-          const p = playerMap[pid]
-          if (p && p.teamId === userTeamIdForAS) userAllStars++
-        }
-        if (userAllStars > 0) {
-          if (!gmcAS.progress) {
-            gmcAS.progress = { allStarAppearances: 0, badgesAdded: 0, starPlayerIdsAtSign: [] }
-          }
-          gmcAS.progress.allStarAppearances = (gmcAS.progress.allStarAppearances ?? 0) + userAllStars
-        }
-      }
+      AllStarService.tallyUserAllStarsForGm({
+        seasonData,
+        gmContract: campaign.settings?.gmContract,
+        userTeamId: userTeamIdForAS,
+      })
     }
 
     // Store awards on season data
@@ -2433,7 +2431,7 @@ export async function enterOffseason(campaignId) {
       if (gmc && gmc.status === 'active' && expired) {
         const userRoster = updatedPlayers.filter(p => p.teamId === userTeamId)
         const payroll = userRoster.reduce(
-          (s, p) => s + (p.contract?.salary ?? p.salary ?? 0), 0
+          (s, p) => s + (p.contractSalary ?? p.contract_salary ?? 0), 0
         )
         // Prior contract season (exclude the just-finished one to avoid double count).
         const hist = userTeam?.seasonHistory ?? userTeam?.season_history ?? []

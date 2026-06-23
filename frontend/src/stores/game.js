@@ -793,6 +793,46 @@ export const useGameStore = defineStore('game', () => {
               })
             }
             dirty = true
+
+            // Record per-player All-Star awards (count, years, team history) for
+            // ALL selected players — user and AI alike — at selection time so the
+            // player detail modals' "All Star Selections" section reflects it
+            // immediately. Idempotent via seasonData.allStarAwardsRecorded; the
+            // dirty-save below persists that flag. Persist the mutated players.
+            try {
+              const updatedAllStars = AllStarService.recordAllStarSelectionsForPlayers({
+                seasonData,
+                allPlayers,
+                year,
+              })
+              if (updatedAllStars.length > 0) {
+                await PlayerRepository.saveBulk(updatedAllStars.map(p => ({ ...p, campaignId })))
+              }
+            } catch (asErr) {
+              console.warn('[GameStore] All-Star per-player award recording failed:', asErr)
+            }
+          }
+        }
+
+        // Part 2: tally the user team's in-season All-Star selections toward
+        // the GM contract "Produce All-Stars" sub-task the moment the roster is
+        // announced — not only at end-of-season award processing — so the owner
+        // sub-task reflects it immediately. Counts All-Star team picks only
+        // (not Rising Stars, not All-League). Idempotent via
+        // seasonData.allStarGmTallied. Mutates campaign.settings.gmContract,
+        // which the caller (_advanceDateIfNeeded) persists and syncs to the
+        // campaign store; seasonData.allStarGmTallied is persisted by the
+        // dirty-save below (generation already set dirty on this pass).
+        if (seasonData?.allStarRosters) {
+          try {
+            const added = AllStarService.tallyUserAllStarsForGm({
+              seasonData,
+              gmContract: campaign.settings?.gmContract,
+              userTeamId: campaign.teamId,
+            })
+            if (added > 0) dirty = true
+          } catch (gmErr) {
+            console.warn('[GameStore] All-Star GM sub-task tally failed:', gmErr)
           }
         }
 

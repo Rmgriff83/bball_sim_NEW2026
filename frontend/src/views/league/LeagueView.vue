@@ -266,6 +266,21 @@ const playerOrigin = computed(() => {
   return { school: school || '—', country }
 })
 
+// Per-selection All-Star history for the dedicated History section. Prefers the
+// richer awards.all_star_history ({ year, teamAbbr }); falls back to the plain
+// awards.all_star years array (older saves) with no team. Most-recent first.
+const allStarSelectionList = computed(() => {
+  const awards = selectedPlayer.value?.awards || {}
+  const history = Array.isArray(awards.all_star_history) ? awards.all_star_history : null
+  const rows = history && history.length
+    ? history.map(h => ({ year: Number(h?.year), teamAbbr: h?.teamAbbr ?? '' }))
+    : (Array.isArray(awards.all_star) ? awards.all_star : []).map(y => ({ year: Number(y), teamAbbr: '' }))
+  return rows
+    .filter(r => Number.isFinite(r.year))
+    .sort((a, b) => b.year - a.year)
+    .map(r => ({ season: `${r.year}-${String(r.year + 1).slice(-2)}`, teamAbbr: r.teamAbbr }))
+})
+
 // Evolution history display state
 const showAllRecentEvolution = ref(false)
 const showAllTimeEvolution = ref(false)
@@ -1980,6 +1995,20 @@ function formatSalary(salary) {
                       <span class="origin-label">From</span>
                       <span class="origin-value">{{ playerOrigin.school }}</span>
                       <span v-if="playerOrigin.country" class="origin-country">{{ playerOrigin.country }}</span>
+                    </div>
+                  </div>
+
+                  <!-- All Star Selections -->
+                  <div class="player-history-section">
+                    <h4 class="player-attr-title">All Star Selections</h4>
+                    <div v-if="allStarSelectionList.length > 0" class="allstar-list">
+                      <div v-for="(sel, i) in allStarSelectionList" :key="`as-${i}`" class="allstar-row">
+                        <span class="allstar-season">{{ sel.season }}</span>
+                        <span v-if="sel.teamAbbr" class="allstar-team">{{ sel.teamAbbr }}</span>
+                      </div>
+                    </div>
+                    <div v-else class="player-empty-state">
+                      <p>No All-Star selections</p>
                     </div>
                   </div>
 
@@ -5127,6 +5156,35 @@ function formatSalary(salary) {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.allstar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.allstar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.allstar-season {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-primary, #fff);
+}
+
+.allstar-team {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
 }
 
 .player-award-item {

@@ -32,7 +32,12 @@ Route::prefix('auth')->group(function () {
         ->middleware(['signed'])
         ->name('verification.verify');
 
-    // Social OAuth
+    // Social OAuth — native one-tap identity-token verification (Apple/Google).
+    // The client (web GIS / Apple JS / iOS native plugin) obtains an identity
+    // token and POSTs it here; the server verifies it against the provider JWKS.
+    Route::post('/social/token', [SocialAuthController::class, 'token']);
+
+    // Legacy web redirect/callback flow (unused by one-tap; kept for reference).
     Route::get('/social/{provider}', [SocialAuthController::class, 'redirect']);
     Route::get('/social/{provider}/callback', [SocialAuthController::class, 'callback']);
 });

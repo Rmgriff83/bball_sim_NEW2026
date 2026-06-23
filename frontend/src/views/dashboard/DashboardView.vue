@@ -24,9 +24,19 @@ const recentActivity = computed(() => {
       all.push({ ...ach, campaignId: c.id, campaignName: c.name })
     }
   }
-  all.sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+  all.sort((a, b) => _earnedMs(b) - _earnedMs(a))
   return all.slice(0, 20)
 })
+
+// Real-time the achievement was earned. Prefers createdAt (real wall-clock,
+// stamped at creation); falls back to the in-game `date` for legacy/backfilled
+// entries created before createdAt existed.
+function _earnedMs(ach) {
+  const t = Date.parse(ach?.createdAt ?? '')
+  if (Number.isFinite(t)) return t
+  const d = Date.parse(ach?.date ?? '')
+  return Number.isFinite(d) ? d : 0
+}
 
 const ACHIEVEMENT_ICONS = {
   championship: Trophy,
@@ -186,7 +196,7 @@ onMounted(async () => {
                   <span class="activity-label">{{ ach.label }}</span>
                   <span class="activity-meta">{{ ach.campaignName }} · {{ ach.subtitle }}</span>
                 </span>
-                <span class="activity-time">{{ formatRelative(ach.date) }}</span>
+                <span class="activity-time">{{ formatRelative(ach.createdAt || ach.date) }}</span>
               </li>
             </ul>
           </GlassCard>

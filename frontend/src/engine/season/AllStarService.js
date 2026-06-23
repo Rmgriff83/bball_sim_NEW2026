@@ -365,6 +365,124 @@ export class AllStarService {
   // -----------------------------------------------------------------------
 
   /**
+   * Count how many of the user team's players made the All-Star team
+   * (starters + reserves, both conferences). All-Star team ONLY — Rising
+   * Stars and end-of-season All-League/awards are intentionally excluded.
+   *
+   * @param {Object} allStars - seasonData.allStarRosters.allStars ({ east, west })
+   * @param {number|string} userTeamId
+   * @returns {number}
+   */
+  static countUserAllStars(allStars, userTeamId) {
+    if (!allStars || userTeamId == null) return 0
+    let n = 0
+    for (const conf of ['east', 'west']) {
+      const roster = allStars[conf]
+      for (const p of Object.values(roster?.starters ?? {})) {
+        if (String(p.teamId) === String(userTeamId)) n++
+      }
+      for (const p of (roster?.reserves ?? [])) {
+        if (String(p.teamId) === String(userTeamId)) n++
+      }
+    }
+    return n
+  }
+
+  /**
+   * Tally the user team's in-season All-Star selections toward the GM
+   * contract's "Produce All-Stars" sub-task (gmContract.progress.allStarAppearances).
+   *
+   * Counts All-Star team selections only (see countUserAllStars) — NOT Rising
+   * Stars and NOT any end-of-season All-League awards. Idempotent per season
+   * via `seasonData.allStarGmTallied`, so it can be called both at selection
+   * time (mid-season, for immediate UI feedback) and as an end-of-season
+   * safety net without double-counting.
+   *
+   * Mutates `gmContract.progress` and `seasonData.allStarGmTallied` in place;
+   * callers are responsible for persisting both.
+   *
+   * @param {Object} params
+   * @param {Object} params.seasonData
+   * @param {Object} [params.gmContract] - campaign.settings.gmContract
+   * @param {number|string} params.userTeamId
+   * @returns {number} how many user All-Stars were added this call (0 if already tallied or no active contract)
+   */
+  static tallyUserAllStarsForGm({ seasonData, gmContract, userTeamId }) {
+    if (!seasonData || seasonData.allStarGmTallied) return 0
+    if (!gmContract || gmContract.status !== 'active') return 0
+    const allStars = seasonData.allStarRosters?.allStars
+    if (!allStars) return 0
+
+    seasonData.allStarGmTallied = true
+    const count = AllStarService.countUserAllStars(allStars, userTeamId)
+    if (count > 0) {
+      if (!gmContract.progress) {
+        gmContract.progress = { allStarAppearances: 0, badgesAdded: 0, starPlayerIdsAtSign: [] }
+      }
+      gmContract.progress.allStarAppearances = (gmContract.progress.allStarAppearances ?? 0) + count
+    }
+    return count
+  }
+
+  /**
+   * Record per-player All-Star awards for EVERY selected player (user + AI),
+   * at selection time. Bumps the career counter and appends to the player's
+   * award history so the player detail modals reflect the selection
+   * immediately rather than only at end-of-season.
+   *
+   * Writes, for each selected player:
+   *   - allStarSelections / all_star_selections (career count)
+   *   - awards.all_star          → year pushed (kept for the existing Awards card)
+   *   - awards.all_star_history  → { year, teamAbbr } pushed (the new section)
+   *
+   * Idempotent per season via `seasonData.allStarAwardsRecorded`, so it can be
+   * called both at selection time (mid-season) and as an end-of-season safety
+   * net without double-counting. Mutates `seasonData` and the matched player
+   * objects in place; the caller is responsible for persisting both.
+   *
+   * @param {Object} params
+   * @param {Object} params.seasonData
+   * @param {Array}  params.allPlayers - all campaign players ({ id, awards, ... })
+   * @param {number} params.year       - season year for these selections
+   * @returns {Array} the player objects that were mutated (for the caller to persist)
+   */
+  static recordAllStarSelectionsForPlayers({ seasonData, allPlayers, year }) {
+    if (!seasonData || seasonData.allStarAwardsRecorded) return []
+    const allStars = seasonData.allStarRosters?.allStars
+    if (!allStars) return []
+
+    seasonData.allStarAwardsRecorded = true
+
+    // Map each selected player id -> their All-Star team abbreviation.
+    const teamAbbrById = {}
+    for (const conf of ['east', 'west']) {
+      const roster = allStars[conf]
+      for (const p of Object.values(roster?.starters ?? {})) {
+        teamAbbrById[String(p.playerId)] = p.teamAbbr ?? null
+      }
+      for (const p of (roster?.reserves ?? [])) {
+        teamAbbrById[String(p.playerId)] = p.teamAbbr ?? null
+      }
+    }
+
+    const playerMap = Object.fromEntries((allPlayers ?? []).map((p) => [String(p.id), p]))
+    const updated = []
+    for (const pid of Object.keys(teamAbbrById)) {
+      const p = playerMap[pid]
+      if (!p) continue
+      p.allStarSelections = (p.allStarSelections ?? 0) + 1
+      p.all_star_selections = p.allStarSelections
+      if (!p.awards) p.awards = {}
+      if (!Array.isArray(p.awards.all_star)) p.awards.all_star = []
+      p.awards.all_star.push(year)
+      if (!Array.isArray(p.awards.all_star_history)) p.awards.all_star_history = []
+      p.awards.all_star_history.push({ year, teamAbbr: teamAbbrById[pid] ?? null })
+      updated.push(p)
+    }
+    return updated
+  }
+
+  /**
    * Collect all player IDs from a selection result.
    * @private
    */

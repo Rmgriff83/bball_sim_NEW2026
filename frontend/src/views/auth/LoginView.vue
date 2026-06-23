@@ -6,6 +6,7 @@ import { required, email, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton, FormInput } from '@/components/ui'
 import { ArrowLeft, AlertCircle } from 'lucide-vue-next'
+import SocialAuthButtons from '@/components/auth/SocialAuthButtons.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -112,6 +113,9 @@ async function handleSubmit() {
         <div class="auth-divider">
           <span>or</span>
         </div>
+
+        <!-- Social sign-in (Apple/Google, platform-gated) -->
+        <SocialAuthButtons mode="login" @error="error = $event" />
 
         <!-- Footer -->
         <p class="auth-footer">

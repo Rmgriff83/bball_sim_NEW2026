@@ -933,6 +933,28 @@ function getAwardYears(key) {
   return _formatYears(arr)
 }
 
+// Format a season-start year as a season label, e.g. 2025 -> "2025-26".
+function _seasonLabel(year) {
+  const y = Number(year)
+  if (!Number.isFinite(y)) return String(year ?? '')
+  return `${y}-${String(y + 1).slice(-2)}`
+}
+
+// Per-selection All-Star history for the dedicated History section. Prefers the
+// richer awards.all_star_history ({ year, teamAbbr }); falls back to the plain
+// awards.all_star years array (older saves) with no team. Most-recent first.
+const allStarSelectionList = computed(() => {
+  const awards = normalizedPlayer.value?.awards || {}
+  const history = Array.isArray(awards.all_star_history) ? awards.all_star_history : null
+  const rows = history && history.length
+    ? history.map(h => ({ year: Number(h?.year), teamAbbr: h?.teamAbbr ?? '' }))
+    : (Array.isArray(awards.all_star) ? awards.all_star : []).map(y => ({ year: Number(y), teamAbbr: '' }))
+  return rows
+    .filter(r => Number.isFinite(r.year))
+    .sort((a, b) => b.year - a.year)
+    .map(r => ({ season: _seasonLabel(r.year), teamAbbr: r.teamAbbr }))
+})
+
 function getTieredAwardSummary(prefix, tiers) {
   const awards = normalizedPlayer.value?.awards || {}
   const lines = []
@@ -2135,6 +2157,20 @@ function formatChange(change) {
                     <span class="origin-label">From</span>
                     <span class="origin-value">{{ playerOrigin.school }}</span>
                     <span v-if="playerOrigin.country" class="origin-country">{{ playerOrigin.country }}</span>
+                  </div>
+                </div>
+
+                <!-- All Star Selections — hidden for draft prospects (none yet) -->
+                <div v-if="!scoutingMode" class="history-section">
+                  <h4 class="history-section-title">All Star Selections</h4>
+                  <div v-if="allStarSelectionList.length > 0" class="allstar-list">
+                    <div v-for="(sel, i) in allStarSelectionList" :key="`as-${i}`" class="allstar-row">
+                      <span class="allstar-season">{{ sel.season }}</span>
+                      <span v-if="sel.teamAbbr" class="allstar-team">{{ sel.teamAbbr }}</span>
+                    </div>
+                  </div>
+                  <div v-else class="empty-state-inline">
+                    <p>No All-Star selections</p>
                   </div>
                 </div>
 
@@ -3885,6 +3921,35 @@ function formatChange(change) {
 }
 
 /* News List */
+.allstar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.allstar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border-left: 3px solid var(--color-primary);
+}
+
+.allstar-season {
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.allstar-team {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
 .news-list {
   display: flex;
   flex-direction: column;
