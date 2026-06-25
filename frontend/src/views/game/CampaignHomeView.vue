@@ -35,7 +35,7 @@ import { enterOffseason, startNewSeason, backfillPlayerAwards, resignGmContract,
 import { gmLevelLabel } from '@/engine/data/gmLevels'
 import { evaluateSubtasks } from '@/engine/season/OwnerSubtaskService'
 import { buildOwnerCheckIn } from '@/engine/season/OwnerCheckInService'
-import { findOwnerForTeam, EXPECTATION_BLURB_DEFAULT } from '@/engine/data/owners'
+import { findOwnerForTeam, EXPECTATION_BLURB_DEFAULT, EXPECTATION_LABEL } from '@/engine/data/owners'
 import { getEffectiveExpectation, effectiveOwner } from '@/engine/season/OwnerExpectationService'
 import { SALARY_CAP } from '@/engine/data/teams'
 import { aiFinishUserTeamSetup } from '@/engine/campaign/UserTeamFinalizer'
@@ -1041,6 +1041,7 @@ onMounted(async () => {
       // identity guard sees the stale campaign), so this is where they actually
       // run when switching between campaigns.
       maybeShowOwnerCheckIn()
+      maybeShowExpectationRaise()
       walkthroughStore.maybeStart('campaignHome')
       maybeStartOffseasonTour()
     }).catch(err => console.error('Failed to refresh campaign:', err))
@@ -1151,6 +1152,14 @@ watch(showAllStarModal, (open, prev) => {
 
 onUnmounted(() => {
   stopIdleDetection()
+  // Tear down any open teleported modal so its full-screen overlay can't orphan in
+  // <body> and block taps after we've navigated away (the Teleport/Transition node
+  // can otherwise outlive this view). Cheap belt-and-suspenders for stability.
+  showInjuryModal.value = false
+  showRecoveryModal.value = false
+  showOwnerCheckInModal.value = false
+  showOwnerWelcomeModal.value = false
+  showSimulateModal.value = false
 })
 
 // Hydrate persisted season awards + champion when in offseason so the
@@ -1390,19 +1399,27 @@ async function handleSeriesResultClose() {
   }
 }
 
-// Handle championship modal — show offseason card (don't auto-advance)
+// Handle championship modal — show offseason card (don't auto-advance).
+// The ChampionshipModal opens on EVERY Finals completion (win OR lose) and shows the
+// real winner. Only enqueue the title breaking-news here when the USER actually won —
+// crediting the real champion, never the user by default. A user LOSS already gets the
+// correct champion news from handleSimToNextPlayoffRound (userEliminated path), so
+// gating here also avoids a duplicate.
 function handleChampionshipClose() {
-  // Breaking news: winning the championship
-  const userTeam = campaignStore.currentCampaign?.team
-  const year = campaignStore.currentCampaign?.season?.year || campaignStore.currentCampaign?.game_year || new Date().getFullYear()
-  breakingNewsStore.enqueue(
-    BreakingNewsService.winningFinals({
-      teamName: userTeam?.name || 'Your Team',
-      year,
-      date: campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0],
-    }),
-    campaignId.value
-  )
+  const champion = playoffStore.champion
+  const userTeamId = team.value?.id ?? campaignStore.currentCampaign?.teamId
+  // == (loose) to match ChampionshipModal's winner.teamId comparison (id types vary).
+  if (champion && userTeamId != null && champion.teamId == userTeamId) {
+    const year = campaignStore.currentCampaign?.season?.year || campaignStore.currentCampaign?.game_year || new Date().getFullYear()
+    breakingNewsStore.enqueue(
+      BreakingNewsService.winningFinals({
+        teamName: champion.name,
+        year,
+        date: campaignStore.currentCampaign?.settings?.currentDate || new Date().toISOString().split('T')[0],
+      }),
+      campaignId.value
+    )
+  }
 
   playoffStore.closeChampionshipModal()
 }
@@ -1860,6 +1877,34 @@ function handleCloseOwnerWelcome() {
 // sees right after campaign creation and at the start of each new season.
 // Fire-once-per-season via settings.ownerCheckInShownYear; suspends onboarding
 // tours until dismissed. Returns true if the modal was opened.
+// Surface a mid-season owner-expectation raise (set by the sim loop). Toast worded
+// as the owner; the Owner tab already lists the newly-appended goals alongside the
+// kept ones. Fires once — clears the marker after showing.
+async function maybeShowExpectationRaise() {
+  const camp = campaignStore.currentCampaign
+  if (!camp || camp.id !== campaignId.value) return
+  const raise = camp.settings?.pendingOwnerExpectationRaise
+  if (!raise?.tier) return
+
+  const label = EXPECTATION_LABEL[raise.tier] ?? raise.tier
+  toastStore.showSuccess(
+    `Your owner has seen enough — expectations raised to ${label}. New coach goals were added; the ones you're already chasing stay.`,
+    6500
+  )
+
+  try {
+    await CampaignRepository.updateSettings(campaignId.value, { pendingOwnerExpectationRaise: null })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        pendingOwnerExpectationRaise: null,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to clear expectation-raise marker:', err)
+  }
+}
+
 function maybeShowOwnerCheckIn() {
   const camp = campaignStore.currentCampaign
   // Identity guard: the stores are singletons, so on a campaign switch they may
@@ -1884,6 +1929,7 @@ function maybeShowOwnerCheckIn() {
   const subResult = evaluateSubtasks({
     owner,
     expectation: eff.tier,
+    expectationTiers: gmc?.expectationTiers ?? (eff.tier ? [eff.tier] : null),
     roster: teamStore.roster ?? [],
     draftPicks: teamStore.team?.draftPicks ?? [],
     facilities: teamStore.team?.facilities ?? null,
@@ -2486,6 +2532,8 @@ async function handleConfirmSimulate() {
 
     if (!gameStore.backgroundSimulating) {
       lastSimResult.value = null
+      // Owner may have raised expectations mid-season after this run's results.
+      await maybeShowExpectationRaise()
       await checkPlayoffStatus()
       // Check for trade proposals after user game sim
       await checkTradeDeadline()
@@ -3386,15 +3434,15 @@ function handleCloseSimulateModal() {
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.first?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-NBA 1st: {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">All-League 1st: {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.second?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-NBA 2nd: {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">All-League 2nd: {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.third?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-NBA 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">All-League 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
                 </div>
               </div>
             </div>
@@ -3640,15 +3688,15 @@ function handleCloseSimulateModal() {
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.first?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-NBA 1st: {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">All-League 1st: {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.second?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-NBA 2nd: {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">All-League 2nd: {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.third?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-NBA 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">All-League 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
                 </div>
               </div>
             </div>

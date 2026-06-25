@@ -275,9 +275,17 @@ async function simulateToThisGame() {
     const response = await gameStore.simulateToGame(props.campaignId, props.game.id)
     toastStore.removeMinimalToast(loadingToastId)
 
-    // If the run paused mid-flight, leave the calendar modal open and let the
-    // SimPauseModal take focus. Don't refresh stores yet — resume will finish.
+    // If the run paused mid-flight (e.g. a player injury), the SimPauseModal takes
+    // focus — but the games sim'd up to the pause ARE persisted, so refresh the
+    // shared stores now. Otherwise the stale in-memory record (e.g. the home page
+    // W-L) persists if the user navigates away before resuming.
     if (response?.paused) {
+      await Promise.all([
+        campaignStore.fetchCampaign(props.campaignId, true),
+        teamStore.fetchTeam(props.campaignId, { force: true }),
+        leagueStore.fetchStandings(props.campaignId, { force: true }),
+        gameStore.fetchGames(props.campaignId, { force: true }),
+      ])
       simulating.value = false
       return
     }

@@ -97,3 +97,40 @@ export function updateOwnerExpectation(current, actualWins, opts = {}) {
     raised: newTier !== tier || newExpectedWins !== expectedWins,
   };
 }
+
+/**
+ * Raise the bar DURING a season based on projected pace. Pure, promote-only:
+ * once enough games are in, project the full-season win total and bump the TIER
+ * if that projection clears a higher one. Never nudges within a tier and never
+ * lowers — those stay the season-end concern of updateOwnerExpectation.
+ *
+ * @param {{tier:string, expectedWins:number}} current
+ * @param {{ wins:number, losses:number, totalGames?:number, minGp?:number, maxExpected?:number }} opts
+ * @returns {{ tier:string, expectedWins:number, raised:boolean }}
+ */
+export function maybeRaiseExpectationMidSeason(current, opts = {}) {
+  const totalGames = opts.totalGames ?? 82;
+  const minGp = opts.minGp ?? 20;
+  const maxExpected = opts.maxExpected ?? MAX_EXPECTED;
+
+  const tier = current?.tier ?? 'playoffs';
+  const expectedWins = current?.expectedWins ?? (EXPECTATION_WINS[tier] ?? EXPECTATION_WINS.playoffs);
+
+  const wins = opts.wins ?? 0;
+  const losses = opts.losses ?? 0;
+  const gp = wins + losses;
+  if (gp < minGp) return { tier, expectedWins, raised: false };
+
+  const projected = _clamp(Math.round((wins / gp) * totalGames), 0, totalGames);
+  const resultTier = tierForWins(projected);
+  if (expectationRank(resultTier) <= expectationRank(tier)) {
+    return { tier, expectedWins, raised: false };
+  }
+
+  const next = nextExpectationTier(resultTier);
+  const ceiling = next ? EXPECTATION_WINS[next] - 1 : maxExpected;
+  const floor = Math.max(EXPECTATION_WINS[resultTier] ?? 0, expectedWins);
+  const newExpectedWins = _clamp(Math.min(projected, ceiling), floor, ceiling);
+
+  return { tier: resultTier, expectedWins: newExpectedWins, raised: true };
+}

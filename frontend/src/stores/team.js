@@ -24,6 +24,7 @@ import {
 import { getCoachActionBudget, getCoachTrainBudget, getCoachResignCost, getCoachTierKey, FREE_AGENT_COACH_TIERS, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { selectBestCoachingScheme } from '@/engine/coaching/CoachStrategyService'
 import api from '@/composables/useApi'
+import { cloneForPersist } from '@/utils/cloneForPersist'
 
 /**
  * Convert a raw playerStats record (cumulative totals) into the per-game
@@ -1016,7 +1017,7 @@ export const useTeamStore = defineStore('team', () => {
       // IndexedDB's structured clone can't serialize Vue's reactive proxies
       // (DataCloneError). Pass a plain deep clone to the repo so persistence
       // succeeds without disturbing the in-memory reactive entry.
-      await PlayerRepository.save(JSON.parse(JSON.stringify(player)))
+      await PlayerRepository.save(cloneForPersist(player))
 
       await _bumpGmBadgeProgress(campaignId, 1)
 
@@ -1201,7 +1202,7 @@ export const useTeamStore = defineStore('team', () => {
       teamData.coach.activeTraining = null
 
       await Promise.all([
-        PlayerRepository.save(JSON.parse(JSON.stringify(player))),
+        PlayerRepository.save(cloneForPersist(player)),
         TeamRepository.save(teamData),
       ])
 
@@ -1294,7 +1295,7 @@ export const useTeamStore = defineStore('team', () => {
           // `roster.value` players are Vue reactive proxies; IDB can't
           // structuredClone proxies → DataCloneError. Strip via JSON clone
           // before persisting (player records are plain JSON-safe).
-          await PlayerRepository.saveBulk(JSON.parse(JSON.stringify(updated)))
+          await PlayerRepository.saveBulk(cloneForPersist(updated))
         }
       }
 
@@ -1439,7 +1440,7 @@ export const useTeamStore = defineStore('team', () => {
         if (updated.length > 0) {
           // Strip Vue reactive proxies before persisting — IDB structuredClone
           // can't handle proxies (DataCloneError).
-          await PlayerRepository.saveBulk(JSON.parse(JSON.stringify(updated)))
+          await PlayerRepository.saveBulk(cloneForPersist(updated))
         }
       }
 
@@ -1532,7 +1533,7 @@ export const useTeamStore = defineStore('team', () => {
       playerRecord.morale = newMorale
 
       // Persist. JSON-clone strips Vue reactive wrappers before IDB writes.
-      await PlayerRepository.save(JSON.parse(JSON.stringify(playerRecord)))
+      await PlayerRepository.save(cloneForPersist(playerRecord))
       await TeamRepository.save(teamData)
 
       // Mirror into local caches so the PlayerDetailModal's `moraleValue`

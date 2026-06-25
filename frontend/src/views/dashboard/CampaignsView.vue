@@ -426,7 +426,7 @@ function getDifficultyLabel(value) {
           <div class="modal-container">
             <!-- Header -->
             <header class="modal-header">
-              <h2 class="modal-title">Sign a 2-Year GM Contract</h2>
+              <h2 class="modal-title">Sign a 4-Year GM Contract</h2>
               <button class="modal-close" @click="closeCreateModal" aria-label="Close">
                 <X :size="20" />
               </button>
@@ -479,7 +479,7 @@ function getDifficultyLabel(value) {
 
               <!-- Team Selection -->
               <div class="form-group">
-                <label class="form-label">Choose the team to sign with (2-year contract)</label>
+                <label class="form-label">Choose the team to sign with (4-year contract)</label>
                 <TeamPicker
                   v-model="selectedTeam"
                   :teams="campaignStore.availableTeams"
@@ -593,7 +593,7 @@ function getDifficultyLabel(value) {
                 @click="createCampaign"
               >
                 <LoadingSpinner v-if="creating" size="sm" />
-                <template v-else>Sign 2-Year Contract</template>
+                <template v-else>Sign 4-Year Contract</template>
               </button>
             </footer>
           </div>

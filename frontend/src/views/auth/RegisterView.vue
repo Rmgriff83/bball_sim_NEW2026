@@ -273,6 +273,7 @@ async function handleSubmit() {
 }
 
 .auth-footer {
+  margin-top: 0.75rem;
   text-align: center;
   font-size: 0.875rem;
   color: var(--color-text-secondary);

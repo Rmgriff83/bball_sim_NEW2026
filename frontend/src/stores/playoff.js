@@ -34,7 +34,7 @@ const PAYOUT_LABEL = {
   madePlayoffs: 'Made the playoffs',
   round1Won: 'Advanced past the first round',
   round2Won: 'Reached the conference finals',
-  round3Won: 'Reached the NBA Finals',
+  round3Won: 'Reached the League Finals',
   championship: 'Won the championship',
 }
 

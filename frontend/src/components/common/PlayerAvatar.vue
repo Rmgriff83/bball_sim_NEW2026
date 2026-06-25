@@ -5,6 +5,8 @@
     :alt="player?.name || 'Player'"
     class="player-headshot"
     :style="{ width: size + 'px', height: size + 'px' }"
+    loading="lazy"
+    decoding="async"
     @error="onImageError"
   />
   <User v-else :size="size" />

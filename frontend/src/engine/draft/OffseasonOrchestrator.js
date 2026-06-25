@@ -16,6 +16,8 @@ import { assignRookieContract, assignUndraftedContract } from './RookieContractS
 import { rollDraftPicks } from './DraftPickService'
 import { selectRookieDraftPick } from '../../services/AIDraftService'
 import { analyzeTeamDirection, buildContext } from '../ai/AITradeService'
+import { getEffectiveExpectation } from '../season/OwnerExpectationService'
+import { findOwnerForTeam } from '../data/owners'
 import {
   initializeTeamLineup,
   initializeUserTeamLineup,
@@ -118,12 +120,20 @@ export async function simFullOffseason(campaignId) {
   }
   const draftOrder = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
 
-  // 3. Compute team directions for AI
+  // 3. Compute team directions for AI. The user team carries its live (dynamic)
+  // owner expectation so its direction reflects how the franchise is trending.
   const context = buildContext({ standings, teams, seasonPhase: 'offseason' })
+  const userTeamForDir = teams.find(t => t.id === campaign.teamId)
+  const userTier = userTeamForDir
+    ? getEffectiveExpectation(campaign, findOwnerForTeam(userTeamForDir.abbreviation)).tier
+    : null
   const directions = {}
   for (const team of teams) {
     const teamRoster = allPlayers.filter(p => p.teamId === team.id)
-    directions[team.id] = analyzeTeamDirection(team, teamRoster, context)
+    const dirTeam = (userTier && team.id === campaign.teamId)
+      ? { ...team, effectiveExpectation: userTier }
+      : team
+    directions[team.id] = analyzeTeamDirection(dirTeam, teamRoster, context)
   }
 
   // 4. Auto-draft all 60 picks

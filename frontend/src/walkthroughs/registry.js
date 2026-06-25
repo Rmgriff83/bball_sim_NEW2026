@@ -672,7 +672,7 @@ export const WALKTHROUGHS = {
       target: 'draft-pool',
       placement: 'top',
       title: 'Available Players',
-      body: 'Every undrafted player. Tap a column header to sort — chase overall rating for win-now talent, or potential for upside.',
+      body: 'Every undrafted player. Tap Name, OVR, or POT at the top to sort — chase overall rating for win-now talent, or potential for upside. Each row scrolls sideways to reveal the full attribute breakdown.',
     },
     {
       target: 'draft-filters',

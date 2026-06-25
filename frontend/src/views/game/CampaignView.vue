@@ -767,7 +767,7 @@ function closeMobileMenu() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 10px 8px;
   background: transparent;
   border-radius: 6px;
   color: var(--color-text-secondary);
@@ -779,6 +779,10 @@ function closeMobileMenu() {
   width: 100%;
   text-align: left;
   cursor: pointer;
+}
+
+.mobile-nav-link svg {
+  min-width:14px;
 }
 
 .mobile-nav-link:hover {

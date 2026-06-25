@@ -69,7 +69,7 @@ export const BreakingNewsService = {
   makingFinals({ teamName, opponentName, date }) {
     return {
       headline: `${teamName.toUpperCase()} PUNCH TICKET TO THE FINALS`,
-      body: `The ${teamName} are headed to the NBA Finals after defeating the ${opponentName} in the conference finals. A championship berth is on the line.`,
+      body: `The ${teamName} are headed to the League Finals after defeating the ${opponentName} in the conference finals. A championship berth is on the line.`,
       category: 'PLAYOFFS',
       icon: 'Trophy',
       date,

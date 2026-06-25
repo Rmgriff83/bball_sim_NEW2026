@@ -33,4 +33,9 @@ export const GAME_SFX = {
   ambience: resolve('crowd-ambience.mp3'),
   // buzzer: resolve('buzzer.mp3'),
   // swish: resolve('swish.mp3'),
+
+  // Live draft. Drop these files into src/assets/audio/ to enable them; until
+  // then resolve() returns null and playback is a silent no-op (no build error).
+  draftIntro: resolve('draft-intro.mp3'),   // ESPN-style start-of-draft sting
+  onTheClock: resolve('on-the-clock.mp3'),  // a team goes on the clock
 }

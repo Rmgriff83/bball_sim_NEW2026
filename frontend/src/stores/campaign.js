@@ -186,15 +186,34 @@ export const useCampaignStore = defineStore('campaign', () => {
       // pull if this campaign was pulled within the cooldown (avoids a redundant
       // /sync/pull on every re-navigation to the same campaign). Stamp the time
       // up front so a failed pull (e.g. a fresh campaign that 404s) also throttles.
+      //
+      // CRITICAL (stability): never let the cloud pull block navigation when we
+      // already have the campaign locally. A slow/dead connection here used to hang
+      // the whole load (and the UI) until the request timed out — or forever, before
+      // the axios timeout. So: if a local copy exists, fire the pull in the
+      // BACKGROUND (newer remote data is written to IDB and picked up next load);
+      // only AWAIT the pull on a genuine cold load (no local copy at all), which is
+      // now bounded by the request timeout.
       if (Date.now() - (_lastPullAt.get(id) ?? 0) > PULL_COOLDOWN_MS) {
         _lastPullAt.set(id, Date.now())
-        try {
-          const pullResult = await syncStore.pullChanges(id)
-          if (pullResult.usedRemote) {
-            console.log('[Campaign] Remote data was newer, reloading from IndexedDB')
+        const hasLocal = !!(await CampaignRepository.get(id))
+        const runPull = async () => {
+          try {
+            const pullResult = await syncStore.pullChanges(id)
+            if (pullResult?.usedRemote) {
+              console.log('[Campaign] Remote data was newer, reloading from IndexedDB')
+            }
+          } catch (pullErr) {
+            console.warn('[Campaign] Cloud pull failed, will use local data:', pullErr?.message)
           }
-        } catch (pullErr) {
-          console.warn('[Campaign] Cloud pull failed, will use local data:', pullErr.message)
+        }
+        if (hasLocal) {
+          // Don't await — navigation stays responsive regardless of connection.
+          runPull()
+        } else {
+          // Cold cloud-only load: we need the data, but the axios timeout guarantees
+          // this resolves/fails instead of hanging.
+          await runPull()
         }
       }
 
@@ -235,7 +254,10 @@ export const useCampaignStore = defineStore('campaign', () => {
         try {
           const authStore = useAuthStore()
           if (authStore.gmLevel < gmTeamRequiredLevel) {
-            await authStore.ensureGmLevelAtLeast(gmTeamRequiredLevel)
+            // Fire-and-forget: ensureGmLevelAtLeast updates local profile.gmLevel
+            // synchronously and persists to the backend in the background, so a slow
+            // gm-level POST can't stall the campaign load on a poor connection.
+            authStore.ensureGmLevelAtLeast(gmTeamRequiredLevel).catch(() => {})
           }
         } catch (floorErr) {
           console.warn('[Campaign] GM level grandfather floor failed:', floorErr)
@@ -257,7 +279,8 @@ export const useCampaignStore = defineStore('campaign', () => {
         const authStore = useAuthStore()
         const recorded = maxRecordedGmLevel(result.campaign)
         if (recorded > 0 && authStore.gmLevel < recorded) {
-          await authStore.ensureGmLevelAtLeast(recorded)
+          // Fire-and-forget (local update is synchronous; backend persist is bg).
+          authStore.ensureGmLevelAtLeast(recorded).catch(() => {})
         }
       } catch (gmHealErr) {
         console.warn('[Campaign] GM level self-heal failed:', gmHealErr)

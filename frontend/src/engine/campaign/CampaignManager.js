@@ -91,7 +91,7 @@ import {
 import { AwardService } from '../season/AwardService'
 import { AllStarService } from '../season/AllStarService'
 import { starPlayerIds, evaluateSubtasks } from '../season/OwnerSubtaskService'
-import { combinedSatisfaction, EXTEND_THRESHOLD } from '../season/OwnerService'
+import { combinedSatisfaction, injuryReliefWins, EXTEND_THRESHOLD } from '../season/OwnerService'
 import { findOwnerForTeam, EXPECTATION_LABEL } from '../data/owners'
 import {
   getEffectiveExpectation,
@@ -1234,7 +1234,7 @@ export async function createCampaign(options) {
 
   campaign.currentSeasonYear = startYear
 
-  // The user signs a 2-year GM contract with the team's owner (instead of just
+  // The user signs a 4-year GM contract with the team's owner (instead of just
   // "picking" a team). Years-remaining is derived from the season year, so this
   // stays correct across seasons without a decrement step. The owner evaluates
   // the GM at contract end — that lifecycle is Part 2; for now we just track it.
@@ -1247,7 +1247,7 @@ export async function createCampaign(options) {
     // owner check-in greets a re-signed GM as a returning partner, not a
     // first-time hire.
     tenureStartYear: startYear,
-    lengthYears: 2,
+    lengthYears: 4,
     status: 'active',
     // Part 2: running sub-task progress for the duration of this contract.
     progress: {
@@ -1263,6 +1263,10 @@ export async function createCampaign(options) {
   {
     const seedOwner = findOwnerForTeam(userTeam.abbreviation)
     if (seedOwner) campaign.settings.ownerExpectation = initOwnerExpectation(seedOwner)
+    // Ordered history of expectation tiers held during this contract. New tiers are
+    // APPENDED (not swapped) when the bar rises, so coach sub-tasks accumulate
+    // instead of wiping work the GM already invested in.
+    campaign.settings.gmContract.expectationTiers = [campaign.settings.ownerExpectation?.tier ?? 'playoffs']
   }
 
   // -------------------------------------------------------------------------
@@ -1573,6 +1577,10 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, use
   ]
   const teamStats = seasonData.teamStats || {}
   const bracket = seasonData.playoffBracket || null
+  // Per-team playoff depth ('champion'|'finals'|'conf_finals'|'round2'|'round1')
+  // derived from the bracket. teamStats.playoffResult is never populated, so without
+  // this every non-champion playoff team was logged as "Missed playoffs" in history.
+  const { depthByTeamId: playoffDepthByTeam } = derivePlayoffDepth(bracket)
 
   for (const team of teams) {
     team.seasonHistory = team.seasonHistory || []
@@ -1601,7 +1609,7 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, use
       losses: standing.losses ?? 0,
       conferenceRank: confRank || null,
       playoffSeed: ts.playoffSeed ?? null,
-      playoffResult: ts.playoffResult ?? null,
+      playoffResult: playoffDepthByTeam[team.id] ?? ts.playoffResult ?? null,
       champion: isChampion,
     })
   }
@@ -1831,7 +1839,7 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, use
     // (championship > conference > berth) so the toast queue + feed
     // both show the highest feat first when multiple fire in one year.
     if (userTeamId != null && team.id === userTeamId) {
-      if (isChampion) _pushAchievement('championship', team, 'NBA Champions')
+      if (isChampion) _pushAchievement('championship', team, 'League Champions')
       if (isConfWinner) _pushAchievement('conference_championship', team, 'Conference Champions')
       if (madePlayoffs) _pushAchievement('playoff_berth', team, 'Playoff Berth')
     }
@@ -2077,7 +2085,7 @@ export async function backfillCampaignAchievements(campaignId) {
         teamId: userTeam.id,
         teamAbbreviation: userTeam.abbreviation,
         teamName: userTeam.name,
-        label: 'NBA Champions',
+        label: 'League Champions',
         subtitle,
       })
       seenKey.add(`${year}|championship`)
@@ -2403,7 +2411,7 @@ export async function enterOffseason(campaignId) {
   campaign.settings.pendingRetirementsYear = currentYear
 
   // ---------------------------------------------------------------------------
-  // GM contract-end evaluation (Part 2). When the 2-year contract is up, the
+  // GM contract-end evaluation (Part 2). When the 4-year contract is up, the
   // owner judges the GM on overall wins (60%) + sub-tasks (40%) and decides
   // whether to extend. Stash the verdict for the offseason ContractDecisionModal
   // (mirrors the pendingRetirements stash + fire-once-by-year pattern). The
@@ -2424,7 +2432,7 @@ export async function enterOffseason(campaignId) {
       const eff = getEffectiveExpectation(campaign, owner)
       const effOwner = effectiveOwner(owner, eff.tier)
 
-      // --- Contract-end evaluation (only when the 2-year deal is up) ---
+      // --- Contract-end evaluation (only when the 4-year deal is up) ---
       const signedYear = gmc?.signedSeasonYear ?? null
       const lengthYears = gmc?.lengthYears ?? 2
       const expired = signedYear != null && (currentYear - signedYear + 1) >= lengthYears
@@ -2439,9 +2447,22 @@ export async function enterOffseason(campaignId) {
           .filter(h => (h.year ?? 0) !== currentYear)
           .sort((a, b) => (b.year ?? 0) - (a.year ?? 0))[0] ?? null
 
+        // THIS season's playoff outcome (its seasonHistory entry was written earlier
+        // in this flow) — so a deep run / championship counts in the very year it
+        // happens. A title fully satisfies the wins category despite a soft record.
+        const curEntry = (Array.isArray(hist) ? hist : [])
+          .find(h => (h.year ?? 0) === currentYear) ?? null
+        const currentPlayoff = curEntry ? {
+          champion: curEntry.champion === true,
+          playoffResult: curEntry.playoffResult ?? null,
+          playoffSeed: curEntry.playoffSeed ?? null,
+          madePlayoffs: curEntry.playoffSeed != null || curEntry.madePlayoffs === true,
+        } : null
+
         const subResult = evaluateSubtasks({
           owner,
           expectation: eff.tier,
+          expectationTiers: gmc?.expectationTiers ?? [eff.tier],
           roster: userRoster,
           draftPicks: userTeam?.draftPicks ?? [],
           facilities: userTeam?.facilities ?? null,
@@ -2452,12 +2473,21 @@ export async function enterOffseason(campaignId) {
           coach: userTeam?.coach ?? null,
           salaryCap: SALARY_CAP,
         })
+        // Soften the win bar if the GM lost star talent to injury this season.
+        const injuryRelief = injuryReliefWins({
+          roster: userRoster,
+          teamGames: currentWins + currentLosses,
+          starPlayerIdsAtSign: gmc?.progress?.starPlayerIdsAtSign ?? [],
+          currentYear,
+        })
         const sat = combinedSatisfaction({
           owner: effOwner,
           expectedWins: eff.expectedWins,
           currentWins,
           currentLosses,
           lastSeason,
+          currentPlayoff,
+          injuryRelief,
           subtaskScore: subResult.subtaskScore,
         })
 
@@ -2506,6 +2536,13 @@ export async function enterOffseason(campaignId) {
           expectedWins: updated.expectedWins,
           lastEvaluatedYear: currentYear,
         }
+        // Append the new tier to the contract's history so its coach sub-tasks are
+        // added on top of (not in place of) the ones already in progress.
+        if (updated.tier && gmc) {
+          const tiers = Array.isArray(gmc.expectationTiers) ? gmc.expectationTiers : [eff.tier]
+          if (!tiers.includes(updated.tier)) tiers.push(updated.tier)
+          gmc.expectationTiers = tiers
+        }
       }
     }
   } catch (err) {
@@ -2532,7 +2569,7 @@ export async function enterOffseason(campaignId) {
 }
 
 /**
- * Build a fresh 2-year GM contract for `team`, seeding sub-task progress from the
+ * Build a fresh 4-year GM contract for `team`, seeding sub-task progress from the
  * given roster. Used by both re-sign (extension) and team-switch. The contract is
  * dated to the UPCOMING season (currentYear + 1) since this runs during the
  * offseason before startNewSeason bumps the year.
@@ -2542,15 +2579,18 @@ export async function enterOffseason(campaignId) {
  * switch passes the upcoming year (new owner → first meeting). Defaults to the
  * upcoming season when not supplied.
  */
-function _buildFreshGmContract(team, userPlayers, currentYear, tenureStartYear = null) {
+function _buildFreshGmContract(team, userPlayers, currentYear, tenureStartYear = null, startTier = null) {
   const signedSeasonYear = currentYear + 1
+  const baseTier = startTier ?? findOwnerForTeam(team.abbreviation)?.expectation ?? 'playoffs'
   return {
     teamId: team.id,
     teamAbbreviation: team.abbreviation,
     signedSeasonYear,
     tenureStartYear: tenureStartYear ?? signedSeasonYear,
-    lengthYears: 2,
+    lengthYears: 4,
     status: 'active',
+    // Fresh contract → fresh tier history (clean slate for this deal).
+    expectationTiers: [baseTier],
     progress: {
       allStarAppearances: 0,
       badgesAdded: 0,
@@ -2585,11 +2625,17 @@ export async function resignGmContract(campaignId) {
   const priorContract = campaign.settings.gmContract ?? null
   const tenureStartYear =
     priorContract?.tenureStartYear ?? priorContract?.signedSeasonYear ?? (currentYear + 1)
+  // Re-sign keeps the SAME owner and the ratcheted ownerExpectation persists, so the
+  // fresh contract's tier history starts at the CURRENT (live) tier — not the static
+  // baseline — keeping coach sub-tasks consistent with the standing mandate.
+  const resignAbbr = team?.abbreviation ?? campaign.teamAbbreviation
+  const resignTier = getEffectiveExpectation(campaign, findOwnerForTeam(resignAbbr)).tier
   campaign.settings.gmContract = _buildFreshGmContract(
     team ?? { id: userTeamId, abbreviation: campaign.teamAbbreviation },
     userPlayers ?? [],
     currentYear,
-    tenureStartYear
+    tenureStartYear,
+    resignTier
   )
   delete campaign.settings.pendingContractDecision
   delete campaign.settings.pendingContractDecisionYear
@@ -2601,7 +2647,7 @@ export async function resignGmContract(campaignId) {
  * Repoint the user-GM to a NEW team in the same campaign after the owner declined
  * to extend (Part 2). Inherits the new team's roster/coach/facilities, clears the
  * user's hired staff (fresh start), resets the user lineup, and signs a fresh
- * 2-year contract with the new owner. Tokens + GM Level (profile-global) are
+ * 4-year contract with the new owner. Tokens + GM Level (profile-global) are
  * untouched. The old team simply reverts to AI control.
  *
  * @param {string} campaignId
@@ -2637,7 +2683,7 @@ export async function switchUserTeam(campaignId, newTeamAbbreviation) {
     rotation: [],
   }
 
-  // New 2-year GM contract with the new owner.
+  // New 4-year GM contract with the new owner.
   campaign.settings.gmContract = _buildFreshGmContract(newTeam, userPlayers ?? [], currentYear)
   delete campaign.settings.pendingContractDecision
   delete campaign.settings.pendingContractDecisionYear
@@ -2802,8 +2848,18 @@ export async function startNewSeason(campaignId) {
     if (!coachRostersByTeam.has(tid)) coachRostersByTeam.set(tid, [])
     coachRostersByTeam.get(tid).push(p)
   }
-  const directionForTeam = (team) =>
-    analyzeTeamDirection(team, coachRostersByTeam.get(team.id) ?? [], coachContext)
+  // User team carries its live (dynamic) owner expectation so its coach-facing
+  // direction matches how the franchise is actually trending.
+  const _coachUserTeam = teams.find(t => t.id === campaign.teamId)
+  const _coachUserTier = _coachUserTeam
+    ? getEffectiveExpectation(campaign, findOwnerForTeam(_coachUserTeam.abbreviation)).tier
+    : null
+  const directionForTeam = (team) => {
+    const t = (_coachUserTier && team.id === campaign.teamId)
+      ? { ...team, effectiveExpectation: _coachUserTier }
+      : team
+    return analyzeTeamDirection(t, coachRostersByTeam.get(team.id) ?? [], coachContext)
+  }
 
   // Return-to-pool shape: stamp a hireCost from tier, drop per-team-only fields.
   const releaseToPool = (coach) => {

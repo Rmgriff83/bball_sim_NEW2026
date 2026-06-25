@@ -79,7 +79,7 @@ function handleClose() {
       <!-- Title -->
       <div class="title-section">
         <Crown :size="32" class="crown-icon" />
-        <h1 class="championship-title">NBA CHAMPIONS!</h1>
+        <h1 class="championship-title">LEAGUE CHAMPIONS!</h1>
       </div>
 
       <!-- Team Name -->

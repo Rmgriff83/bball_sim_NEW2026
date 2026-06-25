@@ -114,7 +114,7 @@ function confirmSwitch() {
               <p class="verdict-blurb">
                 <template v-if="isExtend">
                   {{ ownerName }} is satisfied with your work and wants to keep building with you.
-                  Re-sign a fresh 2-year deal to continue.
+                  Re-sign a fresh 4-year deal to continue.
                 </template>
                 <template v-else>
                   {{ ownerName }} has decided to move in another direction. Your time with this
@@ -172,7 +172,7 @@ function confirmSwitch() {
                   Decline &amp; pursue other jobs
                 </button>
                 <button class="btn-confirm good" :disabled="busy" @click="confirmExtend">
-                  {{ busy ? 'Re-signing…' : 'Re-sign 2-Year Contract' }}
+                  {{ busy ? 'Re-signing…' : 'Re-sign 4-Year Contract' }}
                 </button>
               </template>
               <button v-else class="btn-confirm" @click="goToPicker">

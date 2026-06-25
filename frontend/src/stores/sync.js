@@ -29,6 +29,11 @@ export const useSyncStore = defineStore('sync', () => {
   // Parts that still need to be pushed (failed or never attempted since last clean sync).
   // Lets a 413 on one part avoid re-pushing the parts that already succeeded.
   const _dirtyParts = ref(new Set(PUSH_PARTS))
+  // Campaign ids known to not exist on the server yet (a pull 404'd). A brand-new
+  // local campaign — e.g. during the live draft, before its first push — would
+  // otherwise 404 on every visibility-focus pull and every fetchCampaign pull.
+  // Cleared once a push creates the server row. Non-reactive (control flow only).
+  const _serverMissing = new Set()
 
   // Getters
   const hasPendingChanges = computed(() => isDirty.value)
@@ -695,8 +700,10 @@ export const useSyncStore = defineStore('sync', () => {
       }
       first = false
       try {
-        await api.post(`/api/sync/${campaignId}/push`, payloads[part])
+        await api.post(`/api/sync/${campaignId}/push`, payloads[part], { timeout: 20000 })
         _dirtyParts.value.delete(part)
+        // A successful push means the server row now exists — re-enable pulls.
+        _serverMissing.delete(campaignId)
       } catch (err) {
         // Headshots are gated by the server-side feature unlock — a 403 here
         // just means the user hasn't (yet) had the entitlement webhook
@@ -727,9 +734,21 @@ export const useSyncStore = defineStore('sync', () => {
    * Compares remote clientUpdatedAt vs local updatedAt — remote wins if newer.
    */
   async function pullChanges(campaignId) {
+    if (!campaignId) return null
+    // Skip campaigns we already know aren't on the server yet (unsynced local
+    // campaigns, e.g. a fresh fantasy draft). Avoids repeated 404s until the
+    // first push lands and clears this flag.
+    if (_serverMissing.has(campaignId)) return null
     isPulling.value = true
     try {
       return await _pullChangesInner(campaignId)
+    } catch (err) {
+      if (err?.response?.status === 404) {
+        // No server row yet — remember and stop pulling until a push creates it.
+        _serverMissing.add(campaignId)
+        return null
+      }
+      throw err
     } finally {
       isPulling.value = false
     }
@@ -739,7 +758,7 @@ export const useSyncStore = defineStore('sync', () => {
     // Suppress the global error toast — callers already handle pull failures
     // gracefully (e.g. a freshly-created campaign 404s here until its first
     // push lands), so the user shouldn't see a "Campaign not found" toast.
-    const response = await api.get(`/api/sync/${campaignId}/pull`, { skipErrorToast: true })
+    const response = await api.get(`/api/sync/${campaignId}/pull`, { skipErrorToast: true, timeout: 20000 })
     const data = response.data
 
     const remoteUpdatedAt = data.clientUpdatedAt ? new Date(data.clientUpdatedAt).getTime() : 0
@@ -920,7 +939,7 @@ export const useSyncStore = defineStore('sync', () => {
     isPulling.value = true
     const toastStore = useToastStore()
     try {
-      const response = await api.get(`/api/sync/${campaignId}/pull`, { skipErrorToast: true })
+      const response = await api.get(`/api/sync/${campaignId}/pull`, { skipErrorToast: true, timeout: 20000 })
       const data = response.data
 
       if (!data || !data.campaign) {

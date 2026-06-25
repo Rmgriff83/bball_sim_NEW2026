@@ -151,7 +151,7 @@ function close() {
             <section v-if="allNba" class="award-section">
               <div class="award-section-header">
                 <Star :size="16" class="award-icon all-nba" />
-                <span class="award-section-label">All-NBA</span>
+                <span class="award-section-label">All-League</span>
               </div>
               <div class="team-list">
                 <div

@@ -48,18 +48,26 @@ export const useAuthStore = defineStore('auth', () => {
 
     if (token.value) {
       try {
-        await fetchUser()
+        // Tighter bound than the 25s global so a slow cold-launch isn't a long blank.
+        await fetchUser({ timeout: 12000 })
       } catch (error) {
-        // Token is invalid, clear it
-        await logout()
+        // ONLY a real auth failure (invalid/expired token) clears the session. A
+        // network/timeout error on a poor connection must NOT log the user out —
+        // keep the token and retry the profile fetch in the background.
+        if (error?.response?.status === 401) {
+          await logout()
+        } else {
+          console.warn('[Auth] initialize: profile fetch failed, keeping session:', error?.message || error)
+          fetchUser().catch(() => {})
+        }
       }
     }
 
     initialized.value = true
   }
 
-  async function fetchUser() {
-    const response = await api.get('/api/user')
+  async function fetchUser(opts = {}) {
+    const response = await api.get('/api/user', opts)
     user.value = response.data.user
     profile.value = response.data.profile
     return user.value

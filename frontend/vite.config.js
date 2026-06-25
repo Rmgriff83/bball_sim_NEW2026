@@ -33,7 +33,28 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,json,mp3,flac}'],
+        // Don't precache the ~16MB of player-headshot SVGs — on slow networks that
+        // made the service-worker install download the whole set up front. They're
+        // runtime-cached on first view instead (rule below). Safety cap guards
+        // against any single oversized file sneaking into the precache.
+        globIgnores: ['**/headshot_*.svg', '**/premade_*.svg'],
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         runtimeCaching: [
+          {
+            // Headshots: cache on first access, then serve from cache.
+            urlPattern: /headshot_.*\.svg$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'headshots',
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
+              },
+              cacheableResponse: {
+                statuses: [0, 200]
+              }
+            }
+          },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'CacheFirst',

@@ -3,6 +3,10 @@ import { getToken, removeToken } from "./useTokenStorage";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "",
+  // Hard ceiling so a stalled connection can never hang a request forever (which
+  // would wedge any awaited UI path, e.g. campaign navigation). Callers that need a
+  // tighter bound pass their own `timeout` per-request.
+  timeout: 25000,
   headers: {
     "Content-Type": "application/json",
     Accept: "application/json",

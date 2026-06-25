@@ -12,6 +12,8 @@ import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { getEffectiveExpectation, maybeRaiseExpectationMidSeason } from '@/engine/season/OwnerExpectationService'
+import { findOwnerForTeam } from '@/engine/data/owners'
 import { SeasonManager } from '@/engine/season/SeasonManager'
 import { PlayoffManager } from '@/engine/season/PlayoffManager'
 import { processGameRewards, TOKENS_PER_SYNERGY, WIN_MULTIPLIER, WIN_BONUS_TOKENS } from '@/engine/rewards/RewardService'
@@ -90,6 +92,73 @@ export const useGameStore = defineStore('game', () => {
     const userLineup = campaign.settings?.lineup?.starters || null
     const userTargetMinutes = campaign.settings?.lineup?.target_minutes || null
     return { campaign, year, userTeamId, userLineup, userTargetMinutes }
+  }
+
+  // Short-TTL cache for the full teams list used by the game-detail view. The
+  // detail view only reads stable display fields (name/abbr/color), so a few
+  // seconds of staleness is fine — this avoids re-reading all 30 teams from IDB on
+  // every game the user opens/sims in quick succession.
+  let _teamsCache = { campaignId: null, ts: 0, teams: null }
+  async function _getTeamsCached(campaignId, ttl = 4000) {
+    const now = Date.now()
+    if (_teamsCache.campaignId === campaignId && _teamsCache.teams && (now - _teamsCache.ts) < ttl) {
+      return _teamsCache.teams
+    }
+    const teams = await TeamRepository.getAllForCampaign(campaignId)
+    _teamsCache = { campaignId, ts: now, teams }
+    return teams
+  }
+
+  /**
+   * Mid-season owner-expectation check: if the user team's projected pace clears a
+   * higher tier, ratchet the expectation up NOW (not just at season end), append the
+   * new tier to the GM contract's history (so coach sub-tasks accumulate rather than
+   * reset), and leave a marker for the UI to surface. Non-fatal; runs after the
+   * user advances time during the regular season.
+   */
+  async function _maybeRaiseOwnerExpectation(campaignId) {
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) return
+      // Regular season only (when a phase is tracked).
+      if (campaign.phase && campaign.phase !== 'regular_season') return
+      const userTeamId = campaign.teamId
+      const year = campaign.currentSeasonYear ?? 2025
+
+      const seasonData = await SeasonRepository.get(campaignId, year)
+      const standings = seasonData?.standings
+      if (!standings) return
+      const entries = [...(standings.east || []), ...(standings.west || [])]
+      const st = entries.find(s => (s.teamId ?? s.team_id) === userTeamId)
+      if (!st) return
+      const wins = st.wins ?? st.w ?? 0
+      const losses = st.losses ?? st.l ?? 0
+
+      const userTeam = await TeamRepository.get(campaignId, userTeamId)
+      const owner = findOwnerForTeam(userTeam?.abbreviation)
+      const eff = getEffectiveExpectation(campaign, owner)
+      const res = maybeRaiseExpectationMidSeason(eff, { wins, losses })
+      if (!res.raised) return
+
+      campaign.settings = campaign.settings ?? {}
+      campaign.settings.ownerExpectation = {
+        tier: res.tier,
+        expectedWins: res.expectedWins,
+        // Preserve the season-end fire-once guard untouched.
+        lastEvaluatedYear: campaign.settings.ownerExpectation?.lastEvaluatedYear,
+      }
+      const gmc = campaign.settings.gmContract
+      if (gmc) {
+        const tiers = Array.isArray(gmc.expectationTiers) ? gmc.expectationTiers : [eff.tier]
+        if (!tiers.includes(res.tier)) tiers.push(res.tier)
+        gmc.expectationTiers = tiers
+      }
+      // Surfaced (toast + owner note) by CampaignHomeView, which clears it.
+      campaign.settings.pendingOwnerExpectationRaise = { tier: res.tier, fromTier: eff.tier }
+      await CampaignRepository.save(campaign)
+    } catch (e) {
+      console.warn('[game] mid-season expectation check failed (non-fatal):', e?.message || e)
+    }
   }
 
   /**
@@ -1311,7 +1380,7 @@ export const useGameStore = defineStore('game', () => {
       if (!game) throw new Error(`Game ${gameId} not found`)
 
       // Load full team objects for detailed view
-      const teams = await TeamRepository.getAllForCampaign(campaignId)
+      const teams = await _getTeamsCached(campaignId)
       currentGame.value = _normalizeDetailedGame(game, userTeamId, teams)
       return currentGame.value
     } catch (err) {
@@ -1419,7 +1488,7 @@ export const useGameStore = defineStore('game', () => {
       }
 
       // Load teams for detailed currentGame
-      const teams = await TeamRepository.getAllForCampaign(campaignId)
+      const teams = await _getTeamsCached(campaignId)
       currentGame.value = {
         ..._normalizeDetailedGame(game, userTeamId, teams),
         is_complete: true,
@@ -1564,6 +1633,9 @@ export const useGameStore = defineStore('game', () => {
 
       // Advance date
       await _advanceDateIfNeeded(campaignId, currentDate)
+
+      // Dynamic owner-expectation check now that today's results are in.
+      await _maybeRaiseOwnerExpectation(campaignId)
 
       return { userGameResult }
     } catch (err) {
@@ -2288,6 +2360,9 @@ export const useGameStore = defineStore('game', () => {
         }
       }
 
+      // Dynamic owner-expectation check now that the run's results are in.
+      await _maybeRaiseOwnerExpectation(campaignId)
+
       simulating.value = false
       return { userGameResult, weeklySummary: summaryData }
     } catch (err) {
@@ -2547,6 +2622,11 @@ export const useGameStore = defineStore('game', () => {
     simulating.value = false
     backgroundSimulating.value = false
     simulationProgress.value = null
+    // Games up to this pause are already persisted to IndexedDB, so the cached
+    // in-memory standings/leaders are now stale. Invalidate (like _finishRun does)
+    // so any view re-reads fresh data on its next fetch — otherwise navigating away
+    // mid-pause shows a stale record (e.g. home page stuck at the old W-L).
+    useLeagueStore().invalidate()
     return { paused: true, reason, payload }
   }
 

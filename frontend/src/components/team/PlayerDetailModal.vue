@@ -2182,7 +2182,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.championships > 0" class="award-card gold">
                       <Trophy :size="32" />
                       <span class="award-count">{{ normalizedPlayer.championships }}x</span>
-                      <span class="award-label">NBA Champion</span>
+                      <span class="award-label">League Champion</span>
                       <span v-if="getAwardYears('championship')" class="award-years">{{ getAwardYears('championship') }}</span>
                     </div>
 
@@ -2230,7 +2230,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.all_nba_selections > 0" class="award-card silver">
                       <Star :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_nba_selections }}x</span>
-                      <span class="award-label">All-NBA</span>
+                      <span class="award-label">All-League</span>
                       <div v-if="getTieredAwardSummary('all_nba', ['first','second','third']).length" class="award-tiers">
                         <span v-for="line in getTieredAwardSummary('all_nba', ['first','second','third'])" :key="line" class="award-tier-line">{{ line }}</span>
                       </div>

@@ -9,7 +9,7 @@ import {
   MONEY_CONSCIOUSNESS_LABEL,
   EXPECTATION_BLURB_DEFAULT,
 } from '@/engine/data/owners'
-import { combinedSatisfaction } from '@/engine/season/OwnerService'
+import { combinedSatisfaction, injuryReliefWins } from '@/engine/season/OwnerService'
 import { evaluateSubtasks } from '@/engine/season/OwnerSubtaskService'
 import { getEffectiveExpectation, effectiveOwner } from '@/engine/season/OwnerExpectationService'
 import { SALARY_CAP } from '@/engine/data/teams'
@@ -87,6 +87,11 @@ const subtaskResult = computed(() => {
   return evaluateSubtasks({
     owner: owner.value,
     expectation: effectiveExpectation.value?.tier,
+    // Additive: show every tier held during this contract (earliest→latest), so
+    // goals from an earlier mandate stay even after the bar rose. Backfill old
+    // saves with the current tier.
+    expectationTiers: campaign.value?.settings?.gmContract?.expectationTiers
+      ?? (effectiveExpectation.value?.tier ? [effectiveExpectation.value.tier] : null),
     roster: teamStore.roster ?? [],
     draftPicks: team.value?.draftPicks ?? [],
     facilities: team.value?.facilities ?? null,
@@ -109,6 +114,13 @@ const satisfaction = computed(() => {
     lastSeason: lastSeason.value,
     subtaskScore: subtaskResult.value.subtaskScore,
     contractProgress: contractProgress.value,
+    // Don't let a star's injury crater the live meter.
+    injuryRelief: injuryReliefWins({
+      roster: teamStore.roster ?? [],
+      teamGames: currentRecord.value.wins + currentRecord.value.losses,
+      starPlayerIdsAtSign: progress.value?.starPlayerIdsAtSign ?? [],
+      currentYear: campaign.value?.currentSeasonYear ?? campaign.value?.current_season_year ?? null,
+    }),
   })
 })
 

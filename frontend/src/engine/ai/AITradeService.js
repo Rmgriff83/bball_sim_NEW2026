@@ -352,7 +352,10 @@ function facilityAvg(team) {
  */
 function expectationDirectionBias(team) {
   const owner = team ? findOwnerForTeam(team.abbreviation) : null;
-  const tier = owner?.expectation ?? 'playoffs';
+  // Prefer the live/dynamic expectation when the caller attached it (user team),
+  // so a ratcheted-up mandate actually steers the direction; AI teams without it
+  // fall back to the owner's static tier.
+  const tier = team?.effectiveExpectation ?? owner?.expectation ?? 'playoffs';
   const base = { ...(EXPECTATION_DIRECTION_BIAS[tier] ?? EXPECTATION_DIRECTION_BIAS.playoffs) };
 
   // Facility nudge: strong facilities (avg > 3) add a small win-now lean; weak

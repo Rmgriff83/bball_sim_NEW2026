@@ -236,10 +236,20 @@ function franchisePlayoffPct(fh) {
   return Math.round((w / total) * 1000) / 10
 }
 
+// Friendly labels for the raw playoff-depth keys stored on seasonHistory
+// ('finals' = reached the Finals = won the conference, etc.).
+const PLAYOFF_RESULT_LABELS = {
+  champion: 'Champion',
+  finals: 'Conference Champion',
+  conf_finals: 'Conference Finals',
+  round2: 'Conference Semifinals',
+  round1: 'First Round',
+}
+
 function formatSeasonResult(entry) {
   if (!entry) return '—'
   if (entry.champion) return 'Champion'
-  if (entry.playoffResult) return entry.playoffResult
+  if (entry.playoffResult) return PLAYOFF_RESULT_LABELS[entry.playoffResult] ?? entry.playoffResult
   if (entry.playoffSeed) return `Playoffs · #${entry.playoffSeed} seed`
   return 'Missed playoffs'
 }
@@ -2035,7 +2045,7 @@ function formatSalary(salary) {
                         {{ selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear }}x ROTY
                       </span>
                       <span v-if="(selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections || 0) > 0" class="player-award-item silver">
-                        {{ selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections }}x All-NBA
+                        {{ selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections }}x All-League
                       </span>
                       <span v-if="(selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam || 0) > 0" class="player-award-item silver">
                         {{ selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam }}x All-Defense

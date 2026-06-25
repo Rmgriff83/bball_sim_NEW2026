@@ -25,6 +25,7 @@ import BadgeSynergyService from './BadgeSynergyService';
 import { updateHighs, seasonYearFromDate } from '../stats/careerHighs';
 import EvolutionNewsService from './EvolutionNewsService';
 import { getCoachPerks, getEffectiveCoachAttribute } from '@/engine/coaching/CoachPerks';
+import { cloneForPersist } from '@/utils/cloneForPersist';
 import * as Config from '../config/GameConfig';
 import {
   generateMotivations,
@@ -113,7 +114,7 @@ function groupPlayersByTeam(players) {
  * Deep clone a player object to avoid mutating the original.
  */
 function clonePlayer(player) {
-  return JSON.parse(JSON.stringify(player));
+  return cloneForPersist(player);
 }
 
 /**

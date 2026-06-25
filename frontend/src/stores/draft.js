@@ -8,7 +8,12 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { initializeAllTeamLineups } from '@/engine/ai/AILineupService'
 import { assignRookieContract, assignUndraftedContract } from '@/engine/draft/RookieContractService'
 import { rollDraftPicks } from '@/engine/draft/DraftPickService'
+import { SALARY_CAP } from '@/engine/data/salaryScale'
 import { useAudioStore } from '@/stores/audio'
+
+// Fantasy-draft over-cap penalty: once the user's payroll exceeds the cap, they
+// may only draft players earning under this amount per year.
+const OVERCAP_MAX_SALARY = 5_000_000
 
 export const useDraftStore = defineStore('draft', () => {
   // State
@@ -37,6 +42,14 @@ export const useDraftStore = defineStore('draft', () => {
   const skipRequested = ref(false)   // signal to break out of live play loop
   const draftMode = ref('fantasy')   // 'fantasy' | 'rookie'
   const teamDirections = ref({})     // map of teamId → direction string
+  // Progress (1 → 0) of the current AI team's "deciding" countdown, so the draft
+  // UI can show the same badge ring for AI teams that the user gets from the 60s
+  // pick clock. Updated by autoPlayAIPicks; 0 when no AI team is on the clock.
+  const aiDecideProgress = ref(0)
+
+  // Small hold after each AI pick so the eye catches the new selection in the
+  // persistent LAST PICK card before the next team starts deciding.
+  const PICK_BEAT_MS = 700
 
   let timerInterval = null
 
@@ -88,6 +101,24 @@ export const useDraftStore = defineStore('draft', () => {
   const userRoster = computed(() => {
     return draftResults.value.filter(r => r.teamId === userTeamId.value)
   })
+
+  // --- Fantasy-draft salary cap (no-op in rookie mode) ---
+  const userPayroll = computed(() =>
+    userRoster.value.reduce((sum, r) => sum + (r.contractSalary ?? r.contract_salary ?? 0), 0)
+  )
+
+  // Penalty engages once the user's drafted payroll is OVER the league cap.
+  const userCapPenaltyActive = computed(() =>
+    draftMode.value === 'fantasy' && userPayroll.value > SALARY_CAP
+  )
+
+  // While the penalty is active, only contracts below OVERCAP_MAX_SALARY may be
+  // drafted by the user. Always true in rookie mode / when under the cap.
+  function isPlayerDraftEligible(player) {
+    if (!userCapPenaltyActive.value) return true
+    const salary = player?.contractSalary ?? player?.contract_salary ?? 0
+    return salary < OVERCAP_MAX_SALARY
+  }
 
   const teamRosters = computed(() => {
     const map = {}
@@ -182,6 +213,8 @@ export const useDraftStore = defineStore('draft', () => {
 
     const player = allPlayers.value.find(p => p.id === playerId)
     if (!player) return
+    // Over-cap penalty: block expensive picks (UI also disables the button).
+    if (!isPlayerDraftEligible(player)) return
 
     stopTimer()
     recordPick(player)
@@ -210,6 +243,7 @@ export const useDraftStore = defineStore('draft', () => {
       secondaryPosition: player.secondaryPosition,
       overallRating: player.overallRating,
       potentialRating: player.potentialRating,
+      contractSalary: player.contractSalary ?? player.contract_salary ?? 0,
       badges: player.badges || [],
     }
 
@@ -290,20 +324,26 @@ export const useDraftStore = defineStore('draft', () => {
     while (!isDraftComplete.value && !isUserPick.value && !skipRequested.value && !timerPaused.value) {
       // Wait realistic time before the pick
       const waitTime = getRealisticDelay(currentRound.value)
-      // Break the wait into small chunks so skipRequested / pause can interrupt
+      // Break the wait into small chunks so skipRequested / pause can interrupt,
+      // and so the badge countdown ring can tick down over the deciding window.
       const chunkSize = 100
       let waited = 0
+      aiDecideProgress.value = 1
       while (waited < waitTime && !skipRequested.value && !timerPaused.value) {
         await delay(Math.min(chunkSize, waitTime - waited))
         waited += chunkSize
+        aiDecideProgress.value = Math.max(0, 1 - waited / waitTime)
       }
       if (skipRequested.value || isDraftComplete.value || isUserPick.value || timerPaused.value) break
 
       makeAIPick()
       audio.tertiary()
-      await delay(200) // small gap after pick for toast visibility
+      // Small beat so the eye catches the new pick in the persistent LAST PICK
+      // card before the next team starts deciding.
+      await delay(PICK_BEAT_MS)
     }
 
+    aiDecideProgress.value = 0
     isAutoPlaying.value = false
     skipRequested.value = false
 
@@ -314,11 +354,23 @@ export const useDraftStore = defineStore('draft', () => {
     if (campaignId) saveDraftToCache(campaignId)
   }
 
+  // Best available player the user is allowed to take (honors the over-cap
+  // penalty so it can't be bypassed by the timer / Skip Pick). Falls back to the
+  // top player if somehow nothing is eligible, to avoid a stuck draft.
+  function _bestAvailableForUser() {
+    if (userCapPenaltyActive.value) {
+      return availablePlayers.value.find(isPlayerDraftEligible) || availablePlayers.value[0] || null
+    }
+    return availablePlayers.value[0] || null
+  }
+
   function simCurrentPick() {
     if (isDraftComplete.value) return
 
+    aiDecideProgress.value = 0
+
     if (isUserPick.value) {
-      const best = availablePlayers.value[0]
+      const best = _bestAvailableForUser()
       if (best) {
         stopTimer()
         recordPick(best)
@@ -349,6 +401,7 @@ export const useDraftStore = defineStore('draft', () => {
     isSimming.value = true
     isAutoPlaying.value = false
     skipRequested.value = true
+    aiDecideProgress.value = 0
     stopTimer()
 
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms))
@@ -376,6 +429,7 @@ export const useDraftStore = defineStore('draft', () => {
     isSimming.value = true
     isAutoPlaying.value = false
     skipRequested.value = true
+    aiDecideProgress.value = 0
     stopTimer()
 
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms))
@@ -384,7 +438,7 @@ export const useDraftStore = defineStore('draft', () => {
 
     while (!isDraftComplete.value) {
       if (isUserPick.value) {
-        const best = availablePlayers.value[0]
+        const best = _bestAvailableForUser()
         if (best) {
           recordPick(best)
           advancePick()
@@ -409,7 +463,7 @@ export const useDraftStore = defineStore('draft', () => {
       if (timerSeconds.value <= 0) {
         stopTimer()
         if (isUserPick.value) {
-          const best = availablePlayers.value[0]
+          const best = _bestAvailableForUser()
           if (best) {
             recordPick(best)
             advancePick()
@@ -800,6 +854,7 @@ export const useDraftStore = defineStore('draft', () => {
     skipRequested.value = false
     draftMode.value = 'fantasy'
     teamDirections.value = {}
+    aiDecideProgress.value = 0
     stopTimer()
   }
 
@@ -826,6 +881,7 @@ export const useDraftStore = defineStore('draft', () => {
     lastPickResult,
     draftMode,
     teamDirections,
+    aiDecideProgress,
     // Getters
     currentPick,
     isUserPick,
@@ -834,6 +890,11 @@ export const useDraftStore = defineStore('draft', () => {
     availablePlayers,
     filteredPlayers,
     userRoster,
+    userPayroll,
+    userCapPenaltyActive,
+    isPlayerDraftEligible,
+    salaryCap: SALARY_CAP,
+    overCapMaxSalary: OVERCAP_MAX_SALARY,
     teamRosters,
     recentPicks,
     currentRoundPicks,

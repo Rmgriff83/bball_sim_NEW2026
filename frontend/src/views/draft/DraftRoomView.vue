@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDraftStore } from '@/stores/draft'
 import { useCampaignStore } from '@/stores/campaign'
@@ -10,13 +10,23 @@ import { useAudioStore } from '@/stores/audio'
 import { LoadingSpinner } from '@/components/ui'
 import DraftCompleteModal from '@/components/draft/DraftCompleteModal.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
-import { Search, ChevronUp, ChevronDown, FastForward, SkipForward, SkipBack, Users, X } from 'lucide-vue-next'
+import DraftLastPick from '@/components/draft/DraftLastPick.vue'
+import DraftNewsTicker from '@/components/draft/DraftNewsTicker.vue'
+import DraftAnnouncer from '@/components/draft/DraftAnnouncer.vue'
+import DraftCapReadout from '@/components/draft/DraftCapReadout.vue'
+import { onClockLine } from '@/engine/draft/draftCommentary'
+import { DRAFT_ATTRIBUTES, getAttrValue, attrLevelColor } from '@/utils/draftAttributes'
+import { readableAccent, idealTextOn } from '@/utils/colorContrast'
+import { useIsLightTheme } from '@/composables/useTheme'
+import { Search, ChevronUp, ChevronDown, FastForward, SkipForward, SkipBack, Users, X, Timer } from 'lucide-vue-next'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { generateAndSaveRookieClass } from '@/engine/draft/RookieGenerationService'
 import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
 import { analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
+import { getEffectiveExpectation } from '@/engine/season/OwnerExpectationService'
+import { findOwnerForTeam } from '@/engine/data/owners'
 import { SCOUTABLE_ATTRIBUTES } from '@/engine/data/attributeSchema'
 
 const route = useRoute()
@@ -28,13 +38,27 @@ const toastStore = useToastStore()
 const walkthroughStore = useWalkthroughStore()
 const audio = useAudioStore()
 
-// Draft-room timer audio: a "you're on the clock" cue when the user's turn
-// begins, and a per-second tick through the final 10 seconds. (Generic button
-// taps are handled app-wide by the global click listener in main.js.)
-watch(() => draftStore.isUserPick, (isUser) => {
-  if (isUser && !draftStore.isDraftComplete && !draftStore.isSimming && !draftStore.timerPaused) {
-    audio.play('draftStart')
+// ESPN-style start-of-draft sting, played once when the draft becomes active.
+// (Null-safe: silent until draft-intro.mp3 is added to src/assets/audio/.)
+watch(() => draftStore.isDraftActive, (active, prev) => {
+  if (active && !prev && !draftStore.isDraftComplete && !draftStore.isSimming) {
+    audio.playGameSfx('draftIntro')
   }
+}, { immediate: true })
+
+// "On the clock" cue + in-panel transition: whenever a new team comes up, fire
+// the sound and pulse the on-the-clock panel. Gated so skip/sim don't spam it.
+const clockPulse = ref(false)
+let clockPulseTimer = null
+const commishLine = computed(() => onClockLine(draftStore.currentPick))
+watch(() => draftStore.currentPick?.teamId, (teamId, prev) => {
+  if (teamId == null || teamId === prev) return
+  if (draftStore.isSimming || draftStore.isDraftComplete) return
+  audio.playGameSfx('onTheClock')
+  clockPulse.value = false
+  requestAnimationFrame(() => { clockPulse.value = true })
+  clearTimeout(clockPulseTimer)
+  clockPulseTimer = setTimeout(() => { clockPulse.value = false }, 900)
 })
 
 watch(() => draftStore.timerSeconds, (secs, prev) => {
@@ -61,6 +85,8 @@ watch(() => walkthroughStore.activeKey === 'liveDraft', (touring) => {
 
 const campaignId = computed(() => route.params.id)
 const isRookieMode = computed(() => route.query.mode === 'rookie' || draftStore.draftMode === 'rookie')
+// Calendar year of the rookie class (rookies first play next season).
+const draftYear = computed(() => (campaignStore.currentCampaign?.currentSeasonYear ?? 2025) + 1)
 const loading = ref(true)
 const error = ref(null)
 const showCompleteModal = ref(false)
@@ -87,6 +113,40 @@ function getScoutedDisplay(player, attr) {
   return '?'
 }
 
+// Scouting-aware display for a (nested) attribute key — used by the per-row
+// attribute strip on the draft board.
+function attrDisplay(player, key) {
+  if (!isAttributeRevealed(player.id, key)) return '?'
+  const v = getAttrValue(player, key)
+  return v == null ? '—' : v
+}
+
+// Chip left-border color denoting the attribute's level (high → low), matching
+// the player detail modal. Unscouted (rookie) attrs stay neutral.
+function attrChipColor(player, key) {
+  if (!isAttributeRevealed(player.id, key)) return 'var(--color-text-tertiary)'
+  return attrLevelColor(getAttrValue(player, key))
+}
+
+// Custom attribute tooltip — teleported to <body> so it isn't clipped by the
+// attribute strip's overflow (native `title` is slow/unreliable here).
+const attrTip = ref({ show: false, text: '', x: 0, y: 0 })
+function showAttrTip(e, name) {
+  const r = e.currentTarget.getBoundingClientRect()
+  attrTip.value = { show: true, text: name, x: r.left + r.width / 2, y: r.top - 8 }
+}
+function hideAttrTip() {
+  attrTip.value.show = false
+}
+
+// Compact board name: first initial + last name (e.g. "M. Bridges").
+function shortName(player) {
+  const first = (player?.firstName || '').trim()
+  const last = (player?.lastName || '').trim()
+  const initial = first ? `${first[0]}. ` : ''
+  return `${initial}${last}`.trim()
+}
+
 function getRevealedAttributes(playerId) {
   const raw = scoutedPlayers.value[playerId]?.revealedAttributes || []
   return raw.filter(a => ALL_ATTRIBUTES.includes(a))
@@ -101,15 +161,22 @@ function openPlayerModal(player) {
   showPlayerModal.value = true
 }
 
-// The modal shows a "Draft Player" button only when it's the user's live pick.
+// The modal shows a "Draft Player" button only when it's the user's live pick
+// AND the player is cap-eligible (fantasy over-cap penalty).
 const canDraftCurrent = computed(() =>
-  draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete
+  draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete &&
+  draftStore.isPlayerDraftEligible(selectedPlayer.value)
 )
 
 // Manual user pick (from the list row or the modal). Plays the affirmation
 // sound; the timer-expiry auto-pick stays silent since it isn't a user action.
 function handleDraftPick(playerId) {
   if (!playerId) return
+  const player = draftStore.allPlayers.find(p => p.id === playerId)
+  if (player && ineligible(player)) {
+    toastStore.showError('Over the salary cap — only contracts under $5M can be drafted.')
+    return
+  }
   audio.affirm()
   draftStore.makeUserPick(playerId)
 }
@@ -121,10 +188,29 @@ function handleDraftFromModal(player) {
 }
 
 // Computed
+// Team-color theming must stay readable on both themes (e.g. Brooklyn's near-
+// black on the dark panel). `clockAccent` is a contrast-safe version of the
+// current team's color for text/accent lines; the badge fill keeps the raw
+// color with an auto black/white label.
+const isLightTheme = useIsLightTheme()
+const clockColor = computed(() => draftStore.currentPick?.teamColor || null)
+const clockAccent = computed(() => readableAccent(clockColor.value, isLightTheme.value))
+const clockBadgeText = computed(() => idealTextOn(clockColor.value || '#666'))
+
 const timerProgress = computed(() => draftStore.timerSeconds / 60)
-const timerColor = computed(() => {
-  if (draftStore.timerSeconds > 30) return '#4ade80'
-  if (draftStore.timerSeconds > 10) return '#fbbf24'
+
+// Unified countdown ring around the team badge — the user's 60s pick clock OR an
+// AI team's "deciding" countdown. 0..1, colored by fraction (≈ old 30s/10s).
+const clockProgress = computed(() =>
+  draftStore.isUserPick ? timerProgress.value : draftStore.aiDecideProgress
+)
+const showClockRing = computed(() =>
+  !draftStore.isSimming && !draftStore.isDraftComplete && clockProgress.value > 0
+)
+const ringColor = computed(() => {
+  const p = clockProgress.value
+  if (p > 0.5) return '#4ade80'
+  if (p > 0.17) return '#fbbf24'
   return '#ef4444'
 })
 
@@ -159,9 +245,11 @@ const tickerSlots = computed(() => {
   })
 })
 
-// Round ticker — current round picks for looping marquee
+// Ticker marquee — the most recent 50 completed picks, in pick order. Using a
+// rolling window (rather than the current round) means it never empties out when
+// a new round starts; it just keeps sliding forward as picks come in.
 const roundTickerItems = computed(() => {
-  return draftStore.currentRoundPicks
+  return draftStore.draftResults.slice(-50)
 })
 
 function getPlayerAge(birthDate) {
@@ -193,6 +281,12 @@ function formatContract(player) {
   return years ? `${amount} · ${years}y` : amount
 }
 
+// Over-cap penalty: a fantasy-draft player the user currently can't draft
+// (only meaningful while the user is over the cap; always false otherwise).
+function ineligible(player) {
+  return !draftStore.isPlayerDraftEligible(player)
+}
+
 function getSortIcon(field) {
   if (draftStore.sortField !== field) return null
   return draftStore.sortDir === 'desc' ? 'desc' : 'asc'
@@ -218,7 +312,7 @@ watch(() => draftStore.currentPickIndex, () => {
   if (tickerRef.value) {
     const current = tickerRef.value.querySelector('.ticker-slot.current')
     if (current) {
-      current.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+      current.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' })
     }
   }
 })
@@ -238,69 +332,52 @@ watch(() => draftStore.draftResults.length, () => {
   }
 })
 
-// Per-pick toast notifications — suppressed while the user is fast-forwarding
-// via "skip to my pick" or "skip entire draft" so the toast lane doesn't fill
-// up with dozens of notifications all at once during a rapid sim.
-const suppressPickToasts = ref(false)
-
-watch(() => draftStore.lastPickResult, (result) => {
-  if (!result) return
-  if (suppressPickToasts.value || draftStore.isSimming) return
-  // In rookie draft, hide OVR for unscouted players (user's own picks are fine)
-  let ovr = result.overallRating
-  if (isRookieMode.value && result.teamId !== draftStore.userTeamId) {
-    if (!isAttributeRevealed(result.playerId, 'overallRating')) {
-      ovr = null
-    }
-  }
-  toastStore.showDraftPick({
-    pickNumber: result.pick,
-    teamAbbr: result.teamAbbr,
-    teamColor: result.teamColor,
-    playerName: result.playerName,
-    position: result.position,
-    overallRating: ovr,
-    isUserTeam: result.teamId === draftStore.userTeamId,
-  })
-})
-
-// Toast: show "on the clock" when team changes
-watch(() => draftStore.currentPick, (pick, oldPick) => {
-  if (!pick || draftStore.isDraftComplete || draftStore.isSimming) return
-  // Don't toast on very first pick or same team
-  if (!oldPick) return
-  if (pick.teamId === draftStore.userTeamId) {
-    toastStore.showSuccess(`You're on the clock!`, 3000)
-  } else {
-    toastStore.showSuccess(`${pick.teamName} is on the clock`, 2000)
-  }
-})
+// Per-pick / on-the-clock toast notifications were intentionally removed from the
+// live draft (both fantasy and rookie): the persistent LAST PICK card and the
+// in-panel on-the-clock transition convey the same info without filling the
+// toast lane.
 
 async function handleSkipToMyPick() {
-  suppressPickToasts.value = true
-  try {
-    await draftStore.simToNextUserPick(campaignId.value)
-  } finally {
-    // Hold the suppression one tick past the sim end so any post-loop
-    // watcher fire (last AI pick) is still gated; otherwise the final
-    // toast of the run leaks through after isSimming flips back.
-    await nextTick()
-    suppressPickToasts.value = false
-  }
+  await draftStore.simToNextUserPick(campaignId.value)
 }
 
 async function handleSkipEntire() {
-  suppressPickToasts.value = true
-  try {
-    await draftStore.simEntireDraft(campaignId.value)
-  } finally {
-    await nextTick()
-    suppressPickToasts.value = false
-  }
+  await draftStore.simEntireDraft(campaignId.value)
 }
 
 function handleSkipCurrent() {
   draftStore.simCurrentPick()
+}
+
+// Confirmation popup for the skip buttons (guards accidental taps, esp. on the
+// icon-only mobile footer).
+const skipConfirm = ref({ show: false, title: '', message: '', confirmLabel: 'Skip', danger: false, action: null })
+function askSkip(type) {
+  if (type === 'current') {
+    skipConfirm.value = {
+      show: true, title: 'Skip Pick', danger: false, confirmLabel: 'Skip Pick',
+      message: 'Skip ahead through the current pick?', action: handleSkipCurrent,
+    }
+  } else if (type === 'mine') {
+    skipConfirm.value = {
+      show: true, title: 'Skip to My Pick', danger: false, confirmLabel: 'Skip to My Pick',
+      message: 'Simulate every pick until your next selection?', action: handleSkipToMyPick,
+    }
+  } else {
+    skipConfirm.value = {
+      show: true, title: 'Skip Entire Draft', danger: true, confirmLabel: 'Skip Entire Draft',
+      message: 'Auto-draft the rest of the draft? Every remaining pick — including yours — will be filled automatically.',
+      action: handleSkipEntire,
+    }
+  }
+}
+function confirmSkip() {
+  const fn = skipConfirm.value.action
+  skipConfirm.value.show = false
+  if (fn) fn()
+}
+function cancelSkip() {
+  skipConfirm.value.show = false
 }
 
 // Continue-to-Season click handler. Plays the generic tap explicitly + tells
@@ -335,6 +412,13 @@ async function handleFinalize() {
 onMounted(async () => {
   loading.value = true
   error.value = null
+
+  // The draft room is a fixed-height (100dvh) page that should never scroll. The
+  // document/body behind it can still scroll a hair on iOS (body min-height:100vh >
+  // the visible viewport, plus rubber-band overscroll), which let the user drag the
+  // whole page up/down. Lock the document scroll while this view is mounted.
+  document.documentElement.style.overflow = 'hidden'
+  document.body.style.overflow = 'hidden'
 
   try {
     let campaign = campaignStore.currentCampaign
@@ -406,12 +490,21 @@ onMounted(async () => {
         const lotteryResult = campaign?.settings?.draftLottery ?? null
         const draftOrderSlots = buildRookieDraftOrder(teamsList, standings, gameYear, lotteryResult)
 
-        // Compute team directions for AI drafting
+        // Compute team directions for AI drafting. The user team carries its LIVE
+        // (dynamic) owner expectation so the direction reflects how the franchise
+        // is actually trending — not the static preseason mandate.
         const context = buildContext({ standings, teams: teamsList, seasonPhase: 'offseason' })
+        const userTeamForDir = teamsList.find(t => t.id === campaign.teamId)
+        const userTier = userTeamForDir
+          ? getEffectiveExpectation(campaign, findOwnerForTeam(userTeamForDir.abbreviation)).tier
+          : null
         const directions = {}
         for (const team of teamsList) {
           const teamRoster = allPlayers.filter(p => p.teamId === team.id)
-          directions[team.id] = analyzeTeamDirection(team, teamRoster, context)
+          const dirTeam = (userTier && team.id === campaign.teamId)
+            ? { ...team, effectiveExpectation: userTier }
+            : team
+          directions[team.id] = analyzeTeamDirection(dirTeam, teamRoster, context)
         }
 
         draftStore.initializeRookieDraft(campaign, rookies, teamsList, draftOrderSlots, directions)
@@ -468,12 +561,18 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // Restore document scroll locked in onMounted.
+  document.documentElement.style.overflow = ''
+  document.body.style.overflow = ''
   draftStore.stopTimer()
   draftStore.skipRequested = true
   // If the user leaves mid-tour, end it and make sure the clock isn't left
   // frozen for a future draft in this session.
   if (walkthroughStore.activeKey === 'liveDraft') walkthroughStore.skip()
   draftStore.timerPaused = false
+  // Tear down teleported overlays so they can't orphan in <body> and block taps.
+  skipConfirm.value.show = false
+  attrTip.value.show = false
 })
 </script>
 
@@ -520,13 +619,12 @@ onUnmounted(() => {
               'user-team': slot.teamId === draftStore.userTeamId,
             }"
           >
+            <span class="ticker-badge" :class="{ picked: slot.isCompleted && slot.result }">
+              {{ slot.isCompleted && slot.result ? slot.result.playerName?.split(' ').pop() : `#${slot.pick}` }}
+            </span>
             <div class="ticker-team-badge" :style="{ backgroundColor: slot.teamColor }">
               {{ slot.teamAbbr }}
             </div>
-            <div v-if="slot.isCompleted && slot.result" class="ticker-player">
-              {{ slot.result.playerName?.split(' ').pop() }}
-            </div>
-            <div v-else class="ticker-pick-num">#{{ slot.pick }}</div>
           </div>
         </div>
       </div>
@@ -541,6 +639,7 @@ onUnmounted(() => {
               class="round-ticker-item"
               :class="{ 'user-pick': pick.teamId === draftStore.userTeamId }"
             >
+              <span class="rt-pick">#{{ pick.pick }}</span>
               <span class="rt-badge" :style="{ backgroundColor: pick.teamColor }">{{ pick.teamAbbr }}</span>
               <span class="rt-player">{{ pick.playerName }}</span>
               <span class="rt-pos">{{ pick.position }}</span>
@@ -554,6 +653,7 @@ onUnmounted(() => {
               class="round-ticker-item"
               :class="{ 'user-pick': pick.teamId === draftStore.userTeamId }"
             >
+              <span class="rt-pick">#{{ pick.pick }}</span>
               <span class="rt-badge" :style="{ backgroundColor: pick.teamColor }">{{ pick.teamAbbr }}</span>
               <span class="rt-player">{{ pick.playerName }}</span>
               <span class="rt-pos">{{ pick.position }}</span>
@@ -567,8 +667,14 @@ onUnmounted(() => {
       <div class="draft-main">
         <!-- Left Sidebar: User Roster -->
         <aside class="draft-sidebar roster-panel" data-tour="draft-roster">
-          <h3 class="sidebar-title">YOUR ROSTER</h3>
-          <div class="roster-count">{{ isRookieMode ? `${draftStore.userRoster.length} picks made` : `${draftStore.userRoster.length} / 15` }}</div>
+          <div class="roster-head-row">
+            <h3 class="sidebar-title">YOUR ROSTER</h3>
+            <div class="roster-count">{{ isRookieMode ? `${draftStore.userRoster.length} picks made` : `${draftStore.userRoster.length} / 15` }}</div>
+          </div>
+
+          <!-- Salary cap (fantasy drafts only) -->
+          <DraftCapReadout />
+
 
           <div class="roster-positions">
             <div
@@ -592,14 +698,39 @@ onUnmounted(() => {
 
         <!-- Center: On The Clock + Player Pool -->
         <div class="draft-center">
+          <!-- Stage: on the clock (left 70%) merged with last pick (right 30%) -->
+          <div class="draft-stage" :class="{ 'stage-complete': draftStore.isDraftComplete }">
           <!-- On The Clock -->
-          <div class="on-the-clock" :class="{ 'user-turn': draftStore.isUserPick }" data-tour="draft-clock">
+          <div
+            class="on-the-clock"
+            :class="{ 'user-turn': draftStore.isUserPick, pulse: clockPulse }"
+            :style="{
+              '--clock-color': draftStore.currentPick?.teamColor || 'var(--color-primary)',
+              '--clock-accent': clockAccent || 'var(--color-primary)',
+            }"
+            data-tour="draft-clock"
+          >
             <div v-if="!draftStore.isDraftComplete" class="clock-content">
-              <div
-                class="clock-team-badge"
-                :style="{ backgroundColor: draftStore.currentPick?.teamColor || '#666' }"
-              >
-                {{ draftStore.currentPick?.teamAbbr }}
+              <div class="clock-badge-wrap">
+                <svg v-if="showClockRing" class="badge-ring" viewBox="0 0 60 60">
+                  <circle cx="30" cy="30" r="28" class="badge-ring-track" />
+                  <circle
+                    cx="30" cy="30" r="28"
+                    class="badge-ring-progress"
+                    :class="{ 'ring-slow': draftStore.isUserPick }"
+                    :stroke="ringColor"
+                    stroke-linecap="round"
+                    :stroke-dasharray="175.9"
+                    :stroke-dashoffset="175.9 * (1 - clockProgress)"
+                    transform="rotate(-90 30 30)"
+                  />
+                </svg>
+                <div
+                  class="clock-team-badge"
+                  :style="{ backgroundColor: draftStore.currentPick?.teamColor || '#666', color: clockBadgeText }"
+                >
+                  {{ draftStore.currentPick?.teamAbbr }}
+                </div>
               </div>
               <div class="clock-info">
                 <div class="clock-team-name">{{ draftStore.currentPick?.teamName }}</div>
@@ -609,28 +740,10 @@ onUnmounted(() => {
                   <template v-else-if="draftStore.isUserPick">ON THE CLOCK</template>
                   <template v-else>SELECTING...</template>
                 </div>
-              </div>
-              <div v-if="draftStore.isUserPick && !draftStore.isSimming" class="clock-timer">
-                <svg class="timer-ring" viewBox="0 0 48 48">
-                  <circle
-                    cx="24" cy="24" r="20"
-                    fill="none"
-                    stroke="rgba(255,255,255,0.1)"
-                    stroke-width="3"
-                  />
-                  <circle
-                    cx="24" cy="24" r="20"
-                    fill="none"
-                    :stroke="timerColor"
-                    stroke-width="3"
-                    stroke-linecap="round"
-                    :stroke-dasharray="125.66"
-                    :stroke-dashoffset="125.66 * (1 - timerProgress)"
-                    transform="rotate(-90 24 24)"
-                    class="timer-progress"
-                  />
-                </svg>
-                <span class="timer-text">{{ draftStore.timerSeconds }}</span>
+                <div v-if="!draftStore.isSimming" class="clock-commish">
+                  <Timer :size="12" />
+                  <span>{{ commishLine }}</span>
+                </div>
               </div>
             </div>
             <div v-else class="clock-content draft-complete">
@@ -649,13 +762,18 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- Last Pick (right 35% of the stage) — hidden once the draft is over -->
+          <DraftLastPick v-if="!draftStore.isDraftComplete" class="stage-lastpick" :campaign-id="campaignId" />
+          </div>
+
+          <!-- Rookie-only announcer line (typewriter), above the news ticker -->
+          <DraftAnnouncer :draft-year="draftYear" />
+
+          <!-- Recent picks — minimal vertical news ticker -->
+          <DraftNewsTicker />
+
           <!-- Player Pool -->
           <div class="player-pool" data-tour="draft-pool">
-            <div class="pool-header">
-              <h3 class="pool-title">AVAILABLE PLAYERS</h3>
-              <div class="pool-count">{{ draftStore.availablePlayers.length }} players</div>
-            </div>
-
             <!-- Filters -->
             <div class="pool-filters" data-tour="draft-filters">
               <div class="position-filters">
@@ -680,91 +798,102 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- Player Table -->
-            <div class="pool-table-wrap">
-              <table class="pool-table">
-                <thead>
-                  <tr>
-                    <th class="col-name" @click="draftStore.toggleSort('lastName')">
-                      Name
-                      <ChevronUp v-if="getSortIcon('lastName') === 'asc'" :size="12" />
-                      <ChevronDown v-if="getSortIcon('lastName') === 'desc'" :size="12" />
-                    </th>
-                    <th class="col-pos">Pos</th>
-                    <th class="col-num" @click="draftStore.toggleSort('overallRating')">
-                      OVR
-                      <ChevronUp v-if="getSortIcon('overallRating') === 'asc'" :size="12" />
-                      <ChevronDown v-if="getSortIcon('overallRating') === 'desc'" :size="12" />
-                    </th>
-                    <th class="col-num" @click="draftStore.toggleSort('potentialRating')">
-                      POT
-                      <ChevronUp v-if="getSortIcon('potentialRating') === 'asc'" :size="12" />
-                      <ChevronDown v-if="getSortIcon('potentialRating') === 'desc'" :size="12" />
-                    </th>
-                    <th class="col-num col-age">Age</th>
-                    <th class="col-ht">Ht</th>
-                    <th v-if="!isRookieMode" class="col-contract">Contract</th>
-                    <th class="col-action"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <template
-                    v-for="(player, idx) in draftStore.filteredPlayers.slice(0, 100)"
-                    :key="player.id"
+            <!-- Player list: fixed identity (sortable) + per-row horizontally
+                 scrollable attribute strip + pinned Draft/Details button. -->
+            <div class="pool-list-wrap">
+              <div class="pool-head">
+                <div class="ph-identity">
+                  <button class="ph-sort" @click="draftStore.toggleSort('lastName')">
+                    Name
+                    <ChevronUp v-if="getSortIcon('lastName') === 'asc'" :size="11" />
+                    <ChevronDown v-if="getSortIcon('lastName') === 'desc'" :size="11" />
+                  </button>
+                  <button class="ph-sort ph-num" @click="draftStore.toggleSort('overallRating')">
+                    OVR
+                    <ChevronUp v-if="getSortIcon('overallRating') === 'asc'" :size="11" />
+                    <ChevronDown v-if="getSortIcon('overallRating') === 'desc'" :size="11" />
+                  </button>
+                  <button class="ph-sort ph-num" @click="draftStore.toggleSort('potentialRating')">
+                    POT
+                    <ChevronUp v-if="getSortIcon('potentialRating') === 'asc'" :size="11" />
+                    <ChevronDown v-if="getSortIcon('potentialRating') === 'desc'" :size="11" />
+                  </button>
+                </div>
+                <div class="ph-attrs">Attributes →</div>
+                <div class="pool-count">{{ draftStore.availablePlayers.length }} players</div>
+              </div>
+
+              <div class="pool-list">
+                <div
+                  v-for="(player, idx) in draftStore.filteredPlayers.slice(0, 100)"
+                  :key="player.id"
+                  class="pool-item"
+                >
+                  <div
+                    class="player-row"
+                    :class="{ 'over-cap': ineligible(player) }"
+                    :data-tour="idx === 0 ? 'draft-player-row' : null"
                   >
-                    <tr
-                      class="player-row"
-                      :data-tour="idx === 0 ? 'draft-player-row' : null"
-                      @click="openPlayerModal(player)"
-                    >
-                      <td class="col-name">
-                        <span class="player-name">{{ player.firstName }} {{ player.lastName }}</span>
-                      </td>
-                      <td class="col-pos">
+                    <div class="row-identity" @click="openPlayerModal(player)">
+                      <div class="ri-head">
                         <span class="pos-badge">{{ player.position }}</span>
-                      </td>
-                      <td class="col-num ovr-cell" :class="{ unrevealed: !isAttributeRevealed(player.id, 'overallRating') }">{{ getScoutedDisplay(player, 'overallRating') }}</td>
-                      <td class="col-num pot-cell" :class="{ unrevealed: !isAttributeRevealed(player.id, 'potentialRating') }">{{ getScoutedDisplay(player, 'potentialRating') }}</td>
-                      <td class="col-num col-age">{{ getPlayerAge(player.birthDate) }}</td>
-                      <td class="col-ht">{{ formatHeight(player.heightInches) }}</td>
-                      <td v-if="!isRookieMode" class="col-contract">{{ formatContract(player) }}</td>
-                      <td class="col-action">
-                        <button
-                          v-if="draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete"
-                          class="btn-draft"
-                          @click.stop="handleDraftPick(player.id)"
-                        >
-                          Draft
-                        </button>
-                        <button
-                          v-else
-                          class="btn-details"
-                          @click.stop="openPlayerModal(player)"
-                        >
-                          Details
-                        </button>
-                      </td>
-                    </tr>
-                    <!-- Mobile-only contract subrow. Hidden on desktop via CSS;
-                         spans the first 4 visible cells (Name→POT) so the
-                         contract info that we dropped from the mobile column
-                         set comes back as a footer-style line under each row. -->
-                    <tr
-                      v-if="!isRookieMode"
-                      class="contract-row"
-                      @click="openPlayerModal(player)"
-                    >
-                      <td colspan="4" class="contract-cell">
-                        <span class="contract-label">Contract</span>
-                        <span class="contract-value">{{ formatContract(player) }}</span>
-                      </td>
-                      <!-- Empty trailing cell so the contract-row's column count
-                           matches the main row (4 + 4 = 8 in non-rookie mode). -->
-                      <td colspan="4" class="contract-spacer"></td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
+                        <span class="ri-name">{{ shortName(player) }}</span>
+                      </div>
+                      <div class="ri-stats">
+                        <span class="ri-stat" :class="{ unrevealed: !isAttributeRevealed(player.id, 'overallRating') }">OVR {{ getScoutedDisplay(player, 'overallRating') }}</span>
+                        <span class="ri-stat" :class="{ unrevealed: !isAttributeRevealed(player.id, 'potentialRating') }">POT {{ getScoutedDisplay(player, 'potentialRating') }}</span>
+                      </div>
+                      <div v-if="!isRookieMode" class="ri-contract">
+                        {{ formatContract(player) }}
+                        <span v-if="ineligible(player)" class="overcap-chip">OVER CAP</span>
+                      </div>
+                    </div>
+
+                    <div class="row-attrs">
+                      <span
+                        v-for="a in DRAFT_ATTRIBUTES"
+                        :key="a.key"
+                        class="attr-chip"
+                        :class="{ unrevealed: !isAttributeRevealed(player.id, a.key) }"
+                        :style="{ '--cat': attrChipColor(player, a.key) }"
+                        @mouseenter="showAttrTip($event, a.name)"
+                        @mouseleave="hideAttrTip"
+                      >
+                        <span class="ac-lbl">{{ a.label }}</span>
+                        <span class="ac-val">{{ attrDisplay(player, a.key) }}</span>
+                      </span>
+                    </div>
+
+                    <div class="row-action">
+                      <button
+                        v-if="draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete && !ineligible(player)"
+                        class="btn-draft"
+                        @click.stop="handleDraftPick(player.id)"
+                      >
+                        Draft
+                      </button>
+                      <button
+                        v-else-if="draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete"
+                        class="btn-overcap"
+                        disabled
+                        title="Over the salary cap — only contracts under $5M can be drafted."
+                        @click.stop
+                      >
+                        Over Cap
+                      </button>
+                      <button
+                        v-else
+                        class="btn-details"
+                        aria-label="View details"
+                        title="View details"
+                        @click.stop="openPlayerModal(player)"
+                      >
+                        <Search :size="14" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -780,13 +909,18 @@ onUnmounted(() => {
       </Transition>
       <Transition name="roster-slide">
         <aside v-if="showMobileRoster" class="mobile-roster-drawer">
+          <button class="drawer-handle" aria-label="Close roster" @click="showMobileRoster = false"></button>
           <div class="mobile-roster-header">
             <h3 class="sidebar-title">YOUR ROSTER</h3>
             <button class="mobile-roster-close" @click="showMobileRoster = false">
               <X :size="18" />
             </button>
           </div>
+          <!-- Salary cap (fantasy drafts only) -->
+          <DraftCapReadout />
+
           <div class="roster-count">{{ isRookieMode ? `${draftStore.userRoster.length} picks made` : `${draftStore.userRoster.length} / 15` }}</div>
+
 
           <div class="roster-positions">
             <div
@@ -811,39 +945,44 @@ onUnmounted(() => {
 
       <!-- Bottom Bar: Skip Controls -->
       <footer class="draft-footer">
+        <!-- Mobile-only pull-up handle: signals the footer toggles the roster sheet -->
+        <button class="footer-handle" aria-label="Toggle roster" @click="showMobileRoster = !showMobileRoster"></button>
         <div class="sim-controls" data-tour="draft-controls">
           <button
             class="sim-btn roster-toggle-btn"
+            :class="{ open: showMobileRoster }"
             data-tour="draft-roster-toggle"
             @click="showMobileRoster = !showMobileRoster"
           >
             <Users :size="16" />
+            <span class="roster-toggle-label">Roster</span>
             <span class="roster-toggle-count">{{ draftStore.userRoster.length }}</span>
+            <ChevronUp :size="14" class="roster-toggle-chev" />
           </button>
           <button
             class="sim-btn"
             :disabled="draftStore.isSimming || draftStore.isDraftComplete || draftStore.isUserPick"
-            @click="handleSkipCurrent"
+            @click="askSkip('current')"
           >
             <SkipBack :size="16" />
-            Skip Pick
+            <span class="sim-label">Skip Pick</span>
           </button>
           <button
             v-if="draftStore.hasUpcomingUserPick"
             class="sim-btn"
             :disabled="draftStore.isSimming || draftStore.isDraftComplete"
-            @click="handleSkipToMyPick"
+            @click="askSkip('mine')"
           >
             <FastForward :size="16" />
-            Skip to My Pick
+            <span class="sim-label">Skip to My Pick</span>
           </button>
           <button
             class="sim-btn sim-all"
             :disabled="draftStore.isSimming || draftStore.isDraftComplete"
-            @click="handleSkipEntire"
+            @click="askSkip('all')"
           >
             <SkipForward :size="16" />
-            Skip Entire Draft
+            <span class="sim-label">Skip Entire Draft</span>
           </button>
         </div>
         <div class="pick-counter">
@@ -893,17 +1032,55 @@ onUnmounted(() => {
       @draft-player="handleDraftFromModal"
       @close="showPlayerModal = false"
     />
+
+    <!-- Attribute name tooltip (teleported so the scroll strip can't clip it) -->
+    <Teleport to="body">
+      <div
+        v-if="attrTip.show"
+        class="attr-tip"
+        :style="{ left: attrTip.x + 'px', top: attrTip.y + 'px' }"
+      >{{ attrTip.text }}</div>
+    </Teleport>
+
+    <!-- Skip confirmation -->
+    <Teleport to="body">
+      <Transition name="skipm">
+        <div v-if="skipConfirm.show" class="skip-overlay" @click.self="cancelSkip">
+          <div class="skip-card">
+            <header class="skip-header">
+              <h2 class="skip-title">{{ skipConfirm.title }}</h2>
+              <button class="skip-close" aria-label="Close" @click="cancelSkip">
+                <X :size="18" />
+              </button>
+            </header>
+            <p class="skip-message">{{ skipConfirm.message }}</p>
+            <div class="skip-actions">
+              <button class="skip-cancel" @click="cancelSkip">Cancel</button>
+              <button class="skip-confirm" :class="{ danger: skipConfirm.danger }" @click="confirmSkip">
+                {{ skipConfirm.confirmLabel }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .draft-room {
+  /* 100dvh tracks the ACTUAL visible viewport (iOS WebView / collapsing chrome),
+     so the page can't end up taller than the device and scroll — which on mobile
+     pushed the footer below the fold. 100vh fallback for older engines. */
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
   overflow: hidden;
+  /* Kill iOS rubber-band/overscroll so the page can't be dragged up/down. */
+  overscroll-behavior: none;
 }
 
 /* Loading / Error */
@@ -1002,6 +1179,8 @@ onUnmounted(() => {
   border-bottom: 1px solid var(--glass-border);
   scrollbar-width: none;
   flex-shrink: 0;
+  /* Left-aligned current slot sits just inside the track's edge padding. */
+  scroll-padding-left: 24px;
 }
 
 .draft-ticker::-webkit-scrollbar {
@@ -1016,12 +1195,15 @@ onUnmounted(() => {
 }
 
 .ticker-slot {
+  position: relative;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   align-items: center;
   gap: 4px;
-  padding: 6px 10px;
-  min-width: 64px;
+  padding: 8px;
+  min-width: 44px;
+  min-height: 44px;
   border-radius: var(--radius-md);
   background: var(--color-bg-tertiary);
   border: 1px solid transparent;
@@ -1052,29 +1234,37 @@ onUnmounted(() => {
 }
 
 .ticker-team-badge {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.55rem;
+  font-size: 0.6rem;
   font-weight: 700;
   color: white;
 }
 
-.ticker-player {
-  font-size: 0.6rem;
-  color: var(--color-text-secondary);
-  max-width: 60px;
+/* Minimal badge in the slot's top-left: pick # → player name once selected. */
+.ticker-badge {
+  position: absolute;
+  top: 0px;
+  left: 3px;
+  max-width: calc(100% - 6px);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.75);
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ticker-pick-num {
-  font-size: 0.6rem;
-  color: var(--color-text-tertiary);
+.ticker-badge.picked {
+  color: var(--color-text-primary);
 }
 
 /* Round Ticker (marquee) */
@@ -1089,7 +1279,8 @@ onUnmounted(() => {
 .round-ticker-track {
   display: flex;
   width: max-content;
-  animation: marquee 30s linear infinite;
+  /* 120s = ~half the previous speed again (was 60s, originally 30s). */
+  animation: marquee 120s linear infinite;
 }
 
 .round-ticker-content {
@@ -1109,6 +1300,13 @@ onUnmounted(() => {
 
 .round-ticker-item.user-pick .rt-player {
   color: var(--color-primary);
+}
+
+.rt-pick {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  margin-right: 2px;
 }
 
 .rt-badge {
@@ -1181,6 +1379,52 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
+/* Desktop sidebar: title + count on one row, pushed to opposite edges. */
+.roster-head-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.roster-head-row .sidebar-title,
+.roster-head-row .roster-count {
+  margin-bottom: 0;
+}
+
+/* Fantasy-draft salary cap readout lives in components/draft/DraftCapReadout.vue */
+
+/* Over-cap penalty — ineligible player rows */
+.overcap-chip {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  white-space: nowrap;
+}
+
+.player-row.over-cap {
+  opacity: 0.5;
+}
+
+.btn-overcap {
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  cursor: not-allowed;
+  white-space: nowrap;
+}
+
 .position-group {
   margin-bottom: 12px;
 }
@@ -1229,59 +1473,144 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-/* On The Clock */
-.on-the-clock {
-  padding: 14px 24px;
-  background: var(--color-bg-secondary);
+/* Merged stage: on-the-clock (70%) + last pick (30%) as one element */
+.draft-stage {
+  display: flex;
+  align-items: stretch;
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
 }
 
+.draft-stage > .on-the-clock {
+  flex: 0 0 65%;
+  min-width: 0;
+  border-bottom: none;
+}
+
+/* Draft over: last-pick is hidden, so the clock fills the stage (no empty gap). */
+.draft-stage.stage-complete > .on-the-clock {
+  flex: 1 1 auto;
+}
+
+.draft-stage > .stage-lastpick {
+  flex: 0 0 35%;
+  text-align:center;
+  min-width: 0;
+  border-bottom: none;
+  border-left: 1px solid var(--glass-border);
+}
+
+/* On The Clock */
+.on-the-clock {
+  display:flex;
+  padding: 18px 24px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--clock-color) 14%, transparent), transparent 70%),
+    var(--color-bg-secondary);
+  border-bottom: 1px solid var(--glass-border);
+  border-left: 4px solid var(--clock-accent);
+  box-shadow: inset 0 0 30px color-mix(in srgb, var(--clock-accent) 10%, transparent);
+  flex-shrink: 0;
+  transition: border-color 0.3s ease, background 0.3s ease;
+}
+
 .on-the-clock.user-turn {
-  background: linear-gradient(135deg, rgba(232, 90, 79, 0.08), rgba(244, 162, 89, 0.05));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--clock-color) 22%, transparent), transparent 70%),
+    var(--color-bg-secondary);
 }
 
 .clock-content {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "clock-team-badge clock-team-name clock-team-name"
+    "clock-team-badge clock-team-name clock-team-name"
+    "clock-team-badge clock-team-status clock-team-status"
+    "clock-commish clock-commish clock-commish";
   align-items: center;
-  gap: 16px;
+  column-gap: 18px;
+  row-gap: 2px;
+}
+
+/* The wrapper generates no box so its children (name/status/commish) become
+   direct grid items of .clock-content and can land in their template areas. */
+.clock-info {
+  display: contents;
 }
 
 .clock-team-badge {
-  width: 48px;
-  height: 48px;
-  border-radius: 10px;
+  /* Fills the wrap; circular so the countdown ring wraps its border cleanly. */
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: white;
-  flex-shrink: 0;
-}
-
-.clock-info {
-  flex: 1;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  /* text color set inline (auto black/white for the team fill) */
+  /* soft glow only — the SVG ring now provides the outline */
+  box-shadow: 0 0 14px color-mix(in srgb, var(--clock-accent) 30%, transparent);
 }
 
 .clock-team-name {
-  font-size: 1rem;
-  font-weight: 600;
+  grid-area: clock-team-name;
+  min-width: 0;
+  font-size: 1.3rem;
+  font-weight: 800;
   color: var(--color-text-primary);
+  line-height: 1.1;
 }
 
 .clock-status {
+  grid-area: clock-team-status;
+  min-width: 0;
   font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 0.9rem;
-  letter-spacing: 0.06em;
-  color: var(--color-primary);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--clock-accent);
+}
+
+.clock-commish {
+  grid-area: clock-commish;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  min-width: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+}
+
+.clock-commish svg {
+  min-width: 14px;
+}
+
+/* Brief pulse when a new team comes on the clock (in-panel, no overlay). */
+.on-the-clock.pulse {
+  animation: clock-pulse 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes clock-pulse {
+  0% { box-shadow: inset 0 0 0 0 transparent; }
+  35% {
+    box-shadow: inset 0 0 40px color-mix(in srgb, var(--clock-accent) 28%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--clock-accent) 50%, transparent);
+  }
+  100% { box-shadow: inset 0 0 30px color-mix(in srgb, var(--clock-accent) 10%, transparent); }
 }
 
 /* Draft-complete state — replaces the timer with an inline Continue CTA.
    Layout switches to a row with the status + button so the user can
    advance straight from the page without dismissing the modal first. */
 .clock-content.draft-complete {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
+  width:100%;
 }
 
 .continue-btn {
@@ -1312,32 +1641,40 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
-/* Timer Ring */
-.clock-timer {
+/* Countdown ring wrapped around the team badge (user + AI) */
+.clock-badge-wrap {
+  grid-area: clock-team-badge;
+  align-self: center;
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 60px;
+  height: 60px;
   flex-shrink: 0;
 }
 
-.timer-ring {
-  width: 48px;
-  height: 48px;
-}
-
-.timer-progress {
-  transition: stroke-dashoffset 1s linear, stroke 0.3s ease;
-}
-
-.timer-text {
+.badge-ring {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--color-text-primary);
+  width: 60px;
+  height: 60px;
+  pointer-events: none;
+}
+
+.badge-ring-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 3;
+}
+
+.badge-ring-progress {
+  fill: none;
+  stroke-width: 3;
+  /* AI ring updates ~10x/sec — keep the tween short so it tracks closely. */
+  transition: stroke-dashoffset 0.15s linear, stroke 0.3s ease;
+}
+
+/* User clock ticks once/sec — a 1s linear sweep reads as a smooth countdown. */
+.badge-ring-progress.ring-slow {
+  transition: stroke-dashoffset 1s linear, stroke 0.3s ease;
 }
 
 /* Player Pool */
@@ -1349,24 +1686,15 @@ onUnmounted(() => {
   padding: 12px 24px 0;
 }
 
-.pool-header {
+/* Player count — sits in the header row beside "Attributes →", pushed right. */
+.pool-count {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  flex-shrink: 0;
-}
-
-.pool-title {
-  font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 1rem;
-  font-weight: 400;
-  letter-spacing: 0.06em;
-}
-
-.pool-count {
+  margin-left: auto;
+  padding: 8px 10px;
   font-size: 0.75rem;
   color: var(--color-text-secondary);
+  white-space: nowrap;
 }
 
 /* Pool Filters */
@@ -1374,12 +1702,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 10px;
-  flex-wrap: wrap;
+  margin-bottom: 8px;
+  /* Keep the position filters + search on one row (incl. mobile). */
+  flex-wrap: nowrap;
   flex-shrink: 0;
 }
 
 .position-filters {
+  flex-shrink: 0;
   display: flex;
   gap: 4px;
 }
@@ -1412,8 +1742,10 @@ onUnmounted(() => {
   background: var(--color-bg-tertiary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
-  flex: 1;
-  max-width: 220px;
+  /* Grow to fill the row, but shrink so it shares the row with the filters. */
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 320px;
 }
 
 .search-box svg {
@@ -1434,119 +1766,359 @@ onUnmounted(() => {
   color: var(--color-text-tertiary);
 }
 
-/* Player Table */
-.pool-table-wrap {
+/* Player list (fixed identity + per-row scrollable attribute strip) */
+.pool-list-wrap {
   flex: 1;
   overflow-y: auto;
   margin: 0 -24px;
   padding: 0 24px;
   min-height: 0;
+  --identity-w: 168px;
 }
 
-.pool-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8rem;
-}
-
-.pool-table thead {
+.pool-head {
   position: sticky;
   top: 0;
   z-index: 2;
+  display: flex;
+  align-items: stretch;
   background: var(--color-bg-primary);
+  border-bottom: 1px solid var(--glass-border);
 }
 
-.pool-table th {
+.ph-identity {
+  flex: 0 0 var(--identity-w);
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 8px 10px;
-  text-align: left;
-  font-size: 0.65rem;
+}
+
+.ph-attrs {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  font-size: 0.6rem;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.ph-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.62rem;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--color-text-secondary);
-  border-bottom: 1px solid var(--glass-border);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
 }
 
-.pool-table th svg {
-  vertical-align: middle;
-  margin-left: 2px;
-}
-
-.pool-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(255,255,255,0.03);
-}
-
-.player-row {
-  transition: background 0.15s ease;
-  cursor: pointer;
-}
-
-.player-row:hover {
-  background: rgba(255,255,255,0.03);
-}
-
-.col-name {
-  min-width: 140px;
-}
-
-.col-pos {
-  width: 50px;
-}
-
-.col-num {
-  width: 50px;
-  text-align: center;
-}
-
-.col-ht {
-  width: 50px;
-  text-align: center;
-}
-
-.col-contract {
-  width: 110px;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.col-action {
-  width: 70px;
-  text-align: right;
-}
-
-.player-name {
-  font-weight: 500;
-}
-
-.pos-badge {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-}
-
-.ovr-cell {
-  font-weight: 600;
+.ph-sort:hover {
   color: var(--color-text-primary);
 }
 
-.pot-cell {
+.pool-item {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.player-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  transition: background 0.15s ease;
+}
+
+.player-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.row-identity {
+  flex: 0 0 var(--identity-w);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 10px;
+  border-right: 1px solid var(--glass-border);
+  cursor: pointer;
+}
+
+/* Position badge + player name on one row. */
+.ri-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ri-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.695rem;
+  text-decoration: underline;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* OVR + POT share one row, beneath the name/position. */
+.ri-stats {
+  display: flex;
+  gap: 8px;
+  font-size: 0.72rem;
+}
+
+.ri-stat {
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* Small gold badge before the player name. */
+.pos-badge {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-gold, #ffd700);
+  color: #000;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+/* Horizontally-scrollable attribute strip — each row scrolls independently. */
+.row-attrs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Right padding clears the pinned action button so the last chip is reachable. */
+  padding: 6px 100px 6px 10px;
+  /* Scrollable, but no visible scrollbar (web + mobile). */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.row-attrs::-webkit-scrollbar {
+  display: none;
+}
+
+.attr-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: baseline;
+  justify-content: center;
+  gap: 2px;
+  flex-shrink: 0;
+  min-width: 45px;
+  max-width: 45px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid var(--cat);
+}
+
+.ac-lbl {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-text-tertiary);
+}
+
+.ac-val {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.attr-chip.unrevealed .ac-val {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+/* Attribute name tooltip — teleported to <body>, positioned above the chip. */
+.attr-tip {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  z-index: 9999;
+  padding: 4px 9px;
+  background: var(--color-bg-elevated, #1b1e26);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+/* Skip confirmation popup (compact, teleported to <body>). */
+.skip-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+}
+
+.skip-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl, 16px);
+  box-shadow: var(--shadow-xl, 0 20px 50px rgba(0, 0, 0, 0.5));
+  overflow: hidden;
+}
+
+.skip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.skip-title {
+  margin: 0;
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.35rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--color-text-primary);
+}
+
+.skip-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full, 999px);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.skip-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.skip-message {
+  margin: 0;
+  padding: 16px 18px;
+  font-size: 0.9rem;
+  line-height: 1.45;
   color: var(--color-text-secondary);
 }
 
-.unrevealed {
-  color: var(--color-text-tertiary) !important;
+.skip-actions {
+  display: flex;
+  gap: 10px;
+  padding: 0 18px 16px;
+}
+
+.skip-cancel,
+.skip-confirm {
+  flex: 1;
+  padding: 11px 16px;
+  border-radius: var(--radius-xl, 12px);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.skip-cancel {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+}
+
+.skip-cancel:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-secondary);
+}
+
+.skip-confirm {
+  background: var(--color-primary);
+  border: none;
+  color: white;
+}
+
+.skip-confirm.danger {
+  background: var(--color-error, #ef4444);
+}
+
+.skip-confirm:hover {
+  filter: brightness(1.1);
+}
+
+.skipm-enter-active {
+  transition: opacity 0.2s ease;
+}
+.skipm-leave-active {
+  transition: opacity 0.15s ease;
+}
+.skipm-enter-from,
+.skipm-leave-to {
+  opacity: 0;
+}
+
+/* Identity OVR/POT when unscouted (rookie). */
+.ri-stat.unrevealed {
+  color: var(--color-text-tertiary);
   font-style: italic;
-  font-weight: 400 !important;
+}
+
+/* Pinned action button — attrs scroll beneath it; a fade masks the overlap. */
+.row-action {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 28px;
+  background: linear-gradient(to right, transparent, var(--color-bg-primary) 40%);
+  pointer-events: none;
+}
+
+.row-action > * {
+  pointer-events: auto;
 }
 
 .btn-draft {
-  padding: 4px 12px;
-  font-size: 0.7rem;
-  font-weight: 600;
+  padding: 5px 14px;
+  font-size: 0.72rem;
+  font-weight: 700;
   text-transform: uppercase;
   background: var(--color-primary);
   border: none;
@@ -1561,14 +2133,13 @@ onUnmounted(() => {
 }
 
 /* Lower-emphasis sibling of .btn-draft — shown when the user isn't on the
-   clock, so the action cell still has a visible affordance to open the
-   player details modal (tapping the row also works). */
+   clock, so there's still a visible affordance to open the details modal. */
 .btn-details {
-  padding: 4px 12px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   color: var(--color-text-secondary);
@@ -1581,16 +2152,15 @@ onUnmounted(() => {
   color: var(--color-text-primary);
 }
 
-/* Mobile contract subrow: hidden on desktop, revealed as a small footer
-   line beneath each player row on phones. */
-.contract-row {
-  display: none;
-}
-
-.contract-cell,
-.contract-spacer {
-  /* No top border so the row reads as a continuation of the main row. */
-  border-top: none;
+/* Contract — folded into the identity column, on its own row under OVR/POT. */
+.ri-contract {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
 }
 
 /* Footer / Skip Controls */
@@ -1647,9 +2217,53 @@ onUnmounted(() => {
 }
 
 /* Responsive */
-@media (max-width: 1024px) {
+
+/* Roster toggle + drawer handles — hidden on desktop, shown on mobile */
+.roster-toggle-btn {
+  display: none;
+}
+.footer-handle {
+  display: none;
+}
+.drawer-handle {
+  display: none;
+}
+
+/* Mobile Roster Drawer */
+.mobile-roster-backdrop {
+  display: none;
+}
+
+.mobile-roster-drawer {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  
+
+  /* Reclaim vertical space on phones — drop the marquee ticker; the rookie
+     announcer commentary gets the height instead. */
+  .round-ticker {
+    display: none;
+  }
+
   .draft-main {
     flex-direction: column;
+  }
+
+  /* Stack the merged stage on phones (clock above last pick) */
+  
+  .draft-stage > .stage-lastpick {
+    border-left: none;
+    border-top: 1px solid var(--glass-border);
+  }
+
+  .clock-team-name {
+    font-size: 1.1rem;
+  }
+
+  .clock-status {
+    font-size: 0.9em;
   }
 
   .draft-sidebar {
@@ -1669,25 +2283,9 @@ onUnmounted(() => {
     margin-bottom: 0;
     min-width: 100px;
   }
-}
-
-/* Roster toggle — hidden on desktop */
-.roster-toggle-btn {
-  display: none;
-}
-
-/* Mobile Roster Drawer */
-.mobile-roster-backdrop {
-  display: none;
-}
-
-.mobile-roster-drawer {
-  display: none;
-}
-
-@media (max-width: 640px) {
+  
   .draft-header {
-    padding: 8px 16px;
+    display:none;
   }
 
   .header-left {
@@ -1706,120 +2304,104 @@ onUnmounted(() => {
     padding: 12px 16px 0;
   }
 
-  .pool-table-wrap {
+  .pool-list-wrap {
     margin: 0 -16px;
     padding: 0 16px;
-    /* Kill horizontal scroll on phones — fit everything by hiding the
-       less-essential columns instead. Y-axis scrolling stays. */
-    overflow-x: hidden;
+    /* Narrower identity block on phones; each row still scrolls its attrs. */
+    --identity-w: 120px;
   }
 
-  /* Mobile pool-table: bigger tap targets, no horizontal overflow.
-     Keeps Name / Pos / OVR / POT / Draft action; hides Age, Height,
-     Contract (the user can still see all of those in the player details
-     modal that opens on row tap). */
-  .pool-table {
-    font-size: 0.9rem;
-    table-layout: auto;
-  }
-  .pool-table th {
-    padding: 10px 8px;
-  }
-  .pool-table td {
-    padding: 14px 8px;
-  }
-  .col-name {
-    min-width: 0;
-  }
-  .col-age,
-  .col-ht,
-  .col-contract {
-    display: none;
-  }
+  /* Bigger tap targets on phones. */
   .btn-draft,
   .btn-details {
     padding: 8px 14px;
     font-size: 0.75rem;
   }
 
-  /* Show the contract subrow on mobile. Lighter typography, no bottom
-     border on the main row above so the pair reads as a single card. */
-  .contract-row {
-    display: table-row;
-    cursor: pointer;
-  }
-  .player-row > td {
-    border-bottom: none;
-  }
-  .contract-cell {
-    padding: 0 8px 12px 8px;
-    font-size: 0.72rem;
-    color: var(--color-text-secondary);
-    /* Centered so the contract reads as a unified footer line spanning the
-       row's first 4 visible columns. */
-    text-align: center;
-  }
-  .contract-label {
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--color-text-tertiary);
-    margin-right: 6px;
-    font-size: 0.65rem;
-    font-weight: 600;
+  .row-identity {
+    padding: 10px 10px;
   }
 
-  /* "Player card" treatment: a subtle elevated background painted across
-     the main row + contract subrow so each player visually groups as a
-     distinct card. A thicker bottom border in the page-bg color creates
-     a clean gap between cards (border-collapse merges to the widest, so
-     adjacent card edges read as a single 6px gutter). */
-  .player-row > td,
-  .contract-cell,
-  .contract-spacer {
-    background: rgba(255, 255, 255, 0.04);
-  }
-  /* Light-mode: a white-on-white card disappears, so flip the alpha to a
-     dark tint that reads against the light page background. */
-  [data-theme="light"] .player-row > td,
-  [data-theme="light"] .contract-cell,
-  [data-theme="light"] .contract-spacer {
-    background: rgba(0, 0, 0, 0.04);
-  }
-  .contract-cell,
-  .contract-spacer {
-    border-bottom: 6px solid var(--color-bg-primary);
-  }
-
+  /* Footer reads as a pull-up surface: rounded top + a grab handle. */
   .draft-footer {
-    padding: 8px 16px;
+    position: relative;
+    padding: 28px 16px calc(8px + env(safe-area-inset-bottom));
     flex-wrap: wrap;
     gap: 8px;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.22);
+  }
+
+  /* iOS native only (html.platform-ios is set in main.js; getPlatform() === 'web'
+     in any browser): the home-indicator inset alone wasn't enough breathing room,
+     so floor the footer's bottom padding at 80px. Does NOT affect web/Android. */
+  html.platform-ios .draft-footer {
+    padding-bottom: max(80px, calc(8px + env(safe-area-inset-bottom)));
+  }
+
+  .footer-handle {
+    display: block;
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: var(--color-text-tertiary);
+    opacity: 0.5;
+    cursor: pointer;
   }
 
   .sim-controls {
     flex-wrap: wrap;
   }
 
+  /* Icon-only footer buttons on mobile — hide the text labels. */
   .sim-btn {
-    padding: 6px 12px;
+    padding: 9px 12px;
     font-size: 0.75rem;
+  }
+  .sim-btn .sim-label,
+  .roster-toggle-label {
+    display: none;
   }
 
   .roster-panel {
     display: none;
   }
 
-  /* Show roster toggle button on mobile */
+  /* Show roster toggle button on mobile, styled as a clear toggle */
   .roster-toggle-btn {
     display: flex;
+    align-items: center;
+    gap: 6px;
     background: rgba(232, 90, 79, 0.1);
     border-color: rgba(232, 90, 79, 0.3);
     color: var(--color-primary);
   }
 
+  .roster-toggle-label {
+    font-weight: 700;
+    font-size: 0.78rem;
+  }
+
   .roster-toggle-count {
     font-weight: 700;
     font-size: 0.8rem;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(232, 90, 79, 0.2);
+  }
+
+  .roster-toggle-chev {
+    transition: transform 0.2s ease;
+  }
+
+  .roster-toggle-btn.open .roster-toggle-chev {
+    transform: rotate(180deg);
   }
 
   /* Backdrop */
@@ -1834,26 +2416,41 @@ onUnmounted(() => {
     backdrop-filter: blur(2px);
   }
 
-  /* Slide-out drawer */
+  /* Bottom-sheet drawer — slides up from the bottom edge. */
   .mobile-roster-drawer {
     display: flex;
     flex-direction: column;
     position: fixed;
-    /* Start below the notch on iPhone. env() returns 0 on devices without
-       a notch (browser, older iOS), so no regression elsewhere. */
-    top: env(safe-area-inset-top);
     left: 0;
+    right: 0;
     bottom: 0;
-    width: 280px;
-    max-width: 85vw;
+    top: auto;
+    width: 100%;
+    max-width: 100%;
+    max-height: 70vh;
     /* Sits above the backdrop (105) and the toast containers (100) so the
        drawer always renders over any toasts while it's open. */
     z-index: 110;
     background: var(--color-bg-secondary);
-    border-right: 1px solid var(--glass-border);
-    box-shadow: var(--shadow-xl);
+    border-top: 1px solid var(--glass-border);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
     overflow-y: auto;
-    padding: 16px;
+    padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  /* Grab handle at the top of the sheet */
+  .drawer-handle {
+    display: block;
+    width: 40px;
+    height: 4px;
+    margin: 4px auto 10px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: var(--color-text-tertiary);
+    opacity: 0.5;
+    cursor: pointer;
   }
 
   .mobile-roster-header {
@@ -1873,6 +2470,9 @@ onUnmounted(() => {
     justify-content: center;
     width: 32px;
     height: 32px;
+    position: absolute;
+    top: 5px;
+    right: 5px;
     background: transparent;
     border: none;
     border-radius: var(--radius-full);
@@ -1898,7 +2498,7 @@ onUnmounted(() => {
 
 .roster-slide-enter-from,
 .roster-slide-leave-to {
-  transform: translateX(-100%);
+  transform: translateY(100%);
 }
 
 .roster-backdrop-enter-active {

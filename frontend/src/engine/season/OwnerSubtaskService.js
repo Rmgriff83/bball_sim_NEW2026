@@ -279,6 +279,7 @@ function _subtasksForExpectation(expectation, ctx) {
 export function evaluateSubtasks({
   owner,
   expectation = owner?.expectation,
+  expectationTiers = null,
   roster = [],
   draftPicks = [],
   facilities = null,
@@ -291,15 +292,27 @@ export function evaluateSubtasks({
 } = {}) {
   const moneyConsciousness = Math.max(1, Math.min(5, _num(owner?.moneyConsciousness, 3)));
 
-  const list = _subtasksForExpectation(expectation, {
-    roster,
-    draftPicks,
-    facilities,
-    settings,
-    progress,
-    userTeamId,
-    coach,
-  });
+  // Expectations are ADDITIVE across a contract: if the owner's bar rose, the new
+  // tier's goals are appended without dropping the ones the GM already invested in.
+  // `expectationTiers` is the ordered history (earliest→latest); fall back to the
+  // single current tier for legacy callers / older saves.
+  const tiers = (Array.isArray(expectationTiers) && expectationTiers.length)
+    ? expectationTiers
+    : [expectation];
+
+  const ctx = { roster, draftPicks, facilities, settings, progress, userTeamId, coach };
+  // Merge tier sub-tasks, deduping by id and KEEPING THE FIRST occurrence — so an
+  // earlier/easier target (e.g. "2 All-Stars", a 3★ physician) is never silently
+  // made harder by a later tier; genuinely new goals from higher tiers get appended.
+  const list = [];
+  const seen = new Set();
+  for (const tier of tiers) {
+    for (const task of _subtasksForExpectation(tier, ctx)) {
+      if (seen.has(task.id)) continue;
+      seen.add(task.id);
+      list.push(task);
+    }
+  }
 
   // Global salary-cap sub-task, weighted by money-consciousness.
   list.push({

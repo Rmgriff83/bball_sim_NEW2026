@@ -9,8 +9,20 @@
 // =============================================================================
 
 import { expectedWinsForExpectation } from '../data/owners';
+import { STAR_OVERALL } from './OwnerSubtaskService';
 
 const TOTAL_GAMES = 82;
+
+// Injury relief: losing a star (overall ≥ STAR_OVERALL, or a contract-signing star)
+// for a big chunk of the season softens — never raises — the owner's win bar that
+// year. Tunable.
+const INJURY_RELIEF_PER_STAR = 8;
+const INJURY_RELIEF_CAP = 16;
+const INJURY_MISSED_THRESHOLD = 0.4; // a star must miss ~40%+ of the season to count
+
+function _overallOf(p) {
+  return p?.overallRating ?? p?.overall ?? p?.rating ?? 0;
+}
 
 // Last-season playoff depth -> satisfaction bonus (wins-equivalent). seasonHistory
 // may not always carry `playoffResult`; the caller can also pass `champion` /
@@ -23,8 +35,64 @@ const PLAYOFF_ADJ = {
   round1: 1,
 };
 
+// A championship fully satisfies the record/wins category regardless of the
+// regular-season win total — a title trumps the win count.
+const CHAMPION_FLOOR = 100;
+
 function _clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+/**
+ * Wins-equivalent relief for losing star talent to injury. Returns a number of
+ * "expected wins" to discount from the CURRENT-season bar (>= 0, capped). Only ever
+ * helps the GM. Detects a long absence from the current-year seasonHistory games
+ * played and/or a live season-ending injury (so it also works mid-season before the
+ * season is archived).
+ *
+ * @param {object} params
+ * @param {Array}  params.roster - current user roster (player objects)
+ * @param {number} params.teamGames - games the team has played this season (≈82 at end)
+ * @param {string[]} [params.starPlayerIdsAtSign] - stars the GM had at contract sign
+ * @param {number|null} [params.currentYear] - season year (to read the right history entry)
+ * @param {number} [params.starThreshold] - overall rating that defines a "star"
+ * @returns {number} wins-equivalent relief, 0..INJURY_RELIEF_CAP
+ */
+export function injuryReliefWins({ roster = [], teamGames = 0, starPlayerIdsAtSign = [], currentYear = null, starThreshold = STAR_OVERALL } = {}) {
+  const games = teamGames > 0 ? teamGames : TOTAL_GAMES;
+  const signSet = new Set((Array.isArray(starPlayerIdsAtSign) ? starPlayerIdsAtSign : []).map(String));
+  let relief = 0;
+
+  for (const p of (Array.isArray(roster) ? roster : [])) {
+    const isStar = _overallOf(p) >= starThreshold || signSet.has(String(p?.id));
+    if (!isStar) continue;
+
+    // Games played this season (from the current-year seasonHistory entry, if any).
+    const hist = Array.isArray(p?.seasonHistory) ? p.seasonHistory : [];
+    const entry = currentYear != null ? hist.find((h) => (h.year ?? null) === currentYear) : null;
+    const gp = entry?.stats?.gamesPlayed;
+
+    const injured = p?.isInjured === true || p?.is_injured === true;
+    const sev = p?.injuryDetails?.severity ?? p?.injury_details?.severity ?? null;
+    const daysOut = p?.injuryDetails?.days_remaining ?? p?.injury_details?.days_remaining ?? 0;
+    const longInjury = injured && (sev === 'season_ending' || daysOut > 120);
+
+    let missedFrac = 0;
+    if (gp != null) {
+      missedFrac = _clamp(1 - gp / games, 0, 1);
+    } else if (injured) {
+      // No recorded games this season and currently hurt → treat as a big absence.
+      missedFrac = longInjury ? 1 : 0.6;
+    }
+    // A live season-ending injury floors the miss so the meter reacts mid-season too.
+    if (longInjury) missedFrac = Math.max(missedFrac, 0.5);
+
+    if (missedFrac >= INJURY_MISSED_THRESHOLD) {
+      relief += Math.round(INJURY_RELIEF_PER_STAR * missedFrac);
+    }
+  }
+
+  return Math.min(INJURY_RELIEF_CAP, relief);
 }
 
 /**
@@ -51,10 +119,15 @@ export function satisfactionDisplay(value) {
  *   owner's static tier baseline; callers pass the dynamic value when available)
  * @returns {{ value: number, label: string, color: string, expectedWins: number }}
  */
-export function computeOwnerSatisfaction({ owner, currentWins = 0, currentLosses = 0, lastSeason = null, expectedWins = null } = {}) {
+export function computeOwnerSatisfaction({ owner, currentWins = 0, currentLosses = 0, lastSeason = null, expectedWins = null, currentPlayoff = null, injuryRelief = 0 } = {}) {
   const expected = expectedWins ?? expectedWinsForExpectation(owner?.expectation);
   const patience = _clamp(owner?.patience ?? 3, 1, 5);
   const winNow = ['championship', 'contender', 'playoffs'].includes(owner?.expectation);
+
+  // Lower THIS season's win bar when stars were lost to injury — the owner judges a
+  // depleted roster more forgivingly. Only softens (never raises) the bar, and only
+  // the current season (the displayed mandate `expected` is unchanged).
+  const expectedCurrent = Math.max(0, expected - Math.max(0, injuryRelief || 0));
 
   // --- Current season: projected wins vs expectation, ramped to full weight by
   //     mid-season so an early hot/cold streak doesn't whipsaw the meter. ---
@@ -63,7 +136,22 @@ export function computeOwnerSatisfaction({ owner, currentWins = 0, currentLosses
   if (gp > 0) {
     const projected = (currentWins / gp) * TOTAL_GAMES;
     const weight = Math.min(1, gp / (TOTAL_GAMES / 2));
-    current = (projected - expected) * 1.4 * weight;
+    current = (projected - expectedCurrent) * 1.4 * weight;
+
+    // Current-season playoff outcome (known once the postseason is done) lifts the
+    // record component the same way last season's does — deep runs offset a soft
+    // regular-season win total in the very year they happen.
+    if (currentPlayoff) {
+      if (currentPlayoff.champion) {
+        current += PLAYOFF_ADJ.champion;
+      } else if (currentPlayoff.playoffResult && PLAYOFF_ADJ[currentPlayoff.playoffResult] != null) {
+        current += PLAYOFF_ADJ[currentPlayoff.playoffResult];
+      } else {
+        const made = currentPlayoff.playoffSeed != null || currentPlayoff.madePlayoffs === true;
+        if (made) current += 3;
+        else if (winNow) current -= 10;
+      }
+    }
   }
 
   // --- Last season: record vs expectation + playoff outcome. ---
@@ -92,7 +180,16 @@ export function computeOwnerSatisfaction({ owner, currentWins = 0, currentLosses
   else if (hasCurrent) raw = current;
   else if (hasLast) raw = last;
   const damp = 1 - (patience - 3) * 0.12; // p1→1.24, p3→1.0, p5→0.76
-  const value = _clamp(Math.round(50 + raw * damp), 0, 100);
+  let value = _clamp(Math.round(50 + raw * damp), 0, 100);
+
+  // Winning it all fully satisfies the wins category — applies to the title season
+  // itself (currentPlayoff) and the immediate post-title window before the next
+  // season tips off (reigning champ, no games yet). Once the defense season starts,
+  // the floor lifts and the normal blend (with last season's +18 bonus) governs.
+  const reigningPreSeason = gp === 0 && lastSeason?.champion === true;
+  if (currentPlayoff?.champion === true || reigningPreSeason) {
+    value = Math.max(value, CHAMPION_FLOOR);
+  }
 
   const { label, color } = satisfactionDisplay(value);
   return { value, label, color, expectedWins: expected };
@@ -138,8 +235,10 @@ export function combinedSatisfaction({
   subtaskScore = 0,
   contractProgress = 1,
   expectedWins = null,
+  currentPlayoff = null,
+  injuryRelief = 0,
 } = {}) {
-  const wins = computeOwnerSatisfaction({ owner, currentWins, currentLosses, lastSeason, expectedWins });
+  const wins = computeOwnerSatisfaction({ owner, currentWins, currentLosses, lastSeason, expectedWins, currentPlayoff, injuryRelief });
   const subScore = _clamp(Math.round(subtaskScore || 0), 0, 100);
 
   // Patience-shaped ramp: gamma < 1 ramps fast (impatient), > 1 ramps slow (patient).

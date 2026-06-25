@@ -12,6 +12,7 @@ import { PlayerRepository } from '../db/PlayerRepository'
 import { ensureMinimumRosters, getVeteranMinSalary } from '../ai/AIContractService'
 import { generatePlayer } from './CampaignManager'
 import { getCoachActionBudget } from '../data/coaches'
+import { cloneForPersist } from '../../utils/cloneForPersist'
 
 // Engine roster floor — same constant used by ensureMinimumRosters.
 const TARGET_ROSTER_SIZE = 14
@@ -54,7 +55,7 @@ async function releaseExpiredContracts(campaignId, players) {
     }
   }
   if (released.length > 0) {
-    await PlayerRepository.saveBulk(released.map(p => JSON.parse(JSON.stringify(p))))
+    await PlayerRepository.saveBulk(released.map(p => cloneForPersist(p)))
   }
   return released.length
 }
@@ -91,7 +92,7 @@ async function generateEmergencyFillers(campaignId, team, userTeamId, slotsNeede
     player.team_abbreviation = team.abbreviation
     fillers.push(player)
   }
-  await PlayerRepository.saveBulk(fillers.map(p => JSON.parse(JSON.stringify(p))))
+  await PlayerRepository.saveBulk(fillers.map(p => cloneForPersist(p)))
   return fillers.map(p => ({
     team: team.abbreviation,
     player: p.name,
@@ -176,7 +177,7 @@ export async function aiFinishUserTeamSetup(campaignId) {
     })
     if (result?.signings?.length > 0) {
       playersSigned = result.signings
-      const dirty = (result.updatedPlayers || []).map(p => JSON.parse(JSON.stringify(p)))
+      const dirty = (result.updatedPlayers || []).map(p => cloneForPersist(p))
       await PlayerRepository.saveBulk(dirty)
     }
   }
