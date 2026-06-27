@@ -447,6 +447,15 @@ onMounted(async () => {
 
     if (rookieMode) {
       // --- ROOKIE DRAFT MODE ---
+      // Let the loading view paint a couple of frames FIRST so the iOS WebView
+      // settles its safe-area insets / viewport before the heavy rookie-class
+      // generation below blocks the main thread. Without this, the generation can
+      // starve the layout while env(safe-area-inset-*) is still 0, latching a stale
+      // layout that renders the draft room above the top safe area — a rookie-only
+      // symptom (fantasy drafts skip generation). Re-entry/relaunch "fixes" it
+      // because the insets are already settled by then.
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+
       // Load scouting data so unscouted attributes stay hidden
       scoutedPlayers.value = campaign?.settings?.scoutedPlayers || {}
 
@@ -1069,9 +1078,6 @@ onUnmounted(() => {
 
 <style scoped>
 .draft-room {
-  /* 100dvh tracks the ACTUAL visible viewport (iOS WebView / collapsing chrome),
-     so the page can't end up taller than the device and scroll — which on mobile
-     pushed the footer below the fold. 100vh fallback for older engines. */
   height: 100vh;
   height: 100dvh;
   display: flex;
