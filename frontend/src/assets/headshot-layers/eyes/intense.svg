@@ -71,8 +71,16 @@
     <rect x="38" y="26" width="1" height="1"/>
     <rect x="39" y="26" width="1" height="1"/>
   </g>
-  <g data-piece="eye-iris" data-color-token="eye.iris" data-color-label="Eye Iris">
+  <g data-piece="eye-iris" data-color-token="eye.pupil" data-color-label="Eye pupil">
     <rect x="25" y="28" width="1" height="1"/>
     <rect x="37" y="28" width="1" height="1"/>
+  </g>
+  <g data-piece="eye-iris-2" data-color-token="eye.iris" data-color-label="Eye Iris">
+    <rect x="38" y="28" width="1" height="1"/>
+    <rect x="24" y="28" width="1" height="1"/>
+    <rect x="25" y="27" width="1" height="1"/>
+    <rect x="24" y="27" width="1" height="1"/>
+    <rect x="38" y="27" width="1" height="1"/>
+    <rect x="37" y="27" width="1" height="1"/>
   </g>
 </svg>
