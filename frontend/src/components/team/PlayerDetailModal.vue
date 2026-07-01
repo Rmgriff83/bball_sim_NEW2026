@@ -403,6 +403,7 @@ const normalizedPlayer = computed(() => {
     all_nba_first_team: p.all_nba_first_team || p.allNbaFirstTeam || 0,
     all_rookie_team: p.all_rookie_team || p.allRookieTeam || 0,
     all_defensive_team: p.all_defensive_team || p.allDefensiveTeam || 0,
+    dpoy_awards: p.dpoy_awards || p.dpoyAwards || 0,
     awards: p.awards || {},
     // Draft info
     draftInfo: p.draftInfo || null,
@@ -916,6 +917,7 @@ const hasAwards = computed(() => {
   return p.championships > 0 || p.finals_mvp_awards > 0 ||
          p.conference_finals_mvp_awards > 0 || p.mvp_awards > 0 ||
          p.all_star_selections > 0 || p.rookie_of_the_year > 0 ||
+         p.dpoy_awards > 0 ||
          p.all_nba_selections > 0 || p.all_rookie_team > 0 ||
          p.all_defensive_team > 0
 })
@@ -2208,6 +2210,14 @@ function formatChange(change) {
                       <span class="award-count">{{ normalizedPlayer.mvp_awards }}x</span>
                       <span class="award-label">League MVP</span>
                       <span v-if="getAwardYears('mvp')" class="award-years">{{ getAwardYears('mvp') }}</span>
+                    </div>
+
+                    <!-- Defensive Player of the Year -->
+                    <div v-if="normalizedPlayer.dpoy_awards > 0" class="award-card gold">
+                      <Shield :size="32" />
+                      <span class="award-count">{{ normalizedPlayer.dpoy_awards }}x</span>
+                      <span class="award-label">Defensive Player of the Year</span>
+                      <span v-if="getAwardYears('dpoy')" class="award-years">{{ getAwardYears('dpoy') }}</span>
                     </div>
 
                     <!-- All-Star -->

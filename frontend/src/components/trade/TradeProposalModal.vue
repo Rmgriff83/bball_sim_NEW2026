@@ -11,6 +11,9 @@ const props = defineProps({
   // When the trade deadline has passed, accepting/negotiating is blocked (the
   // store would hard-reject anyway). Reject stays available to clear the inbox.
   deadlinePassed: Boolean,
+  // True while the parent is processing an accept/reject — disables the action
+  // buttons so rapid taps can't queue multiple in-flight requests.
+  busy: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['close', 'accept', 'reject', 'negotiate'])
@@ -64,6 +67,7 @@ function handleAccept() {
 }
 
 function handleConfirmAccept() {
+  if (props.busy) return
   // Second click → actually accept.
   emit('accept', props.proposal)
 }
@@ -73,6 +77,7 @@ function handleCancelAccept() {
 }
 
 function handleReject() {
+  if (props.busy) return
   audio.cancel()
   emit('reject', props.proposal)
 }
@@ -262,11 +267,11 @@ function handleKeydown(e) {
                 <span>The trade deadline has passed — this offer can no longer be accepted.</span>
               </div>
               <div class="modal-footer-row">
-                <button class="btn-reject" @click="handleReject">
+                <button class="btn-reject" :disabled="busy" @click="handleReject">
                   <XCircle :size="16" />
                   Reject
                 </button>
-                <button class="btn-accept" :disabled="deadlinePassed" @click="handleAccept">
+                <button class="btn-accept" :disabled="deadlinePassed || busy" @click="handleAccept">
                   <Check :size="16" />
                   Accept Trade
                 </button>
@@ -286,7 +291,7 @@ function handleKeydown(e) {
                   <button class="btn-reject" @click="handleCancelAccept">
                     Cancel
                   </button>
-                  <button class="btn-accept" @click="handleConfirmAccept">
+                  <button class="btn-accept" :disabled="busy" @click="handleConfirmAccept">
                     <Check :size="16" />
                     Yes, Accept
                   </button>

@@ -12,7 +12,7 @@ import { withDB, ensureStoreUpgraded } from './GameDatabase'
 // connections short-circuit to safe empty values instead of throwing
 // NotFoundError on the transaction.
 
-const VALID_KINDS = new Set(['coach', 'scout', 'physician', 'staff_trainer'])
+const VALID_KINDS = new Set(['coach', 'scout', 'physician', 'staff_trainer', 'analyst'])
 
 function _hasStore(db) {
   return db.objectStoreNames.contains('personnelHeadshots')

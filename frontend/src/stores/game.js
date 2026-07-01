@@ -248,6 +248,9 @@ export const useGameStore = defineStore('game', () => {
     if (game.evolution) base.evolution = game.evolution
     if (game.rewards) base.rewards = game.rewards
     if (game.upgrade_points_awarded) base.upgrade_points_awarded = game.upgrade_points_awarded
+    // Per-game play analytics ({ home, away } raw maps) for the postgame panel.
+    if (game.playAnalytics) base.play_analytics = game.playAnalytics
+    else if (game.play_analytics) base.play_analytics = game.play_analytics
 
     return base
   }
@@ -898,6 +901,7 @@ export const useGameStore = defineStore('game', () => {
               seasonData,
               gmContract: campaign.settings?.gmContract,
               userTeamId: campaign.teamId,
+              year,
             })
             if (added > 0) dirty = true
           } catch (gmErr) {
@@ -1108,6 +1112,13 @@ export const useGameStore = defineStore('game', () => {
       persistData.evolution = slimEvolution
     }
 
+    // Persist this game's per-play analytics (raw { home, away } maps) for user
+    // games so the postgame panel can show THIS game (not the season aggregate)
+    // and it survives reload / revisiting a completed game. Small maps.
+    if (isUserGame && result.play_analytics) {
+      persistData.playAnalytics = result.play_analytics
+    }
+
     // Update schedule entry
     SeasonManager.updateGame(seasonData, gameId, persistData, isUserGame)
 
@@ -1129,7 +1140,7 @@ export const useGameStore = defineStore('game', () => {
     // Update each team's coach career record (regular-season W/L or playoff
     // W/L). Persists immediately so sync's normal team push picks it up.
     if (game) {
-      await _updateCoachCareerStatsAfterGame(campaignId, game, result)
+      await _updateCoachCareerStatsAfterGame(campaignId, game, result, year)
     }
 
     // Generate and persist news
@@ -1165,60 +1176,102 @@ export const useGameStore = defineStore('game', () => {
    * (`career_wins`, etc.) by migrating them into the nested `career_stats`
    * shape on first touch.
    */
-  async function _updateCoachCareerStatsAfterGame(campaignId, game, result) {
+  /**
+   * Accumulate one game's per-play-set analytics (from the sim's
+   * `result.play_analytics.{home,away}`) onto a team's season-scoped
+   * `team.playAnalytics`. Resets the bucket when the season changes (safety net;
+   * the authoritative reset is in CampaignManager.startNewSeason).
+   */
+  function _mergePlayAnalytics(team, sideAnalytics, seasonYear) {
+    if (!team || !sideAnalytics) return false
+    if (!team.playAnalytics) {
+      team.playAnalytics = { season: seasonYear ?? null, plays: {} }
+    } else if (seasonYear != null && team.playAnalytics.season !== seasonYear) {
+      team.playAnalytics = { season: seasonYear, plays: {} }
+    }
+    const plays = team.playAnalytics.plays
+    let changed = false
+    for (const [pid, g] of Object.entries(sideAnalytics)) {
+      let e = plays[pid]
+      if (!e) {
+        e = plays[pid] = {
+          name: g.name, category: g.category,
+          poss: 0, fg2m: 0, fg2a: 0, fg3m: 0, fg3a: 0, ftm: 0, fta: 0, tov: 0, pts: 0,
+        }
+      }
+      e.poss += g.poss || 0
+      e.fg2m += g.fg2m || 0; e.fg2a += g.fg2a || 0
+      e.fg3m += g.fg3m || 0; e.fg3a += g.fg3a || 0
+      e.ftm += g.ftm || 0; e.fta += g.fta || 0
+      e.tov += g.tov || 0; e.pts += g.pts || 0
+      changed = true
+    }
+    return changed
+  }
+
+  async function _updateCoachCareerStatsAfterGame(campaignId, game, result, seasonYear = null) {
     const homeWon = result.home_score > result.away_score
     const isPlayoff = !!(game.isPlayoff || game.is_playoff)
+    const analytics = result.play_analytics || null
 
     const [homeTeam, awayTeam] = await Promise.all([
       TeamRepository.get(campaignId, game.homeTeamId),
       TeamRepository.get(campaignId, game.awayTeamId),
     ])
 
-    const dirty = []
+    const dirty = new Set()
     const updates = [
-      { team: homeTeam, won: homeWon },
-      { team: awayTeam, won: !homeWon },
+      { team: homeTeam, won: homeWon, side: 'home' },
+      { team: awayTeam, won: !homeWon, side: 'away' },
     ]
 
-    for (const { team, won } of updates) {
-      if (!team || !team.coach) continue
+    for (const { team, won, side } of updates) {
+      if (!team) continue
 
-      // Migrate the flat starter fields into a nested career_stats object
-      // on first touch. Subsequent updates always use the nested shape so
-      // archiveSeasonData and the UI consume one canonical structure.
-      if (!team.coach.career_stats) {
-        team.coach.career_stats = {
-          wins: team.coach.career_wins ?? 0,
-          losses: team.coach.career_losses ?? 0,
-          playoff_wins: team.coach.playoff_wins ?? 0,
-          playoff_losses: team.coach.playoff_losses ?? 0,
-          championships: team.coach.championships ?? 0,
-          seasons_coached: team.coach.seasons_coached ?? 0,
+      // Per-play-set analytics (regular season only — playoff play-calling is
+      // recorded too, harmless; keeps the season sample intact).
+      if (analytics && _mergePlayAnalytics(team, analytics[side], seasonYear)) {
+        dirty.add(team)
+      }
+
+      if (team.coach) {
+        // Migrate the flat starter fields into a nested career_stats object
+        // on first touch. Subsequent updates always use the nested shape so
+        // archiveSeasonData and the UI consume one canonical structure.
+        if (!team.coach.career_stats) {
+          team.coach.career_stats = {
+            wins: team.coach.career_wins ?? 0,
+            losses: team.coach.career_losses ?? 0,
+            playoff_wins: team.coach.playoff_wins ?? 0,
+            playoff_losses: team.coach.playoff_losses ?? 0,
+            championships: team.coach.championships ?? 0,
+            seasons_coached: team.coach.seasons_coached ?? 0,
+          }
         }
-      }
 
-      const cs = team.coach.career_stats
-      if (isPlayoff) {
-        if (won) cs.playoff_wins = (cs.playoff_wins ?? 0) + 1
-        else cs.playoff_losses = (cs.playoff_losses ?? 0) + 1
-        const tot = (cs.playoff_wins ?? 0) + (cs.playoff_losses ?? 0)
-        cs.playoff_win_pct = tot > 0
-          ? Math.round((cs.playoff_wins / tot) * 1000) / 1000
-          : 0
-      } else {
-        if (won) cs.wins = (cs.wins ?? 0) + 1
-        else cs.losses = (cs.losses ?? 0) + 1
-        const tot = (cs.wins ?? 0) + (cs.losses ?? 0)
-        cs.win_pct = tot > 0
-          ? Math.round((cs.wins / tot) * 1000) / 1000
-          : 0
-      }
+        const cs = team.coach.career_stats
+        if (isPlayoff) {
+          if (won) cs.playoff_wins = (cs.playoff_wins ?? 0) + 1
+          else cs.playoff_losses = (cs.playoff_losses ?? 0) + 1
+          const tot = (cs.playoff_wins ?? 0) + (cs.playoff_losses ?? 0)
+          cs.playoff_win_pct = tot > 0
+            ? Math.round((cs.playoff_wins / tot) * 1000) / 1000
+            : 0
+        } else {
+          if (won) cs.wins = (cs.wins ?? 0) + 1
+          else cs.losses = (cs.losses ?? 0) + 1
+          const tot = (cs.wins ?? 0) + (cs.losses ?? 0)
+          cs.win_pct = tot > 0
+            ? Math.round((cs.wins / tot) * 1000) / 1000
+            : 0
+        }
 
-      dirty.push(team)
+        dirty.add(team)
+      }
     }
 
-    if (dirty.length > 0) {
-      await TeamRepository.saveBulk(dirty)
+    if (dirty.size > 0) {
+      await TeamRepository.saveBulk([...dirty])
     }
   }
 
@@ -1333,6 +1386,28 @@ export const useGameStore = defineStore('game', () => {
   const nextUserGame = computed(() =>
     userGames.value.find(g => !g.is_complete)
   )
+
+  // Global live W-L for the user team, derived from completed user games (the same
+  // source the Calendar header uses). Because `games` is force-refreshed after every
+  // sim step, this updates in real time — unlike leagueStore standings, which only
+  // refresh on a forced fetch. Both the Calendar header and the campaign home read
+  // this so the record stays consistent and live everywhere.
+  const userRecord = computed(() => {
+    const camp = useCampaignStore().currentCampaign
+    const uid = camp?.team?.id ?? camp?.teamId ?? null
+    let wins = 0, losses = 0
+    if (uid != null) {
+      for (const g of userGames.value) {
+        if (!g.is_complete) continue
+        const isHome = (g.home_team?.id ?? g.homeTeamId) === uid
+        const us = isHome ? g.home_score : g.away_score
+        const them = isHome ? g.away_score : g.home_score
+        if (us > them) wins++
+        else if (them > us) losses++
+      }
+    }
+    return { wins, losses }
+  })
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -1501,6 +1576,7 @@ export const useGameStore = defineStore('game', () => {
         evolution: result.evolution,
         rewards: result.rewards,
         upgrade_points_awarded: rewards?.tokens_awarded || null,
+        play_analytics: result.play_analytics ?? null,
       }
 
       // Advance campaign date
@@ -1876,6 +1952,7 @@ export const useGameStore = defineStore('game', () => {
           evolution: result.evolution,
           rewards: result.rewards,
           upgrade_points_awarded: rewards?.tokens_awarded || null,
+          play_analytics: result.play_analytics ?? null,
           animation_data: {
             possessions: allPossessions,
             quarter_end_indices: quarterEndIndices,
@@ -2045,6 +2122,7 @@ export const useGameStore = defineStore('game', () => {
         evolution: result.evolution,
         rewards: result.rewards,
         upgrade_points_awarded: rewards?.tokens_awarded || null,
+        play_analytics: result.play_analytics ?? null,
       }
 
       // Update game in list
@@ -2306,6 +2384,7 @@ export const useGameStore = defineStore('game', () => {
             box_score: result.box_score,
             evolution: result.evolution,
             rewards: result.rewards,
+            play_analytics: result.play_analytics ?? null,
           }
         }
       }
@@ -3095,6 +3174,7 @@ export const useGameStore = defineStore('game', () => {
         awayScore: r.result.away_score,
         boxScore: r.result.box_score,
         quarterScores: r.result.quarter_scores,
+        playAnalytics: r.result.play_analytics || null,
         isUserGame: false,
         isPlayoff: !!(game?.isPlayoff || game?.is_playoff),
       }
@@ -3114,7 +3194,8 @@ export const useGameStore = defineStore('game', () => {
         await _updateCoachCareerStatsAfterGame(campaignId, game, {
           home_score: r.homeScore,
           away_score: r.awayScore,
-        })
+          play_analytics: r.playAnalytics,
+        }, year)
       } catch (err) {
         console.warn('[GameStore] Coach career stat update failed for bulk AI game:', err)
       }
@@ -3295,6 +3376,7 @@ export const useGameStore = defineStore('game', () => {
     completedGames,
     userGames,
     nextUserGame,
+    userRecord,
     // Actions
     fetchGames,
     fetchGame,

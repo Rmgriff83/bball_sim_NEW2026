@@ -18,6 +18,7 @@ import { Search, Binoculars, User, ArrowUp, ArrowDown } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import { SCOUTABLE_ATTRIBUTES, SCOUTABLE_ATTRIBUTE_CATEGORIES } from '@/engine/data/attributeSchema'
+import { computeScoutReveal } from '@/engine/scouting/scoutReveal'
 
 const route = useRoute()
 const campaignStore = useCampaignStore()
@@ -193,37 +194,15 @@ async function scoutPlayer(player) {
 
     if (unrevealed.length === 0) return
 
-    // Check scout perks
-    const scout = campaign.value?.settings?.scout
-    const facilityLevel = teamStore.team?.facilities?.scouting ?? 1
-
-    function isPerkActive(perkKey) {
-      const perk = scout?.perks?.find(p => p.key === perkKey)
-      return perk && facilityLevel >= perk.requiredLevel
-    }
-
-    // Randomly select attributes — 33% if extra_reveals perk is active, else 8
-    const revealCount = isPerkActive('extra_reveals') ? PERK_REVEAL_COUNT : BASE_REVEAL_COUNT
-    const toReveal = []
-    const pool = [...unrevealed]
-    const count = Math.min(revealCount, pool.length)
-    for (let i = 0; i < count; i++) {
-      const idx = Math.floor(Math.random() * pool.length)
-      toReveal.push(pool.splice(idx, 1)[0])
-    }
-
-    // Update local state with attribute reveals + badge/morale perk chances.
-    // Roll badge/morale reveals into locals so we can detect what happened THIS
-    // action (the flags are sticky once true, so we compare before/after).
-    const newRevealed = [...revealed, ...toReveal]
-    const existing = scoutedPlayers.value[player.id] || {}
-    const hadBadgesRevealed = existing.badgesRevealed === true
-    const badgesRevealed = hadBadgesRevealed || (isPerkActive('badge_reveal') && Math.random() < 0.35)
-    const moraleRevealed = existing.moraleRevealed === true || (isPerkActive('morale_reveal') && Math.random() < 0.35)
-
-    // Milestone detection for the gated success toast.
-    const badgesJustRevealed = !hadBadgesRevealed && badgesRevealed
-    const hitFullScout = newRevealed.length >= ALL_ATTRIBUTES.length
+    // Reveal math (incl. scout-tier perk bonuses) lives in the shared helper so
+    // the Scouting screen and the live rookie draft behave identically.
+    const { toReveal, newRevealed, badgesRevealed, moraleRevealed, badgesJustRevealed, hitFullScout } =
+      computeScoutReveal({
+        revealedAttributes: revealed,
+        scout: campaign.value?.settings?.scout,
+        facilityLevel: teamStore.team?.facilities?.scouting ?? 1,
+        existing: scoutedPlayers.value[player.id] || {},
+      })
 
     scoutedPlayers.value = {
       ...scoutedPlayers.value,

@@ -21,6 +21,10 @@ return [
     'google' => [
         'web_client_id' => env('GOOGLE_WEB_CLIENT_ID'),
         'ios_client_id' => env('GOOGLE_IOS_CLIENT_ID'),
+        // Android OAuth client id — accepted as a valid token audience for native
+        // Android Google sign-in (the plugin returns the web client id as the aud
+        // when webClientId is set, but allow the Android client id too).
+        'android_client_id' => env('GOOGLE_ANDROID_CLIENT_ID'),
     ],
 
     'apple' => [

@@ -84,6 +84,12 @@ export async function rescaleContracts(campaignId) {
       campaignId,
       contractSalary: salary,
       contract_salary: salary,
+      // Also persist the flat years field in BOTH casings so a legacy save that
+      // lacked/diverged on it ends up consistent with the rebuilt salaries array.
+      // Without this, downstream re-sign / expiry logic could read a stale or
+      // missing year count on pre-2.3 players.
+      contractYearsRemaining: salaryYears,
+      contract_years_remaining: salaryYears,
       contractDetails: details,
       contract_details: details,
     })

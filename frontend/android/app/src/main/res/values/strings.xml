@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BBALL SIM</string>
+    <string name="title_activity_main">BBALL SIM</string>
+    <string name="package_name">com.bballsim.app</string>
+    <string name="custom_url_scheme">com.bballsim.app</string>
+</resources>

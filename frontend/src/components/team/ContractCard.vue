@@ -143,6 +143,16 @@ function handleInfo() {
             <RefreshCw :size="14" />
             <span>Re-sign</span>
           </button>
+          <!-- Deadline passed: show WHY re-sign is unavailable instead of the
+               button silently vanishing (which reads as "re-signing is broken"). -->
+          <span
+            v-else-if="isExpiringContract && resignDisabled"
+            class="action-btn resign-closed"
+            title="Re-signing is closed — the deadline has passed. Expiring players hit free agency at season end."
+          >
+            <RefreshCw :size="14" />
+            <span>Re-sign closed</span>
+          </span>
           <button
             class="action-btn drop-btn"
             @click.stop="handleDrop"
@@ -383,6 +393,17 @@ function handleInfo() {
   background: rgba(59, 130, 246, 0.2);
   color: var(--color-primary);
   border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+/* Non-interactive "Re-signing closed" hint shown after the Feb 5 deadline. */
+.resign-closed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-tertiary);
+  border: 1px solid var(--glass-border);
+  cursor: default;
 }
 
 .resign-btn:hover {

@@ -36,6 +36,22 @@ const loading = ref(true)
 const activeTab = ref('standings')
 const activeConference = ref(null)
 
+// All-Time tab: which season-award history the shared award box is showing.
+const allTimeAwardTab = ref('mvp')
+const ALL_TIME_AWARD_TABS = [
+  { key: 'mvp', short: 'MVP', title: 'Most Valuable Player' },
+  { key: 'roty', short: 'ROY', title: 'Rookie of the Year' },
+  { key: 'dpoy', short: 'DPOY', title: 'Defensive Player of the Year' },
+]
+const activeAwardHistory = computed(() => {
+  if (allTimeAwardTab.value === 'roty') return leagueStore.rotyHistory
+  if (allTimeAwardTab.value === 'dpoy') return leagueStore.dpoyHistory
+  return leagueStore.mvpHistory
+})
+const activeAwardTitle = computed(() =>
+  ALL_TIME_AWARD_TABS.find(t => t.key === allTimeAwardTab.value)?.title ?? 'Most Valuable Player'
+)
+
 // League leaders state
 const leadersFetched = ref(false)
 const leadersSortColumn = ref('ppg')
@@ -1025,16 +1041,29 @@ function formatSalary(salary) {
             </table>
           </GlassCard>
 
-          <!-- MVP -->
+          <!-- Individual awards (MVP / ROY / DPOY) -->
           <GlassCard padding="lg" :hoverable="false" class="mt-6">
-            <h3 class="h4 mb-4">Most Valuable Player</h3>
-            <div v-if="leagueStore.mvpHistory.length === 0" class="text-secondary">No MVPs yet — finish a season.</div>
+            <div class="award-box-header">
+              <h3 class="h4">{{ activeAwardTitle }}</h3>
+              <div class="award-subtabs">
+                <button
+                  v-for="t in ALL_TIME_AWARD_TABS"
+                  :key="t.key"
+                  class="award-subtab"
+                  :class="{ active: allTimeAwardTab === t.key }"
+                  @click="allTimeAwardTab = t.key"
+                >
+                  {{ t.short }}
+                </button>
+              </div>
+            </div>
+            <div v-if="activeAwardHistory.length === 0" class="text-secondary">No winners yet — finish a season.</div>
             <table v-else class="records-table history-table">
               <thead>
                 <tr><th class="rec-year-col">Year</th><th>Player</th><th>Team</th></tr>
               </thead>
               <tbody>
-                <tr v-for="m in leagueStore.mvpHistory" :key="'mvp-' + m.year">
+                <tr v-for="m in activeAwardHistory" :key="allTimeAwardTab + '-' + m.year">
                   <td class="rec-year">{{ m.year }}</td>
                   <td class="rec-name">{{ m.playerName }}</td>
                   <td>
@@ -2025,7 +2054,7 @@ function formatSalary(salary) {
                   <!-- Awards -->
                   <div class="player-history-section">
                     <h4 class="player-attr-title">Awards</h4>
-                    <div v-if="selectedPlayer.championships || selectedPlayer.mvp_awards || selectedPlayer.mvpAwards || selectedPlayer.finals_mvp_awards || selectedPlayer.finalsMvpAwards || selectedPlayer.conference_finals_mvp_awards || selectedPlayer.conferenceFinalsMvpAwards || selectedPlayer.all_star_selections || selectedPlayer.allStarSelections || selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear || selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections || selectedPlayer.all_rookie_team || selectedPlayer.allRookieTeam || selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam" class="player-awards-grid">
+                    <div v-if="selectedPlayer.championships || selectedPlayer.mvp_awards || selectedPlayer.mvpAwards || selectedPlayer.finals_mvp_awards || selectedPlayer.finalsMvpAwards || selectedPlayer.conference_finals_mvp_awards || selectedPlayer.conferenceFinalsMvpAwards || selectedPlayer.all_star_selections || selectedPlayer.allStarSelections || selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear || selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections || selectedPlayer.all_rookie_team || selectedPlayer.allRookieTeam || selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam || selectedPlayer.dpoy_awards || selectedPlayer.dpoyAwards" class="player-awards-grid">
                       <span v-if="(selectedPlayer.championships || 0) > 0" class="player-award-item gold">
                         {{ selectedPlayer.championships }}x Champion
                       </span>
@@ -2046,6 +2075,9 @@ function formatSalary(salary) {
                       </span>
                       <span v-if="(selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections || 0) > 0" class="player-award-item silver">
                         {{ selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections }}x All-League
+                      </span>
+                      <span v-if="(selectedPlayer.dpoy_awards || selectedPlayer.dpoyAwards || 0) > 0" class="player-award-item gold">
+                        {{ selectedPlayer.dpoy_awards || selectedPlayer.dpoyAwards }}x DPOY
                       </span>
                       <span v-if="(selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam || 0) > 0" class="player-award-item silver">
                         {{ selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam }}x All-Defense
@@ -2300,6 +2332,47 @@ function formatSalary(salary) {
 }
 
 .tab-btn.active {
+  background: var(--gradient-cosmic);
+  border-color: transparent;
+  color: black;
+  box-shadow: 0 2px 8px rgba(232, 90, 79, 0.3);
+}
+
+/* All-Time award box (MVP / ROY / DPOY) sub-tabs */
+.award-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.award-subtabs {
+  display: flex;
+  gap: 6px;
+}
+
+.award-subtab {
+  padding: 4px 12px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 0.72rem;
+}
+
+.award-subtab:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-primary);
+}
+
+.award-subtab.active {
   background: var(--gradient-cosmic);
   border-color: transparent;
   color: black;
@@ -3507,6 +3580,22 @@ function formatSalary(salary) {
 }
 
 [data-theme="light"] .tab-btn.active {
+  background: var(--gradient-cosmic);
+  color: black;
+}
+
+[data-theme="light"] .award-subtab {
+  background: white;
+  border-color: rgba(0, 0, 0, 0.1);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .award-subtab:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .award-subtab.active {
   background: var(--gradient-cosmic);
   color: black;
 }

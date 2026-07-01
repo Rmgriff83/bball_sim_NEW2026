@@ -120,6 +120,23 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
+  // Owner raised their season expectation mid-season — a rich, clickable
+  // callout (routes to the Owner tab). `fromLabel`/`label` = tier names.
+  function showOwnerExpectation({ label, fromLabel = '', campaignId = null }) {
+    try {
+      const audio = useAudioStore()
+      audio.play('affirm')
+    } catch { /* audio is best-effort */ }
+
+    return addToast({
+      type: 'owner-expectation',
+      label,
+      fromLabel,
+      campaignId,
+      duration: 8000,
+    })
+  }
+
   function showDraftPick({ pickNumber, teamAbbr, teamColor, playerName, position, overallRating, isUserTeam }) {
     return addToast({
       type: 'draft-pick',
@@ -221,6 +238,7 @@ export const useToastStore = defineStore('toast', () => {
     showPlayerSigned,
     showTokenAward,
     showAchievement,
+    showOwnerExpectation,
     addMinimalToast,
     removeMinimalToast,
     showLoading,

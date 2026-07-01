@@ -125,7 +125,11 @@ export async function aiFinishUserTeamSetup(campaignId) {
   let playersSigned = []
 
   // --- Step 1: hire a free coach if needed --------------------------------
-  if (!team.coach) {
+  // Skip the auto-hire while the user has an unresolved coach re-sign decision
+  // pending — they're being prompted to re-sign their expiring coach or pick a
+  // replacement, so we must not pre-empt that with a random free hire.
+  const hasPendingCoachDecision = !!campaign.settings?.pendingCoachDecision
+  if (!team.coach && !hasPendingCoachDecision) {
     const pool = Array.isArray(campaign.settings?.availableCoaches)
       ? campaign.settings.availableCoaches
       : []

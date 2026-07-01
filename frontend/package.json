@@ -9,6 +9,8 @@
     "build": "vite build",
     "build:ios": "VITE_NATIVE_BUILD=true vite build && cap sync ios",
     "open:ios": "cap open ios",
+    "build:android": "VITE_NATIVE_BUILD=true vite build && cap sync android",
+    "open:android": "cap open android",
     "preview": "vite preview",
     "audit:gameplay": "node scripts/audit-gameplay-coverage.js",
     "sync:headshots": "node scripts/sync-headshot-assets.mjs",
@@ -17,6 +19,7 @@
     "prebuild": "npm run sync:headshots && npm run regen:headshots && node scripts/audit-gameplay-coverage.js"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.4",
     "@capacitor/cli": "^8.3.4",
     "@capacitor/core": "^8.3.4",
     "@capacitor/ios": "^8.3.4",

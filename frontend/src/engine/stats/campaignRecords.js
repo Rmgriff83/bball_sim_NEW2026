@@ -63,3 +63,50 @@ export function buildMvpHistory(seasons = []) {
   }
   return rows.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
 }
+
+/**
+ * Per-season Rookies of the Year, newest first. Skips seasons with no recorded
+ * winner. Same row shape as buildMvpHistory.
+ *
+ * @param {Array} seasons
+ * @returns {Array<{ year, playerName, teamAbbr, teamColor, stats }>}
+ */
+export function buildRotyHistory(seasons = []) {
+  const rows = [];
+  for (const season of seasons || []) {
+    const roty = season?.seasonAwards?.rookieOfTheYear;
+    if (!roty || !roty.playerName) continue;
+    rows.push({
+      year: _year(season),
+      playerName: roty.playerName,
+      teamAbbr: roty.teamAbbr ?? roty.teamAbbreviation ?? null,
+      teamColor: roty.teamColor ?? null,
+      stats: roty.stats ?? null,
+    });
+  }
+  return rows.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+}
+
+/**
+ * Per-season Defensive Players of the Year, newest first. Skips seasons with no
+ * recorded winner (incl. seasons archived before DPOY existed). Same row shape
+ * as buildMvpHistory.
+ *
+ * @param {Array} seasons
+ * @returns {Array<{ year, playerName, teamAbbr, teamColor, stats }>}
+ */
+export function buildDpoyHistory(seasons = []) {
+  const rows = [];
+  for (const season of seasons || []) {
+    const dpoy = season?.seasonAwards?.dpoy;
+    if (!dpoy || !dpoy.playerName) continue;
+    rows.push({
+      year: _year(season),
+      playerName: dpoy.playerName,
+      teamAbbr: dpoy.teamAbbr ?? dpoy.teamAbbreviation ?? null,
+      teamColor: dpoy.teamColor ?? null,
+      stats: dpoy.stats ?? null,
+    });
+  }
+  return rows.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+}

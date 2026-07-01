@@ -70,7 +70,11 @@ function scorePlayer(player, teamPicks, currentRound, totalRounds) {
   let score = 0
 
   const ovr = player.overallRating || 75
-  const pot = player.potentialRating || ovr
+  const truePot = player.potentialRating || ovr
+  // Hidden gems hide their ceiling from the AI (see scoreRookiePlayer).
+  const pot = player.isHiddenGem
+    ? Math.min(truePot, ovr + 2 + Math.floor(Math.random() * 7))
+    : truePot
   const age = calculateAge(player.birthDate)
   const position = player.position || 'SF'
   const secondaryPos = player.secondaryPosition || null
@@ -174,7 +178,13 @@ export function selectAIPick(availablePlayers, teamPicks, currentRound, totalRou
  */
 function scoreRookiePlayer(player, teamRoster, direction, pickNumber, round) {
   const ovr = player.overallRating || 60
-  const pot = player.potentialRating || ovr
+  const truePot = player.potentialRating || ovr
+  // Diamonds in the rough: the AI can't see a hidden gem's true ceiling, so it
+  // perceives them as an ordinary low prospect — the gem slips in the draft for
+  // a scouting user to unearth. (True potential is untouched for development.)
+  const pot = player.isHiddenGem
+    ? Math.min(truePot, ovr + 2 + Math.floor(Math.random() * 7))
+    : truePot
   const age = player.age || 20
   const position = player.position || 'SF'
   const potentialGap = Math.max(0, pot - ovr)

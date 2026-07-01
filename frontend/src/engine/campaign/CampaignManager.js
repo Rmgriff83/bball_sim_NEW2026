@@ -26,6 +26,7 @@ import {
   getCoachTrainBudget,
   computeCoachTier,
   getCoachTierKey,
+  getCoachResignCost,
 } from '../data/coaches'
 // Pull scheme maps from the simulator's canonical source. The arrays exported
 // from `data/coaches` use STRING values, so `Object.keys(arr)` returns "0",
@@ -101,7 +102,7 @@ import {
 } from '../season/OwnerExpectationService'
 import { listCoachHeadshots } from '../../services/headshotPremades'
 import {
-  SCOUT_TIERS, PHYSICIAN_TIERS, STAFF_TRAINER_TIERS,
+  SCOUT_TIERS, PHYSICIAN_TIERS, STAFF_TRAINER_TIERS, ANALYST_TIERS,
   PERSONNEL_POOL_COUNTS, PERSONNEL_POOL_KEY,
 } from '../data/personnelTiers'
 
@@ -367,7 +368,7 @@ const BLACK_LAST_NAMES = [
   'Steele', 'Stokes', 'Sutton', 'Tate', 'Thurmond', 'Vance', 'Vaughn',
   'Waters', 'Wells', 'Whitaker', 'Wilkins', 'Woodson', 'Drummond', 'Cousins',
   'Orion', 'Essex', 'Bitamin', 'Betts', 'Baloney', 'Djboute', 'Djiat', 'Prince',
-  'Strawberry', 'Bey', 'Delk', 'Henry Jr.', 'Django'
+  'Strawberry', 'Bey', 'Delk', 'Henry Jr.', 'Django', 'KaBongo'
 ]
 
 // Each real-name bucket is repeated N times when concatenating with the
@@ -1121,10 +1122,12 @@ export async function createCampaign(options) {
     scout: generatePersonnelPool('scout'),
     physician: generatePersonnelPool('physician'),
     staff_trainer: generatePersonnelPool('staff_trainer'),
+    analyst: generatePersonnelPool('analyst'),
   }
   campaign.settings[PERSONNEL_POOL_KEY.scout] = personnelPools.scout
   campaign.settings[PERSONNEL_POOL_KEY.physician] = personnelPools.physician
   campaign.settings[PERSONNEL_POOL_KEY.staff_trainer] = personnelPools.staff_trainer
+  campaign.settings[PERSONNEL_POOL_KEY.analyst] = personnelPools.analyst
 
   // Distribute admin-authored coach headshots across every personnel slot
   // — coaches first, then scouts, physicians, staff trainers — so the
@@ -1254,6 +1257,7 @@ export async function createCampaign(options) {
       allStarAppearances: 0,
       badgesAdded: 0,
       starPlayerIdsAtSign: starPlayerIds(allPlayers.filter(p => p.teamId === userTeam.id)),
+      allStarCountedSeasons: [],
     },
   }
 
@@ -2236,6 +2240,7 @@ export async function enterOffseason(campaignId) {
         seasonData,
         gmContract: campaign.settings?.gmContract,
         userTeamId: userTeamIdForAS,
+        year: currentYear,
       })
     }
 
@@ -2595,6 +2600,7 @@ function _buildFreshGmContract(team, userPlayers, currentYear, tenureStartYear =
       allStarAppearances: 0,
       badgesAdded: 0,
       starPlayerIdsAtSign: starPlayerIds(userPlayers),
+      allStarCountedSeasons: [],
     },
   }
 }
@@ -2672,6 +2678,7 @@ export async function switchUserTeam(campaignId, newTeamAbbreviation) {
   delete campaign.settings.scout
   delete campaign.settings.trainer
   delete campaign.settings.staff_trainer
+  delete campaign.settings.analyst
 
   // Fresh user lineup from the inherited roster.
   const userPlayers = await PlayerRepository.getByTeam(campaignId, newTeam.id)
@@ -2797,6 +2804,13 @@ export async function startNewSeason(campaignId) {
     }
   }
   const userTeamFacilitiesAfter = userTeam?.facilities ? { ...userTeam.facilities } : {}
+
+  // 3b-bis. Reset per-play-set analytics for every team — analytics are
+  // season-scoped and restart from the new season's games only.
+  for (const team of teams) {
+    team.playAnalytics = { season: nextYear, plays: {} }
+  }
+
   await TeamRepository.saveBulk(teams)
 
   // 3c. Reset scouting points and scouted players for the new season
@@ -2816,6 +2830,14 @@ export async function startNewSeason(campaignId) {
     campaign.settings.scout.contractYears -= 1
     if (campaign.settings.scout.contractYears <= 0) {
       delete campaign.settings.scout
+    }
+  }
+
+  // 3d-bis. Decrement analyst contract (2-season contracts), same as scout.
+  if (campaign.settings.analyst) {
+    campaign.settings.analyst.contractYears -= 1
+    if (campaign.settings.analyst.contractYears <= 0) {
+      delete campaign.settings.analyst
     }
   }
 
@@ -2915,7 +2937,18 @@ export async function startNewSeason(campaignId) {
 
     if (team.id === userTeamIdForCoach) {
       if (yearsLeft <= 0) {
-        team.coach = null // expired → user must hire a replacement
+        // Contract up. Don't silently drop the coach — stash it + flag a pending
+        // decision so the campaign home can prompt the user to re-sign (at the
+        // resign cost) or hire a replacement. Coach is still cleared off the team
+        // so an ignored prompt doesn't grant a free season of coaching.
+        campaign.settings = campaign.settings ?? {}
+        campaign.settings.pendingCoachDecision = {
+          coach: { ...coach },
+          resignCost: getCoachResignCost(coach),
+          year: campaign.currentSeasonYear,
+          teamId: userTeamIdForCoach,
+        }
+        team.coach = null
       } else {
         coach.contractYearsRemaining = yearsLeft
         coach.contract_years_remaining = yearsLeft
@@ -3148,6 +3181,7 @@ export function generateTeams(campaignId, modes = null) {
 function generatePersonnelPool(kind) {
   const tiers = kind === 'scout' ? SCOUT_TIERS
     : kind === 'physician' ? PHYSICIAN_TIERS
+    : kind === 'analyst' ? ANALYST_TIERS
     : STAFF_TRAINER_TIERS
   const counts = PERSONNEL_POOL_COUNTS[kind] || {}
   const used = new Set()
@@ -3230,8 +3264,8 @@ function assignPersonnelHeadshots(teams, pools) {
     if (team.coach.headshot) continue
     team.coach.headshot = claim()
   }
-  // 2) Scouts, 3) Physicians, 4) Staff trainers — pool order is the spec.
-  for (const kind of ['scout', 'physician', 'staff_trainer']) {
+  // 2) Scouts, 3) Physicians, 4) Staff trainers, 5) Analysts — pool order.
+  for (const kind of ['scout', 'physician', 'staff_trainer', 'analyst']) {
     for (const candidate of (pools[kind] || [])) {
       candidate.headshot = claim()
     }

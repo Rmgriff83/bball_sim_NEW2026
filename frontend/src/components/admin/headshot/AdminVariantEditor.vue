@@ -12,8 +12,10 @@ import {
 } from '@/services/svgPieces'
 import { snapTo90, pieceBoundingBox, subtractRect } from '@/services/pixelDraw'
 import {
-  getVariantSource, resolvePieceColor, listAllVariants, LAYERS, getCurrentVariantKey,
+  getVariantSource, resolvePieceColor, listAllVariants, getLayersForAudience,
+  getCurrentVariantKey,
   updateLayerVariantContent, removeLayerVariantContent, renameLayerVariantContent,
+  setLayerTier,
 } from '@/services/headshotComposer'
 import { loadRecentColors, pushRecentColor } from '@/services/recentColors'
 
@@ -119,7 +121,7 @@ const backdropOpacityPercent = computed({
 // now accepts `browVariantOverride` / `faceVariantOverride` for the admin
 // backdrop path so both can join the picker like everything else.
 const backdropLayers = computed(() =>
-  LAYERS.filter(l =>
+  getLayersForAudience(props.audience).filter(l =>
     l.id !== props.layerId
     && (l.styleKey || l.toggleKey)
   )
@@ -1127,6 +1129,10 @@ async function handleSave(thenExit = false) {
     // this it would keep showing the stale pre-save SVG until a full reload.
     // Pass audience so the patch lands in the right per-audience map.
     updateLayerVariantContent(props.layerId, props.variantName, svg, props.audience)
+    // updateLayerVariantContent defaults a brand-new variant's tier to 'generic'
+    // (its docs say the caller must set the tier separately). Without this, a
+    // just-saved Paid variant shows as Free in the strip until manually re-toggled.
+    setLayerTier(props.layerId, props.variantName, props.tier === 'paid' ? 'paid' : 'generic', props.audience)
 
     audioStore.affirm()
     toastStore.showSuccess('Variant saved.')

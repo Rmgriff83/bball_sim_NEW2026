@@ -205,17 +205,23 @@ export class AllStarService {
       const pid = String(playerId)
       const gp = stats.gamesPlayed ?? 0
 
-      // Min games filter
-      if (gp < minGames) continue
-
       // Must exist in player lookup
       const playerInfo = playerLookup[pid]
       if (!playerInfo) continue
 
-      // Rising Stars filter: rookies and 2nd-year players
       if (risingStarsOnly) {
+        // Rising Stars: keep the rookie/sophomore tenure gate, but DON'T hard-cut
+        // on the min-games floor — in a freshly generated season 1 most tagged
+        // rookies are low-minute bench players that would fail it, leaving the
+        // roster under-filled. Instead include anyone who has played, and mark
+        // whether they cleared the floor so _selectConference can prefer the
+        // higher-minute rookies first and only backfill the bench with the rest.
+        if (gp < 1) continue
         const draftYear = playerInfo.draftYear
         if (draftYear == null || draftYear < seasonYear - 1) continue
+      } else {
+        // Regular All-Stars: strict min-games filter (large pool, no backfill needed).
+        if (gp < minGames) continue
       }
 
       const teamWinPct = teamWinPcts[playerInfo.teamId] ?? 0
@@ -230,6 +236,9 @@ export class AllStarService {
         position: playerInfo.position,
         secondaryPosition: playerInfo.secondaryPosition,
         conference: playerInfo.conference,
+        // Rising Stars: did this player clear the min-games floor? Starters/bench
+        // prefer those who did, then backfill with lower-minute rookies.
+        eligibleStrict: risingStarsOnly ? gp >= minGames : true,
         // Forward the headshot pointers from the lookup so the All-Star pause
         // modal's PlayerAvatar resolves the real portrait instead of the default
         // icon. (Preserved in _buildPlayerLookup but previously dropped here.)
@@ -297,62 +306,48 @@ export class AllStarService {
    */
   static _selectConference(conferencePlayers, risingStarsOnly = false) {
     const positions = ['PG', 'SG', 'SF', 'PF', 'C']
+    const byScore = (a, b) => b.score - a.score
+
+    // Selection priority: players who cleared the min-games floor ("strong")
+    // first, then lower-minute backfill ("weak") — only Rising Stars have a weak
+    // set (regular All-Stars are all strong). This keeps the roster full without
+    // promoting a fringe rookie over one who actually played.
+    const entries = Object.values(conferencePlayers)
+    const strong = entries.filter((p) => p.eligibleStrict !== false).sort(byScore)
+    const weak = entries.filter((p) => p.eligibleStrict === false).sort(byScore)
+    const ordered = [...strong, ...weak]
+
+    const used = new Set()
     const starters = {}
 
-    // Sort pool by score descending for starter selection
-    const pool = { ...conferencePlayers }
-    const sortedIds = Object.keys(pool).sort((a, b) => pool[b].score - pool[a].score)
-
-    // Use sorted order for selection
-    const orderedPool = {}
-    for (const id of sortedIds) {
-      orderedPool[id] = pool[id]
-    }
-
-    // Select one starter per position
+    // 1) One position-matched starter per slot (strong before weak).
     for (const pos of positions) {
-      let bestForPos = null
-      let bestId = null
-
-      for (const [id, player] of Object.entries(orderedPool)) {
-        if (player.position === pos || player.secondaryPosition === pos) {
-          if (!bestForPos || player.score > bestForPos.score) {
-            bestForPos = player
-            bestId = id
-          }
-        }
-      }
-
-      if (bestForPos) {
-        bestForPos.starterPosition = pos
-        starters[pos] = bestForPos
-        delete orderedPool[bestId]
+      const pick = ordered.find(
+        (p) => !used.has(p.playerId) && (p.position === pos || p.secondaryPosition === pos)
+      )
+      if (pick) {
+        pick.starterPosition = pos
+        starters[pos] = pick
+        used.add(pick.playerId)
       }
     }
 
-    // Flex starter fallback — if the position-locked loop above couldn't
-    // fill all 5 starter slots (e.g. a Rising Stars conference with no
-    // eligible Centers), pad with the highest-score remaining players
-    // regardless of position. Without this, the modal would show 3-4
-    // starters and reserves drawn from an already-depleted pool. The
-    // modal iterates starters values, so flex keys render identically.
-    const filledCount = Object.keys(starters).length
-    if (filledCount < 5) {
-      const flexCandidates = Object.entries(orderedPool)
-        .sort(([, a], [, b]) => b.score - a.score)
-      const needed = 5 - filledCount
-      for (let i = 0; i < needed && i < flexCandidates.length; i++) {
-        const [id, player] = flexCandidates[i]
-        player.starterPosition = `FLEX${i + 1}`
-        starters[`FLEX${i + 1}`] = player
-        delete orderedPool[id]
-      }
+    // 2) Fill any still-empty starter slot with the best remaining player,
+    //    regardless of natural position, keyed under the POSITION key (NOT a
+    //    FLEX key) so AllStarModal — which reads starters[pos] for the five
+    //    fixed positions — actually renders it.
+    for (const pos of positions) {
+      if (starters[pos]) continue
+      const pick = ordered.find((p) => !used.has(p.playerId))
+      if (!pick) break
+      pick.starterPosition = pos
+      starters[pos] = pick
+      used.add(pick.playerId)
     }
 
-    // Sort remaining by score, take top 7 as reserves
-    const remainingIds = Object.keys(orderedPool).sort((a, b) => orderedPool[b].score - orderedPool[a].score)
-    const maxReserves = risingStarsOnly ? Math.min(7, remainingIds.length) : 7
-    const reserves = remainingIds.slice(0, maxReserves).map(id => orderedPool[id])
+    // 3) Reserves: remaining by score up to the target bench size.
+    const reservesTarget = risingStarsOnly ? 5 : 7
+    const reserves = ordered.filter((p) => !used.has(p.playerId)).slice(0, reservesTarget)
 
     return {
       starters,
@@ -393,34 +388,73 @@ export class AllStarService {
    * contract's "Produce All-Stars" sub-task (gmContract.progress.allStarAppearances).
    *
    * Counts All-Star team selections only (see countUserAllStars) — NOT Rising
-   * Stars and NOT any end-of-season All-League awards. Idempotent per season
-   * via `seasonData.allStarGmTallied`, so it can be called both at selection
-   * time (mid-season, for immediate UI feedback) and as an end-of-season
-   * safety net without double-counting.
+   * Stars and NOT any end-of-season All-League awards. Idempotent per season, so
+   * it can be called both at selection time (mid-season, for immediate UI
+   * feedback) and as an end-of-season safety net without double-counting.
    *
-   * Mutates `gmContract.progress` and `seasonData.allStarGmTallied` in place;
-   * callers are responsible for persisting both.
+   * The per-season idempotency guard is CO-LOCATED with the counter on
+   * `gmContract.progress.allStarCountedSeasons` (an array of season years) so
+   * the guard and the counter are always written/persisted together in the same
+   * campaign record. (The old design kept the guard on `seasonData` and the
+   * counter on the campaign — two separate IndexedDB records that could desync,
+   * e.g. a stale cloud-sync snapshot reverting the counter while the guard stuck
+   * `true`, permanently dropping a season's All-Stars.) Because the guard now
+   * reverts together with the counter, this is also self-healing: a reverted
+   * season simply gets re-tallied on the next advance/offseason. The legacy
+   * `seasonData.allStarGmTallied` flag is still honored for the transition season
+   * and kept in sync for any other reader.
+   *
+   * Mutates `gmContract.progress` (and `seasonData.allStarGmTallied`) in place;
+   * callers are responsible for persisting the campaign (and season) records.
    *
    * @param {Object} params
    * @param {Object} params.seasonData
    * @param {Object} [params.gmContract] - campaign.settings.gmContract
    * @param {number|string} params.userTeamId
+   * @param {number|string} [params.year] - the season year (authoritative per-season key)
    * @returns {number} how many user All-Stars were added this call (0 if already tallied or no active contract)
    */
-  static tallyUserAllStarsForGm({ seasonData, gmContract, userTeamId }) {
-    if (!seasonData || seasonData.allStarGmTallied) return 0
+  static tallyUserAllStarsForGm({ seasonData, gmContract, userTeamId, year }) {
+    if (!seasonData) return 0
     if (!gmContract || gmContract.status !== 'active') return 0
     const allStars = seasonData.allStarRosters?.allStars
     if (!allStars) return 0
 
-    seasonData.allStarGmTallied = true
-    const count = AllStarService.countUserAllStars(allStars, userTeamId)
-    if (count > 0) {
-      if (!gmContract.progress) {
-        gmContract.progress = { allStarAppearances: 0, badgesAdded: 0, starPlayerIdsAtSign: [] }
+    if (!gmContract.progress) {
+      gmContract.progress = {
+        allStarAppearances: 0, badgesAdded: 0, starPlayerIdsAtSign: [], allStarCountedSeasons: [],
       }
-      gmContract.progress.allStarAppearances = (gmContract.progress.allStarAppearances ?? 0) + count
     }
+    const prog = gmContract.progress
+    if (!Array.isArray(prog.allStarCountedSeasons)) prog.allStarCountedSeasons = []
+
+    const y = Number(year ?? seasonData.year ?? seasonData.seasonYear)
+
+    // Defensive: if we can't resolve a season year, fall back to the legacy
+    // per-seasonData guard so re-runs still can't double-count.
+    if (!Number.isFinite(y)) {
+      if (seasonData.allStarGmTallied) return 0
+      seasonData.allStarGmTallied = true
+      const count = AllStarService.countUserAllStars(allStars, userTeamId)
+      if (count > 0) prog.allStarAppearances = (prog.allStarAppearances ?? 0) + count
+      return count
+    }
+
+    // Authoritative, co-located per-season guard.
+    if (prog.allStarCountedSeasons.includes(y)) return 0
+
+    // Legacy transition: a season already tallied under the old seasonData guard
+    // is already reflected in allStarAppearances. Record it so it isn't re-added,
+    // but don't double-count.
+    if (seasonData.allStarGmTallied) {
+      prog.allStarCountedSeasons.push(y)
+      return 0
+    }
+
+    const count = AllStarService.countUserAllStars(allStars, userTeamId)
+    prog.allStarAppearances = (prog.allStarAppearances ?? 0) + count
+    prog.allStarCountedSeasons.push(y)
+    seasonData.allStarGmTallied = true // keep the legacy flag in sync (harmless)
     return count
   }
 

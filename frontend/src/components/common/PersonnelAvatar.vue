@@ -32,7 +32,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { UserCog, HeartPulse, Dumbbell, Eye, Brush } from 'lucide-vue-next'
+import { UserCog, HeartPulse, Dumbbell, Eye, Brush, BarChart3 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { getCoachHeadshotByName } from '@/services/headshotPremades'
 import { PersonnelHeadshotRepository } from '@/engine/db/PersonnelHeadshotRepository'
@@ -46,7 +46,7 @@ const props = defineProps({
   kind: {
     type: String,
     default: 'coach',
-    validator: v => ['coach', 'scout', 'physician', 'staff_trainer'].includes(v),
+    validator: v => ['coach', 'scout', 'physician', 'staff_trainer', 'analyst'].includes(v),
   },
   size: { type: Number, default: 32 },
   // Required for IDB custom-edit lookup. Passing this alone enables the
@@ -69,12 +69,14 @@ const FALLBACK_ICONS = {
   scout: Eye,
   physician: HeartPulse,
   staff_trainer: Dumbbell,
+  analyst: BarChart3,
 }
 const KIND_LABELS = {
   coach: 'Coach',
   scout: 'Scout',
   physician: 'Physician',
   staff_trainer: 'Trainer',
+  analyst: 'Analyst',
 }
 
 const fallbackIcon = computed(() => FALLBACK_ICONS[props.kind] || UserCog)

@@ -22,6 +22,9 @@ import { Search, ChevronUp, ChevronDown, FastForward, SkipForward, SkipBack, Use
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { useSyncStore } from '@/stores/sync'
+import { computeScoutReveal } from '@/engine/scouting/scoutReveal'
 import { generateAndSaveRookieClass } from '@/engine/draft/RookieGenerationService'
 import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
 import { analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
@@ -93,8 +96,13 @@ const showCompleteModal = ref(false)
 const tickerRef = ref(null)
 const showMobileRoster = ref(false)
 
-// Scouting state — hide unscouted attributes during rookie draft
+// Scouting state — hide unscouted attributes during rookie draft. Scout points +
+// the hired-scout context let the user actively reveal attributes mid-draft.
 const scoutedPlayers = ref({})
+const scoutingPoints = ref(0)
+const scoutingInProgress = ref(false)
+let scoutRecord = null          // campaign.settings.scout (hired scout w/ perks)
+let scoutFacilityLevel = 1      // user team's scouting facility level
 
 // Player detail modal state
 const selectedPlayer = ref(null)
@@ -159,6 +167,62 @@ function isFullyScouted(playerId) {
 function openPlayerModal(player) {
   selectedPlayer.value = player
   showPlayerModal.value = true
+}
+
+// Spend a scout point to reveal a rookie's attributes DURING the live draft.
+// Uses the exact shared reveal logic as the Scouting screen (incl. scout-tier
+// perk bonuses) and persists to the same campaign.settings.{scoutedPlayers,
+// scoutingPoints} so points/reveals stay consistent across both surfaces.
+async function scoutSelectedPlayer(player) {
+  if (!player) return
+  if (scoutingInProgress.value || scoutingPoints.value < 1 || isFullyScouted(player.id)) return
+  scoutingInProgress.value = true
+  try {
+    const { toReveal, newRevealed, badgesRevealed, moraleRevealed, badgesJustRevealed, hitFullScout } =
+      computeScoutReveal({
+        revealedAttributes: getRevealedAttributes(player.id),
+        scout: scoutRecord,
+        facilityLevel: scoutFacilityLevel,
+        existing: scoutedPlayers.value[player.id] || {},
+      })
+    if (toReveal.length === 0) return
+
+    scoutedPlayers.value = {
+      ...scoutedPlayers.value,
+      [player.id]: { revealedAttributes: newRevealed, badgesRevealed, moraleRevealed },
+    }
+    scoutingPoints.value -= 1
+
+    // Persist to campaign settings (shared with the Scouting screen).
+    const plain = JSON.parse(JSON.stringify(scoutedPlayers.value))
+    await CampaignRepository.updateSettings(campaignId.value, {
+      scoutedPlayers: plain,
+      scoutingPoints: scoutingPoints.value,
+    })
+    if (campaignStore.currentCampaign?.id == campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        scoutedPlayers: plain,
+        scoutingPoints: scoutingPoints.value,
+      }
+    }
+    useSyncStore().markDirty()
+
+    // Milestone toast (same gating as the Scouting screen); routine reveals stay quiet.
+    if (hitFullScout || badgesJustRevealed) {
+      const nm = `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim() || 'Prospect'
+      const msg = hitFullScout && badgesJustRevealed
+        ? `${nm} fully scouted — badges revealed!`
+        : hitFullScout ? `${nm} fully scouted!` : `Badges revealed for ${nm}!`
+      audio.affirm()
+      toastStore.showSuccess(msg)
+    }
+  } catch (err) {
+    console.error('[DraftRoom] scout failed:', err)
+    toastStore.showError('Failed to scout player')
+  } finally {
+    scoutingInProgress.value = false
+  }
 }
 
 // The modal shows a "Draft Player" button only when it's the user's live pick
@@ -456,8 +520,12 @@ onMounted(async () => {
       // because the insets are already settled by then.
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
 
-      // Load scouting data so unscouted attributes stay hidden
+      // Load scouting data so unscouted attributes stay hidden, plus the scout
+      // points + hired-scout context so the user can reveal attributes mid-draft.
       scoutedPlayers.value = campaign?.settings?.scoutedPlayers || {}
+      scoutingPoints.value = campaign?.settings?.scoutingPoints ?? 0
+      scoutRecord = campaign?.settings?.scout ?? null
+      scoutFacilityLevel = teamsList.find(t => t.id === campaign.teamId)?.facilities?.scouting ?? 1
 
       const cacheMode = 'rookie'
       const restored = await draftStore.loadDraftFromCache(campaignId.value, cacheMode)
@@ -683,6 +751,12 @@ onUnmounted(() => {
 
           <!-- Salary cap (fantasy drafts only) -->
           <DraftCapReadout />
+
+          <!-- Scout points (rookie drafts only) — ticks down as you scout. -->
+          <div v-if="isRookieMode" class="scout-readout">
+            <span class="scout-readout-label">Scout Points</span>
+            <span class="scout-readout-value">{{ scoutingPoints }}</span>
+          </div>
 
 
           <div class="roster-positions">
@@ -928,6 +1002,12 @@ onUnmounted(() => {
           <!-- Salary cap (fantasy drafts only) -->
           <DraftCapReadout />
 
+          <!-- Scout points (rookie drafts only) — ticks down as you scout. -->
+          <div v-if="isRookieMode" class="scout-readout">
+            <span class="scout-readout-label">Scout Points</span>
+            <span class="scout-readout-value">{{ scoutingPoints }}</span>
+          </div>
+
           <div class="roster-count">{{ isRookieMode ? `${draftStore.userRoster.length} picks made` : `${draftStore.userRoster.length} / 15` }}</div>
 
 
@@ -1020,11 +1100,12 @@ onUnmounted(() => {
       :scouting-mode="true"
       :revealed-attributes="selectedPlayer ? getRevealedAttributes(selectedPlayer.id) : []"
       :is-fully-scouted="selectedPlayer ? isFullyScouted(selectedPlayer.id) : false"
-      :scouting-points="0"
-      :scouting-in-progress="false"
+      :scouting-points="scoutingPoints"
+      :scouting-in-progress="scoutingInProgress"
       :badges-revealed="selectedPlayer ? (scoutedPlayers[selectedPlayer.id]?.badgesRevealed || false) : false"
       :morale-revealed="selectedPlayer ? (scoutedPlayers[selectedPlayer.id]?.moraleRevealed || false) : false"
       :can-draft="canDraftCurrent"
+      @scout-player="scoutSelectedPlayer"
       @draft-player="handleDraftFromModal"
       @close="showPlayerModal = false"
     />
@@ -1400,6 +1481,34 @@ onUnmounted(() => {
 }
 
 /* Fantasy-draft salary cap readout lives in components/draft/DraftCapReadout.vue */
+
+/* Rookie-draft scout-points readout (mirrors the cap readout's styling). */
+.scout-readout {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-border);
+  border-left: 3px solid var(--color-primary);
+}
+
+.scout-readout-label {
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.scout-readout-value {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--color-primary);
+}
 
 /* Over-cap penalty — ineligible player rows */
 .overcap-chip {

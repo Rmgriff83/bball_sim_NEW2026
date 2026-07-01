@@ -28,6 +28,7 @@ const emit = defineEmits(['close'])
 
 const mvp = computed(() => props.awards?.mvp ?? null)
 const roty = computed(() => props.awards?.rookieOfTheYear ?? null)
+const dpoy = computed(() => props.awards?.dpoy ?? null)
 const allNba = computed(() => props.awards?.allNba ?? null)
 const allDefense = computed(() => props.awards?.allDefense ?? null)
 const allRookie = computed(() => props.awards?.allRookie ?? null)
@@ -38,7 +39,7 @@ const seasonLabel = computed(() => {
 })
 
 const hasAnyAward = computed(() => {
-  return !!(mvp.value || roty.value || allNba.value || allDefense.value || allRookie.value)
+  return !!(mvp.value || roty.value || dpoy.value || allNba.value || allDefense.value || allRookie.value)
 })
 
 function isUserPlayer(player) {
@@ -142,6 +143,42 @@ function close() {
                   <div class="stat-pill">
                     <span class="stat-value">{{ roty.stats.apg }}</span>
                     <span class="stat-label">APG</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Defensive Player of the Year -->
+            <section v-if="dpoy" class="award-section featured">
+              <div class="award-section-header">
+                <Shield :size="16" class="award-icon dpoy" />
+                <span class="award-section-label">Defensive Player of the Year</span>
+              </div>
+              <div class="award-card dpoy-card" :class="{ 'user-card': isUserPlayer(dpoy) }">
+                <div class="award-card-row">
+                  <div
+                    class="team-pill"
+                    :style="{ backgroundColor: dpoy.teamColor || '#666' }"
+                  >
+                    {{ dpoy.teamAbbr }}
+                  </div>
+                  <div class="player-name-block">
+                    <div class="player-name">{{ dpoy.playerName }}</div>
+                    <div class="player-meta">{{ dpoy.position }}</div>
+                  </div>
+                </div>
+                <div v-if="dpoy.stats" class="player-stats">
+                  <div class="stat-pill">
+                    <span class="stat-value">{{ dpoy.stats.spg }}</span>
+                    <span class="stat-label">SPG</span>
+                  </div>
+                  <div class="stat-pill">
+                    <span class="stat-value">{{ dpoy.stats.bpg }}</span>
+                    <span class="stat-label">BPG</span>
+                  </div>
+                  <div class="stat-pill">
+                    <span class="stat-value">{{ dpoy.stats.rpg }}</span>
+                    <span class="stat-label">RPG</span>
                   </div>
                 </div>
               </div>
@@ -405,6 +442,7 @@ function close() {
 
 .award-icon.mvp { color: #ffd700; }
 .award-icon.roty { color: #a855f7; }
+.award-icon.dpoy { color: #38bdf8; }
 .award-icon.all-nba { color: #fb923c; }
 .award-icon.all-defense { color: #38bdf8; }
 
@@ -427,6 +465,11 @@ function close() {
 .award-card.roty-card {
   background: linear-gradient(135deg, rgba(168, 85, 247, 0.12), rgba(139, 92, 246, 0.05));
   border-color: rgba(168, 85, 247, 0.3);
+}
+
+.award-card.dpoy-card {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(14, 165, 233, 0.05));
+  border-color: rgba(56, 189, 248, 0.3);
 }
 
 .award-card.user-card {

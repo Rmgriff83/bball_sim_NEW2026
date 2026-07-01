@@ -43,6 +43,7 @@ class SocialTokenVerifier
         $this->assertAud($claims, array_values(array_filter([
             config('services.google.web_client_id'),
             config('services.google.ios_client_id'),
+            config('services.google.android_client_id'),
         ])));
 
         return [

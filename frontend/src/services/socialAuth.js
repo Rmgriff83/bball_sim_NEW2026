@@ -5,9 +5,9 @@
 // (POST /api/auth/social/token). External SDKs are loaded lazily so the native
 // bundle isn't bloated by web SDKs (and vice-versa).
 //
-//   - iOS:     native Sign in with Apple via @capacitor-community/apple-sign-in.
+//   - iOS:     native Sign in with Apple via @capgo/capacitor-social-login.
 //   - Web:     Apple JS (AppleID.auth) + Google Identity Services (GIS).
-//   - Android: Google (deferred — gated out in the UI for now).
+//   - Android: native Google via @capgo/capacitor-social-login.
 // =============================================================================
 
 import { Capacitor } from '@capacitor/core'
@@ -96,6 +96,32 @@ export async function signInWithApple() {
     credential: data.authorization.id_token,
     name: nm ? _fullName(nm.firstName, nm.lastName) : null,
     email: data?.user?.email || null,
+  }
+}
+
+// --- Google (native: Android) ----------------------------------------------
+/**
+ * Native Google sign-in on Android via @capgo/capacitor-social-login. We pass the
+ * WEB OAuth client id as `webClientId` so the returned id-token's audience is the
+ * web client id the backend already trusts (no separate Android aud needed, though
+ * the backend also allows the Android client id as a belt-and-suspenders).
+ * Resolves to { provider, credential, name, email }.
+ */
+export async function signInWithGoogleNative() {
+  const { SocialLogin } = await import('@capgo/capacitor-social-login')
+  const webClientId = import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID
+  if (!webClientId) throw new Error('Google sign-in is not configured (VITE_GOOGLE_WEB_CLIENT_ID).')
+  await SocialLogin.initialize({ google: { webClientId } })
+  const { result } = await SocialLogin.login({
+    provider: 'google',
+    options: { scopes: ['email', 'profile'] },
+  })
+  const p = result?.profile || {}
+  return {
+    provider: 'google',
+    credential: result?.idToken,
+    name: p.name || _fullName(p.givenName, p.familyName),
+    email: p.email || null,
   }
 }
 

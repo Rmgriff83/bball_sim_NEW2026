@@ -10,6 +10,8 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { backfillBirthDates, catchUpPlayerAging } from '@/engine/migrations/backfillBirthDates'
 import { backfillOrigins } from '@/engine/migrations/backfillOrigins'
 import { backfillGmContract } from '@/engine/migrations/backfillGmContract'
+import { backfillPersonnelIds } from '@/engine/migrations/backfillPersonnelIds'
+import { backfillInitialRookies } from '@/engine/migrations/backfillInitialRookies'
 import { rescaleContracts } from '@/engine/migrations/rescaleContracts'
 import { useAuthStore } from '@/stores/auth'
 import { TEAMS } from '@/engine/data/teams'
@@ -240,6 +242,17 @@ export const useCampaignStore = defineStore('campaign', () => {
         console.warn('[Campaign] salary rescale failed:', rescaleErr)
       }
 
+      // One-shot legacy migration: stamp a stable `id` on hired staff (and pool
+      // candidates) that predate the id-carrying hire flow, so the per-staff
+      // headshot-edit brush (gated on `personnel.id`) renders for them. Runs
+      // BEFORE engineLoadCampaign so the loaded campaign.settings carries the ids.
+      // Guarded internally by campaign.settings.personnelIdsBackfillDone.
+      try {
+        await backfillPersonnelIds(id)
+      } catch (personnelErr) {
+        console.warn('[Campaign] personnel id backfill failed:', personnelErr)
+      }
+
       try {
         result = await engineLoadCampaign(id)
       } catch (loadErr) {
@@ -315,6 +328,16 @@ export const useCampaignStore = defineStore('campaign', () => {
         await backfillOrigins(id)
       } catch (originsErr) {
         console.warn('[Campaign] origins backfill failed:', originsErr)
+      }
+
+      // One-shot legacy migration: tag season-1 rookies for campaigns whose
+      // initial league was never rookie-tagged (fantasy drafts / pre-fix saves),
+      // so Rookie of the Year / All-Rookie have candidates. Self-limiting to an
+      // untagged first season; guarded by settings.initialRookiesBackfilled.
+      try {
+        await backfillInitialRookies(id)
+      } catch (rookieErr) {
+        console.warn('[Campaign] initial-rookie backfill failed:', rookieErr)
       }
 
       const { campaign, teams, userTeam, seasonData, year } = result

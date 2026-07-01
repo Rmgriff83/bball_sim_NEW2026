@@ -10,6 +10,10 @@
  */
 
 import { getEffectiveCoachAttribute } from '@/engine/coaching/CoachPerks'
+// Single source of truth for scheme → category play weighting lives in
+// PlayService (the live possession-loop selector). Re-used here so the
+// CoachingEngine's scheme-weight helpers can never diverge from selection.
+import { SCHEME_WEIGHTS as SCHEME_PLAY_WEIGHTS } from './PlayService'
 
 /**
  * Convert a coach IQ rating into a scheme-effectiveness multiplier.
@@ -80,6 +84,7 @@ export const OFFENSIVE_SCHEMES = {
 export const DEFENSIVE_SCHEMES = {
   man: {
     name: 'Man-to-Man',
+    type: 'man',
     description: 'Traditional man-to-man defense with strong individual matchups',
     modifiers: {
       iso_defense: 0.10,
@@ -92,6 +97,7 @@ export const DEFENSIVE_SCHEMES = {
   },
   zone_2_3: {
     name: '2-3 Zone',
+    type: 'zone',
     description: 'Zone defense protecting the paint with two guards up top and three bigs below',
     modifiers: {
       paint_protection: 0.10,
@@ -103,6 +109,7 @@ export const DEFENSIVE_SCHEMES = {
   },
   zone_3_2: {
     name: '3-2 Zone',
+    type: 'zone',
     description: 'Zone defense with three players up top to contest perimeter shots',
     modifiers: {
       perimeter_protection: 0.08,
@@ -113,6 +120,7 @@ export const DEFENSIVE_SCHEMES = {
   },
   zone_1_3_1: {
     name: '1-3-1 Zone',
+    type: 'zone',
     description: 'Aggressive trapping zone that forces turnovers but vulnerable to skip passes',
     modifiers: {
       turnover_boost: 0.06,
@@ -124,6 +132,7 @@ export const DEFENSIVE_SCHEMES = {
   },
   press: {
     name: 'Full Court Press',
+    type: 'press',
     description: 'High-pressure full court defense forcing turnovers but risky in transition',
     modifiers: {
       turnover_boost: 0.10,
@@ -135,6 +144,7 @@ export const DEFENSIVE_SCHEMES = {
   },
   trap: {
     name: 'Trapping Defense',
+    type: 'press',
     description: 'Double-team oriented defense creating steals but leaving shooters open',
     modifiers: {
       steal_boost: 0.10,
@@ -143,6 +153,55 @@ export const DEFENSIVE_SCHEMES = {
     },
     weaknesses: ['spot_up', 'corner_three'],
     strengths: ['isolation'],
+  },
+  switch_everything: {
+    name: 'Switch Everything',
+    type: 'man',
+    description: 'Switch every screen to take away pick-and-roll and iso advantages, at the cost of size mismatches in the post',
+    modifiers: {
+      screen_vulnerability: 0.10,   // applied on pick_and_roll/motion: NEGATES the offense's screen edge
+      iso_defense: 0.06,
+      steal_boost: 0.03,
+    },
+    weaknesses: ['post_up'],
+    strengths: ['pick_and_roll', 'isolation', 'motion'],
+  },
+  box_and_one: {
+    name: 'Box-and-One',
+    type: 'man',
+    description: 'Four defenders in a zone box with one chaser blanketing the opposing star — smothers isolation but cedes ball movement',
+    modifiers: {
+      iso_defense: 0.12,
+      contest_boost: 0.05,
+      steal_boost: 0.02,
+    },
+    weaknesses: ['motion', 'post_up', 'spot_up'],
+    strengths: ['isolation'],
+  },
+  drop_coverage: {
+    name: 'Drop Coverage',
+    type: 'man',
+    description: 'Bigs sag into the paint on ball screens to wall off the rim, conceding the pull-up and pop three',
+    modifiers: {
+      paint_protection: 0.08,
+      screen_vulnerability: 0.04,
+      corner_three_weakness: -0.06,
+      block_boost: 0.04,
+    },
+    weaknesses: ['spot_up', 'three_point'],
+    strengths: ['pick_and_roll', 'transition'],
+  },
+  half_court_trap: {
+    name: 'Half-Court Trap',
+    type: 'press',
+    description: 'Spring traps past half court to force live-ball turnovers, vulnerable to the open man and quick offense',
+    modifiers: {
+      steal_boost: 0.08,
+      turnover_boost: 0.07,
+      transition_weakness: -0.10,
+    },
+    weaknesses: ['spot_up', 'transition'],
+    strengths: ['post_up', 'isolation'],
   },
 }
 
@@ -163,6 +222,9 @@ const SCHEME_POSITION_REQUIREMENTS = {
   press: { minPerimeter: 3, minSpeed: 75 },             // quick guards
   trap: { minPerimeter: 3, minSpeed: 70 },              // pressure guards
   drop_coverage: { minFrontcourt: 2 },                  // need bigs to drop back
+  switch_everything: { minPerimeter: 3 },               // versatile, switchable wings
+  box_and_one: { minPerimeter: 2, minFrontcourt: 2 },   // a chaser + a sound box
+  half_court_trap: { minPerimeter: 3, minSpeed: 72 },   // quick trapping guards
 }
 
 function calculatePositionFitScore(scheme, roster) {
@@ -197,66 +259,8 @@ function calculatePositionFitScore(scheme, roster) {
   return Math.max(0.5, score)
 }
 
-// ---------------------------------------------------------------------------
-// Play-weight maps per offensive scheme
-// ---------------------------------------------------------------------------
-
-const SCHEME_PLAY_WEIGHTS = {
-  motion: {
-    motion: 2.0,
-    cut: 1.5,
-    pick_and_roll: 1.2,
-    isolation: 0.5,
-    post_up: 0.8,
-    spot_up: 1.0,
-    transition: 1.0,
-  },
-  iso_heavy: {
-    isolation: 2.5,
-    pick_and_roll: 1.2,
-    post_up: 1.0,
-    motion: 0.5,
-    cut: 0.6,
-    spot_up: 0.8,
-    transition: 1.0,
-  },
-  post_centric: {
-    post_up: 2.5,
-    pick_and_roll: 1.0,
-    cut: 1.2,
-    isolation: 0.7,
-    motion: 0.8,
-    spot_up: 0.8,
-    transition: 0.8,
-  },
-  three_point: {
-    spot_up: 2.0,
-    pick_and_roll: 1.5,
-    motion: 1.3,
-    isolation: 0.8,
-    post_up: 0.5,
-    cut: 1.0,
-    transition: 1.2,
-  },
-  run_and_gun: {
-    transition: 2.5,
-    pick_and_roll: 1.3,
-    spot_up: 1.2,
-    isolation: 1.0,
-    motion: 0.7,
-    post_up: 0.5,
-    cut: 0.8,
-  },
-  balanced: {
-    pick_and_roll: 1.2,
-    isolation: 1.0,
-    post_up: 1.0,
-    motion: 1.0,
-    cut: 1.0,
-    spot_up: 1.0,
-    transition: 1.0,
-  },
-}
+// Play-weight maps per offensive scheme are imported from PlayService as
+// SCHEME_PLAY_WEIGHTS (see top of file) — single source of truth.
 
 // ---------------------------------------------------------------------------
 // Tempo modifiers (affects pace of play)
@@ -704,13 +708,35 @@ export class CoachingEngine {
         effectiveness += ((steal + pass) / 2 - 60) * 0.15
         break
       }
-      case 'press': {
+      case 'press':
+      case 'half_court_trap': {
         const steal = this._getRosterAverage(roster, 'defense', 'steal')
         const speed = this._getRosterAverage(roster, 'physical', 'speed')
         const stamina = this._getRosterAverage(roster, 'physical', 'stamina')
         // Same dampening rationale: per-defender steal is already in the
         // per-possession math; speed + stamina remain at the standard weight.
         effectiveness += ((steal * 0.5 + speed + stamina) / 2.5 - 60) * 0.3
+        break
+      }
+      case 'switch_everything': {
+        // Switching lives or dies on versatile, rangy defenders.
+        const perim = this._getRosterAverage(roster, 'defense', 'perimeterDefense')
+        const help = this._getRosterAverage(roster, 'defense', 'helpDefenseIQ')
+        effectiveness += ((perim + help) / 2 - 60) * 0.3
+        break
+      }
+      case 'box_and_one': {
+        // A lockdown chaser (perimeter) anchoring a sound box (interior).
+        const perim = this._getRosterAverage(roster, 'defense', 'perimeterDefense')
+        const interior = this._getRosterAverage(roster, 'defense', 'interiorDefense')
+        effectiveness += ((perim + interior) / 2 - 60) * 0.3
+        break
+      }
+      case 'drop_coverage': {
+        // Rim-protecting bigs walling off the paint.
+        const interior = this._getRosterAverage(roster, 'defense', 'interiorDefense')
+        const block = this._getRosterAverage(roster, 'defense', 'block')
+        effectiveness += ((interior + block) / 2 - 60) * 0.3
         break
       }
     }

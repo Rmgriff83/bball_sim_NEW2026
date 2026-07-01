@@ -155,6 +155,9 @@ class GameSimulator {
     this.awayStarterIds = []
     this.isLiveGame = false
     this.userTeamId = null
+    // User defensive matchup overrides ({ opponentOffId: userDefId }); applied
+    // when the user's team is on defense. Survives quarter breaks (serialized).
+    this.userDefensiveMatchups = null
 
     // ---- Game state ----
     this.generateAnimationData = true
@@ -464,6 +467,10 @@ class GameSimulator {
       this.awayBoxScore[player.id] = this.emptyStatLine(player)
     }
 
+    // Per-play-set analytics accumulators (offense that ran each play).
+    this.homePlayAnalytics = {}
+    this.awayPlayAnalytics = {}
+
     this.homeScore = 0
     this.awayScore = 0
     this.playByPlay = []
@@ -481,6 +488,28 @@ class GameSimulator {
     this.homeDefensiveScheme = homeScheme.defensive || 'man'
     this.awayOffensiveScheme = awayScheme.offensive || 'balanced'
     this.awayDefensiveScheme = awayScheme.defensive || 'man'
+
+    // Honor a per-game style passed in options for the USER team, so the very
+    // first quarter reflects the in-game dropdown even if the team's persisted
+    // coaching_scheme auto-save was skipped. Q2+ already get this via
+    // applyAdjustments/continueGame; this closes the Q1 gap.
+    const optOffStyle = options.offensiveStyle || options.offensive_style || null
+    const optDefStyle = options.defensiveStyle || options.defensive_style || null
+    if (optOffStyle) {
+      if (isUserHomeTeam) this.homeOffensiveScheme = optOffStyle
+      else if (isUserAwayTeam) this.awayOffensiveScheme = optOffStyle
+    }
+    if (optDefStyle) {
+      if (isUserHomeTeam) this.homeDefensiveScheme = optDefStyle
+      else if (isUserAwayTeam) this.awayDefensiveScheme = optDefStyle
+    }
+
+    // User-defined defensive matchup overrides ({ opponentOffId: userDefId }),
+    // applied when the user's team is on defense. Passed per-game via options
+    // (and updated at quarter breaks via applyAdjustments); serialized so it
+    // survives the worker round-trip + navigation resume.
+    this.userDefensiveMatchups =
+      options.defensiveMatchups ?? options.defensive_matchups ?? this.userDefensiveMatchups ?? null
 
     // Coach references — used by CoachingEngine to scale scheme modifiers by
     // offensiveIQ / defensiveIQ, and by PlayExecutionEngine for clutch-time
@@ -908,6 +937,17 @@ class GameSimulator {
     const offensiveCoach = isHome ? this.homeCoach : this.awayCoach
     const defensiveCoach = isHome ? this.awayCoach : this.homeCoach
 
+    // User-defined defensive matchup overrides — only when the DEFENDING team is
+    // the user's. Sourced from `userDefensiveMatchups` (set per-game via options
+    // and at quarter breaks via applyAdjustments; serialized for resume).
+    // Honored by the engine's matchup hierarchy (user pick wins when both players
+    // are on court).
+    const defendingTeam = isHome ? this.awayTeam : this.homeTeam
+    const defensiveMatchups =
+      defendingTeam && this.userTeamId && defendingTeam.id === this.userTeamId
+        ? (this.userDefensiveMatchups ?? null)
+        : null
+
     // Update minutes for active players
     for (const player of offense) {
       const playerId = player.id || null
@@ -991,6 +1031,13 @@ class GameSimulator {
       offensiveModifiers,
       offensiveCoach,
       clutchTime,
+      // Game-state context for defense/matchup-aware read steering in PEE
+      // (which option the offense reads into — not shot-quality math).
+      shotClock: context.shotClock,
+      scoreDifferential: context.scoreDifferential,
+      // User-set defensive matchup overrides (null unless the defending team is
+      // the user's and they've configured matchups — UI ships later).
+      defensiveMatchups,
       // Used by PlayExecutionEngine to read this.momentum[offensiveTeamSide]
       // when applying the per-shot momentum spillover.
       offensiveTeamSide: team,
@@ -1084,11 +1131,51 @@ class GameSimulator {
    * Process play result and update box scores.
    * Returns true if an offensive rebound occurred (offense keeps possession).
    */
+  /**
+   * Accumulate per-play-set analytics for the offense that just ran `playResult`.
+   * Keyed by play id; tracks possessions, 2PT/3PT makes+attempts, FT makes+
+   * attempts, turnovers, and points. Percentages/PPP are derived at display time.
+   */
+  _accumulatePlayAnalytics(playResult, isHome) {
+    const playId = playResult.playId
+    if (!playId) return
+    const pa = isHome ? this.homePlayAnalytics : this.awayPlayAnalytics
+    let e = pa[playId]
+    if (!e) {
+      e = pa[playId] = {
+        name: playResult.playName ?? playId,
+        category: playResult.category ?? null,
+        poss: 0, fg2m: 0, fg2a: 0, fg3m: 0, fg3a: 0, ftm: 0, fta: 0, tov: 0, pts: 0,
+      }
+    }
+    e.poss++
+    const sa = playResult.shotAttempt
+    if (sa) {
+      if (sa.shotType === 'threePoint') {
+        e.fg3a++
+        if (sa.made) e.fg3m++
+      } else {
+        e.fg2a++
+        if (sa.made) e.fg2m++
+      }
+    }
+    const ft = playResult.freeThrows
+    if (ft) {
+      e.fta += ft.attempted || 0
+      e.ftm += ft.made || 0
+    }
+    if (playResult.outcome === 'turnover') e.tov++
+    e.pts += playResult.points || 0
+  }
+
   processPlayResult(playResult, offense, defense, isHome) {
     const outcome = playResult.outcome
     const points = playResult.points || 0
     const shotAttempt = playResult.shotAttempt || null
     const freeThrows = playResult.freeThrows || null
+
+    // Per-play-set analytics for the offense (2PT/3PT/FT/TO/points by play id).
+    this._accumulatePlayAnalytics(playResult, isHome)
 
     // Store scores before update for clutch play tracking
     const prevHomeScore = this.homeScore
@@ -2231,6 +2318,10 @@ class GameSimulator {
         home: this.homeSynergiesActivated,
         away: this.awaySynergiesActivated,
       },
+      play_analytics: {
+        home: this.homePlayAnalytics,
+        away: this.awayPlayAnalytics,
+      },
       clutch_play: this.lastClutchPlay,
       overtime_periods: this.currentQuarter > 4 ? this.currentQuarter - 4 : 0,
     }
@@ -2295,6 +2386,10 @@ class GameSimulator {
         home: this.homeSynergiesActivated,
         away: this.awaySynergiesActivated,
       },
+      play_analytics: {
+        home: this.homePlayAnalytics,
+        away: this.awayPlayAnalytics,
+      },
     }
   }
 
@@ -2323,6 +2418,8 @@ class GameSimulator {
       quarterScores: this.quarterScores,
       homeBoxScore: this.homeBoxScore,
       awayBoxScore: this.awayBoxScore,
+      homePlayAnalytics: this.homePlayAnalytics,
+      awayPlayAnalytics: this.awayPlayAnalytics,
       homeLineup: this.homeLineup.map(p => p.id),
       awayLineup: this.awayLineup.map(p => p.id),
       homePlayers: this.homePlayers.map(p => this.compactPlayerData(p)),
@@ -2331,6 +2428,7 @@ class GameSimulator {
       homeDefensiveScheme: this.homeDefensiveScheme,
       awayOffensiveScheme: this.awayOffensiveScheme,
       awayDefensiveScheme: this.awayDefensiveScheme,
+      userDefensiveMatchups: this.userDefensiveMatchups,
       possessionCount: this.possessionCount,
       quarterEndPossessions: this.quarterEndPossessions,
       homeTeamId: this.homeTeam ? this.homeTeam.id : null,
@@ -2381,6 +2479,8 @@ class GameSimulator {
     this.quarterScores = state.quarterScores
     this.homeBoxScore = state.homeBoxScore
     this.awayBoxScore = state.awayBoxScore
+    this.homePlayAnalytics = state.homePlayAnalytics || {}
+    this.awayPlayAnalytics = state.awayPlayAnalytics || {}
     this.homePlayers = state.homePlayers
     this.awayPlayers = state.awayPlayers
 
@@ -2396,6 +2496,10 @@ class GameSimulator {
       this.homeDefensiveScheme = 'man'
       this.awayOffensiveScheme = state.awayCoachingScheme || 'balanced'
       this.awayDefensiveScheme = 'man'
+    }
+
+    if (state.userDefensiveMatchups !== undefined) {
+      this.userDefensiveMatchups = state.userDefensiveMatchups
     }
 
     this.possessionCount = state.possessionCount
@@ -2444,6 +2548,9 @@ class GameSimulator {
     const awayLineup = adjustments.awayLineup || adjustments.away_lineup || null
     const offStyle = adjustments.offensiveStyle || adjustments.offensive_style || null
     const defStyle = adjustments.defensiveStyle || adjustments.defensive_style || null
+    // Updated defensive matchup overrides from the quarter-break editor.
+    const matchups = adjustments.defensiveMatchups ?? adjustments.defensive_matchups
+    if (matchups) this.userDefensiveMatchups = matchups
 
     // Update home lineup if provided
     if (homeLineup && homeLineup.length > 0) {

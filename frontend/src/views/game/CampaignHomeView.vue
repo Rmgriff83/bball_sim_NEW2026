@@ -24,6 +24,8 @@ import ChampionshipModal from '@/components/playoffs/ChampionshipModal.vue'
 import SeasonAwardsModal from '@/components/playoffs/SeasonAwardsModal.vue'
 import RetirementModal from '@/components/team/RetirementModal.vue'
 import ContractDecisionModal from '@/components/team/ContractDecisionModal.vue'
+import CoachResignModal from '@/components/team/CoachResignModal.vue'
+import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import OwnerCheckInModal from '@/components/team/OwnerCheckInModal.vue'
 import OwnerWelcomeModal from '@/components/team/OwnerWelcomeModal.vue'
 import DraftLotteryModal from '@/components/draft/DraftLotteryModal.vue'
@@ -79,6 +81,9 @@ const currentProposal = ref(null)
 // auto-popping the next proposal so we don't re-show the same offer after
 // every sim, but the offer stays in pendingProposals (visible in Offers tab).
 const dismissedProposalIds = ref(new Set())
+// Guards the trade-proposal modal buttons while an accept/reject is processing so
+// rapid taps can't queue multiple in-flight actions.
+const proposalActionBusy = ref(false)
 const showAllStarModal = ref(false)
 const allStarRosters = ref(null)
 const showInjuryModal = ref(false)
@@ -116,6 +121,11 @@ const seasonAwardsYear = ref(null)
 // team to run (not extended) before reaching the offseason hub.
 const showContractDecisionModal = ref(false)
 const contractDecisionData = ref(null)
+// Coach re-sign prompt when an expiring head coach hits the new season.
+const showCoachResignModal = ref(false)
+const coachDecisionData = ref(null)
+const coachResignBusy = ref(false)
+const showHireCoachModal = ref(false)
 const contractDecisionBusy = ref(false)
 
 // Owner Check-In modal (start of each season / right after campaign creation).
@@ -396,8 +406,11 @@ const teamStanding = computed(() => {
   return standings.find(s => s.teamId === team.value.id || s.team_id === team.value.id)
 })
 
-const wins = computed(() => teamStanding.value?.wins || 0)
-const losses = computed(() => teamStanding.value?.losses || 0)
+// W-L comes from the global live record (gameStore.userRecord), derived from
+// completed user games — so it updates in real time during multi-game sims, matching
+// the Calendar header. (leagueStore standings only refresh on a forced fetch.)
+const wins = computed(() => gameStore.userRecord.wins)
+const losses = computed(() => gameStore.userRecord.losses)
 
 const teamRank = computed(() => {
   if (!team.value) return '-'
@@ -1042,6 +1055,7 @@ onMounted(async () => {
       // run when switching between campaigns.
       maybeShowOwnerCheckIn()
       maybeShowExpectationRaise()
+      maybeShowCoachDecisionModal()
       walkthroughStore.maybeStart('campaignHome')
       maybeStartOffseasonTour()
     }).catch(err => console.error('Failed to refresh campaign:', err))
@@ -1085,6 +1099,10 @@ onMounted(async () => {
   // user MOVES JOBS mid-campaign (handleSwitchTeam). Suspends tours until dismissed.
   maybeShowOwnerCheckIn()
 
+  // Expiring head-coach re-sign prompt (guarded so it won't stack on the check-in;
+  // its close handler re-invokes this).
+  maybeShowCoachDecisionModal()
+
   // First-visit onboarding tour (no-op unless enabled and not yet seen).
   walkthroughStore.maybeStart('campaignHome')
 
@@ -1116,7 +1134,9 @@ function maybeStartOffseasonTour() {
     showRetirementModal.value ||
     showContractDecisionModal.value ||
     showOwnerCheckInModal.value ||
-    showOwnerWelcomeModal.value
+    showOwnerWelcomeModal.value ||
+    showCoachResignModal.value ||
+    showHireCoachModal.value
   ) {
     return
   }
@@ -1160,6 +1180,8 @@ onUnmounted(() => {
   showOwnerCheckInModal.value = false
   showOwnerWelcomeModal.value = false
   showSimulateModal.value = false
+  showCoachResignModal.value = false
+  showHireCoachModal.value = false
 })
 
 // Hydrate persisted season awards + champion when in offseason so the
@@ -1887,10 +1909,8 @@ async function maybeShowExpectationRaise() {
   if (!raise?.tier) return
 
   const label = EXPECTATION_LABEL[raise.tier] ?? raise.tier
-  toastStore.showSuccess(
-    `Your owner has seen enough — expectations raised to ${label}. New coach goals were added; the ones you're already chasing stay.`,
-    6500
-  )
+  const fromLabel = raise.fromTier ? (EXPECTATION_LABEL[raise.fromTier] ?? raise.fromTier) : ''
+  toastStore.showOwnerExpectation({ label, fromLabel, campaignId: campaignId.value })
 
   try {
     await CampaignRepository.updateSettings(campaignId.value, { pendingOwnerExpectationRaise: null })
@@ -1990,6 +2010,112 @@ function handleCloseOwnerCheckIn() {
   walkthroughStore.setSuspended(false)
   walkthroughStore.maybeStart('campaignHome')
   maybeStartOffseasonTour()
+  // The owner check-in is the new-season landing modal; chain the coach re-sign
+  // prompt after it so an expiring head coach gets surfaced.
+  maybeShowCoachDecisionModal()
+}
+
+// --- Coach re-sign decision (expiring head coach) ---------------------------
+// startNewSeason stashes an expiring user coach in settings.pendingCoachDecision
+// instead of silently dropping it. Surface a prompt to re-sign or replace.
+// Fire-once-by-year; won't stack over the new-season/owner/offseason modals.
+function maybeShowCoachDecisionModal() {
+  const camp = campaignStore.currentCampaign
+  if (!camp) return
+  const pending = camp.settings?.pendingCoachDecision
+  if (!pending?.coach) return
+  // Stale after a team switch — only prompt for the current team's coach.
+  if (pending.teamId != null && camp.teamId != null && String(pending.teamId) !== String(camp.teamId)) return
+  if (camp.settings?.coachDecisionDismissedYear === pending.year) return
+  // Don't render over another blocking modal; close handlers re-invoke this.
+  if (
+    showOwnerCheckInModal.value ||
+    showOwnerWelcomeModal.value ||
+    showContractDecisionModal.value ||
+    showRetirementModal.value ||
+    showAllStarModal.value ||
+    showSeasonAwardsModal.value ||
+    showNewSeasonModal.value
+  ) {
+    return
+  }
+  coachDecisionData.value = pending
+  showCoachResignModal.value = true
+}
+
+async function _stampCoachDecisionDismissed() {
+  const year = coachDecisionData.value?.year ?? campaignStore.currentCampaign?.currentSeasonYear
+  try {
+    await CampaignRepository.updateSettings(campaignId.value, { coachDecisionDismissedYear: year })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        coachDecisionDismissedYear: year,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to stamp coach decision dismissal:', err)
+  }
+}
+
+async function handleCoachResigned() {
+  if (coachResignBusy.value) return
+  coachResignBusy.value = true
+  const loadingToastId = toastStore.showLoading('Re-signing your coach...')
+  try {
+    const { coach, cost } = await teamStore.resignPendingCoach(campaignId.value)
+    await _stampCoachDecisionDismissed()
+    await Promise.all([
+      campaignStore.fetchCampaign(campaignId.value, true),
+      teamStore.fetchTeam(campaignId.value, { force: true }),
+    ])
+    toastStore.removeMinimalToast(loadingToastId)
+    showCoachResignModal.value = false
+    coachDecisionData.value = null
+    toastStore.showSuccess(
+      cost > 0
+        ? `Re-signed ${coach?.name ?? 'your coach'} (−${cost} tokens)`
+        : `Re-signed ${coach?.name ?? 'your coach'}`,
+      4000
+    )
+  } catch (err) {
+    toastStore.removeMinimalToast(loadingToastId)
+    toastStore.showError(err?.message || 'Failed to re-sign coach')
+    console.error('[CampaignHome] resign coach failed:', err)
+  } finally {
+    coachResignBusy.value = false
+  }
+}
+
+// "Sign a new coach" → close the prompt and open the hire-coach browser.
+function handleCoachHireNew() {
+  showCoachResignModal.value = false
+  showHireCoachModal.value = true
+}
+
+// Hire modal completed a hire → clear the pending decision so it doesn't re-prompt.
+async function handleCoachHired() {
+  showHireCoachModal.value = false
+  await _stampCoachDecisionDismissed()
+  try {
+    await CampaignRepository.updateSettings(campaignId.value, { pendingCoachDecision: null })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        pendingCoachDecision: null,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to clear pending coach decision:', err)
+  }
+  coachDecisionData.value = null
+}
+
+// Dismiss ("decide later") → leave the team coachless; don't re-pop this year.
+async function handleCloseCoachResign() {
+  showCoachResignModal.value = false
+  await _stampCoachDecisionDismissed()
+  coachDecisionData.value = null
 }
 
 // New-season summary closed → the owner's check-in is the next (first) thing the
@@ -1998,6 +2124,9 @@ function handleCloseNewSeasonModal() {
   showNewSeasonModal.value = false
   newSeasonData.value = null
   maybeShowOwnerCheckIn()
+  // If the owner check-in didn't open (already seen this year), surface the coach
+  // re-sign prompt now; otherwise its close handler chains it.
+  maybeShowCoachDecisionModal()
 }
 
 // Handle starting a new season from offseason hub
@@ -2771,6 +2900,8 @@ async function checkPendingTradeProposals() {
 }
 
 async function handleAcceptProposal(proposal) {
+  if (proposalActionBusy.value) return
+  proposalActionBusy.value = true
   const loadingToastId = toastStore.showLoading('Processing trade...')
   try {
     const result = await tradeStore.acceptProposal(campaignId.value, proposal.id)
@@ -2801,23 +2932,37 @@ async function handleAcceptProposal(proposal) {
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError(tradeStore.error || 'Failed to accept trade')
+  } finally {
+    proposalActionBusy.value = false
   }
 }
 
-async function handleRejectProposal(proposal) {
-  try {
-    await tradeStore.rejectProposal(campaignId.value, proposal.id)
-    showTradeProposalModal.value = false
-    currentProposal.value = null
-    // Show next proposal if any
-    const next = tradeStore.pendingProposals.find(p => !dismissedProposalIds.value.has(p.id))
-    if (next) {
-      currentProposal.value = next
-      showTradeProposalModal.value = true
-    }
-  } catch (err) {
-    toastStore.showError('Failed to reject proposal')
-  }
+// Declining is instant from the user's POV: close + advance the queue synchronously,
+// then persist the rejection best-effort in the background. A decline can't really
+// "fail" (it just leaves the user's queue), so no failure toast — and the button is
+// guarded so a rapid double-tap can't double-advance/queue work.
+function handleRejectProposal(proposal) {
+  if (proposalActionBusy.value || !proposal) return
+  proposalActionBusy.value = true
+
+  // Optimistically drop it from the queue + advance to the next, immediately.
+  showTradeProposalModal.value = false
+  currentProposal.value = null
+  const next = tradeStore.pendingProposals.find(
+    p => p.id !== proposal.id && !dismissedProposalIds.value.has(p.id)
+  )
+
+  // Best-effort persist (removes it from pendingProposals + marks rejected); never
+  // blocks the UI or surfaces an error for a decline.
+  Promise.resolve(tradeStore.rejectProposal(campaignId.value, proposal.id))
+    .catch(err => console.warn('[CampaignHome] reject proposal persist failed:', err))
+    .finally(() => {
+      proposalActionBusy.value = false
+      if (next) {
+        currentProposal.value = next
+        showTradeProposalModal.value = true
+      }
+    })
 }
 
 function handleCloseProposalModal() {
@@ -4168,10 +4313,30 @@ function handleCloseSimulateModal() {
       @switch="handleSwitchTeam"
     />
 
+    <!-- Coach re-sign prompt (expiring head coach at the new season) -->
+    <CoachResignModal
+      :show="showCoachResignModal"
+      :decision="coachDecisionData"
+      :campaign-id="campaignId"
+      :busy="coachResignBusy"
+      @resigned="handleCoachResigned"
+      @hire-new="handleCoachHireNew"
+      @close="handleCloseCoachResign"
+    />
+
+    <!-- Hire-coach browser (opened from the re-sign prompt's "Sign a New Coach") -->
+    <HireCoachModal
+      :show="showHireCoachModal"
+      :campaign-id="campaignId"
+      @hired="handleCoachHired"
+      @close="showHireCoachModal = false"
+    />
+
     <!-- Trade Proposal Modal -->
     <TradeProposalModal
       :show="showTradeProposalModal"
       :proposal="currentProposal"
+      :busy="proposalActionBusy"
       @close="handleCloseProposalModal"
       @accept="handleAcceptProposal"
       @reject="handleRejectProposal"

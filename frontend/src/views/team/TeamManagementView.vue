@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
@@ -10,7 +10,7 @@ import { useAudioStore } from '@/stores/audio'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
-import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp, Coins, Dumbbell, MessagesSquare } from 'lucide-vue-next'
+import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp, Coins, Dumbbell, MessagesSquare, BarChart3 } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
@@ -26,6 +26,7 @@ import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import HireScoutModal from '@/components/team/HireScoutModal.vue'
 import HireTrainerModal from '@/components/team/HireTrainerModal.vue'
 import HireStaffTrainerModal from '@/components/team/HireStaffTrainerModal.vue'
+import HireAnalystModal from '@/components/team/HireAnalystModal.vue'
 import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import CoachBadgeStoreModal from '@/components/coach/CoachBadgeStoreModal.vue'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
@@ -36,6 +37,13 @@ import { isPastTradeDeadline } from '@/engine/season/SeasonDeadlines'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { useWalkthroughTab } from '@/composables/useWalkthroughTab'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { getSchemePlaybook } from '@/engine/simulation/PlayService'
+// Lazy-loaded: the play-animation preview (its CourtDiagram + graph helper) is
+// code-split into its own chunk that only downloads the first time a user opens
+// a scheme's "View plays" — it stays out of the Team Management view bundle.
+const PlayAnimationPreview = defineAsyncComponent(() =>
+  import('@/components/coaching/PlayAnimationPreview.vue')
+)
 
 const route = useRoute()
 const router = useRouter()
@@ -206,6 +214,8 @@ const showHireTrainerModal = ref(false)
 const firingTrainer = ref(false)
 const showHireStaffTrainerModal = ref(false)
 const firingStaffTrainer = ref(false)
+const showHireAnalystModal = ref(false)
+const firingAnalyst = ref(false)
 const showHireCoachModal = ref(false)
 const showCoachBadgeStore = ref(false)
 
@@ -229,11 +239,79 @@ const hiredTrainer = computed(() => campaignStore.currentCampaign?.settings?.tra
 const trainingFacilityLevel = computed(() => teamStore.team?.facilities?.training ?? 1)
 const hiredStaffTrainer = computed(() => campaignStore.currentCampaign?.settings?.staff_trainer ?? null)
 
+// Analyst computed
+const analyticsFacilityLevel = computed(() => teamStore.team?.facilities?.analytics ?? 1)
+const hiredAnalyst = computed(() => campaignStore.currentCampaign?.settings?.analyst ?? null)
+const ANALYST_PERK_LABELS = {
+  postgame_analytics: { label: 'Postgame Analytics', description: "See your team's efficiency by play set after games." },
+  opponent_analytics: { label: 'Opponent Scouting Report', description: "Scout the opponent's play-set tendencies before games." },
+}
+
 // Coach settings state
 const activeCoachTab = ref('offensive')
 const schemesFetched = ref(false)
 const updatingScheme = ref(false)
 const selectedScheme = ref(null)
+
+// --- Playbook preview (offensive scheme cards) ---------------------------
+// Which scheme card has its play list expanded, and the selected play per
+// scheme. Reading getSchemePlaybook directly keeps this in sync with the sim's
+// actual play weighting (no separate data copy).
+const expandedPlaybookScheme = ref(null)
+const selectedPlayId = ref({})
+
+const CATEGORY_LABELS = {
+  isolation: 'Isolation',
+  pick_and_roll: 'Pick & Roll',
+  post_up: 'Post Up',
+  motion: 'Motion',
+  spot_up: 'Spot Up',
+  cut: 'Cuts',
+  transition: 'Transition',
+}
+function categoryLabel(cat) {
+  return CATEGORY_LABELS[cat] || cat
+}
+
+// `getSchemePlaybook` reads from PlayService, which is already in this view's
+// eager graph (team store → CoachingEngine → PlayService), so this adds no
+// bundle weight. The heavy/continuous part — the looping animation component
+// (CourtDiagram + graph builder + rAF) — is the lazily-loaded piece (see the
+// defineAsyncComponent import above), and only mounts on expand.
+function playbookFor(schemeId) {
+  // Only the categories this scheme genuinely emphasises — weighted ABOVE
+  // neutral (> 1.0). The universal pick&roll / cut / transition tag-alongs are
+  // hidden so each scheme's dropdown shows its distinctive play set. Balanced
+  // has no above-neutral category, so it falls back to the full book.
+  const full = getSchemePlaybook(schemeId)
+  const emphasized = full.filter((grp) => grp.weight > 1.0)
+  return emphasized.length ? emphasized : full
+}
+
+function defaultPlayId(schemeId) {
+  const pb = playbookFor(schemeId)
+  return pb[0]?.plays?.[0]?.id ?? null
+}
+
+function togglePlaybook(schemeId) {
+  if (expandedPlaybookScheme.value === schemeId) {
+    expandedPlaybookScheme.value = null
+    return
+  }
+  expandedPlaybookScheme.value = schemeId
+  if (!selectedPlayId.value[schemeId]) {
+    selectedPlayId.value = { ...selectedPlayId.value, [schemeId]: defaultPlayId(schemeId) }
+  }
+}
+
+function selectedPlayObj(schemeId) {
+  const id = selectedPlayId.value[schemeId] || defaultPlayId(schemeId)
+  for (const grp of playbookFor(schemeId)) {
+    const found = grp.plays.find((p) => p.id === id)
+    if (found) return found
+  }
+  return null
+}
 const selectedDefensiveScheme = ref(null)
 const selectedSubStrategy = ref('staggered')
 
@@ -284,6 +362,34 @@ const defensiveSchemes = {
     type: 'aggressive',
     strengths: ['Ball Pressure', 'Steals'],
     weaknesses: ['Open 3s', 'Rotation']
+  },
+  switch_everything: {
+    name: 'Switch Everything',
+    description: 'Switch every screen to erase pick-and-roll and iso advantages. Needs versatile, switchable defenders.',
+    type: 'aggressive',
+    strengths: ['Pick & Roll', 'Isolation'],
+    weaknesses: ['Post Mismatches']
+  },
+  box_and_one: {
+    name: 'Box-and-One',
+    description: 'Four defenders in a zone box with one chaser hounding the opposing star. Smothers iso scorers.',
+    type: 'aggressive',
+    strengths: ['Star Scorers', 'Isolation'],
+    weaknesses: ['Ball Movement', 'Spot-Up 3s']
+  },
+  drop_coverage: {
+    name: 'Drop Coverage',
+    description: 'Bigs sag into the paint on ball screens to wall off the rim, conceding the pull-up and pop three.',
+    type: 'balanced',
+    strengths: ['Pick & Roll', 'Rim Protection'],
+    weaknesses: ['Pull-Up 3s', 'Spot-Up Shooters']
+  },
+  half_court_trap: {
+    name: 'Half-Court Trap',
+    description: 'Spring traps past half court to force live-ball turnovers without the full-court risk.',
+    type: 'aggressive',
+    strengths: ['Turnovers', 'Post Offense'],
+    weaknesses: ['Open Man', 'Quick Offense']
   }
 }
 
@@ -1331,6 +1437,40 @@ async function onScoutHired() {
   }
 }
 
+// Analyst functions
+async function fireAnalyst() {
+  if (firingAnalyst.value) return
+  firingAnalyst.value = true
+  try {
+    const camp = await CampaignRepository.get(campaignId.value)
+    if (camp) {
+      camp.settings = camp.settings ?? {}
+      delete camp.settings.analyst
+      await CampaignRepository.save(camp)
+    }
+    if (campaignStore.currentCampaign) {
+      const settings = { ...campaignStore.currentCampaign.settings }
+      delete settings.analyst
+      campaignStore.currentCampaign.settings = settings
+    }
+    syncStore.markDirty()
+    toastStore.showSuccess('Analyst released')
+  } catch (err) {
+    console.error('Failed to fire analyst:', err)
+    toastStore.showError('Failed to release analyst')
+  } finally {
+    firingAnalyst.value = false
+  }
+}
+
+async function onAnalystHired() {
+  try {
+    await campaignStore.fetchCampaign(campaignId.value)
+  } catch (err) {
+    console.error('Failed to refresh campaign after hiring analyst:', err)
+  }
+}
+
 // Refresh team store after a coach badge purchase so the coach card chip row
 // and the badge store's "Owned" state both reflect the new badge immediately.
 async function onCoachBadgePurchased() {
@@ -2043,6 +2183,17 @@ const STAFF_TRAINER_PERK_LABELS = {
               <AlertTriangle :size="10" />
             </span>
           </button>
+          <button
+            class="coach-tab-btn"
+            :class="{ active: activePersonnelTab === 'analyst' }"
+            @click="activePersonnelTab = 'analyst'"
+            style="position: relative;"
+          >
+            Analyst
+            <span v-if="!hiredAnalyst" class="tab-badge tab-badge-warning">
+              <AlertTriangle :size="10" />
+            </span>
+          </button>
         </div>
 
         <!-- Coach Sub-tab -->
@@ -2283,6 +2434,37 @@ const STAFF_TRAINER_PERK_LABELS = {
                     <div class="trait-tags">
                       <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
                     </div>
+                  </div>
+                </div>
+
+                <!-- Playbook preview — view this scheme's plays as looping animations -->
+                <div class="playbook-section" @click.stop>
+                  <button
+                    type="button"
+                    class="playbook-toggle"
+                    @click="togglePlaybook(schemeId)"
+                  >
+                    {{ expandedPlaybookScheme === schemeId ? 'Hide plays' : 'View plays' }}
+                  </button>
+                  <div v-if="expandedPlaybookScheme === schemeId" class="playbook-body">
+                    <select
+                      :value="selectedPlayId[schemeId] || defaultPlayId(schemeId)"
+                      class="playbook-select"
+                      @change="selectedPlayId = { ...selectedPlayId, [schemeId]: $event.target.value }"
+                    >
+                      <optgroup
+                        v-for="grp in playbookFor(schemeId)"
+                        :key="grp.category"
+                        :label="categoryLabel(grp.category)"
+                      >
+                        <option v-for="pl in grp.plays" :key="pl.id" :value="pl.id">
+                          {{ pl.name }}
+                        </option>
+                      </optgroup>
+                    </select>
+                    <!-- Async component: chunk loads on first expand; mounts only
+                         while expanded; rAF pauses offscreen / stops on collapse -->
+                    <PlayAnimationPreview :play="selectedPlayObj(schemeId)" />
                   </div>
                 </div>
 
@@ -2671,6 +2853,84 @@ const STAFF_TRAINER_PERK_LABELS = {
           </GlassCard>
         </div><!-- /Staff Trainer Sub-tab -->
 
+        <!-- Analyst Sub-tab -->
+        <div v-else-if="activePersonnelTab === 'analyst'">
+          <!-- Hired Analyst Card -->
+          <GlassCard v-if="hiredAnalyst" padding="lg" :hoverable="false">
+            <h3 class="h4 mb-4">Your Analyst</h3>
+            <div class="coach-header">
+              <div class="coach-avatar-wrap">
+                <PersonnelAvatar
+                  :personnel="hiredAnalyst"
+                  kind="analyst"
+                  :size="64"
+                  :campaign-id="campaignId"
+                  :editable="true"
+                />
+              </div>
+              <div class="coach-info">
+                <p class="coach-name">{{ hiredAnalyst.name }}</p>
+                <div class="coach-rating">
+                  <StatBadge :value="hiredAnalyst.tier === 4 ? 85 : 70" size="sm" />
+                  <span class="rating-label">{{ hiredAnalyst.tier }}-Star Analyst</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="scout-contract-info mt-3">
+              <span class="text-secondary text-sm">
+                {{ hiredAnalyst.contractYears }} Season{{ hiredAnalyst.contractYears !== 1 ? 's' : '' }} Remaining · Hired Season {{ hiredAnalyst.hiredSeason }}
+              </span>
+            </div>
+
+            <!-- Analyst Perks -->
+            <div class="scout-perks-section mt-4">
+              <h4 class="section-title">Perks</h4>
+              <div class="scout-perks-list">
+                <div
+                  v-for="perk in hiredAnalyst.perks"
+                  :key="perk.key"
+                  class="scout-perk-row"
+                >
+                  <div class="scout-perk-icon">
+                    <Check :size="14" />
+                  </div>
+                  <div class="scout-perk-text">
+                    <span class="scout-perk-label">{{ ANALYST_PERK_LABELS[perk.key]?.label || perk.key }}</span>
+                    <span class="scout-perk-desc">{{ ANALYST_PERK_LABELS[perk.key]?.description || '' }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Fire Button -->
+            <button
+              class="btn-fire-scout mt-4"
+              :disabled="firingAnalyst"
+              @click="fireAnalyst"
+            >
+              {{ firingAnalyst ? 'Releasing...' : 'Release Analyst' }}
+            </button>
+          </GlassCard>
+
+          <!-- Empty State -->
+          <GlassCard v-else padding="lg" :hoverable="false">
+            <div class="scout-empty-state">
+              <BarChart3 :size="48" class="empty-icon" />
+              <h3 class="empty-title">No Analyst Hired</h3>
+              <p class="empty-desc">
+                Hire an analyst to unlock play-by-play analytics. A 3-Star analyst reveals your team's efficiency per play set after games; a 4-Star analyst also scouts the opponent's tendencies before games.
+              </p>
+              <button
+                class="btn-browse-scouts"
+                @click="showHireAnalystModal = true"
+              >
+                Browse Analysts
+              </button>
+            </div>
+          </GlassCard>
+        </div><!-- /Analyst Sub-tab -->
+
         <!-- Hire Coach Modal -->
         <HireCoachModal
           :show="showHireCoachModal"
@@ -2704,6 +2964,15 @@ const STAFF_TRAINER_PERK_LABELS = {
           :training-facility-level="trainingFacilityLevel"
           @close="showHireStaffTrainerModal = false"
           @hired="onStaffTrainerHired"
+        />
+
+        <!-- Hire Analyst Modal -->
+        <HireAnalystModal
+          :show="showHireAnalystModal"
+          :campaign-id="campaignId"
+          :analytics-facility-level="analyticsFacilityLevel"
+          @close="showHireAnalystModal = false"
+          @hired="onAnalystHired"
         />
 
         <!-- Coach Badge Store Modal -->
@@ -4802,6 +5071,55 @@ const STAFF_TRAINER_PERK_LABELS = {
   justify-content: center;
   background: rgba(0, 0, 0, 0.5);
   border-radius: 12px;
+}
+
+/* Playbook preview (offensive scheme cards) */
+.playbook-section {
+  margin-top: 0.85rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 0.75rem;
+}
+
+.playbook-toggle {
+  width: 100%;
+  padding: 6px 12px;
+  border-radius: var(--radius-lg, 10px);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.playbook-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.playbook-body {
+  margin-top: 0.75rem;
+}
+
+.playbook-select {
+  width: 100%;
+  margin-bottom: 0.6rem;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--color-text-primary);
+  font-size: 0.82rem;
+}
+
+[data-theme='light'] .playbook-toggle {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme='light'] .playbook-select {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.15);
 }
 
 
