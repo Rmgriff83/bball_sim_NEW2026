@@ -39,6 +39,16 @@ const GENERATIONAL_TIER = {
   workEthicMin: 85, workEthicMax: 100,
 }
 
+// "Diamond in the rough" — a rare low/mid-tier prospect who secretly carries
+// star-level POTENTIAL while keeping their low current overall. Weighted to the
+// lower tiers (the top tiers are already high-ceiling). The gem still LOOKS like
+// a late prospect (its tier/overall are unchanged and potential stays hidden
+// behind scouting); the AI values it as an ordinary low pick (see
+// AIDraftService), so it slips in the draft for a scouting user to unearth.
+const HIDDEN_GEM_CHANCE = { undrafted: 0.06, secondRound: 0.05, firstRound: 0.02, lottery: 0, franchise: 0 }
+const GEM_POT_MIN = 84
+const GEM_POT_MAX = 95
+
 const POSITION_WEIGHTS = [
   { position: 'PG', weight: 0.20 },
   { position: 'SG', weight: 0.20 },
@@ -249,11 +259,19 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
 
       // Generate OVR and POT within tier range
       const overall = randInt(tier.ovrMin, tier.ovrMax)
-      const potential = randInt(
+      let finalPotential = randInt(
         Math.max(tier.potMin, overall),
         tier.potMax
       )
       const age = randInt(tier.ageMin, tier.ageMax)
+
+      // Diamond-in-the-rough roll: rarely, a low/mid prospect gets a secret
+      // star ceiling (kept with its low current overall).
+      const gemChance = HIDDEN_GEM_CHANCE[tier.name] ?? 0
+      const isHiddenGem = gemChance > 0 && Math.random() < gemChance
+      if (isHiddenGem) {
+        finalPotential = Math.max(finalPotential, randInt(GEM_POT_MIN, GEM_POT_MAX))
+      }
 
       // Generate the base player using existing infrastructure
       const player = generatePlayer({
@@ -268,8 +286,8 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
       })
 
       // Override with rookie-specific values
-      player.potentialRating = potential
-      player.potential_rating = potential
+      player.potentialRating = finalPotential
+      player.potential_rating = finalPotential
       player.age = age
       const birthYear = 2025 - age
       const birthMonth = String(randInt(1, 12)).padStart(2, '0')
@@ -296,8 +314,11 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
       player.contractDetails = null
       player.contract_details = null
 
-      // Work ethic variance by tier
-      player.attributes.mental.workEthic = randInt(tier.workEthicMin, tier.workEthicMax)
+      // Work ethic variance by tier. Gems get a floor so the high ceiling is
+      // realistically reachable (still some variance).
+      player.attributes.mental.workEthic = isHiddenGem
+        ? randInt(65, 95)
+        : randInt(tier.workEthicMin, tier.workEthicMax)
 
       // Career seasons = 0 (rookie)
       player.careerSeasons = 0
@@ -351,6 +372,12 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
       player.rookieTier = tier.name
       if (isGenerationalSlot) {
         player.isGenerational = true
+      }
+      // Internal flag — the gem still displays as its low tier; only scouting
+      // reveals the true (high) potential. Powers a possible future reveal tag.
+      if (isHiddenGem) {
+        player.isHiddenGem = true
+        player.is_hidden_gem = true
       }
 
       rookies.push(player)

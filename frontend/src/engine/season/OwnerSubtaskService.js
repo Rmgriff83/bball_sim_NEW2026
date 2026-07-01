@@ -30,6 +30,21 @@ export const STAR_OVERALL = 80;
 // going over the cap hurt far more than a spend-happy owner (1) does.
 const SUBTASK_WEIGHT = 3;
 
+// Mirror of EXPECTATION_ORDER in engine/data/owners.js — inlined to keep this
+// module import-free / node-testable. Used to pick the CURRENT (highest) tier
+// out of a contract's tier history when the owner has raised the bar.
+const EXPECTATION_RANK = { rebuild: 0, develop: 1, playoffs: 2, contender: 3, championship: 4 };
+
+// Collapse family for a sub-task id. Same-metric goals that recur across tiers
+// with DIFFERENT ids (the All-Star goal: all_star_2 / all_star_3 / all_star_4)
+// map to one family so only the current tier's version is shown, with the
+// cumulative progress carried over as a head start. Every other recurring goal
+// (add_badges, quality_coach, hire_medical, retain_stars) already shares a
+// single id across tiers, so id === family collapses it naturally.
+function _taskFamily(id) {
+  return typeof id === 'string' && id.startsWith('all_star') ? 'all_star' : id;
+}
+
 function _num(v, fallback = 0) {
   return typeof v === 'number' && !Number.isNaN(v) ? v : fallback;
 }
@@ -292,27 +307,48 @@ export function evaluateSubtasks({
 } = {}) {
   const moneyConsciousness = Math.max(1, Math.min(5, _num(owner?.moneyConsciousness, 3)));
 
-  // Expectations are ADDITIVE across a contract: if the owner's bar rose, the new
-  // tier's goals are appended without dropping the ones the GM already invested in.
-  // `expectationTiers` is the ordered history (earliest→latest); fall back to the
-  // single current tier for legacy callers / older saves.
+  // When the owner raises the bar mid-contract, the CURRENT tier's goals REPLACE
+  // the uncompleted goals of earlier tiers, while COMPLETED earlier goals are kept
+  // as earned credit (they still count toward re-signing). Same-metric goals
+  // (All-Stars, badges) collapse to the current tier's higher target, with the
+  // GM's cumulative progress carried over as a head start (e.g. 2 → "2/4") — that
+  // carry-over is automatic because gmContract.progress counters are tier-agnostic.
+  // `expectationTiers` is the ordered history; fall back to the single current tier
+  // for legacy callers / older saves.
   const tiers = (Array.isArray(expectationTiers) && expectationTiers.length)
     ? expectationTiers
     : [expectation];
 
   const ctx = { roster, draftPicks, facilities, settings, progress, userTeamId, coach };
-  // Merge tier sub-tasks, deduping by id and KEEPING THE FIRST occurrence — so an
-  // earlier/easier target (e.g. "2 All-Stars", a 3★ physician) is never silently
-  // made harder by a later tier; genuinely new goals from higher tiers get appended.
-  const list = [];
-  const seen = new Set();
+
+  // Current tier = the highest-rank tier reached this contract (expectations only
+  // ratchet up, so this is the live bar; robust regardless of history ordering).
+  const currentTier = tiers.reduce(
+    (best, t) => ((EXPECTATION_RANK[t] ?? -1) > (EXPECTATION_RANK[best] ?? -1) ? t : best),
+    expectation ?? tiers[0]
+  );
+
+  // Active goals from the current tier.
+  const currentTasks = _subtasksForExpectation(currentTier, ctx);
+  const currentFamilies = new Set(currentTasks.map((t) => _taskFamily(t.id)));
+
+  // Retain only COMPLETED one-off goals from earlier tiers whose metric isn't
+  // already represented by a current-tier goal (uncompleted olds are replaced;
+  // same-metric completed lowers collapse into the current goal's head start).
+  const extras = [];
+  const seenExtra = new Set();
   for (const tier of tiers) {
+    if (tier === currentTier) continue;
     for (const task of _subtasksForExpectation(tier, ctx)) {
-      if (seen.has(task.id)) continue;
-      seen.add(task.id);
-      list.push(task);
+      if (!task.met) continue;
+      if (currentFamilies.has(_taskFamily(task.id))) continue;
+      if (seenExtra.has(task.id)) continue;
+      seenExtra.add(task.id);
+      extras.push(task);
     }
   }
+
+  const list = [...currentTasks, ...extras];
 
   // Global salary-cap sub-task, weighted by money-consciousness.
   list.push({

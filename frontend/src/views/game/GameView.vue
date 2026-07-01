@@ -19,6 +19,8 @@ import { coachingEngine } from '@/engine/simulation/CoachingEngine'
 import { QUARTER_LENGTH_MINUTES } from '@/engine/config/GameConfig'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
+import PlayAnalyticsPanel from '@/components/analytics/PlayAnalyticsPanel.vue'
+import DefensiveMatchupEditor from '@/components/game/DefensiveMatchupEditor.vue'
 import { SimulateConfirmModal, EvolutionSummary, MomentumBar } from '@/components/game'
 import { usePlayAnimation } from '@/composables/usePlayAnimation'
 import { usePositionValidation } from '@/composables/usePositionValidation'
@@ -155,6 +157,10 @@ watch(
 // Coaching style selections for quarter breaks
 const selectedOffense = ref('balanced')
 const selectedDefense = ref('man')
+// User defensive matchup overrides ({ opponentOffId: userDefId }) + UI toggles.
+const defensiveMatchups = ref({})
+const showMatchupEditor = ref(false)
+const showQbMatchups = ref(false)
 
 // Local lineup for quarter-break adjustments (synced from teamStore)
 // During pre-game: synced from teamStore.lineup
@@ -328,6 +334,22 @@ const displayAwayScore = computed(() => {
 // Determine if user is home or away
 const userIsHome = computed(() =>
   userTeam.value?.id === homeTeam.value?.id
+)
+
+// Analytics gating (by hired analyst tier) + per-play data for both teams.
+// Tier 3 → own-team postgame analytics; tier 4 → also pregame opponent analytics.
+const analystTier = computed(() => campaign.value?.settings?.analyst?.tier ?? 0)
+// Postgame: THIS game's per-play analytics for the user's team (persisted per
+// game as { home, away } raw maps; wrap as { plays } for the panel).
+const userGameAnalytics = computed(() => {
+  const src = game.value?.play_analytics
+  if (!src) return null
+  const side = userIsHome.value ? src.home : src.away
+  return side && Object.keys(side).length ? { plays: side } : null
+})
+// Pregame: opponent's SEASON tendencies (season aggregate on the team object).
+const opponentAnalytics = computed(() =>
+  (userIsHome.value ? awayTeam.value : homeTeam.value)?.playAnalytics ?? null
 )
 
 // Get winner
@@ -1266,6 +1288,8 @@ async function startGame() {
     const settings = {
       offensive_style: selectedOffense.value,
       defensive_style: selectedDefense.value,
+      // User defensive matchup overrides ({ opponentOffId: userDefId }).
+      defensive_matchups: { ...defensiveMatchups.value },
     }
 
     // Include lineup if valid
@@ -1339,6 +1363,8 @@ async function continueToNextQuarter() {
     const adjustments = {
       offensive_style: selectedOffense.value,
       defensive_style: selectedDefense.value,
+      // Updated defensive matchups for the next quarter.
+      defensive_matchups: { ...defensiveMatchups.value },
     }
 
     // Add lineup based on whether user is home or away (only if all 5 slots have valid IDs)
@@ -2049,6 +2075,44 @@ const preGameAwayStarters = computed(() => {
   return selectStartersFromRoster(awayRoster.value)
 })
 
+// Defensive matchup editor sources: the user's 5 defenders and the opponent's 5
+// offensive starters (both annotated with slotPosition PG→C).
+const userDefenders = computed(() =>
+  userIsHome.value ? preGameHomeStarters.value : preGameAwayStarters.value
+)
+const opponentOffense = computed(() =>
+  userIsHome.value ? preGameAwayStarters.value : preGameHomeStarters.value
+)
+
+// A matchup map is valid only if it covers all 5 opponents with unique defenders
+// that are all currently in the user's lineup.
+function isValidMatchupMap(map, opps, defs) {
+  if (!map || !opps?.length || !defs?.length) return false
+  const defIds = new Set(defs.map((d) => String(d.id)))
+  const seen = new Set()
+  for (const o of opps) {
+    const did = map[String(o.id)]
+    if (!did || !defIds.has(String(did)) || seen.has(String(did))) return false
+    seen.add(String(did))
+  }
+  return Object.keys(map).length === opps.length
+}
+
+// Seed the positional default (opp slot i ↔ defender slot i). Reseeds whenever
+// the current map becomes invalid (e.g. the user changed their lineup or the
+// opponent changed); a valid user-swapped permutation is preserved.
+function seedDefensiveMatchups() {
+  const opps = opponentOffense.value
+  const defs = userDefenders.value
+  if (!opps || !defs || opps.length < 5 || defs.length < 5) return
+  if (isValidMatchupMap(defensiveMatchups.value, opps, defs)) return
+  const m = {}
+  for (let i = 0; i < 5; i++) m[String(opps[i].id)] = String(defs[i].id)
+  defensiveMatchups.value = m
+}
+
+watch([userDefenders, opponentOffense], seedDefensiveMatchups, { immediate: true })
+
 // Build starters from lineup IDs for pre-game display
 function buildStartersFromSelectedLineup(lineupIds, roster) {
   if (!lineupIds || !roster || roster.length === 0) return []
@@ -2555,6 +2619,21 @@ onUnmounted(() => {
                                     <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
                                   </button>
                                 </div>
+                              </div>
+
+                              <!-- Defensive Matchups (compact swap editor) -->
+                              <div class="strategy-group">
+                                <button type="button" class="matchup-disclosure" @click="showQbMatchups = !showQbMatchups">
+                                  <span class="strategy-label">Matchups</span>
+                                  <span class="matchup-disclosure-icon">{{ showQbMatchups ? '▴' : '▾' }}</span>
+                                </button>
+                                <DefensiveMatchupEditor
+                                  v-if="showQbMatchups"
+                                  v-model="defensiveMatchups"
+                                  :opponent-starters="opponentOffense"
+                                  :defenders="userDefenders"
+                                  :compact="true"
+                                />
                               </div>
                             </div>
                           </div>
@@ -3266,6 +3345,20 @@ onUnmounted(() => {
                         </button>
                       </div>
                     </div>
+
+                    <!-- Defensive Matchups (swap who guards whom) -->
+                    <div v-if="isUserGame" class="strategy-group">
+                      <button type="button" class="matchup-disclosure" @click="showMatchupEditor = !showMatchupEditor">
+                        <span class="strategy-label">Defensive Matchups</span>
+                        <span class="matchup-disclosure-icon">{{ showMatchupEditor ? '▴' : '▾' }}</span>
+                      </button>
+                      <DefensiveMatchupEditor
+                        v-if="showMatchupEditor"
+                        v-model="defensiveMatchups"
+                        :opponent-starters="opponentOffense"
+                        :defenders="userDefenders"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -3313,6 +3406,15 @@ onUnmounted(() => {
                 </button>
               </div>
             </GlassCard>
+
+            <!-- Opponent Analytics — only with a Level 4 analyst -->
+            <PlayAnalyticsPanel
+              v-if="isUserGame && analystTier >= 4"
+              title="Opponent Tendencies — This Season"
+              :analytics="opponentAnalytics"
+              :locked="false"
+              :default-to-top-category="true"
+            />
           </div>
         </template>
       </template>
@@ -3906,6 +4008,17 @@ onUnmounted(() => {
             </div>
           </div>
         </GlassCard>
+
+        <!-- Play Analytics (your team, THIS game) — obscured until a Level 3
+             analyst. Kept as the LAST element on the postgame page. -->
+        <PlayAnalyticsPanel
+          v-if="isUserGame"
+          title="Play Analytics — This Game"
+          :analytics="userGameAnalytics"
+          :locked="analystTier < 3"
+          :default-to-top-category="true"
+          locked-message="Hire a Level 3 Analyst (Team → Staff) to unlock your team's per-play analytics."
+        />
       </template>
     </template>
 
@@ -5745,6 +5858,22 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   text-align: left;
+}
+
+/* Defensive Matchups disclosure toggle (pre-game + quarter break) */
+.matchup-disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.matchup-disclosure-icon {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
 }
 
 .strategy-pills {

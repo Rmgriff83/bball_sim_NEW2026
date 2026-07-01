@@ -6,7 +6,7 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { scoreMVPCandidate, MVP_MIN_GAMES_PCT } from '@/engine/season/AwardService'
 import { recomputeHighsLeaders } from '@/engine/stats/careerHighs'
-import { buildChampionsHistory, buildMvpHistory } from '@/engine/stats/campaignRecords'
+import { buildChampionsHistory, buildMvpHistory, buildRotyHistory, buildDpoyHistory } from '@/engine/stats/campaignRecords'
 
 export const useLeagueStore = defineStore('league', () => {
   // State
@@ -26,6 +26,8 @@ export const useLeagueStore = defineStore('league', () => {
   const seasonHighs = ref({})
   const champions = ref([])
   const mvpHistory = ref([])
+  const rotyHistory = ref([])
+  const dpoyHistory = ref([])
   const loadingRecords = ref(false)
   const _recordsCampaignId = ref(null)
 
@@ -479,6 +481,8 @@ export const useLeagueStore = defineStore('league', () => {
       seasonHighs.value = recomputeHighsLeaders(players || [], 'seasonHighs')
       champions.value = buildChampionsHistory(seasons || [])
       mvpHistory.value = buildMvpHistory(seasons || [])
+      rotyHistory.value = buildRotyHistory(seasons || [])
+      dpoyHistory.value = buildDpoyHistory(seasons || [])
       _recordsCampaignId.value = campaignId
     } catch (err) {
       console.error('Failed to fetch campaign records:', err)
@@ -511,6 +515,8 @@ export const useLeagueStore = defineStore('league', () => {
     seasonHighs,
     champions,
     mvpHistory,
+    rotyHistory,
+    dpoyHistory,
     loadingRecords,
     // Getters
     eastStandings,

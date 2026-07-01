@@ -4,9 +4,18 @@ import { PLAYS } from '../data/plays'
 // Scheme weights
 // ---------------------------------------------------------------------------
 
-const SCHEME_WEIGHTS = {
+// Scheme → category multipliers. Selection is CATEGORY-FIRST (see selectPlay):
+// we weight categories by these values, pick a category, then pick a play
+// within it. That makes a scheme's signature category dominate regardless of
+// how many plays each category happens to contain — adding more plays never
+// dilutes a scheme's identity. Signature categories are weighted high enough
+// that the hero category lands ~45-55% of half-court possessions.
+//
+// This is the SINGLE SOURCE OF TRUTH for scheme play weighting; CoachingEngine
+// re-exports it (do not fork a second copy).
+export const SCHEME_WEIGHTS = {
   motion: {
-    motion: 2.0,
+    motion: 3.5,
     cut: 1.5,
     pick_and_roll: 1.2,
     isolation: 0.5,
@@ -15,7 +24,7 @@ const SCHEME_WEIGHTS = {
     transition: 1.0,
   },
   iso_heavy: {
-    isolation: 2.5,
+    isolation: 4.0,
     pick_and_roll: 1.2,
     post_up: 1.0,
     motion: 0.5,
@@ -24,7 +33,7 @@ const SCHEME_WEIGHTS = {
     transition: 1.0,
   },
   post_centric: {
-    post_up: 2.8,
+    post_up: 4.0,
     pick_and_roll: 1.0,
     cut: 1.2,
     isolation: 0.7,
@@ -33,7 +42,7 @@ const SCHEME_WEIGHTS = {
     transition: 0.8,
   },
   three_point: {
-    spot_up: 2.0,
+    spot_up: 3.5,
     pick_and_roll: 1.5,
     motion: 1.3,
     isolation: 0.8,
@@ -42,7 +51,7 @@ const SCHEME_WEIGHTS = {
     transition: 1.2,
   },
   run_and_gun: {
-    transition: 2.5,
+    transition: 4.0,
     pick_and_roll: 1.3,
     spot_up: 1.2,
     isolation: 1.0,
@@ -51,7 +60,10 @@ const SCHEME_WEIGHTS = {
     cut: 0.8,
   },
   balanced: {
-    pick_and_roll: 1.2,
+    // Truly even — no category emphasised over another. Keeps the Balanced
+    // scheme varied in selection AND surfaces the full book in the playbook UI
+    // (no above-neutral category → it shows everything).
+    pick_and_roll: 1.0,
     isolation: 1.0,
     post_up: 1.0,
     motion: 1.0,
@@ -298,49 +310,101 @@ export function selectPlay(offensiveLineup, defensiveLineup, coachingScheme, con
     eligiblePlays = [...PLAYS]
   }
 
-  // --- Scheme weights ---
   const schemeWeights = getSchemeWeights(coachingScheme)
+  const avgIQ = calculateAverageIQ(offensiveLineup)
 
-  // --- Calculate weighted probabilities ---
-  const weightedPlays = []
-
+  // --- Stage 1: pick a CATEGORY weighted by the scheme ---
+  // Group eligible plays by category, weight each category by the scheme
+  // multiplier × situational nudges. Category-first keeps a scheme's signature
+  // category dominant no matter how many plays it holds.
+  const byCategory = {}
   for (const play of eligiblePlays) {
-    let weight = 1.0
-
-    // Apply scheme weight by category
-    if (schemeWeights[play.category] !== undefined) {
-      weight *= schemeWeights[play.category]
-    }
-
-    // Position fit bonus
-    weight *= calculatePositionFit(play, offensiveLineup)
-
-    // Talent-weighted boosts for big-man and guard plays
-    weight *= calculateBigManBoost(play, offensiveLineup)
-    weight *= calculateGuardBoost(play, offensiveLineup)
-
-    // Difficulty penalty based on average basketball IQ
-    const avgIQ = calculateAverageIQ(offensiveLineup)
-    const difficultyPenalty = Math.max(0.5, 1 - (play.difficulty - avgIQ) / 100)
-    weight *= difficultyPenalty
-
-    // Late shot clock favours quicker plays
-    if (shotClock < 8) {
-      if (play.category === 'isolation' || play.category === 'spot_up') {
-        weight *= 1.5
-      }
-    }
-
-    // When behind, favour higher-risk / reward plays
-    if (scoreDifferential < -10) {
-      if (play.category === 'isolation' || (play.tags && play.tags.includes('three_point'))) {
-        weight *= 1.3
-      }
-    }
-
-    weightedPlays.push({ play, weight })
+    if (!byCategory[play.category]) byCategory[play.category] = []
+    byCategory[play.category].push(play)
   }
 
-  // --- Weighted random selection ---
+  const weightedCategories = []
+  for (const [category, plays] of Object.entries(byCategory)) {
+    let weight = schemeWeights[category] !== undefined ? schemeWeights[category] : 1.0
+
+    // Late shot clock favours quick-hitter categories
+    if (shotClock < 8 && (category === 'isolation' || category === 'spot_up')) {
+      weight *= 1.5
+    }
+    // When behind, lean into iso / three-heavy looks
+    if (scoreDifferential < -10 && category === 'isolation') {
+      weight *= 1.3
+    }
+
+    weightedCategories.push({ category, plays, weight })
+  }
+
+  const chosenCategory = weightedRandomSelectBy(weightedCategories, (c) => c.weight)
+  const categoryPlays = chosenCategory?.plays ?? eligiblePlays
+
+  // --- Stage 2: pick a PLAY within the category by lineup fit ---
+  const weightedPlays = categoryPlays.map((play) => ({
+    play,
+    weight: playFitWeight(play, offensiveLineup, avgIQ, scoreDifferential),
+  }))
+
   return weightedRandomSelect(weightedPlays)
+}
+
+/**
+ * Per-play weight from lineup fit only (no scheme-category multiplier) — used
+ * to pick within an already-chosen category. Floored so every play is possible.
+ */
+function playFitWeight(play, offensiveLineup, avgIQ, scoreDifferential = 0) {
+  let weight = 1.0
+  weight *= calculatePositionFit(play, offensiveLineup)
+  weight *= calculateBigManBoost(play, offensiveLineup)
+  weight *= calculateGuardBoost(play, offensiveLineup)
+  const difficultyPenalty = Math.max(0.5, 1 - (play.difficulty - avgIQ) / 100)
+  weight *= difficultyPenalty
+  // When trailing, nudge three-point-tagged plays within the category.
+  if (scoreDifferential < -10 && play.tags && play.tags.includes('three_point')) {
+    weight *= 1.2
+  }
+  return Math.max(0.05, weight)
+}
+
+/**
+ * Generic weighted random selection over arbitrary items using a weight accessor.
+ */
+function weightedRandomSelectBy(items, getWeight) {
+  if (!items || items.length === 0) return null
+  const total = items.reduce((sum, it) => sum + Math.max(0, getWeight(it)), 0)
+  if (total <= 0) return items[0]
+  let r = Math.random() * total
+  for (const it of items) {
+    r -= Math.max(0, getWeight(it))
+    if (r <= 0) return it
+  }
+  return items[items.length - 1]
+}
+
+/**
+ * Build a scheme's playbook for the UI: the categories the scheme favours
+ * (weight > 1, i.e. emphasised) in descending weight order, each with its
+ * plays. Shares SCHEME_WEIGHTS with selectPlay so what's shown matches what's
+ * run. Categories with no plays are skipped.
+ *
+ * @param {string} scheme
+ * @returns {{ category: string, weight: number, plays: object[] }[]}
+ */
+export function getSchemePlaybook(scheme) {
+  const weights = getSchemeWeights(scheme)
+  const byCategory = {}
+  for (const play of PLAYS) {
+    if (!byCategory[play.category]) byCategory[play.category] = []
+    byCategory[play.category].push(play)
+  }
+  return Object.entries(byCategory)
+    .map(([category, plays]) => ({
+      category,
+      weight: weights[category] ?? 1.0,
+      plays,
+    }))
+    .sort((a, b) => b.weight - a.weight)
 }

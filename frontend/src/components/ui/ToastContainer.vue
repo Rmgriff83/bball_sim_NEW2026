@@ -1,7 +1,7 @@
 <script setup>
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
-import { X, ExternalLink, Trophy, XCircle, Binoculars, BadgeCheck, Coins, Crown, CalendarCheck, Medal } from 'lucide-vue-next'
+import { X, ExternalLink, Trophy, XCircle, Binoculars, BadgeCheck, Coins, Crown, CalendarCheck, Medal, TrendingUp } from 'lucide-vue-next'
 
 const toastStore = useToastStore()
 const router = useRouter()
@@ -31,6 +31,12 @@ function goToBoxScore(toast) {
 function goToScouting(toast) {
   if (!toast.campaignId) return
   router.push(`/campaign/${toast.campaignId}/scouting`)
+  toastStore.removeToast(toast.id)
+}
+
+function goToOwnerTab(toast) {
+  if (!toast.campaignId) return
+  router.push(`/campaign/${toast.campaignId}/team?tab=owner`)
   toastStore.removeToast(toast.id)
 }
 
@@ -187,6 +193,23 @@ function isWin(toast) {
               <div v-if="toast.subtitle" class="achievement-subtitle">{{ toast.subtitle }}</div>
             </div>
             <button class="toast-close" @click="toastStore.removeToast(toast.id)">
+              <X :size="16" />
+            </button>
+          </template>
+
+          <template v-if="toast.type === 'owner-expectation'">
+            <div class="achievement-badge owner-expectation-badge owner-expectation-click" @click="goToOwnerTab(toast)">
+              <TrendingUp :size="22" />
+            </div>
+            <div class="toast-content owner-expectation-click" @click="goToOwnerTab(toast)">
+              <div class="game-result-header achievement-header">Owner Expectations Raised</div>
+              <div class="achievement-label">
+                <template v-if="toast.fromLabel">{{ toast.fromLabel }} → {{ toast.label }}</template>
+                <template v-else>New target: {{ toast.label }}</template>
+              </div>
+              <div class="achievement-subtitle">Fresh coach goals added — the ones you're chasing stay. Tap to view the Owner.</div>
+            </div>
+            <button class="toast-close" @click.stop="toastStore.removeToast(toast.id)">
               <X :size="16" />
             </button>
           </template>
@@ -483,6 +506,15 @@ function isWin(toast) {
   box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.25);
   flex-shrink: 0;
 }
+/* Owner-expectation raise — green "trending up" accent + clickable card. */
+.owner-expectation-badge {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.16);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+.owner-expectation-click {
+  cursor: pointer;
+}
 /* Per-type accents, matching the Dashboard Recent Activity colors. */
 .achievement-badge--conference_championship {
   color: #a855f7;
@@ -568,15 +600,17 @@ function isWin(toast) {
 }
 </style>
 
-<!-- iOS-only override: the new floating glass bottom nav sits at
+<!-- Native override: the floating glass bottom nav sits at
      `bottom: env(safe-area-inset-bottom)` and is 70px tall, so its top
      edge is calc(70px + env(safe-area-inset-bottom)) above the viewport
-     bottom. Push toasts above that with a 12px breathing gap.
-     Non-scoped block so the global selector `html.platform-ios` matches
-     unambiguously. Browser (platform-web) keeps the existing 90px bottom. -->
+     bottom. Push toasts above that with a 12px breathing gap. Applies to BOTH
+     native platforms (the nav renders on Android too). Non-scoped block so the
+     global `html.platform-*` selectors match. Browser (platform-web) keeps the
+     existing 90px bottom. -->
 <style>
 @media (max-width: 1023px) {
-  html.platform-ios .toast-container {
+  html.platform-ios .toast-container,
+  html.platform-android .toast-container {
     bottom: calc(70px + env(safe-area-inset-bottom) + 12px);
   }
 }

@@ -1,0 +1,86 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  <g data-piece="base" data-color="#ffffff" data-color-label="Base" transform="translate(-1 1)">
+    <rect x="36" y="26" width="1" height="1"/>
+    <rect x="37" y="26" width="1" height="1"/>
+    <rect x="37" y="25" width="1" height="1"/>
+    <rect x="38" y="25" width="1" height="1"/>
+    <rect x="39" y="25" width="1" height="1"/>
+    <rect x="40" y="25" width="1" height="1"/>
+    <rect x="40" y="24" width="1" height="1"/>
+    <rect x="41" y="24" width="1" height="1"/>
+    <rect x="38" y="26" width="1" height="1"/>
+    <rect x="39" y="26" width="1" height="1"/>
+    <rect x="40" y="26" width="1" height="1"/>
+    <rect x="41" y="25" width="1" height="1"/>
+  </g>
+  <g data-piece="base-2" data-color="#ffffff" data-color-label="Base" transform="translate(-14 1)">
+    <rect x="41" y="26" width="1" height="1"/>
+    <rect x="40" y="26" width="1" height="1"/>
+    <rect x="40" y="25" width="1" height="1"/>
+    <rect x="39" y="25" width="1" height="1"/>
+    <rect x="38" y="25" width="1" height="1"/>
+    <rect x="37" y="25" width="1" height="1"/>
+    <rect x="37" y="24" width="1" height="1"/>
+    <rect x="36" y="24" width="1" height="1"/>
+    <rect x="39" y="26" width="1" height="1"/>
+    <rect x="38" y="26" width="1" height="1"/>
+    <rect x="37" y="26" width="1" height="1"/>
+    <rect x="36" y="25" width="1" height="1"/>
+    <rect x="38" y="27" width="1" height="1"/>
+    <rect x="39" y="28" width="1" height="1"/>
+    <rect x="40" y="28" width="1" height="1"/>
+    <rect x="40" y="27" width="1" height="1"/>
+    <rect x="50" y="27" width="1" height="1"/>
+    <rect x="50" y="28" width="1" height="1"/>
+    <rect x="51" y="28" width="1" height="1"/>
+    <rect x="52" y="28" width="1" height="1"/>
+    <rect x="52" y="27" width="1" height="1"/>
+    <rect x="38" y="28" width="1" height="1"/>
+    <rect x="54" y="26" width="1" height="1"/>
+    <rect x="54" y="27" width="1" height="1"/>
+    <rect x="53" y="27" width="1" height="1"/>
+    <rect x="53" y="28" width="1" height="1"/>
+    <rect x="36" y="26" width="1" height="1"/>
+    <rect x="36" y="27" width="1" height="1"/>
+    <rect x="37" y="28" width="1" height="1"/>
+    <rect x="37" y="27" width="1" height="1"/>
+  </g>
+  <g data-piece="eyelid" data-color-token="skin.deep" data-color-label="Eyelid" transform="translate(0 -1)">
+    <rect x="22" y="25" width="1" height="1"/>
+    <rect x="22" y="26" width="1" height="1"/>
+    <rect x="23" y="25" width="1" height="1"/>
+    <rect x="24" y="25" width="1" height="1"/>
+    <rect x="25" y="25" width="1" height="1"/>
+    <rect x="26" y="26" width="1" height="1"/>
+    <rect x="26" y="25" width="1" height="1"/>
+    <rect x="36" y="25" width="1" height="1"/>
+    <rect x="37" y="25" width="1" height="1"/>
+    <rect x="38" y="25" width="1" height="1"/>
+    <rect x="39" y="25" width="1" height="1"/>
+    <rect x="40" y="25" width="1" height="1"/>
+    <rect x="40" y="26" width="1" height="1"/>
+    <rect x="27" y="27" width="1" height="1"/>
+    <rect x="35" y="27" width="1" height="1"/>
+    <rect x="36" y="27" width="1" height="1"/>
+    <rect x="36" y="26" width="1" height="1"/>
+    <rect x="26" y="27" width="1" height="1"/>
+    <rect x="25" y="26" width="1" height="1"/>
+    <rect x="23" y="26" width="1" height="1"/>
+    <rect x="24" y="26" width="1" height="1"/>
+    <rect x="37" y="26" width="1" height="1"/>
+    <rect x="38" y="26" width="1" height="1"/>
+    <rect x="39" y="26" width="1" height="1"/>
+  </g>
+  <g data-piece="eye-iris" data-color-token="eye.pupil" data-color-label="Eye pupil">
+    <rect x="25" y="28" width="1" height="1"/>
+    <rect x="37" y="28" width="1" height="1"/>
+  </g>
+  <g data-piece="eye-iris-2" data-color-token="eye.iris" data-color-label="Eye Iris">
+    <rect x="38" y="28" width="1" height="1"/>
+    <rect x="24" y="28" width="1" height="1"/>
+    <rect x="25" y="27" width="1" height="1"/>
+    <rect x="24" y="27" width="1" height="1"/>
+    <rect x="38" y="27" width="1" height="1"/>
+    <rect x="37" y="27" width="1" height="1"/>
+  </g>
+</svg>

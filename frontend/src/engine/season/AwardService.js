@@ -39,7 +39,7 @@ export class AwardService {
    * @param {Array} params.allPlayers - All player objects
    * @param {Array} params.teams - All team objects
    * @param {number|string} params.userTeamId - The user's team ID
-   * @returns {Object} { mvp, rookieOfTheYear, allNba, allRookie, allDefense, newsEvents }
+   * @returns {Object} { mvp, rookieOfTheYear, dpoy, allNba, allRookie, allDefense, newsEvents }
    */
   static processSeasonAwards({ seasonData, year, allPlayers, teams, userTeamId }) {
     const allStats = SeasonManager.getAllPlayerStats(seasonData)
@@ -70,6 +70,9 @@ export class AwardService {
     // All-Defense (2 teams, position-based)
     const allDefense = AwardService._selectAllDefense(allStats, playerLookup, teamWinPcts, maxGames)
 
+    // Defensive Player of the Year (single winner)
+    const dpoy = AwardService._selectDPOY(allStats, playerLookup, teamWinPcts, maxGames)
+
     // Finals MVP — computed during the playoffs (see PlayoffManager.
     // advanceWinnerToNextRound stamping `bracket.finalsMVP` when round 4
     // wraps). We just surface it here so `applyAwardsToPlayers` can bump
@@ -90,11 +93,11 @@ export class AwardService {
     const date = lastGame?.date || `${year + 1}-04-15`
 
     const newsEvents = AwardService._generateNewsEvents(
-      { mvp, rookieOfTheYear, allNba, allRookie, allDefense, finalsMVP },
+      { mvp, rookieOfTheYear, dpoy, allNba, allRookie, allDefense, finalsMVP },
       playerLookup, userTeamId, date
     )
 
-    return { mvp, rookieOfTheYear, allNba, allRookie, allDefense, finalsMVP, newsEvents }
+    return { mvp, rookieOfTheYear, dpoy, allNba, allRookie, allDefense, finalsMVP, newsEvents }
   }
 
   // -----------------------------------------------------------------------
@@ -152,6 +155,7 @@ export class AwardService {
         position: player.position ?? 'SG',
         secondaryPosition: player.secondaryPosition ?? player.secondary_position ?? null,
         draftYear: player.draftYear ?? player.draft_year ?? null,
+        careerSeasons: player.careerSeasons ?? player.career_seasons ?? null,
         teamId: team.id,
         teamAbbr: team.abbreviation,
         teamColor: team.primary_color ?? team.primaryColor ?? '#6B7280',
@@ -299,7 +303,63 @@ export class AwardService {
   // -----------------------------------------------------------------------
 
   static _selectROTY(allStats, playerLookup, teamWinPcts, maxGames, year) {
+    const rookies = AwardService._eligibleRookies(allStats, playerLookup, teamWinPcts, maxGames, year)
+    // Prefer rookies who cleared the games floor; if none did, still name the
+    // best-performing rookie so a real ROY is always crowned (never silently
+    // empty when a rookie class exists — e.g. a low-minute season-1 class).
+    return rookies.length ? rookies[0] : null
+  }
+
+  /**
+   * Build the season's rookie candidate list, sorted best-first. A rookie is a
+   * player whose `draftYear` matches this season OR whose `careerSeasons` is 0
+   * (defense-in-depth for inconsistently-stamped data). Each entry is flagged
+   * with `metGames`; the list is sorted by (metGames desc, score desc) so
+   * higher-minute rookies win but the award never empties on the games gate.
+   * @private
+   */
+  static _eligibleRookies(allStats, playerLookup, teamWinPcts, maxGames, year) {
     const minGames = Math.ceil(maxGames * ROTY_MIN_GAMES_PCT)
+    const scored = []
+
+    for (const [playerId, stats] of Object.entries(allStats)) {
+      const pid = String(playerId)
+      const info = playerLookup[pid]
+      if (!info) continue
+
+      const isRookie = (info.draftYear != null && info.draftYear === year) || info.careerSeasons === 0
+      if (!isRookie) continue
+
+      const gp = stats.gamesPlayed ?? 0
+      if (gp < 1) continue
+
+      const teamWinPct = teamWinPcts[info.teamId] ?? 0
+      const score = AwardService._scoreROTY(stats, teamWinPct)
+
+      scored.push({
+        playerId: pid,
+        playerName: info.playerName,
+        teamAbbr: info.teamAbbr,
+        teamColor: info.teamColor,
+        position: info.position,
+        score: Math.round(score * 10) / 10,
+        stats: AwardService._buildPerGameStats(stats),
+        metGames: gp >= minGames,
+      })
+    }
+
+    scored.sort((a, b) => (b.metGames - a.metGames) || (b.score - a.score))
+    return scored
+  }
+
+  // -----------------------------------------------------------------------
+  // Defensive Player of the Year Selection
+  // -----------------------------------------------------------------------
+  // Single best defender by the same `_scoreDefense` formula that powers the
+  // All-Defensive Team — so DPOY and the All-Defense 1st Team align.
+
+  static _selectDPOY(allStats, playerLookup, teamWinPcts, maxGames) {
+    const minGames = Math.ceil(maxGames * DEFENSE_MIN_GAMES_PCT)
     let bestPlayer = null
     let bestScore = -Infinity
 
@@ -311,11 +371,8 @@ export class AwardService {
       const info = playerLookup[pid]
       if (!info) continue
 
-      // Rookies only
-      if (info.draftYear == null || info.draftYear !== year) continue
-
       const teamWinPct = teamWinPcts[info.teamId] ?? 0
-      const score = AwardService._scoreROTY(stats, teamWinPct)
+      const score = AwardService._scoreDefense(stats, teamWinPct, info.attributes)
 
       if (score > bestScore) {
         bestScore = score
@@ -383,35 +440,10 @@ export class AwardService {
   // -----------------------------------------------------------------------
 
   static _selectAllRookie(allStats, playerLookup, teamWinPcts, maxGames, year) {
-    const minGames = Math.ceil(maxGames * ROTY_MIN_GAMES_PCT)
-
-    const scored = []
-    for (const [playerId, stats] of Object.entries(allStats)) {
-      const pid = String(playerId)
-      const gp = stats.gamesPlayed ?? 0
-      if (gp < minGames) continue
-
-      const info = playerLookup[pid]
-      if (!info) continue
-      if (info.draftYear == null || info.draftYear !== year) continue
-
-      const teamWinPct = teamWinPcts[info.teamId] ?? 0
-      const score = AwardService._scoreROTY(stats, teamWinPct)
-
-      scored.push({
-        playerId: pid,
-        playerName: info.playerName,
-        teamAbbr: info.teamAbbr,
-        teamColor: info.teamColor,
-        position: info.position,
-        score: Math.round(score * 10) / 10,
-        stats: AwardService._buildPerGameStats(stats),
-      })
-    }
-
+    // Same candidate list as ROY (games-floor preferred, then backfilled), so a
+    // low-minute season-1 rookie class still fills the All-Rookie teams.
+    const scored = AwardService._eligibleRookies(allStats, playerLookup, teamWinPcts, maxGames, year)
     if (scored.length === 0) return null
-
-    scored.sort((a, b) => b.score - a.score)
 
     return {
       first: scored.slice(0, 5),
@@ -505,6 +537,16 @@ export class AwardService {
       }
     }
 
+    // Defensive Player of the Year
+    if (awardResults.dpoy) {
+      const p = playerMap[awardResults.dpoy.playerId]
+      if (p) {
+        p.dpoyAwards = (p.dpoyAwards ?? p.dpoy_awards ?? 0) + 1
+        p.dpoy_awards = p.dpoyAwards
+        pushAwardYear(p, 'dpoy', year)
+      }
+    }
+
     // Finals MVP — sourced from `bracket.finalsMVP` via processSeasonAwards.
     // Pre-fix this was always null because the bracket field was never
     // populated; the counter on the player record stayed at 0 forever.
@@ -591,6 +633,16 @@ export class AwardService {
       })
     }
 
+    // DPOY announcement
+    if (awards.dpoy) {
+      events.push({
+        eventType: 'award',
+        headline: `${awards.dpoy.playerName} wins Defensive Player of the Year`,
+        body: `${awards.dpoy.playerName} (${awards.dpoy.teamAbbr}) has been named Defensive Player of the Year, averaging ${awards.dpoy.stats.spg} SPG, ${awards.dpoy.stats.bpg} BPG, and ${awards.dpoy.stats.rpg} RPG.`,
+        gameDate: date,
+      })
+    }
+
     // ROTY announcement
     if (awards.rookieOfTheYear) {
       events.push({
@@ -626,6 +678,22 @@ export class AwardService {
           headline: `${awards.mvp.playerName} wins League MVP!`,
           body: `Your player ${awards.mvp.playerName} has been named the League MVP.`,
           playerId: awards.mvp.playerId,
+          teamId: userTeamId,
+          gameDate: date,
+        })
+      }
+    }
+
+    // Check if DPOY is on user team
+    if (awards.dpoy) {
+      const info = playerLookup[awards.dpoy.playerId]
+      if (info && String(info.teamId) === userTeamIdStr) {
+        notified.add(awards.dpoy.playerId)
+        events.push({
+          eventType: 'award',
+          headline: `${awards.dpoy.playerName} wins Defensive Player of the Year!`,
+          body: `Your player ${awards.dpoy.playerName} has been named Defensive Player of the Year.`,
+          playerId: awards.dpoy.playerId,
           teamId: userTeamId,
           gameDate: date,
         })

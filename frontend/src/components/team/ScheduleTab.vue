@@ -44,25 +44,9 @@ const currentMonth = ref(new Date())
 const selectedGame = ref(null)
 const showGameModal = ref(false)
 
-// Team record (wins-losses)
-const teamRecord = computed(() => {
-  const userGames = gameStore.userGames || []
-  let wins = 0
-  let losses = 0
-  for (const game of userGames) {
-    if (game.is_complete && userTeam.value) {
-      const isHome = game.home_team?.id === userTeam.value.id
-      const userScore = isHome ? game.home_score : game.away_score
-      const oppScore = isHome ? game.away_score : game.home_score
-      if (userScore > oppScore) {
-        wins++
-      } else {
-        losses++
-      }
-    }
-  }
-  return { wins, losses }
-})
+// Team record (wins-losses) — single global source of truth (gameStore.userRecord),
+// shared with the campaign home so both stay live + consistent.
+const teamRecord = computed(() => gameStore.userRecord)
 
 // Parse a date string into local time (avoids UTC shift from new Date('YYYY-MM-DD'))
 function parseLocalDate(dateStr) {

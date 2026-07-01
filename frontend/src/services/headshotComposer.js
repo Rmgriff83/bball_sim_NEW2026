@@ -158,7 +158,7 @@ export const VARIANTS = {
 // admin sees the same vertical ordering they see in the composed headshot:
 // headband on top, then hair, then face-level features beneath.
 export const LAYERS = [
-  { id: 'headband', label: 'Headband', styleKey: 'headband',      styleVariants: VARIANTS.headbandStyle },
+  { id: 'headband', label: 'Headband', styleKey: 'headband',      styleVariants: VARIANTS.headbandStyle, audiences: ['player'] },
   { id: 'hair',     label: 'Hair',     styleKey: 'hairStyle',     styleVariants: VARIANTS.hairStyle,     colorKey: 'hair',         colorPalette: HAIR_COLORS },
   { id: 'neck',     label: 'Neck',     styleKey: 'neckStyle',      styleVariants: VARIANTS.neckStyle },
   { id: 'mouth',    label: 'Mouth',    styleKey: 'mouthFullness', styleVariants: VARIANTS.mouthFullness, colorKey: 'lip',          colorPalette: LIP_COLORS },
@@ -168,6 +168,14 @@ export const LAYERS = [
   { id: 'stubble',  label: 'Stubble',  styleKey: 'stubbleStyle', styleVariants: VARIANTS.stubbleStyle },
   { id: 'face',     label: 'Face',     styleKey: 'jawWidth',      styleVariants: VARIANTS.jawWidth,      colorKey: 'skin',         colorPalette: SKIN_TONES },
 ]
+
+// Layers visible for a given audience. A layer with no `audiences` field applies
+// to everyone; `audiences: ['player']` (e.g. headband — only players wear them)
+// hides it for coaches. UIs that render the layer list should iterate this rather
+// than the raw LAYERS so the layer picker matches the audience being edited.
+export function getLayersForAudience(audience = 'player') {
+  return LAYERS.filter((l) => !l.audiences || l.audiences.includes(audience))
+}
 
 // ---------------------------------------------------------------------------
 // Layer SVG library — loaded at build time by Vite

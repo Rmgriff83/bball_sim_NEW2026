@@ -593,5 +593,10 @@ export function generateFreeAgentPool(campaignId, { startYear = 2025, count = 53
   // the headshot follows the player to whatever team takes them.
   assignHeadshotsByOverall(pool)
 
+  // Tag season-1 rookies (same as the standard-league path) so Rookie of the
+  // Year / All-Rookie have eligible candidates in a fantasy campaign's first
+  // season. The tags follow each player onto whatever team drafts them.
+  tagInitialRookies(pool, startYear)
+
   return pool
 }

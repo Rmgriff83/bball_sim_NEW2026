@@ -13,8 +13,15 @@
  */
 
 import { Purchases, LOG_LEVEL } from '@revenuecat/purchases-capacitor'
+import { Capacitor } from '@capacitor/core'
 
-const API_KEY = import.meta.env.VITE_REVENUECAT_API_KEY
+// RevenueCat uses a DIFFERENT public key per store: an Apple key (appl_…) for
+// iOS/App Store and a Google key (goog_…) for Android/Play. Pick by platform.
+// Falls back to the legacy single var so existing iOS builds keep working if the
+// platform-specific iOS var isn't set.
+const API_KEY = Capacitor.getPlatform() === 'android'
+  ? import.meta.env.VITE_REVENUECAT_API_KEY_ANDROID
+  : (import.meta.env.VITE_REVENUECAT_API_KEY_IOS || import.meta.env.VITE_REVENUECAT_API_KEY)
 
 let configured = false
 let currentAppUserID = null
@@ -27,7 +34,7 @@ let currentAppUserID = null
  */
 export async function initIAP(userId) {
   if (!API_KEY) {
-    throw new Error('VITE_REVENUECAT_API_KEY is not set')
+    throw new Error('RevenueCat API key is not set for this platform (VITE_REVENUECAT_API_KEY_ANDROID / _IOS)')
   }
   const appUserID = String(userId)
 

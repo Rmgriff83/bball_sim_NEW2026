@@ -923,7 +923,7 @@ export const useTeamStore = defineStore('team', () => {
       const gmc = campaign?.settings?.gmContract
       if (!gmc || gmc.status !== 'active') return
       if (!gmc.progress) {
-        gmc.progress = { allStarAppearances: 0, badgesAdded: 0, starPlayerIdsAtSign: [] }
+        gmc.progress = { allStarAppearances: 0, badgesAdded: 0, starPlayerIdsAtSign: [], allStarCountedSeasons: [] }
       }
       gmc.progress.badgesAdded = (gmc.progress.badgesAdded ?? 0) + count
       await CampaignRepository.updateSettings(campaignId, { gmContract: gmc })
@@ -1415,6 +1415,68 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   /**
+   * Re-sign the coach whose contract expired during the offseason. Unlike
+   * resignCoach() (mid-contract), the coach has already been removed from the team
+   * and stashed in campaign.settings.pendingCoachDecision by startNewSeason — so we
+   * source it from there and restore it onto the team. Charges the resign cost in
+   * tokens up front; clears the pending decision on success.
+   */
+  async function resignPendingCoach(campaignId) {
+    loading.value = true
+    error.value = null
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign) throw new Error('Campaign not found')
+      const pending = campaign.settings?.pendingCoachDecision
+      const stashed = pending?.coach
+      if (!stashed) throw new Error('No expiring coach to re-sign')
+
+      const userTeamId = campaign.teamId ?? campaign.userTeamId ?? campaign.user_team_id
+      if (!userTeamId) throw new Error('No user team found')
+      const teamData = await TeamRepository.get(campaignId, userTeamId)
+      if (!teamData) throw new Error('Team not found')
+
+      // Charge tokens before mutating so a failed deduction can't grant a free coach.
+      const authStore = useAuthStore()
+      const cost = getCoachResignCost(stashed)
+      const tokens = authStore.profile?.tokens ?? 0
+      if (cost > tokens) throw new Error('Insufficient tokens')
+      if (cost > 0) {
+        const response = await api.post('/api/user/tokens', { amount: -cost })
+        if (authStore.profile) {
+          authStore.profile.tokens = response.data.tokens
+        }
+      }
+
+      const currentSeason = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? 2025
+      const restored = {
+        ...stashed,
+        contractYearsRemaining: 2,
+        contract_years_remaining: 2,
+        hiredSeason: currentSeason,
+      }
+      restored.actionsRemaining = getCoachActionBudget(restored)
+      restored.trainActionsRemaining = getCoachTrainBudget(restored)
+      teamData.coach = restored
+      await TeamRepository.save(teamData)
+
+      // Clear the pending decision so it doesn't re-prompt.
+      await CampaignRepository.updateSettings(campaignId, { pendingCoachDecision: null })
+
+      coach.value = restored
+      if (team.value) team.value.coach = restored
+
+      useSyncStore().markDirty()
+      return { coach: restored, cost }
+    } catch (err) {
+      error.value = err.message || 'Failed to re-sign coach'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
    * Release the user team's current head coach. The fired coach is returned to
    * the shared free-agent pool (with a hireCost stamped from their tier) so any
    * team — incl. the user — can hire them later, mirroring the AI lifecycle.
@@ -1609,6 +1671,7 @@ export const useTeamStore = defineStore('team', () => {
     claimTrainingReward,
     hireCoach,
     resignCoach,
+    resignPendingCoach,
     fireCoach,
     holdCoachMeeting,
     clearSelectedPlayer,

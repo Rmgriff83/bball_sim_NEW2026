@@ -4,7 +4,9 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
   availableProviders,
+  platform,
   signInWithApple,
+  signInWithGoogleNative,
   renderGoogleButton,
 } from '@/services/socialAuth'
 
@@ -21,6 +23,9 @@ const authStore = useAuthStore()
 const providers = availableProviders()
 const showApple = providers.includes('apple')
 const showGoogle = providers.includes('google')
+// Android uses the native plugin flow (a tappable button); web uses Google's
+// GIS-rendered button mounted into the host div.
+const nativeGoogle = showGoogle && platform() === 'android'
 
 const googleBtn = ref(null)
 const busy = ref(false)
@@ -59,8 +64,24 @@ async function handleApple() {
   }
 }
 
+async function handleGoogleNative() {
+  if (busy.value) return
+  emit('error', '')
+  try {
+    const result = await signInWithGoogleNative()
+    await handleCredential(result)
+  } catch (err) {
+    // Ignore user-cancelled sheets; surface real errors. (Android cancel codes vary.)
+    const code = String(err?.error ?? err?.code ?? '')
+    if (code === '12501' || code === 'user_cancelled' || /cancel/i.test(err?.message || '')) return
+    emit('error', err?.message || 'Google sign-in failed. Please try again.')
+  }
+}
+
 onMounted(async () => {
-  if (!showGoogle || !googleBtn.value) return
+  // Native Android uses a plain button (handleGoogleNative); only the WEB GIS
+  // button needs rendering into the host.
+  if (!showGoogle || nativeGoogle || !googleBtn.value) return
   try {
     await renderGoogleButton(googleBtn.value, handleCredential)
   } catch (err) {
@@ -90,8 +111,23 @@ onMounted(async () => {
       <span>{{ mode === 'register' ? 'Sign up with Apple' : 'Sign in with Apple' }}</span>
     </button>
 
-    <!-- Google (official GIS-rendered button mounts here) -->
-    <div v-if="showGoogleSafe" ref="googleBtn" class="google-btn-host"></div>
+    <!-- Google: native plugin button on Android, GIS-rendered host on web. -->
+    <button
+      v-if="nativeGoogle"
+      type="button"
+      class="social-btn google-btn"
+      :disabled="busy"
+      @click="handleGoogleNative"
+    >
+      <svg class="social-icon" viewBox="0 0 48 48" aria-hidden="true">
+        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+      </svg>
+      <span>{{ mode === 'register' ? 'Sign up with Google' : 'Sign in with Google' }}</span>
+    </button>
+    <div v-else-if="showGoogleSafe" ref="googleBtn" class="google-btn-host"></div>
   </div>
 </template>
 
@@ -136,6 +172,17 @@ onMounted(async () => {
 
 .apple-btn:hover:not(:disabled) {
   background: #111;
+}
+
+/* Google brand button (Android native flow). White surface per brand guidance. */
+.google-btn {
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid #dadce0;
+}
+
+.google-btn:hover:not(:disabled) {
+  background: #f7f8f8;
 }
 
 .social-icon {

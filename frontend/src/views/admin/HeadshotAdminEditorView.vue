@@ -9,7 +9,7 @@ import { useAudioStore } from '@/stores/audio'
 import { useAuthStore } from '@/stores/auth'
 import {
   composeSvg, defaultConfig, setLayerTier, listAllVariants,
-  listAllVariantsForAudience, LAYERS,
+  listAllVariantsForAudience, LAYERS, getLayersForAudience,
   getCurrentVariantKey, getVariantSource, layerContentVersion,
   resolvePieceColor, registerLayerVariant, updateLayerVariantContent,
   SKIN_TONES, HAIR_COLORS, EYE_COLORS, LIP_COLORS, HEADBAND_STYLES,
@@ -260,8 +260,13 @@ const FACE_JAW_OPTIONS = [
   { value: 2, label: 'Wide' },
 ]
 
+// Layers shown for the active audience tab — coaches don't get the headband
+// layer (only players wear headbands). Drives the variant-strip pill nav and
+// the catalog backdrop picker.
+const audienceLayers = computed(() => getLayersForAudience(activeAudience.value))
+
 const catalogBackdropLayers = computed(() =>
-  LAYERS.filter(l => l.styleKey || l.toggleKey)
+  audienceLayers.value.filter(l => l.styleKey || l.toggleKey)
 )
 
 function catalogVariantOptionsFor(layer) {
@@ -557,6 +562,15 @@ watch(activeLayerId, (next) => {
     console.warn('[HeadshotAdminEditorView] activeLayerId persist failed', err)
   }
 })
+
+// Switching audience tabs can invalidate the selected layer (e.g. headband is
+// player-only) — snap to the first layer valid for the new audience. Runs
+// immediately too, so a restored audience+layer mismatch is sanitized on load.
+watch(activeAudience, () => {
+  if (!audienceLayers.value.some(l => l.id === activeLayerId.value)) {
+    activeLayerId.value = audienceLayers.value[0]?.id ?? 'hair'
+  }
+}, { immediate: true })
 
 // Variant was renamed (on disk for existing variants, or just in memory for
 // brand-new unsaved ones). Update the editor's `variantName` prop so the
@@ -1028,7 +1042,7 @@ onUnmounted(() => {
         v-else
         :key="`strip-${stripRefreshKey}-${activeAudience}`"
         :active-layer-id="activeLayerId"
-        :layers="LAYERS"
+        :layers="audienceLayers"
         :config="config"
         :audience="activeAudience"
         :pending-variant="pendingVariant"

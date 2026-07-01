@@ -82,6 +82,7 @@ export async function backfillGmContract(campaignId) {
     allStarAppearances: 0,
     badgesAdded: 0,
     starPlayerIdsAtSign: starPlayerIds(roster),
+    allStarCountedSeasons: [],
   })
 
   const gmc = settings.gmContract

@@ -72,12 +72,38 @@ export const STAFF_TRAINER_TIERS = {
   },
 }
 
+// Analytics staff — unlocks the per-play-set analytics panels. Access is gated
+// by the hired analyst's TIER (read in GameView): tier 3 → postgame analytics
+// for your own team; tier 4 → also pregame OPPONENT analytics. Perks here are
+// display-only (requiredLevel 1 so they always render active); the actual gate
+// is the analyst tier.
+export const ANALYST_TIERS = {
+  3: {
+    cost: 1500,
+    label: '3-Star Analyst',
+    rating: 70,
+    perks: [
+      { key: 'postgame_analytics', label: 'Postgame Analytics', description: "See your team's efficiency by play set after games.", requiredLevel: 1 },
+    ],
+  },
+  4: {
+    cost: 2500,
+    label: '4-Star Analyst',
+    rating: 85,
+    perks: [
+      { key: 'postgame_analytics', label: 'Postgame Analytics', description: "See your team's efficiency by play set after games.", requiredLevel: 1 },
+      { key: 'opponent_analytics', label: 'Opponent Scouting Report', description: "Scout the opponent's play-set tendencies before games.", requiredLevel: 1 },
+    ],
+  },
+}
+
 // Number of candidates each pool ships with at campaign creation.
 // Mirrors the existing modal generators (2 × 3-star + 1 × 4-star).
 export const PERSONNEL_POOL_COUNTS = {
   scout: { 3: 2, 4: 1 },
   physician: { 3: 2, 4: 1 },
   staff_trainer: { 3: 2, 4: 1 },
+  analyst: { 3: 2, 4: 1 },
 }
 
 // Storage-key mapping for the singleton currently-hired records in
@@ -87,6 +113,7 @@ export const PERSONNEL_SETTINGS_KEY = {
   scout: 'scout',
   physician: 'trainer',         // legacy name
   staff_trainer: 'staff_trainer',
+  analyst: 'analyst',
 }
 
 // The matching pool key in campaign.settings. New at Phase 4 — coaches
@@ -95,4 +122,5 @@ export const PERSONNEL_POOL_KEY = {
   scout: 'availableScouts',
   physician: 'availableTrainers',
   staff_trainer: 'availableStaffTrainers',
+  analyst: 'availableAnalysts',
 }

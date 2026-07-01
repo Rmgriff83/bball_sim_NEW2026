@@ -19,7 +19,7 @@ import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
 import {
   composeSvg,
   configFromSvg,
-  LAYERS,
+  getLayersForAudience,
 } from '@/services/headshotComposer'
 import { listPremades, getCoachHeadshotByName } from '@/services/headshotPremades'
 import { resolveHeadshotSrc, invalidateCustomHeadshot } from '@/services/headshotResolver'
@@ -75,9 +75,14 @@ const isModified = ref(false)
 // instead of a blank surface. Kept separate from `isModified` so the
 // Unsaved Changes confirm doesn't fire on a clean exit from those flows.
 const forceComposedPreview = ref(false)
+// Layers editable for the current audience — coaches don't get the headband
+// layer (only players wear headbands), so the picker is filtered accordingly.
+const audienceLayers = computed(() => getLayersForAudience(audience.value))
 // Default to the first non-derived layer so the variant + color picker is
 // open by default (mirrors the admin editor's always-visible variant strip).
-const activeLayer = ref(LAYERS[0]?.id ?? 'hair')
+// Seeded from the audience-filtered list so coaches don't open on a hidden
+// (headband) layer.
+const activeLayer = ref(audienceLayers.value[0]?.id ?? 'hair')
 const showExitConfirm = ref(false)
 const saving = ref(false)
 
@@ -300,6 +305,14 @@ function setActiveLayer(id) {
   // behaviour applies here too.
   activeLayer.value = id
 }
+
+// If the active layer isn't valid for the current audience (e.g. a coach
+// landing on the now-hidden headband layer), snap to the first visible one.
+watch(audienceLayers, (layers) => {
+  if (activeLayer.value && !layers.some((l) => l.id === activeLayer.value)) {
+    activeLayer.value = layers[0]?.id ?? null
+  }
+}, { immediate: true })
 
 function applyConfigUpdate(next) {
   config.value = next
@@ -613,7 +626,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         v-if="activeLayer && config"
         :layer-id="activeLayer"
         :config="config"
-        :layers="LAYERS"
+        :layers="audienceLayers"
         :audience="audience"
         :embedded="!isMobile"
         :in-sheet="isMobile"

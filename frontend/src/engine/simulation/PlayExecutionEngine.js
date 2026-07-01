@@ -9,9 +9,33 @@
 import { getCoachPerks, getEffectiveCoachAttribute } from '@/engine/coaching/CoachPerks';
 import { BADGES } from '@/engine/data/badges';
 import { ACTION_EFFECT_KEYS, aggregateBadgeEffects, sumActionBoost } from '@/engine/data/badgeKeysByAction';
+import { DEFENSIVE_SCHEMES } from '@/engine/simulation/CoachingEngine';
+import {
+  schemeFamily,
+  assignManMatchups,
+  buildZoneAnchors,
+  zoneDefenderId,
+  assignBoxAndOne,
+  screenSwitchChance,
+} from '@/engine/simulation/DefensiveMatchup';
 
 // Module-level lookup so we don't rebuild this map per call.
 const BADGE_DEFINITIONS = Object.fromEntries(BADGES.map(b => [b.id, b]));
+
+// --- Defense/matchup-aware read steering -----------------------------------
+// Result keys are shot/possession RESULTS, not reads — they are never steered.
+const RESULT_OUTCOME_KEYS = new Set([
+  'made', 'missed', 'blocked', 'fouled', 'stolen', 'turnover', 'deflected',
+]);
+const READ_TERMINALS = new Set(['end_made', 'end_turnover', 'rebound_battle', 'free_throws']);
+// Map a read type → the defensive-scheme strength/weakness tokens it exploits.
+const READ_SCHEME_TOKENS = {
+  three: ['spot_up', 'corner_three', 'three_point', 'wing_three', 'skip_pass', 'open_shooter'],
+  kick: ['spot_up', 'corner_three', 'three_point', 'wing_three', 'skip_pass', 'open_shooter', 'motion'],
+  rim: ['drive', 'transition', 'paint', 'pick_and_roll'],
+  post: ['post_up', 'high_post'],
+  mid: ['mid_range'],
+};
 
 // Synergy and probability-stacking guard rails. Without these, multiple
 // synergies firing simultaneously plus stacked badge / coach / momentum /
@@ -109,6 +133,14 @@ class PlayExecutionEngine {
     // fatigue, and cold-streak state during per-action probability resolution.
     this.gameSimulator = null;
     this.offensiveTeamSide = null;
+    // Defensive matchups (persisted per possession). `matchups` is offId→defId
+    // for man-family schemes; `zoneAnchors` is [{defId,x,y}] for zone/box; for
+    // box-and-one, `chaser` is { offId, defId } (man-locks the star).
+    this.matchups = {};
+    this.zoneAnchors = null;
+    this.chaser = null;
+    this.defenseFamily = 'man';
+    this.lastOnBallDefenderId = null;
   }
 
   /**
@@ -130,6 +162,9 @@ class PlayExecutionEngine {
     this.offensiveModifiers = options.offensiveModifiers ?? {};
     this.offensiveCoach = options.offensiveCoach ?? null;
     this.clutchTime = !!options.clutchTime;
+    // Game-state context for read steering (which option the offense reads into).
+    this.shotClock = options.shotClock ?? 24;
+    this.scoreDifferential = options.scoreDifferential ?? 0;
     // 'home' | 'away' — used to look up the offense's momentum value on the
     // shared gameSimulator during shot-probability calculation.
     this.offensiveTeamSide = options.offensiveTeamSide ?? null;
@@ -167,6 +202,11 @@ class PlayExecutionEngine {
 
     // Set initial formation
     this.setFormation(play);
+
+    // Assign the defensive matchups for this possession (scheme-aware + any
+    // user override map). Persisted on `this` and updated as the play unfolds.
+    this._defenseLineup = defensiveLineup;
+    this.initMatchups(offensiveLineup, defensiveLineup, options.defensiveMatchups);
 
     // Find first action (usually the first one in the array)
     const firstAction = play.actions?.[0];
@@ -215,13 +255,20 @@ class PlayExecutionEngine {
     const actorRole = action.actor;
     const actor = this.getPlayerByRole(actorRole, offensiveLineup);
 
-    // Get defender if applicable
-    const defender = this.getMatchingDefender(actor, defensiveLineup);
-
-    // Apply movement
+    // Apply movement first so zone/area "pick-up" resolves against the actor's
+    // position at this moment in the play.
     if (action.movement) {
       this.applyMovement(action.movement, offensiveLineup);
     }
+
+    // A screen can switch the on-ball matchup (always for switch-everything, a
+    // chance in man, never in drop/zone/box) — creating the realistic mismatch.
+    if (action.type === 'screen') {
+      this.maybeSwitchOnScreen(actor, offensiveLineup);
+    }
+
+    // Resolve the CURRENT defender on this actor (scheme-aware + persisted).
+    const defender = this.resolveDefender(actor);
 
     // Accumulate fatigue per action. Cost defaults to 0.5 — heavier actions
     // can override via `action.fatigueCost`. Tireless badges and high
@@ -473,6 +520,21 @@ class PlayExecutionEngine {
       // Apply action-specific modifier
       adjustedProbability += modifier;
 
+      // Defense/matchup/clock-aware READ steering. Only applies to BRANCH
+      // outcomes (those that advance to another real action) — i.e. which
+      // option the offense reads into. Shot RESULTS (made/missed/blocked/
+      // fouled/stolen/turnover) and terminals are never steered here, so the
+      // (already-tuned) shot-quality math is untouched. The offense leans
+      // toward reads the defense concedes, the matchup favors, or the clock
+      // demands. Multiplier is modest and bounded by the deviation cap below.
+      const isReadBranch =
+        outcome.next &&
+        !READ_TERMINALS.has(outcome.next) &&
+        !RESULT_OUTCOME_KEYS.has(key);
+      if (isReadBranch) {
+        adjustedProbability *= this.readSteerMultiplier(play, outcome.next, advantage);
+      }
+
       // Cap cumulative deviation from baseProbability so the [0.05, 0.95]
       // safety clamp below stops being the primary limiter. Tighter cap on
       // negative outcomes (turnover/blocked/stolen): those bases are small
@@ -509,6 +571,62 @@ class PlayExecutionEngine {
 
     // Normalize probabilities to sum to 1
     return this.normalizeProbabilities(modified);
+  }
+
+  /**
+   * Classify the "read" a branch represents by its destination action, so read
+   * selection can be steered by the defense/matchup. Returns null for branches
+   * that aren't a clear scoring read (e.g. a setup/screen leading nowhere yet).
+   */
+  classifyRead(play, nextId) {
+    const b = this.findAction(play, nextId);
+    if (!b) return null;
+    if (b.type === 'shot') {
+      if (b.shotType === 'threePoint') return 'three';
+      if (b.shotType === 'midRange') return 'mid';
+      return 'rim';
+    }
+    if (b.type === 'pass' || b.type === 'handoff') return 'kick';
+    if (b.type === 'post') return 'post';
+    if (b.type === 'drive' || b.type === 'cut') return 'rim';
+    return null;
+  }
+
+  /**
+   * Multiplier applied to a branch outcome's probability so the offense takes
+   * what the defense gives: leans toward reads the defensive scheme is weak
+   * against, the matchup favors, or the shot clock / score demands. Kept modest
+   * (≈±25% per factor) and further bounded by the deviation cap in the caller.
+   */
+  readSteerMultiplier(play, nextId, advantage) {
+    const readType = this.classifyRead(play, nextId);
+    if (!readType) return 1;
+
+    let m = 1;
+    const tokens = READ_SCHEME_TOKENS[readType] || [];
+    const scheme = DEFENSIVE_SCHEMES[this.defensiveScheme];
+    if (scheme) {
+      const weak = scheme.weaknesses || [];
+      const strong = scheme.strengths || [];
+      if (tokens.some((t) => weak.includes(t))) m *= 1.25;   // defense concedes this read
+      if (tokens.some((t) => strong.includes(t))) m *= 0.8;  // defense takes it away
+    }
+
+    // Matchup: a clear offensive edge makes attacking the rim the better read.
+    if (readType === 'rim') {
+      m *= Math.max(0.8, Math.min(1.2, 1 + (advantage ?? 0) / 300));
+    }
+
+    // Late shot clock: force a direct shot, stop swinging the ball.
+    if ((this.shotClock ?? 24) < 8) {
+      if (readType === 'three' || readType === 'mid' || readType === 'rim') m *= 1.2;
+      if (readType === 'kick') m *= 0.7;
+    }
+
+    // Trailing big: chase threes.
+    if ((this.scoreDifferential ?? 0) < -10 && readType === 'three') m *= 1.2;
+
+    return m;
   }
 
   /**
@@ -996,7 +1114,7 @@ class PlayExecutionEngine {
   }
 
   /**
-   * Get matching defender for a player.
+   * Get matching defender for a player (legacy fallback — exact position match).
    */
   getMatchingDefender(offensivePlayer, defensiveLineup) {
     const position = offensivePlayer.position ?? 'SF';
@@ -1010,6 +1128,83 @@ class PlayExecutionEngine {
 
     // Fallback to any defender
     return defensiveLineup[0] ?? null;
+  }
+
+  /** Look up an on-court player by id within a lineup. */
+  getPlayerById(id, lineup) {
+    if (id == null || !lineup) return null;
+    const sid = String(id);
+    return lineup.find((p) => String(p.id ?? '') === sid) ?? null;
+  }
+
+  /**
+   * Build this possession's defensive assignment, by scheme family:
+   *  man  → persistent offId→defId map (honoring any user overrides)
+   *  zone → defender-to-area anchors (pick-up by location)
+   *  box  → a man "chaser" on the star + 4 zone-box anchors
+   */
+  initMatchups(offensiveLineup, defensiveLineup, overrides = null) {
+    this.defenseFamily = schemeFamily(this.defensiveScheme);
+    this.matchups = {};
+    this.zoneAnchors = null;
+    this.chaser = null;
+
+    if (this.defenseFamily === 'zone') {
+      this.zoneAnchors = buildZoneAnchors(defensiveLineup, this.defensiveScheme);
+    } else if (this.defenseFamily === 'box_one') {
+      const { chaser, anchors } = assignBoxAndOne(offensiveLineup, defensiveLineup);
+      this.chaser = chaser;
+      this.zoneAnchors = anchors;
+    } else {
+      this.matchups = assignManMatchups(offensiveLineup, defensiveLineup, {
+        overrides: overrides ?? null,
+      });
+    }
+  }
+
+  /**
+   * The defender currently on `actor`, per the scheme. Stamps
+   * `lastOnBallDefenderId` for keyframe exposure. Falls back to the legacy
+   * position match if a lookup fails.
+   */
+  resolveDefender(actor) {
+    const actorId = String(actor?.id ?? '');
+    let defId = null;
+    if (this.defenseFamily === 'man') {
+      defId = this.matchups[actorId] ?? null;
+    } else if (this.defenseFamily === 'box_one') {
+      defId = (this.chaser && this.chaser.offId === actorId)
+        ? this.chaser.defId
+        : zoneDefenderId(this.zoneAnchors, this.playerPositions[actorId]);
+    } else { // zone
+      defId = zoneDefenderId(this.zoneAnchors, this.playerPositions[actorId]);
+    }
+    const def = defId ? this.getPlayerById(defId, this._defenseLineup) : null;
+    const resolved = def ?? this.getMatchingDefender(actor, this._defenseLineup ?? []);
+    this.lastOnBallDefenderId = resolved ? String(resolved.id ?? '') : null;
+    return resolved;
+  }
+
+  /**
+   * On a screen, possibly switch the on-ball defender with the screener's
+   * defender (man family only). switch_everything always switches; man switches
+   * with a probability driven by screen strength vs the defender's navigation;
+   * drop coverage never switches.
+   */
+  maybeSwitchOnScreen(screener, offensiveLineup) {
+    if (this.defenseFamily !== 'man') return;
+    const ballHandler = this.getPlayerByRole('dynamic', offensiveLineup);
+    const bId = String(ballHandler?.id ?? '');
+    const sId = String(screener?.id ?? '');
+    if (!bId || !sId || bId === sId) return;
+    if (!(bId in this.matchups) || !(sId in this.matchups)) return;
+    const onBallDef = this.getPlayerById(this.matchups[bId], this._defenseLineup);
+    const chance = screenSwitchChance(this.defensiveScheme, screener, onBallDef);
+    if (Math.random() < chance) {
+      const tmp = this.matchups[bId];
+      this.matchups[bId] = this.matchups[sId];
+      this.matchups[sId] = tmp;
+    }
   }
 
   /**
@@ -1041,6 +1236,11 @@ class PlayExecutionEngine {
       actionType: action.type,
       outcome: outcomeKey,
       description: description,
+      // Always expose the defensive scheme + current matchups so we always know
+      // who's guarding whom (and the scheme) at every moment of the possession.
+      defensive_scheme: this.defensiveScheme,
+      matchups: { ...this.matchups },
+      onBallDefenderId: this.lastOnBallDefenderId,
     };
 
     // Add result info if this is a scoring action
@@ -1054,7 +1254,6 @@ class PlayExecutionEngine {
     // Flag defensive plays for frontend animations
     if (['blocked', 'stolen', 'turnover'].includes(outcomeKey)) {
       keyframe.defensive_play = true;
-      keyframe.defensive_scheme = this.defensiveScheme;
     }
 
     this.keyframes.push(keyframe);
@@ -1438,6 +1637,12 @@ class PlayExecutionEngine {
       firedShotSynergies: this.firedShotSynergies,
       firedDefenseSynergies: this.firedDefenseSynergies,
       firedReboundSynergies: this.firedReboundSynergies,
+      // Defensive assignment for this possession (queryable; per-keyframe
+      // matchups carry the timeline of switches / zone pick-ups).
+      defensiveScheme: this.defensiveScheme,
+      defenseFamily: this.defenseFamily,
+      matchups: { ...this.matchups },
+      chaser: this.chaser ? { ...this.chaser } : null,
     };
   }
 
@@ -1454,6 +1659,11 @@ class PlayExecutionEngine {
     this.playResult = {};
     this.activatedBadges = [];
     this._activationIndex = new Map();
+    this.matchups = {};
+    this.zoneAnchors = null;
+    this.chaser = null;
+    this.defenseFamily = 'man';
+    this.lastOnBallDefenderId = null;
     // Note: defensiveScheme and defensiveModifiers are set at start of executePlay
   }
 
