@@ -2493,11 +2493,15 @@
 </g>
 </g>
 <g data-layer="headband" data-style="black">
-<rect x="14" y="13" width="36" height="4" fill="#222222"/>
-<rect x="14" y="13" width="36" height="1" fill="#000000"/>
-<rect x="14" y="16" width="36" height="1" fill="#000000"/>
-<rect x="14" y="13" width="2" height="4" fill="#000000"/>
-<rect x="48" y="13" width="2" height="4" fill="#000000"/>
+<g data-piece="color-1" data-color="#222222" data-color-label="Color 1" fill="#222222">
+<rect x="17" y="13" width="30" height="4"/>
+</g>
+<g data-piece="color-2" data-color="#000000" data-color-label="Color 2" fill="#000000">
+<rect x="17" y="13" width="30" height="1"/>
+<rect x="17" y="16" width="30" height="1"/>
+<rect x="17" y="13" width="2" height="4"/>
+<rect x="45" y="13" width="2" height="4"/>
+</g>
 </g>
 </g>
 </g>

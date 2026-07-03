@@ -1837,6 +1837,8 @@ function _findAiToAiTrade({
  * @param {string} params.currentDate - ISO date string
  * @param {number} params.seasonYear
  * @param {string} params.difficulty
+ * @param {string|number} [params.userTeamId] - the user's team id; players whose
+ *   team fields point at it are NEVER tradeable AI assets (hard guard)
  * @returns {object} { trades, playerMoves, pickMoves, newsEvents }
  */
 export function processAiToAiTrades({
@@ -1848,6 +1850,7 @@ export function processAiToAiTrades({
   seasonYear,
   difficulty = 'pro',
   getPickValueFn = () => 5,
+  userTeamId = null,
 }) {
   const empty = { trades: [], playerMoves: [], pickMoves: [], newsEvents: [] };
 
@@ -1863,11 +1866,22 @@ export function processAiToAiTrades({
   }
   const getPlayerFn = (id) => playerMap.get(id) ?? null;
 
-  // Build team info: direction, roster, picks
+  // A user player must never appear in an AI team's tradeable roster. Match on
+  // EITHER team field so even a split-field record (canonical teamId on the
+  // user team but a stale snake_case team_id left on an old AI team — the bug
+  // that let an AI-AI trade silently steal a user's traded-in player) is safe.
+  const uid = userTeamId != null ? String(userTeamId) : null;
+  const isUserPlayer = (p) =>
+    uid != null && (String(p.teamId) === uid || String(p.team_id) === uid);
+
+  // Build team info: direction, roster, picks. Roster membership uses ONLY the
+  // canonical, IndexedDB-indexed `teamId` — the OR across teamId/team_id let a
+  // stale-fielded player belong to two rosters at once.
   const teamInfoMap = new Map();
   for (const team of aiTeams) {
     const roster = allPlayers.filter(p =>
-      (p.teamId === team.id || p.team_id === team.id) &&
+      p.teamId === team.id &&
+      !isUserPlayer(p) &&
       (p.isFreeAgent !== 1 && p.is_free_agent !== 1)
     );
     const dir = analyzeTeamDirection(team, roster, context);

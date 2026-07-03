@@ -72,6 +72,11 @@ function _buildPerGameStats(raw) {
     fg3a,
     ftm,
     fta,
+    // Ordered teamIds the player recorded stats for this season (mid-season
+    // trades append). Old buckets lack the array → fall back to the scalar.
+    teams: Array.isArray(raw.teams) && raw.teams.length
+      ? [...raw.teams]
+      : (raw.teamId != null ? [raw.teamId] : []),
   }
 }
 
@@ -94,10 +99,25 @@ async function _attachSeasonStats(players, campaignId) {
   const hasPlayoff = allPlayoffStats && typeof allPlayoffStats === 'object'
   if (!hasRegular && !hasPlayoff) return
 
+  // teamId → abbreviation map for the multi-team season label ("POR/DET").
+  let abbrByTeamId = null
+  try {
+    const teams = await TeamRepository.getAllForCampaign(campaignId)
+    abbrByTeamId = new Map((teams || []).map(t => [String(t.id), t.abbreviation]))
+  } catch { abbrByTeamId = null }
+  const toAbbrs = (stats) => {
+    if (!stats || !abbrByTeamId || !Array.isArray(stats.teams)) return
+    stats.teamsAbbrs = stats.teams
+      .map(id => abbrByTeamId.get(String(id)))
+      .filter(Boolean)
+  }
+
   for (const player of players) {
     if (!player) continue
     player.season_stats = hasRegular ? _buildPerGameStats(allPlayerStats[player.id]) : null
     player.season_playoff_stats = hasPlayoff ? _buildPerGameStats(allPlayoffStats[player.id]) : null
+    toAbbrs(player.season_stats)
+    toAbbrs(player.season_playoff_stats)
   }
 }
 

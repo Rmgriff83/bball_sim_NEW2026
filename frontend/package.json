@@ -16,7 +16,9 @@
     "sync:headshots": "node scripts/sync-headshot-assets.mjs",
     "sync:headshots:upload": "node scripts/sync-headshot-assets.mjs upload",
     "regen:headshots": "node scripts/regenerate-headshot-pool.mjs",
-    "prebuild": "npm run sync:headshots && npm run regen:headshots && node scripts/audit-gameplay-coverage.js"
+    "prebuild": "npm run sync:headshots && npm run regen:headshots && node scripts/audit-gameplay-coverage.js",
+    "release:android": "cap sync android && cd android && JAVA_HOME=\"${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}\" ./gradlew bundleRelease",
+    "release": "npm run build && firebase deploy --only hosting && npm run release:android && npm run build:ios"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.4",

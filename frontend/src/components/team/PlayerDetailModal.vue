@@ -599,7 +599,22 @@ function formatTokens(n) {
   return String(n)
 }
 
-// Season history stats table
+// Season history stats table.
+// Current-season team label: the player's CURRENT team first, then any other
+// team he recorded stats for this season (mid-season trades), most recent
+// first — e.g. traded DET→POR renders "POR/DET"; a second trade to NYK renders
+// "NYK/POR/DET". Old saves without the tracked list fall back to the single
+// current abbreviation exactly as before.
+const currentSeasonTeamLabel = computed(() => {
+  const p = props.player
+  if (!p) return ''
+  const currentAbbr = p.teamAbbreviation || p.team_abbreviation || ''
+  const recorded = p.season_stats?.teamsAbbrs
+  if (!Array.isArray(recorded) || recorded.length === 0) return currentAbbr
+  const others = [...new Set(recorded)].filter(a => a && a !== currentAbbr).reverse()
+  return [currentAbbr, ...others].filter(Boolean).join('/') || currentAbbr
+})
+
 const seasonStatsRows = computed(() => {
   if (!props.player) return []
   const p = props.player
@@ -607,7 +622,7 @@ const seasonStatsRows = computed(() => {
     p.seasonHistory,
     p.season_stats,
     props.currentSeasonYear,
-    p.teamAbbreviation || p.team_abbreviation,
+    currentSeasonTeamLabel.value,
     p.season_playoff_stats
   )
 })

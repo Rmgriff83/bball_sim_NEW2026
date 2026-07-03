@@ -72,18 +72,20 @@ export const STAFF_TRAINER_TIERS = {
   },
 }
 
-// Analytics staff — unlocks the per-play-set analytics panels. Access is gated
-// by the hired analyst's TIER (read in GameView): tier 3 → postgame analytics
-// for your own team; tier 4 → also pregame OPPONENT analytics. Perks here are
-// display-only (requiredLevel 1 so they always render active); the actual gate
-// is the analyst tier.
+// Analytics staff — unlocks the per-play-set analytics panels. Double-gated
+// like every other staff kind: the hired analyst's TIER (tier 3 → postgame
+// analytics for your own team; tier 4 → also the pregame OPPONENT report) AND
+// the team's ANALYTICS facility level (`requiredLevel`, read from the perks
+// stored at hire time — GameView + the staff card check it, mirroring
+// scout/physician/staff-trainer). Analysts hired before this gating existed
+// carry requiredLevel 1 and stay grandfathered until re-hired.
 export const ANALYST_TIERS = {
   3: {
     cost: 1500,
     label: '3-Star Analyst',
     rating: 70,
     perks: [
-      { key: 'postgame_analytics', label: 'Postgame Analytics', description: "See your team's efficiency by play set after games.", requiredLevel: 1 },
+      { key: 'postgame_analytics', label: 'Postgame Analytics', description: "See your team's efficiency by play set after games.", requiredLevel: 2 },
     ],
   },
   4: {
@@ -91,8 +93,8 @@ export const ANALYST_TIERS = {
     label: '4-Star Analyst',
     rating: 85,
     perks: [
-      { key: 'postgame_analytics', label: 'Postgame Analytics', description: "See your team's efficiency by play set after games.", requiredLevel: 1 },
-      { key: 'opponent_analytics', label: 'Opponent Scouting Report', description: "Scout the opponent's play-set tendencies before games.", requiredLevel: 1 },
+      { key: 'postgame_analytics', label: 'Postgame Analytics', description: "See your team's efficiency by play set after games.", requiredLevel: 2 },
+      { key: 'opponent_analytics', label: 'Opponent Scouting Report', description: "Scout the opponent's play-set tendencies before games.", requiredLevel: 3 },
     ],
   },
 }

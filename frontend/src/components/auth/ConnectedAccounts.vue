@@ -3,12 +3,17 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { BaseButton } from '@/components/ui'
-import { availableProviders, signInWithApple, renderGoogleButton } from '@/services/socialAuth'
+import { availableProviders, signInWithApple, signInWithGoogleNative, renderGoogleButton, platform } from '@/services/socialAuth'
 
 const authStore = useAuthStore()
 const toastStore = useToastStore()
 
 const available = availableProviders()
+// On native Android, Google linking must use the native Credential Manager flow
+// (same as the login screen) — the web GSI iframe button can't render inside the
+// Capacitor WebView (https://localhost isn't an authorized GSI origin), which
+// previously left an empty spot where the Link button should be.
+const googleIsNative = platform() === 'android'
 const busy = ref('')        // provider id currently processing
 const confirming = ref('')  // provider id pending unlink confirmation
 const googleHost = ref(null)
@@ -50,6 +55,21 @@ async function linkApple() {
   }
 }
 
+// Native Android Google linking — same Credential Manager flow as the login
+// screen, then the shared link handler.
+async function linkGoogle() {
+  if (busy.value) return
+  try {
+    const result = await signInWithGoogleNative()
+    await handleLinkCredential(result)
+  } catch (err) {
+    const code = String(err?.error || err?.code || '')
+    // Ignore user-cancelled sheets; surface real failures.
+    if (code.includes('cancel') || code === '16') return
+    toastStore.showError(err?.message || 'Google sign-in failed.')
+  }
+}
+
 async function unlink(provider) {
   if (busy.value) return
   busy.value = provider
@@ -65,9 +85,11 @@ async function unlink(provider) {
   }
 }
 
-// Google's credential flow requires its own rendered button. (Re)render it into
-// the host whenever Google is unlinkable + available on this platform.
+// Google's WEB credential flow requires its own rendered GSI button. (Re)render
+// it into the host whenever Google is unlinkable + available on this platform.
+// Native Android uses the plain Link button + native flow instead.
 async function renderGoogleIfNeeded() {
+  if (googleIsNative) return
   await nextTick()
   if (!canLinkGoogle.value || googleLinked.value || !googleHost.value) return
   googleHost.value.innerHTML = ''
@@ -99,10 +121,10 @@ watch(googleLinked, renderGoogleIfNeeded)
         </div>
         <div class="provider-action">
           <template v-if="appleLinked">
-            <template v-if="confirming === 'apple'">
+            <div v-if="confirming === 'apple'" class="confirm-actions">
               <BaseButton variant="danger" :loading="busy === 'apple'" @click="unlink('apple')">Confirm</BaseButton>
               <BaseButton variant="ghost" @click="confirming = ''">Cancel</BaseButton>
-            </template>
+            </div>
             <BaseButton v-else variant="ghost" :disabled="!!busy" @click="confirming = 'apple'">Unlink</BaseButton>
           </template>
           <button
@@ -129,12 +151,27 @@ watch(googleLinked, renderGoogleIfNeeded)
         </div>
         <div class="provider-action">
           <template v-if="googleLinked">
-            <template v-if="confirming === 'google'">
+            <div v-if="confirming === 'google'" class="confirm-actions">
               <BaseButton variant="danger" :loading="busy === 'google'" @click="unlink('google')">Confirm</BaseButton>
               <BaseButton variant="ghost" @click="confirming = ''">Cancel</BaseButton>
-            </template>
+            </div>
             <BaseButton v-else variant="ghost" :disabled="!!busy" @click="confirming = 'google'">Unlink</BaseButton>
           </template>
+          <button
+            v-else-if="canLinkGoogle && googleIsNative"
+            type="button"
+            class="link-google-btn"
+            :disabled="busy === 'google'"
+            @click="linkGoogle"
+          >
+            <svg class="google-glyph" viewBox="0 0 48 48" aria-hidden="true">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            </svg>
+            Link Google
+          </button>
           <div v-else-if="canLinkGoogle" ref="googleHost" class="google-host"></div>
           <span v-else class="unavailable-note">Not available here</span>
         </div>
@@ -197,6 +234,22 @@ watch(googleLinked, renderGoogleIfNeeded)
   gap: 0.5rem;
 }
 
+/* Confirm/Cancel pair for unlinking — side by side on desktop, stacked on
+   mobile so the two buttons don't crowd the row. */
+.confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .confirm-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+}
+
 .link-apple-btn {
   display: inline-flex;
   align-items: center;
@@ -224,6 +277,33 @@ watch(googleLinked, renderGoogleIfNeeded)
 
 .google-host {
   min-height: 38px;
+}
+
+/* Native Android "Link Google" button — mirrors the Apple button's shape with
+   Google's light branding. */
+.link-google-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid #dadce0;
+  border-radius: 999px;
+  background: #fff;
+  color: #3c4043;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-google-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.google-glyph {
+  width: 16px;
+  height: 16px;
 }
 
 .unavailable-note {

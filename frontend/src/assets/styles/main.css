@@ -32,10 +32,10 @@ body {
   /* Push page content below the notch. Capacitor's contentInset is "never",
      so the WebView is truly edge-to-edge and we own safe-area handling
      explicitly. Bottom inset is handled per-component (BottomNav already
-     pads itself by env(safe-area-inset-bottom)); body.padding-bottom is
+     pads itself by var(--safe-area-inset-bottom, env(safe-area-inset-bottom))); body.padding-bottom is
      intentionally NOT set so fixed bottom UI can extend to the absolute
      viewport bottom. */
-  padding-top: env(safe-area-inset-top);
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top));
   /* Disable double-tap-to-zoom and the 300ms tap delay native WebView ships
      with. Pinch-to-zoom is still allowed (manipulation keeps pan/zoom but
      drops double-tap), so accessibility zoom users aren't blocked. */
@@ -86,7 +86,7 @@ body::before {
 /* App container — fills body's content area, which is now 100vh minus the
    safe-area-inset-top padding applied to body. */
 #app {
-  min-height: calc(100vh - env(safe-area-inset-top));
+  min-height: calc(100vh - var(--safe-area-inset-top, env(safe-area-inset-top)));
   display: flex;
   flex-direction: column;
 }

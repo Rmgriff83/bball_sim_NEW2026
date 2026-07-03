@@ -34,8 +34,8 @@ const lastUpdated = 'June 1, 2026'
         <ul>
           <li><strong>Account information.</strong> When you create an account, we collect your email address and a password (stored hashed, never in plain text). You may optionally provide a display name.</li>
           <li><strong>Gameplay data.</strong> Your campaigns, rosters, in-game decisions, and statistics are stored so you can resume across devices.</li>
-          <li><strong>Purchase data.</strong> When you buy a token bundle, our payment processors (Apple App Store via RevenueCat on iOS, Stripe on web) handle the transaction. We receive a confirmation that includes the bundle purchased and a transaction identifier. We do not receive or store your full payment card details.</li>
-          <li><strong>Technical data.</strong> Basic device and usage information such as platform (iOS / web), app version, language, and crash diagnostics may be collected automatically to keep the app running and improve quality.</li>
+          <li><strong>Purchase data.</strong> When you buy a token bundle, our payment processors (Apple App Store on iOS and Google Play on Android — both via RevenueCat — and Stripe on web) handle the transaction. We receive a confirmation that includes the bundle purchased and a transaction identifier. We do not receive or store your full payment card details.</li>
+          <li><strong>Technical data.</strong> Basic device and usage information such as platform (iOS / Android / web), app version, language, and crash diagnostics may be collected automatically to keep the app running and improve quality.</li>
         </ul>
       </section>
 
@@ -59,6 +59,7 @@ const lastUpdated = 'June 1, 2026'
         <p>We use a small number of trusted third parties to operate the app:</p>
         <ul>
           <li><strong>Apple App Store + RevenueCat</strong> — process in-app purchases on iOS and provide receipt validation.</li>
+          <li><strong>Google Play + RevenueCat</strong> — process in-app purchases on Android and provide purchase validation.</li>
           <li><strong>Stripe</strong> — processes purchases initiated from our website.</li>
           <li><strong>Our own backend</strong> at <code>api.bball-sim.com</code> — stores your account, gameplay data, and token balance.</li>
         </ul>
@@ -88,7 +89,7 @@ const lastUpdated = 'June 1, 2026'
         <ul>
           <li><strong>Access or correct your information.</strong> You can view and edit your profile inside the app, or email us for assistance.</li>
           <li><strong>Delete your account.</strong> Email the address below and we'll remove your account and associated data within 7 days.</li>
-          <li><strong>Refunds.</strong> Token purchases are processed by Apple or Stripe. For refunds, contact Apple support or use the App Store's refund flow; Stripe refunds can be requested through us.</li>
+          <li><strong>Refunds.</strong> Token purchases are processed by Apple, Google, or Stripe. For refunds, use the App Store's refund flow (Apple) or Google Play's refund flow (Android); Stripe refunds can be requested through us.</li>
         </ul>
       </section>
 

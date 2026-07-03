@@ -585,7 +585,15 @@ export const useTradeStore = defineStore('trade', () => {
         currentDate,
       })
 
-      // Persist player changes: update teamId for all moved players
+      // Persist player changes: stamp the FULL team identity on all moved
+      // players (both casings + abbreviation + free-agent flag), mirroring the
+      // AI-to-AI trade path — a bare teamId left teamAbbreviation pointing at
+      // the old team (stale abbr in the player modal) and snake_case readers
+      // misplacing the player.
+      const abbrByTeamId = new Map([
+        [String(userTeamId), userTeam.abbreviation],
+        [String(selectedTeam.value.id), aiTeamObj?.abbreviation ?? selectedTeam.value.abbreviation],
+      ])
       const playersToSave = []
       for (const asset of details.assets) {
         if (asset.type === 'player') {
@@ -593,7 +601,13 @@ export const useTradeStore = defineStore('trade', () => {
           const player = [...result.updatedLeaguePlayers, ...result.updatedUserRoster]
             .find(p => (p.id ?? '') == asset.playerId)
           if (player) {
+            const destAbbr = abbrByTeamId.get(String(asset.to)) ?? player.teamAbbreviation
             player.teamId = asset.to
+            player.team_id = asset.to
+            player.teamAbbreviation = destAbbr
+            player.team_abbreviation = destAbbr
+            player.isFreeAgent = 0
+            player.is_free_agent = 0
             player.campaignId = campaignId
             playersToSave.push(player)
           }
@@ -1013,14 +1027,26 @@ export const useTradeStore = defineStore('trade', () => {
         currentDate,
       })
 
-      // Persist player moves
+      // Persist player moves — stamp the FULL team identity (both casings +
+      // abbreviation + free-agent flag), mirroring executeTrade / the AI-to-AI
+      // path, so no reader is left pointing at the player's old team.
+      const abbrByTeamId = new Map([
+        [String(userTeamId), userTeam.abbreviation],
+        [String(aiTeam.id), aiTeamObj?.abbreviation ?? aiTeam.abbreviation],
+      ])
       const playersToSave = []
       for (const asset of details.assets) {
         if (asset.type === 'player') {
           const player = [...result.updatedLeaguePlayers, ...result.updatedUserRoster]
             .find(p => (p.id ?? '') == asset.playerId)
           if (player) {
+            const destAbbr = abbrByTeamId.get(String(asset.to)) ?? player.teamAbbreviation
             player.teamId = asset.to
+            player.team_id = asset.to
+            player.teamAbbreviation = destAbbr
+            player.team_abbreviation = destAbbr
+            player.isFreeAgent = 0
+            player.is_free_agent = 0
             player.campaignId = campaignId
             playersToSave.push(player)
           }
@@ -1248,6 +1274,7 @@ export const useTradeStore = defineStore('trade', () => {
         age: p.age,
         height: p.height,
         headshot: p.headshot,
+        hasCustomHeadshot: p.hasCustomHeadshot ?? p.has_custom_headshot ?? false,
       }
     }
     if (asset?.type === 'pick' && asset.pick) {

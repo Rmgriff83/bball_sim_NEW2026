@@ -12,6 +12,7 @@ import { backfillOrigins } from '@/engine/migrations/backfillOrigins'
 import { backfillGmContract } from '@/engine/migrations/backfillGmContract'
 import { backfillPersonnelIds } from '@/engine/migrations/backfillPersonnelIds'
 import { backfillInitialRookies } from '@/engine/migrations/backfillInitialRookies'
+import { reconcileTeamFields } from '@/engine/migrations/reconcileTeamFields'
 import { rescaleContracts } from '@/engine/migrations/rescaleContracts'
 import { useAuthStore } from '@/stores/auth'
 import { TEAMS } from '@/engine/data/teams'
@@ -338,6 +339,16 @@ export const useCampaignStore = defineStore('campaign', () => {
         await backfillInitialRookies(id)
       } catch (rookieErr) {
         console.warn('[Campaign] initial-rookie backfill failed:', rookieErr)
+      }
+
+      // One-shot repair: reconcile snake_case team fields (team_id/abbrs/
+      // is_free_agent) with the canonical teamId. Pre-fix user trades left
+      // split-field players that the AI-AI trade engine could steal off the
+      // user's roster. Guarded by settings.teamFieldsReconciled.
+      try {
+        await reconcileTeamFields(id)
+      } catch (reconcileErr) {
+        console.warn('[Campaign] team-field reconcile failed:', reconcileErr)
       }
 
       const { campaign, teams, userTeam, seasonData, year } = result

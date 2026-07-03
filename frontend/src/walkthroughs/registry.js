@@ -421,14 +421,14 @@ export const WALKTHROUGHS = {
       tab: { view: 'gm', tab: 'facilities' },
       placement: 'bottom',
       title: 'Facilities',
-      body: 'Upgrade your training, medical, and scouting facilities. Higher levels unlock staff perks and speed up player growth.',
+      body: 'Upgrade your training, medical, scouting, and analytics facilities. Your hired staff\'s perks only take effect once the matching facility reaches the level listed on each perk — a 4-star hire runs at partial strength until the facility catches up.',
     },
     {
       target: 'gm-facilities-content',
       tab: { view: 'gm', tab: 'facilities' },
       placement: 'top',
       title: 'Invest in Infrastructure',
-      body: 'Facility upgrades are long-term bets — they compound across seasons by keeping players healthier and developing faster.',
+      body: 'Each level card spells out exactly what it activates — extra scouting points, your trainer\'s development boost, your physician\'s recovery perks, your analyst\'s reports. Locked staff perks show "Requires Facility Lv X" on the Staff tab and switch on the moment you hit that level.',
     },
   ],
 
@@ -536,6 +536,13 @@ export const WALKTHROUGHS = {
       placement: 'top',
       title: 'Your Game Plan',
       body: "Pick your offensive and defensive schemes for tonight. The percentage on each pill is the fit % — how well your current roster matches that scheme. Higher fit means a bigger in-game edge.",
+    },
+    {
+      target: 'game-matchups',
+      placement: 'top',
+      title: 'Defensive Matchups',
+      body: "Choose who guards whom. Swap any defender onto a different opponent — put your best stopper on their star, or hide a weak defender on a low-usage player. Your assignments carry into the game and can be adjusted at quarter breaks.",
+      skipIfMissing: true,
     },
     {
       target: 'game-start-btn',

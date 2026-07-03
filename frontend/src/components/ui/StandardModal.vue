@@ -99,10 +99,10 @@ onUnmounted(() => {
   /* Safe-area-aware padding so the modal never sits under the iPhone notch
      or home indicator. max() preserves the 16px minimum gutter on devices
      without insets (web, older iOS, etc.). */
-  padding-top: max(16px, env(safe-area-inset-top));
-  padding-right: max(16px, env(safe-area-inset-right));
-  padding-bottom: max(16px, env(safe-area-inset-bottom));
-  padding-left: max(16px, env(safe-area-inset-left));
+  padding-top: max(16px, var(--safe-area-inset-top, env(safe-area-inset-top)));
+  padding-right: max(16px, var(--safe-area-inset-right, env(safe-area-inset-right)));
+  padding-bottom: max(16px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
+  padding-left: max(16px, var(--safe-area-inset-left, env(safe-area-inset-left)));
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(4px);
 }

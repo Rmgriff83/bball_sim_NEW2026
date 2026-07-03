@@ -658,9 +658,9 @@ function findSeriesById(seriesId) {
   /* Match the campaign-home wrapper so padding + content width are consistent
      across the home, league, scouting, and playoff sub-routes. Bottom
      padding clears the floating mobile nav (70px tall, sits at
-     env(safe-area-inset-bottom)) with 16px breathing room. */
+     var(--safe-area-inset-bottom, env(safe-area-inset-bottom))) with 16px breathing room. */
   padding: 8px 16px;
-  padding-bottom: calc(70px + env(safe-area-inset-bottom) + 16px);
+  padding-bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 16px);
   max-width: 1024px;
   margin: 0 auto;
 }

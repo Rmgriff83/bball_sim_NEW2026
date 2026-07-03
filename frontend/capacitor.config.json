@@ -4,5 +4,13 @@
   "webDir": "dist",
   "ios": {
     "contentInset": "never"
+  },
+  "android": {
+    "backgroundColor": "#1a1520"
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css"
+    }
   }
 }

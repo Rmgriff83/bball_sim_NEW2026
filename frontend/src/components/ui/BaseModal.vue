@@ -118,10 +118,10 @@ const sizeClasses = {
    render under the notch / home indicator on iPhone. max() keeps the
    minimum 16px gutter on devices without insets. */
 .modal-overlay {
-  padding-top: max(16px, env(safe-area-inset-top));
-  padding-right: max(16px, env(safe-area-inset-right));
-  padding-bottom: max(16px, env(safe-area-inset-bottom));
-  padding-left: max(16px, env(safe-area-inset-left));
+  padding-top: max(16px, var(--safe-area-inset-top, env(safe-area-inset-top)));
+  padding-right: max(16px, var(--safe-area-inset-right, env(safe-area-inset-right)));
+  padding-bottom: max(16px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
+  padding-left: max(16px, var(--safe-area-inset-left, env(safe-area-inset-left)));
 }
 
 .modal-container {

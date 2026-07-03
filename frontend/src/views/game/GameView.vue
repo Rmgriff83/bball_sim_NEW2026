@@ -157,9 +157,10 @@ watch(
 // Coaching style selections for quarter breaks
 const selectedOffense = ref('balanced')
 const selectedDefense = ref('man')
-// User defensive matchup overrides ({ opponentOffId: userDefId }) + UI toggles.
+// User defensive matchup overrides ({ opponentOffId: userDefId }). The pregame
+// editor lives in its own always-expanded card; showQbMatchups toggles the
+// compact quarter-break instance.
 const defensiveMatchups = ref({})
-const showMatchupEditor = ref(false)
 const showQbMatchups = ref(false)
 
 // Local lineup for quarter-break adjustments (synced from teamStore)
@@ -336,9 +337,30 @@ const userIsHome = computed(() =>
   userTeam.value?.id === homeTeam.value?.id
 )
 
-// Analytics gating (by hired analyst tier) + per-play data for both teams.
-// Tier 3 → own-team postgame analytics; tier 4 → also pregame opponent analytics.
+// Analytics gating (analyst tier AND analytics facility) + per-play data.
+// Tier 3 → own-team postgame analytics; tier 4 → also pregame opponent
+// analytics. Each perk additionally requires the Analytics facility to reach
+// the requiredLevel STORED on the hired analyst's perks (analysts hired before
+// facility gating carry requiredLevel 1 → grandfathered until re-hired).
 const analystTier = computed(() => campaign.value?.settings?.analyst?.tier ?? 0)
+const analyticsFacilityLevel = computed(() => userTeam.value?.facilities?.analytics ?? 1)
+function analystPerkUnlocked(key) {
+  const perk = campaign.value?.settings?.analyst?.perks?.find((p) => p.key === key)
+  if (!perk) return false
+  return analyticsFacilityLevel.value >= (perk.requiredLevel ?? 1)
+}
+const postgameAnalyticsUnlocked = computed(
+  () => analystTier.value >= 3 && analystPerkUnlocked('postgame_analytics')
+)
+const opponentAnalyticsUnlocked = computed(
+  () => analystTier.value >= 4 && analystPerkUnlocked('opponent_analytics')
+)
+// Locked-message for the postgame panel: name the missing piece.
+const postgameLockedMessage = computed(() =>
+  analystTier.value < 3
+    ? "Hire a Level 3 Analyst (Team → Staff) to unlock your team's per-play analytics."
+    : "Upgrade your Analytics Facility (Team → GM → Facilities) to unlock your team's per-play analytics."
+)
 // Postgame: THIS game's per-play analytics for the user's team (persisted per
 // game as { home, away } raw maps; wrap as { plays } for the panel).
 const userGameAnalytics = computed(() => {
@@ -3346,19 +3368,6 @@ onUnmounted(() => {
                       </div>
                     </div>
 
-                    <!-- Defensive Matchups (swap who guards whom) -->
-                    <div v-if="isUserGame" class="strategy-group">
-                      <button type="button" class="matchup-disclosure" @click="showMatchupEditor = !showMatchupEditor">
-                        <span class="strategy-label">Defensive Matchups</span>
-                        <span class="matchup-disclosure-icon">{{ showMatchupEditor ? '▴' : '▾' }}</span>
-                      </button>
-                      <DefensiveMatchupEditor
-                        v-if="showMatchupEditor"
-                        v-model="defensiveMatchups"
-                        :opponent-starters="opponentOffense"
-                        :defenders="userDefenders"
-                      />
-                    </div>
                   </div>
                 </div>
 
@@ -3407,9 +3416,25 @@ onUnmounted(() => {
               </div>
             </GlassCard>
 
+            <!-- Defensive Matchups — own card, always expanded (swap who guards whom) -->
+            <GlassCard
+              v-if="isUserGame"
+              padding="lg"
+              :hoverable="false"
+              class="pregame-matchups-card"
+              data-tour="game-matchups"
+            >
+              <h4 class="strategy-section-label">Defensive Matchups</h4>
+              <DefensiveMatchupEditor
+                v-model="defensiveMatchups"
+                :opponent-starters="opponentOffense"
+                :defenders="userDefenders"
+              />
+            </GlassCard>
+
             <!-- Opponent Analytics — only with a Level 4 analyst -->
             <PlayAnalyticsPanel
-              v-if="isUserGame && analystTier >= 4"
+              v-if="isUserGame && opponentAnalyticsUnlocked"
               title="Opponent Tendencies — This Season"
               :analytics="opponentAnalytics"
               :locked="false"
@@ -4010,14 +4035,15 @@ onUnmounted(() => {
         </GlassCard>
 
         <!-- Play Analytics (your team, THIS game) — obscured until a Level 3
-             analyst. Kept as the LAST element on the postgame page. -->
+             analyst AND an Analytics Facility at the perk's required level.
+             Kept as the LAST element on the postgame page. -->
         <PlayAnalyticsPanel
           v-if="isUserGame"
           title="Play Analytics — This Game"
           :analytics="userGameAnalytics"
-          :locked="analystTier < 3"
+          :locked="!postgameAnalyticsUnlocked"
           :default-to-top-category="true"
-          locked-message="Hire a Level 3 Analyst (Team → Staff) to unlock your team's per-play analytics."
+          :locked-message="postgameLockedMessage"
         />
       </template>
     </template>
@@ -4285,7 +4311,7 @@ onUnmounted(() => {
     padding-top: 8px;
     /* Bottom nav (70px) + safe-area + 12px gap + floating Play Game button
        (~50px tall) + 16px breathing room below the last content card. */
-    padding-bottom: calc(70px + env(safe-area-inset-bottom) + 12px + 50px + 16px);
+    padding-bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 12px + 50px + 16px);
   }
   .back-btn {
     margin-bottom: 8px;
@@ -5129,7 +5155,7 @@ onUnmounted(() => {
   position: fixed;
   left: 16px;
   right: 16px;
-  bottom: calc(70px + env(safe-area-inset-bottom) + 12px);
+  bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 12px);
   margin-top: 0;
   z-index: 50;
   /* Coral→orange→gold gradient (same recipe as scout-pts-badge). Black

@@ -29,48 +29,51 @@ const confirmingUpgrade = ref(false)
 
 const UPGRADE_COST = 500
 
+// Per-level text states the REAL unlocks: staff perks activate only once the
+// matching facility reaches the perk's required level (see personnelTiers.js —
+// scout Lv2/Lv3, physician Lv3/Lv4, staff trainer Lv3/Lv4, analyst Lv2/Lv3).
 const facilityTypes = {
   scouting: {
     name: 'Scouting',
-    description: 'Reveals hidden attributes on draft prospects. Higher levels earn more scouting points every two weeks.',
+    description: 'Reveals hidden attributes on draft prospects. Higher levels earn more scouting points every two weeks and activate your hired scout\'s perks.',
     perks: [
       'Level 1: 1 scouting point every two weeks',
-      'Level 2: 2 scouting points every two weeks',
-      'Level 3: 3 scouting points every two weeks',
+      'Level 2: 2 scouting points every two weeks — activates your scout\'s Extra Reveals perk',
+      'Level 3: 3 scouting points every two weeks — activates Badge Intel + Personality Intel (4-star scout)',
       'Level 4: 4 scouting points every two weeks',
       'Level 5: 5 scouting points every two weeks',
     ]
   },
   training: {
     name: 'Training',
-    description: 'Improves player development and attribute growth during the season.',
+    description: 'Improves player development and attribute growth during the season. Higher levels activate your development trainer\'s perks.',
     perks: [
       'Level 1: Basic training facilities',
       'Level 2: Improved shooting machines',
-      'Level 3: Advanced analytics integration',
-      'Level 4: Elite training staff',
+      'Level 3: Activates your trainer\'s Development perk (5–10% faster growth)',
+      'Level 4: Activates the Conditioning Program perk (4-star trainer — less in-game fatigue)',
       'Level 5: World-class development center',
     ]
   },
   medical: {
     name: 'Medical',
-    description: 'Reduces injury risk and speeds up player recovery times.',
+    description: 'Reduces injury risk and speeds up player recovery times. Higher levels activate your physician\'s perks.',
     perks: [
       'Level 1: Standard medical staff',
-      'Level 2: Enhanced injury prevention',
-      'Level 3: Advanced rehabilitation center',
-      'Level 4: Sports science integration',
+      'Level 2: Advanced rehabilitation equipment',
+      'Level 3: Activates your physician\'s Fast Recovery perk (10–15% faster healing)',
+      'Level 4: Activates the Injury Prevention perk (4-star physician — 10% less injury risk)',
       'Level 5: Cutting-edge medical facility',
     ]
   },
   analytics: {
     name: 'Analytics',
-    description: 'Provides deeper insights into team performance and opponent tendencies.',
+    description: 'Powers your analyst department (hire an analyst under Team → Staff). Higher levels unlock your analyst\'s perks and raise your franchise facility rating.',
     perks: [
       'Level 1: Basic stat tracking',
-      'Level 2: Advanced box score analysis',
-      'Level 3: Player tracking data',
-      'Level 4: Predictive modeling',
+      'Level 2: Unlocks Postgame Analytics (with an analyst hired)',
+      'Level 3: Unlocks the pregame Opponent Scouting Report (with a 4-star analyst)',
+      'Level 4: Predictive modeling — boosts franchise facility rating',
       'Level 5: League-leading analytics department',
     ]
   },
@@ -161,7 +164,6 @@ async function upgradeFacility() {
         v-for="(facility, key) in facilityTypes"
         :key="key"
         class="facility-overview-item"
-        :class="{ muted: key === 'analytics' }"
       >
         <span class="overview-name">{{ facility.name }}</span>
         <div class="level-stars">
@@ -181,12 +183,10 @@ async function upgradeFacility() {
         v-for="(facility, key) in facilityTypes"
         :key="key"
         class="facility-tab-btn"
-        :class="{ active: activeSubTab === key, disabled: key === 'analytics' }"
-        :disabled="key === 'analytics'"
-        :title="key === 'analytics' ? 'Analytics — coming soon' : null"
+        :class="{ active: activeSubTab === key }"
         @click="activeSubTab = key; confirmingUpgrade = false"
       >
-        {{ facility.name }}<span v-if="key === 'analytics'" class="facility-soon">Soon</span>
+        {{ facility.name }}
       </button>
     </div>
 
@@ -281,10 +281,6 @@ async function upgradeFacility() {
   align-items: center;
 }
 
-.facility-overview-item.muted {
-  opacity: 0.5;
-}
-
 .overview-name {
   font-size: 0.85rem;
   font-weight: 600;
@@ -323,24 +319,6 @@ async function upgradeFacility() {
   color: black;
   border-color: transparent;
   box-shadow: 0 0 12px rgba(232, 90, 79, 0.3);
-}
-
-/* Analytics is not wired to a gameplay effect yet — greyed out / not selectable. */
-.facility-tab-btn.disabled,
-.facility-tab-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.facility-tab-btn.disabled:hover {
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--color-text-secondary);
-}
-.facility-soon {
-  margin-left: 6px;
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  opacity: 0.8;
 }
 
 /* Facility Detail */

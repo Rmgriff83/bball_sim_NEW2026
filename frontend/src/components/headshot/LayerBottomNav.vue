@@ -33,7 +33,7 @@ function select(id) {
 .layer-bottom-nav {
   position: fixed;
   left: 50%;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 12px);
   transform: translateX(-50%);
   width: 92%;
   max-width: 720px;

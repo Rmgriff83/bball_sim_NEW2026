@@ -112,9 +112,13 @@ export async function signInWithGoogleNative() {
   const webClientId = import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID
   if (!webClientId) throw new Error('Google sign-in is not configured (VITE_GOOGLE_WEB_CLIENT_ID).')
   await SocialLogin.initialize({ google: { webClientId } })
+  // Basic Credential Manager sign-in: returns an id-token plus profile (name,
+  // email) — email/profile are included by default. Do NOT pass `scopes`: the
+  // capgo plugin treats any scopes as an OAuth *authorization* request, which
+  // requires a MainActivity onActivityResult override and otherwise throws
+  // "you CANNOT use scopes without modifying the main activity."
   const { result } = await SocialLogin.login({
     provider: 'google',
-    options: { scopes: ['email', 'profile'] },
   })
   const p = result?.profile || {}
   return {

@@ -4,18 +4,20 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton } from '@/components/ui'
 import { Gamepad2, BarChart3, Trophy, ChevronRight } from 'lucide-vue-next'
+import { Capacitor } from '@capacitor/core'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 
-// VITE_NATIVE_BUILD is set by `npm run build:ios`. The App Store badge
-// only makes sense on the web build — inside the native app, users are
-// already on iOS, so the link is redundant. Build-time env is preferable
-// to a Capacitor.isNativePlatform() runtime check here because Vite
-// tree-shakes the branch entirely from the iOS bundle.
-const isNativeBuild = import.meta.env.VITE_NATIVE_BUILD
+// The "Download on the App Store" badge only makes sense on the WEB build —
+// inside any native app (iOS or Android) the user already installed it, so the
+// link is redundant (and pointing Android users at the iOS store is wrong).
+// - iOS: `build:ios` sets VITE_NATIVE_BUILD, so it's stripped at build time.
+// - Android: the build doesn't set that flag, so we also gate on the runtime
+//   Capacitor.isNativePlatform() check (getPlatform() is 'web' | 'ios' | 'android').
+const showAppStoreBadge = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativePlatform()
 </script>
 
 <template>
@@ -62,7 +64,7 @@ const isNativeBuild = import.meta.env.VITE_NATIVE_BUILD
              already in the app, so VITE_NATIVE_BUILD strips this branch
              entirely from the iOS bundle. -->
         <a
-          v-if="!isNativeBuild"
+          v-if="showAppStoreBadge"
           class="app-store-badge"
           href="https://apps.apple.com/us/app/bball-sim/id6774754906"
           target="_blank"

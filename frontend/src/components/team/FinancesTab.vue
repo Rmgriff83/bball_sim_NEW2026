@@ -218,11 +218,13 @@ function hasContractInYear(player, year) {
   return yearsFromNow < player.contractYearsRemaining
 }
 
-// Fetch data
+// Fetch data. Always force — roster mutations can happen OUTSIDE this tab
+// (trades most notably), and serving the cached snapshot hid traded-in players
+// from the contracts/expiring lists.
 async function loadData() {
   loading.value = true
   try {
-    await financeStore.fetchRosterContracts(props.campaignId)
+    await financeStore.fetchRosterContracts(props.campaignId, { force: true })
   } catch (err) {
     console.error('Failed to load finance data:', err)
   } finally {

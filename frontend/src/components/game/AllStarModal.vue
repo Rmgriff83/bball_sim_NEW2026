@@ -1,6 +1,20 @@
 <script setup>
 import { ref, watch, onUnmounted, computed } from 'vue'
 import { X, Star, Users } from 'lucide-vue-next'
+import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+
+// PlayerAvatar expects `player.id`; roster entries carry `playerId` plus the
+// headshot pointers forwarded by AllStarService._buildPlayerLookup. Same
+// adapter as SimPauseModal so both All-Star surfaces render identical avatars.
+function avatarPlayer(player) {
+  if (!player) return null
+  return {
+    id: player.playerId,
+    name: player.playerName,
+    headshot: player.headshot ?? null,
+    hasCustomHeadshot: player.hasCustomHeadshot ?? false,
+  }
+}
 
 const props = defineProps({
   show: Boolean,
@@ -133,6 +147,7 @@ onUnmounted(() => {
                   >
                     <template v-if="currentRosters.east?.starters?.[pos]">
                       <div class="player-header">
+                        <PlayerAvatar :player="avatarPlayer(currentRosters.east.starters[pos])" :size="38" class="as-avatar" />
                         <span class="position-badge" :style="{ backgroundColor: currentRosters.east.starters[pos].teamColor || '#6B7280' }">
                           {{ pos }}
                         </span>
@@ -171,6 +186,7 @@ onUnmounted(() => {
                     :class="{ 'user-highlight': isUserPlayer(player) }"
                   >
                     <div class="player-header">
+                      <PlayerAvatar :player="avatarPlayer(player)" :size="32" class="as-avatar" />
                       <span class="position-badge small" :style="{ backgroundColor: player.teamColor || '#6B7280' }">
                         {{ player.position }}
                       </span>
@@ -206,6 +222,7 @@ onUnmounted(() => {
                   >
                     <template v-if="currentRosters.west?.starters?.[pos]">
                       <div class="player-header">
+                        <PlayerAvatar :player="avatarPlayer(currentRosters.west.starters[pos])" :size="38" class="as-avatar" />
                         <span class="position-badge" :style="{ backgroundColor: currentRosters.west.starters[pos].teamColor || '#6B7280' }">
                           {{ pos }}
                         </span>
@@ -244,6 +261,7 @@ onUnmounted(() => {
                     :class="{ 'user-highlight': isUserPlayer(player) }"
                   >
                     <div class="player-header">
+                      <PlayerAvatar :player="avatarPlayer(player)" :size="32" class="as-avatar" />
                       <span class="position-badge small" :style="{ backgroundColor: player.teamColor || '#6B7280' }">
                         {{ player.position }}
                       </span>
@@ -518,6 +536,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Headshot avatar — matches the SimPauseModal all-star rows. */
+.as-avatar {
+  flex-shrink: 0;
 }
 
 .position-badge {

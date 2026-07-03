@@ -13,6 +13,18 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Edge-to-edge: transparent system bars (matters on pre-Android-15
+             devices; 15+ enforces transparency) with light icons over the
+             app's dark theme. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <!-- Matches the app's dark background (the color-bg-primary CSS var).
+             On WebViews older than 140, Capacitor pads the layout away from the
+             system bars (env() is broken there) and this color fills those
+             strips: dark and branded instead of white. WebViews at 140 or newer
+             get true edge to edge. -->
+        <item name="android:windowBackground">#1a1520</item>
     </style>
 
 

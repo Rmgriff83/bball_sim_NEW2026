@@ -207,7 +207,7 @@ function handleLinkClick(toast) {
 </style>
 
 <!-- Native override: clear the floating glass bottom nav
-     (bottom: env(safe-area-inset-bottom), 70px tall) with a 12px gap above.
+     (bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom)), 70px tall) with a 12px gap above.
      Applies to both native platforms (nav renders on Android too). Non-scoped
      block — `html.platform-*` is set globally on <html> by main.js. Browser
      builds keep the existing 90px bottom. -->
@@ -215,7 +215,7 @@ function handleLinkClick(toast) {
 @media (max-width: 1023px) {
   html.platform-ios .minimal-toast-container,
   html.platform-android .minimal-toast-container {
-    bottom: calc(70px + env(safe-area-inset-bottom) + 12px);
+    bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 12px);
   }
 }
 </style>

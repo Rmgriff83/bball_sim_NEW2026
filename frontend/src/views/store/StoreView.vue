@@ -151,7 +151,14 @@ async function confirmPurchase() {
       confirmBundle.value = null
     } catch (err) {
       console.error('IAP purchase failed', err)
-      toastStore.showError('Purchase failed. Please try again.')
+      // Surface the RevenueCat error code/message so store failures are
+      // diagnosable on-device (Play billing rejects have distinct codes:
+      // e.g. PRODUCT_NOT_AVAILABLE, PURCHASE_NOT_ALLOWED, STORE_PROBLEM).
+      const code = err?.code ?? err?.errorCode ?? null
+      const detail = err?.underlyingErrorMessage || err?.message || ''
+      toastStore.showError(
+        `Purchase failed${code != null ? ` [${code}]` : ''}${detail ? `: ${detail}` : '. Please try again.'}`
+      )
     } finally {
       purchasing.value = false
     }
@@ -413,10 +420,10 @@ onMounted(async () => {
 .store-main {
   flex: 1;
   /* Bottom padding clears the floating mobile nav (70px tall, sits at
-     env(safe-area-inset-bottom)) with 16px breathing room. The shorthand
+     var(--safe-area-inset-bottom, env(safe-area-inset-bottom))) with 16px breathing room. The shorthand
      covers top/horizontal at the normal 1.5rem while the bottom takes
      the larger calc value. */
-  padding: 1.5rem 1.5rem calc(70px + env(safe-area-inset-bottom) + 16px);
+  padding: 1.5rem 1.5rem calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 16px);
 }
 
 .store-container {

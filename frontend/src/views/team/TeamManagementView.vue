@@ -1485,6 +1485,12 @@ function isPerkActiveForScout(perk) {
   return (teamStore.team?.facilities?.scouting ?? 1) >= perk.requiredLevel
 }
 
+// Analyst perks gate on the ANALYTICS facility (stored requiredLevel — analysts
+// hired before facility gating carry 1 and stay grandfathered until re-hired).
+function isPerkActiveForAnalyst(perk) {
+  return (teamStore.team?.facilities?.analytics ?? 1) >= (perk.requiredLevel ?? 1)
+}
+
 const PERK_LABELS = {
   extra_reveals: { label: 'Extra Reveals', description: 'Reveals 33% of attributes per scout action (3 actions to fully scout)' },
   badge_reveal: { label: 'Badge Intel', description: '35% chance per scout action to reveal badges' },
@@ -2891,13 +2897,18 @@ const STAFF_TRAINER_PERK_LABELS = {
                   v-for="perk in hiredAnalyst.perks"
                   :key="perk.key"
                   class="scout-perk-row"
+                  :class="{ inactive: !isPerkActiveForAnalyst(perk) }"
                 >
                   <div class="scout-perk-icon">
-                    <Check :size="14" />
+                    <Check v-if="isPerkActiveForAnalyst(perk)" :size="14" />
+                    <Lock v-else :size="14" />
                   </div>
                   <div class="scout-perk-text">
                     <span class="scout-perk-label">{{ ANALYST_PERK_LABELS[perk.key]?.label || perk.key }}</span>
                     <span class="scout-perk-desc">{{ ANALYST_PERK_LABELS[perk.key]?.description || '' }}</span>
+                    <span v-if="!isPerkActiveForAnalyst(perk)" class="scout-perk-req">
+                      Requires Analytics Facility Lv {{ perk.requiredLevel }}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -3079,10 +3090,10 @@ const STAFF_TRAINER_PERK_LABELS = {
 <style scoped>
 .roster-view {
   /* Bottom padding clears the floating mobile nav (70px tall, sits at
-     env(safe-area-inset-bottom)) with 16px breathing room so the lineup
+     var(--safe-area-inset-bottom, env(safe-area-inset-bottom))) with 16px breathing room so the lineup
      tab's last player card isn't covered on devices with a home indicator. */
   padding: 8px 16px;
-  padding-bottom: calc(70px + env(safe-area-inset-bottom) + 16px);
+  padding-bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 16px);
   max-width: 1024px;
   margin: 0 auto;
 }

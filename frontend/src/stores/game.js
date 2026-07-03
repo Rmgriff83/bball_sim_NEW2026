@@ -606,12 +606,18 @@ export const useGameStore = defineStore('game', () => {
       const userTeamId = campaign.teamId
       const aiTeams = allTeams.filter(t => t.id !== userTeamId)
 
-      // Compute and persist AI trading blocks
+      // Compute and persist AI trading blocks. Roster membership uses ONLY the
+      // canonical `teamId` and hard-excludes user players — the old OR across
+      // teamId/team_id let a split-field player (traded to the user while a
+      // stale team_id still pointed at the old team) land on an AI trading
+      // block and get re-traded away from the user.
       const context = buildContext({ standings: seasonData.standings || { east: [], west: [] }, teams: allTeams, seasonPhase: 'regular_season' })
+      const uid = String(userTeamId)
       const aiTeamsToSaveBlock = []
       for (const team of aiTeams) {
         const roster = allPlayers.filter(p =>
-          (p.teamId === team.id || p.team_id === team.id) &&
+          p.teamId === team.id &&
+          String(p.teamId) !== uid && String(p.team_id) !== uid &&
           (p.isFreeAgent !== 1 && p.is_free_agent !== 1)
         )
         const dir = analyzeTeamDirection(team, roster, context)
@@ -642,6 +648,7 @@ export const useGameStore = defineStore('game', () => {
         seasonYear: year,
         difficulty,
         getPickValueFn,
+        userTeamId,
       })
 
       if (result.trades.length === 0) return
@@ -2478,6 +2485,13 @@ export const useGameStore = defineStore('game', () => {
     let progressToastId = null
 
     try {
+      // Heal first: any games stranded BEHIND the campaign date are unreachable
+      // by the forward-only day-walk below (lastGameDate < cursorDate made this
+      // whole function a permanent no-op — the season-wedge bug). Sweep them.
+      if (!resume) {
+        await sweepOrphanedGames(campaignId)
+      }
+
       const { year, userTeamId, userLineup, userTargetMinutes, campaign } = await _getCampaignContext(campaignId)
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData) throw new Error(`Season ${year} not found`)
@@ -2783,6 +2797,24 @@ export const useGameStore = defineStore('game', () => {
         ? pauseResumeContext.value.cursorDate
         : (campaign.currentDate || `${year}-10-21`)
 
+      // Self-heal (mirrors the sim-preview rollback): if any game up to the
+      // target is stranded BEHIND the cursor (a later game was played directly,
+      // jumping the date past unplayed ones), start the day-walk at the earliest
+      // stranded date and roll the campaign date back — otherwise those games
+      // stay incomplete forever and wedge the season end.
+      if (!resume) {
+        const earliestIncomplete = seasonData.schedule.reduce((min, g) => {
+          if (g.isComplete || g.isCancelled || g.isPlayoff) return min
+          if (g.gameDate > target.gameDate) return min
+          return (min == null || g.gameDate < min) ? g.gameDate : min
+        }, null)
+        if (earliestIncomplete != null && earliestIncomplete < cursorDate) {
+          cursorDate = earliestIncomplete
+          campaign.currentDate = earliestIncomplete
+          await CampaignRepository.save(campaign)
+        }
+      }
+
       // Estimate total games to surface in progress toast (best-effort, doesn't block)
       const totalRemaining = seasonData.schedule.filter(g =>
         !g.isComplete && !g.isCancelled && !g.isPlayoff &&
@@ -3065,6 +3097,20 @@ export const useGameStore = defineStore('game', () => {
 
         totalCompleted += aiGames.length
 
+        // No-progress guard: if the games we just simmed didn't actually get
+        // marked complete (malformed bracket/schedule state), every further
+        // pass would re-sim the same list — bail out loudly instead of looking
+        // like an endless sim.
+        const stillIncomplete = seasonData.schedule.filter(g =>
+          g.isPlayoff && !g.isComplete && !g.isCancelled &&
+          g.homeTeamId !== userTeamId && g.awayTeamId !== userTeamId
+        ).length
+        if (stillIncomplete >= aiGames.length) {
+          console.error('[Playoffs] no progress after simming a pass — aborting to avoid a stuck loop')
+          toastStore.showError("Couldn't advance the playoffs. Please reload the app and try again.")
+          break
+        }
+
         // Track last game date for date advancement
         const lastGame = aiGames[aiGames.length - 1]
         if (lastGame?.gameDate) lastGameDate = lastGame.gameDate
@@ -3308,6 +3354,65 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * Self-heal: sim every ORPHANED game — any non-playoff game (user's or AI's)
+   * left incomplete strictly BEHIND campaign.currentDate. Orphans happen when a
+   * later game is played/simmed directly from the calendar (the date jumps past
+   * earlier unplayed games) and are otherwise unreachable: the forward-only sim
+   * loops start at currentDate, and the AI catch-up sweep excluded user games.
+   * Left unfixed they wedge the season (isRegularSeasonComplete stays false
+   * forever while a playoff bracket may already exist).
+   *
+   * Idempotent by nature — a correctly-progressed campaign has zero orphans.
+   * User-team orphans are simmed like AI games (no reward toasts) — they're
+   * stale games the user chose to skip past.
+   *
+   * @returns {Promise<number>} number of games swept
+   */
+  async function sweepOrphanedGames(campaignId) {
+    try {
+      const campaign = await CampaignRepository.get(campaignId)
+      if (!campaign?.currentDate) return 0
+      const year = campaign.currentSeasonYear ?? 2025
+      const seasonData = await SeasonRepository.get(campaignId, year)
+      if (!seasonData?.schedule) return 0
+
+      const orphans = seasonData.schedule
+        .filter(g =>
+          !g.isComplete && !g.isCancelled && !g.isPlayoff &&
+          g.gameDate < campaign.currentDate
+        )
+        .sort((a, b) => (a.gameDate < b.gameDate ? -1 : a.gameDate > b.gameDate ? 1 : 0))
+
+      if (orphans.length === 0) return 0
+
+      const engineStore = useEngineStore()
+      const worker = engineStore.getWorker()
+      const toastStore = useToastStore()
+
+      backgroundSimulating.value = true
+      simulationProgress.value = { completed: 0, total: orphans.length }
+      const progressToastId = toastStore.showProgress('Completing missed games', 0, orphans.length)
+
+      try {
+        await _simulateAiGamesBulk(campaignId, year, seasonData, orphans, worker, (progress) => {
+          simulationProgress.value = progress
+          toastStore.updateProgress(progressToastId, progress.completed, progress.total)
+        })
+      } finally {
+        toastStore.removeMinimalToast(progressToastId)
+        backgroundSimulating.value = false
+        simulationProgress.value = null
+      }
+      return orphans.length
+    } catch (err) {
+      console.error('Failed to sweep orphaned games:', err)
+      backgroundSimulating.value = false
+      simulationProgress.value = null
+      return 0
+    }
+  }
+
+  /**
    * Simulate AI games for a specific day in the background (fire-and-forget).
    * Used during live games to simulate same-day AI matchups.
    */
@@ -3393,6 +3498,7 @@ export const useGameStore = defineStore('game', () => {
     simulateRemainingSeason,
     simulateToGame,
     resumeSimulation,
+    sweepOrphanedGames,
     cancelSimulation,
     simulateToNextPlayoffRound,
     clearSimulatePreview,

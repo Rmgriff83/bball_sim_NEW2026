@@ -2128,10 +2128,10 @@ function formatSalary(salary) {
      template's Tailwind `p-6` (24px) on the horizontal axis only. */
   padding-left: 16px;
   padding-right: 16px;
-  /* Floating bottom nav is 70px tall and sits at env(safe-area-inset-bottom).
+  /* Floating bottom nav is 70px tall and sits at var(--safe-area-inset-bottom, env(safe-area-inset-bottom)).
      Reserve 70 + safe area + 16px breathing room so the last content row
      never gets covered on devices with a home indicator. */
-  padding-bottom: calc(70px + env(safe-area-inset-bottom) + 16px);
+  padding-bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 16px);
   max-width: 1024px;
   margin: 0 auto;
 }

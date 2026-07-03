@@ -75,8 +75,17 @@ watch(() => props.show, async (val) => {
   }
 })
 
-function isPerkActive(perk) {
-  return props.analyticsFacilityLevel >= perk.requiredLevel
+// Resolve the CANONICAL facility requirement for a candidate's perk. Pool
+// candidates persisted before facility gating existed carry requiredLevel 1;
+// resolving by key against ANALYST_TIERS keeps display + new hires on the
+// current gating without a data migration.
+function requiredLevelFor(candidate, perk) {
+  const canonical = ANALYST_TIERS[candidate.tier]?.perks?.find((p) => p.key === perk.key)
+  return canonical?.requiredLevel ?? perk.requiredLevel ?? 1
+}
+
+function isPerkActive(candidate, perk) {
+  return props.analyticsFacilityLevel >= requiredLevelFor(candidate, perk)
 }
 
 function close() {
@@ -105,7 +114,9 @@ async function hireAnalyst(candidate) {
       tier: candidate.tier,
       hiredSeason: currentSeason,
       contractYears: 2,
-      perks: candidate.perks.map(p => ({ key: p.key, requiredLevel: p.requiredLevel })),
+      // Stamp CANONICAL requiredLevels (legacy pool candidates carry 1) so the
+      // facility gate applies to every new hire.
+      perks: candidate.perks.map(p => ({ key: p.key, requiredLevel: requiredLevelFor(candidate, p) })),
       headshot: candidate.headshot ?? null,
       hasCustomHeadshot: candidate.hasCustomHeadshot ?? false,
     }
@@ -187,15 +198,18 @@ async function hireAnalyst(candidate) {
                     v-for="perk in candidate.perks"
                     :key="perk.key"
                     class="perk-row"
-                    :class="{ inactive: !isPerkActive(perk) }"
+                    :class="{ inactive: !isPerkActive(candidate, perk) }"
                   >
                     <div class="perk-icon">
-                      <Check v-if="isPerkActive(perk)" :size="14" />
+                      <Check v-if="isPerkActive(candidate, perk)" :size="14" />
                       <Lock v-else :size="14" />
                     </div>
                     <div class="perk-text">
                       <span class="perk-label">{{ perk.label }}</span>
                       <span class="perk-desc">{{ perk.description }}</span>
+                      <span v-if="!isPerkActive(candidate, perk)" class="perk-req">
+                        Requires Analytics Facility Lv {{ requiredLevelFor(candidate, perk) }}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -470,6 +484,12 @@ async function hireAnalyst(candidate) {
   font-size: 0.75rem;
   color: var(--color-text-secondary);
   line-height: 1.3;
+}
+
+.perk-req {
+  font-size: 0.7rem;
+  color: #F59E0B;
+  font-weight: 500;
 }
 
 .btn-hire {

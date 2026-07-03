@@ -1002,10 +1002,10 @@ function getDifficultyLabel(value) {
   justify-content: center;
   /* Safe-area-aware padding so the modal can never render under the notch /
      home indicator on iPhone. Matches BaseModal's gutter behavior. */
-  padding-top: max(16px, env(safe-area-inset-top));
-  padding-right: max(16px, env(safe-area-inset-right));
-  padding-bottom: max(16px, env(safe-area-inset-bottom));
-  padding-left: max(16px, env(safe-area-inset-left));
+  padding-top: max(16px, var(--safe-area-inset-top, env(safe-area-inset-top)));
+  padding-right: max(16px, var(--safe-area-inset-right, env(safe-area-inset-right)));
+  padding-bottom: max(16px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
+  padding-left: max(16px, var(--safe-area-inset-left, env(safe-area-inset-left)));
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(4px);
 }

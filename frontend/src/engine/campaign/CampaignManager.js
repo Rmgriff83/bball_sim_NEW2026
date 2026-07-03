@@ -1527,6 +1527,19 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, use
 
   // 2A. Player season history
   const playerStats = seasonData.playerStats || {}
+  // teamId → abbreviation for the multi-team season label. A player traded
+  // mid-season archives "POR/DET" (current/last team first, then earlier
+  // teams he recorded stats for) instead of only his end-of-season team.
+  const _abbrByTeamId = new Map((teams || []).map(t => [String(t.id), t.abbreviation]))
+  const _seasonTeamLabel = (player, stats) => {
+    const current = player.teamAbbreviation
+    const recorded = Array.isArray(stats?.teams)
+      ? stats.teams.map(id => _abbrByTeamId.get(String(id))).filter(Boolean)
+      : []
+    if (recorded.length === 0) return current
+    const others = [...new Set(recorded)].filter(a => a && a !== current).reverse()
+    return [current, ...others].filter(Boolean).join('/') || current
+  }
   for (const player of allPlayers) {
     const stats = playerStats[String(player.id)]
     if (!stats || !stats.gamesPlayed) continue
@@ -1535,7 +1548,7 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, use
     player.seasonHistory.push({
       year: currentYear,
       teamId: player.teamId,
-      teamAbbreviation: player.teamAbbreviation,
+      teamAbbreviation: _seasonTeamLabel(player, stats),
       stats: {
         gamesPlayed: stats.gamesPlayed ?? 0,
         points: stats.points ?? 0,

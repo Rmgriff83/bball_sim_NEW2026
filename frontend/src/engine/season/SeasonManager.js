@@ -658,6 +658,17 @@ export class SeasonManager {
     const stats = bucket[pid]
     const minutesPlayed = gameStats.minutes ?? 0
 
+    // Chronological record of every team the player has LOGGED GAMES for this
+    // season (a mid-season trade adds a second entry the first time he suits
+    // up for the new team). Lazily initialized so pre-existing buckets from
+    // live campaigns keep working. Powers the multi-team "POR/DET" season label.
+    if (!Array.isArray(stats.teams)) {
+      stats.teams = stats.teamId != null ? [stats.teamId] : []
+    }
+    if (teamId != null && stats.teams[stats.teams.length - 1] !== teamId) {
+      stats.teams.push(teamId)
+    }
+
     // Only count as a game played if the player actually got minutes
     if (minutesPlayed > 0) {
       stats.gamesPlayed++
@@ -689,6 +700,9 @@ export class SeasonManager {
       playerId,
       playerName,
       teamId,
+      // Ordered list of teams the player records stats for this season
+      // (scalar teamId kept for backward compatibility with existing readers).
+      teams: teamId != null ? [teamId] : [],
       gamesPlayed: 0,
       gamesStarted: 0,
       minutesPlayed: 0,

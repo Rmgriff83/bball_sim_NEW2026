@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTradeStore } from '@/stores/trade'
 import { useTeamStore } from '@/stores/team'
+import { useFinanceStore } from '@/stores/finance'
 import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
@@ -28,6 +29,7 @@ const emit = defineEmits(['trade-completed', 'prefill-consumed'])
 const router = useRouter()
 const tradeStore = useTradeStore()
 const teamStore = useTeamStore()
+const financeStore = useFinanceStore()
 const toastStore = useToastStore()
 const audio = useAudioStore()
 const breakingNewsStore = useBreakingNewsStore()
@@ -235,11 +237,17 @@ async function applyPrefill(prefill) {
         firstName: player.firstName || player.first_name,
         lastName: player.lastName || player.last_name,
         position: player.position,
+        secondaryPosition: player.secondaryPosition ?? player.secondary_position,
         overallRating: player.overallRating ?? player.overall_rating,
         contractSalary: player.contractSalary ?? player.contract_salary,
         contractYearsRemaining: player.contractYearsRemaining ?? player.contract_years_remaining,
         tradeValue: player.tradeValue ?? player.trade_value,
         age: player.age,
+        height: player.height,
+        // Headshot pointers — without these the confirm/acceptance modal
+        // rendered the acquired player as the default avatar.
+        headshot: player.headshot ?? null,
+        hasCustomHeadshot: player.hasCustomHeadshot ?? player.has_custom_headshot ?? false,
       })
     }
     wizardStep.value = 1
@@ -322,6 +330,7 @@ function addPlayerToOffer(player) {
     age: player.age,
     height: player.height,
     headshot: player.headshot,
+    hasCustomHeadshot: player.hasCustomHeadshot ?? player.has_custom_headshot ?? false,
   })
 }
 
@@ -353,6 +362,7 @@ function addPlayerToRequest(player) {
     age: player.age,
     height: player.height,
     headshot: player.headshot,
+    hasCustomHeadshot: player.hasCustomHeadshot ?? player.has_custom_headshot ?? false,
   })
 }
 
@@ -490,7 +500,9 @@ async function executeTrade() {
       )
     }
 
-    // Refresh user assets and team roster
+    // Refresh user assets and team roster; drop the finance store's cached
+    // roster so the Contracts tab picks up traded players.
+    financeStore.invalidate()
     await Promise.all([
       tradeStore.fetchUserAssets(props.campaignId),
       teamStore.fetchTeam(props.campaignId, { force: true })

@@ -16,7 +16,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
-import { LoadingSpinner, BaseModal, StandardModal } from '@/components/ui'
+import { LoadingSpinner, BaseModal, StandardModal, BaseButton } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
 import SeasonEndModal from '@/components/playoffs/SeasonEndModal.vue'
 import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
@@ -1277,6 +1277,22 @@ watch(
 // shows a progress toast, then checkPlayoffStatus surfaces the SeasonEndModal.
 // Guarded against re-entry via the gameStore sim flags.
 async function maybeAutoFinishRegularSeason() {
+  // Self-heal FIRST, regardless of the guards below: games stranded incomplete
+  // behind the campaign date (created by playing a later game directly from
+  // the calendar) wedge the season permanently — isRegularSeasonComplete stays
+  // false while a playoff bracket may already exist, and every advance button
+  // no-ops. The sweep sims them and unblocks the season-end/playoff flow.
+  try {
+    if (!gameStore.simulating && !gameStore.backgroundSimulating) {
+      const swept = await gameStore.sweepOrphanedGames(campaignId.value)
+      if (swept > 0) {
+        await checkPlayoffStatus()
+      }
+    }
+  } catch (err) {
+    console.warn('Orphaned-game sweep failed (non-fatal):', err)
+  }
+
   if (!nextGame.value &&
       !playoffStore.isInPlayoffs &&
       !playoffStore.champion &&
@@ -1295,6 +1311,27 @@ async function maybeAutoFinishRegularSeason() {
     } catch (err) {
       console.error('Failed to auto-finish regular season:', err)
     }
+  }
+}
+
+// Retry a failed campaign load (the load-error fallback card). Re-runs the
+// core fetch chain; if it succeeds `campaign` becomes non-null and the main
+// content renders.
+async function retryLoad() {
+  loading.value = true
+  try {
+    await campaignStore.fetchCampaign(campaignId.value)
+    await Promise.all([
+      teamStore.fetchTeam(campaignId.value),
+      leagueStore.fetchStandings(campaignId.value),
+      gameStore.fetchGames(campaignId.value),
+    ])
+    await checkPlayoffStatus()
+    await maybeAutoFinishRegularSeason()
+  } catch (err) {
+    console.error('Retry load failed:', err)
+  } finally {
+    loading.value = false
   }
 }
 
@@ -2992,20 +3029,28 @@ function handleNegotiateProposal(proposal) {
 
 // All-Star selection handling
 async function checkAllStarSelections() {
-  const camp = campaignStore.currentCampaign
-  if (!camp) return
+  // Guarded: this runs in the mount chain — a malformed season record must not
+  // break the whole campaign load.
+  try {
+    const camp = campaignStore.currentCampaign
+    if (!camp) return
 
-  const year = camp.currentSeasonYear ?? camp.game_year ?? 2025
+    const year = camp.currentSeasonYear ?? camp.game_year ?? 2025
 
-  const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
-  const seasonData = await SeasonRepository.get(campaignId.value, year)
-  if (!seasonData) return
+    const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+    const seasonData = await SeasonRepository.get(campaignId.value, year)
+    if (!seasonData) return
 
-  // Rosters are now populated by game.js _processMidSeasonEvents during date advancement.
-  // Here we only check if they exist and haven't been viewed yet.
-  if (seasonData.allStarRosters && !seasonData.allStarViewed) {
-    allStarRosters.value = seasonData.allStarRosters
-    showAllStarModal.value = true
+    // Rosters are populated by game.js _processMidSeasonEvents during date
+    // advancement, and the break is ANNOUNCED by the sim-pause modal
+    // (SimPauseModal, reason 'all_star' — the one with headshots). We only cache
+    // the rosters here for the manual re-view (awards timeline) — no auto-open,
+    // which used to stack a second, headshot-less popup on top of the pause modal.
+    if (seasonData.allStarRosters) {
+      allStarRosters.value = seasonData.allStarRosters
+    }
+  } catch (err) {
+    console.warn('All-Star roster check failed (non-fatal):', err)
   }
 }
 
@@ -4181,6 +4226,18 @@ function handleCloseSimulateModal() {
       </section>
     </template>
 
+    <!-- Load-error fallback: without this, a swallowed load failure rendered a
+         completely BLANK page (loading=false + campaign=null had no branch). -->
+    <div v-else class="load-error-container">
+      <h2 class="load-error-title">Couldn't load this campaign</h2>
+      <p class="load-error-text">
+        Something went wrong while loading your campaign data. This is usually
+        temporary — try again, and if it keeps happening, fully close and reopen
+        the app.
+      </p>
+      <BaseButton variant="primary" @click="retryLoad">Try Again</BaseButton>
+    </div>
+
     <!-- Simulate to Next Game Modal -->
     <SimulateConfirmModal
       :show="showSimulateModal"
@@ -4610,6 +4667,29 @@ function handleCloseSimulateModal() {
   align-items: center;
   justify-content: center;
   height: 100vh;
+}
+
+/* Load-error fallback (replaces the previous blank page on load failure). */
+.load-error-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 70vh;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.load-error-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.load-error-text {
+  max-width: 420px;
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
 }
 
 .loading-container :deep(.loading-spinner) {
@@ -7100,9 +7180,9 @@ function handleCloseSimulateModal() {
 @media (max-width: 1023px) {
   .games-ticker {
     /* Sit directly above the BottomNav. The nav's height is 70px content +
-       env(safe-area-inset-bottom) on iPhone (~34px home-indicator), so
+       var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) on iPhone (~34px home-indicator), so
        hardcoding 70px here would tuck the ticker behind the nav on iOS. */
-    bottom: calc(70px + env(safe-area-inset-bottom));
+    bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
   }
 }
 

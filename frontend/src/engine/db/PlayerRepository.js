@@ -131,8 +131,13 @@ export const PlayerRepository = {
     return withDB(async db => {
       const player = await db.get('players', [campaignId, playerId])
       if (!player) throw new Error(`Player ${playerId} not found`)
+      // Keep BOTH casings in sync — a split teamId/team_id record made a
+      // traded-in player look like it still belonged to its old team to any
+      // snake_case reader (see the AI-AI trade steal bug).
       player.teamId = newTeamId
+      player.team_id = newTeamId
       player.isFreeAgent = newTeamId ? 0 : 1
+      player.is_free_agent = newTeamId ? 0 : 1
       player.updatedAt = new Date().toISOString()
       return db.put('players', player)
     })

@@ -189,7 +189,7 @@ function isActive(routeName) {
      and stay flush with the bottom on devices that don't (env() = 0). The
      strip below the nav shows the page background — common pattern in native
      iOS apps and now consistent across all mobile clients. */
-  bottom: env(safe-area-inset-bottom);
+  bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom));
   /* Width-matched to the home view's content cards so the nav looks like a
      paired strip rather than a narrower floating pill. Home (and the rest
      of the campaign views) use `.campaign-home { max-width: 1024px;

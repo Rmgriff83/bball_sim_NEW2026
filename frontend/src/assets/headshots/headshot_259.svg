@@ -592,11 +592,15 @@
 </g>
 </g>
 <g data-layer="headband" data-style="white">
-<rect x="14" y="13" width="36" height="4" fill="#f4f4f4"/>
-<rect x="14" y="13" width="36" height="1" fill="#cfcfcf"/>
-<rect x="14" y="16" width="36" height="1" fill="#cfcfcf"/>
-<rect x="14" y="13" width="2" height="4" fill="#cfcfcf"/>
-<rect x="48" y="13" width="2" height="4" fill="#cfcfcf"/>
+<g data-piece="color-1" data-color="#f4f4f4" data-color-label="Color 1" fill="#f4f4f4">
+<rect x="17" y="13" width="30" height="4"/>
+</g>
+<g data-piece="color-2" data-color="#cfcfcf" data-color-label="Color 2" fill="#cfcfcf">
+<rect x="17" y="13" width="30" height="1"/>
+<rect x="17" y="16" width="30" height="1"/>
+<rect x="17" y="13" width="2" height="4"/>
+<rect x="45" y="13" width="2" height="4"/>
+</g>
 </g>
 </g>
 </g>

@@ -416,9 +416,11 @@ async function checkAllStarSelections() {
   const year = camp.currentSeasonYear ?? camp.game_year ?? new Date().getFullYear()
   const seasonData = await SeasonRepository.get(props.campaignId, year)
   if (!seasonData) return
-  if (seasonData.allStarRosters && !seasonData.allStarViewed) {
+  // The break announcement is owned by the sim-pause modal (SimPauseModal,
+  // reason 'all_star' — the headshot one). Only cache rosters here for manual
+  // re-view; auto-opening used to stack a second, headshot-less popup.
+  if (seasonData.allStarRosters) {
     allStarRosters.value = seasonData.allStarRosters
-    showAllStarModal.value = true
   }
 }
 

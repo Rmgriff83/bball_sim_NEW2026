@@ -2440,7 +2440,7 @@ onUnmounted(() => {
   /* Footer reads as a pull-up surface: rounded top + a grab handle. */
   .draft-footer {
     position: relative;
-    padding: 28px 16px calc(8px + env(safe-area-inset-bottom));
+    padding: 28px 16px calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
     flex-wrap: wrap;
     gap: 8px;
     border-radius: 16px 16px 0 0;
@@ -2451,7 +2451,7 @@ onUnmounted(() => {
      in any browser): the home-indicator inset alone wasn't enough breathing room,
      so floor the footer's bottom padding at 80px. Does NOT affect web/Android. */
   html.platform-ios .draft-footer {
-    padding-bottom: max(80px, calc(8px + env(safe-area-inset-bottom)));
+    padding-bottom: max(80px, calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom))));
   }
 
   .footer-handle {
@@ -2551,7 +2551,7 @@ onUnmounted(() => {
     border-radius: 18px 18px 0 0;
     box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
     overflow-y: auto;
-    padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+    padding: 8px 16px calc(16px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
   }
 
   /* Grab handle at the top of the sheet */

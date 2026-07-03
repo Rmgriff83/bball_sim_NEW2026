@@ -1,6 +1,8 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useTradeStore } from '@/stores/trade'
+import { useTeamStore } from '@/stores/team'
+import { useFinanceStore } from '@/stores/finance'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { GlassCard } from '@/components/ui'
@@ -17,6 +19,8 @@ const props = defineProps({
 const emit = defineEmits(['trade-completed'])
 
 const tradeStore = useTradeStore()
+const teamStore = useTeamStore()
+const financeStore = useFinanceStore()
 const breakingNewsStore = useBreakingNewsStore()
 
 const proposals = computed(() => tradeStore.pendingProposals)
@@ -46,6 +50,13 @@ async function handleAccept(proposal) {
         breakingNewsStore.enqueue(newsItem)
       }
     }
+
+    // Refresh caches so the roster + Contracts tab reflect the trade
+    // immediately (the finance store otherwise serves its pre-trade snapshot).
+    financeStore.invalidate()
+    try {
+      await teamStore.fetchTeam(props.campaignId, { force: true })
+    } catch { /* non-fatal — next view load refreshes */ }
 
     emit('trade-completed')
   } catch (err) {

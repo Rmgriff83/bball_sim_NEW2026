@@ -601,8 +601,8 @@ function isWin(toast) {
 </style>
 
 <!-- Native override: the floating glass bottom nav sits at
-     `bottom: env(safe-area-inset-bottom)` and is 70px tall, so its top
-     edge is calc(70px + env(safe-area-inset-bottom)) above the viewport
+     `bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom))` and is 70px tall, so its top
+     edge is calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom))) above the viewport
      bottom. Push toasts above that with a 12px breathing gap. Applies to BOTH
      native platforms (the nav renders on Android too). Non-scoped block so the
      global `html.platform-*` selectors match. Browser (platform-web) keeps the
@@ -611,7 +611,7 @@ function isWin(toast) {
 @media (max-width: 1023px) {
   html.platform-ios .toast-container,
   html.platform-android .toast-container {
-    bottom: calc(70px + env(safe-area-inset-bottom) + 12px);
+    bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 12px);
   }
 }
 </style>
