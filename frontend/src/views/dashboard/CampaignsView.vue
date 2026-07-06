@@ -7,6 +7,8 @@ import { useAudioStore } from '@/stores/audio'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { GlassCard, BaseButton, LoadingSpinner } from '@/components/ui'
 import HasPlayedBeforeModal from '@/components/walkthrough/HasPlayedBeforeModal.vue'
+import HeadshotEditorPromoModal from '@/components/store/HeadshotEditorPromoModal.vue'
+import { shouldShowPromo, markPromoShown } from '@/services/promoGate'
 import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2, Trophy, Star, Medal } from 'lucide-vue-next'
 import { gmLevelLabel, gmLevelColor } from '@/engine/data/gmLevels'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
@@ -119,8 +121,31 @@ onMounted(async () => {
   if (route.query.new === '1') {
     openCreateModal()
     router.replace({ path: route.path, query: { ...route.query, new: undefined } })
+  } else {
+    maybeShowHeadshotPromo()
   }
 })
+
+// Weekly Headshot Editor upsell. Non-invasive by construction: never shown to
+// owners, never to brand-new users (no campaigns yet), never over the
+// create-flow or onboarding modals, and at most once per 7 days per user
+// (stamped at SHOW time, so any dismissal counts as this week's showing).
+const showHeadshotPromo = ref(false)
+
+function maybeShowHeadshotPromo() {
+  if (authStore.hasFeature('headshot_editor')) return
+  if (!campaignStore.campaigns.length) return
+  if (showCreateModal.value || showPlayedBeforeModal.value) return
+  const uid = authStore.user?.id
+  if (!shouldShowPromo(uid, 'headshotEditor')) return
+  markPromoShown(uid, 'headshotEditor')
+  showHeadshotPromo.value = true
+}
+
+function goToStorePurchase() {
+  showHeadshotPromo.value = false
+  router.push({ name: 'store', query: { buy: 'headshot_editor_unlock' } })
+}
 
 async function handleLogout() {
   await authStore.logout()
@@ -605,6 +630,13 @@ function getDifficultyLabel(value) {
     <HasPlayedBeforeModal
       :show="showPlayedBeforeModal"
       @answered="handlePlayedBeforeAnswer"
+    />
+
+    <!-- Weekly Headshot Editor upsell (non-owners only) -->
+    <HeadshotEditorPromoModal
+      :show="showHeadshotPromo"
+      @close="showHeadshotPromo = false"
+      @unlock="goToStorePurchase"
     />
   </div>
 </template>

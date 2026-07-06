@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, helpers } from '@vuelidate/validators'
@@ -9,7 +9,7 @@ import { useSyncStore } from '@/stores/sync'
 import { useToastStore } from '@/stores/toast'
 import { GlassCard, BaseButton, FormInput, Badge, BaseModal } from '@/components/ui'
 import ConnectedAccounts from '@/components/auth/ConnectedAccounts.vue'
-import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, CloudDownload, Trash2, AlertTriangle, Zap, Users, Volume2, VolumeX, RotateCcw, Check } from 'lucide-vue-next'
+import { ArrowLeft, Coins, Sparkles, Sun, Moon, Cloud, CloudUpload, CloudDownload, Trash2, AlertTriangle, Zap, Users, Volume2, VolumeX, RotateCcw, Check, Bell } from 'lucide-vue-next'
 import { useAudioStore } from '@/stores/audio'
 import { useLocalCache } from '@/composables/useLocalCache'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
@@ -117,10 +117,68 @@ function previewVolume() {
   audio.navigate() // play a sample after the user finishes dragging
 }
 
+// Notification reminders (native only). Status drives the row: 'prompt' can
+// still fire the OS ask directly; 'denied' can only deep-link to system
+// settings; 'granted' just shows On. Re-checked whenever the app regains
+// visibility so returning from the Settings app updates the row in place.
+const notifStatus = ref('unsupported')
+
+async function refreshNotifStatus() {
+  const { getPermissionStatus } = await import('@/services/notifications')
+  notifStatus.value = await getPermissionStatus()
+}
+
+async function handleEnableReminders() {
+  const n = await import('@/services/notifications')
+  if (notifStatus.value === 'denied') {
+    await n.openNotificationSettings()
+  } else {
+    await n.ensurePermission()
+  }
+  await refreshNotifStatus()
+}
+
+async function handleSendTestNotification() {
+  const n = await import('@/services/notifications')
+  const ok = await n.sendTestNotification()
+  await refreshNotifStatus()
+  if (ok) {
+    toastStore.showSuccess('Test scheduled — it should appear in about 5 seconds.')
+  } else {
+    toastStore.showError('Could not schedule the test notification.')
+  }
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') refreshNotifStatus()
+}
+
+// Which build is this device actually running? Native builds show
+// "v<versionName> (<build>)" at the bottom of Settings — indispensable when
+// diagnosing store-update / stale-asset issues.
+const appVersion = ref('')
+
+async function loadAppVersion() {
+  try {
+    const { App } = await import('@capacitor/app')
+    const info = await App.getInfo()
+    appVersion.value = `v${info.version} (${info.build})`
+  } catch { /* label just stays hidden */ }
+}
+
 // Fetch fresh user data on mount to get latest rewards
 onMounted(async () => {
+  if (isNative) {
+    refreshNotifStatus()
+    loadAppVersion()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+  }
   await authStore.fetchUser()
   loadSynergies()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
 // Badge synergy database helpers
@@ -401,6 +459,48 @@ async function clearLocalCache() {
         </div>
       </div>
 
+      <!-- Notifications Card (native only — reminders are device-local).
+           Always rendered on native, even when the plugin is unavailable:
+           a silently-broken state must be VISIBLE, not vanish. -->
+      <div v-if="isNative" class="profile-section">
+        <h3 class="section-title">Notifications</h3>
+        <div class="theme-toggle-row">
+          <div class="theme-label">
+            <Bell :size="20" />
+            <span>Reminders</span>
+          </div>
+          <span v-if="notifStatus === 'granted'" class="notif-on-tag">
+            <Check :size="14" /> On
+          </span>
+          <span v-else-if="notifStatus === 'unsupported'" class="notif-unavailable-tag">
+            Unavailable
+          </span>
+          <button v-else class="notif-enable-btn" @click="handleEnableReminders">
+            {{ notifStatus === 'denied' ? 'Open Settings' : 'Turn On' }}
+          </button>
+        </div>
+        <p class="notif-hint">
+          <template v-if="notifStatus === 'denied'">
+            Notifications are turned off for this app in your device settings. Open Settings to
+            allow them and get training and game-day reminders.
+          </template>
+          <template v-else-if="notifStatus === 'unsupported'">
+            Notifications aren't available on this build.
+          </template>
+          <template v-else>
+            Get an alert when a training session finishes, plus reminders when upgrade points or
+            your next game are waiting.
+          </template>
+        </p>
+        <button
+          v-if="notifStatus === 'granted'"
+          class="notif-test-btn"
+          @click="handleSendTestNotification"
+        >
+          Send Test Notification
+        </button>
+      </div>
+
       <!-- Rewards Card -->
       <div class="profile-section">
         <h3 class="section-title">Rewards</h3>
@@ -669,6 +769,10 @@ async function clearLocalCache() {
         </div>
       </BaseModal>
 
+      <!-- Build identifier — which binary + bundle this device is actually
+           running. Native only (appVersion stays empty on web). -->
+      <p v-if="appVersion" class="app-version-label">BBALL SIM {{ appVersion }}</p>
+
       </div><!-- end Settings Tab -->
 
       <!-- Database Tab -->
@@ -904,6 +1008,84 @@ async function clearLocalCache() {
 [data-theme="light"] .toggle-thumb {
   background: white;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Notifications */
+.notif-on-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+
+.notif-enable-btn {
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-lg);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: filter 0.2s ease;
+}
+
+.notif-enable-btn:hover {
+  filter: brightness(1.1);
+}
+
+.notif-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+  margin-top: 0.75rem;
+}
+
+.notif-unavailable-tag {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+
+.notif-test-btn {
+  margin-top: 0.75rem;
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.notif-test-btn:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
+
+.app-version-label {
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.05em;
+  margin: 0.5rem 0 1rem;
 }
 
 /* Rewards */

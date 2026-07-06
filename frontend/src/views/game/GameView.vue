@@ -106,6 +106,21 @@ function snapshotTeamRecords() {
 }
 const gameJustCompleted = ref(false)  // True when final quarter just finished
 
+// Second contextual notification-permission ask (the first is at training
+// start): the user just finished a game — a natural payoff moment to offer
+// reminders. One-shot per device inside the service; short delay so the OS
+// prompt doesn't collide with the final-buzzer overlay landing. Covers all
+// three completion paths (resume-complete, final quarter, sim-to-end) since
+// they all flip this ref.
+watch(gameJustCompleted, (done) => {
+  if (!done) return
+  setTimeout(() => {
+    import('@/services/notifications')
+      .then(n => n.maybeAskPermissionAfterGame())
+      .catch(() => {})
+  }, 2000)
+})
+
 // Live stats animation state
 const animatingStatPlayers = ref({}) // { [playerId]: 'up' | 'down' }
 const prevAwayRanking = ref([])
@@ -4311,7 +4326,7 @@ onUnmounted(() => {
     padding-top: 8px;
     /* Bottom nav (70px) + safe-area + 12px gap + floating Play Game button
        (~50px tall) + 16px breathing room below the last content card. */
-    padding-bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 12px + 50px + 16px);
+    padding-bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 12px + 16px);
   }
   .back-btn {
     margin-bottom: 8px;

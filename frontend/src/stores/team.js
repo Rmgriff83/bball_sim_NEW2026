@@ -1139,6 +1139,20 @@ export const useTeamStore = defineStore('team', () => {
       if (team.value) team.value.coach = teamData.coach
 
       useSyncStore().markDirty()
+
+      // Schedule the "training ready" local notification (fire-and-forget;
+      // also the contextual moment to ask for notification permission — the
+      // user just started a real-time countdown).
+      try {
+        const trainee = roster.value.find(p => String(p.id) === String(playerId))
+        const playerName = trainee
+          ? `${trainee.firstName ?? trainee.first_name ?? ''} ${trainee.lastName ?? trainee.last_name ?? ''}`.trim() || null
+          : null
+        import('@/services/notifications').then(n =>
+          n.scheduleTrainingReady({ playerName, endsAt })
+        ).catch(() => {})
+      } catch { /* notifications are best-effort */ }
+
       return { activeTraining: teamData.coach.activeTraining, trainActionsRemaining: teamData.coach.trainActionsRemaining }
     } catch (err) {
       error.value = err.message || 'Failed to start training session'
@@ -1232,6 +1246,10 @@ export const useTeamStore = defineStore('team', () => {
       await _bumpGmBadgeProgress(campaignId, 1)
 
       useSyncStore().markDirty()
+
+      // Reward claimed — drop the pending "training ready" notification.
+      import('@/services/notifications').then(n => n.cancelTrainingReady()).catch(() => {})
+
       return { badge, level: picked.nextLevel, badgeId: picked.badge.id }
     } catch (err) {
       error.value = err.message || 'Failed to claim training reward'

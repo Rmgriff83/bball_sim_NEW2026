@@ -8,6 +8,14 @@ export default defineConfig({
   plugins: [
     vue(),
     VitePWA({
+      // Native (Capacitor) builds must NOT run a service worker: assets are
+      // local files, and the SW's precache survives app-store updates in
+      // WebView storage — so the first launch after every update serves the
+      // PREVIOUS version's entire JS bundle from cache. selfDestroying ships
+      // a stub sw.js that unregisters itself and clears caches on existing
+      // installs (removing the SW entirely would strand old installs on the
+      // stale worker forever). Web builds keep the full PWA.
+      selfDestroying: !!process.env.VITE_NATIVE_BUILD,
       registerType: 'autoUpdate',
       includeAssets: ['app-icon.svg'],
       manifest: {

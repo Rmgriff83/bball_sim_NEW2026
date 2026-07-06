@@ -77,7 +77,7 @@ const unlockBundles = [
     feature: 'headshot_editor',
     price: '$3.99',
     label: 'Headshot Editor',
-    description: 'Unlock full headshot customization for every player, coach, and staff member — plus team renaming on campaign creation. One-time purchase, applies across all your campaigns.'
+    description: 'Unlock full headshot customization for every player, coach, and staff member — plus team renaming on campaign creation. New styles, faces, and assets are added regularly, and owners get every drop free. One-time purchase, applies across all your campaigns.'
   }
 ]
 
@@ -212,6 +212,18 @@ onMounted(async () => {
   } else if (status === 'cancel') {
     toastStore.showError('Purchase canceled.')
     router.replace({ query: {} })
+  }
+
+  // Deep-link straight into the confirm modal (e.g. /store?buy=headshot_editor_unlock
+  // from the upsell popup). Runs after the price load so the modal shows the live
+  // price on native, and skips when returning from Stripe checkout above. Unknown
+  // ids do nothing; owned unlocks no-op inside promptPurchase. The query is always
+  // stripped so refresh/back can't re-open the modal.
+  const buyId = route.query.buy
+  if (buyId && !status) {
+    const bundle = [...tokenBundles, ...unlockBundles].find(b => b.id === buyId)
+    if (bundle) promptPurchase(bundle)
+    router.replace({ query: { ...route.query, buy: undefined } })
   }
 })
 </script>

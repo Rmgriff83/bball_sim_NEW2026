@@ -46,7 +46,7 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { simFullOffseason, runDraftLotteryForCampaign } from '@/engine/draft/OffseasonOrchestrator'
 import { FREE_AGENCY_DURATION_DAYS, isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase, Dumbbell, HeartPulse, Telescope, BarChart3, Clock, Smile, Meh, Frown } from 'lucide-vue-next'
+import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase, Dumbbell, HeartPulse, Telescope, BarChart3, Clock, Smile, Meh, Frown, Shield } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
@@ -3618,6 +3618,10 @@ function handleCloseSimulateModal() {
                   <Star :size="14" class="offseason-award-icon gold" />
                   <span class="offseason-award-text">MVP: <strong>{{ displayedSeasonAwards.mvp.playerName }}</strong> ({{ displayedSeasonAwards.mvp.teamAbbr }})</span>
                 </div>
+                <div v-if="displayedSeasonAwards.dpoy" class="offseason-award-line">
+                  <Shield :size="14" class="offseason-award-icon gold" />
+                  <span class="offseason-award-text">DPOY: <strong>{{ displayedSeasonAwards.dpoy.playerName }}</strong> ({{ displayedSeasonAwards.dpoy.teamAbbr }})</span>
+                </div>
                 <div v-if="displayedSeasonAwards.rookieOfTheYear" class="offseason-award-line">
                   <Award :size="14" class="offseason-award-icon gold" />
                   <span class="offseason-award-text">ROTY: <strong>{{ displayedSeasonAwards.rookieOfTheYear.playerName }}</strong> ({{ displayedSeasonAwards.rookieOfTheYear.teamAbbr }})</span>
@@ -3633,6 +3637,22 @@ function handleCloseSimulateModal() {
                 <div v-if="displayedSeasonAwards.allNba?.third?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
                   <span class="offseason-award-text">All-League 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allDefense?.first?.length" class="offseason-award-line">
+                  <Shield :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-Defense 1st: {{ displayedSeasonAwards.allDefense.first.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allDefense?.second?.length" class="offseason-award-line">
+                  <Shield :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-Defense 2nd: {{ displayedSeasonAwards.allDefense.second.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allRookie?.first?.length" class="offseason-award-line">
+                  <Award :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-Rookie 1st: {{ displayedSeasonAwards.allRookie.first.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allRookie?.second?.length" class="offseason-award-line">
+                  <Award :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-Rookie 2nd: {{ displayedSeasonAwards.allRookie.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
               </div>
             </div>
@@ -3872,6 +3892,10 @@ function handleCloseSimulateModal() {
                   <Star :size="14" class="offseason-award-icon gold" />
                   <span class="offseason-award-text">MVP: <strong>{{ displayedSeasonAwards.mvp.playerName }}</strong> ({{ displayedSeasonAwards.mvp.teamAbbr }})</span>
                 </div>
+                <div v-if="displayedSeasonAwards.dpoy" class="offseason-award-line">
+                  <Shield :size="14" class="offseason-award-icon gold" />
+                  <span class="offseason-award-text">DPOY: <strong>{{ displayedSeasonAwards.dpoy.playerName }}</strong> ({{ displayedSeasonAwards.dpoy.teamAbbr }})</span>
+                </div>
                 <div v-if="displayedSeasonAwards.rookieOfTheYear" class="offseason-award-line">
                   <Award :size="14" class="offseason-award-icon gold" />
                   <span class="offseason-award-text">ROTY: <strong>{{ displayedSeasonAwards.rookieOfTheYear.playerName }}</strong> ({{ displayedSeasonAwards.rookieOfTheYear.teamAbbr }})</span>
@@ -3887,6 +3911,22 @@ function handleCloseSimulateModal() {
                 <div v-if="displayedSeasonAwards.allNba?.third?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
                   <span class="offseason-award-text">All-League 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allDefense?.first?.length" class="offseason-award-line">
+                  <Shield :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-Defense 1st: {{ displayedSeasonAwards.allDefense.first.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allDefense?.second?.length" class="offseason-award-line">
+                  <Shield :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-Defense 2nd: {{ displayedSeasonAwards.allDefense.second.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allRookie?.first?.length" class="offseason-award-line">
+                  <Award :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-Rookie 1st: {{ displayedSeasonAwards.allRookie.first.map(p => p.playerName).join(', ') }}</span>
+                </div>
+                <div v-if="displayedSeasonAwards.allRookie?.second?.length" class="offseason-award-line">
+                  <Award :size="14" class="offseason-award-icon" />
+                  <span class="offseason-award-text">All-Rookie 2nd: {{ displayedSeasonAwards.allRookie.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
               </div>
             </div>

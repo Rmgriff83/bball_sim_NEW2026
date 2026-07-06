@@ -1,8 +1,10 @@
 <script setup>
 import { onMounted, watch } from 'vue'
+import { Capacitor } from '@capacitor/core'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { useGameStore } from '@/stores/game'
+import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { ToastContainer, MinimalToast } from '@/components/ui'
@@ -12,6 +14,7 @@ import WalkthroughOverlay from '@/components/walkthrough/WalkthroughOverlay.vue'
 const authStore = useAuthStore()
 const breakingNewsStore = useBreakingNewsStore()
 const gameStore = useGameStore()
+const teamStore = useTeamStore()
 const toastStore = useToastStore()
 const walkthroughStore = useWalkthroughStore()
 
@@ -53,6 +56,38 @@ onMounted(() => {
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme) {
     document.documentElement.setAttribute('data-theme', savedTheme)
+  }
+
+  // Retention notifications (native only): cancel the lapse/points reminders
+  // whenever the user is HERE, and (re)schedule them whenever the app goes to
+  // the background. The training-ready notification is managed separately by
+  // the team store at session start/claim.
+  if (Capacitor.isNativePlatform()) {
+    // Cold start = the user came back — clear the ladder.
+    import('@/services/notifications').then(n => n.cancelRetentionReminders()).catch(() => {})
+
+    import('@capacitor/app').then(({ App }) => {
+      App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) {
+          import('@/services/notifications').then(n => n.cancelRetentionReminders()).catch(() => {})
+          return
+        }
+        // Backgrounding: sum unspent attribute upgrade points across the
+        // loaded roster (0 when no campaign is loaded — the lapse reminders
+        // still schedule).
+        let pendingPoints = 0
+        try {
+          for (const p of (teamStore.roster ?? [])) {
+            pendingPoints +=
+              (p?.offense_upgrade_points ?? p?.offenseUpgradePoints ?? 0) +
+              (p?.defense_upgrade_points ?? p?.defenseUpgradePoints ?? 0)
+          }
+        } catch { pendingPoints = 0 }
+        import('@/services/notifications')
+          .then(n => n.scheduleRetentionReminders({ pendingPoints }))
+          .catch(() => {})
+      })
+    }).catch(() => {})
   }
 })
 </script>
