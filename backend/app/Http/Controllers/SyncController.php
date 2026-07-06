@@ -56,15 +56,28 @@ class SyncController extends Controller
             'clientUpdatedAt' => 'required|string',
         ]);
 
-        // Find or create the campaign record using client_id
-        $campaign = Campaign::firstOrCreate(
-            ['client_id' => $clientId, 'user_id' => $userId],
-            [
+        // Find or create the campaign record using client_id. withTrashed +
+        // restore: a push for a soft-deleted campaign resurrects it (same
+        // net behavior as the old hard-delete + recreate, without tripping
+        // the unique client_id constraint on the tombstoned row).
+        $campaign = Campaign::withTrashed()
+            ->where('client_id', $clientId)
+            ->where('user_id', $userId)
+            ->first();
+
+        if ($campaign && $campaign->trashed()) {
+            $campaign->restore();
+        }
+
+        if (!$campaign) {
+            $campaign = Campaign::create([
+                'client_id' => $clientId,
+                'user_id' => $userId,
                 'name' => $validated['campaign']['name'] ?? 'Campaign',
                 'current_date' => $validated['campaign']['currentDate'] ?? $validated['campaign']['current_date'] ?? '2025-10-21',
                 'difficulty' => $validated['campaign']['difficulty'] ?? 'pro',
-            ]
-        );
+            ]);
+        }
 
         // Verify ownership
         if ($campaign->user_id !== $userId) {
@@ -123,14 +136,27 @@ class SyncController extends Controller
 
             $campaignData = $request->input('campaign');
 
-            $campaign = Campaign::firstOrCreate(
-                ['client_id' => $clientId, 'user_id' => $userId],
-                [
+            // withTrashed + restore: see pushSnapshot — a meta push for a
+            // soft-deleted campaign resurrects it instead of 500ing on the
+            // unique client_id constraint.
+            $campaign = Campaign::withTrashed()
+                ->where('client_id', $clientId)
+                ->where('user_id', $userId)
+                ->first();
+
+            if ($campaign && $campaign->trashed()) {
+                $campaign->restore();
+            }
+
+            if (!$campaign) {
+                $campaign = Campaign::create([
+                    'client_id' => $clientId,
+                    'user_id' => $userId,
                     'name' => $campaignData['name'] ?? 'Campaign',
                     'current_date' => $campaignData['currentDate'] ?? $campaignData['current_date'] ?? '2025-10-21',
                     'difficulty' => $campaignData['difficulty'] ?? 'pro',
-                ]
-            );
+                ]);
+            }
 
             if ($campaign->user_id !== $userId) {
                 return response()->json(['message' => 'Unauthorized'], 403);
@@ -230,6 +256,10 @@ class SyncController extends Controller
                 ]);
             }
 
+            // Minimal audit trail — lets support reconstruct when a campaign
+            // last landed (and which parts) after a data-loss report.
+            Log::info("Sync push ok: user={$userId} campaign={$clientId} part={$part}");
+
             return response()->json([
                 'success' => true,
                 'part' => $part,
@@ -242,12 +272,29 @@ class SyncController extends Controller
     }
 
     /**
-     * Pull the full campaign snapshot from the server.
-     * Reads chunked part files and combines them, with fallback to legacy snapshot.json.
+     * Pull a campaign snapshot from the server.
+     *
+     * Chunked (preferred): GET /api/sync/{clientId}/pull?part=meta|players_user|...
+     * returns ONE part's stored JSON verbatim — no decode/re-encode, near-zero
+     * memory overhead.
+     *
+     * Legacy (no ?part): reads all chunked part files and combines them into a
+     * single JSON response, with fallback to legacy snapshot.json. Kept for
+     * old clients.
+     *
      * GET /api/sync/{clientId}/pull
      */
-    public function pullSnapshot(Request $request, string $clientId): JsonResponse
+    public function pullSnapshot(Request $request, string $clientId)
     {
+        // The combined legacy path holds the whole snapshot in memory several
+        // times over (gunzip + json_decode each part, merge, then re-encode in
+        // response()->json). Large campaigns (multi-season saves, custom SVG
+        // headshots) blew the default 128M limit in production — the OOM
+        // 500s made client-side restores fail silently and campaigns look
+        // deleted. Raise the ceiling for this endpoint; the chunked ?part
+        // path below avoids the problem structurally.
+        ini_set('memory_limit', '512M');
+
         $userId = $request->user()->id;
 
         $campaign = Campaign::where('client_id', $clientId)
@@ -256,6 +303,11 @@ class SyncController extends Controller
 
         if (!$campaign) {
             return response()->json(['message' => 'Campaign not found'], 404);
+        }
+
+        $part = $request->query('part');
+        if ($part && in_array($part, ['meta', 'players', 'players_user', 'players_ai', 'players_fa', 'seasons', 'headshots'])) {
+            return $this->pullSnapshotPart($clientId, $part);
         }
 
         try {
@@ -348,6 +400,42 @@ class SyncController extends Controller
     }
 
     /**
+     * Return a single stored snapshot part verbatim. The stored .gz already
+     * IS the JSON payload the client pushed ({campaign,teams,...} for meta,
+     * {players,...} for player parts, etc.), so we gunzip and stream the raw
+     * string — no json_decode/encode, keeping memory flat regardless of
+     * campaign size.
+     *
+     * 404 here means "this part file doesn't exist" (e.g. a legacy campaign
+     * with only snapshot.json) — the client falls back to the legacy
+     * combined pull. "Campaign not found" 404s are returned by the caller
+     * before we get here.
+     */
+    private function pullSnapshotPart(string $clientId, string $part)
+    {
+        $path = "campaigns/{$clientId}/{$part}.json.gz";
+
+        if (!Storage::exists($path)) {
+            return response()->json(['message' => 'Part not available'], 404);
+        }
+
+        try {
+            $json = gzdecode(Storage::get($path));
+            if ($json === false) {
+                Log::error("Failed to decompress {$part} for campaign {$clientId}");
+                return response()->json(['message' => 'Failed to read part'], 500);
+            }
+
+            return response($json, 200)
+                ->header('Content-Type', 'application/json')
+                ->header('Cache-Control', 'no-cache, no-store, must-revalidate');
+        } catch (\Exception $e) {
+            Log::error("Error reading {$part} for campaign {$clientId}: " . $e->getMessage());
+            return response()->json(['message' => 'Failed to read part'], 500);
+        }
+    }
+
+    /**
      * Read and decompress a gzipped JSON file from storage.
      */
     private function readCompressedJson(string $path): ?array
@@ -392,12 +480,13 @@ class SyncController extends Controller
         }
 
         try {
-            // Delete all S3 files for this campaign
-            $directory = "campaigns/{$clientId}";
-            Storage::deleteDirectory($directory);
-
-            // Delete the database record
+            // Soft delete only. The S3 part files are intentionally retained
+            // so an accidental deletion (or a client bug) is recoverable —
+            // the campaigns:prune-deleted command hard-deletes both the row
+            // and the S3 directory after a 30-day grace window.
             $campaign->delete();
+
+            Log::info("Sync delete (soft): user={$userId} campaign={$clientId}");
 
             return response()->json(['success' => true]);
         } catch (\Exception $e) {
