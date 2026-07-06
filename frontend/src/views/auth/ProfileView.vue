@@ -138,17 +138,6 @@ async function handleEnableReminders() {
   await refreshNotifStatus()
 }
 
-async function handleSendTestNotification() {
-  const n = await import('@/services/notifications')
-  const ok = await n.sendTestNotification()
-  await refreshNotifStatus()
-  if (ok) {
-    toastStore.showSuccess('Test scheduled — it should appear in about 5 seconds.')
-  } else {
-    toastStore.showError('Could not schedule the test notification.')
-  }
-}
-
 function onVisibilityChange() {
   if (document.visibilityState === 'visible') refreshNotifStatus()
 }
@@ -492,13 +481,6 @@ async function clearLocalCache() {
             your next game are waiting.
           </template>
         </p>
-        <button
-          v-if="notifStatus === 'granted'"
-          class="notif-test-btn"
-          @click="handleSendTestNotification"
-        >
-          Send Test Notification
-        </button>
       </div>
 
       <!-- Rewards Card -->
@@ -1059,25 +1041,6 @@ async function clearLocalCache() {
   border: 1px solid var(--glass-border);
   padding: 4px 10px;
   border-radius: 20px;
-}
-
-.notif-test-btn {
-  margin-top: 0.75rem;
-  width: 100%;
-  padding: 10px 16px;
-  background: transparent;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color 0.2s ease, border-color 0.2s ease;
-}
-
-.notif-test-btn:hover {
-  color: var(--color-text-primary);
-  border-color: var(--color-text-secondary);
 }
 
 .app-version-label {

@@ -114,28 +114,6 @@ export async function ensurePermission() {
 }
 
 /**
- * End-to-end verification hook (Profile page "Send test"): schedules a
- * notification ~5s out. Returns true when scheduling succeeded so the UI
- * can toast the outcome instead of failing silently.
- */
-export async function sendTestNotification() {
-  if (!isNative()) return false
-  try {
-    if (!(await ensurePermission())) return false
-    await _schedule([{
-      id: 1999,
-      title: 'Test notification',
-      body: 'Reminders are working on this device!',
-      schedule: { at: new Date(Date.now() + 5000), allowWhileIdle: true },
-    }])
-    return true
-  } catch (err) {
-    console.warn('[notif] sendTestNotification failed', err)
-    return false
-  }
-}
-
-/**
  * Second contextual permission ask (the first is at training start): fires
  * after the user completes a game sim, so users who never touch training
  * still get one natural chance to opt in. One-shot per device — the flag is
