@@ -29,6 +29,12 @@ class ResetPasswordController extends Controller
             function ($user, $password) {
                 $user->forceFill([
                     'password' => Hash::make($password),
+                    // A social-created account (random throwaway password,
+                    // has_password=false) that completes a reset now has a
+                    // real password — flip the flag, or the profile UI keeps
+                    // showing "set a password" and unlink-protection wrongly
+                    // blocks removing their only social login.
+                    'has_password' => true,
                 ])->setRememberToken(Str::random(60));
 
                 $user->save();
