@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -10,7 +9,12 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
-class User extends Authenticatable implements MustVerifyEmail
+// Deliberately NOT `implements MustVerifyEmail`: the framework auto-sends a
+// verification email on the Registered event for models with that contract,
+// and we only send password-reset email (operator decision, July 2026).
+// hasVerifiedEmail(), the signed verify route, and the explicit resend
+// endpoint all keep working without the interface.
+class User extends Authenticatable
 {
     use HasFactory, Notifiable, HasApiTokens;
 
