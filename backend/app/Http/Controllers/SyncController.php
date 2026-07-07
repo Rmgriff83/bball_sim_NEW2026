@@ -293,7 +293,11 @@ class SyncController extends Controller
         // 500s made client-side restores fail silently and campaigns look
         // deleted. Raise the ceiling for this endpoint; the chunked ?part
         // path below avoids the problem structurally.
-        ini_set('memory_limit', '512M');
+        //
+        // 384M (not higher): on the 2GB droplet, worst-case concurrent legacy
+        // pulls must stay under RAM alongside the other FPM workers. Legacy
+        // pulls disappear as clients adopt the chunked path.
+        ini_set('memory_limit', '384M');
 
         $userId = $request->user()->id;
 
