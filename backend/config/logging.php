@@ -54,7 +54,11 @@ return [
 
         'stack' => [
             'driver' => 'stack',
-            'channels' => explode(',', (string) env('LOG_STACK', 'single')),
+            // Default to the rotating `daily` channel (14-day retention via
+            // LOG_DAILY_DAYS below). The old `single` default grew
+            // storage/logs/laravel.log without bound — a real concern now
+            // that sync pushes write an audit line per part.
+            'channels' => explode(',', (string) env('LOG_STACK', 'daily')),
             'ignore_exceptions' => false,
         ],
 
