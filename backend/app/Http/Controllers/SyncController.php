@@ -39,6 +39,13 @@ class SyncController extends Controller
      */
     public function pushSnapshot(Request $request, string $clientId): JsonResponse
     {
+        // Large part payloads (players_fa grows with every retired player
+        // across a campaign's life) exist in memory several times over
+        // during parse/validate/encode — big campaigns fatal'd at the
+        // default 128M (Validator OOM in production). Same ceiling as
+        // pullSnapshot.
+        ini_set('memory_limit', '512M');
+
         $part = $request->input('part');
         $userId = $request->user()->id;
 
@@ -168,32 +175,40 @@ class SyncController extends Controller
                 'clientUpdatedAt' => $request->input('clientUpdatedAt'),
             ];
         } elseif (in_array($part, ['players', 'players_user', 'players_ai', 'players_fa'])) {
-            $request->validate([
-                'players' => 'present|array',
-                'clientUpdatedAt' => 'required|string',
-            ]);
+            // Manual checks instead of $request->validate(): the Validator
+            // deep-copies its data, which doubles a potentially huge players
+            // array in memory (players_fa OOM'd in production). Same
+            // contract: 422 with a message on bad input.
+            $players = $request->input('players');
+            $clientUpdatedAt = $request->input('clientUpdatedAt');
+            if (!is_array($players) || !is_string($clientUpdatedAt) || $clientUpdatedAt === '') {
+                return response()->json(['message' => 'Invalid players payload.'], 422);
+            }
 
             if (!$campaign) {
                 return response()->json(['message' => 'Campaign not found. Push meta part first.'], 404);
             }
 
             $data = [
-                'players' => $request->input('players'),
-                'clientUpdatedAt' => $request->input('clientUpdatedAt'),
+                'players' => $players,
+                'clientUpdatedAt' => $clientUpdatedAt,
             ];
         } elseif ($part === 'seasons') {
-            $request->validate([
-                'seasons' => 'required|array',
-                'clientUpdatedAt' => 'required|string',
-            ]);
+            // Manual checks — same Validator-copy avoidance as the player
+            // parts (multi-season payloads are the other big array).
+            $seasons = $request->input('seasons');
+            $clientUpdatedAt = $request->input('clientUpdatedAt');
+            if (!is_array($seasons) || $seasons === [] || !is_string($clientUpdatedAt) || $clientUpdatedAt === '') {
+                return response()->json(['message' => 'Invalid seasons payload.'], 422);
+            }
 
             if (!$campaign) {
                 return response()->json(['message' => 'Campaign not found. Push meta part first.'], 404);
             }
 
             $data = [
-                'seasons' => $request->input('seasons'),
-                'clientUpdatedAt' => $request->input('clientUpdatedAt'),
+                'seasons' => $seasons,
+                'clientUpdatedAt' => $clientUpdatedAt,
             ];
         } else { // headshots
             // Entitlement gate — only users who own the headshot_editor unlock

@@ -76,23 +76,47 @@ class PaymentController extends Controller
             return response('Invalid payload', 400);
         }
 
-        // Idempotency: claim the event id atomically. If another delivery already
-        // processed this event, the unique pk insert throws and we return 200
-        // without re-crediting tokens.
+        // Idempotency claim + fulfillment run in ONE transaction so they
+        // commit or vanish together. This closes both loss modes:
+        //  - graceful failure → we throw → claim rolls back → 500 → Stripe
+        //    retries re-attempt once the cause is fixed;
+        //  - hard death mid-request (OOM, FPM kill, timeout) → the
+        //    uncommitted transaction auto-rolls back server-side, so the
+        //    retry is NOT met with "Already processed" — the original flaw
+        //    that permanently lost purchases.
+        // Concurrent duplicate deliveries: the second insertOrIgnore blocks
+        // on the first's row lock, then reports 0 rows once it commits.
         try {
-            DB::table('stripe_webhook_events')->insert([
-                'id' => $event->id,
-                'type' => $event->type,
-            ]);
-        } catch (\Illuminate\Database\QueryException $e) {
-            return response('Already processed', 200);
+            $status = DB::transaction(function () use ($event) {
+                $claimed = DB::table('stripe_webhook_events')->insertOrIgnore([
+                    'id' => $event->id,
+                    'type' => $event->type,
+                ]);
+                if (!$claimed) {
+                    return 'already_processed';
+                }
+                if ($event->type !== 'checkout.session.completed') {
+                    return 'ignored'; // deliberate permanent skip — claim kept
+                }
+                if (!$this->fulfillCheckoutSession($event->data->object)) {
+                    // Specific cause already logged by the fulfiller.
+                    throw new \RuntimeException('fulfillment_failed');
+                }
+                return 'fulfilled';
+            });
+        } catch (\Throwable $e) {
+            if ($e->getMessage() !== 'fulfillment_failed') {
+                Log::error('Stripe fulfillment threw', [
+                    'event_id' => $event->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+            return response('Fulfillment failed', 500);
         }
 
-        if ($event->type === 'checkout.session.completed') {
-            $this->fulfillCheckoutSession($event->data->object);
-        }
-
-        return response('OK', 200);
+        return $status === 'already_processed'
+            ? response('Already processed', 200)
+            : response('OK', 200);
     }
 
     /**
@@ -100,17 +124,24 @@ class PaymentController extends Controller
      *
      * Trust model: tokens granted are looked up server-side from the price id
      * returned by Stripe, NOT from any client- or metadata-supplied amount.
+     *
+     * Returns true when the event needs no retry (credited, or a deliberate
+     * permanent skip like unpaid sessions); false when fulfillment was
+     * attempted but failed — the caller rolls back the idempotency claim and
+     * 500s so Stripe retries can succeed once the cause is fixed.
      */
-    private function fulfillCheckoutSession(StripeSession $session): void
+    private function fulfillCheckoutSession(StripeSession $session): bool
     {
         if ($session->payment_status !== 'paid') {
-            return;
+            // Deliberate permanent skip — an unpaid session will arrive again
+            // as a new event if it ever completes.
+            return true;
         }
 
         $userId = $session->metadata->user_id ?? $session->client_reference_id ?? null;
         if (!$userId) {
             Log::warning('Stripe checkout completed with no user reference', ['session' => $session->id]);
-            return;
+            return false;
         }
 
         // Pull the price id from the session line items (server-side, trusted)
@@ -120,7 +151,7 @@ class PaymentController extends Controller
 
         if (!$priceId) {
             Log::warning('Stripe checkout completed with no line item price', ['session' => $session->id]);
-            return;
+            return false;
         }
 
         $matchedBundle = null;
@@ -136,7 +167,7 @@ class PaymentController extends Controller
                 'session' => $session->id,
                 'price_id' => $priceId,
             ]);
-            return;
+            return false;
         }
 
         $user = User::find($userId);
@@ -145,10 +176,15 @@ class PaymentController extends Controller
                 'session' => $session->id,
                 'user_id' => $userId,
             ]);
-            return;
+            return false;
         }
 
-        $this->applyBundle($user, $matchedBundle);
+        $this->applyBundle($user, $matchedBundle, [
+            'source' => 'stripe',
+            'session' => $session->id,
+            'price_id' => $priceId,
+        ]);
+        return true;
     }
 
     /**
@@ -158,17 +194,29 @@ class PaymentController extends Controller
      * setUnlock no-ops when the feature is already owned, creditTokens is
      * already guarded by the unique webhook-event-id insert upstream.
      */
-    private function applyBundle(User $user, array $bundle): void
+    private function applyBundle(User $user, array $bundle, array $logContext = []): void
     {
         if (!empty($bundle['unlocks']) && is_array($bundle['unlocks'])) {
             foreach ($bundle['unlocks'] as $feature) {
                 if (is_string($feature) && $feature !== '') {
                     $user->profile->setUnlock($feature);
+                    Log::notice('Payment unlock granted', $logContext + [
+                        'user_id' => $user->id,
+                        'feature' => $feature,
+                    ]);
                 }
             }
         }
         if (!empty($bundle['tokens']) && (int) $bundle['tokens'] > 0) {
-            $user->profile->creditTokens((int) $bundle['tokens']);
+            $newBalance = $user->profile->creditTokens((int) $bundle['tokens']);
+            // Success audit line — a fulfilled purchase must be visible in
+            // the log (previously success was silent, making "no log entry"
+            // ambiguous between success and never-ran).
+            Log::notice('Payment tokens credited', $logContext + [
+                'user_id' => $user->id,
+                'tokens' => (int) $bundle['tokens'],
+                'new_balance' => $newBalance,
+            ]);
         }
     }
 
@@ -194,26 +242,48 @@ class PaymentController extends Controller
             return response('Invalid payload', 400);
         }
 
-        // Idempotency: claim the event id atomically. If another delivery
-        // already processed this event, the unique pk insert throws and we
-        // return 200 without re-crediting tokens.
+        // Idempotency claim + fulfillment run in ONE transaction so they
+        // commit or vanish together (see webhook() for the full rationale).
+        // The claim-then-fulfill-non-atomically shape lost real purchases:
+        // a request killed mid-fulfillment (OOM/FPM kill/timeout) left the
+        // committed claim behind, and RC's retry was answered with
+        // "Already processed" — tokens never credited, nothing logged.
         try {
-            DB::table('revenuecat_webhook_events')->insert([
-                'id' => $event['id'],
-                'type' => $event['type'],
-            ]);
-        } catch (\Illuminate\Database\QueryException $e) {
-            return response('Already processed', 200);
+            $status = DB::transaction(function () use ($event) {
+                $claimed = DB::table('revenuecat_webhook_events')->insertOrIgnore([
+                    'id' => $event['id'],
+                    'type' => $event['type'],
+                ]);
+                if (!$claimed) {
+                    return 'already_processed';
+                }
+
+                // Consumables come through as NON_RENEWING_PURCHASE;
+                // INITIAL_PURCHASE covered defensively in case RC
+                // re-classifies them.
+                $purchaseTypes = ['INITIAL_PURCHASE', 'NON_RENEWING_PURCHASE'];
+                if (!in_array($event['type'], $purchaseTypes, true)) {
+                    return 'ignored'; // deliberate permanent skip — claim kept
+                }
+                if (!$this->fulfillIapPurchase($event)) {
+                    // Specific cause already logged by the fulfiller.
+                    throw new \RuntimeException('fulfillment_failed');
+                }
+                return 'fulfilled';
+            });
+        } catch (\Throwable $e) {
+            if ($e->getMessage() !== 'fulfillment_failed') {
+                Log::error('RevenueCat fulfillment threw', [
+                    'event_id' => $event['id'],
+                    'error' => $e->getMessage(),
+                ]);
+            }
+            return response('Fulfillment failed', 500);
         }
 
-        // Consumables come through as NON_RENEWING_PURCHASE; INITIAL_PURCHASE
-        // covered defensively in case RC re-classifies them.
-        $purchaseTypes = ['INITIAL_PURCHASE', 'NON_RENEWING_PURCHASE'];
-        if (in_array($event['type'], $purchaseTypes, true)) {
-            $this->fulfillIapPurchase($event);
-        }
-
-        return response('OK', 200);
+        return $status === 'already_processed'
+            ? response('Already processed', 200)
+            : response('OK', 200);
     }
 
     /**
@@ -222,39 +292,89 @@ class PaymentController extends Controller
      * Trust model: tokens granted are looked up server-side via the product
      * id in services.iap.bundles, NOT from any client- or RC-supplied amount.
      * Mirrors fulfillCheckoutSession()'s pattern for Stripe.
+     *
+     * Returns true when credited; false when fulfillment failed — the caller
+     * rolls back the idempotency claim and 500s so RC retries can succeed once
+     * the cause (missing product mapping, unlinked identity, bug) is fixed.
      */
-    private function fulfillIapPurchase(array $event): void
+    private function fulfillIapPurchase(array $event): bool
     {
-        $userId = $event['app_user_id'] ?? null;
         $productId = $event['product_id'] ?? null;
 
-        if (!$userId || !$productId) {
-            Log::warning('RevenueCat event missing app_user_id or product_id', [
-                'event_id' => $event['id'] ?? null,
-            ]);
-            return;
+        // Forensic context on every warning: store + country_code directly
+        // test regional hypotheses (e.g. storefront-specific product ids),
+        // aliases expose anonymous-identity purchases.
+        $context = [
+            'event_id' => $event['id'] ?? null,
+            'product_id' => $productId,
+            'app_user_id' => $event['app_user_id'] ?? null,
+            'original_app_user_id' => $event['original_app_user_id'] ?? null,
+            'aliases' => $event['aliases'] ?? null,
+            'store' => $event['store'] ?? null,
+            'country_code' => $event['country_code'] ?? null,
+        ];
+
+        if (!$productId) {
+            Log::warning('RevenueCat event missing product_id', $context);
+            return false;
         }
 
         $bundle = config('services.iap.bundles', [])[$productId] ?? null;
         $grantsTokens = !empty($bundle['tokens']) && (int) $bundle['tokens'] > 0;
         $grantsUnlocks = !empty($bundle['unlocks']) && is_array($bundle['unlocks']);
         if (!$bundle || (!$grantsTokens && !$grantsUnlocks)) {
-            Log::warning('RevenueCat event for unrecognized product', [
-                'event_id' => $event['id'],
-                'product_id' => $productId,
-            ]);
-            return;
+            Log::warning('RevenueCat event for unrecognized product', $context);
+            return false;
         }
 
-        $user = User::find($userId);
+        $user = $this->resolveRevenueCatUser($event);
         if (!$user || !$user->profile) {
-            Log::warning('RevenueCat event for missing user/profile', [
-                'event_id' => $event['id'],
-                'user_id' => $userId,
-            ]);
-            return;
+            Log::warning('RevenueCat event for missing user/profile', $context);
+            return false;
         }
 
-        $this->applyBundle($user, $bundle);
+        $this->applyBundle($user, $bundle, [
+            'source' => 'revenuecat',
+            'event_id' => $event['id'] ?? null,
+            'product_id' => $productId,
+            'store' => $event['store'] ?? null,
+            'country_code' => $event['country_code'] ?? null,
+        ]);
+        return true;
+    }
+
+    /**
+     * Resolve the purchasing user from a RevenueCat event. The primary
+     * app_user_id is our backend user id (set by the app's initIAP), but a
+     * purchase made under an anonymous/aliased RC identity (e.g. before the
+     * identify call landed, or via restore) carries the real id in
+     * original_app_user_id or the aliases array instead.
+     */
+    private function resolveRevenueCatUser(array $event): ?User
+    {
+        $candidates = [];
+        foreach ([$event['app_user_id'] ?? null, $event['original_app_user_id'] ?? null] as $id) {
+            if (is_string($id) && $id !== '') {
+                $candidates[] = $id;
+            }
+        }
+        foreach ((array) ($event['aliases'] ?? []) as $id) {
+            if (is_string($id) && $id !== '') {
+                $candidates[] = $id;
+            }
+        }
+
+        foreach (array_unique($candidates) as $id) {
+            // RC anonymous ids can never match a backend user id.
+            if (str_starts_with($id, '$RCAnonymousID:')) {
+                continue;
+            }
+            $user = User::find($id);
+            if ($user) {
+                return $user;
+            }
+        }
+
+        return null;
     }
 }
