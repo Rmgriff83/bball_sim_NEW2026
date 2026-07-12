@@ -1945,6 +1945,12 @@ async function maybeShowExpectationRaise() {
   const raise = camp.settings?.pendingOwnerExpectationRaise
   if (!raise?.tier) return
 
+  // Never surface while the user's game is in progress: the raise marker
+  // can be written by the pre-game intervening sim, and toasting it
+  // mid-game reads as a spoiler for the unfinished game. Leave the marker
+  // in place — it fires on the next visit once the game is done.
+  if (isGameInProgress.value) return
+
   const label = EXPECTATION_LABEL[raise.tier] ?? raise.tier
   const fromLabel = raise.fromTier ? (EXPECTATION_LABEL[raise.fromTier] ?? raise.fromTier) : ''
   toastStore.showOwnerExpectation({ label, fromLabel, campaignId: campaignId.value })

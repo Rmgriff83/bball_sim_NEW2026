@@ -623,10 +623,15 @@ export const useSyncStore = defineStore('sync', () => {
    * the whole sync working. Failed parts stay in `_dirtyParts` so the next
    * push only retries the parts that didn't land.
    */
-  async function pushChanges(campaignId) {
+  async function pushChanges(campaignId, opts = {}) {
     const snapshot = await _serializeCampaignSnapshot(campaignId)
 
-    if (!snapshot.campaign) return
+    // A missing local campaign must FAIL the push, not silently succeed —
+    // otherwise syncNow clears isDirty/lastSyncAt for a push that never
+    // happened and the data looks safely synced when it isn't.
+    if (!snapshot.campaign) {
+      throw new Error(`Cannot push: campaign ${campaignId} not found locally`)
+    }
 
     const userTeamId = snapshot.campaign.teamId
       ?? snapshot.campaign.userTeamId
@@ -639,8 +644,19 @@ export const useSyncStore = defineStore('sync', () => {
     // Anything not yet known to be clean must be (re-)pushed. New uploads
     // start with the full set dirty; partial-failure retries push only the
     // parts that previously failed.
-    if (_dirtyParts.value.size === 0) {
-      _dirtyParts.value = new Set(PUSH_PARTS)
+    //
+    // opts.isolated: recovery pushes for a NON-active campaign (e.g.
+    // fetchCampaigns pushing a never-synced local campaign) use their own
+    // full part set so they don't clobber the active campaign's retry
+    // tracking in the shared `_dirtyParts`.
+    let partsSet
+    if (opts.isolated) {
+      partsSet = new Set(PUSH_PARTS)
+    } else {
+      if (_dirtyParts.value.size === 0) {
+        _dirtyParts.value = new Set(PUSH_PARTS)
+      }
+      partsSet = _dirtyParts.value
     }
 
     const payloads = {
@@ -683,12 +699,12 @@ export const useSyncStore = defineStore('sync', () => {
     // creates the Campaign row on the meta push), so we always lead with it
     // when it's dirty. PUSH_PARTS order already starts with meta.
     const order = PUSH_PARTS.filter(p => {
-      if (!_dirtyParts.value.has(p)) return false
+      if (!partsSet.has(p)) return false
       // Skip an empty headshots payload — the backend's entitlement gate
       // 403s unentitled users, but there's also nothing to write either way
       // when no player has been customized. Mark clean so we don't retry.
       if (p === 'headshots' && (!snapshot.headshots || snapshot.headshots.length === 0)) {
-        _dirtyParts.value.delete(p)
+        partsSet.delete(p)
         return false
       }
       return true
@@ -701,7 +717,7 @@ export const useSyncStore = defineStore('sync', () => {
       first = false
       try {
         await api.post(`/api/sync/${campaignId}/push`, payloads[part], { timeout: 20000 })
-        _dirtyParts.value.delete(part)
+        partsSet.delete(part)
         // A successful push means the server row now exists — re-enable pulls.
         _serverMissing.delete(campaignId)
       } catch (err) {
@@ -710,7 +726,7 @@ export const useSyncStore = defineStore('sync', () => {
         // fulfilled. Skip cleanly so we don't keep retrying every route-leave.
         const status = err?.response?.status
         if (part === 'headshots' && status === 403) {
-          _dirtyParts.value.delete(part)
+          partsSet.delete(part)
           continue
         }
         failed.push(part)
@@ -754,12 +770,97 @@ export const useSyncStore = defineStore('sync', () => {
     }
   }
 
+  /**
+   * Fetch the campaign snapshot, preferring chunked part pulls
+   * (?part=meta|players_user|...). Each part response is small and the
+   * server streams the stored JSON verbatim — this avoids the server-side
+   * OOM that made big-campaign pulls 500 (and restores silently fail), and
+   * keeps individual responses mobile-network friendly.
+   *
+   * Fallbacks:
+   *  - Old server (ignores ?part → returns the full combined snapshot):
+   *    detected by the full-snapshot shape and returned as-is.
+   *  - Legacy campaign with only snapshot.json (?part=meta → 404
+   *    "Part not available"): retried as a combined pull.
+   * "Campaign not found" 404s propagate to the caller (drives _serverMissing).
+   */
+  async function _fetchSnapshot(campaignId) {
+    const get = (params, timeout) => api.get(
+      `/api/sync/${campaignId}/pull`,
+      { skipErrorToast: true, timeout: timeout ?? 30000, ...(params ? { params } : {}) }
+    )
+    const isFullSnapshot = (d) => !!d && !!d.campaign
+      && (Array.isArray(d.players) || Array.isArray(d.seasons))
+
+    let meta
+    try {
+      const res = await get({ part: 'meta' })
+      meta = res.data
+    } catch (err) {
+      if (err?.response?.status === 404 && err.response?.data?.message === 'Part not available') {
+        // Legacy snapshot-only campaign — combined pull (bigger, longer timeout).
+        const res = await get(null, 45000)
+        return res.data
+      }
+      throw err
+    }
+
+    // Old server ignored ?part and sent the whole snapshot.
+    if (isFullSnapshot(meta)) return meta
+
+    const data = {
+      campaign: meta?.campaign ?? null,
+      teams: meta?.teams ?? [],
+      clientUpdatedAt: meta?.clientUpdatedAt ?? null,
+      players: [],
+      seasons: [],
+      headshots: [],
+    }
+
+    // Players: split parts, falling back to the legacy single 'players' part.
+    let haveSplit = true
+    for (const part of ['players_user', 'players_ai', 'players_fa']) {
+      try {
+        const res = await get({ part })
+        if (isFullSnapshot(res.data)) return res.data
+        if (Array.isArray(res.data?.players)) data.players.push(...res.data.players)
+      } catch (err) {
+        if (err?.response?.status === 404) { haveSplit = false; break }
+        throw err
+      }
+    }
+    if (!haveSplit) {
+      data.players = []
+      try {
+        const res = await get({ part: 'players' })
+        if (Array.isArray(res.data?.players)) data.players = res.data.players
+      } catch (err) {
+        if (err?.response?.status !== 404) throw err
+      }
+    }
+
+    try {
+      const res = await get({ part: 'seasons' })
+      if (Array.isArray(res.data?.seasons)) data.seasons = res.data.seasons
+    } catch (err) {
+      if (err?.response?.status !== 404) throw err
+    }
+
+    try {
+      const res = await get({ part: 'headshots' })
+      if (Array.isArray(res.data?.headshots)) data.headshots = res.data.headshots
+    } catch (err) {
+      if (err?.response?.status !== 404) throw err
+    }
+
+    return data
+  }
+
   async function _pullChangesInner(campaignId) {
     // Suppress the global error toast — callers already handle pull failures
     // gracefully (e.g. a freshly-created campaign 404s here until its first
     // push lands), so the user shouldn't see a "Campaign not found" toast.
-    const response = await api.get(`/api/sync/${campaignId}/pull`, { skipErrorToast: true, timeout: 20000 })
-    const data = response.data
+    const data = await _fetchSnapshot(campaignId)
 
     const remoteUpdatedAt = data.clientUpdatedAt ? new Date(data.clientUpdatedAt).getTime() : 0
 
@@ -939,8 +1040,7 @@ export const useSyncStore = defineStore('sync', () => {
     isPulling.value = true
     const toastStore = useToastStore()
     try {
-      const response = await api.get(`/api/sync/${campaignId}/pull`, { skipErrorToast: true, timeout: 20000 })
-      const data = response.data
+      const data = await _fetchSnapshot(campaignId)
 
       if (!data || !data.campaign) {
         throw new Error('No cloud snapshot found for this campaign')

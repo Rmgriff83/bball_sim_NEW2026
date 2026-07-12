@@ -70,6 +70,27 @@ const MAX_CAMPAIGNS = 4
 const confirmDeleteId = ref(null)
 const deleting = ref(false)
 
+// Cloud-only stub restore state (campaigns on the server whose download
+// failed — rendered with a Restore button instead of being hidden).
+const restoringId = ref(null)
+const restoreError = ref(null)
+const restoringErrorId = ref(null)
+
+async function restoreCampaign(campaign) {
+  if (restoringId.value) return
+  restoringId.value = campaign.id
+  restoreError.value = null
+  restoringErrorId.value = null
+  try {
+    await campaignStore.restoreCloudCampaign(campaign.id)
+  } catch (err) {
+    restoreError.value = err?.message || 'Restore failed. Check your connection and try again.'
+    restoringErrorId.value = campaign.id
+  } finally {
+    restoringId.value = null
+  }
+}
+
 const draftModes = [
   { value: 'standard', label: 'Standard', description: 'Teams come with pre-built rosters' },
   { value: 'fantasy', label: 'Fantasy Draft', description: 'Draft all players from scratch' },
@@ -361,8 +382,38 @@ function getDifficultyLabel(value) {
             :key="campaign.id"
             padding="lg"
             class="campaign-card"
-            @click="openCampaign(campaign.id)"
+            :class="{ 'cloud-only': campaign.cloudOnly }"
+            @click="campaign.cloudOnly ? null : openCampaign(campaign.id)"
           >
+            <!-- Cloud-only stub: exists on the server but couldn't be
+                 downloaded (e.g. pull failed on a slow connection). Never
+                 hide it — offer Restore instead. -->
+            <template v-if="campaign.cloudOnly">
+              <div class="campaign-header">
+                <div class="campaign-info">
+                  <h3 class="campaign-name">{{ campaign.name }}</h3>
+                  <p class="campaign-team">Saved in the cloud — not on this device</p>
+                </div>
+              </div>
+              <div class="campaign-footer">
+                <span class="last-played">
+                  {{ campaign.updatedAt ? `Last synced: ${formatDate(campaign.updatedAt)}` : 'Cloud backup available' }}
+                </span>
+                <BaseButton
+                  variant="primary"
+                  size="sm"
+                  :loading="restoringId === campaign.id"
+                  @click.stop="restoreCampaign(campaign)"
+                >
+                  Restore
+                </BaseButton>
+              </div>
+              <p v-if="restoreError && restoringErrorId === campaign.id" class="restore-error">
+                {{ restoreError }}
+              </p>
+            </template>
+
+            <template v-else>
             <div class="campaign-header">
               <div class="campaign-info">
                 <h3 class="campaign-name">{{ campaign.team?.name || campaign.name }}</h3>
@@ -434,6 +485,7 @@ function getDifficultyLabel(value) {
                   <ChevronRight :size="16" />
                 </div>
               </div>
+            </template>
             </template>
           </GlassCard>
         </div>
@@ -802,6 +854,22 @@ function getDifficultyLabel(value) {
 
 .campaign-card:hover {
   transform: translateY(-2px);
+}
+
+.campaign-card.cloud-only {
+  cursor: default;
+  border: 1px dashed rgba(124, 58, 237, 0.5);
+  opacity: 0.92;
+}
+
+.campaign-card.cloud-only:hover {
+  transform: none;
+}
+
+.restore-error {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: #ff6b6b;
 }
 
 .campaign-header {

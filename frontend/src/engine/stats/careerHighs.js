@@ -123,3 +123,29 @@ export function recomputeHighsLeaders(players = [], key = 'careerHighs') {
 export function recomputeAllTimeHighs(players = []) {
   return recomputeHighsLeaders(players, 'careerHighs');
 }
+
+/**
+ * Merge any number of record boards (recomputeHighsLeaders output shape) into
+ * one: per stat, the entry with the higher value wins, metadata and all.
+ *
+ * This is what makes the all-time board durable across retiree pruning —
+ * pruned players' records live on in the stored board and are unioned with
+ * the live recompute, so a record can only ever be beaten, never lost.
+ *
+ * @param {...(object|null|undefined)} boards
+ * @returns {object}
+ */
+export function mergeHighsBoards(...boards) {
+  const out = {};
+  for (const board of boards) {
+    if (!board || typeof board !== 'object') continue;
+    for (const stat of HIGH_STATS) {
+      const entry = board[stat];
+      if (!entry || !(entry.value > 0)) continue;
+      if (!out[stat] || entry.value > out[stat].value) {
+        out[stat] = { ...entry };
+      }
+    }
+  }
+  return out;
+}

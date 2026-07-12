@@ -104,6 +104,17 @@ export const PlayerRepository = {
     return withDB(db => db.delete('players', [campaignId, playerId]))
   },
 
+  async deleteBulk(campaignId, playerIds) {
+    if (!Array.isArray(playerIds) || playerIds.length === 0) return
+    return withDB(async db => {
+      const tx = db.transaction('players', 'readwrite')
+      for (const id of playerIds) {
+        tx.store.delete([campaignId, id])
+      }
+      await tx.done
+    })
+  },
+
   async deleteAllForCampaign(campaignId) {
     return withDB(async db => {
       const tx = db.transaction('players', 'readwrite')

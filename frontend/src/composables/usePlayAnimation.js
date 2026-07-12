@@ -18,6 +18,13 @@ export function usePlayAnimation() {
   const completedQuarter = ref(0)
   const isLiveMode = ref(false)  // True for quarter-by-quarter simulation
 
+  // Segmented pacing (play / deadBall modes): the loaded animation data is a
+  // partial-quarter segment. `pendingBreakInfo` is the engine's breakInfo for
+  // the loaded segment; when playback reaches the end of a non-quarter-final
+  // segment we raise `isSegmentPause` instead of `isQuarterBreak`.
+  const isSegmentPause = ref(false)
+  const pendingBreakInfo = ref(null)
+
   // Animation frame ID for cleanup
   let animationFrameId = null
   let lastTimestamp = null
@@ -360,21 +367,40 @@ export function usePlayAnimation() {
     const prevBall = prevKeyframe.ball || { x: 0.5, y: 0.5 }
     const nextBall = nextKeyframe.ball || prevBall
 
-    // Check if ball is in flight (for arc animation)
-    const inFlight = nextBall.inFlight || false
-    const arc = nextBall.arc || 0
+    // Flight metadata rides the DESTINATION keyframe (set by the engine on
+    // shot flights, miss bounces, and passes). The court is a TOP-DOWN view,
+    // so apex "height" is a 0..1 scale factor for the renderer (ball swells
+    // toward the camera mid-flight) — never a screen-space offset; the ball
+    // travels the straight ground line between keyframes.
+    //
+    // `traveling` gates ALL motion effects: it's true only strictly between
+    // two distinct keyframes, before arrival. Once the ball ARRIVES —
+    // including sitting past the play's final keyframe during the
+    // end-of-play hold (turnovers, dead balls) — spin and airborne effects
+    // stop, even though we're still reading the same destination keyframe.
+    const traveling = nextTime > prevTime && elapsedTime.value < nextTime
+    const inFlight = traveling && (nextBall.inFlight || false)
+    const height = inFlight
+      ? (nextBall.height ?? 0) * Math.sin(Math.min(1, Math.max(0, t)) * Math.PI)
+      : 0
 
-    let x = lerp(prevBall.x, nextBall.x, easeInOutQuad(t))
-    let y = lerp(prevBall.y, nextBall.y, easeInOutQuad(t))
+    const x = lerp(prevBall.x, nextBall.x, easeInOutQuad(t))
+    const y = lerp(prevBall.y, nextBall.y, easeInOutQuad(t))
 
-    // Apply arc for passes
-    if (inFlight && arc > 0) {
-      // Parabolic arc: highest at t=0.5
-      const arcHeight = arc * Math.sin(t * Math.PI)
-      y -= arcHeight
+    return {
+      x,
+      y,
+      inFlight,
+      // Apex-height factor (0 at both endpoints, peaks mid-segment).
+      height,
+      // Spin only while traveling toward a spinning destination — freezes
+      // the moment the ball arrives (catch / rim / net / turnover frame).
+      spin: traveling ? (nextBall.spin ?? null) : null,
+      // Swish: hold at the rim while the renderer shrinks/fades the ball
+      // down through the net. throughT is progress through that drop.
+      through: nextBall.through === true,
+      throughT: nextBall.through === true ? Math.min(1, Math.max(0, t)) : 0,
     }
-
-    return { x, y, inFlight }
   })
 
   /**
@@ -439,6 +465,11 @@ export function usePlayAnimation() {
     // Initialize quarter break state
     quarterEndIndices.value = data?.quarter_end_indices || []
     isQuarterBreak.value = false
+    // Segmented pacing: remember the break that ends this segment (null in
+    // legacy quarter mode) so the end-of-data handler knows whether to raise
+    // a segment pause or a quarter break.
+    pendingBreakInfo.value = options.breakInfo ?? null
+    isSegmentPause.value = false
     // For live mode, track the quarter we're about to play
     isLiveMode.value = options.isLive || false
     if (options.quarter) {
@@ -596,13 +627,22 @@ export function usePlayAnimation() {
       } else {
         // Reached end of animation data
         if (isLiveMode.value) {
-          // In live mode, reaching the end means quarter is complete
-          // Update displayed scores and box score immediately for quarter break
+          // Sync displayed scores/box to the final possession — there is no
+          // next possession, so no +2/+3 animation to wait for.
           if (currentPossession.value) {
             displayedHomeScore.value = currentPossession.value.home_score || 0
             displayedAwayScore.value = currentPossession.value.away_score || 0
             displayedBoxScore.value = currentPossession.value.box_score || null
           }
+          // Segmented pacing: a mid-quarter segment ends in a segment pause
+          // (lightweight break bar), NOT a quarter break — completedQuarter
+          // is left untouched so the quarter-break modal stays hidden.
+          if (pendingBreakInfo.value && !pendingBreakInfo.value.quarterComplete) {
+            isSegmentPause.value = true
+            pause()
+            return
+          }
+          // Quarter (or quarter-final segment) complete → quarter break.
           completedQuarter.value = currentQuarter.value
           isQuarterBreak.value = true
           pause()
@@ -661,6 +701,8 @@ export function usePlayAnimation() {
     isQuarterBreak,
     completedQuarter,
     isLiveMode,
+    isSegmentPause,
+    pendingBreakInfo,
 
     // Computed
     totalPossessions,

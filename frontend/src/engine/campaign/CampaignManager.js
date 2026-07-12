@@ -11,7 +11,8 @@
 
 import { TEAMS, SALARY_CAP, TEAM_TIERS } from '../data/teams'
 import { baseSalaryForRating, veteranMinSalary } from '../data/salaryScale'
-import { recomputeAllTimeHighs } from '../stats/careerHighs'
+import { recomputeAllTimeHighs, recomputeHighsLeaders, mergeHighsBoards } from '../stats/careerHighs'
+import { PlayerHeadshotRepository } from '../db/PlayerHeadshotRepository'
 import {
   COACH_FIRST_NAMES,
   COACH_LAST_NAMES,
@@ -2210,10 +2211,15 @@ export async function enterOffseason(campaignId) {
     campaign.achievements.push(...newAchievements)
   }
   // Persist the recomputed campaign all-time highs on the campaign this function
-  // saves below (set here so it isn't clobbered by that save).
+  // saves below (set here so it isn't clobbered by that save). MERGE with the
+  // stored board rather than overwrite: pruned retirees exist only in the
+  // stored board, so a raw recompute from live players would drop their records.
   if (archiveResult?.allTimeHighs) {
     campaign.settings = campaign.settings ?? {}
-    campaign.settings.allTimeHighs = archiveResult.allTimeHighs
+    campaign.settings.allTimeHighs = mergeHighsBoards(
+      campaign.settings.allTimeHighs ?? {},
+      archiveResult.allTimeHighs,
+    )
   }
 
   // 1b. Compute end-of-season awards (before stats are reset)
@@ -2383,12 +2389,34 @@ export async function enterOffseason(campaignId) {
   // of the league.
   const { retirees } = processRetirements(updatedPlayers, currentYear)
   if (retirees.length > 0) {
-    const retireeIds = new Set(retirees.map(r => r.id))
     updatedPlayers = updatedPlayers.map(p => {
       const retired = retirees.find(r => r.id === p.id)
       return retired ? retired : p
     })
-    void retireeIds // for readability — already used via .find above
+  }
+
+  // 4d. Prune retirees from the pool. Retired player objects have no UI
+  // surface (the RetirementModal reads the denormalized pendingRetirements
+  // snapshot stashed below), so keeping them only grows the players_fa sync
+  // part and IndexedDB without bound (+~80/season). Their single-game records
+  // are folded into the persistent settings.allTimeHighs board first, so the
+  // All-Time records tab keeps them forever. The filter also sweeps any
+  // pre-existing retirees (older saves, or rows resurrected by a stale cloud
+  // pull), making the prune self-healing season over season.
+  const prunedRetirees = updatedPlayers.filter(p => p.isRetired || p.is_retired)
+  if (prunedRetirees.length > 0) {
+    campaign.settings = campaign.settings ?? {}
+    campaign.settings.allTimeHighs = mergeHighsBoards(
+      campaign.settings.allTimeHighs ?? {},
+      recomputeHighsLeaders(prunedRetirees, 'careerHighs'),
+    )
+    updatedPlayers = updatedPlayers.filter(p => !(p.isRetired || p.is_retired))
+    await PlayerRepository.deleteBulk(campaignId, prunedRetirees.map(p => p.id))
+    for (const p of prunedRetirees) {
+      try {
+        await PlayerHeadshotRepository.delete(campaignId, p.id)
+      } catch { /* no headshot row — fine */ }
+    }
   }
 
   await PlayerRepository.saveBulk(

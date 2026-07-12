@@ -45,10 +45,16 @@ const COPY = {
       ? `${playerName}'s training session is done — claim the reward.`
       : 'A training session is done — claim the reward.',
   }),
-  points: (n) => ({
-    title: 'Upgrade points waiting',
-    body: `You have ${n} attribute upgrade point${n === 1 ? '' : 's'} ready to spend on your players.`,
-  }),
+  points: (n) => {
+    // Points accumulate as floats (fractional training/evolution awards) —
+    // only whole points are spendable, so floor for display. Guards the
+    // "9.95000000001 attribute points" notification.
+    const whole = Math.floor(Number(n) || 0)
+    return {
+      title: 'Upgrade points waiting',
+      body: `You have ${whole} attribute upgrade point${whole === 1 ? '' : 's'} ready to spend on your players.`,
+    }
+  },
   lapse2d: () => ({
     title: 'Your next game is waiting',
     body: 'The league is paused until you return, GM. Jump back in and keep the run going.',
@@ -242,8 +248,11 @@ export async function scheduleRetentionReminders({ pendingPoints = 0 } = {}) {
     const now = Date.now()
     const batch = []
 
-    if (pendingPoints > 0) {
-      const { title, body } = COPY.points(pendingPoints)
+    // Only whole points are spendable — a fractional remainder (e.g. 0.4)
+    // shouldn't fire a "points waiting" reminder at all.
+    const wholePoints = Math.floor(Number(pendingPoints) || 0)
+    if (wholePoints > 0) {
+      const { title, body } = COPY.points(wholePoints)
       batch.push({
         id: NOTIF_IDS.POINTS,
         title,

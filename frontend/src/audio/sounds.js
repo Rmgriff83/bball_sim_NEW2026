@@ -16,8 +16,10 @@ export const UI_SOUNDS = {
   // Affirmation: meaningful confirmations (campaign select, attribute upgrade,
   // scout use). Plays the supplied audio file. Swap the import above to change
   // it, or replace `file` with a `synth` recipe to go back to a synthesized one.
+  // `volume` is the per-sound gain (0..1) under the user's master volume.
   affirm: {
     file: affirmFile,
+    volume: 0.7,
   },
 
   // Cancellation / dismissal: a gentle downward blip.

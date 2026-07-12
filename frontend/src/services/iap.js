@@ -7,9 +7,9 @@
  * un-configured SDK.
  *
  * Server-side trust: tokens are credited by the backend via the RevenueCat
- * webhook (see PaymentController::revenueCatWebhook). The transaction id
- * returned from purchase() is only used for the defense-in-depth /verify
- * endpoint that shortens the post-purchase wait if the webhook is delayed.
+ * webhook (see PaymentController::revenueCatWebhook) — that webhook is the
+ * ONLY crediting path. The transaction id returned from purchase() is kept
+ * for support/debugging (there is no client-side verify endpoint).
  */
 
 import { Purchases, LOG_LEVEL } from '@revenuecat/purchases-capacitor'

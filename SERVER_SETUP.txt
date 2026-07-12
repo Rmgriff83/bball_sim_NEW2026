@@ -154,6 +154,34 @@ From here on, always SSH in as deploy:
     CACHE_STORE=database
     FILESYSTEM_DISK=s3
 
+    # Rotating logs (14-day retention) — Laravel's template defaults this
+    # to `single`, which grows one laravel.log forever. On the EXISTING
+    # prod server, edit .env to match and run: php artisan config:cache
+    LOG_STACK=daily
+    # Production shouldn't write DEBUG (that's what dumped whole email
+    # bodies into laravel.log when the mailer was `log`).
+    LOG_LEVEL=info
+
+    # REQUIRED for password-reset emails: the reset link is built against
+    # this URL (the PLAYER-FACING app, not this API host). Without it the
+    # link falls back to APP_URL and points at api.bball-sim.com.
+    FRONTEND_URL=https://bball-sim.com
+
+    # Email — Resend over SMTP (see EMAIL section below for account setup).
+    # Only password-reset emails are sent; signup verification is disabled
+    # in code (app/Models/User.php).
+    MAIL_MAILER=smtp
+    MAIL_HOST=smtp.resend.com
+    # 2465, NOT 465: DigitalOcean silently drops outbound SMTP ports
+    # (25/465/587) on droplets — connections time out. Resend listens on
+    # 2465 (implicit TLS) / 2587 (STARTTLS) precisely for this situation.
+    MAIL_PORT=2465
+    MAIL_SCHEME=smtps
+    MAIL_USERNAME=resend
+    MAIL_PASSWORD=your_resend_api_key
+    MAIL_FROM_ADDRESS="noreply@bball-sim.com"
+    MAIL_FROM_NAME="Bball Sim - Dynasty Basketball"
+
     AWS_ACCESS_KEY_ID=your_spaces_key
     AWS_SECRET_ACCESS_KEY=your_spaces_secret
     AWS_DEFAULT_REGION=sfo3
@@ -350,3 +378,94 @@ Frontend (from your local machine):
 - Queue worker logs: /var/www/bball-sim/backend/storage/logs/queue-worker.log
 - Nginx logs: /var/log/nginx/access.log and /var/log/nginx/error.log
 - Laravel logs: /var/www/bball-sim/backend/storage/logs/laravel.log
+  (rotates daily with 14-day retention since July 2026 — see config/logging.php)
+
+========================================================================
+  CAPACITY TUNING (2 GB droplet, ~900+ users, added July 2026)
+========================================================================
+
+The backend is a thin sync API (all game compute is client-side), so the
+droplet's ceiling is PHP-FPM workers x per-request memory. With light
+tuning this box supports roughly 3,000-5,000 users; past that, resize the
+droplet (2 vCPU / 4 GB ≈ 2-3x more) — MySQL and Spaces stay non-issues
+until well beyond that.
+
+--- PHP-FPM pool (one-time) ---
+
+  sudo nano /etc/php/8.2/fpm/pool.d/www.conf
+
+  Set:
+    pm = dynamic
+    pm.max_children = 8        ; default 5 queues requests at peak
+    pm.start_servers = 3
+    pm.min_spare_servers = 2
+    pm.max_spare_servers = 4
+    pm.max_requests = 500      ; recycle workers, bounds slow memory leaks
+
+  sudo systemctl restart php8.2-fpm
+
+  Memory budget: 8 workers x ~128-150 MB typical, plus occasional 512 MB
+  sync requests (SyncController raises its own limit for legacy pulls AND
+  oversized part pushes — players_fa grows with retired players over a
+  campaign's life). Worst-case bursts stay workable because only one or
+  two sync requests are typically that large at once; if you raise
+  max_children further, resize the droplet first.
+
+--- Scheduler cron (required for campaigns:prune-deleted) ---
+
+  crontab -e   (as deploy)
+  * * * * * cd /var/www/bball-sim/backend && php artisan schedule:run >> /dev/null 2>&1
+
+--- Monitoring (DigitalOcean dashboard, one-time) ---
+
+  Droplet → Monitoring → Create alert policy:
+    - CPU above 70% for 10 minutes
+    - Memory above 85% for 10 minutes
+  When these start firing during evening peaks, it's time to resize.
+
+--- Quick health checks ---
+
+  free -m                                   # memory headroom at peak
+  grep -c "Sync push ok" storage/logs/laravel-$(date +%F).log   # syncs today
+  sudo grep -c "max_children" /var/log/php8.2-fpm.log           # >0 = pool saturating, raise/resize
+
+--- Spaces (one-time) ---
+
+  Enable bucket VERSIONING on the Spaces bucket (Settings → Versioning)
+  so campaign save files survive accidental deletion/overwrite.
+
+========================================================================
+  EMAIL — Resend for password-reset emails (added July 2026)
+========================================================================
+
+Only password-reset emails are sent (signup verification email is disabled
+in app/Models/User.php). Volume is tiny — Resend's free tier (3,000/month)
+is far more than enough.
+
+--- One-time Resend setup (resend.com) ---
+
+  1. Create a Resend account.
+  2. Domains → Add Domain → bball-sim.com. Resend shows DNS records
+     (SPF TXT + DKIM CNAMEs) — add them wherever bball-sim.com's DNS
+     lives, then wait for Resend to show "Verified".
+  3. API Keys → Create API Key (sending access) — this is MAIL_PASSWORD.
+
+--- Prod .env (see env block above) ---
+
+  MAIL_MAILER=smtp, MAIL_HOST=smtp.resend.com, MAIL_PORT=2465 (NOT 465 —
+  DigitalOcean drops standard SMTP ports; see env block comment),
+  MAIL_SCHEME=smtps, MAIL_USERNAME=resend, MAIL_PASSWORD=<api key>,
+  MAIL_FROM_ADDRESS=noreply@bball-sim.com
+  PLUS: FRONTEND_URL must be set to the player-facing app URL or reset
+  links will point at the API host.
+
+  Then: php artisan config:cache
+
+--- Test it ---
+
+  cd /var/www/bball-sim/backend
+  php artisan tinker --execute="Illuminate\Support\Facades\Password::sendResetLink(['email' => 'YOUR_OWN_EMAIL']);"
+
+  (Use an email that has an account.) Check your inbox, click the link,
+  and confirm it opens the app's /reset-password page and the reset
+  completes. If nothing arrives, check Resend's dashboard → Logs.
