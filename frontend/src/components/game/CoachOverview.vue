@@ -5,34 +5,46 @@
          centered canvas bubble, not here). Coach name yields during breaks
          so everything fits the canvas width. -->
     <div class="co-strip">
-      <div class="co-avatar" :style="{ borderColor: teamColor }">
-        <CoachAvatar :coach="coach" :size="20" :campaign-id="campaignId" />
+      <div class="co-cluster">
+        <div class="co-avatar" :style="{ borderColor: teamColor }">
+          <CoachAvatar :coach="coach" :size="34" :campaign-id="campaignId" />
+          <span v-if="coachOverall != null" class="co-ovr-badge">{{ coachOverall }}</span>
+        </div>
+        <span class="co-coach-name">{{ coachLastName }}</span>
+        <button
+          class="co-action-btn co-clipboard-btn"
+          :disabled="!isStoppage || !allowSubs"
+          title="Subs & adjustments"
+          aria-label="Subs & adjustments"
+          @click="emit('open-adjust')"
+        >
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+            <circle cx="9" cy="14" r="2" />
+            <path d="m13.5 12 4 4" />
+            <path d="m17.5 12-4 4" />
+          </svg>
+        </button>
+        <span class="co-chip co-chip-offense">{{ offenseLabel }}</span>
+        <span class="co-chip co-chip-defense">{{ defenseLabel }}</span>
       </div>
 
-      <span v-if="!isStoppage" class="co-coach-name">{{ coachLastName }}</span>
-      <span class="co-chip co-chip-offense">
-        <span class="co-chip-label">OFF</span>{{ offenseLabel }}
-      </span>
-      <span class="co-chip co-chip-defense">
-        <span class="co-chip-label">DEF</span>{{ defenseLabel }}
-      </span>
       <span class="co-spacer"></span>
 
-      <button
-        class="co-timeout-btn"
-        :class="{ 'is-ready': timeoutReady && !timeoutArmed, 'is-armed': timeoutArmed }"
-        :disabled="!timeoutReady && !timeoutArmed"
-        :title="timeoutTitle"
-        @click="emit('toggle-timeout')"
-      >
-        <Check v-if="timeoutArmed" :size="11" />
-        <span>TO · {{ timeoutsRemaining }}</span>
-      </button>
-
-      <div v-if="isStoppage" class="co-break-actions">
-        <button v-if="allowSubs" class="co-action-btn" @click="emit('open-subs')">Subs</button>
-        <button v-if="allowSubs" class="co-action-btn" @click="emit('open-adjust')">Adjust</button>
-        <button class="co-action-btn co-action-continue" :disabled="simulating" @click="emit('continue')">
+      <div class="co-break-actions">
+        <button
+          class="co-timeout-btn"
+          :class="{ 'is-ready': timeoutReady && !timeoutArmed, 'is-armed': timeoutArmed }"
+          :disabled="!timeoutReady && !timeoutArmed"
+          :title="timeoutTitle"
+          @click="emit('toggle-timeout')"
+        >
+          <Check v-if="timeoutArmed" :size="11" />
+          <span>TO · {{ timeoutsRemaining }}</span>
+        </button>
+        <button class="co-action-btn co-action-continue" :disabled="!isStoppage || simulating" @click="emit('continue')">
           <span v-if="simulating" class="co-btn-loading"></span>
           <span v-else>Continue ▸</span>
         </button>
@@ -75,6 +87,13 @@ const coachLastName = computed(() => {
   return parts[parts.length - 1]
 })
 
+// Coach overall — tolerate every save shape (snake_case, camelCase, or the
+// authored `overall` on data/coaches.js). Null when unknown so we hide the badge.
+const coachOverall = computed(() => {
+  const c = props.coach
+  return c?.overall_rating ?? c?.overallRating ?? c?.overall ?? null
+})
+
 // Timeouts can only be taken on dead balls; the pill dims while live.
 const timeoutReady = computed(() => props.isStoppage && props.allowTimeout)
 
@@ -105,26 +124,71 @@ const timeoutTitle = computed(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 26px; /* pins the row so the live ⇄ break swap doesn't shift the court */
+  min-height: 42px; /* pins the row (cluster height) so the live ⇄ break swap doesn't shift the court */
   min-width: 0;
 }
 
+/* ---- Cluster: named grid — avatar spans both rows on the left, name + timeout
+   on the top row, OFF/DEF chips on the bottom row. ---- */
+.co-cluster {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  grid-template-areas:
+    "avatar name to"
+    "avatar off  def";
+  align-items: center;
+  justify-items: start;
+  column-gap: 5px;
+  row-gap: 3px;
+  padding: 3px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  min-width: 0;
+  flex-shrink: 1;
+}
+
 .co-avatar {
-  width: 24px;
-  height: 24px;
+  grid-area: avatar;
+  position: relative; /* anchors the absolute overall badge */
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: 1px solid;
   background: #1a1f2c;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
   flex-shrink: 0;
   color: #5a6478; /* UserCog fallback icon tint */
 }
 
+/* Small coach-overall badge pinned to the avatar's bottom-left corner. */
+.co-ovr-badge {
+  position: absolute;
+  bottom: -2px;
+  left: -3px;
+  min-width: 16px;
+  height: 15px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: #10131c;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
 .co-coach-name {
-  font-size: 10px;
+  grid-area: name;
+  font-size: 12px;
+  margin-top:10px;
   font-weight: 700;
   color: #fff;
   white-space: nowrap;
@@ -148,25 +212,17 @@ const timeoutTitle = computed(() => {
   min-width: 0;
 }
 
-.co-chip-label {
-  font-size: 7.5px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
 .co-chip-offense {
+  grid-area: off;
   background: rgba(239, 106, 79, 0.14);
   border: 1px solid rgba(239, 106, 79, 0.4);
 }
 
-.co-chip-offense .co-chip-label { color: #f0896f; }
-
 .co-chip-defense {
+  grid-area: def;
   background: rgba(47, 128, 237, 0.13);
   border: 1px solid rgba(47, 128, 237, 0.4);
 }
-
-.co-chip-defense .co-chip-label { color: #6ba5f5; }
 
 .co-spacer {
   flex: 1;
@@ -175,6 +231,7 @@ const timeoutTitle = computed(() => {
 .co-timeout-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 3px;
   padding: 3px 8px;
   border-radius: 7px;
@@ -182,9 +239,8 @@ const timeoutTitle = computed(() => {
   font-weight: 800;
   cursor: pointer;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  color: #565b6b;
+  color: gray;
+  background: rgba(255, 255, 255, 0.08);
   transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -193,10 +249,8 @@ const timeoutTitle = computed(() => {
 }
 
 .co-timeout-btn.is-ready {
-  background: #ef6a4f;
-  border-color: transparent;
-  color: #fff;
-  box-shadow: 0 4px 12px -4px rgba(239, 106, 79, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #e6e9f0;
 }
 
 .co-timeout-btn.is-armed {
@@ -208,8 +262,21 @@ const timeoutTitle = computed(() => {
 
 .co-break-actions {
   display: flex;
+  align-items: stretch;
+  flex-direction: column;
   gap: 5px;
   flex-shrink: 0;
+}
+
+/* Single clipboard (X's & O's) button — opens subs/adjustments.
+   Lives in the cluster's `to` slot (top row, right of the coach name). */
+.co-clipboard-btn {
+  grid-area: to;
+  justify-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
 }
 
 .co-action-btn {
@@ -257,5 +324,17 @@ const timeoutTitle = computed(() => {
 
 @keyframes co-spin {
   to { transform: rotate(360deg); }
+}
+
+@media (max-width: 620px){
+  .co-cluster {
+    grid-template-areas:
+      "avatar name to"
+      "avatar name to"
+      "off def to";
+  }
+  .co-coach-name {
+    margin-top: 0;
+  }
 }
 </style>

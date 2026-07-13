@@ -2807,10 +2807,18 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- Live band: vertical momentum rail spans the coach overview +
-                 court column (user's team always the top token/fill). -->
+            <!-- Live band: court column + live stats. The vertical momentum
+                 rail now lives inside the court column, left of the canvas. -->
             <template v-if="hasAnimationData">
             <div class="live-main-row">
+
+            <!-- Court and Live Stats Row -->
+            <div class="court-stats-row">
+              <!-- Animated Court with Overlays -->
+              <div class="court-container court-in-broadcast">
+              <!-- Momentum rail: left of the canvas, stretching the full
+                   height of the court column (co-strip top → canvas bottom).
+                   User's team is always the top token/fill. -->
               <MomentumRail
                 :user-momentum="userIsHome ? currentHomeMomentum : currentAwayMomentum"
                 :opp-momentum="userIsHome ? currentAwayMomentum : currentHomeMomentum"
@@ -2819,11 +2827,7 @@ onUnmounted(() => {
                 :user-abbr="(userIsHome ? homeTeam : awayTeam)?.abbreviation || ''"
                 :opp-abbr="(userIsHome ? awayTeam : homeTeam)?.abbreviation || ''"
               />
-
-            <!-- Court and Live Stats Row -->
-            <div class="court-stats-row">
-              <!-- Animated Court with Overlays -->
-              <div class="court-container court-in-broadcast">
+              <div class="court-col">
               <!-- Coach Overview strip: the old animation-controls slot —
                    canvas width, two thin rows (contextual strip + on-court
                    stamina/matchup minis). -->
@@ -2846,33 +2850,6 @@ onUnmounted(() => {
                 @open-subs="openSegmentSubs"
                 @open-adjust="openSegmentAdjust"
               />
-              <!-- Minimal playback controls, pinned bottom-left over the court -->
-              <div class="court-play-controls">
-                <button
-                  class="cpc-btn cpc-circle"
-                  @click="togglePlayPause"
-                  :title="isPlaying ? 'Pause' : 'Play'"
-                >
-                  <Play v-if="!isPlaying" :size="15" fill="currentColor" />
-                  <Pause v-else :size="15" fill="currentColor" />
-                </button>
-                <button
-                  class="cpc-btn cpc-speed"
-                  @click="cycleSpeed"
-                  :title="`Playback speed — tap to change (${playbackSpeed}x)`"
-                >
-                  <span class="cpc-chevrons">{{ speedChevrons }}</span>{{ playbackSpeed }}x
-                </button>
-                <button
-                  class="cpc-btn cpc-circle cpc-mute"
-                  :class="{ 'is-muted': audioStore.gameMuted }"
-                  @click="toggleGameMute"
-                  :title="audioStore.gameMuted ? 'Unmute game sounds' : 'Mute game sounds'"
-                >
-                  <VolumeX v-if="audioStore.gameMuted" :size="15" />
-                  <Volume2 v-else :size="15" />
-                </button>
-              </div>
 
               <BasketballCourt
                 ref="courtRef"
@@ -2902,6 +2879,34 @@ onUnmounted(() => {
                 @stoppage-adjust="openSegmentAdjust"
                 @stoppage-continue="handleSegmentContinue"
               />
+
+              <!-- Minimal playback controls — a compact strip directly under the court. -->
+              <div class="court-play-controls court-play-controls-strip">
+                <button
+                  class="cpc-btn cpc-circle"
+                  @click="togglePlayPause"
+                  :title="isPlaying ? 'Pause' : 'Play'"
+                >
+                  <Play v-if="!isPlaying" :size="15" fill="currentColor" />
+                  <Pause v-else :size="15" fill="currentColor" />
+                </button>
+                <button
+                  class="cpc-btn cpc-speed"
+                  @click="cycleSpeed"
+                  :title="`Playback speed — tap to change (${playbackSpeed}x)`"
+                >
+                  <span class="cpc-chevrons">{{ speedChevrons }}</span>{{ playbackSpeed }}x
+                </button>
+                <button
+                  class="cpc-btn cpc-circle cpc-mute"
+                  :class="{ 'is-muted': audioStore.gameMuted }"
+                  @click="toggleGameMute"
+                  :title="audioStore.gameMuted ? 'Unmute game sounds' : 'Mute game sounds'"
+                >
+                  <VolumeX v-if="audioStore.gameMuted" :size="15" />
+                  <Volume2 v-else :size="15" />
+                </button>
+              </div>
 
               <!-- Quarter Break / Game Complete Overlay (also reused as the
                    Coach & Subs sheet at segmented dead-ball pauses) -->
@@ -3309,6 +3314,7 @@ onUnmounted(() => {
                   </div>
                 </div>
               </Transition>
+              </div><!-- .court-col -->
 
               </div>
 
@@ -5255,7 +5261,6 @@ onUnmounted(() => {
 .court-container {
   display: flex;
   justify-content: center;
-  overflow: hidden;
   border-radius: 8px;
 }
 
@@ -7463,7 +7468,8 @@ onUnmounted(() => {
 
 .broadcast-header {
   background: var(--gradient-cosmic);
-  padding: 12px 20px 8px;
+  padding: 14px 20px 8px;
+  position: relative;
 }
 
 /* Playoff round chip embedded inline with the broadcast date footer. Dark pill
@@ -7548,7 +7554,16 @@ onUnmounted(() => {
 
 .court-in-broadcast {
   display: flex;
+  flex-direction: row;
+  align-items: stretch; /* momentum rail stretches co-strip top → canvas bottom */
+  gap: 10px;
+}
+
+/* The co-strip + canvas stack; the momentum rail sits to its left. */
+.court-col {
+  display: flex;
   flex-direction: column;
+  min-width: 0;
   /* Anchor for the .court-play-controls overlay */
   position: relative;
 }
@@ -7752,10 +7767,12 @@ onUnmounted(() => {
 
 .broadcast-live {
   display: flex;
+  position: absolute;
+  top: 5px;
+  right: 5px;
   align-items: center;
   gap: 6px;
   padding: 3px 8px;
-  background: rgba(0, 0, 0, 0.15);
   border-radius: 4px;
   color: #dc2626;
   font-size: 0.65rem;
@@ -7823,6 +7840,10 @@ onUnmounted(() => {
 }
 
 @media (max-width: 500px) {
+  .broadcast-live{
+    top: initial;
+    bottom: 3px;
+  }
   .team-name-with-logo {
     display: none;
   }
@@ -8018,6 +8039,39 @@ onUnmounted(() => {
   z-index: 6;
 }
 
+/* Broadcast variant: controls flow in normal layout as a compact, minimal
+   strip left-aligned directly beneath the court instead of floating over it. */
+.court-play-controls-strip {
+  position: absolute;
+  bottom: -17px;
+}
+
+.court-play-controls-strip .cpc-btn {
+  height: 26px;
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.court-play-controls-strip .cpc-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.court-play-controls-strip .cpc-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.court-play-controls-strip .cpc-circle {
+  width: 26px;
+}
+
+.court-play-controls-strip .cpc-speed {
+  border-radius: 13px;
+  padding: 0 9px;
+  font-size: 11px;
+}
+
 .cpc-btn {
   background: rgba(15, 17, 25, 0.78);
   backdrop-filter: blur(4px);
@@ -8064,7 +8118,7 @@ onUnmounted(() => {
 /* Mobile adjustments for animation controls */
 @media (max-width: 620px) {
   .broadcast-header {
-    padding: 10px 16px 6px;
+    padding: 12px 16px 6px;
   }
 
   .broadcast-scoreboard {
@@ -8155,6 +8209,11 @@ onUnmounted(() => {
   .live-main-row {
     gap: 8px;
     padding: 10px;
+  }
+
+  .court-play-controls-strip{
+    left:initial;
+    right: 0;
   }
 
   .cpc-btn {
