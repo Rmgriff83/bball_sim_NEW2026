@@ -2235,15 +2235,18 @@ watch(
 // eagerly is always safe; the mute toggle calls it to resume the right beds
 // mid-play on unmute.
 function syncAmbientBeds() {
-  if (showAnimationMode.value) audioStore.startAmbient('game_crowd')
+  // The broadcast walkthrough silences the arena — beds resume when it ends.
+  const tourRunning = walkthroughStore.activeKey === 'gameLive'
+
+  if (showAnimationMode.value && !tourRunning) audioStore.startAmbient('game_crowd')
   else audioStore.stopAmbient('game_crowd')
 
   const atTheLine = !!currentPossession.value?.is_free_throw
-  if (isPlaying.value && !atTheLine) audioStore.startAmbient('play_active')
+  if (isPlaying.value && !atTheLine && !tourRunning) audioStore.startAmbient('play_active')
   else audioStore.stopAmbient('play_active')
 }
 
-watch([isPlaying, currentPossessionIndex, showAnimationMode], syncAmbientBeds)
+watch([isPlaying, currentPossessionIndex, showAnimationMode, () => walkthroughStore.activeKey], syncAmbientBeds)
 
 // Movement trails are suppressed during free-throw possessions (the
 // formation snap would paint streaks across the court). Also wipe the

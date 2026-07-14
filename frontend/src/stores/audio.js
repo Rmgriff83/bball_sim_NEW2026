@@ -29,6 +29,12 @@ function loadVolume() {
   return Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.6 // default 60%
 }
 
+// All in-game presentation audio (event SFX, ambient beds, timeout music,
+// game clips) plays at a slight global attenuation under the user's master
+// volume — one knob to trim the whole game mix without touching UI sounds
+// or menu music.
+const GAME_AUDIO_ATTENUATION = 0.9
+
 export const useAudioStore = defineStore('audio', () => {
   const enabled = ref(loadEnabled())
   const volume = ref(loadVolume())
@@ -145,7 +151,7 @@ export const useAudioStore = defineStore('audio', () => {
     const url = GAME_SFX[key]
     if (!url) return null // file not added yet — safe no-op
     engine.unlock()
-    return engine.playClip(url, { loop, volume: volume.value })
+    return engine.playClip(url, { loop, volume: volume.value * GAME_AUDIO_ATTENUATION })
   }
 
   function stopGameSfx(handle) {
@@ -177,7 +183,7 @@ export const useAudioStore = defineStore('audio', () => {
     engine.unlock()
     preloadEventSfx()
     const url = poolDef.urls[Math.floor(Math.random() * poolDef.urls.length)]
-    engine.playSample(url, { volume: poolDef.volume ?? 1 })
+    engine.playSample(url, { volume: (poolDef.volume ?? 1) * GAME_AUDIO_ATTENUATION })
   }
 
   // ---- Timeout hype music ----
@@ -193,7 +199,7 @@ export const useAudioStore = defineStore('audio', () => {
     engine.unlock()
     stopTimeoutMusic()
     const url = TIMEOUT_MUSIC.urls[Math.floor(Math.random() * TIMEOUT_MUSIC.urls.length)]
-    timeoutMusicHandle = engine.playClip(url, { loop: false, volume: TIMEOUT_MUSIC.volume })
+    timeoutMusicHandle = engine.playClip(url, { loop: false, volume: TIMEOUT_MUSIC.volume * GAME_AUDIO_ATTENUATION })
   }
 
   function stopTimeoutMusic() {
@@ -227,7 +233,7 @@ export const useAudioStore = defineStore('audio', () => {
     engine.unlock()
     preloadAmbientSfx()
     const url = layer.urls[Math.floor(Math.random() * layer.urls.length)]
-    _ambientHandles.set(key, engine.playLoop(url, { volume: layer.volume ?? 1 }))
+    _ambientHandles.set(key, engine.playLoop(url, { volume: (layer.volume ?? 1) * GAME_AUDIO_ATTENUATION }))
   }
 
   function stopAmbient(key) {

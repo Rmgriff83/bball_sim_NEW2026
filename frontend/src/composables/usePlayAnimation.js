@@ -115,6 +115,13 @@ export function usePlayAnimation() {
     displayedAwayMomentum.value = 50
   }
 
+  // Apply a possession's engine momentum stamp to the rail (missing stamp =
+  // hold the current values).
+  function _syncMomentumFrom(possession) {
+    displayedHomeMomentum.value = possession.momentum?.home ?? displayedHomeMomentum.value
+    displayedAwayMomentum.value = possession.momentum?.away ?? displayedAwayMomentum.value
+  }
+
   // Watch for possession changes and update scores with delay to sync with +2/+3 animation
   watch(currentPossessionIndex, (newIndex, oldIndex) => {
     // Clear any pending score update
@@ -625,6 +632,7 @@ export function usePlayAnimation() {
           displayedHomeScore.value = currentPossession.value.home_score || 0
           displayedAwayScore.value = currentPossession.value.away_score || 0
           displayedBoxScore.value = currentPossession.value.box_score || null
+          _syncMomentumFrom(currentPossession.value)
         }
         completedQuarter.value = currentQuarter.value
         isQuarterBreak.value = true
@@ -640,12 +648,15 @@ export function usePlayAnimation() {
       } else {
         // Reached end of animation data
         if (isLiveMode.value) {
-          // Sync displayed scores/box to the final possession — there is no
-          // next possession, so no +2/+3 animation to wait for.
+          // Sync displayed scores/box/momentum to the final possession — the
+          // possession-index watcher only fires when the index ADVANCES, so a
+          // segment's LAST possession (i.e. EVERY possession now that paced
+          // games load one per segment) must apply its stamps here.
           if (currentPossession.value) {
             displayedHomeScore.value = currentPossession.value.home_score || 0
             displayedAwayScore.value = currentPossession.value.away_score || 0
             displayedBoxScore.value = currentPossession.value.box_score || null
+            _syncMomentumFrom(currentPossession.value)
           }
           // Segmented pacing: a mid-quarter segment ends in a segment pause
           // (lightweight break bar), NOT a quarter break — completedQuarter
