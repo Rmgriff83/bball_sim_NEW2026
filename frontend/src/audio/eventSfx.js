@@ -48,6 +48,11 @@ const EVENT_SFX = {
   // text announces the steal (outcome 'stolen'). Variants join via steal_N.m4a.
   steal: pool(import.meta.glob('@/assets/audio/sfx/steal_*.m4a', { eager: true, query: '?url', import: 'default' }), 0.75),
 
+  // Timeout air horn — blasts ~0.5s after the whistle when a timeout starts
+  // (GameView schedules it in startTimeoutSequence). Well under the other
+  // accents — the source sample is HOT. Variants join via airhorn_N.mp3.
+  timeout_airhorn: pool(import.meta.glob('@/assets/audio/sfx/airhorn_*.mp3', { eager: true, query: '?url', import: 'default' }), 0.15),
+
   // Future pools (add files + engine keyframe stamps when ready):
   // rim_bounce:   pool(import.meta.glob('@/assets/audio/sfx/rim_*.m4a',     { eager: true, query: '?url', import: 'default' })),
 }

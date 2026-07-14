@@ -189,10 +189,23 @@ const props = defineProps({
   simulating: {
     type: Boolean,
     default: false
+  },
+  // Timeout sequence: players slide off to their sidelines and a centered
+  // TIMEOUT bubble counts down (skippable). The parent flips this on when
+  // a called timeout fires at a play end, and off after 'timeout-complete'.
+  timeoutMode: {
+    type: Boolean,
+    default: false
+  },
+  // Seconds left on the timeout clock — owned by the parent (GameView runs
+  // the interval) so other surfaces (coaches overlay) can show it too.
+  timeoutSecondsLeft: {
+    type: Number,
+    default: 30
   }
 })
 
-const emit = defineEmits(['stoppage-subs', 'stoppage-adjust', 'stoppage-continue'])
+const emit = defineEmits(['stoppage-subs', 'stoppage-adjust', 'stoppage-continue', 'timeout-complete'])
 
 const positionHistory = ref({})
 const canvas = ref(null)
@@ -266,6 +279,69 @@ function animateScore() {
     drawCourt()
   }
 }
+
+// ---- Timeout sequence: slide-off + countdown display -----------------------
+// On timeoutMode rising edge we snapshot every player's current interpolated
+// position and tween their x past their sideline (home → left, away → right)
+// with the same self-contained RAF pattern as the other canvas FX. The
+// snapshot persists while timeoutMode holds so paused redraws keep the
+// players off-court; the next segment's own keyframes walk them back in.
+// The countdown itself is parent-owned (timeoutSecondsLeft prop).
+const TIMEOUT_SLIDE_MS = 900
+const timeoutSlide = ref(null) // { players: [{x, y, targetX, playerId, lineupIndex}], progress }
+
+function startTimeoutSlide() {
+  const homeIds = new Set(props.homeRoster.map(p => String(p.id ?? p.player_id)))
+  const players = Object.entries(props.interpolatedPositions || {}).map(([playerId, pos]) => ({
+    playerId,
+    x: pos.x,
+    y: pos.y,
+    lineupIndex: pos.lineupIndex ?? null,
+    targetX: homeIds.has(String(playerId)) ? -0.08 : 1.08,
+  }))
+  timeoutSlide.value = { players, progress: 0, startTime: performance.now() }
+  animateTimeoutSlide()
+}
+
+function animateTimeoutSlide() {
+  if (!timeoutSlide.value || !props.timeoutMode) return
+  const elapsed = performance.now() - timeoutSlide.value.startTime
+  timeoutSlide.value.progress = Math.min(1, elapsed / TIMEOUT_SLIDE_MS)
+  drawCourt()
+  if (timeoutSlide.value.progress < 1) {
+    requestAnimationFrame(animateTimeoutSlide)
+  }
+}
+
+// Positions to draw while the timeout is up: each player lerped from their
+// frozen spot toward (and past) their sideline. hasBall is always false —
+// the ball is holstered for the duration.
+function timeoutSlidePositions() {
+  const slide = timeoutSlide.value
+  if (!slide) return null
+  const t = slide.progress
+  const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+  const positions = {}
+  for (const p of slide.players) {
+    positions[p.playerId] = {
+      x: p.x + (p.targetX - p.x) * eased,
+      y: p.y,
+      hasBall: false,
+      lineupIndex: p.lineupIndex,
+    }
+  }
+  return positions
+}
+
+watch(() => props.timeoutMode, (active) => {
+  if (active) {
+    startTimeoutSlide()
+  } else {
+    timeoutSlide.value = null
+    positionHistory.value = {} // no trails from the slide-off on resume
+    drawCourt()
+  }
+})
 
 /**
  * Trigger defensive animation at a player's position on the court.
@@ -862,17 +938,25 @@ function drawCourt() {
 
   // Animation mode rendering
   if (props.animationMode) {
-    if (props.showTrails) {
-      drawMovementTrails(c)
-    }
-    drawAnimatedPlayers(c)
-    if (props.interpolatedBallPosition) {
-      const ball = props.interpolatedBallPosition
-      const airborne = ball.inFlight || ball.through
-      const ballOffset = !airborne ? 16 : 0
-      const ballX = ball.x * w - ballOffset
-      const ballY = ball.y * h + ballOffset
-      drawBall(c, ballX, ballY, airborne, ball)
+    if (props.timeoutMode) {
+      // Timeout: players slide to their sidelines; no trails, no ball.
+      const slidePositions = timeoutSlidePositions()
+      if (slidePositions) {
+        drawAnimatedPlayers(c, slidePositions)
+      }
+    } else {
+      if (props.showTrails) {
+        drawMovementTrails(c)
+      }
+      drawAnimatedPlayers(c)
+      if (props.interpolatedBallPosition) {
+        const ball = props.interpolatedBallPosition
+        const airborne = ball.inFlight || ball.through
+        const ballOffset = !airborne ? 16 : 0
+        const ballX = ball.x * w - ballOffset
+        const ballY = ball.y * h + ballOffset
+        drawBall(c, ballX, ballY, airborne, ball)
+      }
     }
   } else {
     if (props.showPlayers && props.playerPositions.length > 0) {
@@ -1533,10 +1617,10 @@ function drawScoreAnimation(c, centerX, rimY) {
   c.restore()
 }
 
-function drawAnimatedPlayers(c) {
+function drawAnimatedPlayers(c, positionsOverride = null) {
   const w = courtWidth.value
   const h = courtHeight.value
-  const positions = props.interpolatedPositions
+  const positions = positionsOverride || props.interpolatedPositions
 
   // Position slot labels
   const slotLabels = ['PG', 'SG', 'SF', 'PF', 'C']
@@ -1925,6 +2009,25 @@ defineExpose({
         </button>
       </div>
     </div>
+
+    <!-- Timeout Overlay (centered): same bubble family as the stoppage
+         overlay — big countdown, skippable, with a shortcut into the
+         coaches overlay (subs/settings while the clock runs). -->
+    <div v-if="timeoutMode" class="stoppage-overlay timeout-overlay">
+      <div class="timeout-title">Timeout</div>
+      <div class="timeout-clock">0:{{ String(Math.max(0, timeoutSecondsLeft)).padStart(2, '0') }}</div>
+      <div class="stoppage-actions">
+        <button class="stoppage-btn" @click="emit('stoppage-adjust')">Coaching</button>
+        <button
+          class="stoppage-btn stoppage-btn-continue"
+          :disabled="simulating"
+          @click="emit('timeout-complete')"
+        >
+          <span v-if="simulating" class="stoppage-btn-loading"></span>
+          <span v-else>Skip ▸</span>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -2087,6 +2190,30 @@ defineExpose({
 .stoppage-actions {
   display: flex;
   gap: 6px;
+}
+
+/* Timeout bubble: same base as .stoppage-overlay, content centered around
+   the big countdown. */
+.timeout-overlay {
+  align-items: center;
+  min-width: 110px;
+}
+
+.timeout-title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.timeout-clock {
+  font-family: 'Courier New', monospace;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  letter-spacing: 0.04em;
 }
 
 .stoppage-btn {

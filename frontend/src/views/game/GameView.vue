@@ -9,6 +9,7 @@ import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { usePlayoffStore } from '@/stores/playoff'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
 import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X, Volume2, VolumeX } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -78,6 +79,7 @@ const {
   seekTo,
   continueAfterQuarterBreak,
   setDisplayedScores,
+  resetMomentumDisplay,
   cleanup
 } = usePlayAnimation()
 
@@ -189,7 +191,9 @@ const pacingModes = [
   { value: 'play', label: 'Every Play' },
   { value: 'deadBall', label: 'Dead Balls' },
 ]
-const selectedPacing = ref(localStorage.getItem(PACING_STORAGE_KEY) || 'quarter')
+// Dead Balls is the default pacing — users who explicitly picked a mode keep
+// their stored choice.
+const selectedPacing = ref(localStorage.getItem(PACING_STORAGE_KEY) || 'deadBall')
 watch(selectedPacing, (mode) => {
   try { localStorage.setItem(PACING_STORAGE_KEY, mode) } catch { /* private mode */ }
 })
@@ -198,15 +202,34 @@ watch(selectedPacing, (mode) => {
 // legacy quarter pacing). Drives the segment break bar: reason copy, timeout
 // availability, subs gating, and foul-out prompts.
 const currentBreakInfo = ref(null)
-// User armed a timeout at this dead ball — sent as call_timeout on Continue.
+// User armed a timeout — mid-play it fires automatically at the next eligible
+// dead ball; at an eligible dead ball it fires immediately.
 const timeoutRequested = ref(false)
-// The quarter-break modal reused as the "coach & subs" sheet at segment pauses.
-const showSegmentModal = ref(false)
+// The timeout sequence is up: players slide to the sidelines and the court
+// shows the 30s TIMEOUT countdown. Play auto-resumes on expiry or Skip.
+const timeoutActive = ref(false)
+// A timeout was taken this break — send call_timeout with the next Continue
+// so the engine burns it (momentum reset + lineup breather).
+const pendingTimeoutCall = ref(false)
+// Timeout clock — owned here (not the court) so both the canvas bubble and
+// the coaches overlay can show it. Ticks while timeoutActive; auto-resumes
+// play at 0.
+const TIMEOUT_SECONDS = 30
+const timeoutSecondsLeft = ref(TIMEOUT_SECONDS)
+let timeoutTimer = null
+// The coaches overlay: subs / coach settings / matchups over the court canvas,
+// openable any time during a live game. Edits ride the next Continue.
+const showCoachesOverlay = ref(false)
+// Which overlay tab is showing: 'settings' | 'matchups' | 'subs'.
+const coachesTab = ref('settings')
+// A scheme/matchup/lineup edit was made from the overlay while the ball was
+// LIVE — drives the footer note that it applies at the next break. Cleared
+// when the next Continue ships the adjustments to the engine.
+const liveEditsPending = ref(false)
 // User defensive matchup overrides ({ opponentOffId: userDefId }). The pregame
-// editor lives in its own always-expanded card; showQbMatchups toggles the
-// compact quarter-break instance.
+// editor lives in its own always-expanded card; the coaches overlay hosts the
+// compact instance on its Matchups tab.
 const defensiveMatchups = ref({})
-const showQbMatchups = ref(false)
 
 // Local lineup for quarter-break adjustments (synced from teamStore)
 // During pre-game: synced from teamStore.lineup
@@ -217,18 +240,10 @@ const positionLabels = ['PG', 'SG', 'SF', 'PF', 'C']
 // Alias for backwards compatibility with existing code
 const selectedLineup = localLineup
 
-// Expanded swap dropdown state for quarter break
+// Expanded swap dropdown state for the coaches overlay Subs tab
 const expandedSwapPlayer = ref(null)
-// Track if substitutions view is open in quarter break modal
-const showSubstitutionsView = ref(false)
-// Strategy card is collapsed by default at quarter breaks — the strategy
-// panel is now a secondary affordance hidden behind a toggle, so the user
-// can hit Continue in the header without scrolling past it.
-const qbStrategyExpanded = ref(false)
-// Contextual dropdown under the new court-card Substitutions button.
-// Distinct from `showSubstitutionsView` (which still drives the live-game
-// quarter-break subs view) so the pre-game flow opens an inline panel
-// instead of swapping the strategy card's content.
+// Contextual dropdown under the pre-game court-card Substitutions button —
+// the pre-game flow opens an inline panel (unrelated to the coaches overlay).
 const showSubsDropdown = ref(false)
 
 // Available coaching styles
@@ -318,6 +333,18 @@ watch(
   { immediate: true }
 )
 const isUserGame = computed(() => game.value?.is_user_game)
+
+// Replay key for the walkthrough "?" button. During the live broadcast the
+// gameLive tour is replayable (the activeKey watcher pauses/resumes the
+// animation around it); replay-mode animation of finished games stays
+// tour-less; otherwise it's the preview/recap tour per game state.
+const replayTourKey = computed(() => {
+  if (!isUserGame.value) return null
+  if (isLiveMode.value) return 'gameLive'
+  if (showAnimationMode.value) return null
+  return isComplete.value ? 'gameRecap' : 'gamePreview'
+})
+
 const evolutionData = computed(() => game.value?.evolution)
 const gameNews = computed(() => game.value?.news || [])
 const rewardsData = computed(() => game.value?.rewards)
@@ -1398,6 +1425,10 @@ async function startGame() {
       // Pacing mode — read by the engine only on a fresh start; resumes keep
       // the mode serialized in the saved game state.
       pacing_mode: selectedPacing.value,
+      // Fetch one possession per call regardless of pacing — the pacing mode
+      // only decides where the CLIENT visibly pauses (it auto-continues
+      // through the rest), so timeouts/edits land at the current play's end.
+      stop_after_play: true,
     }
 
     // Include lineup if valid
@@ -1443,9 +1474,14 @@ async function startGame() {
         startingAwayScore,
         breakInfo: result.breakInfo ?? null,
       })
-      setTimeout(() => {
-        play()
-      }, 500)
+      // First-visit broadcast tour: hold tip-off while it runs — the
+      // walkthrough activeKey watcher starts play when it ends/dismisses.
+      walkthroughStore.maybeStart('gameLive')
+      if (walkthroughStore.activeKey !== 'gameLive') {
+        setTimeout(() => {
+          play()
+        }, 500)
+      }
     }
 
     // Check if game completed (can happen when resuming an in-progress game)
@@ -1468,7 +1504,7 @@ async function startGame() {
 /**
  * Continue to next quarter with coaching adjustments.
  */
-async function continueToNextQuarter() {
+async function continueToNextQuarter({ instantPlay = false } = {}) {
   // Capture starting scores BEFORE async call (they reflect end of previous quarter)
   const startingHomeScore = currentHomeScore.value
   const startingAwayScore = currentAwayScore.value
@@ -1482,14 +1518,23 @@ async function continueToNextQuarter() {
       defensive_style: selectedDefense.value,
       // Updated defensive matchups for the next quarter.
       defensive_matchups: { ...defensiveMatchups.value },
+      // One possession per call in every pacing mode — the auto-flow watcher
+      // continues silently where the pacing wouldn't pause, so timeouts and
+      // coaching edits land at the end of the current play.
+      stop_after_play: true,
     }
 
-    // Timeout armed at this dead ball — the engine burns it (momentum
-    // dampen + energy restore) before simulating the next segment.
-    if (timeoutRequested.value) {
+    // A timeout was taken at this dead ball — the engine burns it (momentum
+    // reset to even + lineup fatigue/energy breather) before simulating the
+    // next segment.
+    if (pendingTimeoutCall.value) {
       adjustments.call_timeout = true
-      timeoutRequested.value = false
+      pendingTimeoutCall.value = false
     }
+
+    // Live-made coaching edits ship with these adjustments — retire the
+    // overlay's "applies at the next break" note.
+    liveEditsPending.value = false
 
     // Add lineup based on whether user is home or away (only if all 5 slots have valid IDs)
     const validLineup = selectedLineup.value.filter(id => id !== null && id !== undefined)
@@ -1553,10 +1598,14 @@ async function continueToNextQuarter() {
         startingHomeScore,
         startingAwayScore,
         breakInfo: result.breakInfo ?? null,
+        // Mid-game reload — keep the momentum rail where it is.
+        preserveMomentum: true,
       })
+      // Auto-flow continues (mid-quarter, no visible pause) resume instantly
+      // so back-to-back plays read as continuous action.
       setTimeout(() => {
         play()
-      }, 500)
+      }, instantPlay ? 0 : 500)
     }
   } catch (err) {
     console.error('Failed to continue game:', err)
@@ -1572,12 +1621,6 @@ async function continueToNextQuarter() {
  * In replay mode, just resumes animation.
  */
 function handleQuarterBreakContinue() {
-  if (showSegmentModal.value) {
-    // Coach & subs sheet opened from a segment pause — close it and resume.
-    showSegmentModal.value = false
-    handleSegmentContinue()
-    return
-  }
   if (isLiveMode.value) {
     continueToNextQuarter()
   } else {
@@ -1595,15 +1638,142 @@ function handleQuarterBreakContinue() {
  */
 function handleSegmentContinue() {
   if (simulating.value) return
+  timeoutActive.value = false // strip Continue during the countdown = Skip
   isSegmentPause.value = false
-  showSegmentModal.value = false
+  showCoachesOverlay.value = false
   continueToNextQuarter()
 }
 
-/** Arm/disarm a timeout for this dead ball (sent on Continue). */
-function toggleTimeoutRequest() {
-  timeoutRequested.value = !timeoutRequested.value
+// ---------------------------------------------------------------------------
+// Timeouts
+// ---------------------------------------------------------------------------
+
+// Timeout can be taken at this boundary: any play end except a completed
+// quarter or mid-free-throw trip, with a timeout left. Deliberately looser
+// than the engine's dead-ball-only `allowTimeout` — every possession is now a
+// real engine boundary (stop_after_play), and `_applyTimeout` itself imposes
+// no dead-ball precondition.
+function canFireTimeoutNow(bi) {
+  if (!bi || bi.quarterComplete) return false
+  if (bi.deadBallType === 'free_throw_pending') return false
+  return (bi.timeoutsRemaining ?? lastKnownTimeouts.value) > 0
 }
+
+// When the TO button is live: at a pause it fires immediately (any play end);
+// mid-play it can always be ARMED — it fires at the end of the current play.
+const timeoutAvailable = computed(() => {
+  if (timeoutActive.value) return false
+  if (isSegmentPause.value || isQuarterBreak.value) {
+    return canFireTimeoutNow(currentBreakInfo.value)
+  }
+  return isLiveMode.value && lastKnownTimeouts.value > 0
+})
+
+/**
+ * TO button (strip + break modal): tap while armed cancels; tap at a pause
+ * starts the timeout sequence immediately; tap mid-play arms it to fire at
+ * the end of the current play.
+ */
+function toggleTimeoutRequest() {
+  if (timeoutActive.value) return
+  if (timeoutRequested.value) {
+    timeoutRequested.value = false
+    return
+  }
+  if (!timeoutAvailable.value) return
+  if (isSegmentPause.value && canFireTimeoutNow(currentBreakInfo.value)) {
+    startTimeoutSequence()
+  } else {
+    timeoutRequested.value = true
+  }
+}
+
+/**
+ * The timeout is taken NOW: players slide off, the court counts down 30s.
+ * The engine burn (call_timeout) rides the next Continue via
+ * pendingTimeoutCall; the count + momentum rail update optimistically and
+ * re-sync from the next segment's breakInfo/possession stamps.
+ */
+function startTimeoutSequence() {
+  timeoutRequested.value = false
+  pendingTimeoutCall.value = true
+  timeoutActive.value = true
+  lastKnownTimeouts.value = Math.max(0, lastKnownTimeouts.value - 1)
+  resetMomentumDisplay()
+  // Audio sequence: whistle NOW (the ref blows it dead — same pool as foul
+  // calls), air horn ~0.5s in, hype music ~3.5s in. The scheduled beats
+  // cancel if the timeout ends before they fire.
+  audioStore.playEventSfx('foul_whistle')
+  _clearTimeoutAudioTimers()
+  timeoutAudioTimers.push(setTimeout(() => audioStore.playEventSfx('timeout_airhorn'), 500))
+  timeoutAudioTimers.push(setTimeout(() => audioStore.startTimeoutMusic(), 3500))
+  timeoutSecondsLeft.value = TIMEOUT_SECONDS
+  _clearTimeoutTimer()
+  timeoutTimer = setInterval(() => {
+    timeoutSecondsLeft.value -= 1
+    if (timeoutSecondsLeft.value <= 0) {
+      onTimeoutComplete()
+    }
+  }, 1000)
+}
+
+function _clearTimeoutTimer() {
+  if (timeoutTimer) {
+    clearInterval(timeoutTimer)
+    timeoutTimer = null
+  }
+}
+
+// Pending timeout-audio beats (air horn / hype music start).
+let timeoutAudioTimers = []
+function _clearTimeoutAudioTimers() {
+  for (const t of timeoutAudioTimers) clearTimeout(t)
+  timeoutAudioTimers = []
+}
+
+// However the timeout ends (expiry, Skip, strip Continue): stop the clock,
+// cancel unfired audio beats, kill the music, and whistle play back in.
+watch(timeoutActive, (active) => {
+  if (active) return
+  _clearTimeoutTimer()
+  _clearTimeoutAudioTimers()
+  audioStore.stopTimeoutMusic()
+  audioStore.playEventSfx('foul_whistle')
+})
+
+/** Countdown expired or Skip tapped — resume play where it left off. */
+function onTimeoutComplete() {
+  if (!timeoutActive.value) return
+  handleSegmentContinue()
+}
+
+// Every possession end is an engine boundary now (stop_after_play). This
+// watcher decides what each boundary becomes, in precedence order:
+//   1. Foul-out → coaches overlay at the subs view (armed TO stays armed).
+//      Skipped in hands-off quarter pacing — the engine's auto-sub stands.
+//   2. Armed timeout → the timeout sequence fires NOW (end of current play).
+//   3. Auto-flow → continue silently through boundaries where the selected
+//      pacing wouldn't pause (quarter: everything mid-quarter; deadBall:
+//      live-ball ends). Clearing isSegmentPause synchronously (pre-render)
+//      keeps the break UI from flashing for a frame.
+watch(isSegmentPause, (paused) => {
+  if (!paused) return
+  const bi = currentBreakInfo.value
+  const pacing = selectedPacing.value
+  if (pacing !== 'quarter' && (bi?.foulOutPlayerIds?.length ?? 0) > 0) {
+    openCoachesSubs()
+    return
+  }
+  if (timeoutRequested.value && canFireTimeoutNow(bi)) {
+    startTimeoutSequence()
+    return
+  }
+  const autoFlow = pacing === 'quarter' || (pacing === 'deadBall' && !bi?.deadBall)
+  if (autoFlow && bi && !bi.quarterComplete && !simulating.value) {
+    isSegmentPause.value = false
+    continueToNextQuarter({ instantPlay: true })
+  }
+})
 
 /** Human copy for why the game stopped (segment break bar + modal title). */
 const breakReasonText = computed(() => {
@@ -1649,7 +1819,7 @@ const fouledOutNames = computed(() => {
 // Coach Overview strip AND the centered stoppage bubble on the court
 // (BasketballCourt's stoppageMode).
 const showBreakControls = computed(() =>
-  isSegmentPause.value && !showSegmentModal.value && !isQuarterBreak.value
+  isSegmentPause.value && !showCoachesOverlay.value && !isQuarterBreak.value && !timeoutActive.value
 )
 
 // The VERIFIED result line for the stoppage bubble. Dead balls use the
@@ -1665,15 +1835,6 @@ const stoppageResultText = computed(() => {
       : base
   }
   return currentPossession.value?.result_text || 'End of play'
-})
-
-// Foul-out at a segment break: surface the subs sheet so the user confirms
-// or overrides the engine's auto-replacement.
-watch(isSegmentPause, (paused) => {
-  if (paused && (currentBreakInfo.value?.foulOutPlayerIds?.length ?? 0) > 0) {
-    showSegmentModal.value = true
-    showSubstitutionsView.value = true
-  }
 })
 
 // ---------------------------------------------------------------------------
@@ -1694,18 +1855,43 @@ const userCoach = computed(() =>
   userIsHome.value ? homeTeamCoach.value : awayTeamCoach.value
 )
 
-/** Overview "Subs" — open the segment sheet straight at the subs view. */
-function openSegmentSubs() {
-  showSubstitutionsView.value = true
-  showSegmentModal.value = true
+/** Open the coaches overlay straight on the Subs tab. */
+function openCoachesSubs() {
+  coachesTab.value = 'subs'
+  showCoachesOverlay.value = true
 }
 
-/** Overview "Adjust" — open the segment sheet at coach settings + matchups. */
-function openSegmentAdjust() {
-  showSubstitutionsView.value = false
-  qbStrategyExpanded.value = true
-  showQbMatchups.value = true
-  showSegmentModal.value = true
+/** Open the coaches overlay on the Settings tab. */
+function openCoachesAdjust() {
+  coachesTab.value = 'settings'
+  showCoachesOverlay.value = true
+}
+
+/** Close the overlay; next open starts back at the Settings tab. */
+function closeCoachesOverlay() {
+  showCoachesOverlay.value = false
+  expandedSwapPlayer.value = null
+  coachesTab.value = 'settings'
+}
+
+// Any coaching edit made from the overlay while the ball is live flips the
+// "applies at the next break" footer note on. Deep: lineup swaps mutate an
+// array slot and the matchup editor emits a fresh map.
+watch([selectedOffense, selectedDefense, defensiveMatchups, selectedLineup], () => {
+  if (showCoachesOverlay.value && !isSegmentPause.value && !isQuarterBreak.value) {
+    liveEditsPending.value = true
+  }
+}, { deep: true })
+
+/** Overlay Continue at a pause — close and resume via the matching path. */
+function handleCoachesOverlayContinue() {
+  if (simulating.value) return
+  closeCoachesOverlay()
+  if (isSegmentPause.value) {
+    handleSegmentContinue()
+  } else {
+    handleQuarterBreakContinue()
+  }
 }
 
 /**
@@ -1915,11 +2101,40 @@ const gameClock = computed(() => {
 // can spotlight both the button and the panel it reveals. (watch is not
 // immediate, so it only fires when an action is requested mid-tour.)
 watch(() => walkthroughStore.requestedAction, (req) => {
-  if (!req || req.view !== 'gamePreview') return
-  if (req.action === 'openSubsDropdown') {
-    showSubsDropdown.value = true
-  } else if (req.action === 'closeSubsDropdown') {
-    showSubsDropdown.value = false
+  if (!req) return
+  if (req.view === 'gamePreview') {
+    if (req.action === 'openSubsDropdown') {
+      showSubsDropdown.value = true
+    } else if (req.action === 'closeSubsDropdown') {
+      showSubsDropdown.value = false
+    }
+  } else if (req.view === 'gameLive') {
+    // Broadcast tour: the coaches-tabs step opens/closes the coaches overlay
+    // (enter is a safety net behind the interactive clipboard tap; leave
+    // also fires on skip, so the overlay never sticks open).
+    if (req.action === 'openCoaches') {
+      openCoachesAdjust()
+    } else if (req.action === 'closeCoaches') {
+      closeCoachesOverlay()
+    }
+  }
+})
+
+// Broadcast tour pause/resume: entering the gameLive tour (first visit or a
+// "?" replay) pauses the animation; when it ends — finished or skipped — play
+// starts again UNLESS the game is parked at a break/timeout/final, where the
+// user resumes via the normal controls.
+watch(() => walkthroughStore.activeKey, (key, prev) => {
+  if (key === 'gameLive') {
+    if (isPlaying.value) pause()
+    return
+  }
+  if (prev === 'gameLive' && !key) {
+    closeCoachesOverlay() // belt & braces alongside the step's leave action
+    if (isLiveMode.value && !gameJustCompleted.value && !isQuarterBreak.value
+        && !isSegmentPause.value && !timeoutActive.value) {
+      play()
+    }
   }
 })
 
@@ -2587,16 +2802,15 @@ function handleSeek(percent) {
   }
 }
 
-// Lock body scroll when quarter break overlay is shown
-watch([isQuarterBreak, showSegmentModal, showAnimationMode], ([isBreak, segModal, isAnimating]) => {
-  if ((isBreak || segModal) && isAnimating) {
+// Lock body scroll only while the quarter-break modal is actually SHOWING.
+// The coaches overlay never locks — it only covers the canvas — including
+// when it temporarily replaces the break modal (quarter break + overlay
+// open), where the page must stay scrollable so live stats remain reachable.
+watch([isQuarterBreak, showCoachesOverlay, showAnimationMode], ([isBreak, coachesOpen, isAnimating]) => {
+  if (isBreak && !coachesOpen && isAnimating) {
     document.body.style.overflow = 'hidden'
   } else {
     document.body.style.overflow = ''
-    // Reset substitutions view when quarter break closes
-    showSubstitutionsView.value = false
-    // Re-collapse the strategy card so the next break opens closed-by-default
-    qbStrategyExpanded.value = false
   }
 })
 
@@ -2613,6 +2827,9 @@ document.addEventListener('visibilitychange', _flushOnHide)
 // Cleanup on unmount
 onUnmounted(() => {
   cleanup()
+  _clearTimeoutTimer()
+  _clearTimeoutAudioTimers()
+  audioStore.stopTimeoutMusic()
   audioStore.stopAllAmbient()
   document.removeEventListener('visibilitychange', _flushOnHide)
   gameStore.flushPendingGameState()
@@ -2820,6 +3037,7 @@ onUnmounted(() => {
                    height of the court column (co-strip top → canvas bottom).
                    User's team is always the top token/fill. -->
               <MomentumRail
+                data-tour="game-live-momentum"
                 :user-momentum="userIsHome ? currentHomeMomentum : currentAwayMomentum"
                 :opp-momentum="userIsHome ? currentAwayMomentum : currentHomeMomentum"
                 :user-color="(userIsHome ? homeTeam : awayTeam)?.primary_color || '#6B7280'"
@@ -2832,6 +3050,7 @@ onUnmounted(() => {
                    canvas width, two thin rows (contextual strip + on-court
                    stamina/matchup minis). -->
               <CoachOverview
+                data-tour="game-live-coach"
                 :coach="userCoach"
                 :campaign-id="campaignId"
                 :team-city="userTeam?.city || ''"
@@ -2839,18 +3058,21 @@ onUnmounted(() => {
                 :team-color="userTeam?.primary_color || '#6B7280'"
                 :offense-label="getOffenseLabel(selectedOffense)"
                 :defense-label="getDefenseLabel(selectedDefense)"
-                :is-stoppage="showBreakControls"
+                :is-stoppage="showBreakControls || timeoutActive"
                 :timeouts-remaining="lastKnownTimeouts"
                 :timeout-armed="timeoutRequested"
-                :allow-timeout="currentBreakInfo?.allowTimeout ?? false"
-                :allow-subs="currentBreakInfo?.allowSubs ?? false"
+                :allow-timeout="timeoutAvailable"
+                :allow-subs="isLiveMode && !gameJustCompleted"
                 :simulating="simulating"
                 @continue="handleSegmentContinue"
                 @toggle-timeout="toggleTimeoutRequest"
-                @open-subs="openSegmentSubs"
-                @open-adjust="openSegmentAdjust"
+                @open-subs="openCoachesSubs"
+                @open-adjust="openCoachesAdjust"
               />
 
+              <!-- The canvas box: positioning anchor so the coaches overlay
+                   spans exactly the court, nothing else. -->
+              <div class="court-canvas-wrap" data-tour="game-live-court">
               <BasketballCourt
                 ref="courtRef"
                 :width="500"
@@ -2875,13 +3097,256 @@ onUnmounted(() => {
                 :stoppage-result="stoppageResultText"
                 :allow-subs="currentBreakInfo?.allowSubs ?? false"
                 :simulating="simulating"
-                @stoppage-subs="openSegmentSubs"
-                @stoppage-adjust="openSegmentAdjust"
+                :timeout-mode="timeoutActive"
+                :timeout-seconds-left="timeoutSecondsLeft"
+                @stoppage-subs="openCoachesSubs"
+                @stoppage-adjust="openCoachesAdjust"
                 @stoppage-continue="handleSegmentContinue"
+                @timeout-complete="onTimeoutComplete"
               />
 
+              <!-- Coaches Overlay: tabbed subs / coach settings / matchups
+                   spanning exactly the court canvas. Openable any time in a
+                   live game — edits ride the next Continue (the engine
+                   applies them at the next segment, i.e. the next available
+                   opportunity). Styled in the co-strip's compact language. -->
+              <Transition name="fade">
+                <div v-if="showCoachesOverlay" class="coaches-overlay" data-tour="game-live-coaches-panel">
+                  <header class="coaches-overlay-header">
+                    <div class="coaches-tabs">
+                      <button class="coaches-tab" :class="{ active: coachesTab === 'settings' }" @click="coachesTab = 'settings'">Settings</button>
+                      <button class="coaches-tab" :class="{ active: coachesTab === 'matchups' }" @click="coachesTab = 'matchups'">Matchups</button>
+                      <button class="coaches-tab" :class="{ active: coachesTab === 'subs' }" @click="coachesTab = 'subs'; expandedSwapPlayer = null">Subs</button>
+                    </div>
+                    <button class="coaches-overlay-close" aria-label="Close" @click="closeCoachesOverlay">
+                      <X :size="14" />
+                    </button>
+                  </header>
+
+                  <!-- Foul-out prompt: engine already auto-subbed a fallback;
+                       user confirms/overrides. -->
+                  <div v-if="fouledOutNames.length" class="qb-foulout-banner coaches-foulout">
+                    <strong>{{ fouledOutNames.join(', ') }}</strong> fouled out —
+                    a replacement was auto-selected. Review your lineup before continuing.
+                  </div>
+
+                  <div class="coaches-overlay-body">
+                    <!-- Settings tab: offense / defense scheme pills -->
+                    <template v-if="coachesTab === 'settings'">
+                      <div class="strategy-row">
+                        <div class="strategy-group">
+                          <span class="strategy-label">Offense</span>
+                          <div class="strategy-pills">
+                            <button
+                              v-for="style in offensiveStyles"
+                              :key="style.value"
+                              class="strategy-pill"
+                              :class="{ active: selectedOffense === style.value }"
+                              @click="selectedOffense = style.value"
+                            >
+                              <span class="strategy-pill-label">{{ style.label }}</span>
+                              <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                            </button>
+                          </div>
+                        </div>
+                        <div class="strategy-group">
+                          <span class="strategy-label">Defense</span>
+                          <div class="strategy-pills">
+                            <button
+                              v-for="style in defensiveStyles"
+                              :key="style.value"
+                              class="strategy-pill"
+                              :class="{ active: selectedDefense === style.value }"
+                              @click="selectedDefense = style.value"
+                            >
+                              <span class="strategy-pill-label">{{ style.label }}</span>
+                              <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+
+                    <!-- Matchups tab: compact swap editor -->
+                    <template v-else-if="coachesTab === 'matchups'">
+                      <DefensiveMatchupEditor
+                        v-model="defensiveMatchups"
+                        :opponent-starters="opponentOffense"
+                        :defenders="userDefenders"
+                        :compact="true"
+                      />
+                    </template>
+
+                    <!-- Subs tab: lineup cards + contextual swap dropdowns -->
+                    <template v-else>
+                      <div class="lineup-cards-section">
+                        <div class="lineup-cards-header">
+                          <span class="lineup-cards-title">
+                            Current Lineup
+                            <span v-if="totalLineupSynergyCount > 0" class="synergy-count-badge">
+                              <Zap :size="11" />{{ totalLineupSynergyCount }}
+                            </span>
+                          </span>
+                          <span class="lineup-cards-hint">Tap swap icon to make changes</span>
+                        </div>
+                        <div class="lineup-cards-grid">
+                          <div
+                            v-for="slot in currentStartersWithStats"
+                            :key="slot.slotPosition"
+                            class="lineup-card"
+                            :class="{
+                              empty: !slot.player,
+                              'dropdown-open': expandedSwapPlayer === slot.slotIndex,
+                              [slot.player ? getRatingClass(slot.player.overall_rating) : '']: !!slot.player
+                            }"
+                            @click="toggleSwapDropdown(slot.slotIndex)"
+                          >
+                            <!-- Empty Slot -->
+                            <template v-if="!slot.player">
+                              <div class="lineup-card-empty">
+                                <span class="slot-position-badge">{{ slot.slotPosition }}</span>
+                                <span class="empty-text">Empty</span>
+                                <!-- Visual affordance only — the whole card is the click target. -->
+                                <button class="swap-btn" tabindex="-1">
+                                  <ArrowUpDown :size="14" />
+                                </button>
+                              </div>
+                            </template>
+
+                            <!-- Filled Slot -->
+                            <template v-else>
+                              <div class="lineup-card-header">
+                                <span class="slot-position-badge" :style="{ backgroundColor: getPositionColor(slot.slotPosition) }">
+                                  {{ slot.slotPosition }}
+                                </span>
+                                <div class="lineup-player-info">
+                                  <div class="lineup-player-name-row">
+                                    <span class="lineup-player-name">{{ slot.player.name }}</span>
+                                    <span class="lineup-fatigue" :style="{ color: getFatigueColor(slot.player.fatigue || 0) }">{{ Math.round(slot.player.fatigue || 0) }}%</span>
+                                  </div>
+                                  <span class="lineup-inline-stats">
+                                    {{ slot.player.points || 0 }}p {{ slot.player.rebounds || 0 }}r {{ slot.player.assists || 0 }}a
+                                  </span>
+                                </div>
+                                <div class="lineup-card-actions">
+                                  <span v-if="getPlayerSynergyCount(slot.player) > 0" class="lineup-synergy-indicator">
+                                    <Zap :size="11" />{{ getPlayerSynergyCount(slot.player) }}
+                                  </span>
+                                  <!-- Shooter mid-FT-trip is locked in (real rule) -->
+                                  <span
+                                    v-if="isLockedFtShooterSlot(slot.slotIndex)"
+                                    class="ft-shooter-lock"
+                                    title="At the line — cannot be substituted until the free throws are complete"
+                                  >
+                                    🏀 At the line
+                                  </span>
+                                  <!-- Visual affordance only — the whole card is the click target. -->
+                                  <button
+                                    v-else
+                                    class="swap-btn"
+                                    :class="{ active: expandedSwapPlayer === slot.slotIndex }"
+                                    tabindex="-1"
+                                  >
+                                    <ArrowUpDown :size="14" />
+                                  </button>
+                                  <span class="lineup-player-ovr">{{ slot.player.overall_rating }}</span>
+                                </div>
+                              </div>
+                            </template>
+
+                            <!-- Swap Dropdown -->
+                            <Transition name="dropdown-slide">
+                              <!-- @click.stop: picks inside the dropdown must not
+                                   bubble to the card and re-toggle it. -->
+                              <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown" @click.stop>
+                                <div class="swap-dropdown-header">
+                                  {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
+                                </div>
+                                <div class="swap-dropdown-list">
+                                  <!-- Available bench players -->
+                                  <button
+                                    v-for="candidate in getSwapCandidates(slot.slotPosition, slot.slotIndex)"
+                                    :key="candidate.player_id"
+                                    class="swap-option"
+                                    :class="{
+                                      injured: candidate.is_injured || candidate.isInjured,
+                                      'has-synergy': getCandidateSynergyCount(candidate, slot.slotIndex) > 0
+                                    }"
+                                    @click="swapPlayerIn(slot.slotIndex, candidate.player_id)"
+                                  >
+                                    <ArrowUpDown :size="12" class="swap-option-icon" />
+                                    <span
+                                      class="swap-option-pos"
+                                      :style="{ backgroundColor: getPositionColor(candidate.position) }"
+                                    >
+                                      {{ candidate.position }}
+                                    </span>
+                                    <div class="swap-option-name-row">
+                                      <span class="swap-option-name">{{ candidate.name }}</span>
+                                      <span class="swap-option-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ Math.round(candidate.fatigue || 0) }}%</span>
+                                    </div>
+                                    <span class="swap-option-stats">
+                                      {{ candidate.points || 0 }}p {{ candidate.rebounds || 0 }}r
+                                    </span>
+                                    <span v-if="getCandidateSynergyCount(candidate, slot.slotIndex) > 0" class="swap-synergy-badge">
+                                      <Zap :size="10" />{{ getCandidateSynergyCount(candidate, slot.slotIndex) }}
+                                    </span>
+                                    <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
+                                  </button>
+                                  <div v-if="getSwapCandidates(slot.slotPosition, slot.slotIndex).length === 0" class="swap-empty">
+                                    No eligible players
+                                  </div>
+                                </div>
+                              </div>
+                            </Transition>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+
+                  <footer class="coaches-overlay-actions">
+                    <span v-if="timeoutActive" class="coaches-timeout-status">
+                      Timeout · 0:{{ String(Math.max(0, timeoutSecondsLeft)).padStart(2, '0') }}
+                    </span>
+                    <span
+                      v-if="liveEditsPending && !(isSegmentPause || isQuarterBreak)"
+                      class="coaches-overlay-note"
+                    >
+                      Changes take effect after the current play
+                    </span>
+                    <!-- Quarter break: closing returns to the break recap modal
+                         (it re-shows itself when the overlay drops). -->
+                    <button
+                      v-if="isQuarterBreak"
+                      class="coaches-overlay-done"
+                      @click="closeCoachesOverlay"
+                    >
+                      ◂ Back to Break
+                    </button>
+                    <button
+                      v-if="isSegmentPause || isQuarterBreak"
+                      class="coaches-overlay-continue"
+                      :disabled="simulating"
+                      @click="handleCoachesOverlayContinue"
+                    >
+                      <span v-if="simulating" class="qb-btn-loading"></span>
+                      <span v-else>Continue ▸</span>
+                    </button>
+                    <button
+                      v-if="!isSegmentPause && !isQuarterBreak"
+                      class="coaches-overlay-done"
+                      @click="closeCoachesOverlay"
+                    >
+                      Done
+                    </button>
+                  </footer>
+                </div>
+              </Transition>
+              </div><!-- .court-canvas-wrap -->
+
               <!-- Minimal playback controls — a compact strip directly under the court. -->
-              <div class="court-play-controls court-play-controls-strip">
+              <div class="court-play-controls court-play-controls-strip" data-tour="game-live-controls">
                 <button
                   class="cpc-btn cpc-circle"
                   @click="togglePlayPause"
@@ -2908,15 +3373,15 @@ onUnmounted(() => {
                 </button>
               </div>
 
-              <!-- Quarter Break / Game Complete Overlay (also reused as the
-                   Coach & Subs sheet at segmented dead-ball pauses) -->
+              <!-- Quarter Break / Game Complete Overlay (break info only —
+                   coaching tools live in the coaches overlay above) -->
               <Transition name="fade">
-                <div v-if="isQuarterBreak || showSegmentModal" class="qb-modal-overlay">
+                <div v-if="isQuarterBreak && !showCoachesOverlay" class="qb-modal-overlay">
                   <div class="qb-modal-container">
                     <!-- Header -->
-                    <header class="qb-modal-header" :class="{ 'game-complete-header': !showSegmentModal && (gameJustCompleted || completedQuarter >= 4), 'qb-header-with-action': showSegmentModal || !(gameJustCompleted || completedQuarter >= 4) }">
+                    <header class="qb-modal-header" :class="{ 'game-complete-header': gameJustCompleted || completedQuarter >= 4, 'qb-header-with-action': !(gameJustCompleted || completedQuarter >= 4) }">
                       <!-- Game Complete Header (use completedQuarter >= 4 as fallback) -->
-                      <template v-if="!showSegmentModal && (gameJustCompleted || completedQuarter >= 4)">
+                      <template v-if="gameJustCompleted || completedQuarter >= 4">
                         <h2 class="qb-modal-title game-complete">Final</h2>
                         <button class="qb-header-btn" @click="viewBoxScore">
                           View Box Score
@@ -2924,9 +3389,9 @@ onUnmounted(() => {
                       </template>
                       <!-- Quarter Break Header -->
                       <template v-else>
-                        <h2 class="qb-modal-title">{{ showSegmentModal ? (breakReasonText || 'Dead Ball') : 'End of Q' + completedQuarter }}</h2>
+                        <h2 class="qb-modal-title">{{ 'End of Q' + completedQuarter }}</h2>
                         <button
-                          v-if="isLiveMode && !showSubstitutionsView"
+                          v-if="isLiveMode"
                           class="qb-header-continue-btn"
                           :disabled="simulating"
                           @click="handleQuarterBreakContinue"
@@ -2942,15 +3407,8 @@ onUnmounted(() => {
 
                     <!-- Content -->
                     <main class="qb-modal-content">
-                      <!-- Foul-out prompt (segmented pacing): engine already
-                           auto-subbed a fallback; user confirms/overrides. -->
-                      <div v-if="showSegmentModal && fouledOutNames.length" class="qb-foulout-banner">
-                        <strong>{{ fouledOutNames.join(', ') }}</strong> fouled out —
-                        a replacement was auto-selected. Review your lineup before continuing.
-                      </div>
-
-                      <!-- Score Display - Cosmic Theme (hidden in substitutions view) -->
-                      <div v-show="!showSubstitutionsView" class="qb-score-card card-cosmic">
+                      <!-- Score Display - Cosmic Theme -->
+                      <div class="qb-score-card card-cosmic">
                         <div class="qb-matchup">
                           <!-- Away Team -->
                           <div class="qb-matchup-team">
@@ -2992,11 +3450,10 @@ onUnmounted(() => {
                       </div>
 
                       <!-- Top Players (per team) — quick read of who's been
-                           carrying the night. Hidden in substitutions view
-                           and at game-complete to avoid duplicating the
-                           postgame leaders panel. -->
+                           carrying the night. Hidden at game-complete to
+                           avoid duplicating the postgame leaders panel. -->
                       <div
-                        v-if="!showSubstitutionsView && !gameJustCompleted && completedQuarter < 4 && (topAwayPlayer || topHomePlayer)"
+                        v-if="!gameJustCompleted && completedQuarter < 4 && (topAwayPlayer || topHomePlayer)"
                         class="qb-top-players-card"
                       >
                         <div class="qb-top-players-label">Top Performers</div>
@@ -3040,250 +3497,29 @@ onUnmounted(() => {
                         </div>
                       </div>
 
-                      <!-- Coaching Adjustments (only in live mode during quarter breaks, not game complete) -->
+                      <!-- Coaching Adjustments — the tools now live in the
+                           coaches overlay; this swaps the modal for it (the
+                           modal returns when the overlay closes). -->
                       <div v-if="isLiveMode && !gameJustCompleted && completedQuarter < 4" class="qb-coaching-section">
-                        <!-- Main View -->
-                        <template v-if="!showSubstitutionsView">
-                          <!-- Strategy Settings - collapsible (closed by default) -->
-                          <div class="qb-strategy-card" :class="{ 'is-collapsed': !qbStrategyExpanded }">
-                            <button
-                              type="button"
-                              class="qb-strategy-toggle"
-                              :aria-expanded="qbStrategyExpanded"
-                              @click="qbStrategyExpanded = !qbStrategyExpanded"
-                            >
-                              <span class="qb-strategy-toggle-label">Coach Settings</span>
-                              <ChevronDown
-                                :size="18"
-                                class="qb-strategy-chevron"
-                                :class="{ 'is-open': qbStrategyExpanded }"
-                              />
-                            </button>
-                            <div v-show="qbStrategyExpanded" class="strategy-row">
-                              <div class="strategy-group">
-                                <span class="strategy-label">Offense</span>
-                                <div class="strategy-pills">
-                                  <button
-                                    v-for="style in offensiveStyles"
-                                    :key="style.value"
-                                    class="strategy-pill"
-                                    :class="{ active: selectedOffense === style.value }"
-                                    @click="selectedOffense = style.value"
-                                  >
-                                    <span class="strategy-pill-label">{{ style.label }}</span>
-                                    <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
-                                  </button>
-                                </div>
-                              </div>
-                              <div class="strategy-group">
-                                <span class="strategy-label">Defense</span>
-                                <div class="strategy-pills">
-                                  <button
-                                    v-for="style in defensiveStyles"
-                                    :key="style.value"
-                                    class="strategy-pill"
-                                    :class="{ active: selectedDefense === style.value }"
-                                    @click="selectedDefense = style.value"
-                                  >
-                                    <span class="strategy-pill-label">{{ style.label }}</span>
-                                    <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
-                                  </button>
-                                </div>
-                              </div>
+                        <button
+                          class="qb-subs-btn"
+                          @click="openCoachesAdjust"
+                        >
+                          <Users :size="18" />
+                          <span>Subs & Adjustments</span>
+                        </button>
 
-                              <!-- Defensive Matchups (compact swap editor) -->
-                              <div class="strategy-group">
-                                <button type="button" class="matchup-disclosure" @click="showQbMatchups = !showQbMatchups">
-                                  <span class="strategy-label">Matchups</span>
-                                  <span class="matchup-disclosure-icon">{{ showQbMatchups ? '▴' : '▾' }}</span>
-                                </button>
-                                <DefensiveMatchupEditor
-                                  v-if="showQbMatchups"
-                                  v-model="defensiveMatchups"
-                                  :opponent-starters="opponentOffense"
-                                  :defenders="userDefenders"
-                                  :compact="true"
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          <!-- Timeout (segmented dead balls only) -->
-                          <button
-                            v-if="showSegmentModal && (currentBreakInfo?.allowTimeout || timeoutRequested)"
-                            class="qb-subs-btn segment-timeout-btn"
-                            :class="{ 'timeout-armed': timeoutRequested }"
-                            @click="toggleTimeoutRequest"
-                          >
-                            <span>{{ timeoutRequested ? 'Timeout Armed — tap to cancel' : `Call Timeout (${currentBreakInfo?.timeoutsRemaining ?? 0} left)` }}</span>
-                          </button>
-
-                          <!-- Substitutions Button -->
-                          <button
-                            class="qb-subs-btn"
-                            @click="showSubstitutionsView = true"
-                          >
-                            <Users :size="18" />
-                            <span>Substitutions</span>
-                          </button>
-
-                          <button
-                            class="qb-sim-to-end-btn"
-                            :disabled="simulating"
-                            @click="handleSimToEnd"
-                          >
-                            <span v-if="simulating" class="qb-btn-loading"></span>
-                            <template v-else>
-                              <FastForward :size="20" />
-                              <span>Sim to End</span>
-                            </template>
-                          </button>
-                        </template>
-
-                        <!-- Substitutions View -->
-                        <template v-else>
-                          <!-- Header Row: Back + Continue -->
-                          <div class="subs-header-row">
-                            <button
-                              class="qb-back-btn"
-                              @click="showSubstitutionsView = false; expandedSwapPlayer = null"
-                            >
-                              <ArrowLeft :size="18" />
-                              <span>Back</span>
-                            </button>
-                            <button
-                              class="qb-continue-btn subs-continue-btn"
-                              :disabled="simulating"
-                              @click="handleQuarterBreakContinue"
-                            >
-                              <span v-if="simulating" class="qb-btn-loading"></span>
-                              <template v-else>
-                                <ChevronRight :size="18" />
-                                <span>Continue</span>
-                              </template>
-                            </button>
-                          </div>
-
-                          <!-- Lineup Cards -->
-                          <div class="lineup-cards-section">
-                            <div class="lineup-cards-header">
-                              <span class="lineup-cards-title">
-                                Current Lineup
-                                <span v-if="totalLineupSynergyCount > 0" class="synergy-count-badge">
-                                  <Zap :size="11" />{{ totalLineupSynergyCount }}
-                                </span>
-                              </span>
-                              <span class="lineup-cards-hint">Tap swap icon to make changes</span>
-                            </div>
-                            <div class="lineup-cards-grid">
-                              <div
-                                v-for="slot in currentStartersWithStats"
-                                :key="slot.slotPosition"
-                                class="lineup-card"
-                                :class="{
-                                  empty: !slot.player,
-                                  'dropdown-open': expandedSwapPlayer === slot.slotIndex,
-                                  [slot.player ? getRatingClass(slot.player.overall_rating) : '']: !!slot.player
-                                }"
-                              >
-                                <!-- Empty Slot -->
-                                <template v-if="!slot.player">
-                                  <div class="lineup-card-empty">
-                                    <span class="slot-position-badge">{{ slot.slotPosition }}</span>
-                                    <span class="empty-text">Empty</span>
-                                    <button class="swap-btn" @click="toggleSwapDropdown(slot.slotIndex)">
-                                      <ArrowUpDown :size="14" />
-                                    </button>
-                                  </div>
-                                </template>
-
-                                <!-- Filled Slot -->
-                                <template v-else>
-                                  <div class="lineup-card-header">
-                                    <span class="slot-position-badge" :style="{ backgroundColor: getPositionColor(slot.slotPosition) }">
-                                      {{ slot.slotPosition }}
-                                    </span>
-                                    <div class="lineup-player-info">
-                                      <div class="lineup-player-name-row">
-                                        <span class="lineup-player-name">{{ slot.player.name }}</span>
-                                        <span class="lineup-fatigue" :style="{ color: getFatigueColor(slot.player.fatigue || 0) }">{{ Math.round(slot.player.fatigue || 0) }}%</span>
-                                      </div>
-                                      <span class="lineup-inline-stats">
-                                        {{ slot.player.points || 0 }}p {{ slot.player.rebounds || 0 }}r {{ slot.player.assists || 0 }}a
-                                      </span>
-                                    </div>
-                                    <div class="lineup-card-actions">
-                                      <span v-if="getPlayerSynergyCount(slot.player) > 0" class="lineup-synergy-indicator">
-                                        <Zap :size="11" />{{ getPlayerSynergyCount(slot.player) }}
-                                      </span>
-                                      <!-- Shooter mid-FT-trip is locked in (real rule) -->
-                                      <span
-                                        v-if="isLockedFtShooterSlot(slot.slotIndex)"
-                                        class="ft-shooter-lock"
-                                        title="At the line — cannot be substituted until the free throws are complete"
-                                      >
-                                        🏀 At the line
-                                      </span>
-                                      <button
-                                        v-else
-                                        class="swap-btn"
-                                        :class="{ active: expandedSwapPlayer === slot.slotIndex }"
-                                        @click="toggleSwapDropdown(slot.slotIndex)"
-                                      >
-                                        <ArrowUpDown :size="14" />
-                                      </button>
-                                      <span class="lineup-player-ovr">{{ slot.player.overall_rating }}</span>
-                                    </div>
-                                  </div>
-                                </template>
-
-                                <!-- Swap Dropdown -->
-                                <Transition name="dropdown-slide">
-                                  <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown">
-                                    <div class="swap-dropdown-header">
-                                      {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
-                                    </div>
-                                    <div class="swap-dropdown-list">
-                                      <!-- Available bench players -->
-                                      <button
-                                        v-for="candidate in getSwapCandidates(slot.slotPosition, slot.slotIndex)"
-                                        :key="candidate.player_id"
-                                        class="swap-option"
-                                        :class="{
-                                          injured: candidate.is_injured || candidate.isInjured,
-                                          'has-synergy': getCandidateSynergyCount(candidate, slot.slotIndex) > 0
-                                        }"
-                                        @click="swapPlayerIn(slot.slotIndex, candidate.player_id)"
-                                      >
-                                        <ArrowUpDown :size="12" class="swap-option-icon" />
-                                        <span
-                                          class="swap-option-pos"
-                                          :style="{ backgroundColor: getPositionColor(candidate.position) }"
-                                        >
-                                          {{ candidate.position }}
-                                        </span>
-                                        <div class="swap-option-name-row">
-                                          <span class="swap-option-name">{{ candidate.name }}</span>
-                                          <span class="swap-option-fatigue" :style="{ color: getFatigueColor(candidate.fatigue || 0) }">{{ Math.round(candidate.fatigue || 0) }}%</span>
-                                        </div>
-                                        <span class="swap-option-stats">
-                                          {{ candidate.points || 0 }}p {{ candidate.rebounds || 0 }}r
-                                        </span>
-                                        <span v-if="getCandidateSynergyCount(candidate, slot.slotIndex) > 0" class="swap-synergy-badge">
-                                          <Zap :size="10" />{{ getCandidateSynergyCount(candidate, slot.slotIndex) }}
-                                        </span>
-                                        <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
-                                      </button>
-                                      <div v-if="getSwapCandidates(slot.slotPosition, slot.slotIndex).length === 0" class="swap-empty">
-                                        No eligible players
-                                      </div>
-                                    </div>
-                                  </div>
-                                </Transition>
-                              </div>
-                            </div>
-                          </div>
-                        </template>
+                        <button
+                          class="qb-sim-to-end-btn"
+                          :disabled="simulating"
+                          @click="handleSimToEnd"
+                        >
+                          <span v-if="simulating" class="qb-btn-loading"></span>
+                          <template v-else>
+                            <FastForward :size="20" />
+                            <span>Sim to End</span>
+                          </template>
+                        </button>
                       </div>
 
                       <!-- Replay mode: show continue button (only for Q1-Q3) -->
@@ -3319,7 +3555,7 @@ onUnmounted(() => {
               </div>
 
               <!-- Live Stats Panel -->
-              <div class="live-stats-panel">
+              <div class="live-stats-panel" data-tour="game-live-stats">
                 <div class="live-stats-grid">
                   <!-- Away Team Stats -->
                   <div class="live-stats-team">
@@ -3855,7 +4091,7 @@ onUnmounted(() => {
                     <!-- Pacing: how often the played game pauses for input.
                          Changeable any time from this screen — for a game in
                          progress the new mode takes effect on resume. -->
-                    <div class="strategy-group">
+                    <div class="strategy-group" data-tour="game-pacing">
                       <span class="strategy-label">Pacing</span>
                       <div class="strategy-pills">
                         <button
@@ -4789,6 +5025,11 @@ onUnmounted(() => {
         </div>
       </Transition>
     </Teleport>
+
+    <WalkthroughReplayButton
+      :walkthrough-key="replayTourKey"
+      :class="{ 'wt-above-pregame-cta': replayTourKey === 'gamePreview' }"
+    />
   </div>
 </template>
 
@@ -5679,6 +5920,20 @@ onUnmounted(() => {
   transform: translateY(-1px);
 }
 
+/* Pre-game, the fixed full-width START button owns the bottom band on mobile —
+   lift the walkthrough "?" clear of it. Compound selector out-specifies the
+   component's own scoped `.wt-replay-page` rule. */
+.wt-replay-btn.wt-above-pregame-cta {
+  bottom: calc(70px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 76px);
+}
+
+@media (min-width: 1024px) {
+  /* Desktop pins the START CTA bottom-right, so the corner is free again. */
+  .wt-replay-btn.wt-above-pregame-cta {
+    bottom: 16px;
+  }
+}
+
 @media (min-width: 1024px) {
   .qb-continue-btn.pregame-play-btn {
     left: auto;
@@ -5770,15 +6025,308 @@ onUnmounted(() => {
   color: currentColor;
 }
 
-/* ---- Segmented pacing: timeout/foul-out affordances ---- */
-/* The break actions now live in the CoachOverview component (contextual
-   actions block); only the segment-sheet styles remain here. */
-.segment-timeout-btn.timeout-armed {
-  background: rgba(255, 209, 102, 0.2);
-  border-color: #ffd166;
-  color: #ffd166;
+/* ---- Coaches overlay: subs/settings/matchups over the court. Same dark
+   translucent family as the stoppage/timeout bubbles, sized to the court
+   column so the game stays (dimly) visible beneath. ---- */
+/* Positioning anchor sized exactly to the court container's box (desktop
+   500-wide canvas; mobile the rotated 300x500 inline-styled box). */
+.court-canvas-wrap {
+  position: relative;
+  width: fit-content;
 }
 
+.coaches-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20; /* above the court's internal overlays (z ≤ 11) */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px; /* matches .basketball-court-container */
+  background: rgba(10, 12, 18, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-sizing: border-box;
+  width: 75%;
+  height: 85%;
+  margin: auto;
+}
+
+.coaches-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Tab pills — co-chip family: tiny bold uppercase, coral active accent. */
+.coaches-tabs {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.coaches-tab {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #8b93a7;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.coaches-tab:hover {
+  color: #e6e9f0;
+}
+
+.coaches-tab.active {
+  background: rgba(239, 106, 79, 0.16);
+  border-color: rgba(239, 106, 79, 0.45);
+  color: #fff;
+}
+
+/* Live timeout status — left side of the overlay footer; armed-TO coral,
+   tabular clock, sized to the tab pills. (Never shows alongside the
+   live-edits note: that one is hidden at pauses.) */
+.coaches-timeout-status {
+  margin-right: auto;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  background: rgba(239, 106, 79, 0.16);
+  border: 1px solid rgba(239, 106, 79, 0.45);
+  color: #fff;
+  white-space: nowrap;
+}
+
+.coaches-overlay-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e6e9f0;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.coaches-overlay-close:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.coaches-overlay-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  margin-top: 18px;
+  margin-bottom: 12px;
+}
+
+.coaches-overlay-body::-webkit-scrollbar {
+  display: none;
+}
+
+.coaches-overlay-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+/* Live-edit footer note — co-strip muted micro-type; nudged left so the
+   Done button keeps the right edge. */
+.coaches-overlay-note {
+  margin-right: auto;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8b93a7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.coaches-overlay-continue,
+.coaches-overlay-done {
+  padding: 3px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e6e9f0;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.coaches-overlay-done:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.coaches-overlay-continue {
+  background: #ef6a4f;
+  border-color: transparent;
+  color: #fff;
+}
+
+.coaches-overlay-continue:hover:not(:disabled) {
+  background: #f4795f;
+}
+
+.coaches-overlay-continue:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+/* ---- Coaches overlay content crunch: same element structure as the old
+   quarter-break tools, resized to the co-strip's compact type scale. All
+   scoped under .coaches-overlay so the base classes used elsewhere
+   (pregame card, etc.) are untouched. ---- */
+.coaches-overlay .strategy-row {
+  gap: 6px;
+}
+
+.coaches-overlay .strategy-label {
+  font-size: 9px;
+}
+
+.coaches-overlay .strategy-pill {
+  padding: 3px 7px;
+}
+
+.coaches-overlay .strategy-pill-label {
+  font-size: 9px;
+}
+
+.coaches-overlay .strategy-pill-fit {
+  font-size: 8px;
+}
+
+.coaches-overlay .lineup-cards-section {
+  gap: 4px;
+}
+
+.coaches-overlay .lineup-cards-title {
+  font-size: 10px;
+}
+
+.coaches-overlay .lineup-cards-hint {
+  font-size: 8.5px;
+}
+
+.coaches-overlay .lineup-cards-grid {
+  gap: 4px;
+}
+
+.coaches-overlay .lineup-card {
+  padding: 4px 6px;
+  border-radius: 7px;
+  cursor: pointer; /* whole card opens the swap dropdown */
+}
+
+.coaches-overlay .lineup-card-header {
+  padding: 6px;
+}
+
+.coaches-overlay .slot-position-badge {
+  font-size: 8px;
+}
+
+.coaches-overlay .lineup-player-name {
+  font-size: 10px;
+}
+
+.coaches-overlay .lineup-fatigue {
+  font-size: 9px;
+}
+
+.coaches-overlay .lineup-inline-stats {
+  font-size: 8.5px;
+}
+
+.coaches-overlay .lineup-player-ovr {
+  font-size: 11px;
+}
+
+.coaches-overlay .swap-btn {
+  width: 20px;
+  height: 20px;
+}
+
+.coaches-overlay .swap-dropdown-header {
+  font-size: 9px;
+  padding: 4px 6px;
+}
+
+.coaches-overlay .swap-option {
+  padding: 3px 6px;
+}
+
+.coaches-overlay .swap-option-name {
+  font-size: 10px;
+}
+
+.coaches-overlay .swap-option-fatigue,
+.coaches-overlay .swap-option-stats {
+  font-size: 8.5px;
+}
+
+.coaches-overlay .swap-option-ovr {
+  font-size: 10px;
+}
+
+/* Matchup editor: crunch the compact variant a notch further. */
+.coaches-overlay :deep(.me-headers) {
+  font-size: 8.5px;
+}
+
+.coaches-overlay :deep(.me-row) {
+  padding: 4px 6px;
+}
+
+.coaches-overlay :deep(.me-name) {
+  font-size: 10px;
+}
+
+.coaches-overlay :deep(.me-pick) {
+  font-size: 10px;
+  padding: 3px 7px 3px 3px;
+}
+
+.coaches-overlay .qb-foulout-banner.coaches-foulout {
+  padding: 5px 8px;
+  font-size: 9.5px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+/* ---- Segmented pacing: foul-out affordances ---- */
 .ft-shooter-lock {
   font-size: 0.62rem;
   font-weight: 700;
@@ -6649,11 +7197,17 @@ onUnmounted(() => {
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--color-text-primary);
+  /* Single line always — long names ellipsize like the swap-dropdown's. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .lineup-fatigue {
   font-size: 0.7rem;
   font-weight: 600;
+  flex-shrink: 0; /* the % never collapses; the name ellipsizes instead */
 }
 
 .lineup-inline-stats {
@@ -7556,7 +8110,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: row;
   align-items: stretch; /* momentum rail stretches co-strip top → canvas bottom */
-  gap: 10px;
 }
 
 /* The co-strip + canvas stack; the momentum rail sits to its left. */
@@ -8167,6 +8720,11 @@ onUnmounted(() => {
   .court-in-broadcast,
   .court-in-replay {
     padding: 0;
+  }
+
+  .coaches-overlay {
+    width: 95%;
+    height: 75%;
   }
 
   .live-stats-panel {

@@ -107,6 +107,14 @@ export function usePlayAnimation() {
     if (boxScore) displayedBoxScore.value = boxScore
   }
 
+  // Snap the momentum rail back to even — called when a timeout is taken so
+  // the reset reads immediately, before the engine's 50/50 stamps arrive on
+  // the next segment's possessions.
+  function resetMomentumDisplay() {
+    displayedHomeMomentum.value = 50
+    displayedAwayMomentum.value = 50
+  }
+
   // Watch for possession changes and update scores with delay to sync with +2/+3 animation
   watch(currentPossessionIndex, (newIndex, oldIndex) => {
     // Clear any pending score update
@@ -449,9 +457,14 @@ export function usePlayAnimation() {
       displayedHomeScore.value = 0
       displayedAwayScore.value = 0
     }
-    // Reset momentum to neutral on new animation load.
-    displayedHomeMomentum.value = 50
-    displayedAwayMomentum.value = 50
+    // Reset momentum to neutral on new animation load. Mid-game segment
+    // loads (possession-granular pacing reloads every play) pass
+    // preserveMomentum so the rail carries across plays — the engine's
+    // per-possession stamps keep it in sync.
+    if (!options.preserveMomentum) {
+      displayedHomeMomentum.value = 50
+      displayedAwayMomentum.value = 50
+    }
 
     // Initialize box score from starting box score or first possession
     if (options.startingBoxScore) {
@@ -739,6 +752,7 @@ export function usePlayAnimation() {
     seekTo,
     continueAfterQuarterBreak,
     setDisplayedScores,
+    resetMomentumDisplay,
     cleanup
   }
 }

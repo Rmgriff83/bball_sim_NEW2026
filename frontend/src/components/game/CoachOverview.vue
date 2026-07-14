@@ -13,7 +13,8 @@
         <span class="co-coach-name">{{ coachLastName }}</span>
         <button
           class="co-action-btn co-clipboard-btn"
-          :disabled="!isStoppage || !allowSubs"
+          data-tour="game-live-clipboard"
+          :disabled="!allowSubs"
           title="Subs & adjustments"
           aria-label="Subs & adjustments"
           @click="emit('open-adjust')"
@@ -27,8 +28,8 @@
             <path d="m17.5 12-4 4" />
           </svg>
         </button>
-        <span class="co-chip co-chip-offense">{{ offenseLabel }}</span>
-        <span class="co-chip co-chip-defense">{{ defenseLabel }}</span>
+        <span class="co-chip co-chip-offense">{{ offenseChipLabel }}</span>
+        <span class="co-chip co-chip-defense">{{ defenseChipLabel }}</span>
       </div>
 
       <span class="co-spacer"></span>
@@ -36,6 +37,7 @@
       <div class="co-break-actions">
         <button
           class="co-timeout-btn"
+          data-tour="game-live-timeout"
           :class="{ 'is-ready': timeoutReady && !timeoutArmed, 'is-armed': timeoutArmed }"
           :disabled="!timeoutReady && !timeoutArmed"
           :title="timeoutTitle"
@@ -87,6 +89,17 @@ const coachLastName = computed(() => {
   return parts[parts.length - 1]
 })
 
+// Chip-only label compaction — the strip chips are tiny, so long scheme names
+// shorten HERE ONLY (pills elsewhere keep the full labels):
+// "Isolation Heavy" → "Iso Heavy"; zone defenses drop the word ("Zone 2-3" → "2-3").
+const offenseChipLabel = computed(() =>
+  props.offenseLabel === 'Isolation Heavy' ? 'Iso Heavy' : props.offenseLabel
+)
+
+const defenseChipLabel = computed(() =>
+  props.defenseLabel.replace(/^Zone\s+/i, '')
+)
+
 // Coach overall — tolerate every save shape (snake_case, camelCase, or the
 // authored `overall` on data/coaches.js). Null when unknown so we hide the badge.
 const coachOverall = computed(() => {
@@ -94,13 +107,16 @@ const coachOverall = computed(() => {
   return c?.overall_rating ?? c?.overallRating ?? c?.overall ?? null
 })
 
-// Timeouts can only be taken on dead balls; the pill dims while live.
-const timeoutReady = computed(() => props.isStoppage && props.allowTimeout)
+// GameView encodes full availability in allowTimeout: at a dead ball it's the
+// engine's gate (timeout fires immediately); mid-play it means "can be armed
+// to fire at the next dead ball". The pill dims when neither applies.
+const timeoutReady = computed(() => props.allowTimeout)
 
 const timeoutTitle = computed(() => {
-  if (props.timeoutArmed) return 'Timeout armed — applies on continue. Tap to cancel.'
+  if (props.timeoutArmed) return 'Timeout armed — will be called at the next dead ball. Tap to cancel.'
+  if (timeoutReady.value && !props.isStoppage) return 'Call a timeout at the next dead ball'
   if (timeoutReady.value) return 'Call a timeout'
-  return 'Timeouts can only be called at dead balls'
+  return 'No timeout available right now'
 })
 </script>
 
@@ -327,12 +343,6 @@ const timeoutTitle = computed(() => {
 }
 
 @media (max-width: 620px){
-  .co-cluster {
-    grid-template-areas:
-      "avatar name to"
-      "avatar name to"
-      "off def to";
-  }
   .co-coach-name {
     margin-top: 0;
   }

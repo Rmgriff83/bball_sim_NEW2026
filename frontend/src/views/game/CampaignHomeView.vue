@@ -15,6 +15,7 @@ import { useFinanceStore } from '@/stores/finance'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { LoadingSpinner, BaseModal, StandardModal, BaseButton } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
@@ -1123,6 +1124,15 @@ onMounted(async () => {
 //     beneath/over the modal instead of waiting for it to close.
 // The watch on `showAllStarModal` below re-runs this when the modal
 // dismisses so the tour fires immediately on close instead of being lost.
+// Replay key for the "?" button — mirrors which tour auto-fires in each phase:
+// the offseason hub tour pre-FA, the free-agency tour mid-FA, otherwise the
+// main campaign-home tour.
+const replayTourKey = computed(() => {
+  if (freeAgencyNotStarted.value) return 'campaignOffseason'
+  if (isFreeAgencyActive.value) return 'freeAgency'
+  return 'campaignHome'
+})
+
 function maybeStartOffseasonTour() {
   if (!isOffseason.value || !freeAgencyNotStarted.value) return
   // Don't start the tour while any blocking offseason popup is still open — it
@@ -4697,6 +4707,8 @@ function handleCloseSimulateModal() {
       @purchase-upgrade-point="handleModalPurchaseUpgradePoint"
       @hold-coach-meeting="handleModalHoldCoachMeeting"
     />
+
+    <WalkthroughReplayButton :walkthrough-key="replayTourKey" />
   </div>
 </template>
 

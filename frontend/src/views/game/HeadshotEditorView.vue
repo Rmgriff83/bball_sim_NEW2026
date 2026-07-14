@@ -13,6 +13,7 @@ import { PERSONNEL_POOL_KEY, PERSONNEL_SETTINGS_KEY } from '@/engine/data/person
 import { useSyncStore } from '@/stores/sync'
 import { useTeamStore } from '@/stores/team'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
 import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
@@ -657,6 +658,8 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         </div>
       </template>
     </BaseModal>
+
+    <WalkthroughReplayButton walkthrough-key="headshotEditor" />
   </div>
 </template>
 

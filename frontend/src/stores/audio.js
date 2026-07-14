@@ -5,6 +5,7 @@ import { UI_SOUNDS } from '@/audio/sounds'
 import { MUSIC, GAME_SFX } from '@/audio/tracks'
 import EVENT_SFX from '@/audio/eventSfx'
 import AMBIENT_SFX from '@/audio/ambientSfx'
+import { TIMEOUT_MUSIC } from '@/audio/timeoutMusic'
 
 // Public audio API for the app. Holds the user preferences (enabled + volume,
 // persisted to localStorage) and delegates actual sound production to the
@@ -40,7 +41,10 @@ export const useAudioStore = defineStore('audio', () => {
   function toggleGameMuted() {
     gameMuted.value = !gameMuted.value
     localStorage.setItem(STORAGE_GAME_MUTED, String(gameMuted.value))
-    if (gameMuted.value) stopAllAmbient()
+    if (gameMuted.value) {
+      stopAllAmbient()
+      stopTimeoutMusic()
+    }
     return gameMuted.value
   }
 
@@ -58,6 +62,7 @@ export const useAudioStore = defineStore('audio', () => {
     if (!enabled.value) {
       stopMusic()
       stopAllAmbient()
+      stopTimeoutMusic()
     }
   }
 
@@ -175,6 +180,27 @@ export const useAudioStore = defineStore('audio', () => {
     engine.playSample(url, { volume: poolDef.volume ?? 1 })
   }
 
+  // ---- Timeout hype music ----
+  // One random track from the pool (audio/timeoutMusic.js), played ONCE (no
+  // loop — a track shorter than the clock just ends); GameView starts it
+  // ~3.5s into the timeout and stops it the moment play resumes. Gated like
+  // game SFX.
+  let timeoutMusicHandle = null
+
+  function startTimeoutMusic() {
+    if (!enabled.value || gameMuted.value) return
+    if (TIMEOUT_MUSIC.urls.length === 0) return // no tracks yet — safe no-op
+    engine.unlock()
+    stopTimeoutMusic()
+    const url = TIMEOUT_MUSIC.urls[Math.floor(Math.random() * TIMEOUT_MUSIC.urls.length)]
+    timeoutMusicHandle = engine.playClip(url, { loop: false, volume: TIMEOUT_MUSIC.volume })
+  }
+
+  function stopTimeoutMusic() {
+    engine.stopClip(timeoutMusicHandle)
+    timeoutMusicHandle = null
+  }
+
   // ---- Ambient loops (layered in-game beds: court noise, crowd, ...) ----
   // Gapless Web Audio loops (engine.playLoop), one active handle per layer
   // key. Layers mix independently under the master gain; GameView wires each
@@ -235,6 +261,8 @@ export const useAudioStore = defineStore('audio', () => {
     stopGameSfx,
     preloadEventSfx,
     playEventSfx,
+    startTimeoutMusic,
+    stopTimeoutMusic,
     preloadAmbientSfx,
     startAmbient,
     stopAmbient,

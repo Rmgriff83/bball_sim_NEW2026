@@ -350,10 +350,15 @@ class GameSimulator {
     this.currentQuarter = 1
     this.timeRemaining = QUARTER_LENGTH_MINUTES
 
-    if (this.pacingMode !== 'quarter') {
+    // stop_after_play: the live client fetches one possession per call in
+    // EVERY pacing mode (it auto-continues through boundaries where the mode
+    // wouldn't pause) so timeouts/edits land at the end of the current play.
+    const stopAfterPlay = !!(options.stop_after_play ?? options.stopAfterPlay)
+
+    if (this.pacingMode !== 'quarter' || stopAfterPlay) {
       this._beginQuarterSegmentState()
       const segStartScores = { home: this.homeScore, away: this.awayScore }
-      const breakInfo = this._runSegment(this.pacingMode)
+      const breakInfo = this._runSegment(stopAfterPlay ? 'play' : this.pacingMode)
       return {
         quarterResult: this._buildSegmentResult(1, breakInfo, segStartScores),
         gameState: this.serializeState(),
@@ -397,7 +402,15 @@ class GameSimulator {
     // path would re-simulate the partial quarter from 12:00 on top of the
     // already-banked score), and used for play/deadBall pacing. simToEnd
     // passes forceQuarterPacing so segments run straight to quarter ends.
-    const stopMode = opts.forceQuarterPacing ? 'quarter' : this.pacingMode
+    let stopMode = opts.forceQuarterPacing ? 'quarter' : this.pacingMode
+    // Per-call override: the live client fetches ONE possession per call in
+    // every pacing mode so armed timeouts and live coaching edits land at the
+    // end of the CURRENT play (it auto-continues through boundaries where the
+    // pacing wouldn't pause). Persisted pacingMode is untouched — resume UI
+    // still shows the user's pick. simToEnd's forceQuarterPacing wins.
+    if (!opts.forceQuarterPacing && adjustments && (adjustments.stop_after_play || adjustments.stopAfterPlay)) {
+      stopMode = 'play'
+    }
     if (this.pendingPossessionTeam != null || stopMode !== 'quarter') {
       return this._continueSegmented(gameState, stopMode)
     }
@@ -688,9 +701,9 @@ class GameSimulator {
   }
 
   /**
-   * User timeout: burn one, dampen the OPPONENT's momentum toward neutral and
-   * give the user's on-court five a breather (energy back, fatigue trim —
-   * kept small because fatigue persists to the season).
+   * User timeout: burn one, reset momentum to even (kills either team's run —
+   * calling one while YOU have the run wastes it) and give the user's on-court
+   * five a real breather (energy back, fatigue recovery).
    */
   _applyTimeout() {
     if (this.userTimeoutsRemaining <= 0) return false
@@ -702,12 +715,13 @@ class GameSimulator {
     this.nextPossessionStart = 'dead_ball'
 
     const userIsHome = this.homeTeam && this.homeTeam.id === this.userTeamId
-    const opp = userIsHome ? 'away' : 'home'
-    this.momentum[opp] = 50 + (this.momentum[opp] - 50) * 0.4
+    this.momentum.home = 50
+    this.momentum.away = 50
+    this.momentumCooldown = { home: 0, away: 0 }
 
     const lineup = userIsHome ? this.homeLineup : this.awayLineup
     for (const p of lineup) {
-      p.fatigue = Math.max(0, (p.fatigue ?? 0) - 3)
+      p.fatigue = Math.max(0, (p.fatigue ?? 0) - 10)
       p.energy = Math.min(100, (p.energy ?? 100) + 20)
     }
 
@@ -834,6 +848,20 @@ class GameSimulator {
     this.quarterEndPossessions = []
     this.homeSynergiesActivated = 0
     this.awaySynergiesActivated = 0
+
+    // Per-game runtime state — the live worker reuses ONE simulator instance
+    // across games, so anything only initialized in the constructor leaks
+    // from the previous game (e.g. timeouts spent last game left the next
+    // game starting at 0). Fresh game = full reset; resumes never come
+    // through here (deserializeState restores their saved values).
+    this.userTimeoutsRemaining = 4
+    this.momentum = { home: 50, away: 50 }
+    this.momentumCooldown = { home: 0, away: 0 }
+    this.teamFouls = { home: 0, away: 0 }
+    this.pendingFoulOutIds = []
+    this.pendingFreeThrows = null
+    this.nextPossessionStart = 'dead_ball'
+    this.pendingPossessionTeam = null
 
     // Coaching schemes
     const homeScheme = homeTeam.coaching_scheme || {}

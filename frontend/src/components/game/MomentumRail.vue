@@ -125,6 +125,7 @@ const fillStyle = computed(() => {
 @media (max-width: 620px) {
   .momentum-rail {
     width: 40px;
+    padding-right: 20px;
   }
 }
 </style>

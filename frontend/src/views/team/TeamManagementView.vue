@@ -35,6 +35,7 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { useSyncStore } from '@/stores/sync'
 import { isPastTradeDeadline } from '@/engine/season/SeasonDeadlines'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { useWalkthroughTab } from '@/composables/useWalkthroughTab'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { getSchemePlaybook } from '@/engine/simulation/PlayService'
@@ -133,6 +134,9 @@ const TAB_TOUR_KEYS = {
   owner: 'gmOwner',
   schedule: 'gmSchedule',
 }
+// Replay key for the "?" button — the active GM tab's tour, if it has one.
+const replayTourKey = computed(() => TAB_TOUR_KEYS[activeTab.value] ?? null)
+
 function startTabTour(tab) {
   const key = TAB_TOUR_KEYS[tab]
   if (!key) return
@@ -3084,6 +3088,8 @@ const STAFF_TRAINER_PERK_LABELS = {
       @purchase-upgrade-point="handlePurchaseUpgradePoint"
       @hold-coach-meeting="handleHoldCoachMeeting"
     />
+
+    <WalkthroughReplayButton :walkthrough-key="replayTourKey" />
   </div>
 </template>
 
