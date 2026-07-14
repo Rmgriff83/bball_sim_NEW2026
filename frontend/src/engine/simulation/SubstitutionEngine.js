@@ -499,6 +499,10 @@ export function evaluateSubstitutions(
   for (const player of fullRoster) {
     if (!currentLineupIds.includes(player.id)) {
       if (!isPlayerInjured(player)) {
+        // Fouled-out players (6 personals) can never re-enter.
+        if ((boxScore[player.id]?.fouls ?? 0) >= 6) {
+          continue;
+        }
         // Load management: never sub in a player whose fatigue is at or above
         // the threshold. Let them sit and recover.
         if (isLoadManagement && (player.fatigue ?? 0) >= LOAD_MANAGEMENT_FATIGUE_THRESHOLD) {
@@ -805,6 +809,8 @@ export function applyCloseGameOverride(
   const healthy = fullRoster
     .filter((p) => {
       if (isPlayerInjured(p)) return false;
+      // Fouled-out players (6 personals) can never re-enter.
+      if (boxScore && (boxScore[p.id]?.fouls ?? 0) >= 6) return false;
       if (targetMinutes && boxScore) {
         const target = targetMinutes[p.id];
         const actual = boxScore[p.id]?.minutes ?? 0;

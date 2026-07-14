@@ -99,6 +99,7 @@ const columns = [
   { key: 'steals', label: 'STL', class: 'stat-col' },
   { key: 'blocks', label: 'BLK', class: 'stat-col' },
   { key: 'turnovers', label: 'TO', class: 'stat-col' },
+  { key: 'fouls', label: 'PF', class: 'stat-col' },
 ]
 
 function sortBy(column) {
@@ -125,7 +126,7 @@ const activeTeam = computed(() =>
 function calculateTotals(stats) {
   if (!Array.isArray(stats) || stats.length === 0) {
     return {
-      points: 0, rebounds: 0, assists: 0, steals: 0, blocks: 0, turnovers: 0,
+      points: 0, rebounds: 0, assists: 0, steals: 0, blocks: 0, turnovers: 0, fouls: 0,
       fgm: 0, fga: 0, fg3m: 0, fg3a: 0, ftm: 0, fta: 0
     }
   }
@@ -136,6 +137,7 @@ function calculateTotals(stats) {
     totals.steals += player.steals || 0
     totals.blocks += player.blocks || 0
     totals.turnovers += player.turnovers || 0
+    totals.fouls += player.fouls || 0
     totals.fgm += player.fgm || 0
     totals.fga += player.fga || 0
     totals.fg3m += player.fg3m || 0
@@ -144,7 +146,7 @@ function calculateTotals(stats) {
     totals.fta += player.fta || 0
     return totals
   }, {
-    points: 0, rebounds: 0, assists: 0, steals: 0, blocks: 0, turnovers: 0,
+    points: 0, rebounds: 0, assists: 0, steals: 0, blocks: 0, turnovers: 0, fouls: 0,
     fgm: 0, fga: 0, fg3m: 0, fg3a: 0, ftm: 0, fta: 0
   })
 }
@@ -230,6 +232,7 @@ function formatShootingLine(made, attempted) {
             <td class="stat-col">{{ player.steals || 0 }}</td>
             <td class="stat-col">{{ player.blocks || 0 }}</td>
             <td class="stat-col turnovers">{{ player.turnovers || 0 }}</td>
+            <td class="stat-col">{{ player.fouls || 0 }}</td>
             <td class="stat-col shooting">
               <span class="shooting-line">{{ formatShootingLine(player.fgm, player.fga) }}</span>
               <span class="shooting-pct">{{ formatPercentage(player.fgm, player.fga) }}</span>
@@ -263,6 +266,7 @@ function formatShootingLine(made, attempted) {
             <td class="stat-col">{{ activeTotals.steals }}</td>
             <td class="stat-col">{{ activeTotals.blocks }}</td>
             <td class="stat-col turnovers">{{ activeTotals.turnovers }}</td>
+            <td class="stat-col">{{ activeTotals.fouls }}</td>
             <td class="stat-col shooting">
               <span class="shooting-line">{{ formatShootingLine(activeTotals.fgm, activeTotals.fga) }}</span>
               <span class="shooting-pct">{{ formatPercentage(activeTotals.fgm, activeTotals.fga) }}</span>

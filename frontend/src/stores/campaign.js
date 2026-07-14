@@ -14,6 +14,7 @@ import { backfillPersonnelIds } from '@/engine/migrations/backfillPersonnelIds'
 import { backfillInitialRookies } from '@/engine/migrations/backfillInitialRookies'
 import { reconcileTeamFields } from '@/engine/migrations/reconcileTeamFields'
 import { rescaleContracts } from '@/engine/migrations/rescaleContracts'
+import { pruneRetiredPlayers } from '@/engine/migrations/pruneRetiredPlayers'
 import { useAuthStore } from '@/stores/auth'
 import { TEAMS } from '@/engine/data/teams'
 import { useSyncStore } from '@/stores/sync'
@@ -78,19 +79,30 @@ export const useCampaignStore = defineStore('campaign', () => {
       const localIds = new Set(localCampaigns.map(c => c.id))
       const serverIds = new Set(serverCampaigns.map(c => c.id))
 
-      // Reconcile deletions: a campaign in the local cache but missing from the
-      // server's authoritative list was deleted on another device. Remove it
-      // locally — but skip campaigns that haven't been synced yet AND were
-      // created very recently, to avoid wiping a brand-new campaign whose
-      // initial push hasn't completed.
-      const RECENT_CREATE_GRACE_MS = 60_000
-      const now = Date.now()
+      // Reconcile deletions: a campaign that WAS synced (server once had it)
+      // but is now missing from the server's list was deleted on another
+      // device — remove it locally.
+      //
+      // A NEVER-synced campaign missing from the server is a completely
+      // different situation: its first push simply hasn't landed, and the
+      // local copy is the ONLY copy in existence. Deleting it here destroyed
+      // real users' campaigns (the old code only spared never-synced
+      // campaigns younger than 60s). Instead, self-heal: push it to the
+      // server now. Push failure leaves it untouched locally.
       for (const local of localCampaigns) {
         if (serverIds.has(local.id)) continue
-        const createdMs = local.createdAt ? new Date(local.createdAt).getTime() : 0
-        const isRecent = createdMs && (now - createdMs) < RECENT_CREATE_GRACE_MS
         const wasSynced = !!local.lastSyncedAt
-        if (isRecent && !wasSynced) continue
+
+        if (!wasSynced) {
+          try {
+            await syncStore.pushChanges(local.id, { isolated: true })
+            await CampaignRepository.markSyncedWithServer(local.id)
+            console.log(`[Campaign] Recovered unsynced local campaign to cloud: ${local.name} (${local.id})`)
+          } catch (err) {
+            console.warn(`[Campaign] Could not push unsynced campaign ${local.id} (kept locally):`, err)
+          }
+          continue
+        }
 
         try {
           await engineDeleteCampaign(local.id)
@@ -100,7 +112,10 @@ export const useCampaignStore = defineStore('campaign', () => {
         }
       }
 
-      // Pull any cloud-only campaigns into IndexedDB
+      // Pull any cloud-only campaigns into IndexedDB. Failures are handled
+      // below: campaigns that still aren't local get rendered as cloud
+      // stubs with a Restore button — a campaign that exists on the server
+      // must never be invisible to the player.
       const cloudOnlyCampaigns = serverCampaigns.filter(sc => !localIds.has(sc.id))
       for (const sc of cloudOnlyCampaigns) {
         try {
@@ -124,7 +139,19 @@ export const useCampaignStore = defineStore('campaign', () => {
         }
       }
 
-      campaigns.value = await listCampaigns()
+      const finalLocal = await listCampaigns()
+      const finalLocalIds = new Set(finalLocal.map(c => c.id))
+      // Server campaigns whose pull failed (or hasn't happened) are shown as
+      // cloud-only stubs so the user can see them and retry via Restore.
+      const cloudStubs = serverCampaigns
+        .filter(sc => !finalLocalIds.has(sc.id))
+        .map(sc => ({
+          id: sc.id,
+          name: sc.name || 'Cloud Campaign',
+          cloudOnly: true,
+          updatedAt: sc.updatedAt ?? null,
+        }))
+      campaigns.value = [...finalLocal, ...cloudStubs]
       return campaigns.value
     } catch (err) {
       error.value = err.message || 'Failed to fetch campaigns'
@@ -132,6 +159,22 @@ export const useCampaignStore = defineStore('campaign', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  /**
+   * Re-attempt downloading a cloud-only campaign (rendered as a stub in the
+   * campaigns list after its automatic pull failed). Throws on failure so
+   * the UI can surface an error; refreshes the list on success.
+   */
+  async function restoreCloudCampaign(id) {
+    const syncStore = useSyncStore()
+    await syncStore.pullChanges(id)
+    const restored = await CampaignRepository.get(id)
+    if (!restored) {
+      throw new Error('Could not download this campaign from the cloud. Check your connection and try again.')
+    }
+    await fetchCampaigns()
+    return restored
   }
 
   /**
@@ -351,6 +394,17 @@ export const useCampaignStore = defineStore('campaign', () => {
         console.warn('[Campaign] team-field reconcile failed:', reconcileErr)
       }
 
+      // One-shot catch-up: prune retired players accumulated before the
+      // offseason retiree prune existed (their single-game records are folded
+      // into settings.allTimeHighs first). Shrinks the players_fa sync part
+      // and IndexedDB. Guarded by settings.retireePruneDone.
+      try {
+        const pruned = await pruneRetiredPlayers(id)
+        if (pruned > 0) console.info(`[Campaign] pruned ${pruned} retired players`)
+      } catch (pruneErr) {
+        console.warn('[Campaign] retiree prune failed:', pruneErr)
+      }
+
       const { campaign, teams, userTeam, seasonData, year } = result
 
       // Map engine result to the currentCampaign shape expected by Vue views
@@ -393,10 +447,17 @@ export const useCampaignStore = defineStore('campaign', () => {
       currentCampaign.value = null
       _resetCampaignScopedStores()
 
-      // Mark for cloud sync
+      // Mark for cloud sync and push immediately (fire-and-forget). The old
+      // flow waited for the next route-leave/visibility event to do the
+      // first push, leaving a window where the brand-new campaign existed
+      // nowhere but this device. Failure here is fine — fetchCampaigns'
+      // reconciliation now recovers never-synced campaigns by pushing them.
       const syncStore = useSyncStore()
       syncStore.setActiveCampaign(newCampaign.id)
       syncStore.markDirty()
+      syncStore.syncNow().catch(err => {
+        console.warn('[Campaign] Initial push after creation failed (will retry on next sync):', err)
+      })
 
       return newCampaign
     } catch (err) {
@@ -498,6 +559,7 @@ export const useCampaignStore = defineStore('campaign', () => {
     currentSeason,
     // Actions
     fetchCampaigns,
+    restoreCloudCampaign,
     fetchCampaign,
     createCampaign,
     updateCampaign,

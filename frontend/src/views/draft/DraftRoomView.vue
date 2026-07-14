@@ -6,6 +6,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { useAudioStore } from '@/stores/audio'
 import { LoadingSpinner } from '@/components/ui'
 import DraftCompleteModal from '@/components/draft/DraftCompleteModal.vue'
@@ -1154,6 +1155,8 @@ onUnmounted(() => {
         </div>
       </Transition>
     </Teleport>
+
+    <WalkthroughReplayButton walkthrough-key="liveDraft" />
   </div>
 </template>
 

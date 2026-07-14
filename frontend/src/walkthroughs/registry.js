@@ -538,6 +538,12 @@ export const WALKTHROUGHS = {
       body: "Pick your offensive and defensive schemes for tonight. The percentage on each pill is the fit % — how well your current roster matches that scheme. Higher fit means a bigger in-game edge.",
     },
     {
+      target: 'game-pacing',
+      placement: 'top',
+      title: 'Game Pacing',
+      body: "Pacing controls how often a live game pauses for your input. By Quarter plays a full quarter straight through and stops at the breaks — the fastest, most hands-off way to watch. Every Play pauses after every single possession for maximum control. Dead Balls is the middle ground: play runs until a natural stoppage — a foul, an out-of-bounds, a timeout — then pauses so you can sub and adjust. You can change it any time from this screen, and for a game in progress the new mode applies when you resume.",
+    },
+    {
       target: 'game-matchups',
       placement: 'top',
       title: 'Defensive Matchups',
@@ -596,6 +602,72 @@ export const WALKTHROUGHS = {
       placement: 'center',
       title: 'On to the next',
       body: "That's the recap. Growth and regression compound over a season, so a steady run of starter minutes for your young guys is one of the best ways to build a contender. Head back to the home page when you're ready for the next matchup.",
+    },
+  ],
+
+  // Live broadcast — fires the first time the user enters a live game.
+  // GameView holds tip-off (the animation is loaded but not playing) while
+  // this runs, and starts play the moment the tour finishes or is dismissed.
+  gameLive: [
+    {
+      placement: 'center',
+      title: 'Welcome to the Broadcast',
+      body: "This is your live game. We've held tip-off while we show you around — play starts the moment you finish.",
+    },
+    {
+      target: 'game-live-court',
+      placement: 'bottom',
+      title: 'The Court',
+      body: "Plays animate here possession by possession. At dead balls the game pauses (based on your pacing setting) with a stoppage bubble — hit Continue to keep playing.",
+    },
+    {
+      target: 'game-live-controls',
+      placement: 'top',
+      title: 'Playback Controls',
+      body: "Pause or resume the action, change the playback speed, and mute the game sounds.",
+    },
+    {
+      target: 'game-live-coach',
+      placement: 'bottom',
+      title: 'Coach Overview',
+      body: "Your head coach, with the offensive and defensive schemes you're currently running on the chips below. Your in-game actions live on this strip too.",
+    },
+    {
+      target: 'game-live-timeout',
+      placement: 'bottom',
+      title: 'Timeouts',
+      body: "Tap mid-play to arm a timeout — it's called at the end of the current play — or tap at a dead ball to call one immediately. A timeout resets momentum to even and gives your five on the floor a real breather.",
+    },
+    {
+      target: 'game-live-clipboard',
+      placement: 'bottom',
+      interactive: true,
+      title: 'Your Coaching Panel',
+      body: "The clipboard opens your coaching panel — it works any time, even while the ball is live. Go ahead — tap it.",
+    },
+    {
+      target: 'game-live-coaches-panel',
+      placement: 'bottom',
+      action: { view: 'gameLive', enter: 'openCoaches', leave: 'closeCoaches' },
+      title: 'One Panel, Three Tabs',
+      body: "Adjust your offensive and defensive settings, defensive matchups, and substitutions from these tabs. Changes made while the ball is live take effect right after the current play.",
+    },
+    {
+      target: 'game-live-momentum',
+      placement: 'right',
+      title: 'Momentum',
+      body: "The rail tracks who has the run — a hot streak boosts that team's play until it cools off, or until you burn a timeout to reset it.",
+    },
+    {
+      target: 'game-live-stats',
+      placement: 'left',
+      title: 'Live Stats',
+      body: "Top performers update as plays resolve. The colored percentage is each player's fatigue — tired players play worse and risk injury, so sub them out before it climbs into the red.",
+    },
+    {
+      placement: 'center',
+      title: 'Enjoy the Game',
+      body: "That's the broadcast. Good luck, coach — tip-off is right after you close this.",
     },
   ],
 

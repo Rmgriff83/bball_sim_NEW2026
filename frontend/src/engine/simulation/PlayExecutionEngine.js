@@ -72,6 +72,44 @@ function _defaultBaseProbability(key, outcome, action) {
   return 0.5;
 }
 
+// --- Ball-flight presentation (top-down court view) -------------------------
+// Every shot appends keyframes for release → straight ground-line flight to
+// the rim → result (swish shrink-through, or rim bounce back toward
+// halfcourt). The court renders overhead, so apex "height" is a 0..1 scale
+// factor the renderer uses to swell the ball toward the camera mid-flight —
+// never a screen-space offset. Real-shot grounding: ~2-2.5 rev/s backspin,
+// 45-52° launch, and backspin braking rim contact so misses rebound softly
+// back toward the court.
+const RIM_POS = { x: 0.5, y: 0.836 }; // rendered rim center (courtConfig)
+const SHOT_FLIGHT_BASE_S = 0.45;
+const SHOT_FLIGHT_PER_DIST_S = 0.6;   // per normalized court unit of distance
+const SHOT_HEIGHT_BASE = 0.35;
+const SHOT_HEIGHT_PER_DIST = 0.9;     // longer shot = higher apex (clamped 1)
+const SWISH_THROUGH_S = 0.28;         // swishes drop near-vertically → pure scale-down
+const MISS_BOUNCE_S = 0.5;
+const MISS_BOUNCE_HEIGHT = 0.15;      // one soft hop (backspin brakes the ricochet)
+const FT_FLIGHT_S = 0.6;
+const BLOCK_DEFLECT_S = 0.3;
+const PASS_FLIGHT_HEIGHT = 0.15;      // chest passes stay low
+
+// --- Free-throw formation (real NBA geometry, offense-only rendering) ------
+// The shooter stands at the center of the FT line (19ft from baseline →
+// y≈0.45 in courtConfig terms — the old {0.5, 0.75} spot was far too close
+// to the rim). Teammates take lane spots along the key edges (x 0.34/0.66),
+// bigs at the low spots nearest the basket like real rebounders. Defenders
+// aren't rendered on this court, so the formation is shooter + 4 teammates.
+const FT_LINE_POS = { x: 0.5, y: 0.45 };
+const FT_LANE_SPOTS = [
+  { x: 0.31, y: 0.72 },  // left low   (best rebounder)
+  { x: 0.69, y: 0.72 },  // right low  (second big)
+  { x: 0.31, y: 0.56 },  // left mid
+  { x: 0.69, y: 0.56 },  // right mid
+];
+const FT_SETUP_S = 0.9;  // walk into formation
+const FT_SET_S = 0.6;    // dribble/set before each attempt
+// Lane-spot priority: bigs closest to the basket.
+const FT_REBOUND_PRIORITY = { C: 0, PF: 1, SF: 2, SG: 3, PG: 4 };
+
 // Always-on attribute contributors per action type. These layer on top of the
 // explicit `attributes.offense` / `attributes.defense` arrays in plays.js so
 // every defined attribute appears in at least one rating computation. Because
@@ -168,6 +206,9 @@ class PlayExecutionEngine {
     // 'home' | 'away' — used to look up the offense's momentum value on the
     // shared gameSimulator during shot-probability calculation.
     this.offensiveTeamSide = options.offensiveTeamSide ?? null;
+    // Foul model context: whether the defense is in the penalty (team fouls
+    // >= 5 this quarter), so non-shooting fouls award 2 free throws.
+    this.foulContext = options.foulContext ?? {};
 
     // Synergy candidates pre-computed by GameSimulator. Condition gating is
     // deferred to here because PEE has the full shot context. PEE writes back
@@ -226,7 +267,7 @@ class PlayExecutionEngine {
 
       // Check for terminal states
       if (outcome.next && outcome.next.startsWith('end_')) {
-        this.handleEndState(outcome, action);
+        this.handleEndState(outcome, action, offensiveLineup);
         break;
       }
 
@@ -236,7 +277,18 @@ class PlayExecutionEngine {
       }
 
       if (outcome.next === 'free_throws') {
-        this.handleFreeThrows(outcome, offensiveLineup);
+        // The whistle is the dead ball — the play ends HERE and the free
+        // throws run as their own segments (GameSimulator shoots them via
+        // executeFreeThrowAttempt), so paced modes get a break BEFORE the
+        // first attempt and between attempts, like real basketball.
+        this.playResult.outcome = 'foul';
+        this.playResult.points = 0;
+        this.playResult.deadBall = true;
+        this.playResult.offenseRetains = true;
+        this.playResult.pendingFreeThrows = {
+          shooterId: this.ballCarrierId ?? null,
+          attempts: this._ftCountForAction(action),
+        };
         break;
       }
 
@@ -274,6 +326,17 @@ class PlayExecutionEngine {
     // can override via `action.fatigueCost`. Tireless badges and high
     // `durability` reduce the increment.
     this.accumulateFatigue(action, actor, defender);
+
+    // Defensive disruption gamble (failed-gamble foul model): on ball-moving
+    // actions the defender may attempt a deflection. Success tips the ball
+    // out of bounds (dead ball, offense retains); failure risks a reach-in
+    // foul. Resolves BEFORE the authored outcome graph — a disruption ends
+    // the play at this action.
+    const disruption = this._attemptDisruption(action, actor, defender);
+    if (disruption) {
+      this.elapsedTime += action.duration ?? 1.0;
+      return disruption;
+    }
 
     // Calculate outcome probabilities based on attributes
     const modifiedOutcomes = this.calculateModifiedOutcomes(
@@ -513,6 +576,10 @@ class PlayExecutionEngine {
             const defEffects = aggregateBadgeEffects(defender, BADGE_DEFINITIONS);
             const cleanContest = defEffects.contestBoost || 0;
             adjustedProbability -= cleanContest * 0.5;
+            // Disciplined contests foul less (mirrors the failed-gamble
+            // model's use of defensiveConsistency on the floor).
+            const defConsistency = this.getPlayerAttribute(defender, 'defensiveConsistency') ?? 50;
+            adjustedProbability -= (defConsistency - 50) / 250;
           }
         }
       }
@@ -813,6 +880,240 @@ class PlayExecutionEngine {
 
     incrementFor(actor, ACTION_EFFECT_KEYS.fatigue.offenseReduction);
     incrementFor(defender, ACTION_EFFECT_KEYS.fatigue.defenseReduction);
+  }
+
+  // ---------------------------------------------------------------------
+  // Defensive disruption (failed-gamble foul model)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Roll a defensive disruption attempt on a ball-moving action.
+   *
+   * Model: the defender's `steal` attribute (plus steal-family badges) drives
+   * how OFTEN they gamble. Each gamble then resolves by matchup quality:
+   *   - success → deflection out of bounds (dead ball, offense retains)
+   *   - failure → foul roll, reduced by the defender's `defensiveConsistency`
+   *     (disciplined gamblers recover cleanly) and raised when the defender
+   *     is outmatched (desperation reach); remainder is a no-call.
+   *
+   * Families: 'pass'/'handoff' use the passing-lane mix (passPerception/
+   * steal/helpDefenseIQ vs passAccuracy/passIQ, interceptor vs
+   * needle_threader); 'drive' maps to the dribble badge contract
+   * (perimeterDefense/steal vs ballHandling/strength, pick_pocket + clamps
+   * vs unpluckable / tight_handles / strong_handle).
+   *
+   * Returns a sentinel outcome ({ next: 'end_deflection' | 'end_foul' }) with
+   * playResult already stamped, or null when nothing happens.
+   */
+  _attemptDisruption(action, actor, defender) {
+    if (!defender || !actor) return null;
+    const type = action.type;
+    const isPassFamily = type === 'pass' || type === 'handoff';
+    const isDriveFamily = type === 'drive';
+    if (!isPassFamily && !isDriveFamily) return null;
+
+    const defEffects = aggregateBadgeEffects(defender, BADGE_DEFINITIONS);
+    const offEffects = aggregateBadgeEffects(actor, BADGE_DEFINITIONS);
+
+    // --- Attempt frequency: aggression scales with `steal` + gamble badges.
+    const stealAttr = this.getPlayerAttribute(defender, 'steal') ?? 50;
+    let defBadgeSum;
+    let baseRate;
+    if (isPassFamily) {
+      baseRate = 0.04;
+      defBadgeSum = defEffects.stealChanceBoost || 0;
+    } else {
+      baseRate = 0.06;
+      defBadgeSum = (defEffects.onBallStealBoost || 0) + (defEffects.perimeterDefBoost || 0);
+    }
+    const attemptMult = Math.max(0.4, Math.min(2.2, 1 + (stealAttr - 50) / 100 + defBadgeSum));
+    if (Math.random() >= baseRate * attemptMult) return null;
+
+    // --- Attempt resolution: matchup quality decides deflection vs risk.
+    let defScore, offScore, offBadgeSum;
+    if (isPassFamily) {
+      defScore = this.calculateAttributeRating(defender, ['passPerception', 'steal', 'helpDefenseIQ']);
+      offScore = this.calculateAttributeRating(actor, ['passAccuracy', 'passIQ']);
+      offBadgeSum = offEffects.tightPassBoost || 0;
+    } else {
+      defScore = this.calculateAttributeRating(defender, ['perimeterDefense', 'steal']);
+      offScore = this.calculateAttributeRating(actor, ['ballHandling', 'strength']);
+      offBadgeSum = (offEffects.stripResistance || 0) + (offEffects.ballSecurityBoost || 0);
+    }
+    const successChance = Math.max(0.10, Math.min(0.65,
+      0.28 + (defScore - offScore) / 150 + defBadgeSum * 0.5 - offBadgeSum
+    ));
+
+    if (Math.random() < successChance) {
+      // Deflected out of bounds — offense retains, clock event, dead ball.
+      this.playResult.deflection = {
+        byId: defender.id ?? null,
+        onId: actor.id ?? null,
+        actionId: action.id,
+      };
+      this.playResult.outcome = 'deflected';
+      this.playResult.points = 0;
+      this.playResult.offenseRetains = true;
+      this.playResult.deadBall = true;
+      this._recordDisruptionKeyframe(action, actor, defender, 'deflection');
+      return { next: 'end_deflection', key: 'deflected' };
+    }
+
+    // Failed gamble → foul roll. Disciplined defenders recover; beaten
+    // defenders reach in desperation.
+    const defConsistency = this.getPlayerAttribute(defender, 'defensiveConsistency') ?? 50;
+    let foulChance = Math.max(0.2, Math.min(0.75, 0.55 - (defConsistency - 50) / 200));
+    foulChance += Math.max(0, Math.min(0.1, (offScore - defScore) / 400));
+    if (Math.random() >= foulChance) return null; // clean recovery, play on
+
+    this.playResult.foul = {
+      type: 'reach_in',
+      byId: defender.id ?? null,
+      onId: actor.id ?? null,
+    };
+    this.playResult.deadBall = true;
+    this._recordDisruptionKeyframe(action, actor, defender, 'foul');
+
+    this.playResult.outcome = 'foul';
+    this.playResult.points = 0;
+    this.playResult.offenseRetains = true;
+    if (this.foulContext?.defenseInPenalty) {
+      // In the penalty: ball-handler shoots two — as separate segments
+      // after the whistle break, same as shooting fouls.
+      this.playResult.pendingFreeThrows = {
+        shooterId: actor.id ?? null,
+        attempts: 2,
+      };
+    }
+    return { next: 'end_foul', key: 'fouled' };
+  }
+
+  /**
+   * Snap the offense into the real FT formation: shooter at the line,
+   * teammates onto the lane spots (bigs get the low spots nearest the
+   * basket).
+   */
+  _setFreeThrowFormation(shooter, offensiveLineup) {
+    if (shooter.id != null) {
+      this.playerPositions[shooter.id] = { x: FT_LINE_POS.x, y: FT_LINE_POS.y };
+      this.ballCarrierId = shooter.id;
+    }
+    const teammates = offensiveLineup
+      .filter(p => p && p.id != null && p.id !== shooter.id)
+      .sort((a, b) =>
+        (FT_REBOUND_PRIORITY[a.position] ?? 5) - (FT_REBOUND_PRIORITY[b.position] ?? 5)
+      );
+    teammates.slice(0, FT_LANE_SPOTS.length).forEach((p, i) => {
+      this.playerPositions[p.id] = { x: FT_LANE_SPOTS[i].x, y: FT_LANE_SPOTS[i].y };
+    });
+  }
+
+  /**
+   * Execute ONE free-throw attempt as its own standalone play/segment. The
+   * foul play ended at the whistle with `pendingFreeThrows`; GameSimulator
+   * calls this once per attempt so paced modes get a break BEFORE the
+   * first shot and between shots (real dead-ball rhythm — subs made at
+   * those breaks genuinely apply because each attempt re-reads the lineup).
+   *
+   * Rolls the make here, presents formation → set → flight → result, and
+   * returns a playResult-shaped object (points/freeThrows for exactly this
+   * attempt; ctx.playId keeps play-analytics attribution on the play that
+   * drew the foul).
+   */
+  executeFreeThrowAttempt(shooter, offensiveLineup, ctx = {}) {
+    const attemptNo = ctx.attemptNo ?? 1;
+    const totalAttempts = ctx.totalAttempts ?? 1;
+    const isFinal = attemptNo >= totalAttempts;
+    const name = this._lastNameOf(shooter);
+
+    this.resetState();
+    offensiveLineup.forEach((player, index) => {
+      const playerId = String(player.id ?? '');
+      if (playerId) this.playerLineupIndices[playerId] = index;
+    });
+
+    // Formation is in place from frame one — each attempt is its own
+    // animation possession, and possession starts already snap positions.
+    this._setFreeThrowFormation(shooter, offensiveLineup);
+
+    const ftRating = shooter.attributes?.offense?.freeThrow ?? 70;
+    const made = Math.random() < ftRating / 100;
+
+    this._appendBallKeyframe(
+      { ...FT_LINE_POS },
+      `${name} at the line (${attemptNo} of ${totalAttempts})`
+    );
+    this.elapsedTime += FT_SET_S;
+    this._appendBallKeyframe(
+      { ...FT_LINE_POS },
+      `${name} shoots free throw ${attemptNo} of ${totalAttempts}...`
+    );
+
+    this._appendShotResultKeyframes(made ? 'made' : 'missed', {
+      from: FT_LINE_POS,
+      flightS: FT_FLIGHT_S,
+      shortBounce: !isFinal,
+      label: `${name} ${made ? 'makes' : 'misses'} free throw ${attemptNo} of ${totalAttempts}`,
+    });
+
+    this.playResult.outcome = 'free_throws';
+    this.playResult.points = made ? 1 : 0;
+    this.playResult.freeThrows = {
+      made: made ? 1 : 0,
+      attempted: 1,
+      shooterId: shooter.id ?? null,
+      attemptNo,
+      totalAttempts,
+    };
+    this.playResult.deadBall = true;
+    this.playResult.offenseRetains = !isFinal;
+
+    return this.buildPlayResult({
+      id: ctx.playId ?? 'free_throw',
+      name: ctx.playName ?? 'Free Throw',
+      category: 'free_throw',
+    });
+  }
+
+  /**
+   * Keyframe for a disruption event (deflection or reach-in foul) so the
+   * animation and play-by-play show it at the action where it happened.
+   */
+  _recordDisruptionKeyframe(action, actor, defender, kind) {
+    const defName = this._lastNameOf(defender, 'Defender');
+    const actorName = this._lastNameOf(actor);
+
+    const keyframe = {
+      time: this.elapsedTime,
+      positions: this.buildPositionsSnapshot(),
+      ball: this.ballCarrierId
+        ? (this.playerPositions[this.ballCarrierId] ?? { x: 0.5, y: 0.5 })
+        : { x: 0.5, y: 0.5 },
+      action: action.id,
+      actionType: action.type,
+      outcome: kind === 'deflection' ? 'deflected' : 'fouled',
+      description: kind === 'deflection'
+        ? `${defName} tips the ball out of bounds!`
+        : `${defName} is called for a reach-in foul on ${actorName}`,
+      defensive_scheme: this.defensiveScheme,
+      matchups: { ...this.matchups },
+      onBallDefenderId: this.lastOnBallDefenderId,
+      // Both disruption results are whistle moments: the reach-in call and
+      // the ball tipped out of bounds (side out, offense retains).
+      sfx: 'foul_whistle',
+    };
+    if (kind === 'deflection') {
+      keyframe.defensive_play = true;
+    }
+    this.keyframes.push(keyframe);
+  }
+
+  /**
+   * Free-throw count for a shooting foul: 3 when fouled on a missed three,
+   * otherwise 2 (drives / twos / generic free_throws terminals).
+   */
+  _ftCountForAction(action) {
+    return action?.type === 'shot' && action?.shotType === 'threePoint' ? 3 : 2;
   }
 
   /**
@@ -1138,6 +1439,31 @@ class PlayExecutionEngine {
   }
 
   /**
+   * Display name for play descriptions — LAST name (broadcast style),
+   * falling back to first name, then a generic label.
+   */
+  _lastNameOf(player, fallback = 'Player') {
+    return (
+      player?.last_name ?? player?.lastName ??
+      player?.first_name ?? player?.firstName ??
+      fallback
+    );
+  }
+
+  /**
+   * The defender credited with a defensive play on `actor`: the current
+   * on-ball defender when known, else the actor's assigned matchup.
+   */
+  _creditedDefender(actor) {
+    const def = this.lastOnBallDefenderId != null
+      ? this.getPlayerById(this.lastOnBallDefenderId, this._defenseLineup)
+      : null;
+    if (def) return def;
+    const matchupId = actor?.id != null ? this.matchups[String(actor.id)] ?? this.matchups[actor.id] : null;
+    return matchupId != null ? this.getPlayerById(matchupId, this._defenseLineup) : null;
+  }
+
+  /**
    * Build this possession's defensive assignment, by scheme family:
    *  man  → persistent offId→defId map (honoring any user overrides)
    *  zone → defender-to-area anchors (pick-up by location)
@@ -1226,12 +1552,26 @@ class PlayExecutionEngine {
     const description = this.generateDescription(action, actor, outcome);
     const outcomeKey = outcome.key ?? '';
 
+    // Clone the ball position — the raw playerPositions entries are LIVE
+    // objects that later movement mutates; sharing the reference would let
+    // future actions rewrite past keyframes' ball positions. The clone is
+    // also where per-segment flight flags (pass arc/spin queued by
+    // processActionType) get attached: they describe the travel INTO this
+    // keyframe, matching how the composable reads flight data from the
+    // destination keyframe.
+    const carrierPos = this.ballCarrierId
+      ? (this.playerPositions[this.ballCarrierId] ?? { x: 0.5, y: 0.5 })
+      : { x: 0.5, y: 0.5 };
+    const ball = { x: carrierPos.x, y: carrierPos.y };
+    if (this._pendingBallFlight) {
+      Object.assign(ball, this._pendingBallFlight);
+      this._pendingBallFlight = null;
+    }
+
     const keyframe = {
       time: this.elapsedTime,
       positions: this.buildPositionsSnapshot(),
-      ball: this.ballCarrierId
-        ? (this.playerPositions[this.ballCarrierId] ?? { x: 0.5, y: 0.5 })
-        : { x: 0.5, y: 0.5 },
+      ball,
       action: action.id,
       actionType: action.type,
       outcome: outcomeKey,
@@ -1252,11 +1592,145 @@ class PlayExecutionEngine {
     }
 
     // Flag defensive plays for frontend animations
-    if (['blocked', 'stolen', 'turnover'].includes(outcomeKey)) {
+    if (['blocked', 'stolen', 'turnover', 'deflected'].includes(outcomeKey)) {
       keyframe.defensive_play = true;
     }
 
+    // Block contact happens AT this keyframe (the "swatted away!" text
+    // moment) — the deflection keyframe 0.3s later is the ball LANDING,
+    // too late for the swat sound. Every blocked outcome in plays.js routes
+    // through a shot action, so this covers all blocks.
+    if (outcomeKey === 'blocked' && action.type === 'shot') {
+      keyframe.sfx = 'block';
+    }
+
+    // Whistle on the call — authored shooting/non-shooting fouls resolve at
+    // this keyframe (its text announces the foul). Disruption fouls and
+    // tip-out-of-bounds never reach here (early return); they get the
+    // whistle in _recordDisruptionKeyframe.
+    if (outcomeKey === 'fouled') {
+      keyframe.sfx = 'foul_whistle';
+    }
+
+    // Steal — the pick-pocket happens at this keyframe (its text announces
+    // it). Live ball: play flows on, no whistle.
+    if (outcomeKey === 'stolen') {
+      keyframe.sfx = 'steal';
+    }
+
+    // Generic turnovers are DEAD-BALL violations (travel, pass out of
+    // bounds — mirrors _classifyPossessionEnd: outcome 'turnover' with
+    // turnoverKind !== 'stolen' → violation), so the ref's whistle blows.
+    // Steals stay whistle-free above: the ball never goes dead.
+    if (outcomeKey === 'turnover') {
+      keyframe.sfx = 'foul_whistle';
+    }
+
     this.keyframes.push(keyframe);
+  }
+
+  /**
+   * Push a presentation-only keyframe for ball flight/result moments (shot
+   * release, rim arrival, swish-through, rim bounce). Uses the standard
+   * keyframe shape so the renderer/interpolation treat it like any other.
+   * `sfx` (optional) declares an event-sound key ('made_shot', later
+   * 'foul_whistle' etc.) — GameView's keyframe watcher plays a random
+   * variant from that event's pool when the keyframe becomes current.
+   */
+  _appendBallKeyframe(ball, description, sfx = null) {
+    const keyframe = {
+      time: this.elapsedTime,
+      positions: this.buildPositionsSnapshot(),
+      ball,
+      action: 'ball_flight',
+      actionType: 'ball_flight',
+      outcome: '',
+      description,
+      defensive_scheme: this.defensiveScheme,
+      matchups: { ...this.matchups },
+      onBallDefenderId: this.lastOnBallDefenderId,
+    };
+    if (sfx) keyframe.sfx = sfx;
+    this.keyframes.push(keyframe);
+  }
+
+  /** Current ball position as a safe clone (falls back to court center). */
+  _currentBallPosition() {
+    const pos = this.ballCarrierId
+      ? (this.playerPositions[this.ballCarrierId] ?? { x: 0.5, y: 0.5 })
+      : { x: 0.5, y: 0.5 };
+    return { x: pos.x, y: pos.y };
+  }
+
+  /**
+   * Append the shot-result presentation: release → flight to the rim →
+   * swish-through (made) or a soft rim bounce back toward halfcourt
+   * (missed). Advances elapsedTime so playResult.duration covers the whole
+   * sequence — this is what makes the animation WAIT for the make/miss.
+   *
+   * kind: 'made' | 'missed'
+   * opts.from     — release point (defaults to current ball carrier)
+   * opts.flightS  — override flight time (free throws use a fixed value)
+   * opts.label    — description for the flight keyframe
+   * Returns the ball's final position so follow-up keyframes (rebound
+   * scramble) can continue FROM the landing spot instead of snapping back.
+   */
+  _appendShotResultKeyframes(kind, opts = {}) {
+    const from = opts.from ?? this._currentBallPosition();
+    const dist = Math.hypot(RIM_POS.x - from.x, RIM_POS.y - from.y);
+    const flightS = opts.flightS ?? (SHOT_FLIGHT_BASE_S + dist * SHOT_FLIGHT_PER_DIST_S);
+    const height = Math.min(1, SHOT_HEIGHT_BASE + dist * SHOT_HEIGHT_PER_DIST);
+
+    // Release: ball leaves the shooter's hands from where they stand.
+    this._appendBallKeyframe({ x: from.x, y: from.y }, 'The shot is up...');
+
+    // Flight to the rim. Spin + apex height ride the DESTINATION keyframe
+    // (the composable reads flight data from the segment's end keyframe).
+    // Spin stops here on arrival — the keyframes after this carry no spin.
+    // The sound cue rides this keyframe too: it becomes current at the
+    // exact moment the ball meets the rim — swish on a make, clank on a
+    // miss (covers field goals AND free throws; blocks never reach here).
+    this.elapsedTime += flightS;
+    this._appendBallKeyframe(
+      { ...RIM_POS, inFlight: true, height, spin: 'shot' },
+      opts.label ?? (kind === 'made' ? 'It falls through!' : 'Off the rim!'),
+      kind === 'made' ? 'made_shot' : 'missed_shot'
+    );
+
+    if (kind === 'made') {
+      // Swish: hold on the rim while the renderer shrinks/fades the ball
+      // down through the net (away from the top-down camera). No
+      // description — the flight keyframe already announced the make; a
+      // second line here spammed the ticker on every made shot. Carries
+      // the crowd-cheer cue: this keyframe becomes current ~0.28s after
+      // the rim-arrival swish sound, so the crowd swells right after the
+      // net rips.
+      this.elapsedTime += SWISH_THROUGH_S;
+      this._appendBallKeyframe({ ...RIM_POS, through: true }, '', 'crowd_cheer');
+      return { ...RIM_POS };
+    }
+
+    // Miss: one soft ground-plane hop back toward halfcourt at a random
+    // angle (backspin brakes the ricochet, so it comes back into play).
+    // No description — the flight keyframe already narrated the miss and
+    // a second line here spammed the ticker on every missed shot.
+    // opts.shortBounce: dead-ball misses (non-final free throws — the ref
+    // retrieves the ball) barely leave the rim instead of scattering.
+    const landing = opts.shortBounce
+      ? {
+          x: Math.min(0.95, Math.max(0.05, 0.5 + (Math.random() * 0.16 - 0.08))),
+          y: RIM_POS.y - (0.04 + Math.random() * 0.06),
+        }
+      : {
+          x: Math.min(0.95, Math.max(0.05, 0.5 + (Math.random() * 0.44 - 0.22))),
+          y: RIM_POS.y - (0.10 + Math.random() * 0.18),
+        };
+    this.elapsedTime += opts.shortBounce ? MISS_BOUNCE_S * 0.6 : MISS_BOUNCE_S;
+    this._appendBallKeyframe(
+      { ...landing, inFlight: true, height: MISS_BOUNCE_HEIGHT },
+      ''
+    );
+    return landing;
   }
 
   /**
@@ -1281,25 +1755,27 @@ class PlayExecutionEngine {
    * Generate human-readable description.
    */
   generateDescription(action, actor, outcome) {
-    const name = actor.first_name ?? actor.firstName ?? 'Player';
+    const name = this._lastNameOf(actor);
     const outcomeKey = outcome.key ?? '';
 
-    // Handle special defensive outcomes
-    if (['stolen', 'turnover'].includes(outcomeKey)) {
-      return this.getTurnoverDescription(name);
+    // Handle special defensive outcomes. Steals are LIVE-ball (play flows,
+    // steal credited); generic turnovers are DEAD-ball violations — narrate
+    // the concrete violation (travel / OOB / offensive foul), never steal
+    // language, so presentation matches the whistle + stoppage.
+    if (outcomeKey === 'stolen') {
+      return this.getStealDescription(actor);
+    }
+    if (outcomeKey === 'turnover') {
+      return this.getViolationDescription(action, actor);
     }
 
     switch (action.type) {
       case 'screen':
         return `${name} sets a screen`;
       case 'pass':
-        return outcomeKey === 'stolen'
-          ? this.getTurnoverDescription(name)
-          : `${name} passes the ball`;
+        return `${name} passes the ball`;
       case 'drive':
-        return outcomeKey === 'turnover'
-          ? this.getTurnoverDescription(name)
-          : `${name} drives to the basket`;
+        return `${name} drives to the basket`;
       case 'shot':
         return this.getShotDescription(action, actor, outcome);
       case 'decision':
@@ -1311,9 +1787,7 @@ class PlayExecutionEngine {
       case 'post':
         return `${name} works in the post`;
       case 'handoff':
-        return outcomeKey === 'turnover'
-          ? this.getTurnoverDescription(name)
-          : `${name} executes a handoff`;
+        return `${name} executes a handoff`;
       case 'reset':
         return 'Resetting the offense';
       default:
@@ -1325,7 +1799,7 @@ class PlayExecutionEngine {
    * Get shot description based on outcome.
    */
   getShotDescription(action, actor, outcome) {
-    const name = actor.first_name ?? actor.firstName ?? 'Player';
+    const name = this._lastNameOf(actor);
     const shotType = action.shotType ?? 'shot';
 
     let shotName;
@@ -1336,12 +1810,17 @@ class PlayExecutionEngine {
       default: shotName = 'shot'; break;
     }
 
-    if (outcome.key === 'made') {
-      return `${name} makes the ${shotName}!`;
-    } else if (outcome.key === 'missed') {
-      return `${name} misses the ${shotName}`;
+    // Made/missed shots get the SAME neutral release line — the result is
+    // narrated by the flight keyframes when the ball actually reaches the
+    // rim ("It falls through!" / "Off the rim!"). Announcing it here spoiled
+    // the outcome on screen before the flight animation played. Blocks and
+    // fouls resolve AT the release, so their text stays immediate. The
+    // play-by-play feed rebuilds its "makes/misses" line from the play
+    // result (GameSimulator.recordPlayByPlay), not from this keyframe.
+    if (outcome.key === 'made' || outcome.key === 'missed') {
+      return `${name} puts up the ${shotName}...`;
     } else if (outcome.key === 'blocked') {
-      return this.getBlockedDescription(name);
+      return this.getBlockedDescription(actor);
     } else if (outcome.key === 'fouled') {
       return `${name} is fouled on the ${shotName}`;
     }
@@ -1350,41 +1829,50 @@ class PlayExecutionEngine {
   }
 
   /**
-   * Get scheme-aware description for blocked shots.
+   * Scheme-aware description for blocked shots — names the BLOCKER (the
+   * contesting on-ball defender). The same defender is stamped on
+   * playResult.blockedById so the box-score block credit matches the call.
    */
-  getBlockedDescription(shooterName) {
+  getBlockedDescription(actor) {
+    const shooterName = this._lastNameOf(actor);
+    const blocker = this._creditedDefender(actor);
+    const def = this._lastNameOf(blocker, 'The defender');
+
+    // Keep narration and stats in sync: the narrated blocker gets the credit.
+    if (blocker?.id != null) {
+      this.playResult.blockedById = blocker.id;
+    }
+
     const descriptionsMap = {
       man: [
-        `${shooterName}'s shot is swatted away!`,
-        'Strong man defense leads to a block!',
-        `${shooterName} gets his shot rejected!`,
+        `${def} swats ${shooterName}'s shot away!`,
+        `${def} rejects ${shooterName} at the rim!`,
       ],
       zone_2_3: [
-        'The 2-3 zone collapses and blocks!',
-        'Zone defense walls off the paint!',
-        `${shooterName} is met by the zone!`,
+        `${def} collapses out of the 2-3 zone for the block!`,
+        `${def} walls off the paint and blocks ${shooterName}!`,
       ],
       zone_3_2: [
-        'The 3-2 zone rotates for the block!',
-        `${shooterName}'s shot is sent back!`,
+        `${def} rotates from the 3-2 zone for the block!`,
+        `${shooterName}'s shot is sent back by ${def}!`,
       ],
       zone_1_3_1: [
-        'The 1-3-1 zone gets the block!',
-        'Weak side help leads to a rejection!',
+        `${def} gets the block out of the 1-3-1!`,
+        `Weak side help — ${def} with the rejection!`,
       ],
       press: [
-        `${shooterName}'s rushed shot is blocked!`,
-        "Press forces contested attempt that's rejected!",
+        `${shooterName}'s rushed shot is blocked by ${def}!`,
+        `${def} rejects the contested attempt!`,
       ],
       trap: [
-        'Double team leads to a blocked shot!',
-        `${shooterName} gets trapped and blocked!`,
+        `${def} blocks it out of the double team!`,
+        `${shooterName} gets trapped — ${def} with the block!`,
       ],
     };
 
     const defaultDescriptions = [
-      `${shooterName}'s shot is blocked!`,
-      'Great defensive play for the block!',
+      `${def} blocks ${shooterName}'s shot!`,
+      `${def} with the rejection!`,
     ];
 
     const descriptions = descriptionsMap[this.defensiveScheme] ?? defaultDescriptions;
@@ -1392,43 +1880,120 @@ class PlayExecutionEngine {
   }
 
   /**
-   * Get scheme-aware description for turnovers/steals.
+   * Dead-ball violation for a generic `turnover` outcome. Rolls ONE concrete
+   * violation kind per play (memoized on playResult.turnoverViolation),
+   * context-aware by the action it fired on, with weights derived from the
+   * real NBA dead-ball turnover distribution (2018-19: offensive foul 36%,
+   * bad pass OOB 30%, traveling 19%, lost ball OOB 15% of the main four).
+   * Offensive fouls also stamp playResult.foul (type 'offensive') so the
+   * simulator books the personal foul on the OFFENDER — NBA rules: counts
+   * as a personal (can foul out), does NOT count toward the team-foul
+   * penalty, never awards free throws.
    */
-  getTurnoverDescription(playerName) {
+  getViolationDescription(action, actor) {
+    const name = this._lastNameOf(actor);
+
+    if (!this.playResult.turnoverViolation) {
+      const type = action?.type ?? '';
+      let weights;
+      if (type === 'pass' || type === 'handoff') {
+        // Errant delivery dominates; charges/illegal screens spring some.
+        weights = { bad_pass_oob: 0.65, offensive_foul: 0.2, travel: 0.15 };
+      } else if (type === 'drive') {
+        // Attacking downhill: charges and shuffled feet.
+        weights = { offensive_foul: 0.4, travel: 0.3, lost_ball_oob: 0.3 };
+      } else if (type === 'post') {
+        // Back-downs: over-aggressive seals and pivot-foot slips.
+        weights = { offensive_foul: 0.45, travel: 0.35, lost_ball_oob: 0.2 };
+      } else {
+        // Global NBA mix for everything else.
+        weights = { offensive_foul: 0.36, bad_pass_oob: 0.3, travel: 0.19, lost_ball_oob: 0.1, double_dribble: 0.05 };
+      }
+
+      let roll = Math.random();
+      let kind = 'travel';
+      for (const [k, w] of Object.entries(weights)) {
+        roll -= w;
+        if (roll <= 0) { kind = k; break; }
+      }
+      this.playResult.turnoverViolation = kind;
+
+      if (kind === 'offensive_foul') {
+        this.playResult.foul = {
+          type: 'offensive',
+          byId: actor?.id ?? null,
+          onId: this.lastOnBallDefenderId ?? null,
+        };
+        this.playResult.deadBall = true;
+      }
+    }
+
+    const variantsByKind = {
+      travel: [
+        `${name} travels!`,
+        `${name} shuffles his feet — traveling!`,
+      ],
+      bad_pass_oob: [
+        `${name}'s pass sails out of bounds!`,
+        `${name} throws it away — out of bounds!`,
+      ],
+      lost_ball_oob: [
+        `${name} loses the handle and the ball rolls out of bounds!`,
+        `${name} fumbles it out of bounds!`,
+      ],
+      offensive_foul: [
+        `${name} charges into the defender — offensive foul!`,
+        `${name} bowls over his man! Offensive foul.`,
+      ],
+      double_dribble: [
+        `${name} picks up his dribble... and puts it down again! Double dribble.`,
+      ],
+    };
+    const variants = variantsByKind[this.playResult.turnoverViolation] || variantsByKind.travel;
+    return variants[Math.floor(Math.random() * variants.length)];
+  }
+
+  /**
+   * Scheme-aware description for LIVE-ball steals (`stolen` outcomes) —
+   * always names the DEFENDER who made the play (the on-ball defender,
+   * i.e. the same player credited with the steal via stolenById).
+   */
+  getStealDescription(actor) {
+    const victim = this._lastNameOf(actor);
+    const defender = this._creditedDefender(actor);
+    const def = this._lastNameOf(defender, 'The defender');
+
     const descriptionsMap = {
       man: [
-        'Tight man defense forces the turnover!',
-        'Man-to-man pressure creates the steal!',
-        `${playerName} coughs it up against the pressure!`,
+        `${def} picks ${victim}'s pocket!`,
+        `${def}'s tight man pressure forces the steal!`,
+        `${victim} coughs it up — ${def} takes it away!`,
       ],
       zone_2_3: [
-        'The 2-3 zone reads the pass!',
-        'Zone defense anticipates and steals!',
+        `${def} reads the pass from the 2-3 zone and picks it off!`,
+        `${def} jumps the lane out of the zone — steal!`,
       ],
       zone_3_2: [
-        'The 3-2 zone picks off the pass!',
-        'Quick hands in the zone cause the turnover!',
+        `${def} picks off the pass from the 3-2 zone!`,
+        `Quick hands by ${def} in the zone — turnover!`,
       ],
       zone_1_3_1: [
-        'The 1-3-1 trap forces the turnover!',
-        'Aggressive trapping creates the steal!',
-        `${playerName} is caught in the 1-3-1!`,
+        `${def} springs the 1-3-1 trap and comes up with it!`,
+        `${victim} is caught in the 1-3-1 — ${def} steals it!`,
       ],
       press: [
-        'Full court press creates the turnover!',
-        'Press defense forces the bad pass!',
-        `${playerName} can't handle the pressure!`,
+        `${def} turns the press into a steal!`,
+        `${victim} can't handle the pressure — ${def} takes it!`,
       ],
       trap: [
-        'Double team forces the turnover!',
-        'Trap defense creates another steal!',
-        `${playerName} is suffocated by the trap!`,
+        `${def} strips it out of the double team!`,
+        `${victim} is suffocated by the trap — ${def} with the steal!`,
       ],
     };
 
     const defaultDescriptions = [
-      'Turnover! Great defensive play!',
-      `${playerName} loses the ball!`,
+      `${def} strips ${victim} — steal!`,
+      `${def} takes it away from ${victim}!`,
     ];
 
     const descriptions = descriptionsMap[this.defensiveScheme] ?? defaultDescriptions;
@@ -1450,6 +2015,10 @@ class PlayExecutionEngine {
       if (receiverRole && receiverRole in this.roleAssignments) {
         this.ballCarrierId = this.roleAssignments[receiverRole];
       }
+      // Flight flags for the NEXT keyframe (ball at the receiver): the
+      // travel into it renders as a low arc with slow pass-spin that stops
+      // at the catch.
+      this._pendingBallFlight = { inFlight: true, height: PASS_FLIGHT_HEIGHT, spin: 'pass' };
     }
 
     // Handle handoff - track passer for assist attribution
@@ -1460,6 +2029,8 @@ class PlayExecutionEngine {
       if (receiverRole && receiverRole in this.roleAssignments) {
         this.ballCarrierId = this.roleAssignments[receiverRole];
       }
+      // Handoffs are point-blank exchanges — brief spin, no visible arc.
+      this._pendingBallFlight = { inFlight: true, height: 0, spin: 'pass' };
     }
 
     // Drives count as ball-handling between a catch and a shot. Only count
@@ -1468,6 +2039,27 @@ class PlayExecutionEngine {
     // there hasn't been a pass yet on this play, so don't track.
     if (action.type === 'drive' && this.playResult.dribblesSincePass != null) {
       this.playResult.dribblesSincePass += 1;
+    }
+
+    // Steal attribution: the on-ball defender at the moment of the `stolen`
+    // outcome forced it — stamped so GameSimulator credits the right player
+    // instead of a random defender. `turnoverKind` distinguishes live-ball
+    // steals (transition) from dead-ball violations for break classification.
+    if (outcome.key === 'stolen' || outcome.key === 'turnover') {
+      this.playResult.turnoverKind = outcome.key;
+      if (outcome.key === 'stolen') {
+        this.playResult.stolenById = this.lastOnBallDefenderId;
+      }
+    }
+
+    // Shooting foul attribution (shot or drive resolving `fouled` → FTs).
+    if ((action.type === 'shot' || action.type === 'drive') && outcome.key === 'fouled') {
+      this.playResult.foul = {
+        type: 'shooting',
+        byId: this.lastOnBallDefenderId,
+        onId: actor.id ?? null,
+      };
+      this.playResult.deadBall = true;
     }
 
     // Track shot attempts
@@ -1485,21 +2077,64 @@ class PlayExecutionEngine {
         // 1–2 → high probability, 3+ → standard probabilistic credit.
         dribblesSincePass: this.playResult.dribblesSincePass,
       };
+
+      // And-1 roll: contact finish on a made shot. Rim finishes draw far
+      // more continuation contact than jumpers; drawFoul nudges the rate.
+      if (outcome.key === 'made' && this.lastOnBallDefenderId) {
+        const shotType = action.shotType ?? 'paint';
+        const isRim = shotType === 'paint' || /dunk|layup/i.test(action.id ?? '');
+        const drawFoul = this.getPlayerAttribute(actor, 'drawFoul') ?? 50;
+        const andOneRate = (isRim ? 0.08 : 0.025) * (1 + (drawFoul - 50) / 200);
+        if (Math.random() < andOneRate) {
+          this.playResult.foul = {
+            type: 'and_one',
+            byId: this.lastOnBallDefenderId,
+            onId: actor.id ?? null,
+          };
+          this.playResult.pendingAndOne = { shooterId: actor.id ?? null };
+          this.playResult.deadBall = true;
+        }
+      }
     }
   }
 
   /**
    * Handle end states.
    */
-  handleEndState(outcome, action) {
+  handleEndState(outcome, action, offensiveLineup = []) {
     const endType = outcome.next;
 
     if (endType === 'end_made') {
       this.playResult.outcome = 'made';
       this.playResult.points = outcome.points ?? 2;
+
+      // Shot presentation: release → flight → through the net. Launches from
+      // the current ball carrier's spot, so terminal makes from drives/cuts
+      // (not just `shot` actions) get the full flight too.
+      this._appendShotResultKeyframes('made');
+
+      // And-1: shooter converted through contact — the basket counts here
+      // and the free throw runs as its own segment after the dead-ball
+      // break (its point/FT stats are credited by that attempt's result).
+      const pending = this.playResult.pendingAndOne;
+      if (pending) {
+        delete this.playResult.pendingAndOne;
+        this.playResult.pendingFreeThrows = {
+          shooterId: pending.shooterId ?? null,
+          attempts: 1,
+        };
+        // Whistle rides a beat after the swish-through — the ref signaling
+        // the continuation foul while the crowd is still up. Ball state
+        // repeats the through frame so nothing moves on screen.
+        this.elapsedTime += 0.15;
+        this._appendBallKeyframe({ ...RIM_POS, through: true }, '', 'foul_whistle');
+      }
     } else if (endType === 'end_turnover') {
       this.playResult.outcome = 'turnover';
       this.playResult.points = 0;
+    } else if (endType === 'end_deflection' || endType === 'end_foul') {
+      // Disruption sentinels — playResult outcome/points/freeThrows were
+      // already stamped by _attemptDisruption.
     } else {
       this.playResult.outcome = 'completed';
       this.playResult.points = outcome.points ?? 0;
@@ -1510,6 +2145,24 @@ class PlayExecutionEngine {
    * Handle rebound battle.
    */
   handleReboundBattle(offensiveLineup, defensiveLineup) {
+    // Present the attempt that precedes the battle. Blocked shots never
+    // reach the rim — a short deflection near the shooter instead of the
+    // full flight; everything else shows flight → rim bounce. Track where
+    // the ball ENDS UP so the rebound is collected there, not dragged back
+    // to a fixed spot in front of the hoop.
+    let ballLanding
+    if (this.playResult.shotAttempt?.blocked) {
+      const from = this._currentBallPosition();
+      ballLanding = {
+        x: Math.min(0.95, Math.max(0.05, from.x + (Math.random() * 0.24 - 0.12))),
+        y: Math.max(0.05, from.y - (0.05 + Math.random() * 0.15)),
+      };
+      this.elapsedTime += BLOCK_DEFLECT_S;
+      this._appendBallKeyframe({ ...ballLanding }, 'Swatted away!');
+    } else {
+      ballLanding = this._appendShotResultKeyframes('missed');
+    }
+
     let offRebRating = 0;
     let defRebRating = 0;
 
@@ -1557,80 +2210,67 @@ class PlayExecutionEngine {
       this.playResult.points = 0;
     }
 
-    // Record rebound keyframe
-    this.keyframes.push({
-      time: this.elapsedTime + 0.5,
-      positions: this.buildPositionsSnapshot(),
-      ball: { x: 0.5, y: 0.8 },
-      action: 'rebound_battle',
-      description: this.playResult.outcome === 'offensive_rebound'
+    // Record rebound keyframe — advance elapsedTime so the scramble is
+    // inside playResult.duration (previously stamped at duration + 0.5 and
+    // never actually displayed). The board is grabbed WHERE the ball landed.
+    this.elapsedTime += 0.5;
+    this._appendBallKeyframe(
+      { x: ballLanding.x, y: ballLanding.y },
+      this.playResult.outcome === 'offensive_rebound'
         ? 'Offensive rebound!'
-        : 'Defensive rebound',
-    });
-  }
-
-  /**
-   * Handle free throws.
-   */
-  handleFreeThrows(outcome, offensiveLineup) {
-    // Safety check: if lineup is empty, skip free throws
-    if (!offensiveLineup || offensiveLineup.length === 0) {
-      this.playResult.outcome = 'free_throws';
-      this.playResult.points = 0;
-      this.playResult.freeThrows = { made: 0, attempted: 0 };
-      return;
-    }
-
-    let shooter = null;
-    for (const player of offensiveLineup) {
-      if (player.id === this.ballCarrierId) {
-        shooter = player;
-        break;
-      }
-    }
-
-    if (!shooter) {
-      shooter = offensiveLineup[0];
-    }
-
-    const ftRating = shooter.attributes?.offense?.freeThrow ?? 70;
-    const ftPercentage = ftRating / 100;
-
-    // Assume 2 free throws
-    let made = 0;
-    for (let i = 0; i < 2; i++) {
-      if (Math.random() < ftPercentage) {
-        made++;
-      }
-    }
-
-    this.playResult.outcome = 'free_throws';
-    this.playResult.points = made;
-    this.playResult.freeThrows = { made: made, attempted: 2, shooterId: shooter.id ?? null };
-
-    this.keyframes.push({
-      time: this.elapsedTime + 1.0,
-      positions: this.buildPositionsSnapshot(),
-      ball: { x: 0.5, y: 0.75 },
-      action: 'free_throws',
-      description: (shooter.first_name ?? shooter.firstName ?? 'Player') + ` makes ${made} of 2 free throws`,
-    });
+        : 'Defensive rebound'
+    );
   }
 
   /**
    * Build final play result.
    */
   buildPlayResult(play) {
+    // End-of-play breather: guarantee a hold between the final keyframe and
+    // the end of the possession so every result LANDS before the next play
+    // starts (interpolation freezes the last frame during the hold). The
+    // hold is measured from the LAST KEYFRAME, not just appended — some
+    // endings (turnovers) already carry an implicit tail from the final
+    // action's duration, and stacking on top of it froze the court for 2s+.
+    const outcome = this.playResult.outcome ?? 'completed'
+    let targetHold
+    if (outcome === 'missed' || outcome === 'offensive_rebound') {
+      targetHold = 0.25 // the bounce + scramble already animated the beat
+    } else if (outcome === 'made' || outcome === 'free_throws') {
+      targetHold = 0.45 // beat after the ball drops through
+    } else {
+      targetHold = 1.0  // turnover / deflected / foul — static ending
+    }
+    const lastKfTime = this.keyframes.length > 0
+      ? this.keyframes[this.keyframes.length - 1].time
+      : this.elapsedTime
+
     return {
       playId: play.id,
       playName: play.name,
       category: play.category,
-      outcome: this.playResult.outcome ?? 'completed',
+      outcome,
       points: this.playResult.points ?? 0,
-      duration: this.elapsedTime,
+      duration: Math.max(this.elapsedTime, lastKfTime + targetHold),
       shotAttempt: this.playResult.shotAttempt ?? null,
       freeThrows: this.playResult.freeThrows ?? null,
       lastPasserId: this.playResult.lastPasserId ?? null,
+      // Foul / disruption model (all optional — absent on plain possessions)
+      foul: this.playResult.foul ?? null,
+      deflection: this.playResult.deflection ?? null,
+      stolenById: this.playResult.stolenById ?? null,
+      turnoverKind: this.playResult.turnoverKind ?? null,
+      // Concrete dead-ball violation call (travel, bad_pass_oob, ...) rolled
+      // by getViolationDescription for generic `turnover` outcomes.
+      turnoverViolation: this.playResult.turnoverViolation ?? null,
+      // The narrated blocker (getBlockedDescription) — box-score block
+      // credit prefers this so the stat matches the call.
+      blockedById: this.playResult.blockedById ?? null,
+      offenseRetains: this.playResult.offenseRetains ?? false,
+      deadBall: this.playResult.deadBall ?? false,
+      // Free throws owed after this play (whistle ended it): GameSimulator
+      // shoots them as separate segments via executeFreeThrowAttempt.
+      pendingFreeThrows: this.playResult.pendingFreeThrows ?? null,
       keyframes: this.keyframes,
       roleAssignments: this.roleAssignments,
       activatedBadges: this.activatedBadges,
@@ -1664,6 +2304,7 @@ class PlayExecutionEngine {
     this.chaser = null;
     this.defenseFamily = 'man';
     this.lastOnBallDefenderId = null;
+    this._pendingBallFlight = null;
     // Note: defensiveScheme and defensiveModifiers are set at start of executePlay
   }
 

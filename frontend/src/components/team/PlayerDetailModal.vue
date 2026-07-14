@@ -19,6 +19,7 @@ import { BADGES } from '@/engine/data/badges'
 import { getCoachTrainBudget } from '@/engine/data/coaches'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 import { getMotivationLabel, getArchetypeLabel, calculateRetentionScore } from '@/engine/ai/MotivationService'
@@ -272,6 +273,16 @@ watch(activeTab, (tab) => {
   // maybeStart no-ops if the tour isn't enabled, already seen, already running,
   // or not yet defined in the registry — so undefined keys are safe.
   if (key) walkthroughStore.maybeStart(key)
+})
+
+// Replay key for the "?" button — the active sub-tab's tour ('stats' is the
+// initial page, covered by 'playerDetail'). Only offered where the tab tours
+// were designed to run (opened from the lineup), and null on tour-less tabs
+// (history) so the button hides there.
+const replayTourKey = computed(() => {
+  if (!props.enableTabTours) return null
+  if (activeTab.value === 'stats') return 'playerDetail'
+  return TAB_TOUR_KEYS[activeTab.value] ?? null
 })
 
 // Evolution display state
@@ -2319,6 +2330,8 @@ function formatChange(change) {
               Close
             </button>
           </footer>
+
+          <WalkthroughReplayButton :walkthrough-key="replayTourKey" variant="modal" />
         </div>
       </div>
     </Transition>
@@ -2487,6 +2500,13 @@ function formatChange(change) {
 .contract-info {
   display: flex;
   gap: 2rem;
+}
+
+/* Lift the walkthrough "?" above the footer (which holds the contract info in
+   its bottom-left). Compound selector out-specifies the component's own
+   scoped `.wt-replay-modal` rule. */
+.wt-replay-btn.wt-replay-modal {
+  bottom: 82px;
 }
 
 .btn-close-footer {

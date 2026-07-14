@@ -317,17 +317,43 @@ async function saveToCloud() {
 }
 
 async function pullFromCloud() {
-  const campaignId = syncStore.activeCampaignId
-  if (!campaignId) {
-    showPullFromCloudModal.value = false
-    return
-  }
   pullingFromCloud.value = true
   try {
-    await syncStore.forcePullFromCloud(campaignId)
-    showPullFromCloudModal.value = false
-    // Full reload so every Pinia store rehydrates from the now-replaced IndexedDB.
-    window.location.reload()
+    let campaignIds = []
+    if (syncStore.activeCampaignId) {
+      campaignIds = [syncStore.activeCampaignId]
+    } else {
+      // No active campaign this session — exactly the state of a user who
+      // lost local data and is here to recover it. Pull every campaign the
+      // server has for this account instead of silently doing nothing.
+      const serverCampaigns = await syncStore.fetchServerCampaigns()
+      campaignIds = (serverCampaigns || []).map(c => c.id)
+    }
+
+    if (campaignIds.length === 0) {
+      showPullFromCloudModal.value = false
+      return
+    }
+
+    let restored = 0
+    let lastErr = null
+    for (const id of campaignIds) {
+      try {
+        await syncStore.forcePullFromCloud(id)
+        restored++
+      } catch (err) {
+        lastErr = err
+        console.error(`Pull from cloud failed for campaign ${id}:`, err)
+      }
+    }
+
+    if (restored > 0) {
+      showPullFromCloudModal.value = false
+      // Full reload so every Pinia store rehydrates from the now-replaced IndexedDB.
+      window.location.reload()
+    } else if (lastErr) {
+      throw lastErr
+    }
   } catch (err) {
     console.error('Pull from cloud failed:', err)
   } finally {

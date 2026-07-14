@@ -232,6 +232,76 @@ export function playSample(url, { volume: sampleVolume = 1 } = {}) {
   }
 }
 
+// ---- Looping ambient beds via the AudioContext ----------------------------
+// Gapless looped playback of a decoded sample (AudioBufferSourceNode.loop —
+// HTMLAudioElement's `loop` has an audible seam on iOS/Android WebViews).
+// Each loop gets its own gain node under masterGain, so beds can layer on
+// top of one another and user mute/volume apply live. Short gain ramps on
+// start/stop avoid clicks.
+//
+// Returns a handle whose `stop()` is idempotent and safe to call while the
+// decode is still in flight (the loop then never starts). Decode failure →
+// silent no-op handle: a seamed HTMLAudio fallback loop is worse than silence.
+export function playLoop(url, { volume: loopVolume = 1, fadeS = 0.08 } = {}) {
+  const handle = { stopped: false, _src: null, _env: null, stop: null }
+  handle.stop = () => {
+    handle.stopped = true
+    const src = handle._src
+    const env = handle._env
+    if (!src || !env || !ctx) return
+    handle._src = null
+    handle._env = null
+    try {
+      const now = ctx.currentTime
+      env.gain.cancelScheduledValues(now)
+      env.gain.setValueAtTime(env.gain.value, now)
+      env.gain.linearRampToValueAtTime(0, now + fadeS)
+      src.stop(now + fadeS + 0.02)
+      src.onended = () => { try { src.disconnect(); env.disconnect() } catch { /* noop */ } }
+    } catch { /* best-effort */ }
+  }
+
+  if (!url) { handle.stopped = true; return handle }
+  const c = ensureContext()
+  if (!c || !masterGain) { handle.stopped = true; return handle }
+
+  const start = (buffer) => {
+    if (!buffer || handle.stopped) return // decode failed, or stopped before start
+    try {
+      if (c.state === 'suspended') c.resume().catch(() => {})
+      const src = c.createBufferSource()
+      src.buffer = buffer
+      src.loop = true
+      // AAC priming/padding can leave a few ms of silence at the buffer
+      // edges; nudging the loop points inward keeps the seam inaudible.
+      if (buffer.duration > 1) {
+        src.loopStart = 0.03
+        src.loopEnd = buffer.duration - 0.05
+      }
+      const env = c.createGain()
+      const now = c.currentTime
+      env.gain.setValueAtTime(0, now)
+      env.gain.linearRampToValueAtTime(Math.max(0, Math.min(1, loopVolume)), now + fadeS)
+      src.connect(env)
+      env.connect(masterGain) // masterGain applies user volume + mute live
+      src.start(now)
+      handle._src = src
+      handle._env = env
+    } catch { /* best-effort: never throw */ }
+  }
+
+  if (sampleCache.has(url)) {
+    start(sampleCache.get(url))
+  } else {
+    preloadSample(url).then(start).catch(() => {})
+  }
+  return handle
+}
+
+export function stopLoop(handle) {
+  if (handle?.stop) handle.stop()
+}
+
 // ---- MP3 clip playback (music / game noises) -----------------------------
 // `url` is the resolved asset URL (or null if the file hasn't been added yet,
 // in which case this is a safe no-op). Returns a handle for stopClip().

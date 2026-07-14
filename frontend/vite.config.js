@@ -40,7 +40,7 @@ export default defineConfig({
         ]
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,json,mp3,flac}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,json,mp3,flac,m4a}'],
         // Don't precache the ~16MB of player-headshot SVGs — on slow networks that
         // made the service-worker install download the whole set up front. They're
         // runtime-cached on first view instead (rule below). Safety cap guards

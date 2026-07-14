@@ -168,8 +168,44 @@ const props = defineProps({
   activatedSynergies: {
     type: Array,
     default: () => []
+  },
+  // Dead-ball stoppage overlay (live segmented pacing only): when true the
+  // bottom-right description bubble hides and a centered bubble takes over,
+  // showing the same play description + Subs/Adjust/Continue actions.
+  stoppageMode: {
+    type: Boolean,
+    default: false
+  },
+  // The play's definitive result line ("X makes the three-pointer!") shown
+  // under the description inside the stoppage bubble.
+  stoppageResult: {
+    type: String,
+    default: ''
+  },
+  allowSubs: {
+    type: Boolean,
+    default: false
+  },
+  simulating: {
+    type: Boolean,
+    default: false
+  },
+  // Timeout sequence: players slide off to their sidelines and a centered
+  // TIMEOUT bubble counts down (skippable). The parent flips this on when
+  // a called timeout fires at a play end, and off after 'timeout-complete'.
+  timeoutMode: {
+    type: Boolean,
+    default: false
+  },
+  // Seconds left on the timeout clock — owned by the parent (GameView runs
+  // the interval) so other surfaces (coaches overlay) can show it too.
+  timeoutSecondsLeft: {
+    type: Number,
+    default: 30
   }
 })
+
+const emit = defineEmits(['stoppage-subs', 'stoppage-adjust', 'stoppage-continue', 'timeout-complete'])
 
 const positionHistory = ref({})
 const canvas = ref(null)
@@ -243,6 +279,69 @@ function animateScore() {
     drawCourt()
   }
 }
+
+// ---- Timeout sequence: slide-off + countdown display -----------------------
+// On timeoutMode rising edge we snapshot every player's current interpolated
+// position and tween their x past their sideline (home → left, away → right)
+// with the same self-contained RAF pattern as the other canvas FX. The
+// snapshot persists while timeoutMode holds so paused redraws keep the
+// players off-court; the next segment's own keyframes walk them back in.
+// The countdown itself is parent-owned (timeoutSecondsLeft prop).
+const TIMEOUT_SLIDE_MS = 900
+const timeoutSlide = ref(null) // { players: [{x, y, targetX, playerId, lineupIndex}], progress }
+
+function startTimeoutSlide() {
+  const homeIds = new Set(props.homeRoster.map(p => String(p.id ?? p.player_id)))
+  const players = Object.entries(props.interpolatedPositions || {}).map(([playerId, pos]) => ({
+    playerId,
+    x: pos.x,
+    y: pos.y,
+    lineupIndex: pos.lineupIndex ?? null,
+    targetX: homeIds.has(String(playerId)) ? -0.08 : 1.08,
+  }))
+  timeoutSlide.value = { players, progress: 0, startTime: performance.now() }
+  animateTimeoutSlide()
+}
+
+function animateTimeoutSlide() {
+  if (!timeoutSlide.value || !props.timeoutMode) return
+  const elapsed = performance.now() - timeoutSlide.value.startTime
+  timeoutSlide.value.progress = Math.min(1, elapsed / TIMEOUT_SLIDE_MS)
+  drawCourt()
+  if (timeoutSlide.value.progress < 1) {
+    requestAnimationFrame(animateTimeoutSlide)
+  }
+}
+
+// Positions to draw while the timeout is up: each player lerped from their
+// frozen spot toward (and past) their sideline. hasBall is always false —
+// the ball is holstered for the duration.
+function timeoutSlidePositions() {
+  const slide = timeoutSlide.value
+  if (!slide) return null
+  const t = slide.progress
+  const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+  const positions = {}
+  for (const p of slide.players) {
+    positions[p.playerId] = {
+      x: p.x + (p.targetX - p.x) * eased,
+      y: p.y,
+      hasBall: false,
+      lineupIndex: p.lineupIndex,
+    }
+  }
+  return positions
+}
+
+watch(() => props.timeoutMode, (active) => {
+  if (active) {
+    startTimeoutSlide()
+  } else {
+    timeoutSlide.value = null
+    positionHistory.value = {} // no trails from the slide-off on resume
+    drawCourt()
+  }
+})
 
 /**
  * Trigger defensive animation at a player's position on the court.
@@ -839,16 +938,25 @@ function drawCourt() {
 
   // Animation mode rendering
   if (props.animationMode) {
-    if (props.showTrails) {
-      drawMovementTrails(c)
-    }
-    drawAnimatedPlayers(c)
-    if (props.interpolatedBallPosition) {
-      const inFlight = props.interpolatedBallPosition.inFlight
-      const ballOffset = !inFlight ? 16 : 0
-      const ballX = props.interpolatedBallPosition.x * w - ballOffset
-      const ballY = props.interpolatedBallPosition.y * h + ballOffset
-      drawBall(c, ballX, ballY, inFlight)
+    if (props.timeoutMode) {
+      // Timeout: players slide to their sidelines; no trails, no ball.
+      const slidePositions = timeoutSlidePositions()
+      if (slidePositions) {
+        drawAnimatedPlayers(c, slidePositions)
+      }
+    } else {
+      if (props.showTrails) {
+        drawMovementTrails(c)
+      }
+      drawAnimatedPlayers(c)
+      if (props.interpolatedBallPosition) {
+        const ball = props.interpolatedBallPosition
+        const airborne = ball.inFlight || ball.through
+        const ballOffset = !airborne ? 16 : 0
+        const ballX = ball.x * w - ballOffset
+        const ballY = ball.y * h + ballOffset
+        drawBall(c, ballX, ballY, airborne, ball)
+      }
     }
   } else {
     if (props.showPlayers && props.playerPositions.length > 0) {
@@ -1370,39 +1478,82 @@ function drawPlayers(c) {
   })
 }
 
-function drawBall(c, x, y, inFlight = false) {
-  const shadowOffset = inFlight ? 6 : 2
-  c.beginPath()
-  c.arc(x + shadowOffset, y + shadowOffset, 8, 0, Math.PI * 2)
-  c.fillStyle = inFlight ? 'rgba(0, 0, 0, 0.2)' : 'rgba(0, 0, 0, 0.3)'
-  c.fill()
+// --- Ball spin & flight presentation (top-down view) ---
+// The seam pattern rotates clockwise while the current flight segment carries
+// a spin flag (shot 2.5 rev/s ≈ real backspin, pass 1.2 rev/s) and freezes
+// the moment the segment resolves (rim contact, net, or catch) — the angle
+// simply stops advancing when `spin` is absent. Apex height scales the ball
+// up (closer to the overhead camera); a swish shrinks/fades it down through
+// the net, away from the camera.
+const BALL_SPIN_RPS = { shot: 2.5, pass: 1.2 }
+const BALL_APEX_SCALE = 0.7
+let ballSpinAngle = 0
+let lastBallDrawTs = null
 
-  const gradient = c.createRadialGradient(x - 2, y - 2, 0, x, y, 8)
+function drawBall(c, x, y, inFlight = false, ball = {}) {
+  // Advance (or freeze) the spin angle based on real frame time.
+  const now = performance.now()
+  const rate = ball.spin ? (BALL_SPIN_RPS[ball.spin] ?? 0) : 0
+  if (rate > 0 && lastBallDrawTs != null) {
+    const dt = Math.min(0.1, (now - lastBallDrawTs) / 1000)
+    ballSpinAngle = (ballSpinAngle + dt * rate * Math.PI * 2) % (Math.PI * 2)
+  }
+  lastBallDrawTs = now
+
+  const height = ball.height ?? 0
+  const throughT = ball.through ? (ball.throughT ?? 0) : 0
+  const scale = ball.through
+    ? 1 - 0.45 * throughT            // sinking through the net
+    : 1 + BALL_APEX_SCALE * height   // swelling toward the camera at the apex
+  const alpha = ball.through ? 1 - 0.65 * throughT : 1
+  const r = 8 * scale
+
+  c.save()
+  c.globalAlpha = alpha
+
+  // Shadow separates further from the ball the higher it flies; gone once
+  // the ball is dropping through the net.
+  if (!ball.through) {
+    const shadowOffset = (inFlight ? 6 : 2) + height * 8
+    c.beginPath()
+    c.arc(x + shadowOffset, y + shadowOffset, 8, 0, Math.PI * 2)
+    c.fillStyle = inFlight ? 'rgba(0, 0, 0, 0.2)' : 'rgba(0, 0, 0, 0.3)'
+    c.fill()
+  }
+
+  const gradient = c.createRadialGradient(x - 2, y - 2, 0, x, y, r)
   gradient.addColorStop(0, '#FF8C00')
   gradient.addColorStop(1, '#FF4500')
 
   c.beginPath()
-  c.arc(x, y, 8, 0, Math.PI * 2)
+  c.arc(x, y, r, 0, Math.PI * 2)
   c.fillStyle = gradient
   c.fill()
 
+  // Seams — the ORIGINAL ball detail (one seam line + inner circle), just
+  // drawn in a rotated frame so the line visibly turns while the ball spins.
+  c.translate(x, y)
+  c.rotate(ballSpinAngle)
   c.strokeStyle = '#000000'
   c.lineWidth = 1
   c.beginPath()
-  c.moveTo(x - 7, y)
-  c.lineTo(x + 7, y)
+  c.moveTo(-r + 1, 0)
+  c.lineTo(r - 1, 0)
   c.stroke()
+  c.rotate(-ballSpinAngle)
   c.beginPath()
-  c.arc(x, y, 6, 0, Math.PI * 2)
+  c.arc(0, 0, r * 0.75, 0, Math.PI * 2)
   c.stroke()
 
-  if (inFlight) {
+  if (inFlight && !ball.through) {
     c.beginPath()
-    c.arc(x, y, 12, 0, Math.PI * 2)
+    c.arc(0, 0, r + 4, 0, Math.PI * 2)
     c.strokeStyle = 'rgba(255, 140, 0, 0.5)'
     c.lineWidth = 2
     c.stroke()
   }
+
+  c.restore()
 }
 
 function drawScoreAnimation(c, centerX, rimY) {
@@ -1466,10 +1617,10 @@ function drawScoreAnimation(c, centerX, rimY) {
   c.restore()
 }
 
-function drawAnimatedPlayers(c) {
+function drawAnimatedPlayers(c, positionsOverride = null) {
   const w = courtWidth.value
   const h = courtHeight.value
-  const positions = props.interpolatedPositions
+  const positions = positionsOverride || props.interpolatedPositions
 
   // Position slot labels
   const slotLabels = ['PG', 'SG', 'SF', 'PF', 'C']
@@ -1611,6 +1762,9 @@ function drawMovementTrails(c) {
       ? (props.homeTeam?.primary_color || '#3B82F6')
       : (props.awayTeam?.primary_color || '#EF4444')
 
+    // Faint path line only — the per-position dot breadcrumbs that used to
+    // accompany it read as unexplained "extra players" scattered on the
+    // court (especially after formation walks) and were removed.
     c.beginPath()
     c.moveTo(positions[0].x, positions[0].y)
     for (let i = 1; i < positions.length; i++) {
@@ -1620,16 +1774,6 @@ function drawMovementTrails(c) {
     c.lineWidth = 3
     c.globalAlpha = 0.3
     c.stroke()
-    c.globalAlpha = 1.0
-
-    positions.forEach((pos, i) => {
-      const alpha = (i / positions.length) * 0.5
-      c.beginPath()
-      c.arc(pos.x, pos.y, 3, 0, Math.PI * 2)
-      c.fillStyle = baseColor
-      c.globalAlpha = alpha
-      c.fill()
-    })
     c.globalAlpha = 1.0
   })
 }
@@ -1819,8 +1963,9 @@ defineExpose({
       <span class="play-name-text">{{ playName }}</span>
     </div>
 
-    <!-- Play Description Overlay (bottom right) -->
-    <div v-if="playDescription" class="play-description-overlay">
+    <!-- Play Description Overlay (bottom right; yields to the stoppage
+         bubble while a dead-ball break is up) -->
+    <div v-if="playDescription && !stoppageMode" class="play-description-overlay">
       <div class="play-description-entry">
         <span
           class="play-team-badge"
@@ -1830,6 +1975,57 @@ defineExpose({
           {{ playTeamAbbreviation }}
         </span>
         <span class="play-description-text">{{ playDescription }}</span>
+      </div>
+    </div>
+
+    <!-- Stoppage Overlay (centered): the play description in the same
+         bubble style, plus the dead-ball actions. -->
+    <div v-if="stoppageMode" class="stoppage-overlay">
+      <div v-if="playDescription" class="stoppage-last-play-label">Last Play:</div>
+      <div v-if="playDescription" class="play-description-entry">
+        <span
+          class="play-team-badge"
+          :class="{ 'away-team': playTeamIsAway }"
+          :style="{ '--team-color': playTeamColor }"
+        >
+          {{ playTeamAbbreviation }}
+        </span>
+        <span class="play-description-text">{{ playDescription }}</span>
+      </div>
+      <template v-if="stoppageResult && stoppageResult !== playDescription">
+        <div class="stoppage-last-play-label stoppage-result-label">Result:</div>
+        <div class="stoppage-result-text">{{ stoppageResult }}</div>
+      </template>
+      <div class="stoppage-actions">
+        <button v-if="allowSubs" class="stoppage-btn" @click="emit('stoppage-subs')">Subs</button>
+        <button v-if="allowSubs" class="stoppage-btn" @click="emit('stoppage-adjust')">Adjust</button>
+        <button
+          class="stoppage-btn stoppage-btn-continue"
+          :disabled="simulating"
+          @click="emit('stoppage-continue')"
+        >
+          <span v-if="simulating" class="stoppage-btn-loading"></span>
+          <span v-else>Continue ▸</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Timeout Overlay (centered): same bubble family as the stoppage
+         overlay — big countdown, skippable, with a shortcut into the
+         coaches overlay (subs/settings while the clock runs). -->
+    <div v-if="timeoutMode" class="stoppage-overlay timeout-overlay">
+      <div class="timeout-title">Timeout</div>
+      <div class="timeout-clock">0:{{ String(Math.max(0, timeoutSecondsLeft)).padStart(2, '0') }}</div>
+      <div class="stoppage-actions">
+        <button class="stoppage-btn" @click="emit('stoppage-adjust')">Coaching</button>
+        <button
+          class="stoppage-btn stoppage-btn-continue"
+          :disabled="simulating"
+          @click="emit('timeout-complete')"
+        >
+          <span v-if="simulating" class="stoppage-btn-loading"></span>
+          <span v-else>Skip ▸</span>
+        </button>
       </div>
     </div>
   </div>
@@ -1934,6 +2130,137 @@ defineExpose({
   font-size: 11px;
   color: rgba(255, 255, 255, 0.9);
   line-height: 1.3;
+}
+
+/* Centered dead-ball stoppage bubble — same family as the description
+   overlay, promoted to center stage with the break actions attached. */
+.stoppage-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.72);
+  padding: 10px 12px;
+  border-radius: 8px;
+  max-width: 82%;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  animation: stoppagePop 0.25s ease-out;
+}
+
+@keyframes stoppagePop {
+  from {
+    transform: translate(-50%, -50%) scale(0.92);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+.stoppage-last-play-label {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: -4px; /* tucks the label against its description line */
+}
+
+.stoppage-result-label {
+  color: rgba(239, 106, 79, 0.85); /* coral — marks the verified outcome */
+  margin-top: 2px;
+}
+
+/* The play's verified outcome, under the description. Brighter/bolder than
+   the description so the result reads as the headline of the two. */
+.stoppage-result-text {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.3;
+  text-align: left;
+  margin-top: -4px;
+}
+
+.stoppage-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Timeout bubble: same base as .stoppage-overlay, content centered around
+   the big countdown. */
+.timeout-overlay {
+  align-items: center;
+  min-width: 110px;
+}
+
+.timeout-title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.timeout-clock {
+  font-family: 'Courier New', monospace;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  letter-spacing: 0.04em;
+}
+
+.stoppage-btn {
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e6e9f0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.stoppage-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.stoppage-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.stoppage-btn-continue {
+  background: #ef6a4f;
+  border-color: transparent;
+  color: #fff;
+}
+
+.stoppage-btn-continue:hover:not(:disabled) {
+  background: #f4795f;
+}
+
+.stoppage-btn-loading {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: stoppageSpin 0.7s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes stoppageSpin {
+  to { transform: rotate(360deg); }
 }
 
 /* Rotate court 90 degrees clockwise on mobile */

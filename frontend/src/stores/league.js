@@ -5,7 +5,7 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { scoreMVPCandidate, MVP_MIN_GAMES_PCT } from '@/engine/season/AwardService'
-import { recomputeHighsLeaders } from '@/engine/stats/careerHighs'
+import { recomputeHighsLeaders, mergeHighsBoards } from '@/engine/stats/careerHighs'
 import { buildChampionsHistory, buildMvpHistory, buildRotyHistory, buildDpoyHistory } from '@/engine/stats/campaignRecords'
 
 export const useLeagueStore = defineStore('league', () => {
@@ -473,11 +473,18 @@ export const useLeagueStore = defineStore('league', () => {
     loadingRecords.value = true
     error.value = null
     try {
-      const [players, seasons] = await Promise.all([
+      const [players, seasons, campaign] = await Promise.all([
         PlayerRepository.getAllForCampaign(campaignId),
         SeasonRepository.getAllForCampaign(campaignId),
+        CampaignRepository.get(campaignId),
       ])
-      allTimeHighs.value = recomputeHighsLeaders(players || [], 'careerHighs')
+      // Union the live recompute with the persistent board — pruned retirees'
+      // records exist only in settings.allTimeHighs (old saves without the
+      // stored board degrade to exactly the live recompute).
+      allTimeHighs.value = mergeHighsBoards(
+        campaign?.settings?.allTimeHighs ?? {},
+        recomputeHighsLeaders(players || [], 'careerHighs'),
+      )
       seasonHighs.value = recomputeHighsLeaders(players || [], 'seasonHighs')
       champions.value = buildChampionsHistory(seasons || [])
       mvpHistory.value = buildMvpHistory(seasons || [])

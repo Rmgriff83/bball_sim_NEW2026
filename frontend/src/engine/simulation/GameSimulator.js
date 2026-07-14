@@ -217,6 +217,49 @@ class GameSimulator {
     // bonus this game. Reset when the shooter gets a make so they can claim it
     // again on a future cold spell.
     this.coldStreakBonusUsed = new Set()
+
+    // ---- Pacing / segmented simulation (live games) ----
+    // 'quarter' (legacy, default) | 'play' (stop after every possession) |
+    // 'deadBall' (stop only at dead-ball stoppages). Serialized so a resumed
+    // game keeps the mode it started with.
+    this.pacingMode = 'quarter'
+    // Mid-quarter loop state. `pendingPossessionTeam` non-null means we're
+    // mid-quarter (it's also the serialization signal for `midQuarter`).
+    this.pendingPossessionTeam = null
+    this.minutesSinceLastRotation = 0
+    this.scoreAtQuarterStart = { home: 0, away: 0 }
+    // Result of the most recent possession — read by the segment loop for
+    // dead-ball classification. Set every possession in simulatePossession.
+    this.lastPlayResult = null
+
+    // ---- Foul model ----
+    // Team fouls reset each quarter; a defense at >= 5 is "in the penalty"
+    // (non-shooting fouls award 2 FTs).
+    this.teamFouls = { home: 0, away: 0 }
+    // User-team players who fouled out since the last break — surfaced via
+    // breakInfo so the UI can prompt for a replacement (the engine already
+    // auto-subbed a fallback so the game can never wedge).
+    this.pendingFoulOutIds = []
+
+    // ---- User timeouts ----
+    this.userTimeoutsRemaining = 4
+
+    // ---- Pending free throws ----
+    // Set when a play ends at a whistle that awards FTs; each attempt then
+    // runs as its OWN segment via _simulateFreeThrowAttempt so paced modes
+    // break before/between attempts (and subs made at those breaks apply).
+    // { team, shooterId, attempts, taken, made, playId, playName }
+    this.pendingFreeThrows = null
+
+    // ---- Transition trigger ----
+    // How the NEXT possession begins, stamped by how the previous one ended.
+    // Transition offense only exists when the ball is gained LIVE with the
+    // defense not set (steal > recovered block > defensive rebound; some
+    // teams push off makes) — dead balls (violations, fouls, OOB, timeouts,
+    // period starts) always let the defense set, so no fast break.
+    // One of: 'steal' | 'block' | 'live_rebound' | 'made_basket' |
+    // 'oreb' | 'dead_ball'.
+    this.nextPossessionStart = 'dead_ball'
   }
 
   // =========================================================================
@@ -288,6 +331,7 @@ class GameSimulator {
   startGame(homeTeam, awayTeam, options = {}) {
     this.initializeGameFromData(homeTeam, awayTeam, options)
     this.isLiveGame = true
+    this.pacingMode = options.pacing_mode ?? options.pacingMode ?? 'quarter'
 
     if (options.coachingAdjustments) {
       this.applyAdjustments(options.coachingAdjustments)
@@ -303,11 +347,27 @@ class GameSimulator {
       )
     }
 
+    this.currentQuarter = 1
+    this.timeRemaining = QUARTER_LENGTH_MINUTES
+
+    // stop_after_play: the live client fetches one possession per call in
+    // EVERY pacing mode (it auto-continues through boundaries where the mode
+    // wouldn't pause) so timeouts/edits land at the end of the current play.
+    const stopAfterPlay = !!(options.stop_after_play ?? options.stopAfterPlay)
+
+    if (this.pacingMode !== 'quarter' || stopAfterPlay) {
+      this._beginQuarterSegmentState()
+      const segStartScores = { home: this.homeScore, away: this.awayScore }
+      const breakInfo = this._runSegment(stopAfterPlay ? 'play' : this.pacingMode)
+      return {
+        quarterResult: this._buildSegmentResult(1, breakInfo, segStartScores),
+        gameState: this.serializeState(),
+      }
+    }
+
     const homeScoreAtQuarterStart = 0
     const awayScoreAtQuarterStart = 0
 
-    this.currentQuarter = 1
-    this.timeRemaining = QUARTER_LENGTH_MINUTES
     this.simulateQuarterOnly()
 
     this.quarterScores.home.push(this.homeScore - homeScoreAtQuarterStart)
@@ -331,9 +391,29 @@ class GameSimulator {
    * @param {Object|null} adjustments - optional lineup/coaching adjustments
    * @returns {{ quarterResult, gameState, isComplete, finalResult }}
    */
-  continueGame(gameState, adjustments = null) {
+  continueGame(gameState, adjustments = null, opts = {}) {
     this.deserializeState(gameState)
     this.applyAdjustments(adjustments)
+    if (adjustments && (adjustments.call_timeout || adjustments.callTimeout)) {
+      this._applyTimeout()
+    }
+
+    // Segmented path: required whenever we're resuming mid-quarter (the legacy
+    // path would re-simulate the partial quarter from 12:00 on top of the
+    // already-banked score), and used for play/deadBall pacing. simToEnd
+    // passes forceQuarterPacing so segments run straight to quarter ends.
+    let stopMode = opts.forceQuarterPacing ? 'quarter' : this.pacingMode
+    // Per-call override: the live client fetches ONE possession per call in
+    // every pacing mode so armed timeouts and live coaching edits land at the
+    // end of the CURRENT play (it auto-continues through boundaries where the
+    // pacing wouldn't pause). Persisted pacingMode is untouched — resume UI
+    // still shows the user's pick. simToEnd's forceQuarterPacing wins.
+    if (!opts.forceQuarterPacing && adjustments && (adjustments.stop_after_play || adjustments.stopAfterPlay)) {
+      stopMode = 'play'
+    }
+    if (this.pendingPossessionTeam != null || stopMode !== 'quarter') {
+      return this._continueSegmented(gameState, stopMode)
+    }
 
     const nextQuarter = (gameState.completedQuarters || []).length + 1
     const homeScoreAtQuarterStart = this.homeScore
@@ -372,10 +452,298 @@ class GameSimulator {
     let state = gameState
     let result
     while (true) {
-      result = this.continueGame(state)
+      result = this.continueGame(state, null, { forceQuarterPacing: true })
       if (result.isComplete) return result
       state = result.gameState
     }
+  }
+
+  // =========================================================================
+  // SEGMENTED SIMULATION (play / deadBall pacing)
+  // =========================================================================
+
+  /**
+   * Reset the mid-quarter loop state at the top of a fresh quarter.
+   */
+  _beginQuarterSegmentState() {
+    this.applyBetweenQuarterMomentum()
+    this.teamFouls = { home: 0, away: 0 }
+    // Period opens with a jump/inbound against a set defense — no transition.
+    this.nextPossessionStart = 'dead_ball'
+    this.pendingPossessionTeam = Math.random() < 0.5 ? 'home' : 'away'
+    this.minutesSinceLastRotation = 0
+    this.scoreAtQuarterStart = { home: this.homeScore, away: this.awayScore }
+  }
+
+  /**
+   * Continue a segmented (play/deadBall) game: resume mid-quarter loop state
+   * if present, otherwise start the next quarter, then simulate up to the
+   * next stop point for `stopMode`.
+   */
+  _continueSegmented(gameState, stopMode) {
+    let quarter
+    if (this.pendingPossessionTeam != null) {
+      // Mid-quarter resume — clock/possession/rotation state restored by
+      // deserializeState; no quarter advance, no between-quarter momentum.
+      quarter = this.currentQuarter
+    } else {
+      quarter = (gameState.completedQuarters || []).length + 1
+      this.currentQuarter = quarter
+      this.timeRemaining = quarter <= 4 ? QUARTER_LENGTH_MINUTES : OVERTIME_LENGTH_MINUTES
+      this._beginQuarterSegmentState()
+    }
+
+    const segStartScores = { home: this.homeScore, away: this.awayScore }
+    const breakInfo = this._runSegment(stopMode)
+
+    const isComplete = breakInfo.quarterComplete && this.isGameComplete()
+    if (isComplete) breakInfo.reason = 'gameEnd'
+
+    return {
+      quarterResult: this._buildSegmentResult(quarter, breakInfo, segStartScores),
+      gameState: isComplete ? null : this.serializeState(),
+      isComplete,
+      finalResult: isComplete ? this.buildFinalResult() : null,
+    }
+  }
+
+  /**
+   * Run possessions until the next stop point for `stopMode`:
+   *   'play'     → after every possession
+   *   'deadBall' → after possessions ending in a dead ball
+   *   'quarter'  → only at quarter end (used by simToEnd on segmented saves)
+   * Returns the breakInfo describing why we stopped. Quarter-end bookkeeping
+   * (quarterScores push etc.) happens here when the clock hits zero.
+   */
+  _runSegment(stopMode) {
+    // Fresh segment: foul-outs surfaced at the previous break were either
+    // handled by the user's lineup adjustment or the engine's auto-sub.
+    this.pendingFoulOutIds = []
+
+    let stopClassification = null
+    let reason = null
+
+    // Pending free throws keep the segment alive past the clock (FTs are
+    // shot with the clock stopped, even after it hits zero).
+    while (this.timeRemaining > 0 || this.pendingFreeThrows) {
+      // Free throws owed from a whistle: each attempt is its own segment
+      // step so paced modes break BEFORE the first shot and between shots.
+      // After the FINAL attempt there is NO break — the ball is live again
+      // (rebound/inbound) and deadBall mode flows straight into the next
+      // possession. 'play' mode still pauses (it pauses after everything).
+      if (this.pendingFreeThrows) {
+        const keptFt = this._simulateFreeThrowAttempt()
+        if (!keptFt) {
+          this.pendingPossessionTeam = this.pendingPossessionTeam === 'home' ? 'away' : 'home'
+        }
+        const stillPending = !!this.pendingFreeThrows
+        if (stopMode === 'play' || (stopMode === 'deadBall' && stillPending)) {
+          stopClassification = stillPending
+            ? this._classifyPossessionEnd(this.lastPlayResult || {})
+            : { deadBall: false, deadBallType: null }
+          reason = stillPending ? 'deadBall' : 'possession'
+          break
+        }
+        continue
+      }
+
+      const team = this.pendingPossessionTeam
+      const scheme = team === 'home' ? this.homeOffensiveScheme : this.awayOffensiveScheme
+      let possessionTime = this._rollPossessionMinutes(scheme)
+      if (possessionTime > this.timeRemaining) {
+        possessionTime = this.timeRemaining
+      }
+
+      const keptBall = this.simulatePossession(team, possessionTime)
+      this.timeRemaining -= possessionTime
+      this.minutesSinceLastRotation += possessionTime
+
+      if (!keptBall) {
+        this.pendingPossessionTeam = team === 'home' ? 'away' : 'home'
+      }
+
+      if (this.minutesSinceLastRotation >= 2) {
+        this.rotatePlayers()
+        this.minutesSinceLastRotation = 0
+      }
+
+      if (this.timeRemaining <= 0 && !this.pendingFreeThrows) break
+
+      const cls = this._classifyPossessionEnd(this.lastPlayResult || {})
+      if (stopMode === 'play') {
+        stopClassification = cls
+        reason = cls.deadBall ? 'deadBall' : 'possession'
+        break
+      }
+      if (stopMode === 'deadBall' && cls.deadBall) {
+        stopClassification = cls
+        reason = 'deadBall'
+        break
+      }
+    }
+
+    const quarterComplete = this.timeRemaining <= 0 && !this.pendingFreeThrows
+    if (quarterComplete) {
+      this.quarterScores.home.push(this.homeScore - this.scoreAtQuarterStart.home)
+      this.quarterScores.away.push(this.awayScore - this.scoreAtQuarterStart.away)
+      this.quarterEndPossessions.push(this.possessionCount)
+      this.pendingPossessionTeam = null
+      reason = 'quarterEnd'
+    }
+
+    return this._buildBreakInfo(reason, quarterComplete, stopClassification)
+  }
+
+  /**
+   * Classify how the last possession ended for the dead-ball model.
+   * Dead: any foul (shooting/reach-in/and-1), deflection out of bounds,
+   * free throws, and non-steal turnovers (violations / ball out of bounds).
+   * Live: steals, made baskets without a foul, rebounds either way.
+   */
+  _classifyPossessionEnd(playResult) {
+    // Free throws still owed (whistle just happened, or mid-trip between
+    // attempts): dead ball with its own type so the UI can say what's next.
+    if (this.pendingFreeThrows) {
+      return { deadBall: true, deadBallType: 'free_throw_pending' }
+    }
+    const foul = playResult.foul || null
+    if (foul) {
+      // Offensive fouls (charges) are their own type — they read as a
+      // turnover against the offense, not a defensive foul (no bonus
+      // implications, possession flips).
+      const type = foul.type === 'offensive'
+        ? 'offensive_foul'
+        : foul.type === 'and_one'
+          ? 'and_one'
+          : foul.type === 'shooting' ? 'shooting_foul' : 'non_shooting_foul'
+      return { deadBall: true, deadBallType: type }
+    }
+    if (playResult.deflection) {
+      return { deadBall: true, deadBallType: 'deflection_oob' }
+    }
+    if (playResult.outcome === 'free_throws') {
+      return { deadBall: true, deadBallType: 'shooting_foul' }
+    }
+    if (playResult.outcome === 'turnover' && playResult.turnoverKind !== 'stolen') {
+      // violationKind names the concrete call (travel, bad_pass_oob, ...)
+      // rolled by PlayExecutionEngine.getViolationDescription.
+      return {
+        deadBall: true,
+        deadBallType: 'violation',
+        violationKind: playResult.turnoverViolation ?? null,
+      }
+    }
+    return { deadBall: false, deadBallType: null }
+  }
+
+  /**
+   * Break metadata returned with each segment. `bonus.home` means the HOME
+   * offense is in the bonus (i.e. the away defense has >= 5 team fouls).
+   */
+  _buildBreakInfo(reason, quarterComplete, cls) {
+    const deadBall = quarterComplete ? true : !!(cls && cls.deadBall)
+
+    // Free-throw trips: only the break BEFORE THE FINAL attempt is the
+    // "main" break — the real substitution/timeout window (subs must be in
+    // before the last FT, after which the ball is live). Earlier FT breaks
+    // (the whistle, between non-final attempts) are pause beats only.
+    // Exception: a user-team foul-out always opens subs so the replacement
+    // prompt is never stranded on a subs-disabled break.
+    const pendingFt = this.pendingFreeThrows
+    const isMinorFtBreak = !!pendingFt && (pendingFt.taken + 1) < pendingFt.attempts
+    const hasFoulOut = (this.pendingFoulOutIds || []).length > 0
+    const allowStoppageActions = deadBall && (!isMinorFtBreak || hasFoulOut)
+
+    return {
+      reason: reason || 'possession',
+      deadBall,
+      deadBallType: quarterComplete ? 'quarter_end' : (cls ? cls.deadBallType : null),
+      // Concrete violation call (travel, bad_pass_oob, ...) when
+      // deadBallType is 'violation' — names the stoppage in the UI.
+      violationKind: cls?.violationKind ?? null,
+      allowTimeout: allowStoppageActions && !quarterComplete && this.userTimeoutsRemaining > 0,
+      allowSubs: allowStoppageActions,
+      quarterComplete,
+      timeoutsRemaining: this.userTimeoutsRemaining,
+      teamFouls: { ...this.teamFouls },
+      bonus: { home: this.teamFouls.away >= 5, away: this.teamFouls.home >= 5 },
+      // Free throws owed at this break (break bar shows "FT n of m next").
+      // shooterId: the fouled player MUST keep shooting — the subs UI locks
+      // their slot and applyAdjustments rejects lineups that bench them.
+      freeThrows: this.pendingFreeThrows
+        ? {
+            next: this.pendingFreeThrows.taken + 1,
+            total: this.pendingFreeThrows.attempts,
+            shooterId: this.pendingFreeThrows.shooterId ?? null,
+          }
+        : null,
+      foulOutPlayerIds: [...(this.pendingFoulOutIds || [])],
+      currentLineups: {
+        home: this.homeLineup.map(p => p.id),
+        away: this.awayLineup.map(p => p.id),
+      },
+    }
+  }
+
+  /**
+   * Segment result: same shape as buildQuarterResult plus breakInfo and the
+   * scores at the start of this segment (mid-quarter resume display).
+   */
+  _buildSegmentResult(quarter, breakInfo, segStartScores) {
+    const base = this.buildQuarterResult(quarter)
+    return {
+      ...base,
+      starting_scores: segStartScores
+        ? { ...segStartScores }
+        : { ...this.scoreAtQuarterStart },
+      breakInfo,
+    }
+  }
+
+  /**
+   * User timeout: burn one, reset momentum to even (kills either team's run —
+   * calling one while YOU have the run wastes it) and give the user's on-court
+   * five a real breather (energy back, fatigue recovery).
+   */
+  _applyTimeout() {
+    if (this.userTimeoutsRemaining <= 0) return false
+    if (!this.userTeamId) return false
+    this.userTimeoutsRemaining--
+
+    // Timeout = dead ball; the defense sets before the inbound, so the next
+    // possession can never open in transition.
+    this.nextPossessionStart = 'dead_ball'
+
+    const userIsHome = this.homeTeam && this.homeTeam.id === this.userTeamId
+    this.momentum.home = 50
+    this.momentum.away = 50
+    this.momentumCooldown = { home: 0, away: 0 }
+
+    const lineup = userIsHome ? this.homeLineup : this.awayLineup
+    for (const p of lineup) {
+      p.fatigue = Math.max(0, (p.fatigue ?? 0) - 10)
+      p.energy = Math.min(100, (p.energy ?? 100) + 20)
+    }
+
+    if (this.generateAnimationData) {
+      const mins = Math.floor(this.timeRemaining)
+      const secs = Math.floor((this.timeRemaining - mins) * 60)
+      const teamObj = userIsHome ? this.homeTeam : this.awayTeam
+      this.playByPlay.push({
+        possession: this.possessionCount,
+        quarter: this.currentQuarter,
+        time: `${mins}:${String(secs).padStart(2, '0')}`,
+        team: userIsHome ? 'home' : 'away',
+        play_name: 'Timeout',
+        play_id: null,
+        outcome: 'timeout',
+        points: 0,
+        description: `${teamObj?.name || 'Coach'} calls a timeout (${this.userTimeoutsRemaining} remaining)`,
+        home_score: this.homeScore,
+        away_score: this.awayScore,
+      })
+    }
+    return true
   }
 
   // =========================================================================
@@ -480,6 +848,20 @@ class GameSimulator {
     this.quarterEndPossessions = []
     this.homeSynergiesActivated = 0
     this.awaySynergiesActivated = 0
+
+    // Per-game runtime state — the live worker reuses ONE simulator instance
+    // across games, so anything only initialized in the constructor leaks
+    // from the previous game (e.g. timeouts spent last game left the next
+    // game starting at 0). Fresh game = full reset; resumes never come
+    // through here (deserializeState restores their saved values).
+    this.userTimeoutsRemaining = 4
+    this.momentum = { home: 50, away: 50 }
+    this.momentumCooldown = { home: 0, away: 0 }
+    this.teamFouls = { home: 0, away: 0 }
+    this.pendingFoulOutIds = []
+    this.pendingFreeThrows = null
+    this.nextPossessionStart = 'dead_ball'
+    this.pendingPossessionTeam = null
 
     // Coaching schemes
     const homeScheme = homeTeam.coaching_scheme || {}
@@ -860,6 +1242,9 @@ class GameSimulator {
   simulateQuarter() {
     this.timeRemaining = this.currentQuarter <= 4 ? QUARTER_LENGTH_MINUTES : OVERTIME_LENGTH_MINUTES
     this.applyBetweenQuarterMomentum()
+    this.teamFouls = { home: 0, away: 0 }
+    // Period opens with a jump/inbound against a set defense — no transition.
+    this.nextPossessionStart = 'dead_ball'
     let possessionTeam = Math.random() < 0.5 ? 'home' : 'away'
     let minutesSinceLastRotation = 0
 
@@ -880,6 +1265,15 @@ class GameSimulator {
         possessionTeam = possessionTeam === 'home' ? 'away' : 'home'
       }
 
+      // Whistle left free throws pending — shoot them now (clock stopped;
+      // this also covers FTs awarded on a foul as the clock expired).
+      while (this.pendingFreeThrows) {
+        const kept = this._simulateFreeThrowAttempt()
+        if (!kept) {
+          possessionTeam = possessionTeam === 'home' ? 'away' : 'home'
+        }
+      }
+
       // Rotate players every ~2 minutes of game time
       if (minutesSinceLastRotation >= 2) {
         this.rotatePlayers()
@@ -894,6 +1288,9 @@ class GameSimulator {
    */
   simulateQuarterOnly() {
     this.applyBetweenQuarterMomentum()
+    this.teamFouls = { home: 0, away: 0 }
+    // Period opens with a jump/inbound against a set defense — no transition.
+    this.nextPossessionStart = 'dead_ball'
     let possessionTeam = Math.random() < 0.5 ? 'home' : 'away'
     let minutesSinceLastRotation = 0
 
@@ -911,6 +1308,14 @@ class GameSimulator {
 
       if (!gotOreb) {
         possessionTeam = possessionTeam === 'home' ? 'away' : 'home'
+      }
+
+      // Whistle left free throws pending — shoot them now (clock stopped).
+      while (this.pendingFreeThrows) {
+        const kept = this._simulateFreeThrowAttempt()
+        if (!kept) {
+          possessionTeam = possessionTeam === 'home' ? 'away' : 'home'
+        }
       }
 
       if (minutesSinceLastRotation >= 2) {
@@ -979,9 +1384,28 @@ class GameSimulator {
     for (const act of transitionSynergyActs) {
       fastBreakSynergyBonus += act.boost?.fastBreakChance || 0
     }
-    // Determine if this is a transition opportunity
+    // Transition opportunity — gated by how THIS possession begins
+    // (nextPossessionStart, stamped by the previous possession's ending).
+    // Real transition only exists off a LIVE change of possession with the
+    // defense unset: steals & recovered blocks convert most, defensive
+    // rebounds off misses moderately, made baskets occasionally (up-tempo
+    // quick-inbound push). Dead balls (violations, fouls, OOB, timeouts,
+    // period starts) and offensive-rebound resets never produce a break —
+    // the defense is set. Multipliers scale the scheme's aggression
+    // (TRANSITION_FREQUENCIES) so overall transition volume stays near the
+    // tuned rate while the timing becomes realistic.
+    const TRANSITION_TRIGGER_MULT = {
+      steal: 3.5,
+      block: 3.5,
+      live_rebound: 1.4,
+      made_basket: 0.5,
+      oreb: 0,
+      dead_ball: 0,
+    }
+    const triggerMult = TRANSITION_TRIGGER_MULT[this.nextPossessionStart] ?? 0
     const transitionFreq = coachingEngine.getTransitionFrequency(offensiveScheme)
-    const isTransition = (transitionFreq + fastBreakSynergyBonus) > Math.random()
+    const transitionChance = Math.min(0.85, (transitionFreq + fastBreakSynergyBonus) * triggerMult)
+    const isTransition = Math.random() < transitionChance
 
     // Select a play based on team, scheme, and game situation
     const context = {
@@ -1048,6 +1472,10 @@ class GameSimulator {
       synergyDefenseCandidates: defenseSynergyCandidates,
       synergyReboundCandidates: reboundSynergyCandidates,
       gameSimulator: this,
+      // Foul model context — defense in the penalty shoots FTs on reach-ins.
+      foulContext: {
+        defenseInPenalty: (this.teamFouls[isHome ? 'away' : 'home'] ?? 0) >= 5,
+      },
     }
 
     // Execute the play with defensive context
@@ -1081,46 +1509,182 @@ class GameSimulator {
     // Process play result and update stats
     const gotOffensiveRebound = this.processPlayResult(playResult, offense, defense, isHome)
 
+    // Whistle that awards free throws: queue the attempts — they run as
+    // separate segments/possessions after this play's dead-ball break.
+    if (playResult.pendingFreeThrows && playResult.pendingFreeThrows.attempts > 0) {
+      this.pendingFreeThrows = {
+        team,
+        shooterId: playResult.pendingFreeThrows.shooterId,
+        attempts: playResult.pendingFreeThrows.attempts,
+        taken: 0,
+        made: 0,
+        playId: playResult.playId ?? null,
+        playName: playResult.playName ?? null,
+      }
+    }
+
+    // Expose the possession result to the segment loop (dead-ball
+    // classification) and fold in retained-possession dead balls
+    // (deflected out of bounds, non-penalty fouls on the floor).
+    this.lastPlayResult = playResult
+    const keptPossession = gotOffensiveRebound || playResult.offenseRetains === true
+
+    // Stamp how the NEXT possession begins (feeds the transition roll).
+    // Order matters: any dead ball (foul, violation, deflection OOB,
+    // FTs owed) kills transition regardless of the raw outcome — pending
+    // FT trips re-stamp when the final attempt resolves the ball live.
+    if (this._classifyPossessionEnd(playResult).deadBall) {
+      this.nextPossessionStart = 'dead_ball'
+    } else if (keptPossession) {
+      this.nextPossessionStart = 'oreb'
+    } else if (playResult.turnoverKind === 'stolen') {
+      this.nextPossessionStart = 'steal'
+    } else if (playResult.shotAttempt?.blocked) {
+      this.nextPossessionStart = 'block'
+    } else if (playResult.outcome === 'made') {
+      this.nextPossessionStart = 'made_basket'
+    } else if (playResult.outcome === 'missed' || playResult.outcome === 'offensive_rebound') {
+      this.nextPossessionStart = 'live_rebound'
+    } else {
+      this.nextPossessionStart = 'dead_ball'
+    }
+
     // Update momentum based on the outcome of this possession.
     this.updateMomentum(playResult, team)
 
     // Record play-by-play and animation data (skip for AI-only games)
-    if (this.generateAnimationData) {
-      this.recordPlayByPlay(playResult, team)
+    this._pushPossessionAnimation(playResult, team)
 
-      if (playResult.keyframes && playResult.keyframes.length > 0) {
-        // Synergies fire on the shot, which resolves at the end of the play —
-        // stamp them so the canvas can stagger them with the rest of the
-        // animation (mirrors the badge `time` field set in PlayExecutionEngine).
-        const synergyTime = Math.max(0, (playResult.duration ?? 0) - 0.05)
-        const stampedSynergies = (playResult.activatedSynergies || []).map(s => ({
-          ...s,
-          time: typeof s.time === 'number' ? s.time : synergyTime,
-        }))
+    return keptPossession
+  }
 
-        this.animationData.push({
-          possession_id: this.possessionCount,
-          team,
-          quarter: this.currentQuarter,
-          time: this.timeRemaining,
-          play_id: playResult.playId,
-          play_name: playResult.playName,
-          duration: playResult.duration,
-          keyframes: playResult.keyframes,
-          home_score: this.homeScore,
-          away_score: this.awayScore,
-          box_score: {
-            home: Object.values(this.homeBoxScore).map(s => this.formatBoxScoreStats(s)),
-            away: Object.values(this.awayBoxScore).map(s => this.formatBoxScoreStats(s)),
-          },
-          activated_badges: playResult.activatedBadges || [],
-          activated_synergies: stampedSynergies,
-          momentum: { home: this.momentum.home, away: this.momentum.away },
-        })
+  /**
+   * Record the play-by-play entry + animation possession for a resolved
+   * play result. Shared by regular possessions and standalone free-throw
+   * attempts. No-op for AI-only games (generateAnimationData false).
+   */
+  _pushPossessionAnimation(playResult, team) {
+    if (!this.generateAnimationData) return
+
+    this.recordPlayByPlay(playResult, team)
+    // The feed entry recordPlayByPlay just pushed carries the definitive
+    // result line ("X makes the three-pointer!") — stamp it on the
+    // animation possession so presentation (the stoppage bubble) can show
+    // the play's outcome. Additive field — readers guard with `?? ''`.
+    const resultText = this.playByPlay.length > 0
+      ? this.playByPlay[this.playByPlay.length - 1].description || ''
+      : ''
+
+    if (playResult.keyframes && playResult.keyframes.length > 0) {
+      // Synergies fire on the shot, which resolves at the end of the play —
+      // stamp them so the canvas can stagger them with the rest of the
+      // animation (mirrors the badge `time` field set in PlayExecutionEngine).
+      const synergyTime = Math.max(0, (playResult.duration ?? 0) - 0.05)
+      const stampedSynergies = (playResult.activatedSynergies || []).map(s => ({
+        ...s,
+        time: typeof s.time === 'number' ? s.time : synergyTime,
+      }))
+
+      // Live player condition, refreshed per possession. The stat line's
+      // own `fatigue` copy is snapshotted at game start, but fatigue accrues
+      // play-by-play on the live player objects (PlayExecutionEngine) — so
+      // re-read it here, along with in-game `energy` (100 → 0 reserve that
+      // resets every game). Additive fields — readers guard with `??`.
+      const liveById = new Map()
+      for (const p of [...this.homePlayers, ...this.awayPlayers]) {
+        liveById.set(String(p.id), p)
       }
+      const withLiveCondition = (s) => {
+        const formatted = this.formatBoxScoreStats(s)
+        const live = liveById.get(String(formatted.player_id))
+        formatted.energy = live?.energy ?? 100
+        formatted.fatigue = live?.fatigue ?? formatted.fatigue
+        return formatted
+      }
+
+      this.animationData.push({
+        possession_id: this.possessionCount,
+        team,
+        quarter: this.currentQuarter,
+        time: this.timeRemaining,
+        play_id: playResult.playId,
+        play_name: playResult.playName,
+        // Per-attempt FT possessions (executeFreeThrowAttempt) are the only
+        // playResults carrying `freeThrows`. The flag lets presentation
+        // treat them differently (e.g. no court-noise ambient bed at the
+        // line). play_id can't be used — it keeps the fouled play's id.
+        is_free_throw: !!playResult.freeThrows,
+        result_text: resultText,
+        duration: playResult.duration,
+        keyframes: playResult.keyframes,
+        home_score: this.homeScore,
+        away_score: this.awayScore,
+        box_score: {
+          home: Object.values(this.homeBoxScore).map(withLiveCondition),
+          away: Object.values(this.awayBoxScore).map(withLiveCondition),
+        },
+        activated_badges: playResult.activatedBadges || [],
+        activated_synergies: stampedSynergies,
+        momentum: { home: this.momentum.home, away: this.momentum.away },
+      })
+    }
+  }
+
+  /**
+   * Shoot ONE pending free throw as its own segment/possession. Returns
+   * true while the offense retains (more attempts coming), false after the
+   * final attempt (possession flips). Clock stays stopped — no game time
+   * is consumed, matching real dead-ball free throws.
+   */
+  _simulateFreeThrowAttempt() {
+    const pending = this.pendingFreeThrows
+    if (!pending) return false
+
+    const isHome = pending.team === 'home'
+    const offense = isHome ? this.homeLineup : this.awayLineup
+    const defense = isHome ? this.awayLineup : this.homeLineup
+    const players = isHome ? this.homePlayers : this.awayPlayers
+
+    // Shooter must keep shooting even if a break-time sub removed them from
+    // the current lineup (real rule: the fouled player shoots).
+    const shooter =
+      offense.find(p => String(p.id) === String(pending.shooterId)) ||
+      players.find(p => String(p.id) === String(pending.shooterId)) ||
+      offense[0]
+
+    pending.taken++
+    const playResult = this.playEngine.executeFreeThrowAttempt(shooter, offense, {
+      attemptNo: pending.taken,
+      totalAttempts: pending.attempts,
+      playId: pending.playId,
+      playName: pending.playName,
+    })
+    playResult.activatedSynergies = []
+
+    this.possessionCount++
+    if (playResult.freeThrows?.made) pending.made += playResult.freeThrows.made
+
+    const kept = this.processPlayResult(playResult, offense, defense, isHome)
+    this.updateMomentum(playResult, pending.team)
+    this._pushPossessionAnimation(playResult, pending.team)
+    this.lastPlayResult = playResult
+
+    const done = pending.taken >= pending.attempts
+    if (done) this.pendingFreeThrows = null
+
+    // Transition trigger for the possession that follows the trip. Between
+    // attempts the ball stays dead. After the FINAL attempt: made FT → live
+    // inbound (push-off-make territory); missed FT → live rebound scramble
+    // (defensive board can run, offensive board is a reset).
+    if (!done) {
+      this.nextPossessionStart = 'dead_ball'
+    } else if (playResult.freeThrows?.made) {
+      this.nextPossessionStart = 'made_basket'
+    } else {
+      this.nextPossessionStart = kept ? 'oreb' : 'live_rebound'
     }
 
-    return gotOffensiveRebound
+    return !done || kept || playResult.offenseRetains === true
   }
 
   // =========================================================================
@@ -1313,10 +1877,19 @@ class GameSimulator {
         }
       }
 
-      // Chance of steal -- opposing chemistry boosts steal rate
-      const defChem = isHome ? this.awayChemistryModifier : this.homeChemistryModifier
-      if (Math.floor(Math.random() * 100) + 1 <= (60 * (1 + defChem)) && defense.length > 0) {
-        const stealer = defense[Math.floor(Math.random() * defense.length)]
+      // Steal credit — ONLY live-ball `stolen` outcomes are steals (the
+      // defender who forced it is stamped by PlayExecutionEngine; random
+      // defender as a safety fallback). Generic turnovers are dead-ball
+      // violations (travel, out of bounds, offensive foul) — by rule no
+      // steal is ever credited for those.
+      if (playResult.turnoverKind === 'stolen' && defense.length > 0) {
+        let stealer = null
+        if (playResult.stolenById) {
+          stealer = defense.find(p => String(p.id) === String(playResult.stolenById)) || null
+        }
+        if (!stealer) {
+          stealer = defense[Math.floor(Math.random() * defense.length)]
+        }
         const stealerId = stealer.id || null
         if (stealerId) {
           if (isHome && this.awayBoxScore[stealerId]) {
@@ -1328,15 +1901,46 @@ class GameSimulator {
       }
     }
 
+    // Foul bookkeeping — personal foul on the committer, foul-out at 6
+    // (auto-subbed so the game can never wedge; user teams also get
+    // prompted at the next break). Defensive fouls also add a team foul.
+    // OFFENSIVE fouls (charges — foul.type 'offensive') book against the
+    // OFFENSIVE player and, per NBA rules, do NOT count toward the
+    // team-foul penalty and never award free throws.
+    const foul = playResult.foul || null
+    if (foul && foul.byId) {
+      const isOffensiveFoul = foul.type === 'offensive'
+      const foulSide = isOffensiveFoul
+        ? (isHome ? 'home' : 'away')
+        : (isHome ? 'away' : 'home')
+      const foulBoxScore = foulSide === 'home' ? this.homeBoxScore : this.awayBoxScore
+      const foulerId = String(foul.byId)
+      if (foulBoxScore[foulerId]) {
+        foulBoxScore[foulerId].fouls = (foulBoxScore[foulerId].fouls ?? 0) + 1
+      }
+      if (!isOffensiveFoul) {
+        this.teamFouls[foulSide] = (this.teamFouls[foulSide] ?? 0) + 1
+      }
+      if (foulBoxScore[foulerId] && foulBoxScore[foulerId].fouls >= 6) {
+        this._handleFoulOut(foulerId, foulSide)
+      }
+    }
+
     // Handle rebound on miss
     let gotOffensiveRebound = false
     if (outcome === 'missed' || outcome === 'offensive_rebound') {
       gotOffensiveRebound = this.handleRebound(offense, defense, isHome)
     }
 
-    // Handle block
+    // Handle block — credit the defender named in the narration
+    // (playResult.blockedById, stamped by getBlockedDescription) so the
+    // box-score block matches the call; weighted-random fallback for
+    // results without the stamp (e.g. legacy paths).
     if (shotAttempt && shotAttempt.blocked) {
-      const blocker = this.selectBlocker(defense)
+      const stampedBlocker = playResult.blockedById != null
+        ? defense.find(p => String(p.id) === String(playResult.blockedById)) || null
+        : null
+      const blocker = stampedBlocker || this.selectBlocker(defense)
       const blockerId = blocker.id || null
       if (blockerId) {
         if (isHome && this.awayBoxScore[blockerId]) {
@@ -1458,7 +2062,7 @@ class GameSimulator {
     // Record offensive rebound in play-by-play
     if (isOffensiveRebound && this.generateAnimationData) {
       const rebName = rebounder
-        ? (rebounder.first_name || '') + ' ' + (rebounder.last_name || '')
+        ? (rebounder.last_name || rebounder.first_name || 'Unknown')
         : 'Unknown'
       const teamLabel = isHome ? 'home' : 'away'
       const mins = Math.floor(this.timeRemaining)
@@ -1519,6 +2123,86 @@ class GameSimulator {
     }
 
     return defense[0]
+  }
+
+  // =========================================================================
+  // FOUL-OUT HANDLING
+  // =========================================================================
+
+  /**
+   * A player reached 6 personal fouls: replace them with the best eligible
+   * bench player (position fit first, then overall). Empty bench → the
+   * player stays on the floor (no crash, logged). User-team foul-outs are
+   * additionally queued for the UI prompt at the next break — the auto-sub
+   * still runs as a fallback so a stale client can never wedge the game.
+   */
+  _handleFoulOut(playerId, side) {
+    const isHome = side === 'home'
+    const lineup = isHome ? this.homeLineup : this.awayLineup
+
+    const idx = lineup.findIndex(p => String(p.id) === String(playerId))
+    if (idx === -1) return
+    const fouledOut = lineup[idx]
+
+    if (this.generateAnimationData) {
+      const mins = Math.floor(this.timeRemaining)
+      const secs = Math.floor((this.timeRemaining - mins) * 60)
+      this.playByPlay.push({
+        possession: this.possessionCount,
+        quarter: this.currentQuarter,
+        time: `${mins}:${String(secs).padStart(2, '0')}`,
+        team: side,
+        play_name: 'Foul Out',
+        play_id: null,
+        outcome: 'foul_out',
+        points: 0,
+        description: `${(fouledOut.first_name || '')} ${(fouledOut.last_name || '')} fouls out (6 personal fouls)`,
+        home_score: this.homeScore,
+        away_score: this.awayScore,
+      })
+    }
+
+    const teamObj = isHome ? this.homeTeam : this.awayTeam
+    if (this.isLiveGame && teamObj && teamObj.id === this.userTeamId) {
+      this.pendingFoulOutIds.push(String(playerId))
+    }
+
+    this._replaceFouledOutPlayer(playerId, side)
+  }
+
+  /**
+   * Swap a fouled-out player for the best eligible bench player (position
+   * fit first, then overall). No-op when the bench is empty. Also used by
+   * applyAdjustments to sanitize incoming lineups that would re-insert a
+   * fouled-out player.
+   */
+  _replaceFouledOutPlayer(playerId, side) {
+    const isHome = side === 'home'
+    const lineup = isHome ? this.homeLineup : this.awayLineup
+    const players = isHome ? this.homePlayers : this.awayPlayers
+    const boxScore = isHome ? this.homeBoxScore : this.awayBoxScore
+
+    const idx = lineup.findIndex(p => String(p.id) === String(playerId))
+    if (idx === -1) return
+    const fouledOut = lineup[idx]
+
+    const onCourt = new Set(lineup.map(p => String(p.id)))
+    const candidates = players.filter(p =>
+      !onCourt.has(String(p.id)) &&
+      !p.is_injured &&
+      ((boxScore[p.id]?.fouls ?? 0) < 6)
+    )
+    if (candidates.length === 0) return
+
+    const fouledPos = fouledOut.position
+    candidates.sort((a, b) => {
+      const aFit = (a.position === fouledPos || a.secondary_position === fouledPos) ? 1 : 0
+      const bFit = (b.position === fouledPos || b.secondary_position === fouledPos) ? 1 : 0
+      if (aFit !== bFit) return bFit - aFit
+      return (b.overall_rating || 0) - (a.overall_rating || 0)
+    })
+
+    lineup[idx] = candidates[0]
   }
 
   // =========================================================================
@@ -2128,7 +2812,51 @@ class GameSimulator {
    */
   recordPlayByPlay(playResult, team) {
     const keyframes = playResult.keyframes || []
-    const lastKeyframe = keyframes.length > 0 ? keyframes[keyframes.length - 1] : {}
+    // Skip presentation-only ball-flight keyframes ("The shot is up...",
+    // bounce frames) — the feed entry should describe the deciding ACTION
+    // ("X makes the three-pointer!"), which is the last non-flight keyframe.
+    let lastKeyframe = {}
+    for (let i = keyframes.length - 1; i >= 0; i--) {
+      if (keyframes[i].actionType !== 'ball_flight' && keyframes[i].description) {
+        lastKeyframe = keyframes[i]
+        break
+      }
+    }
+    if (!lastKeyframe.description && keyframes.length > 0) {
+      lastKeyframe = keyframes[keyframes.length - 1]
+    }
+
+    let description = lastKeyframe.description || ''
+
+    // Shot possessions: the release keyframe is deliberately neutral ("puts
+    // up the three-pointer...") so the on-court ticker doesn't spoil the
+    // result before the flight animation — rebuild the definitive feed line
+    // from the play result here. Blocked shots keep their keyframe text.
+    const sa = playResult.shotAttempt
+    if (
+      sa && sa.shooterName && !sa.blocked && !sa.fouled &&
+      ['made', 'missed', 'offensive_rebound'].includes(playResult.outcome)
+    ) {
+      const shotLabel = sa.shotType === 'threePoint'
+        ? 'three-pointer'
+        : sa.shotType === 'midRange' ? 'mid-range jumper' : 'shot at the rim'
+      // Broadcast style: last name only (matches the keyframe descriptions).
+      const shooterLast = sa.shooterName.trim().split(/\s+/).pop()
+      description = `${shooterLast} ${sa.made ? 'makes' : 'misses'} the ${shotLabel}${sa.made ? '!' : ''}`
+    }
+
+    // Free-throw possessions: the result line lives on flight keyframes we
+    // just skipped — rebuild it from the play result instead. Standalone
+    // attempts (attemptNo set) get per-attempt phrasing.
+    const ft = playResult.freeThrows
+    if (playResult.outcome === 'free_throws' && ft && ft.attempted > 0) {
+      const box = team === 'home' ? this.homeBoxScore : this.awayBoxScore
+      const fullName = (ft.shooterId && box[ft.shooterId]?.name) || 'Shooter'
+      const shooterName = String(fullName).trim().split(/\s+/).pop() || 'Shooter'
+      description = ft.attemptNo
+        ? `${shooterName} ${ft.made > 0 ? 'makes' : 'misses'} free throw ${ft.attemptNo} of ${ft.totalAttempts}`
+        : `${shooterName} makes ${ft.made} of ${ft.attempted} free throws`
+    }
 
     const mins = Math.floor(this.timeRemaining)
     const secs = Math.floor((this.timeRemaining - mins) * 60)
@@ -2142,7 +2870,7 @@ class GameSimulator {
       play_id: playResult.playId || null,
       outcome: playResult.outcome,
       points: playResult.points || 0,
-      description: lastKeyframe.description || '',
+      description,
       home_score: this.homeScore,
       away_score: this.awayScore,
     })
@@ -2408,11 +3136,35 @@ class GameSimulator {
    * Serialize current game state for storage between quarters.
    */
   serializeState() {
+    // Completed-only quarter count: mid-quarter (segmented pacing) the
+    // current quarter is NOT complete. Legacy quarter pacing only serializes
+    // at quarter boundaries (pendingPossessionTeam null), matching v4.
+    const completedCount = this.pendingPossessionTeam != null
+      ? this.currentQuarter - 1
+      : this.currentQuarter
     return {
-      version: 4,
+      version: 5,
       status: 'in_progress',
       currentQuarter: this.currentQuarter,
-      completedQuarters: Array.from({ length: this.currentQuarter }, (_, i) => i + 1),
+      completedQuarters: Array.from({ length: completedCount }, (_, i) => i + 1),
+      pacingMode: this.pacingMode,
+      midQuarter: this.pendingPossessionTeam != null
+        ? {
+            timeRemaining: this.timeRemaining,
+            possessionTeam: this.pendingPossessionTeam,
+            minutesSinceLastRotation: this.minutesSinceLastRotation,
+            scoreAtQuarterStart: { ...this.scoreAtQuarterStart },
+          }
+        : null,
+      momentum: { ...this.momentum },
+      momentumCooldown: { ...this.momentumCooldown },
+      teamFoulsThisQuarter: { ...this.teamFouls },
+      userTimeoutsRemaining: this.userTimeoutsRemaining,
+      // Transition trigger for the next possession (additive — old saves
+      // lack it and restore to the safe 'dead_ball' default).
+      nextPossessionStart: this.nextPossessionStart,
+      pendingFoulOutIds: [...(this.pendingFoulOutIds || [])],
+      pendingFreeThrows: this.pendingFreeThrows ? { ...this.pendingFreeThrows } : null,
       homeScore: this.homeScore,
       awayScore: this.awayScore,
       quarterScores: this.quarterScores,
@@ -2467,6 +3219,10 @@ class GameSimulator {
       badges: player.badges || [],
       tendencies: player.tendencies || {},
       fatigue: player.fatigue || 0,
+      // In-game energy state — needed for mid-quarter resume (segmented
+      // pacing); quarter-boundary resumes previously got away without it.
+      energy: player.energy ?? 100,
+      lastEnergyTickGameMinutes: player.lastEnergyTickGameMinutes ?? 0,
     }
   }
 
@@ -2528,6 +3284,29 @@ class GameSimulator {
     this.isLiveGame = state.isLiveGame || false
     this.userTeamId = state.userTeamId || null
 
+    // ---- v5 additive fields (all ??-defaulted so v4 saves resume cleanly
+    // at quarter granularity with the foul/timeout state zeroed) ----
+    this.pacingMode = state.pacingMode ?? 'quarter'
+    this.momentum = state.momentum ?? { home: 50, away: 50 }
+    this.momentumCooldown = state.momentumCooldown ?? { home: 0, away: 0 }
+    this.teamFouls = state.teamFoulsThisQuarter ?? { home: 0, away: 0 }
+    this.userTimeoutsRemaining = state.userTimeoutsRemaining ?? 4
+    this.nextPossessionStart = state.nextPossessionStart ?? 'dead_ball'
+    this.pendingFoulOutIds = state.pendingFoulOutIds ?? []
+    this.pendingFreeThrows = state.pendingFreeThrows ?? null
+    const mid = state.midQuarter ?? null
+    if (mid) {
+      this.timeRemaining = mid.timeRemaining
+      this.pendingPossessionTeam = mid.possessionTeam ?? null
+      this.minutesSinceLastRotation = mid.minutesSinceLastRotation ?? 0
+      this.scoreAtQuarterStart = mid.scoreAtQuarterStart
+        ?? { home: this.homeScore, away: this.awayScore }
+    } else {
+      this.pendingPossessionTeam = null
+      this.minutesSinceLastRotation = 0
+      this.scoreAtQuarterStart = { home: this.homeScore, away: this.awayScore }
+    }
+
     // Reset per-quarter data
     this.animationData = []
     this.playByPlay = []
@@ -2543,6 +3322,13 @@ class GameSimulator {
   applyAdjustments(adjustments) {
     if (!adjustments) return
 
+    // Pre-adjustment lineups — used below to identify newcomers when a
+    // sanitization needs to displace someone (pending-FT shooter guard).
+    const preLineupIds = {
+      home: new Set(this.homeLineup.map(p => String(p.id))),
+      away: new Set(this.awayLineup.map(p => String(p.id))),
+    }
+
     // Accept both camelCase and snake_case field names
     const homeLineup = adjustments.homeLineup || adjustments.home_lineup || null
     const awayLineup = adjustments.awayLineup || adjustments.away_lineup || null
@@ -2551,6 +3337,17 @@ class GameSimulator {
     // Updated defensive matchup overrides from the quarter-break editor.
     const matchups = adjustments.defensiveMatchups ?? adjustments.defensive_matchups
     if (matchups) this.userDefensiveMatchups = matchups
+
+    // Pacing change on resume: the preview screen lets the user re-pick the
+    // mode for an in-progress game. Applied before the segment/quarter loop
+    // reads this.pacingMode, so it takes effect immediately. Switching is
+    // safe at any save point — a mid-quarter state resumed into 'quarter'
+    // simply runs one segment to the quarter end, and a quarter-boundary
+    // state resumed into 'play'/'deadBall' starts the next quarter segmented.
+    const pacing = adjustments.pacingMode ?? adjustments.pacing_mode ?? null
+    if (pacing && ['quarter', 'play', 'deadBall'].includes(pacing)) {
+      this.pacingMode = pacing
+    }
 
     // Update home lineup if provided
     if (homeLineup && homeLineup.length > 0) {
@@ -2583,6 +3380,40 @@ class GameSimulator {
         this.awayDefensiveScheme = defStyle
       } else {
         this.homeDefensiveScheme = defStyle
+      }
+    }
+
+    // Sanitize: an incoming lineup (e.g. a stale quarter-break selection)
+    // must not re-insert a player who has fouled out.
+    for (const side of ['home', 'away']) {
+      const lineup = side === 'home' ? this.homeLineup : this.awayLineup
+      const boxScore = side === 'home' ? this.homeBoxScore : this.awayBoxScore
+      for (const p of [...lineup]) {
+        if (p && (boxScore[p.id]?.fouls ?? 0) >= 6) {
+          this._replaceFouledOutPlayer(p.id, side)
+        }
+      }
+    }
+
+    // Sanitize: the pending free-throw shooter cannot be substituted out
+    // mid-trip (real rule — the fouled player shoots). If the incoming
+    // lineup benched them, put them back in the slot of one of the
+    // newcomers (defense-in-depth behind the subs-UI lock).
+    const pendingFt = this.pendingFreeThrows
+    if (pendingFt && pendingFt.shooterId != null) {
+      const side = pendingFt.team
+      const lineup = side === 'home' ? this.homeLineup : this.awayLineup
+      const players = side === 'home' ? this.homePlayers : this.awayPlayers
+      const shooterOnCourt = lineup.some(p => String(p.id) === String(pendingFt.shooterId))
+      if (!shooterOnCourt) {
+        const shooter = players.find(p => String(p.id) === String(pendingFt.shooterId))
+        if (shooter) {
+          // Displace the newcomer who took the shooter's place (a lineup
+          // player who wasn't on court before this adjustment); fall back
+          // to the last slot if every slot is a holdover.
+          const newcomerIdx = lineup.findIndex(p => !preLineupIds[side].has(String(p.id)))
+          lineup[newcomerIdx !== -1 ? newcomerIdx : lineup.length - 1] = shooter
+        }
       }
     }
   }

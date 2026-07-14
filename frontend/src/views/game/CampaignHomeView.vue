@@ -15,6 +15,7 @@ import { useFinanceStore } from '@/stores/finance'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { LoadingSpinner, BaseModal, StandardModal, BaseButton } from '@/components/ui'
 import { SimulateConfirmModal } from '@/components/game'
@@ -1123,6 +1124,15 @@ onMounted(async () => {
 //     beneath/over the modal instead of waiting for it to close.
 // The watch on `showAllStarModal` below re-runs this when the modal
 // dismisses so the tour fires immediately on close instead of being lost.
+// Replay key for the "?" button — mirrors which tour auto-fires in each phase:
+// the offseason hub tour pre-FA, the free-agency tour mid-FA, otherwise the
+// main campaign-home tour.
+const replayTourKey = computed(() => {
+  if (freeAgencyNotStarted.value) return 'campaignOffseason'
+  if (isFreeAgencyActive.value) return 'freeAgency'
+  return 'campaignHome'
+})
+
 function maybeStartOffseasonTour() {
   if (!isOffseason.value || !freeAgencyNotStarted.value) return
   // Don't start the tour while any blocking offseason popup is still open — it
@@ -1944,6 +1954,12 @@ async function maybeShowExpectationRaise() {
   if (!camp || camp.id !== campaignId.value) return
   const raise = camp.settings?.pendingOwnerExpectationRaise
   if (!raise?.tier) return
+
+  // Never surface while the user's game is in progress: the raise marker
+  // can be written by the pre-game intervening sim, and toasting it
+  // mid-game reads as a spoiler for the unfinished game. Leave the marker
+  // in place — it fires on the next visit once the game is done.
+  if (isGameInProgress.value) return
 
   const label = EXPECTATION_LABEL[raise.tier] ?? raise.tier
   const fromLabel = raise.fromTier ? (EXPECTATION_LABEL[raise.fromTier] ?? raise.fromTier) : ''
@@ -4691,6 +4707,8 @@ function handleCloseSimulateModal() {
       @purchase-upgrade-point="handleModalPurchaseUpgradePoint"
       @hold-coach-meeting="handleModalHoldCoachMeeting"
     />
+
+    <WalkthroughReplayButton :walkthrough-key="replayTourKey" />
   </div>
 </template>
 

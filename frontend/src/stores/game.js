@@ -46,6 +46,11 @@ export const useGameStore = defineStore('game', () => {
   const isLiveSimulation = ref(false)
   const currentSimQuarter = ref(0)
   const quarterAnimationData = ref([])
+  // Latest engine state not yet flushed to IndexedDB. In segmented pacing
+  // (play/deadBall) we skip the per-segment IDB write on live-ball pauses to
+  // avoid a write per possession; this holds the newest state so
+  // flushPendingGameState() can persist it on route-leave/visibility-hide.
+  const _pendingGameState = ref(null)
 
   // Simulate to next game state
   const simulatePreview = ref(null)
@@ -222,6 +227,9 @@ export const useGameStore = defineStore('game', () => {
       quarter_scores: game.quarterScores ?? null,
       is_user_game: isUserGame,
       current_quarter: game.currentQuarter ?? null,
+      // Segmented-pacing resume metadata (absent on legacy saves)
+      saved_mid_quarter: game.savedMidQuarter ?? false,
+      saved_pacing_mode: game.savedPacingMode ?? null,
     }
 
     // Attach full team objects when available
@@ -291,6 +299,9 @@ export const useGameStore = defineStore('game', () => {
     game.homeScore = scores.home
     game.awayScore = scores.away
     game.currentQuarter = quarter
+    // Additive segmented-pacing metadata (derived from the engine state)
+    game.savedMidQuarter = !!gameState?.midQuarter
+    game.savedPacingMode = gameState?.pacingMode ?? 'quarter'
 
     await SeasonRepository.save({ campaignId, year, ...seasonData })
 
@@ -1597,6 +1608,11 @@ export const useGameStore = defineStore('game', () => {
         }
       }
 
+      // Owner-expectation check now that THIS game's result is in the
+      // standings — the raise then reflects the finished game and the
+      // homepage surfaces it after completion, never mid-game.
+      await _maybeRaiseOwnerExpectation(campaignId)
+
       result.playoffUpdate = playoffUpdate
       return result
     } catch (err) {
@@ -1782,16 +1798,32 @@ export const useGameStore = defineStore('game', () => {
 
       currentSimQuarter.value = 1
 
-      // Store Q1 animation data
+      // Store Q1 animation data. Segmented pacing (breakInfo present without
+      // quarterComplete) leaves quarterEndIndex null until the quarter's last
+      // segment arrives via continueGame.
+      const startBreakInfo = quarterResult.breakInfo ?? null
       quarterAnimationData.value.push({
         quarter: 1,
-        possessions: quarterResult.animation_data.possessions,
-        quarterEndIndex: quarterResult.animation_data.quarter_end_index,
+        possessions: [...quarterResult.animation_data.possessions],
+        quarterEndIndex: (!startBreakInfo || startBreakInfo.quarterComplete)
+          ? quarterResult.animation_data.quarter_end_index
+          : null,
       })
 
-      // Persist in-progress state to IndexedDB so it survives navigation
+      // Persist in-progress state to IndexedDB so it survives navigation.
+      // Segmented pacing: skip the write on live-ball pauses (play mode can
+      // pause every possession); dead balls and quarter ends always persist.
       if (quarterResult.gameState) {
-        await _saveInProgressState(campaignId, year, gameId, quarterResult.gameState, quarterResult.scores, 1)
+        _pendingGameState.value = {
+          campaignId, year, gameId,
+          gameState: quarterResult.gameState,
+          scores: quarterResult.scores,
+          quarter: 1,
+        }
+        if (!startBreakInfo || startBreakInfo.deadBall || startBreakInfo.quarterComplete) {
+          await _saveInProgressState(campaignId, year, gameId, quarterResult.gameState, quarterResult.scores, 1)
+          _pendingGameState.value = null
+        }
       }
 
       // Update current game state
@@ -1878,12 +1910,26 @@ export const useGameStore = defineStore('game', () => {
 
       currentSimQuarter.value = quarterResult.quarter
 
-      // Append this quarter's animation data
-      quarterAnimationData.value.push({
-        quarter: quarterResult.quarter,
-        possessions: quarterResult.animation_data.possessions,
-        quarterEndIndex: quarterResult.animation_data.quarter_end_index,
-      })
+      // Append this quarter's animation data. Segmented pacing returns
+      // partial-quarter segments: fold them into the existing entry for the
+      // quarter (creating it on the first segment) so the final-replay merge
+      // and reward processing see one entry per quarter, exactly as before.
+      const breakInfo = quarterResult.breakInfo ?? null
+      const segPossessions = quarterResult.animation_data.possessions
+      let quarterEntry = quarterAnimationData.value.find(q => q.quarter === quarterResult.quarter)
+      if (quarterEntry) {
+        quarterEntry.possessions.push(...segPossessions)
+      } else {
+        quarterEntry = {
+          quarter: quarterResult.quarter,
+          possessions: [...segPossessions],
+          quarterEndIndex: null,
+        }
+        quarterAnimationData.value.push(quarterEntry)
+      }
+      if (!breakInfo || breakInfo.quarterComplete) {
+        quarterEntry.quarterEndIndex = quarterResult.animation_data.quarter_end_index
+      }
 
       if (quarterResult.isGameComplete) {
         // Game finished
@@ -1939,9 +1985,12 @@ export const useGameStore = defineStore('game', () => {
         const completedEntry = seasonData.schedule.find(g => g.id === gameId)
         if (completedEntry) {
           delete completedEntry.savedGameState
+          delete completedEntry.savedMidQuarter
+          delete completedEntry.savedPacingMode
           completedEntry.isInProgress = false
           await SeasonRepository.save({ campaignId, year, ...seasonData })
         }
+        _pendingGameState.value = null
 
         // Save evolution changes to player records
         await _applyEvolutionToPlayers(evolution, game)
@@ -1990,6 +2039,11 @@ export const useGameStore = defineStore('game', () => {
           }
         }
 
+        // Owner-expectation check now that THIS game's result is in the
+        // standings — the raise then reflects the finished game and the
+        // homepage surfaces it after completion, never mid-game.
+        await _maybeRaiseOwnerExpectation(campaignId)
+
         return {
           ...quarterResult,
           playoffUpdate,
@@ -2008,9 +2062,23 @@ export const useGameStore = defineStore('game', () => {
           quarter_scores: quarterResult.scores.quarterScores,
         }
 
-        // Persist updated game state to IndexedDB so it survives navigation
+        // Persist updated game state to IndexedDB so it survives navigation.
+        // Segmented pacing: only write on dead balls / quarter ends (play
+        // mode pauses every possession — a write per pause would hammer IDB
+        // and cloud sync). The freshest state is always held in
+        // _pendingGameState for flushPendingGameState() to persist on
+        // route-leave / visibility-hide.
         if (quarterResult.gameState) {
-          await _saveInProgressState(campaignId, year, gameId, quarterResult.gameState, quarterResult.scores, quarterResult.quarter)
+          _pendingGameState.value = {
+            campaignId, year, gameId,
+            gameState: quarterResult.gameState,
+            scores: quarterResult.scores,
+            quarter: quarterResult.quarter,
+          }
+          if (!breakInfo || breakInfo.deadBall || breakInfo.quarterComplete) {
+            await _saveInProgressState(campaignId, year, gameId, quarterResult.gameState, quarterResult.scores, quarterResult.quarter)
+            _pendingGameState.value = null
+          }
         }
 
         // Keep games list in sync with scores/quarter
@@ -2032,6 +2100,26 @@ export const useGameStore = defineStore('game', () => {
       throw err
     } finally {
       simulating.value = false
+    }
+  }
+
+  /**
+   * Persist any segment gameState that was skipped by the dead-ball-only
+   * write cadence. Called by GameView on route-leave / visibility-hide so
+   * closing the app mid-play-mode loses at most nothing (vs rewinding to
+   * the last dead ball).
+   */
+  async function flushPendingGameState() {
+    const pending = _pendingGameState.value
+    if (!pending) return
+    _pendingGameState.value = null
+    try {
+      await _saveInProgressState(
+        pending.campaignId, pending.year, pending.gameId,
+        pending.gameState, pending.scores, pending.quarter
+      )
+    } catch (err) {
+      console.warn('[GameStore] flushPendingGameState failed:', err)
     }
   }
 
@@ -2154,6 +2242,11 @@ export const useGameStore = defineStore('game', () => {
           evolution: result.evolution || null,
         }
       }
+
+      // Owner-expectation check now that THIS game's result is in the
+      // standings — the raise then reflects the finished game and the
+      // homepage surfaces it after completion, never mid-game.
+      await _maybeRaiseOwnerExpectation(campaignId)
 
       return {
         result,
@@ -3490,6 +3583,7 @@ export const useGameStore = defineStore('game', () => {
     startLiveGame,
     continueGame,
     simToEnd,
+    flushPendingGameState,
     clearSimulationResult,
     clearCurrentGame,
     clearLiveSimulation,

@@ -13,6 +13,7 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
 import { useSyncStore } from '@/stores/sync'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { LoadingSpinner, StatBadge } from '@/components/ui'
 import { Search, Binoculars, User, ArrowUp, ArrowDown } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -727,6 +728,8 @@ onMounted(async () => {
       @scout-player="scoutPlayer(selectedPlayer)"
       @close="showPlayerModal = false"
     />
+
+    <WalkthroughReplayButton walkthrough-key="scouting" />
   </div>
 </template>
 
