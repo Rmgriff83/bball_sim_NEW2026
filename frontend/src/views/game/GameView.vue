@@ -6181,7 +6181,7 @@ onUnmounted(() => {
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.08);
   color: #e6e9f0;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
@@ -6215,16 +6215,12 @@ onUnmounted(() => {
   gap: 6px;
 }
 
-.coaches-overlay .strategy-label {
-  font-size: 9px;
-}
-
 .coaches-overlay .strategy-pill {
   padding: 3px 7px;
 }
 
 .coaches-overlay .strategy-pill-label {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .coaches-overlay .strategy-pill-fit {
@@ -6306,15 +6302,15 @@ onUnmounted(() => {
 
 /* Matchup editor: crunch the compact variant a notch further. */
 .coaches-overlay :deep(.me-headers) {
-  font-size: 8.5px;
+  font-size: 10px;
 }
 
 .coaches-overlay :deep(.me-row) {
-  padding: 4px 6px;
+  padding: 6px 20px;
 }
 
 .coaches-overlay :deep(.me-name) {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .coaches-overlay :deep(.me-pick) {
@@ -7024,6 +7020,7 @@ onUnmounted(() => {
   text-align: left;
   gap: 2px;
   line-height: 1.15;
+  height: 50px;
 }
 
 .strategy-pill-fit {

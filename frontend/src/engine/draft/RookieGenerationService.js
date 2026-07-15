@@ -289,7 +289,11 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
       player.potentialRating = finalPotential
       player.potential_rating = finalPotential
       player.age = age
-      const birthYear = 2025 - age
+      // Anchor the birth year to the actual draft year, not a fixed 2025 —
+      // otherwise a rookie generated in a later season gets a birthDate that
+      // implies an older age, and catchUpPlayerAging then inflates player.age
+      // (up to ~27) on the next campaign load.
+      const birthYear = gameYear - age
       const birthMonth = String(randInt(1, 12)).padStart(2, '0')
       const birthDay = String(randInt(1, 28)).padStart(2, '0')
       player.birthDate = `${birthYear}-${birthMonth}-${birthDay}`

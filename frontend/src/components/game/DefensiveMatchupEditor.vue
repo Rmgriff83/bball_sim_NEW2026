@@ -85,7 +85,7 @@ function isDefault(opponent, index) {
         <!-- Opponent (offense) -->
         <span class="me-side">
           <span class="me-avatar-wrap">
-            <PlayerAvatar :player="opp" :size="compact ? 28 : 34" />
+            <PlayerAvatar :player="opp" :size="34" />
             <span class="me-pos" :style="{ backgroundColor: posColor(opp.slotPosition) }">{{ opp.slotPosition }}</span>
           </span>
           <span class="me-name">{{ lastNameOf(opp) }}</span>
@@ -97,7 +97,7 @@ function isDefault(opponent, index) {
         <span class="me-side me-side-right" :class="{ custom: !isDefault(opp, i) }">
           <span class="me-name">{{ lastNameOf(assignedDefender(opp, i)) }}</span>
           <span class="me-avatar-wrap">
-            <PlayerAvatar :player="assignedDefender(opp, i)" :size="compact ? 28 : 34" />
+            <PlayerAvatar :player="assignedDefender(opp, i)" :size="34" />
             <span class="me-pos" :style="{ backgroundColor: posColor(assignedDefender(opp, i)?.slotPosition || assignedDefender(opp, i)?.position) }">
               {{ assignedDefender(opp, i)?.slotPosition || assignedDefender(opp, i)?.position }}
             </span>

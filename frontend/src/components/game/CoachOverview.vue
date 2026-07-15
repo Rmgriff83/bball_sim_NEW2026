@@ -5,7 +5,17 @@
          centered canvas bubble, not here). Coach name yields during breaks
          so everything fits the canvas width. -->
     <div class="co-strip">
-      <div class="co-cluster">
+      <!-- The whole cluster is the tap target for the coaching panel (same as
+           the clipboard button). The clipboard's own click just bubbles here. -->
+      <div
+        class="co-cluster"
+        data-tour="game-live-cluster"
+        :class="{ 'is-clickable': allowSubs }"
+        role="button"
+        :aria-disabled="!allowSubs"
+        :title="allowSubs ? 'Subs & adjustments' : null"
+        @click="allowSubs && emit('open-adjust')"
+      >
         <div class="co-avatar" :style="{ borderColor: teamColor }">
           <CoachAvatar :coach="coach" :size="34" :campaign-id="campaignId" />
           <span v-if="coachOverall != null" class="co-ovr-badge">{{ coachOverall }}</span>
@@ -17,7 +27,6 @@
           :disabled="!allowSubs"
           title="Subs & adjustments"
           aria-label="Subs & adjustments"
-          @click="emit('open-adjust')"
         >
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -43,12 +52,27 @@
           :title="timeoutTitle"
           @click="emit('toggle-timeout')"
         >
+          <span class="co-to-pips" aria-hidden="true">
+            <span
+              v-for="n in timeoutsTotal"
+              :key="n"
+              class="co-to-pip"
+              :class="{ 'is-lit': n <= timeoutsRemaining }"
+            ></span>
+          </span>
           <Check v-if="timeoutArmed" :size="11" />
-          <span>TO · {{ timeoutsRemaining }}</span>
+          <span class="co-to-label">TO</span>
+          <span class="co-to-count">{{ timeoutsRemaining }}</span>
         </button>
-        <button class="co-action-btn co-action-continue" :disabled="!isStoppage || simulating" @click="emit('continue')">
+        <button
+          class="co-action-btn co-action-continue"
+          :disabled="!isStoppage || simulating"
+          title="Continue"
+          aria-label="Continue"
+          @click="emit('continue')"
+        >
           <span v-if="simulating" class="co-btn-loading"></span>
-          <span v-else>Continue ▸</span>
+          <Play v-else :size="14" fill="currentColor" stroke="none" />
         </button>
       </div>
     </div>
@@ -57,7 +81,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { Check } from 'lucide-vue-next'
+import { Check, Play } from 'lucide-vue-next'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 
 // The live-game "Coach Overview" strip: sits INSIDE the court container,
@@ -76,6 +100,7 @@ const props = defineProps({
   defenseLabel: { type: String, default: '—' },
   isStoppage: { type: Boolean, default: false },
   timeoutsRemaining: { type: Number, default: 0 },
+  timeoutsTotal: { type: Number, default: 4 },
   timeoutArmed: { type: Boolean, default: false },
   allowTimeout: { type: Boolean, default: false },
   allowSubs: { type: Boolean, default: false },
@@ -91,13 +116,24 @@ const coachLastName = computed(() => {
 
 // Chip-only label compaction — the strip chips are tiny, so long scheme names
 // shorten HERE ONLY (pills elsewhere keep the full labels):
-// "Isolation Heavy" → "Iso Heavy"; zone defenses drop the word ("Zone 2-3" → "2-3").
+// "Isolation Heavy" → "Iso Heavy", "Post Centric" → "Post"; zone defenses drop
+// the word ("Zone 2-3" → "2-3"), "Full Court Press" → "Press", "Man-to-Man" → "Man".
+const OFFENSE_CHIP_LABELS = {
+  'Isolation Heavy': 'Iso Heavy',
+  'Post Centric': 'Post',
+}
+
 const offenseChipLabel = computed(() =>
-  props.offenseLabel === 'Isolation Heavy' ? 'Iso Heavy' : props.offenseLabel
+  OFFENSE_CHIP_LABELS[props.offenseLabel] ?? props.offenseLabel
 )
 
+const DEFENSE_CHIP_LABELS = {
+  'Full Court Press': 'Press',
+  'Man-to-Man': 'Man',
+}
+
 const defenseChipLabel = computed(() =>
-  props.defenseLabel.replace(/^Zone\s+/i, '')
+  DEFENSE_CHIP_LABELS[props.defenseLabel] ?? props.defenseLabel.replace(/^Zone\s+/i, '')
 )
 
 // Coach overall — tolerate every save shape (snake_case, camelCase, or the
@@ -162,6 +198,17 @@ const timeoutTitle = computed(() => {
   border: 1px solid rgba(255, 255, 255, 0.06);
   min-width: 0;
   flex-shrink: 1;
+}
+
+/* Whole-cluster tap target for the coaching panel (matches the clipboard btn). */
+.co-cluster.is-clickable {
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.co-cluster.is-clickable:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .co-avatar {
@@ -245,19 +292,57 @@ const timeoutTitle = computed(() => {
 }
 
 .co-timeout-btn {
+  position: relative; /* anchors the left-border pip strip */
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  padding: 3px 8px;
+  gap: 1px;
+  padding: 3px 9px 3px 14px; /* extra left room for the pip strip */
   border-radius: 7px;
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 800;
+  line-height: 1.05;
   cursor: pointer;
   flex-shrink: 0;
   color: gray;
   background: rgba(255, 255, 255, 0.08);
   transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Left-border tally of timeouts left — one pip per timeout, lit while
+   available and dimmed once spent. Illumination tracks the button's text
+   color so it reads correctly in ready/armed/disabled states. */
+.co-to-pips {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.co-to-pip {
+  width: 3px;
+  height: 4px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.co-to-pip.is-lit {
+  background: currentColor;
+  box-shadow: 0 0 4px -1px currentColor;
+}
+
+.co-to-label {
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+}
+
+.co-to-count {
+  font-size: 1.15em;
 }
 
 .co-timeout-btn:disabled {
@@ -278,8 +363,9 @@ const timeoutTitle = computed(() => {
 
 .co-break-actions {
   display: flex;
-  align-items: stretch;
-  flex-direction: column;
+  align-self: stretch;   /* fill the strip's full height */
+  align-items: stretch;  /* both buttons take that full height */
+  flex-direction: row;
   gap: 5px;
   flex-shrink: 0;
 }
@@ -318,6 +404,11 @@ const timeoutTitle = computed(() => {
 }
 
 .co-action-continue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 54px;
   background: #ef6a4f;
   border-color: transparent;
   color: #fff;

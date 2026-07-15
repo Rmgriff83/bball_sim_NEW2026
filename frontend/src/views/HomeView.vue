@@ -11,13 +11,13 @@ const authStore = useAuthStore()
 
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 
-// The "Download on the App Store" badge only makes sense on the WEB build —
+// The App Store + Google Play badges only make sense on the WEB build —
 // inside any native app (iOS or Android) the user already installed it, so the
-// link is redundant (and pointing Android users at the iOS store is wrong).
+// links are redundant (and pointing users at the wrong store is worse).
 // - iOS: `build:ios` sets VITE_NATIVE_BUILD, so it's stripped at build time.
 // - Android: the build doesn't set that flag, so we also gate on the runtime
 //   Capacitor.isNativePlatform() check (getPlatform() is 'web' | 'ios' | 'android').
-const showAppStoreBadge = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativePlatform()
+const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativePlatform()
 </script>
 
 <template>
@@ -58,13 +58,12 @@ const showAppStoreBadge = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNat
           </template>
         </div>
 
-        <!-- App Store badge — web build only. Inline SVG so we're not
-             hotlinking Apple's CDN; the design follows the official
-             "Download on the App Store" badge spec. Native iOS users are
-             already in the app, so VITE_NATIVE_BUILD strips this branch
-             entirely from the iOS bundle. -->
+        <!-- Store badges — web build only. Inline SVGs so we're not hotlinking
+             the stores' CDNs; the designs follow the official "Download on the
+             App Store" / "Get it on Google Play" badge specs. Native users are
+             already in the app, so this whole block is gated off in-app. -->
+        <div v-if="showStoreBadges" class="store-badges">
         <a
-          v-if="showAppStoreBadge"
           class="app-store-badge"
           href="https://apps.apple.com/us/app/bball-sim/id6774754906"
           target="_blank"
@@ -117,6 +116,69 @@ const showAppStoreBadge = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNat
             >App Store</text>
           </svg>
         </a>
+
+        <!-- Google Play badge — inline SVG following the official
+             "Get it on Google Play" spec (black pill, colored play triangle,
+             GET IT ON / Google Play wordmark). -->
+        <a
+          class="google-play-badge"
+          href="https://play.google.com/store/apps/details?id=com.bballsim.app"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Get Bball Sim on Google Play"
+        >
+          <svg
+            class="app-store-badge-svg"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 160 50"
+            role="img"
+            aria-hidden="true"
+          >
+            <!-- Black rounded background + 1px subtle border -->
+            <rect width="160" height="50" rx="8" fill="#000" />
+            <rect
+              x="0.5"
+              y="0.5"
+              width="159"
+              height="49"
+              rx="7.5"
+              fill="none"
+              stroke="rgba(255, 255, 255, 0.18)"
+            />
+            <!-- Google Play triangle — the modern play mark: a right-pointing
+                 triangle with the brand's blue→cyan gradient. -->
+            <defs>
+              <linearGradient id="gp-triangle" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#00E1FF" />
+                <stop offset="1" stop-color="#00A0FF" />
+              </linearGradient>
+            </defs>
+            <g transform="translate(15, 14)">
+              <path d="M0 0.5 L18 11 L0 21.5 Z" fill="url(#gp-triangle)" />
+            </g>
+            <!-- Tagline above the wordmark -->
+            <text
+              x="42"
+              y="20"
+              fill="#fff"
+              font-family="Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+              font-size="8"
+              font-weight="400"
+              letter-spacing="0.8"
+            >GET IT ON</text>
+            <!-- Wordmark -->
+            <text
+              x="42"
+              y="38"
+              fill="#fff"
+              font-family="Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+              font-size="17"
+              font-weight="500"
+              letter-spacing="-0.2"
+            >Google Play</text>
+          </svg>
+        </a>
+        </div>
       </div>
 
       <!-- Retro Effects -->
@@ -386,24 +448,36 @@ const showAppStoreBadge = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNat
   justify-content: center;
 }
 
-/* Apple App Store badge — anchored below the hero CTAs. Width is held at
-   the Apple-spec aspect ratio (135:40); transform-only hover stays
-   GPU-friendly. focus-visible matches the rest of the hero's accent
-   color so keyboard nav remains visible against the dark background. */
-.app-store-badge {
-  display: inline-block;
+/* Store badges row — App Store + Google Play sit side by side below the hero
+   CTAs, wrapping to a stack on narrow screens. */
+.store-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
   margin-top: 1.5rem;
+}
+
+/* App Store / Google Play badges. Transform-only hover stays GPU-friendly;
+   focus-visible matches the rest of the hero's accent color so keyboard nav
+   remains visible against the dark background. */
+.app-store-badge,
+.google-play-badge {
+  display: inline-block;
   line-height: 0;
   border-radius: 7px;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
-.app-store-badge:hover {
+.app-store-badge:hover,
+.google-play-badge:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
-.app-store-badge:focus-visible {
+.app-store-badge:focus-visible,
+.google-play-badge:focus-visible {
   outline: 2px solid var(--color-primary, #ffc125);
   outline-offset: 3px;
 }

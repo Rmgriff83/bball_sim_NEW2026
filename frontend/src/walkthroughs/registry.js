@@ -639,11 +639,11 @@ export const WALKTHROUGHS = {
       body: "Tap mid-play to arm a timeout — it's called at the end of the current play — or tap at a dead ball to call one immediately. A timeout resets momentum to even and gives your five on the floor a real breather.",
     },
     {
-      target: 'game-live-clipboard',
+      target: 'game-live-cluster',
       placement: 'bottom',
       interactive: true,
       title: 'Your Coaching Panel',
-      body: "The clipboard opens your coaching panel — it works any time, even while the ball is live. Go ahead — tap it.",
+      body: "Tap your coach box to open the coaching panel — it works any time, even while the ball is live. Go ahead — tap it.",
     },
     {
       target: 'game-live-coaches-panel',

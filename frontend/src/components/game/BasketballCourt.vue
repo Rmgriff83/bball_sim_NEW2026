@@ -1996,9 +1996,11 @@ defineExpose({
         <div class="stoppage-last-play-label stoppage-result-label">Result:</div>
         <div class="stoppage-result-text">{{ stoppageResult }}</div>
       </template>
-      <div class="stoppage-actions">
-        <button v-if="allowSubs" class="stoppage-btn" @click="emit('stoppage-subs')">Subs</button>
-        <button v-if="allowSubs" class="stoppage-btn" @click="emit('stoppage-adjust')">Adjust</button>
+      <div class="stoppage-actions stoppage-actions-stacked">
+        <div v-if="allowSubs" class="stoppage-actions-row">
+          <button class="stoppage-btn" @click="emit('stoppage-subs')">Subs</button>
+          <button class="stoppage-btn" @click="emit('stoppage-adjust')">Adjust</button>
+        </div>
         <button
           class="stoppage-btn stoppage-btn-continue"
           :disabled="simulating"
@@ -2109,6 +2111,14 @@ defineExpose({
   gap: 6px;
 }
 
+/* Inside the centered stoppage bubble the badge stacks above the description
+   text, left-aligned — the live in-corner variant stays inline. */
+.stoppage-overlay .play-description-entry {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
 .play-team-badge {
   font-size: 9px;
   font-weight: 700;
@@ -2163,7 +2173,7 @@ defineExpose({
 }
 
 .stoppage-last-play-label {
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2179,7 +2189,7 @@ defineExpose({
 /* The play's verified outcome, under the description. Brighter/bolder than
    the description so the result reads as the headline of the two. */
 .stoppage-result-text {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: #fff;
   line-height: 1.3;
@@ -2190,6 +2200,23 @@ defineExpose({
 .stoppage-actions {
   display: flex;
   gap: 6px;
+}
+
+/* Dead-ball stoppage: Subs + Adjust on the first row, Continue full-width
+   beneath them. (The timeout overlay keeps the single-row layout.) */
+.stoppage-actions-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  width: 200px;
+}
+
+.stoppage-actions-row {
+  display: flex;
+  gap: 6px;
+}
+
+.stoppage-actions-row .stoppage-btn {
+  flex: 1;
 }
 
 /* Timeout bubble: same base as .stoppage-overlay, content centered around
@@ -2222,7 +2249,7 @@ defineExpose({
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.08);
   color: #e6e9f0;
-  font-size: 0.7rem;
+  font-size: 0.9rem;
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
@@ -2312,8 +2339,12 @@ defineExpose({
     font-size: 9px;
   }
 
+  .stoppage-overlay .play-description-text {
+    font-size: 11px;
+  }
+
   .play-team-badge {
-    font-size: 7px;
+    font-size: 9px;
     padding: 1px 3px;
   }
 }
