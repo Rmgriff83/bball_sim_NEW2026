@@ -146,16 +146,34 @@ export const useAudioStore = defineStore('audio', () => {
   }
 
   // ---- In-game SFX / ambience ----
+  // Plays through the AudioContext (playStoppableSample / playLoop), NOT an
+  // HTMLAudioElement — so these MIX with the user's background music instead of
+  // interrupting/ducking it on iOS. Both paths return the same stop() handle
+  // contract, so stopGameSfx works for one-shots and loops alike.
   function playGameSfx(key, { loop = false } = {}) {
     if (!enabled.value) return null
     const url = GAME_SFX[key]
     if (!url) return null // file not added yet — safe no-op
     engine.unlock()
-    return engine.playClip(url, { loop, volume: volume.value * GAME_AUDIO_ATTENUATION })
+    const gain = volume.value * GAME_AUDIO_ATTENUATION
+    return loop
+      ? engine.playLoop(url, { volume: gain })
+      : engine.playStoppableSample(url, { volume: gain })
   }
 
   function stopGameSfx(handle) {
-    engine.stopClip(handle)
+    engine.stopLoop(handle) // handle.stop() — same contract as playLoop
+  }
+
+  // Warm-decode the GAME_SFX clips (draft sting etc.) so the first play through
+  // the AudioContext path isn't clipped by fetch+decode latency. Idempotent.
+  let _gameSfxPreloaded = false
+  function preloadGameSfx() {
+    if (_gameSfxPreloaded || !enabled.value) return
+    _gameSfxPreloaded = true
+    for (const url of Object.values(GAME_SFX)) {
+      if (url) engine.preloadSample(url)
+    }
   }
 
   // ---- Event SFX (simulation-keyframe sounds: swish, whistle, ...) ----
@@ -191,7 +209,19 @@ export const useAudioStore = defineStore('audio', () => {
   // loop — a track shorter than the clock just ends); GameView starts it
   // ~3.5s into the timeout and stops it the moment play resumes. Gated like
   // game SFX.
+  //
+  // Plays through the AudioContext (playStoppableSample), NOT an
+  // HTMLAudioElement — so like the rest of the in-game audio it MIXES with the
+  // user's background music instead of interrupting/ducking it on iOS.
   let timeoutMusicHandle = null
+
+  // Warm-decode the hype tracks so the ~3.5s-in cue starts on time.
+  let _timeoutMusicPreloaded = false
+  function preloadTimeoutMusic() {
+    if (_timeoutMusicPreloaded || !enabled.value) return
+    _timeoutMusicPreloaded = true
+    for (const url of TIMEOUT_MUSIC.urls) engine.preloadSample(url)
+  }
 
   function startTimeoutMusic() {
     if (!enabled.value || gameMuted.value) return
@@ -199,11 +229,11 @@ export const useAudioStore = defineStore('audio', () => {
     engine.unlock()
     stopTimeoutMusic()
     const url = TIMEOUT_MUSIC.urls[Math.floor(Math.random() * TIMEOUT_MUSIC.urls.length)]
-    timeoutMusicHandle = engine.playClip(url, { loop: false, volume: TIMEOUT_MUSIC.volume * GAME_AUDIO_ATTENUATION })
+    timeoutMusicHandle = engine.playStoppableSample(url, { volume: TIMEOUT_MUSIC.volume * GAME_AUDIO_ATTENUATION })
   }
 
   function stopTimeoutMusic() {
-    engine.stopClip(timeoutMusicHandle)
+    engine.stopLoop(timeoutMusicHandle) // handle.stop() — same contract as playLoop
     timeoutMusicHandle = null
   }
 
@@ -265,8 +295,10 @@ export const useAudioStore = defineStore('audio', () => {
     stopMusic,
     playGameSfx,
     stopGameSfx,
+    preloadGameSfx,
     preloadEventSfx,
     playEventSfx,
+    preloadTimeoutMusic,
     startTimeoutMusic,
     stopTimeoutMusic,
     preloadAmbientSfx,

@@ -1228,6 +1228,7 @@ onMounted(async () => {
   // is disabled; the fetch/decode is async and never touches the sim worker.
   audioStore.preloadEventSfx()
   audioStore.preloadAmbientSfx()
+  audioStore.preloadTimeoutMusic()
 
   try {
     // Fetch team data first (single source of truth for user's roster and lineup)

@@ -478,6 +478,10 @@ onMounted(async () => {
   loading.value = true
   error.value = null
 
+  // Warm-decode the draft cues so the AudioContext (mixing) path plays them
+  // instantly instead of clipping the first note.
+  audio.preloadGameSfx()
+
   // The draft room is a fixed-height (100dvh) page that should never scroll. The
   // document/body behind it can still scroll a hair on iOS (body min-height:100vh >
   // the visible viewport, plus rubber-band overscroll), which let the user drag the

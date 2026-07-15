@@ -302,6 +302,64 @@ export function stopLoop(handle) {
   if (handle?.stop) handle.stop()
 }
 
+// ---- Stoppable one-shot sample via the AudioContext -----------------------
+// Like playSample (mixes with external audio via the ambient session, so it
+// does NOT pause the user's background music), but returns a stop() handle so
+// a longer clip — e.g. the timeout hype music — can be cut short when play
+// resumes. Non-looping; ends on its own when the buffer finishes.
+//
+// Decode failure is a SILENT no-op (unlike playSample, which falls back to
+// playClip/HTMLAudio): the whole reason to use this path is to avoid
+// interrupting background audio, so an interrupting fallback would defeat it.
+// Stop with stopLoop(handle) (same handle contract as playLoop).
+export function playStoppableSample(url, { volume: sampleVolume = 1, fadeS = 0.06 } = {}) {
+  const handle = { stopped: false, _src: null, _env: null, stop: null }
+  handle.stop = () => {
+    handle.stopped = true
+    const src = handle._src
+    const env = handle._env
+    if (!src || !env || !ctx) return
+    handle._src = null
+    handle._env = null
+    try {
+      const now = ctx.currentTime
+      env.gain.cancelScheduledValues(now)
+      env.gain.setValueAtTime(env.gain.value, now)
+      env.gain.linearRampToValueAtTime(0, now + fadeS)
+      src.stop(now + fadeS + 0.02)
+      src.onended = () => { try { src.disconnect(); env.disconnect() } catch { /* noop */ } }
+    } catch { /* best-effort */ }
+  }
+
+  if (!url) { handle.stopped = true; return handle }
+  const c = ensureContext()
+  if (!c || !masterGain) { handle.stopped = true; return handle }
+
+  const start = (buffer) => {
+    if (!buffer || handle.stopped) return // decode failed, or stopped before start
+    try {
+      if (c.state === 'suspended') c.resume().catch(() => {})
+      const src = c.createBufferSource()
+      src.buffer = buffer
+      const env = c.createGain()
+      env.gain.value = Math.max(0, Math.min(1, sampleVolume))
+      src.connect(env)
+      env.connect(masterGain) // masterGain applies user volume + mute live
+      src.start()
+      src.onended = () => { try { src.disconnect(); env.disconnect() } catch { /* noop */ } }
+      handle._src = src
+      handle._env = env
+    } catch { /* best-effort: never throw */ }
+  }
+
+  if (sampleCache.has(url)) {
+    start(sampleCache.get(url))
+  } else {
+    preloadSample(url).then(start).catch(() => {})
+  }
+  return handle
+}
+
 // ---- MP3 clip playback (music / game noises) -----------------------------
 // `url` is the resolved asset URL (or null if the file hasn't been added yet,
 // in which case this is a safe no-op). Returns a handle for stopClip().
