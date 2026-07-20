@@ -6,10 +6,13 @@ use App\Http\Controllers\Auth\ForgotPasswordController;
 use App\Http\Controllers\Auth\ResetPasswordController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\SocialAuthController;
+use App\Http\Controllers\Auth\LoginHandoffController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\RosterBuildController;
 use App\Http\Controllers\SyncController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\AdminHeadshotController;
+use App\Http\Controllers\AppVersionController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -40,6 +43,11 @@ Route::prefix('auth')->group(function () {
     // Legacy web redirect/callback flow (unused by one-tap; kept for reference).
     Route::get('/social/{provider}', [SocialAuthController::class, 'redirect']);
     Route::get('/social/{provider}/callback', [SocialAuthController::class, 'callback']);
+
+    // One-time app→web login handoff exchange (public by design — the nonce
+    // is the credential; single-use + 60s TTL + uniform 401, throttled).
+    Route::post('/handoff/exchange', [LoginHandoffController::class, 'exchange'])
+        ->middleware('throttle:20,1');
 });
 
 // Protected routes (require authentication)
@@ -72,11 +80,31 @@ Route::middleware('auth:sanctum')->group(function () {
     // Payments
     Route::post('/payments/checkout-session', [PaymentController::class, 'createCheckoutSession']);
 
-    // Cloud sync (client-id based, no route model binding)
+    // Cloud sync (client-id based, no route model binding). whereUuid keeps
+    // malformed ids out of the controllers entirely (belt-and-suspenders for
+    // the push create-path, where the param becomes a stored client_id + S3
+    // path segment).
     Route::get('/sync/campaigns', [SyncController::class, 'listCampaigns']);
-    Route::post('/sync/{clientId}/push', [SyncController::class, 'pushSnapshot']);
-    Route::get('/sync/{clientId}/pull', [SyncController::class, 'pullSnapshot']);
-    Route::delete('/sync/{clientId}', [SyncController::class, 'deleteCampaign']);
+    Route::post('/sync/{clientId}/push', [SyncController::class, 'pushSnapshot'])->whereUuid('clientId');
+    Route::get('/sync/{clientId}/pull', [SyncController::class, 'pullSnapshot'])->whereUuid('clientId');
+    Route::delete('/sync/{clientId}', [SyncController::class, 'deleteCampaign'])->whereUuid('clientId');
+
+    // One-time app→web login handoff mint (Community flow).
+    Route::post('/auth/handoff', [LoginHandoffController::class, 'mint'])
+        ->middleware('throttle:6,1');
+
+    // Community roster builds (Roster Editor IAP Part B — web-only UI; every
+    // endpoint enforces the custom_roster unlock server-side except report).
+    Route::get('/roster-builds', [RosterBuildController::class, 'index']);
+    Route::get('/roster-builds/mine', [RosterBuildController::class, 'mine']);
+    Route::get('/roster-builds/downloads', [RosterBuildController::class, 'downloads']);
+    Route::post('/roster-builds', [RosterBuildController::class, 'publish'])
+        ->middleware('throttle:5,1440'); // 5 publishes/day
+    Route::post('/roster-builds/{id}/download', [RosterBuildController::class, 'download'])->whereNumber('id');
+    Route::get('/roster-builds/{id}/blob', [RosterBuildController::class, 'blob'])->whereNumber('id');
+    Route::post('/roster-builds/{id}/report', [RosterBuildController::class, 'report'])
+        ->whereNumber('id')->middleware('throttle:10,60');
+    Route::delete('/roster-builds/{id}', [RosterBuildController::class, 'destroy'])->whereNumber('id');
 
     // Admin: headshot layer catalog management. The controller enforces
     // global_admin and 503s when ASSETS_AWS_BUCKET isn't configured.
@@ -102,6 +130,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
 // Public routes
 Route::get('/achievements', [UserController::class, 'allAchievements']);
+
+// App version gate — powers the native in-app "update available" nag (public).
+Route::get('/app-version', AppVersionController::class);
 
 // Stripe webhook (public — authenticated by signature, not session)
 Route::post('/webhooks/stripe', [PaymentController::class, 'webhook']);

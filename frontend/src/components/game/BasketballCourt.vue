@@ -2208,6 +2208,7 @@ defineExpose({
   flex-direction: column;
   align-items: stretch;
   width: 200px;
+  align-self: center;
 }
 
 .stoppage-actions-row {

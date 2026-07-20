@@ -1,8 +1,9 @@
 <script setup>
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { StatBadge, BaseModal } from '@/components/ui'
-import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, UserPlus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check, Brush, Dumbbell, Sparkles, ChevronDown } from 'lucide-vue-next'
+import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield, Repeat, RefreshCw, UserMinus, UserPlus, Lock, Binoculars, ShoppingBag, Smile, Meh, Frown, Coins, MessagesSquare, Check, Brush, Dumbbell, Sparkles, ChevronDown, Pencil } from 'lucide-vue-next'
+import { PERSONALITY_TRAITS } from '@/engine/campaign/CampaignManager'
 import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { detectArchetype } from '@/engine/data/archetypes'
 import CoachMeetingConfirmModal from './CoachMeetingConfirmModal.vue'
@@ -691,6 +692,96 @@ const canEditHeadshot = computed(() =>
   && !playerIsFreeAgent.value
   && authStore.hasFeature('headshot_editor')
 )
+
+// Roster Editor IAP perk: owners may edit ONLY flavor data — history (bio &
+// origin) and personality — for ANY player league-wide (incl. AI teams and
+// free agents; it's cosmetic data). Hidden in scouting mode so it can't leak
+// prospect reveal info. Attributes/badges/contracts stay non-editable here.
+const canEditFlavor = computed(() =>
+  !props.scoutingMode
+  && !!props.campaignId
+  && authStore.hasFeature('custom_roster')
+)
+
+const editingHistory = ref(false)
+const editingPersonality = ref(false)
+const flavorSaving = ref(false)
+const historyForm = reactive({ college: '', country: '', draftRound: null, draftPick: 1, draftYear: 2025, careerSeasons: 0 })
+const personalityForm = reactive({ traits: [], morale: 80, chemistry: 75, mediaProfile: 'normal' })
+
+function startHistoryEdit() {
+  const p = props.player ?? {}
+  historyForm.college = p.college ?? p.school ?? ''
+  historyForm.country = p.country ?? ''
+  const di = p.draftInfo ?? null
+  historyForm.draftRound = p.draftRound ?? di?.round ?? null
+  historyForm.draftPick = p.draftPick ?? di?.pick ?? 1
+  historyForm.draftYear = p.draftYear ?? di?.year ?? 2025
+  historyForm.careerSeasons = p.careerSeasons ?? p.career_seasons ?? 0
+  editingHistory.value = true
+}
+
+function startPersonalityEdit() {
+  const pers = props.player?.personality ?? {}
+  personalityForm.traits = Array.isArray(pers.traits) ? [...pers.traits] : []
+  personalityForm.morale = pers.morale ?? props.player?.morale ?? 80
+  personalityForm.chemistry = pers.chemistry ?? 75
+  personalityForm.mediaProfile = ['low_key', 'normal', 'high_profile'].includes(pers.mediaProfile)
+    ? pers.mediaProfile : 'normal'
+  editingPersonality.value = true
+}
+
+function toggleFlavorTrait(trait) {
+  const i = personalityForm.traits.indexOf(trait)
+  if (i >= 0) personalityForm.traits.splice(i, 1)
+  else if (personalityForm.traits.length < 3) personalityForm.traits.push(trait)
+}
+
+async function saveHistoryEdit() {
+  if (flavorSaving.value) return
+  flavorSaving.value = true
+  try {
+    const pid = props.player.id ?? props.player.playerId
+    const patch = await teamStore.updatePlayerFlavor(props.campaignId, pid, {
+      college: historyForm.college,
+      country: historyForm.country,
+      careerSeasons: Number(historyForm.careerSeasons),
+      draft: historyForm.draftRound
+        ? { year: historyForm.draftYear, round: historyForm.draftRound, pick: historyForm.draftPick }
+        : null,
+    })
+    Object.assign(props.player, patch)
+    editingHistory.value = false
+    toastStore.showSuccess('Player history updated')
+  } catch (err) {
+    toastStore.showError(err?.message || 'Failed to update history')
+  } finally {
+    flavorSaving.value = false
+  }
+}
+
+async function savePersonalityEdit() {
+  if (flavorSaving.value) return
+  flavorSaving.value = true
+  try {
+    const pid = props.player.id ?? props.player.playerId
+    const patch = await teamStore.updatePlayerFlavor(props.campaignId, pid, {
+      personality: {
+        traits: personalityForm.traits,
+        morale: Number(personalityForm.morale),
+        chemistry: Number(personalityForm.chemistry),
+        mediaProfile: personalityForm.mediaProfile,
+      },
+    })
+    Object.assign(props.player, patch)
+    editingPersonality.value = false
+    toastStore.showSuccess('Personality updated')
+  } catch (err) {
+    toastStore.showError(err?.message || 'Failed to update personality')
+  } finally {
+    flavorSaving.value = false
+  }
+}
 const coachMeetingDisabledReason = computed(() => {
   if (!props.coach) return 'Sign a coach first'
   if (moraleValue.value >= 100) return 'Morale already maxed'
@@ -2085,20 +2176,70 @@ function formatChange(change) {
 
                 <!-- Personality Traits -->
                 <div class="morale-traits-section" data-tour="pdm-traits">
-                  <h4 class="morale-section-title">Personality Traits</h4>
-                  <div v-if="normalizedPlayer.personalityTraits.length > 0" class="traits-list">
-                    <div
-                      v-for="trait in normalizedPlayer.personalityTraits"
-                      :key="trait"
-                      class="trait-item"
+                  <h4 class="morale-section-title">
+                    Personality Traits
+                    <button
+                      v-if="canEditFlavor && !editingPersonality"
+                      class="flavor-edit-btn inline"
+                      @click="startPersonalityEdit"
                     >
-                      <span class="trait-name">{{ formatTraitName(trait) }}</span>
-                      <span class="trait-description">{{ getTraitDescription(trait) }}</span>
+                      <Pencil :size="11" /> Edit
+                    </button>
+                  </h4>
+
+                  <div v-if="editingPersonality" class="flavor-edit-panel">
+                    <div class="flavor-traits">
+                      <button
+                        v-for="t in PERSONALITY_TRAITS"
+                        :key="t"
+                        class="flavor-trait"
+                        :class="{ on: personalityForm.traits.includes(t) }"
+                        @click="toggleFlavorTrait(t)"
+                      >
+                        {{ formatTraitName(t) }}
+                      </button>
+                    </div>
+                    <div class="flavor-grid">
+                      <label class="flavor-field">
+                        <span>Morale</span>
+                        <input v-model.number="personalityForm.morale" type="number" min="0" max="99" class="flavor-input" />
+                      </label>
+                      <label class="flavor-field">
+                        <span>Chemistry</span>
+                        <input v-model.number="personalityForm.chemistry" type="number" min="0" max="99" class="flavor-input" />
+                      </label>
+                      <label class="flavor-field">
+                        <span>Media Profile</span>
+                        <select v-model="personalityForm.mediaProfile" class="flavor-input">
+                          <option value="low_key">Low-key</option>
+                          <option value="normal">Normal</option>
+                          <option value="high_profile">High-profile</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="flavor-actions">
+                      <button class="flavor-cancel" :disabled="flavorSaving" @click="editingPersonality = false">Cancel</button>
+                      <button class="flavor-save" :disabled="flavorSaving" @click="savePersonalityEdit">
+                        <Check :size="13" /> Save
+                      </button>
                     </div>
                   </div>
-                  <div v-else class="morale-empty">
-                    No notable personality traits
-                  </div>
+
+                  <template v-else>
+                    <div v-if="normalizedPlayer.personalityTraits.length > 0" class="traits-list">
+                      <div
+                        v-for="trait in normalizedPlayer.personalityTraits"
+                        :key="trait"
+                        class="trait-item"
+                      >
+                        <span class="trait-name">{{ formatTraitName(trait) }}</span>
+                        <span class="trait-description">{{ getTraitDescription(trait) }}</span>
+                      </div>
+                    </div>
+                    <div v-else class="morale-empty">
+                      No notable personality traits
+                    </div>
+                  </template>
                 </div>
 
                 <!-- Motivations -->
@@ -2165,28 +2306,84 @@ function formatChange(change) {
 
               <!-- History Tab (Awards + News) -->
               <div v-if="activeTab === 'history' && showHistory" class="tab-panel">
-                <!-- Draft Info -->
-                <div v-if="normalizedPlayer.draftInfo" class="history-section draft-info-section">
-                  <div class="draft-info-card">
-                    <span class="draft-info-pick">#{{ normalizedPlayer.draftInfo.pick }}</span>
-                    <div class="draft-info-details">
-                      <span class="draft-info-label">
-                        Round {{ normalizedPlayer.draftInfo.round }}, Pick {{ normalizedPlayer.draftInfo.pick }}
-                        <template v-if="normalizedPlayer.draftInfo.year"> &middot; {{ normalizedPlayer.draftInfo.year }}</template>
-                      </span>
-                      <span class="draft-info-team">Drafted by {{ normalizedPlayer.draftInfo.teamAbbreviation }}</span>
-                    </div>
+                <!-- Roster Editor IAP: edit bio & origin in place -->
+                <button
+                  v-if="canEditFlavor && !editingHistory"
+                  class="flavor-edit-btn"
+                  @click="startHistoryEdit"
+                >
+                  <Pencil :size="12" /> Edit History
+                </button>
+
+                <div v-if="editingHistory" class="flavor-edit-panel">
+                  <div class="flavor-grid">
+                    <label class="flavor-field">
+                      <span>College / Club</span>
+                      <input v-model="historyForm.college" class="flavor-input" />
+                    </label>
+                    <label class="flavor-field">
+                      <span>Country</span>
+                      <input v-model="historyForm.country" class="flavor-input" />
+                    </label>
+                    <label class="flavor-field">
+                      <span>Draft Round</span>
+                      <select
+                        :value="historyForm.draftRound ?? ''"
+                        class="flavor-input"
+                        @change="historyForm.draftRound = $event.target.value ? Number($event.target.value) : null"
+                      >
+                        <option value="">Undrafted</option>
+                        <option :value="1">1</option>
+                        <option :value="2">2</option>
+                      </select>
+                    </label>
+                    <template v-if="historyForm.draftRound">
+                      <label class="flavor-field">
+                        <span>Pick</span>
+                        <input v-model.number="historyForm.draftPick" type="number" min="1" max="60" class="flavor-input" />
+                      </label>
+                      <label class="flavor-field">
+                        <span>Draft Year</span>
+                        <input v-model.number="historyForm.draftYear" type="number" min="1990" max="2025" class="flavor-input" />
+                      </label>
+                    </template>
+                    <label class="flavor-field">
+                      <span>Career Seasons</span>
+                      <input v-model.number="historyForm.careerSeasons" type="number" min="0" max="25" class="flavor-input" />
+                    </label>
+                  </div>
+                  <div class="flavor-actions">
+                    <button class="flavor-cancel" :disabled="flavorSaving" @click="editingHistory = false">Cancel</button>
+                    <button class="flavor-save" :disabled="flavorSaving" @click="saveHistoryEdit">
+                      <Check :size="13" /> Save
+                    </button>
                   </div>
                 </div>
 
-                <!-- Origin (school or international club + country) -->
-                <div v-if="playerOrigin" class="history-section origin-section">
-                  <div class="origin-card">
-                    <span class="origin-label">From</span>
-                    <span class="origin-value">{{ playerOrigin.school }}</span>
-                    <span v-if="playerOrigin.country" class="origin-country">{{ playerOrigin.country }}</span>
+                <template v-else>
+                  <!-- Draft Info -->
+                  <div v-if="normalizedPlayer.draftInfo" class="history-section draft-info-section">
+                    <div class="draft-info-card">
+                      <span class="draft-info-pick">#{{ normalizedPlayer.draftInfo.pick }}</span>
+                      <div class="draft-info-details">
+                        <span class="draft-info-label">
+                          Round {{ normalizedPlayer.draftInfo.round }}, Pick {{ normalizedPlayer.draftInfo.pick }}
+                          <template v-if="normalizedPlayer.draftInfo.year"> &middot; {{ normalizedPlayer.draftInfo.year }}</template>
+                        </span>
+                        <span class="draft-info-team">Drafted by {{ normalizedPlayer.draftInfo.teamAbbreviation }}</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+
+                  <!-- Origin (school or international club + country) -->
+                  <div v-if="playerOrigin" class="history-section origin-section">
+                    <div class="origin-card">
+                      <span class="origin-label">From</span>
+                      <span class="origin-value">{{ playerOrigin.school }}</span>
+                      <span v-if="playerOrigin.country" class="origin-country">{{ playerOrigin.country }}</span>
+                    </div>
+                  </div>
+                </template>
 
                 <!-- All Star Selections — hidden for draft prospects (none yet) -->
                 <div v-if="!scoutingMode" class="history-section">
@@ -4851,5 +5048,124 @@ function formatChange(change) {
 
 .attr-value.stat-pop {
   animation: stat-pop 0.4s ease-out;
+}
+
+/* ── Roster Editor IAP flavor editing (history + personality) ─────────── */
+.flavor-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(232, 90, 79, 0.35);
+  background: rgba(232, 90, 79, 0.12);
+  color: var(--color-primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.flavor-edit-btn.inline {
+  margin-left: 8px;
+  padding: 3px 8px;
+  font-size: 0.66rem;
+  vertical-align: middle;
+}
+
+.flavor-edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+}
+
+.flavor-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.flavor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.64rem;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.flavor-input {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 0.88rem;
+  min-width: 0;
+  max-width: 150px;
+}
+
+.flavor-traits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.flavor-trait {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.flavor-trait.on {
+  background: rgba(232, 90, 79, 0.16);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.flavor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.flavor-cancel {
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.flavor-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 16px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  border: none;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.flavor-save:disabled,
+.flavor-cancel:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 </style>

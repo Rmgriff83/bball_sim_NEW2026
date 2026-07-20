@@ -5,7 +5,7 @@
 // college/international diversity, and realistic name generation.
 // =============================================================================
 
-import { generatePlayer, FIRST_NAMES as FAKE_FIRST_NAMES, LAST_NAMES as FAKE_LAST_NAMES } from '../campaign/CampaignManager'
+import { generatePlayer, generateAttributeCaps, FIRST_NAMES as FAKE_FIRST_NAMES, LAST_NAMES as FAKE_LAST_NAMES } from '../campaign/CampaignManager'
 import { pickNameForCountry } from '../data/playerNames'
 import { PlayerRepository } from '../db/PlayerRepository'
 
@@ -323,6 +323,12 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
       player.attributes.mental.workEthic = isHiddenGem
         ? randInt(65, 95)
         : randInt(tier.workEthicMin, tier.workEthicMax)
+
+      // generatePlayer aimed the per-attribute ceilings at its own rookie-style
+      // potential target, but the rookie service just overrode potentialRating
+      // (tier band / hidden gem). Re-aim the caps at that final potential so the
+      // growth engine can actually reach a gem's high ceiling.
+      player.attributeCaps = generateAttributeCaps(player.attributes, player.position, finalPotential)
 
       // Career seasons = 0 (rookie)
       player.careerSeasons = 0

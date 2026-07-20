@@ -115,15 +115,16 @@ export function getAttrFitMax(attrFit) {
 }
 
 /**
- * Is the badge in the player's primary or secondary position pool?
+ * Is the badge in the player's primary, secondary, or tertiary position pool?
  */
 export function isBadgeInPositionPool(player, badgeId) {
   if (!player) return false
-  const primary = BADGES_BY_POSITION[player.position] ?? []
-  const secondary = player.secondaryPosition || player.secondary_position
-    ? (BADGES_BY_POSITION[player.secondaryPosition || player.secondary_position] ?? [])
-    : []
-  return primary.includes(badgeId) || secondary.includes(badgeId)
+  const positions = [
+    player.position,
+    player.secondaryPosition || player.secondary_position,
+    player.tertiaryPosition || player.tertiary_position,
+  ].filter(Boolean)
+  return positions.some((pos) => (BADGES_BY_POSITION[pos] ?? []).includes(badgeId))
 }
 
 /**
@@ -135,7 +136,12 @@ export function isBadgeInPositionPool(player, badgeId) {
  * intent that a 95-pot PG with 90 passing maxes Dimer at HOF, while the
  * same PG with 75 passing maxes it at Gold.
  */
-export function getMaxBadgeLevel(player, badge) {
+/**
+ * The DERIVED per-player cap (position pool + attr fit + potential tier),
+ * ignoring any authored override. Exported so the Roster Editor can display
+ * the derived value as the starting point the user then overrides.
+ */
+export function getDerivedMaxBadgeLevel(player, badge) {
   if (!player || !badge) return null
   if (!isBadgeInPositionPool(player, badge.id)) return null
   const fit = getAttrFit(player, badge)
@@ -143,6 +149,18 @@ export function getMaxBadgeLevel(player, badge) {
   const potentialMax = getPotentialTierMax(player.potentialRating ?? player.potential_rating ?? 0)
   const attrMax = getAttrFitMax(fit)
   return compareBadgeLevels(potentialMax, attrMax) <= 0 ? potentialMax : attrMax
+}
+
+export function getMaxBadgeLevel(player, badge) {
+  if (!player || !badge) return null
+  // Roster Editor override: an authored per-badge ceiling (player.badgeCaps)
+  // replaces the derived cap entirely — including for badges outside the
+  // position pool ('none' locks the badge out of the store). Absent map or
+  // missing entry falls through to the derived behavior, so generated/legacy
+  // players are untouched.
+  const authored = player.badgeCaps?.[badge.id]
+  if (authored !== undefined) return authored === 'none' ? null : authored
+  return getDerivedMaxBadgeLevel(player, badge)
 }
 
 /**

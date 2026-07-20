@@ -64,7 +64,10 @@ import { generateLeagueRosters, generateFreeAgentPool, assignCampaignModes } fro
 // team that also drew `campaignMode: 'contender'` got both an elite roster
 // AND an elite coach.
 const MODE_TO_COACH_TIER = {
-  contender: 1,
+  // Contenders get a tier-2 coach (same as average_strong), NOT a guaranteed
+  // tier-1 coach — so an already-elite contender roster isn't further stacked
+  // with the best coaching on top.
+  contender: 2,
   average_strong: 2,
   middle: 2,
   average_weak: 3,
@@ -81,7 +84,7 @@ import {
   initializeUserTeamLineup,
 } from '../ai/AILineupService'
 import { generateAITargetMinutes } from '../simulation/SubstitutionEngine'
-import { processSeasonEnd, processRetirements } from '../evolution/PlayerEvolution'
+import { processSeasonEnd, processRetirements, deriveOverallFromAttributes } from '../evolution/PlayerEvolution'
 import { runAIRosterManagement, ensureMinimumRosters } from '../ai/AIContractService'
 import { generateMotivations, getMarketSize } from '../ai/MotivationService'
 import {
@@ -127,7 +130,7 @@ function clampRating(rating) {
   return Math.max(25, Math.min(99, rating))
 }
 
-function generateUUID() {
+export function generateUUID() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID()
   }
@@ -420,7 +423,7 @@ export const LAST_NAMES = _mixRealNames(
   ],
 )
 
-const PERSONALITY_TRAITS = ['team_player', 'ball_hog', 'mentor', 'hot_head', 'media_darling', 'quiet', 'leader', 'joker', 'competitor']
+export const PERSONALITY_TRAITS = ['team_player', 'ball_hog', 'mentor', 'hot_head', 'media_darling', 'quiet', 'leader', 'joker', 'competitor']
 const MEDIA_PROFILES = ['low_key', 'normal', 'high_profile']
 
 // 15-man roster position template: starters first (1 per position), then bench depth
@@ -653,7 +656,7 @@ function generateTendencies(position) {
   }
 }
 
-function getBadgeLevel(overall) {
+export function getBadgeLevel(overall) {
   const roll = randInt(1, 100)
   if (overall >= 90) {
     if (roll <= 20) return 'hof'
@@ -759,7 +762,7 @@ function _sampleNoReplace(scored, n, k = 2) {
 
 /** Badge count band keyed off OVR. Same buckets the legacy generateBadges
  *  used, with the user-requested adjustment of `0–4` for sub-70 OVR. */
-function _badgeCountForOvr(overall) {
+export function _badgeCountForOvr(overall) {
   if (overall >= 90) return randInt(8, 12)
   if (overall >= 85) return randInt(6, 10)
   if (overall >= 80) return randInt(5, 8)
@@ -796,7 +799,7 @@ function _veteranBadgeCountForOvr(overall, careerSeasons) {
  *   archetype — optional `{ id, name }` from detectArchetype; bumps tagged
  *               badges by ARCHETYPE_BONUS_MULT.
  */
-function pickBadgesByFit(player, { count, tier, archetype = null }) {
+export function pickBadgesByFit(player, { count, tier, archetype = null }) {
   if (!Number.isFinite(count) || count <= 0) return []
 
   // Soft fallback for malformed players (no attributes yet).
@@ -919,6 +922,63 @@ function generateContract(overall, age) {
  * logic to keep PlayerEvolution behavior consistent across the procedural
  * pipeline.
  */
+// Per-category growth-headroom bias — skill develops more than physique/mentals.
+// Only redistributes headroom; the aggregate is re-scaled to hit the target
+// potential, so this doesn't change the potential distribution, just its shape.
+const CAP_CATEGORY_BIAS = { offense: 1.15, defense: 1.0, physical: 0.9, mental: 0.5 }
+
+/**
+ * Build a complete per-attribute growth-ceiling map (`attributeCaps`) for a
+ * generated player, scaled so its derived potential
+ * (deriveOverallFromAttributes over the caps) lands on `targetPotential`.
+ * Each ceiling is >= its current attribute and <= 99. This makes the authored
+ * per-attribute ceiling the single source of truth for potential while keeping
+ * the potential distribution identical to the old scalar formula (the caller
+ * passes the same target the old code used).
+ */
+export function generateAttributeCaps(attributes, position, targetPotential) {
+  // 1. A per-attribute headroom shape: category bias × mild jitter.
+  const shape = {}
+  for (const [category, catAttrs] of Object.entries(attributes)) {
+    if (!catAttrs || typeof catAttrs !== 'object') continue
+    const bias = CAP_CATEGORY_BIAS[category] ?? 1.0
+    shape[category] = {}
+    for (const attr of Object.keys(catAttrs)) {
+      shape[category][attr] = bias * (0.85 + Math.random() * 0.3) // 0.85..1.15
+    }
+  }
+
+  // 2. Probe the (linear) slope of derived overall w.r.t. adding the shape.
+  //    Use a 5× step so integer rounding in deriveOverallFromAttributes doesn't
+  //    swamp the measured slope.
+  const STEP = 5
+  const probe = {}
+  for (const [category, catAttrs] of Object.entries(attributes)) {
+    if (!catAttrs || typeof catAttrs !== 'object') continue
+    probe[category] = {}
+    for (const [attr, value] of Object.entries(catAttrs)) {
+      probe[category][attr] = value + STEP * (shape[category]?.[attr] ?? 0)
+    }
+  }
+  const base = deriveOverallFromAttributes(attributes, position)
+  const slope = (deriveOverallFromAttributes(probe, position) - base) / STEP
+  let k = slope > 0.01 ? (targetPotential - base) / slope : 0
+  if (!Number.isFinite(k) || k < 0) k = 0
+  k = Math.min(k, 40) // defensive: no single attribute rockets absurdly far
+
+  // 3. Apply headroom, clamped to [current, 99].
+  const caps = {}
+  for (const [category, catAttrs] of Object.entries(attributes)) {
+    if (!catAttrs || typeof catAttrs !== 'object') continue
+    caps[category] = {}
+    for (const [attr, value] of Object.entries(catAttrs)) {
+      const ceiling = Math.round(value + k * (shape[category]?.[attr] ?? 0))
+      caps[category][attr] = Math.max(Math.round(value), Math.min(99, ceiling))
+    }
+  }
+  return caps
+}
+
 function computePotentialFromAge(overall, age) {
   let floor, ceiling
   if (age <= 23) {
@@ -1060,6 +1120,11 @@ export async function createCampaign(options) {
   const teamAbbreviation = options.teamAbbreviation ?? options.team_abbreviation
   const draftMode = options.draftMode ?? options.draft_mode ?? 'standard'
   const customTeamName = options.customTeamName ?? options.custom_team_name ?? null
+  // Custom Roster IAP: when chosen in the create modal, the campaign is created
+  // + persisted normally (with a generated roster as the editable starting
+  // point) but stays in a "setup, not started" state until the user finalizes
+  // the roster editor.
+  const customRoster = (options.customRoster ?? options.custom_roster) === true
 
   const isFantasy = draftMode === 'fantasy'
   const campaignId = generateUUID()
@@ -1077,6 +1142,13 @@ export async function createCampaign(options) {
     difficulty,
     draftMode,
     draftCompleted: !isFantasy,
+    // Custom Roster setup lifecycle. Both fields are omitted-as-falsy on legacy
+    // saves; the resume guard treats absent `customRoster` as "not a custom
+    // campaign" and absent `rosterSetupCompleted` as complete.
+    customRoster,
+    custom_roster: customRoster,
+    rosterSetupCompleted: customRoster ? false : true,
+    roster_setup_completed: customRoster ? false : true,
     settings: {
       autoSave: true,
       injuryFrequency: 'normal',
@@ -2313,12 +2385,15 @@ export async function enterOffseason(campaignId) {
     }
   }
 
-  // Process season end (aging, retirement, contract decrement, stat resets — injuries preserved)
+  // Process season end (aging, retirement, contract decrement, stat resets — injuries preserved).
+  // Pass currentYear so a mid-season re-sign stamped with this season's year is
+  // recognized and its fresh term is not decremented on the way into the offseason.
   const seasonEndResult = processSeasonEnd(
     allPlayers,
     {},
     campaign.difficulty ?? 'pro',
-    teamContextMap
+    teamContextMap,
+    currentYear
   )
 
   // Save updated players (retired excluded)
@@ -3701,12 +3776,18 @@ export function generatePlayer(options) {
   // (teamIndex/posIndex used to seed a deterministic name; names are now chosen
   // by nationality via pickNameForCountry, so those options are no longer read.)
 
-  const potential = Math.min(99, overall + randInt(-5, 15))
   const age = generateAge(overall)
   const heightInches = getHeight(position)
   const weightLbs = getWeight(position)
   const secondaryPosition = getSecondaryPosition(position)
   const attributes = generateAttributes(position, overall)
+  // Per-attribute growth ceilings are the single source of truth for potential.
+  // Aim the caps at the same target the old scalar formula produced
+  // (overall + [-5,15]) so the potential distribution is unchanged, then derive
+  // the scalar potentialRating back out of the caps.
+  const targetPotential = Math.min(99, overall + randInt(-5, 15))
+  const attributeCaps = generateAttributeCaps(attributes, position, targetPotential)
+  const potential = deriveOverallFromAttributes(attributeCaps, position)
   const tendencies = generateTendencies(position)
   // Attribute-driven badge pick — detects archetype, scores all 76 badges
   // by attribute + vital fit, samples weighted by score. Synthesizes a
@@ -3814,6 +3895,9 @@ export function generatePlayer(options) {
 
     // Attributes & gameplay
     attributes,
+    // Per-attribute growth ceilings (single map, camelCase keys mirroring
+    // `attributes`). Growth clamps read this; potential is derived from it.
+    attributeCaps,
     tendencies,
     badges,
     // Canonical NBA archetype detected from the attribute + vital
@@ -3930,9 +4014,13 @@ export function generateVeteran(options) {
   const birthDay = String(randInt(1, 28)).padStart(2, '0')
   const birthDate = `${birthYear}-${birthMonth}-${birthDay}`
 
-  // 4. Age-banded potential (replaces the rookie-style +random formula)
+  // 4. Age-banded potential. Regenerate the per-attribute ceilings against the
+  //    veteran's age-banded target (the base record's caps were aimed at a
+  //    rookie-style target) and derive the scalar potential from them.
   const overall = base.overallRating
-  const potentialRating = computePotentialFromAge(overall, age)
+  const veteranTargetPotential = computePotentialFromAge(overall, age)
+  const attributeCaps = generateAttributeCaps(base.attributes, base.position, veteranTargetPotential)
+  const potentialRating = deriveOverallFromAttributes(attributeCaps, base.position)
 
   // 5. Badge sheet that scales with experience — attribute-driven via
   //    `pickBadgesByFit`. Veteran band uses _veteranBadgeCountForOvr
@@ -3983,6 +4071,8 @@ export function generateVeteran(options) {
     _lastBirthdayYear: startYear,
     potentialRating,
     potential_rating: potentialRating,
+    // Ceilings re-aimed at the veteran's age-banded potential target.
+    attributeCaps,
     badges,
     // Canonical archetype detected from the player's attribute + vital
     // fingerprint. May differ from the base record's archetype if the

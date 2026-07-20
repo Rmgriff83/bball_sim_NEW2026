@@ -83,6 +83,11 @@ return [
                 'tokens' => 0,
                 'unlocks' => ['headshot_editor'],
             ],
+            'custom_roster_unlock' => [
+                'price_id' => env('STRIPE_PRICE_CUSTOM_ROSTER_UNLOCK'),
+                'tokens' => 0,
+                'unlocks' => ['custom_roster'],
+            ],
         ],
     ],
 
@@ -101,6 +106,10 @@ return [
             'headshot_editor_unlock' => [
                 'tokens' => 0,
                 'unlocks' => ['headshot_editor'],
+            ],
+            'custom_roster_unlock' => [
+                'tokens' => 0,
+                'unlocks' => ['custom_roster'],
             ],
         ],
     ],

@@ -387,6 +387,11 @@ class PlayExecutionEngine {
     let defenseRating = 50; // Default
     if (defender) {
       defenseRating = this.calculateAttributeRating(defender, defenseAttrs);
+      // Fatigue bites on the defensive end too: a gassed defender gives up
+      // more. Scale the rating by the same fatigue modifier the shooter's make
+      // probability uses (returns ~0.74–1.0), so a tired defender lowers the
+      // matchup's defensive resistance → the offense's advantage rises.
+      defenseRating *= this.gameSimulator?.calculateFatigueModifier?.(defender) ?? 1;
     }
 
     // Calculate advantage (-50 to +50 range typically)

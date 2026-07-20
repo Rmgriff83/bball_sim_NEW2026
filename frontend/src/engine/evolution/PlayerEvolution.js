@@ -298,8 +298,12 @@ function updateFatigue(player, minutes, options = {}) {
     const recovery = getAttributeWeightedRecovery(player, bracket.base);
     player.fatigue = Math.max(0, current - recovery);
   } else {
-    // Moderate/heavy minutes: player GAINS fatigue (high attributes reduce gain)
-    let gain = bracket.base * (1.2 - athleticAvg * 0.4);
+    // Moderate/heavy minutes: player GAINS fatigue (high attributes reduce gain).
+    // Stamina/durability scaling is deliberately WIDE (~0.51–1.30 spread) so
+    // conditioning is a real differentiator: a 90-stamina iron-man tires ~40%
+    // slower than a 50-stamina player at the same minutes.
+    // stamina 50 → ×1.0, 70 → ×0.8, 90 → ×0.6.
+    let gain = bracket.base * Math.max(0.4, 1.5 - athleticAvg);
 
     // Staff trainer fatigue reduction (applied before rookie wall so it stacks naturally)
     if (options.fatigueReduction > 0) {
@@ -353,7 +357,10 @@ function _updateRestModeFlag(player) {
   const f = player.fatigue ?? 0;
   if (f >= 75) {
     player.restMode = true;
-  } else if (player.restMode === true && f <= 15) {
+  } else if (player.restMode === true && f <= 50) {
+    // Clear at 50 (not 15): now that fatigue actually reaches 75 under the
+    // rebalanced weights, a clear-at-15 latch would bench a rested star for
+    // ~3 weeks. Clearing at 50 returns him after ~1 week of reduced minutes.
     player.restMode = false;
   }
 }
@@ -373,9 +380,11 @@ function applyAttributeChanges(player, changes, gameDate = null) {
 
   const today = gameDate ?? new Date().toISOString().split('T')[0];
 
-  // Check upfront if player can earn upgrade points
+  // Check upfront if player can earn upgrade points. Uses the derived potential
+  // (from the per-attribute ceilings when present) so a fully-capped player
+  // stops accruing dead points; falls back to the scalar potential otherwise.
   const overall = player.overallRating ?? player.overall_rating ?? 70;
-  const potential = player.potentialRating ?? player.potential_rating ?? 75;
+  const potential = derivePotential(player);
   const canEarnPoints = overall < potential;
 
   let offensePointsEarned = 0;
@@ -522,7 +531,6 @@ function applyAttributeChanges(player, changes, gameDate = null) {
  */
 function applyMonthlyAttributeChanges(player, devPoints, regPoints) {
   const age = devGetPlayerAge(player);
-  const potential = player.potentialRating ?? player.potential_rating ?? 75;
 
   for (const category of Object.keys(player.attributes)) {
     const attrs = player.attributes[category];
@@ -531,9 +539,11 @@ function applyMonthlyAttributeChanges(player, devPoints, regPoints) {
     for (const attrName of Object.keys(attrs)) {
       const change = agingCalculateAttributeChange(attrName, age, devPoints, regPoints);
 
-      // Can't exceed potential
+      // Can't exceed the per-attribute ceiling (falls back to the scalar
+      // potential for legacy saves without an attributeCaps map).
+      const cap = getAttrCap(player, category, attrName);
       const newValue = attrs[attrName] + change;
-      attrs[attrName] = Math.max(25, Math.min(potential, Math.round(newValue * 10) / 10));
+      attrs[attrName] = Math.max(25, Math.min(cap, Math.round(newValue * 10) / 10));
     }
   }
 
@@ -568,6 +578,103 @@ function calculateAttributeChange(attrName, age, devPoints, regPoints) {
     }
   }
   return 0;
+}
+
+// =============================================================================
+// PER-ATTRIBUTE GROWTH CEILINGS + DERIVED OVERALL/POTENTIAL
+// =============================================================================
+// The Custom Roster feature lets players carry a per-attribute ceiling map
+// (`player.attributeCaps`) so each attribute grows only up to its own authored
+// upper bound. Normal generation also builds this map and derives potential
+// from it. Legacy saves without the map fall back to the single scalar
+// `potentialRating`, so existing campaigns behave byte-for-byte as before.
+//
+// Calibration: the raw category-weighted formula (same weights recalculateOverall
+// uses) runs slightly off the generator's stamped overalls. Fit offline by
+// sampling the exact CampaignManager generateAttributes across OVR 55-95 × all
+// positions — `overall ≈ a·raw + b_pos` reproduces stamped overalls within ~1pt
+// MAE. If the generator's mod tables / role bands change, re-fit (the sampler
+// lives in scratch: reproduce generateAttributes + this formula, least-squares).
+const OVERALL_CALIB_A = 1.0478;
+const OVERALL_CALIB_B = { PG: -1.562, SG: -2.502, SF: -3.905, PF: -4.349, C: -3.487 };
+const OVERALL_CALIB_B_DEFAULT = -3.0;
+
+function _calibIntercept(position) {
+  return OVERALL_CALIB_B[position] ?? OVERALL_CALIB_B_DEFAULT;
+}
+
+// Raw category-weighted average of an attribute block (0-99), using the same
+// OVERALL_WEIGHTS recalculateOverall applies. Missing categories default to 75.
+function _rawCategoryOverall(attributes) {
+  const weights = Config.OVERALL_WEIGHTS;
+  let calc = 0;
+  for (const [category, weight] of Object.entries(weights)) {
+    const catAttrs = attributes?.[category];
+    if (!catAttrs || typeof catAttrs !== 'object') { calc += 75 * weight; continue; }
+    const vals = Object.values(catAttrs).filter((v) => typeof v === 'number');
+    const avg = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 75;
+    calc += avg * weight;
+  }
+  return calc;
+}
+
+/**
+ * Derive an overall (on the generator's stamped scale) from an attribute block
+ * for a given position. Used to stamp a from-scratch authored player's overall
+ * and, on the cap map, to derive potential. Clamped 40-99.
+ */
+function deriveOverallFromAttributes(attributes, position) {
+  const raw = _rawCategoryOverall(attributes);
+  return Math.max(40, Math.min(99, Math.round(OVERALL_CALIB_A * raw + _calibIntercept(position))));
+}
+
+/**
+ * Per-attribute growth ceiling for `player.attributes[category][attr]`. Reads
+ * the authored/generated `attributeCaps` map when present; otherwise falls back
+ * to the scalar potential (legacy behavior). This is the single accessor every
+ * growth clamp uses.
+ */
+function getAttrCap(player, category, attr) {
+  const perAttr = player?.attributeCaps?.[category]?.[attr];
+  if (typeof perAttr === 'number') return perAttr;
+  return player?.potentialRating ?? player?.potential_rating ?? 99;
+}
+
+/**
+ * Derive the player's scalar potential — the overall they'd have if every
+ * attribute reached its ceiling. Falls back to the stored scalar potential when
+ * no cap map exists.
+ */
+function derivePotential(player) {
+  const caps = player?.attributeCaps;
+  if (!caps) return player?.potentialRating ?? player?.potential_rating ?? 99;
+  return deriveOverallFromAttributes(caps, player?.position ?? 'SF');
+}
+
+/**
+ * Seed a complete `attributeCaps` map for a player that lacks one (existing
+ * saves opened in the editor, or scratch players). Each cap defaults to the
+ * player's scalar potential, floored at the current attribute value so a cap
+ * can never sit below where the attribute already is. Editor-only — normal
+ * generation builds caps directly via generateAttributeCaps.
+ */
+function ensureAttributeCaps(player) {
+  if (!player?.attributes) return player;
+  const scalarPot = Math.round(player.potentialRating ?? player.potential_rating ?? 75);
+  const existing = player.attributeCaps ?? {};
+  const caps = {};
+  for (const [category, catAttrs] of Object.entries(player.attributes)) {
+    if (!catAttrs || typeof catAttrs !== 'object') continue;
+    caps[category] = {};
+    for (const [attr, value] of Object.entries(catAttrs)) {
+      if (typeof value !== 'number') continue;
+      const prior = existing?.[category]?.[attr];
+      const seed = typeof prior === 'number' ? prior : scalarPot;
+      caps[category][attr] = Math.max(Math.round(value), Math.min(99, Math.round(seed)));
+    }
+  }
+  player.attributeCaps = caps;
+  return player;
 }
 
 // =============================================================================
@@ -969,8 +1076,11 @@ function selectAIUpgrade(player, position, potential) {
     }
 
     for (const [attrName, value] of Object.entries(attributes[category])) {
-      // Skip if already at potential cap
-      if (value >= potential) {
+      // Skip if already at this attribute's ceiling (per-attribute cap when
+      // present, else the scalar potential). Once every offense/defense/
+      // physical attribute is capped, selectAIUpgrade returns null and the
+      // AI-upgrade loop stops draining points.
+      if (value >= getAttrCap(player, category, attrName)) {
         continue;
       }
 
@@ -1063,10 +1173,11 @@ function processAIUpgrades(player, upgradeDate = null) {
       break; // No valid upgrades available (all at cap)
     }
 
-    // Apply the +1 attribute bump
+    // Apply the +1 attribute bump, clamped to the attribute's own ceiling
+    // (falls back to the scalar potential for legacy saves).
     const { category, attribute } = upgrade;
     const currentValue = player.attributes[category][attribute];
-    const newValue = Math.min(potential, currentValue + 1);
+    const newValue = Math.min(getAttrCap(player, category, attribute), currentValue + 1);
     player.attributes[category][attribute] = newValue;
 
     // Bump the unrounded overall so the rounded rating reflects the spent point,
@@ -1650,7 +1761,7 @@ export function processMonthlyDevelopment(players, difficulty = 'pro', options =
  * @param {string} difficulty - Campaign difficulty
  * @returns {{ players: Array, results: Object, news: Array }}
  */
-export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro', teamContextMap = {}) {
+export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro', teamContextMap = {}, seasonYear = null) {
   const results = {
     developed: [],
     regressed: [],
@@ -1705,8 +1816,20 @@ export function processSeasonEnd(players, seasonStats = {}, difficulty = 'pro', 
     // since their new N-year deal is meant to begin NEXT season. Without
     // this, a 1-year mid-season extension would expire to 0 here and the
     // offseason FA step would flip the player back into the free-agent pool.
-    const justResigned = player.resigned_this_season ?? player.resignedThisSeason ?? false;
-    if (justResigned) {
+    //
+    // Two guards: (1) the legacy one-shot boolean `resigned_this_season`, kept
+    // for back-compat with in-flight re-signs; and (2) a season-year STAMP
+    // (`resignedSeasonYear`) that we COMPARE against the season being ended
+    // rather than consume. The stamp is robust where the boolean was fragile —
+    // it survives sync round-trips / stale pulls and makes this skip idempotent
+    // (a re-run of the same season-end still skips). It self-expires next
+    // season: once `seasonYear` advances past the stamp, the compare fails and
+    // the contract decrements normally. We still clear the boolean, but LEAVE
+    // the stamp in place.
+    const flagResigned = player.resigned_this_season ?? player.resignedThisSeason ?? false;
+    const stampYear = player.resignedSeasonYear ?? player.resigned_season_year ?? null;
+    const stampResigned = seasonYear != null && stampYear === seasonYear;
+    if (flagResigned || stampResigned) {
       player.resigned_this_season = false;
       player.resignedThisSeason = false;
     } else {
@@ -1819,7 +1942,8 @@ export function processMultiDayRestRecovery(players, teamsPerDay = []) {
   const totalDays = teamsPerDay.length;
   if (totalDays === 0) return players;
 
-  const restRecovery = Config.FATIGUE.rest_day_recovery;
+  // Per-off-day trickle (falls back to the heavier full-rest value if unset).
+  const restRecovery = Config.FATIGUE.off_day_recovery ?? Config.FATIGUE.rest_day_recovery;
 
   // Count games per team
   const gamesPerTeam = {};
@@ -1856,6 +1980,10 @@ export function processMultiDayRestRecovery(players, teamsPerDay = []) {
 
 export {
   recalculateOverall,
+  deriveOverallFromAttributes,
+  derivePotential,
+  getAttrCap,
+  ensureAttributeCaps,
   getPlayerName,
   findPlayerInRoster,
   groupPlayersByTeam,

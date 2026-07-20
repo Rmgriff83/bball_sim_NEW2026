@@ -446,6 +446,12 @@ const postgameLockedMessage = computed(() =>
     ? "Hire a Level 3 Analyst (Team → Staff) to unlock your team's per-play analytics."
     : "Upgrade your Analytics Facility (Team → GM → Facilities) to unlock your team's per-play analytics."
 )
+// Locked-message for the pregame opponent-tendencies panel (Level 4 gate).
+const opponentLockedMessage = computed(() =>
+  analystTier.value < 4
+    ? 'Hire a Level 4 Analyst (Team → Staff) to scout opponent tendencies.'
+    : 'Upgrade your Analytics Facility (Team → GM → Facilities) to scout opponent tendencies.'
+)
 // Postgame: THIS game's per-play analytics for the user's team (persisted per
 // game as { home, away } raw maps; wrap as { plays } for the panel).
 const userGameAnalytics = computed(() => {
@@ -4179,14 +4185,20 @@ onUnmounted(() => {
               />
             </GlassCard>
 
-            <!-- Opponent Analytics — only with a Level 4 analyst -->
-            <PlayAnalyticsPanel
-              v-if="isUserGame && opponentAnalyticsUnlocked"
-              title="Opponent Tendencies — This Season"
-              :analytics="opponentAnalytics"
-              :locked="false"
-              :default-to-top-category="true"
-            />
+            <!-- Opponent Analytics — obscured (not hidden) until a Level 4 analyst
+                 AND an Analytics Facility at the perk's required level, so users
+                 see what they're missing and are nudged to hire the analyst.
+                 Wrapped so it spaces like the other grid cards and clears the
+                 fixed "pop-in" START button below it. -->
+            <div v-if="isUserGame" class="pregame-analytics">
+              <PlayAnalyticsPanel
+                title="Opponent Tendencies — This Season"
+                :analytics="opponentAnalytics"
+                :locked="!opponentAnalyticsUnlocked"
+                :default-to-top-category="true"
+                :locked-message="opponentLockedMessage"
+              />
+            </div>
           </div>
         </template>
       </template>
@@ -5876,6 +5888,25 @@ onUnmounted(() => {
   align-self: start;
 }
 
+/* Opponent-analytics is the LAST pregame grid item and sits beneath the fixed
+   "pop-in" START button. The panel's own GlassCard already matches the other
+   cards' padding, so drop its default bottom margin (the grid `gap` spaces it
+   like its siblings) and add explicit bottom clearance so the floating START
+   button never covers it. Desktop needs more since `.game-view` only reserves
+   24px there. */
+.pregame-analytics {
+  align-self: start;
+  margin-bottom: 56px;
+}
+.pregame-analytics :deep(.analytics-card) {
+  margin-bottom: 0;
+}
+@media (min-width: 1024px) {
+  .pregame-analytics {
+    margin-bottom: 80px;
+  }
+}
+
 .pregame-coaching-section {
   width: 100%;
   display: flex;
@@ -7065,6 +7096,40 @@ onUnmounted(() => {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: white;
+}
+
+/* ── The coaches overlay stays DARK in light mode ──────────────────────────
+   It covers the dark court canvas with a hardcoded dark shell. Re-pin the
+   theme tokens inside it so its themed content (scheme pills, lineup cards,
+   swap dropdowns, matchup editor) keeps the dark-mode palette — custom
+   properties inherit into child components. (The coach-overview strip is the
+   opposite: it adapts to light mode via its own component styles.) */
+[data-theme="light"] .coaches-overlay {
+  --color-bg-primary: #1a1520;
+  --color-bg-secondary: #252030;
+  --color-bg-tertiary: #2d2838;
+  --color-bg-elevated: #35303f;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #b8b0c4;
+  --color-text-tertiary: #7a7486;
+  --glass-bg: rgba(37, 32, 48, 0.8);
+  --glass-bg-light: rgba(45, 40, 56, 0.9);
+  --glass-border: rgba(255, 255, 255, 0.1);
+}
+
+/* The global light-mode .strategy-pill override above uses literal colors, so
+   the var re-pin can't catch it — restore the dark literals for the overlay's
+   Settings tab (the active state is identical in both themes). */
+[data-theme="light"] .coaches-overlay .strategy-pill {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .coaches-overlay .strategy-pill:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: var(--color-text-primary);
 }
 
 /* Lineup Cards Section */
@@ -8667,6 +8732,29 @@ onUnmounted(() => {
 .cpc-mute.is-muted {
   color: rgba(255, 255, 255, 0.45);
   background: rgba(15, 17, 25, 0.6);
+}
+
+/* Light mode — the STRIP variant sits on the page background (below the
+   court), so its white-alpha ghost buttons + white icons vanish; flip them to
+   dark alphas. The floating variant keeps its opaque dark pill (it overlays
+   the court canvas, which is dark in both themes). */
+[data-theme="light"] .court-play-controls-strip .cpc-btn {
+  background: rgba(45, 40, 56, 0.08);
+  color: #2d2838;
+}
+
+[data-theme="light"] .court-play-controls-strip .cpc-btn:hover {
+  background: rgba(45, 40, 56, 0.16);
+}
+
+[data-theme="light"] .court-play-controls-strip .cpc-mute.is-muted {
+  background: rgba(45, 40, 56, 0.05);
+  color: rgba(45, 40, 56, 0.45);
+}
+
+/* Darken the speed chevrons' amber for light backgrounds. */
+[data-theme="light"] .court-play-controls-strip .cpc-chevrons {
+  color: #b97a00;
 }
 
 /* Mobile adjustments for animation controls */

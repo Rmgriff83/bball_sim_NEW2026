@@ -28,6 +28,10 @@ function getPlayerSecondaryPosition(player) {
   return player.secondaryPosition ?? player.secondary_position ?? null;
 }
 
+function getPlayerTertiaryPosition(player) {
+  return player.tertiaryPosition ?? player.tertiary_position ?? null;
+}
+
 function isPlayerInjured(player) {
   return player.isInjured ?? player.is_injured ?? false;
 }
@@ -136,6 +140,14 @@ export function selectBestLineup(roster) {
     }
   }
 
+  // Pass 2.5 — tertiary position (optional field; only custom-roster players
+  // carry it today). Runs after secondary so a natural fit still wins.
+  for (const pos of POSITIONS) {
+    if (!lineup[pos]) {
+      pickBest(pos, (player, p) => getPlayerTertiaryPosition(player) === p);
+    }
+  }
+
   // Pass 3 — fallback: fill any remaining slot with the best available player
   // regardless of position (roster short a position, etc.).
   for (const pos of POSITIONS) {
@@ -231,8 +243,9 @@ export function findReplacement(roster, currentStarters, position) {
 
     const primaryPos = getPlayerPosition(player);
     const secondaryPos = getPlayerSecondaryPosition(player);
+    const tertiaryPos = getPlayerTertiaryPosition(player);
 
-    if (primaryPos === position || secondaryPos === position) {
+    if (primaryPos === position || secondaryPos === position || tertiaryPos === position) {
       candidates.push({
         id: playerId,
         rating,

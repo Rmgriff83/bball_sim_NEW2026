@@ -129,6 +129,23 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // Exchange a one-time app→web handoff nonce for a session (Community flow).
+  // Mirrors loginWithSocial minus clearDatabase — the handoff lands the SAME
+  // user on web, so local web data (if any) belongs to them already.
+  async function loginWithHandoff(nonce) {
+    loading.value = true
+    try {
+      const response = await api.post('/api/auth/handoff/exchange', { nonce }, { skipErrorToast: true })
+      token.value = response.data.token
+      user.value = response.data.user
+      await setToken(token.value)
+      await fetchUser()
+      return response.data
+    } finally {
+      loading.value = false
+    }
+  }
+
   // Link a verified social identity (Apple/Google) to the CURRENT account.
   // Unlike loginWithSocial: no clearDatabase, no token swap — the session is
   // unchanged. payload = { provider, credential, name?, email? }.
@@ -336,6 +353,7 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     register,
     loginWithSocial,
+    loginWithHandoff,
     linkSocial,
     unlinkSocial,
     logout,

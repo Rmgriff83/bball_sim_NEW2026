@@ -72,17 +72,63 @@ const audioStore = useAudioStore(pinia)
 // only be resumed from inside a user gesture. Unlock it once on the first tap.
 document.addEventListener('pointerdown', () => unlockAudio(), { once: true })
 
+// A modal/popup dismissal button — the close "X" (aria-label="Close" or a
+// class token like `modal-close`, `pe-close`, `close-btn`, `btn-close`) or a
+// footer Cancel/Close button (`btn-cancel`, `pe-cancel`, `skip-cancel`, …).
+// Word-boundary tokens only, so `resign-closed` doesn't match. Dismiss
+// handlers that play their own dedicated sound call audio.cancel(), which
+// sets the suppress flag, so this never double-fires.
+function isDismissButton(el) {
+  const aria = (el.getAttribute('aria-label') || '').toLowerCase()
+  if (aria === 'close' || aria === 'dismiss') return true
+  for (const c of el.classList) {
+    if (
+      c === 'close' || c.endsWith('-close') || c === 'close-btn' || c.startsWith('btn-close') ||
+      c === 'cancel' || c.endsWith('-cancel') || c === 'cancel-btn' || c.startsWith('btn-cancel')
+    ) return true
+  }
+  return false
+}
+
+// A modal backdrop click ("click off" a popup). Backdrops across the app are
+// full-viewport fixed/absolute containers with an `overlay`/`backdrop` class
+// that close via @click.self — so the click target IS the backdrop element
+// itself. The size guard excludes panel-style containers that merely have
+// "overlay" in their name (e.g. the in-court coaches overlay).
+function isModalBackdrop(el) {
+  let named = false
+  for (const c of el.classList) {
+    if (c.includes('overlay') || c.includes('backdrop')) { named = true; break }
+  }
+  if (!named) return false
+  const r = el.getBoundingClientRect()
+  return r.width >= window.innerWidth * 0.9 && r.height >= window.innerHeight * 0.9
+}
+
 // Play the generic tap on every button click, app-wide. Runs in the bubble
 // phase (after the element's own click handler), so a purchase (cha-ching) or
 // modal dismissal (cancel) can call audioStore.suppressClickSound() during the
 // click to opt that specific button out of the generic tap.
+// Closing a popup — via its X button or by clicking off onto the backdrop —
+// plays the cancel SFX (same sound as declining a trade) instead of the tap.
 document.addEventListener('click', (e) => {
   // Buttons and navigation links (router-link renders <a href>) both count as
   // clickable controls that should tap.
   const el = e.target?.closest?.('button, [role="button"], a[href]')
-  if (!el) return
-  if (el.disabled || el.getAttribute('aria-disabled') === 'true') return
-  audioStore.navigate()
+  if (el) {
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return
+    if (isDismissButton(el)) {
+      audioStore.cancelFromGlobalClick()
+      return
+    }
+    audioStore.navigate()
+    return
+  }
+  // Not a control — check for a backdrop (click-off) dismissal.
+  const target = e.target
+  if (target instanceof Element && isModalBackdrop(target)) {
+    audioStore.cancelFromGlobalClick()
+  }
 })
 
 // Initialize sync store and start auto-sync

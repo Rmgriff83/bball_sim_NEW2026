@@ -12,6 +12,7 @@ import { validateSalaryCap } from '@/engine/finance/TradeExecutor'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowRight, ArrowLeft, X, Check, AlertCircle, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus, Package, Users, Repeat, AlertTriangle, CheckCircle, Info, Star, Calendar, DollarSign } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import TradePartnerStep from './TradePartnerStep.vue'
 
 const props = defineProps({
   campaignId: {
@@ -37,17 +38,17 @@ const breakingNewsStore = useBreakingNewsStore()
 // Wizard state
 const loading = ref(true)
 const showTradeWizard = ref(false)
-const wizardStep = ref(1) // 1: Your assets, 2: Team selection, 3: Their assets
+const wizardStep = ref(1) // 1: Your assets, 2: Trade partner (browse + select their assets), 3: Confirm
 const assetTab = ref('players') // 'players' or 'picks'
 
-// Confirmation state (step 4 of wizard)
+// Confirmation state (step 3 of wizard)
 const confirmModalState = ref('confirm') // 'confirm', 'loading', 'result'
 
-// Step definitions for the wizard
+// Step definitions for the wizard. "Their Assets" is folded into the enriched
+// Trade Partner step (browse each team's roster/picks/block and tap to receive).
 const wizardSteps = [
   { number: 1, title: 'Your Assets', description: 'Select assets to trade away', icon: Package },
-  { number: 2, title: 'Trade Partner', description: 'Choose a team to trade with', icon: Users },
-  { number: 3, title: 'Their Assets', description: 'Select assets to receive', icon: Repeat },
+  { number: 2, title: 'Trade Partner', description: 'Pick a team and what to receive', icon: Users },
 ]
 
 const tradeableTeams = computed(() => tradeStore.tradeableTeams)
@@ -67,10 +68,8 @@ const canWizardNext = computed(() => {
     return userOffering.value.length > 0
   }
   if (wizardStep.value === 2) {
-    return selectedTeam.value !== null
-  }
-  if (wizardStep.value === 3) {
-    return userRequesting.value.length > 0
+    // Partner step now also selects what to receive — need a partner AND ≥1 asset.
+    return selectedTeam.value !== null && userRequesting.value.length > 0
   }
   return false
 })
@@ -82,7 +81,7 @@ const canSubmitTrade = computed(() => {
 })
 
 const wizardTitle = computed(() => {
-  if (wizardStep.value <= 3) {
+  if (wizardStep.value <= 2) {
     return wizardSteps[wizardStep.value - 1]?.title || 'Trade Wizard'
   }
   if (confirmModalState.value === 'loading') return 'Processing Trade...'
@@ -223,9 +222,9 @@ async function applyPrefill(prefill) {
     for (const a of (prefill.receiving || [])) {
       tradeStore.addToUserRequesting(a)
     }
-    // Land on the partner's-assets step so the user can immediately tweak
-    // what they're asking for in the counter.
-    wizardStep.value = 3
+    // Land on the enriched Trade Partner step so the user can immediately tweak
+    // what they're asking for in the counter (the seeded partner is selected).
+    wizardStep.value = 2
     assetTab.value = 'players'
   } else {
     // Legacy: single-player request from trading block.
@@ -250,7 +249,9 @@ async function applyPrefill(prefill) {
         hasCustomHeadshot: player.hasCustomHeadshot ?? player.has_custom_headshot ?? false,
       })
     }
-    wizardStep.value = 1
+    // Land on the enriched Trade Partner step so the seeded team + requested
+    // player are visible and the user can add more before reviewing.
+    wizardStep.value = 2
     assetTab.value = 'players'
   }
 
@@ -289,19 +290,19 @@ function closeTradeWizard() {
 }
 
 function wizardNext() {
-  if (canWizardNext.value && wizardStep.value < 3) {
+  if (canWizardNext.value && wizardStep.value < 2) {
     wizardStep.value++
     assetTab.value = 'players' // Reset tab when changing steps
-  } else if (wizardStep.value === 3 && canSubmitTrade.value) {
+  } else if (wizardStep.value === 2 && canSubmitTrade.value) {
     // Move to confirmation step
-    wizardStep.value = 4
+    wizardStep.value = 3
     confirmModalState.value = 'confirm'
   }
 }
 
 function wizardBack() {
-  if (wizardStep.value === 4) {
-    wizardStep.value = 3
+  if (wizardStep.value === 3) {
+    wizardStep.value = 2
     confirmModalState.value = 'confirm'
   } else if (wizardStep.value > 1) {
     wizardStep.value--
@@ -626,7 +627,7 @@ function formatAge(age) {
               <button
                 class="wizard-btn-close"
                 @click="closeTradeWizard"
-                :disabled="wizardStep === 4 && confirmModalState === 'loading'"
+                :disabled="wizardStep === 3 && confirmModalState === 'loading'"
                 aria-label="Close"
               >
                 <X :size="20" />
@@ -637,7 +638,7 @@ function formatAge(age) {
             <main class="wizard-modal-content">
               <div class="wizard-content">
         <!-- Trade Slots Summary + Validation -->
-        <div v-if="wizardStep < 4 && (userOffering.length > 0 || userRequesting.length > 0)" class="wizard-trade-summary">
+        <div v-if="wizardStep < 3 && (userOffering.length > 0 || userRequesting.length > 0)" class="wizard-trade-summary">
           <div class="wizard-trade-summary-row">
             <div class="wizard-trade-slots">
               <!-- YOUR SIDE -->
@@ -672,7 +673,7 @@ function formatAge(age) {
               </div>
 
               <!-- THEIR SIDE -->
-              <div class="wizard-slot-section receiving" :class="{ active: wizardStep === 3 }">
+              <div class="wizard-slot-section receiving" :class="{ active: wizardStep === 2 }">
                 <div class="wizard-slot-header">
                   <span v-if="selectedTeam" class="wizard-slot-badge">{{ selectedTeam.abbreviation }}</span>
                   <span class="wizard-slot-label">{{ selectedTeam ? selectedTeam.name + ' Send' : 'They Send' }}</span>
@@ -694,7 +695,7 @@ function formatAge(age) {
                   </div>
                 </div>
                 <div v-else class="wizard-slot-empty">
-                  <span>{{ wizardStep < 3 ? 'Pick a team first' : 'Select assets' }}</span>
+                  <span>{{ wizardStep < 2 ? 'Pick a team first' : 'Select assets' }}</span>
                 </div>
               </div>
             </div>
@@ -839,173 +840,13 @@ function formatAge(age) {
           </div>
         </div>
 
-        <!-- Step 2: Trade Partner -->
+        <!-- Step 2: Trade Partner (enriched — browse assets + select what to receive) -->
         <div v-if="wizardStep === 2" class="wizard-step-content">
-          <p class="wizard-step-description">Choose which team you want to trade with.</p>
-
-          <div class="wizard-teams-grid">
-            <button
-              v-for="team in tradeableTeams"
-              :key="team.id"
-              class="wizard-team-card"
-              :class="{ selected: selectedTeam?.id === team.id }"
-              @click="selectTeam(team)"
-            >
-              <div class="wizard-team-header">
-                <span class="wizard-team-abbr">{{ team.abbreviation }}</span>
-                <Check v-if="selectedTeam?.id === team.id" :size="18" class="wizard-team-check" />
-              </div>
-              <span class="wizard-team-city">{{ team.name }}</span>
-              <div class="wizard-team-meta">
-                <span class="wizard-team-record">{{ team.record.wins }}-{{ team.record.losses }}</span>
-                <span class="wizard-team-direction" :style="{ color: tradeStore.getDirectionColor(team.direction) }">
-                  <component :is="getDirectionIcon(team.direction)" :size="14" />
-                  {{ tradeStore.getDirectionLabel(team.direction) }}
-                </span>
-              </div>
-            </button>
-          </div>
-
-          <!-- Selected Team Details -->
-          <div v-if="selectedTeam" class="wizard-selected-team-details">
-            <h4>{{ selectedTeam.name }}</h4>
-            <div class="wizard-team-stats">
-              <div class="wizard-stat">
-                <span class="wizard-stat-label">Record</span>
-                <span class="wizard-stat-value">{{ selectedTeam.record.wins }}-{{ selectedTeam.record.losses }}</span>
-              </div>
-              <div class="wizard-stat">
-                <span class="wizard-stat-label">Cap Space</span>
-                <span class="wizard-stat-value">{{ formatSalary(selectedTeam.cap_space) }}</span>
-              </div>
-              <div class="wizard-stat">
-                <span class="wizard-stat-label">Direction</span>
-                <span class="wizard-stat-value" :style="{ color: tradeStore.getDirectionColor(selectedTeam.direction) }">
-                  {{ tradeStore.getDirectionLabel(selectedTeam.direction) }}
-                </span>
-              </div>
-            </div>
-          </div>
+          <TradePartnerStep :campaign-id="campaignId" />
         </div>
 
-        <!-- Step 3: Their Assets -->
+        <!-- Step 3: Confirm / Loading / Result -->
         <div v-if="wizardStep === 3" class="wizard-step-content">
-          <p class="wizard-step-description">Select what you want from the {{ selectedTeam?.name }}.</p>
-
-          <!-- Asset Tabs -->
-          <div class="wizard-asset-tabs">
-            <button
-              class="wizard-asset-tab"
-              :class="{ active: assetTab === 'players' }"
-              @click="assetTab = 'players'"
-            >
-              <User :size="16" />
-              Players ({{ wizardRoster.length }})
-            </button>
-            <button
-              class="wizard-asset-tab"
-              :class="{ active: assetTab === 'picks' }"
-              @click="assetTab = 'picks'"
-            >
-              <Calendar :size="16" />
-              Draft Picks ({{ wizardPicks.length }})
-            </button>
-          </div>
-
-          <!-- Selected Summary -->
-          <div v-if="userRequesting.length > 0" class="wizard-selected-summary receiving">
-            <span class="selected-label">Requesting:</span>
-            <div class="selected-chips">
-              <div v-for="asset in userRequesting" :key="`chip-${asset.type}-${asset.id}`" class="selected-chip">
-                <span v-if="asset.type === 'player'">{{ asset.firstName }} {{ asset.lastName }}</span>
-                <span v-else>{{ formatPickYear(asset.year) }} R{{ asset.round }}</span>
-                <button class="chip-remove" @click.stop="removeFromRequest(asset)">
-                  <X :size="12" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Players Grid -->
-          <div v-if="assetTab === 'players'" class="wizard-asset-grid">
-            <div
-              v-for="player in wizardRoster"
-              :key="player.id"
-              class="wizard-asset-card player"
-              :class="{ selected: isPlayerSelected(player.id) }"
-              @click="togglePlayerSelection(player)"
-            >
-              <div class="wizard-asset-card-content">
-                <div class="wizard-asset-avatar">
-                  <PlayerAvatar :player="player" :size="58" />
-                </div>
-                <div class="wizard-asset-info">
-                  <span class="wizard-asset-name">{{ player.firstName }} {{ player.lastName }}</span>
-                  <div class="wizard-asset-meta">
-                    <span class="wizard-asset-vitals">{{ player.height || "6'6\"" }} · {{ formatAge(player.age) }} yrs</span>
-                    <span class="wizard-asset-position-badge" :style="{ backgroundColor: getPositionColor(player.position) }">
-                      {{ player.position }}
-                    </span>
-                    <span
-                      v-if="player.secondaryPosition"
-                      class="wizard-asset-position-badge secondary"
-                      :style="{ backgroundColor: getPositionColor(player.secondaryPosition) }"
-                    >
-                      {{ player.secondaryPosition }}
-                    </span>
-                  </div>
-                  <div class="wizard-asset-contract">
-                    <span class="wizard-asset-salary">{{ formatSalary(player.contractSalary) }}</span>
-                    <span class="wizard-asset-years">{{ formatContractYears(player.contractYearsRemaining) }}</span>
-                  </div>
-                  <div class="wizard-asset-stars">
-                    <Star v-for="s in getAssetStars(player)" :key="`s-${s}`" :size="11" class="star filled" />
-                    <Star v-for="s in (5 - getAssetStars(player))" :key="`e-${s}`" :size="11" class="star empty" />
-                  </div>
-                </div>
-                <div class="wizard-asset-rating">
-                  <StatBadge :value="player.overallRating" size="sm" />
-                  <Check v-if="isPlayerSelected(player.id)" :size="18" class="wizard-asset-check-icon" />
-                </div>
-              </div>
-            </div>
-            <div v-if="wizardRoster.length === 0" class="wizard-asset-empty">
-              No players available
-            </div>
-          </div>
-
-          <!-- Picks Grid -->
-          <div v-else class="wizard-asset-grid picks">
-            <div
-              v-for="pick in wizardPicks"
-              :key="pick.id"
-              class="wizard-asset-card pick"
-              :class="{ selected: isPickSelected(pick.id) }"
-              @click="togglePickSelection(pick)"
-            >
-              <div class="wizard-asset-card-content">
-                <div class="wizard-asset-pick-year">{{ formatPickYear(pick.year) }}</div>
-                <div class="wizard-asset-info">
-                  <span class="wizard-asset-name">Round {{ pick.round }}</span>
-                  <span v-if="pick.original_team_abbreviation" class="wizard-asset-pick-team">({{ pick.original_team_abbreviation }})</span>
-                  <div v-if="pick.projected_position" class="wizard-asset-projection">
-                    Projected #{{ pick.projected_position }}
-                  </div>
-                </div>
-                <div class="wizard-asset-check">
-                  <Check v-if="isPickSelected(pick.id)" :size="20" />
-                </div>
-              </div>
-            </div>
-            <div v-if="wizardPicks.length === 0" class="wizard-asset-empty">
-              No draft picks available
-            </div>
-          </div>
-
-        </div>
-
-        <!-- Step 4: Confirm / Loading / Result -->
-        <div v-if="wizardStep === 4" class="wizard-step-content">
           <!-- Loading State -->
           <div v-if="confirmModalState === 'loading'" class="modal-loading">
             <LoadingSpinner size="lg" />
@@ -1251,8 +1092,8 @@ function formatAge(age) {
 
             <!-- Footer -->
             <footer class="wizard-modal-footer">
-              <!-- Steps 1-3 -->
-              <template v-if="wizardStep < 4">
+              <!-- Steps 1-2 -->
+              <template v-if="wizardStep < 3">
                 <button
                   v-if="canWizardBack"
                   class="wizard-btn-back"
@@ -1265,7 +1106,7 @@ function formatAge(age) {
 
                 <div class="wizard-nav-right">
                   <button
-                    v-if="wizardStep < 3"
+                    v-if="wizardStep < 2"
                     class="wizard-btn-next"
                     @click="wizardNext"
                     :disabled="!canWizardNext"
@@ -1285,7 +1126,7 @@ function formatAge(age) {
                 </div>
               </template>
 
-              <!-- Step 4: Confirm -->
+              <!-- Step 3: Confirm -->
               <template v-else-if="confirmModalState === 'confirm'">
                 <button class="wizard-btn-back" @click="wizardBack">
                   <ChevronLeft :size="18" />

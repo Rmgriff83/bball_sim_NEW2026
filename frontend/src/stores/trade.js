@@ -17,7 +17,9 @@ import {
   buildContext,
   expireStaleProposals,
   isBeforeDeadline,
+  computeAiTradingBlock,
 } from '@/engine/ai/AITradeService'
+import { buildPerGameStats, getStatLine as buildStatLine } from '@/components/trade/tradeAssetFormat'
 import { buildPickValueFn } from '@/engine/ai/PickValuationService'
 import {
   validateSalaryCap,
@@ -128,6 +130,33 @@ function userTradingAllowed(campaign, currentDate, seasonYear) {
   return isBeforeDeadline(currentDate, seasonYear)
 }
 
+// Approximate value of a draft pick on the player-rating scale, so picks can be
+// ranked alongside players in a team's "best assets" preview. Round + projected
+// slot only — display quality still comes from getAssetStars. Preview-ranking
+// only; not used for trade evaluation.
+function _pickAssetValue(pick) {
+  const round = pick?.round ?? 1
+  const proj = pick?.projected_position ?? pick?.projectedPosition ?? null
+  if (round === 1) return proj ? Math.max(72, 92 - proj * 0.7) : 77
+  return proj ? Math.max(56, 70 - proj * 0.3) : 60
+}
+
+// Normalize a season's per-player stats (array or {playerId: stats} map) into a
+// { playerId: stats } lookup. Mirrors TradingBlockTab's buildMap.
+function _buildStatsMap(source) {
+  const map = {}
+  if (!source) return map
+  if (Array.isArray(source)) {
+    for (const s of source) {
+      const pid = s.playerId ?? s.player_id
+      if (pid) map[pid] = s
+    }
+  } else if (typeof source === 'object') {
+    Object.assign(map, source)
+  }
+  return map
+}
+
 export const useTradeStore = defineStore('trade', () => {
   // State
   const tradeableTeams = ref([])
@@ -146,6 +175,20 @@ export const useTradeStore = defineStore('trade', () => {
 
   // Trading block
   const userTradingBlock = ref([])
+
+  // League-wide AI trade block — every non-user player an AI team has put on the
+  // block, tagged with _teamId/_teamName/_teamAbbr. Surfaced as the second tab of
+  // the enriched Trade Partner step. Populated by fetchLeagueTradeBlock.
+  const leagueTradeBlock = ref([])
+
+  // Current-season + playoff per-player stat maps (keyed by playerId), loaded
+  // alongside the tradeable teams so the enriched partner cards / trade-block
+  // rows can show a stat line and feed PlayerDetailModal. Keyed off seasonData.
+  const leagueStatsMap = ref({})
+  const playoffStatsMap = ref({})
+  // Season year the stat maps / partner cards were loaded for (fed to the
+  // PlayerDetailModal season table).
+  const currentSeasonYear = ref(null)
 
   // Whether the season's trade deadline has passed. Set by fetchTradeableTeams /
   // fetchPendingProposals so the UI can disable trade actions (the execute paths
@@ -354,7 +397,16 @@ export const useTradeStore = defineStore('trade', () => {
       }
       const context = buildContext({ standings, teams: allTeams, seasonPhase: 'regular_season' })
 
-      // Filter out the user's team and enrich with record + direction
+      // Current-season + playoff stat maps for the enriched partner cards /
+      // trade-block rows (keyed by playerId). Same source/shape as the Trading
+      // Block tab so the stat line + PlayerDetailModal render identically.
+      currentSeasonYear.value = year
+      leagueStatsMap.value = _buildStatsMap(seasonData?.playerStats)
+      playoffStatsMap.value = _buildStatsMap(seasonData?.playoffPlayerStats)
+
+      // Filter out the user's team and enrich with record + direction + the
+      // team's own assets (roster / picks / top-5) so each card can show them at
+      // a glance WITHOUT a per-card fetch — the data is already loaded here.
       tradeableTeams.value = allTeams
         .filter(t => t.id !== userTeamId)
         .map(t => {
@@ -362,15 +414,49 @@ export const useTradeStore = defineStore('trade', () => {
           const wins = s?.wins ?? 0
           const losses = s?.losses ?? 0
           const teamRoster = rostersByTeamId.get(t.id) ?? []
+          const teamPicks = t.draftPicks ?? t.draft_picks ?? []
           const direction = analyzeTeamDirection(t, teamRoster, context)
           const totalPayroll = t.total_payroll ?? t.totalPayroll ?? 0
+          // Best assets = players AND picks, ranked on one scale so a premium
+          // pick can surface among the stars. Star display still via getAssetStars.
+          const topAssets = [
+            ...teamRoster.map(p => ({ kind: 'player', item: p, _v: p.overallRating ?? p.overall_rating ?? 0 })),
+            ...teamPicks.map(k => ({ kind: 'pick', item: k, _v: _pickAssetValue(k) })),
+          ]
+            .sort((a, b) => b._v - a._v)
+            .slice(0, 5)
+            .map(({ kind, item }) => ({ kind, item }))
           return {
             ...t,
             record: { wins, losses },
             direction,
             cap_space: SALARY_CAP - totalPayroll,
+            roster: teamRoster,
+            picks: teamPicks,
+            topAssets,
           }
         })
+
+      // League-wide AI trade block — every non-user player an AI team has listed.
+      // Fall back to computeAiTradingBlock for teams lacking a persisted block
+      // (older saves) so the tab is never empty on legacy data.
+      const playerById = new Map(allPlayers.map(p => [p.id, p]))
+      const block = []
+      for (const t of allTeams) {
+        if (t.id === userTeamId) continue
+        const teamRoster = rostersByTeamId.get(t.id) ?? []
+        let blockIds = Array.isArray(t.tradingBlock) ? t.tradingBlock : (t.trading_block ?? [])
+        if (!blockIds || blockIds.length === 0) {
+          const dir = analyzeTeamDirection(t, teamRoster, context)
+          blockIds = computeAiTradingBlock({ roster: teamRoster, direction: dir })
+        }
+        for (const pid of blockIds) {
+          const player = playerById.get(pid)
+          if (player) block.push({ ...player, _teamId: t.id, _teamName: t.name, _teamAbbr: t.abbreviation })
+        }
+      }
+      block.sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+      leagueTradeBlock.value = block
 
       return tradeableTeams.value
     } catch (err) {
@@ -378,6 +464,22 @@ export const useTradeStore = defineStore('trade', () => {
       throw err
     } finally {
       loading.value = false
+    }
+  }
+
+  // Compact PPG/RPG/APG line for a roster/block row (null when no games logged).
+  function getStatLine(playerId) {
+    return buildStatLine(leagueStatsMap.value[playerId])
+  }
+
+  // Clone a player and attach season/playoff per-game stats so PlayerDetailModal
+  // renders its current-year table. Never mutates the underlying record.
+  function buildModalPlayer(player) {
+    if (!player) return null
+    return {
+      ...player,
+      season_stats: buildPerGameStats(leagueStatsMap.value[player.id]),
+      season_playoff_stats: buildPerGameStats(playoffStatsMap.value[player.id]),
     }
   }
 
@@ -1425,6 +1527,10 @@ export const useTradeStore = defineStore('trade', () => {
     userRequesting,
     pendingProposals,
     userTradingBlock,
+    leagueTradeBlock,
+    leagueStatsMap,
+    playoffStatsMap,
+    currentSeasonYear,
     tradeDeadlinePassed,
     negotiationPrefill,
     loading,
@@ -1442,6 +1548,8 @@ export const useTradeStore = defineStore('trade', () => {
     // Actions
     fetchTradeableTeams,
     fetchTeamDetails,
+    getStatLine,
+    buildModalPlayer,
     fetchUserAssets,
     proposeTrade,
     executeTrade,

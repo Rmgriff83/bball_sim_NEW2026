@@ -11,7 +11,7 @@ import { SUBSTITUTION_STRATEGIES } from '@/engine/config/GameConfig'
 import { useSyncStore } from '@/stores/sync'
 import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
-import { recalculateOverall } from '@/engine/evolution/PlayerEvolution'
+import { recalculateOverall, getAttrCap, derivePotential } from '@/engine/evolution/PlayerEvolution'
 import { applyCoachChangePenalty } from '@/engine/evolution/MoraleService'
 import { BADGES } from '@/engine/data/badges'
 import {
@@ -682,12 +682,13 @@ export const useTeamStore = defineStore('team', () => {
       const currentValue = player.attributes?.[category]?.[attribute]
       if (currentValue === undefined) throw new Error('Invalid attribute')
 
-      // Check potential cap
-      const potential = player.potentialRating ?? player.potential_rating ?? 99
-      if (currentValue >= potential) throw new Error('Attribute already at potential cap')
+      // Check the per-attribute ceiling (falls back to the scalar potential for
+      // legacy saves without an attributeCaps map).
+      const attrCap = getAttrCap(player, category, attribute)
+      if (currentValue >= attrCap) throw new Error('Attribute already at its ceiling')
 
       // Apply the upgrade
-      const newValue = Math.min(potential, currentValue + 1)
+      const newValue = Math.min(attrCap, currentValue + 1)
       player.attributes[category][attribute] = newValue
 
       // Deduct 1.0 from the correct pool
@@ -706,7 +707,9 @@ export const useTeamStore = defineStore('team', () => {
       const baseExact = typeof player._overallExact === 'number'
         ? player._overallExact
         : (player.overallRating ?? player.overall_rating ?? 70)
-      player._overallExact = Math.min(potential, baseExact + MANUAL_UPGRADE_BUMP)
+      // `_overallExact` is a player-level (OVR-space) number, so cap it against
+      // the derived scalar potential, not a single attribute's ceiling.
+      player._overallExact = Math.min(derivePotential(player), baseExact + MANUAL_UPGRADE_BUMP)
 
       // Recalculate overall rating (will preserve the bump via _overallExact)
       recalculateOverall(player)
@@ -777,7 +780,10 @@ export const useTeamStore = defineStore('team', () => {
     const exact = typeof player._overallExact === 'number'
       ? player._overallExact
       : (player.overall_rating ?? player.overallRating ?? 0)
-    const potential = player.potential_rating ?? player.potentialRating ?? 99
+    // Headroom is an OVR-space concept — cap against the derived scalar potential
+    // (which reflects the per-attribute ceilings when present). Which specific
+    // attributes can still be spent on is enforced per-attribute at spend time.
+    const potential = derivePotential(player)
     const pendingPoints = (player.offense_upgrade_points ?? player.offenseUpgradePoints ?? 0)
                         + (player.defense_upgrade_points ?? player.defenseUpgradePoints ?? 0)
     const remainingOvr = Math.max(0, potential - exact - pendingPoints * MANUAL_UPGRADE_BUMP)
@@ -1592,6 +1598,89 @@ export const useTeamStore = defineStore('team', () => {
    * Order matters here: tokens are deducted BEFORE the morale mutation, so a
    * failed `/api/user/tokens` call doesn't leave a half-applied state.
    */
+  /**
+   * Roster Editor IAP perk: edit a player's flavor data — history (bio &
+   * origin) and/or personality — for ANY player league-wide, in any campaign.
+   * Mirrors the holdCoachMeeting persistence shape. Sections are optional so
+   * the History and Morale editors can save independently.
+   *
+   * @param {Object} fields
+   * @param {string} [fields.college]
+   * @param {string} [fields.country]
+   * @param {{year:number, round:number, pick:number}|null} [fields.draft]
+   *   Draft history; explicit null = undrafted. Omit to leave unchanged.
+   * @param {number} [fields.careerSeasons]
+   * @param {{traits?:string[], morale?:number, chemistry?:number, mediaProfile?:string}} [fields.personality]
+   */
+  async function updatePlayerFlavor(campaignId, playerId, fields = {}) {
+    if (!campaignId || !playerId) throw new Error('Missing campaign or player')
+    const playerRecord = await PlayerRepository.get(campaignId, playerId)
+    if (!playerRecord) throw new Error('Player not found')
+
+    const patch = {}
+
+    if (typeof fields.college === 'string' && fields.college.trim()) {
+      patch.college = fields.college.trim()
+    }
+    if (typeof fields.country === 'string' && fields.country.trim()) {
+      patch.country = fields.country.trim()
+    }
+    if (Number.isFinite(fields.careerSeasons)) {
+      const cs = Math.max(0, Math.min(25, Math.round(fields.careerSeasons)))
+      patch.careerSeasons = cs
+      patch.career_seasons = cs
+    }
+    if (fields.draft !== undefined) {
+      if (fields.draft === null) {
+        // Undrafted — clear both the flat fields and the nested draftInfo the
+        // History tab renders.
+        patch.draftYear = null
+        patch.draftRound = null
+        patch.draftPick = null
+        patch.draftInfo = null
+      } else {
+        const year = Math.max(1990, Math.min(2025, Math.round(Number(fields.draft.year)) || 2025))
+        const round = Math.max(1, Math.min(2, Math.round(Number(fields.draft.round)) || 1))
+        const pick = Math.max(1, Math.min(60, Math.round(Number(fields.draft.pick)) || 1))
+        patch.draftYear = year
+        patch.draftRound = round
+        patch.draftPick = pick
+        patch.draftInfo = {
+          ...(playerRecord.draftInfo ?? {}),
+          year,
+          round,
+          pick,
+          teamAbbreviation: playerRecord.draftInfo?.teamAbbreviation
+            ?? playerRecord.teamAbbreviation ?? playerRecord.team_abbreviation ?? null,
+        }
+      }
+    }
+    if (fields.personality && typeof fields.personality === 'object') {
+      const p = fields.personality
+      // Shallow-merge onto the existing personality so motivations/chemistry
+      // history and any future keys survive.
+      const merged = { ...(playerRecord.personality ?? {}) }
+      if (Array.isArray(p.traits)) merged.traits = p.traits.slice(0, 3)
+      if (Number.isFinite(p.morale)) merged.morale = Math.max(0, Math.min(99, Math.round(p.morale)))
+      if (Number.isFinite(p.chemistry)) merged.chemistry = Math.max(0, Math.min(99, Math.round(p.chemistry)))
+      if (['low_key', 'normal', 'high_profile'].includes(p.mediaProfile)) merged.mediaProfile = p.mediaProfile
+      patch.personality = merged
+      // Legacy top-level morale mirror (same convention as holdCoachMeeting).
+      if (Number.isFinite(p.morale)) patch.morale = merged.morale
+    }
+
+    Object.assign(playerRecord, patch)
+    await PlayerRepository.save(cloneForPersist(playerRecord))
+
+    // Mirror into the user-roster cache when the player is on it (league-wide
+    // edits can target non-roster players — nothing to patch then).
+    const idx = roster.value.findIndex(p => p?.id === playerId)
+    if (idx !== -1) Object.assign(roster.value[idx], patch)
+
+    useSyncStore().markDirty()
+    return patch
+  }
+
   async function holdCoachMeeting(campaignId, playerId, { purchasedAction = false } = {}) {
     loading.value = true
     error.value = null
@@ -1712,6 +1801,7 @@ export const useTeamStore = defineStore('team', () => {
     resignPendingCoach,
     fireCoach,
     holdCoachMeeting,
+    updatePlayerFlavor,
     clearSelectedPlayer,
     clearTeam,
     invalidate,

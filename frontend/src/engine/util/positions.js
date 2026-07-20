@@ -33,16 +33,18 @@ export function positionDistance(a, b) {
 function defenderPositions(defender) {
   const primary = defender?.position ?? 'SF'
   const secondary = defender?.secondary_position ?? defender?.secondaryPosition ?? null
-  return { primary, secondary }
+  const tertiary = defender?.tertiary_position ?? defender?.tertiaryPosition ?? null
+  return { primary, secondary, tertiary }
 }
 
 /**
  * Can `defender` guard an offensive player at `offPos`? True if the defender's
- * primary OR secondary position matches exactly, or they share a position group.
+ * primary, secondary, OR tertiary position matches exactly, or they share a
+ * position group.
  */
 export function eligibleToGuard(defender, offPos) {
-  const { primary, secondary } = defenderPositions(defender)
-  if (primary === offPos || secondary === offPos) return true
+  const { primary, secondary, tertiary } = defenderPositions(defender)
+  if (primary === offPos || secondary === offPos || tertiary === offPos) return true
   return positionGroup(primary) === positionGroup(offPos)
 }
 

@@ -20,6 +20,7 @@ import { processGameRewards, TOKENS_PER_SYNERGY, WIN_MULTIPLIER, WIN_BONUS_TOKEN
 import { NewsService } from '@/engine/season/NewsService'
 import { processAiToAiTrades, computeAiTradingBlock, analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
 import { buildPickValueFn } from '@/engine/ai/PickValuationService'
+import { selectBestLineup } from '@/engine/ai/AILineupService'
 import { AllStarService } from '@/engine/season/AllStarService'
 import { getSeasonDeadlines } from '@/engine/season/SeasonDeadlines'
 import {
@@ -31,7 +32,7 @@ import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { processRecovery as processInjuryRecovery, isInjured as isPlayerInjured } from '@/engine/evolution/InjuryService'
 import { applySeasonalAging } from '@/engine/evolution/AttributeAging'
-import { recalculateOverall } from '@/engine/evolution/PlayerEvolution'
+import { recalculateOverall, processMultiDayRestRecovery } from '@/engine/evolution/PlayerEvolution'
 
 export const useGameStore = defineStore('game', () => {
   // State
@@ -513,6 +514,63 @@ export const useGameStore = defineStore('game', () => {
       await PlayerRepository.saveBulk(updates)
     }
     return recovered
+  }
+
+  /**
+   * Off-day fatigue recovery — the counterpart to the injury tick. For each
+   * calendar day elapsed in [prevDate .. gameDate] a team had NO game, its
+   * players recover a trickle of fatigue (Config.FATIGUE.off_day_recovery via
+   * processMultiDayRestRecovery). Without this, fatigue only ever accrued on
+   * game days and ratcheted toward 100 by midseason. League-wide; runs once
+   * per advance over the whole elapsed span. Non-fatal.
+   */
+  async function _tickFatigueRecovery(campaignId, prevDate, gameDate, year) {
+    if (!prevDate || !gameDate || gameDate < prevDate) return
+    const seasonData = await SeasonRepository.get(campaignId, year)
+    if (!seasonData?.schedule?.length) return
+
+    // Elapsed calendar days, inclusive.
+    const days = []
+    {
+      const [py, pm, pd] = prevDate.split('-').map(Number)
+      const [gy, gm, gd] = gameDate.split('-').map(Number)
+      const cur = new Date(py, pm - 1, pd)
+      const end = new Date(gy, gm - 1, gd)
+      while (cur <= end) {
+        days.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`)
+        cur.setDate(cur.getDate() + 1)
+      }
+    }
+    if (days.length === 0) return
+
+    // teamId → abbreviation (processMultiDayRestRecovery matches on teamAbbreviation).
+    const teams = await TeamRepository.getAllForCampaign(campaignId)
+    const abbrById = new Map(teams.map(t => [t.id, t.abbreviation]))
+
+    // For each elapsed day, the team abbreviations that had a game.
+    const gamesByDay = new Map(days.map(d => [d, []]))
+    for (const g of seasonData.schedule) {
+      if (g.isCancelled) continue // a cancelled game isn't a game played — team still rests
+      const bucket = gamesByDay.get(g.gameDate)
+      if (!bucket) continue
+      const homeAbbr = abbrById.get(g.homeTeamId)
+      const awayAbbr = abbrById.get(g.awayTeamId)
+      if (homeAbbr) bucket.push(homeAbbr)
+      if (awayAbbr) bucket.push(awayAbbr)
+    }
+    const teamsPerDay = days.map(d => gamesByDay.get(d))
+
+    const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+    if (!allPlayers?.length) return
+    const updated = processMultiDayRestRecovery(allPlayers, teamsPerDay)
+
+    // processMultiDayRestRecovery returns the same ref when unchanged, a clone
+    // when it recovered — a strict ref check is enough to know what to persist.
+    const changed = []
+    for (let i = 0; i < updated.length; i++) {
+      if (updated[i] !== allPlayers[i]) changed.push({ ...updated[i], campaignId })
+    }
+    if (changed.length > 0) await PlayerRepository.saveBulk(changed)
   }
 
   /**
@@ -1036,6 +1094,20 @@ export const useGameStore = defineStore('game', () => {
         }
       } catch (err) {
         console.warn('[GameStore] Injury recovery tick failed:', err)
+      }
+
+      // Off-day fatigue recovery for the elapsed span (league-wide). `gameDate`
+      // is the last simmed day; `campaign.currentDate` is still the OLD date
+      // here (reassigned to newDate below).
+      try {
+        await _tickFatigueRecovery(
+          campaignId,
+          campaign.currentDate || '',
+          gameDate,
+          campaign.currentSeasonYear ?? 2025,
+        )
+      } catch (err) {
+        console.warn('[GameStore] Fatigue recovery tick failed:', err)
       }
 
       try {
@@ -3266,6 +3338,36 @@ export const useGameStore = defineStore('game', () => {
   // ---------------------------------------------------------------------------
 
   /**
+   * Keep an AI team's saved starting lineup accurate before it plays: recompute
+   * the best available HEALTHY five and persist it if it changed. Handles both
+   * injuries (drop) and recoveries (restore) — the sim already refuses to play
+   * injured players, this just keeps `lineup_settings.starters` clean and lets
+   * the AI pick its own replacement. Fatigue is zeroed for the pick so lineup
+   * selection stays rating/health-based (the minute system handles fatigue).
+   * AI teams only — never called for the user's team. Non-fatal.
+   */
+  async function _refreshAiTeamStarters(campaignId, team, roster) {
+    try {
+      if (!team || !Array.isArray(roster) || roster.length === 0) return
+      const best = selectBestLineup(roster.map(p => ({ ...p, fatigue: 0 })))
+      // Skip degenerate rosters that can't field 5 healthy — the simulator's
+      // injured-last-resort path handles those.
+      if (!best || best.length < 5 || best.some(id => id == null)) return
+
+      const current = team.lineup_settings?.starters ?? null
+      const unchanged = Array.isArray(current)
+        && current.length === best.length
+        && current.every((id, i) => String(id) === String(best[i]))
+      if (unchanged) return
+
+      team.lineup_settings = { ...(team.lineup_settings ?? {}), starters: best }
+      await TeamRepository.save(team)
+    } catch (err) {
+      console.warn('[GameStore] AI lineup refresh failed (non-fatal):', err?.message || err)
+    }
+  }
+
+  /**
    * Simulate a set of AI games in bulk, persist results, and report progress.
    */
   async function _simulateAiGamesBulk(campaignId, year, seasonData, aiGames, worker, onProgress = null) {
@@ -3276,6 +3378,11 @@ export const useGameStore = defineStore('game', () => {
     const bulkGames = []
     for (const game of aiGames) {
       const { homeTeam, awayTeam, homePlayers, awayPlayers } = await _loadGameSimData(campaignId, game)
+      // Keep both AI teams' saved lineups injury-clean before they play (both
+      // teams are guaranteed non-user here). Mutates lineup_settings in-memory
+      // so the refreshed starters feed straight into the worker payload below.
+      await _refreshAiTeamStarters(campaignId, homeTeam, homePlayers)
+      await _refreshAiTeamStarters(campaignId, awayTeam, awayPlayers)
       bulkGames.push({
         gameId: game.id,
         homeTeam,

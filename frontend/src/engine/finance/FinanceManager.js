@@ -494,10 +494,16 @@ export function resignPlayer({ player, years, salary: salaryOverride, resignDead
 
   // Mid-season extension semantics: the new N-year deal starts NEXT season.
   // processSeasonEnd() decrements contractYearsRemaining at season's end for
-  // every player, so without this flag a player re-signed mid-season for N
-  // years would carry only N-1 into the new season — and a 1-year re-sign
-  // would expire to 0 and be flipped to a free agent during enterOffseason.
-  // The flag is consumed and cleared by processSeasonEnd().
+  // every player, so without a guard a player re-signed mid-season for N years
+  // would carry only N-1 into the new season — and a 1-year re-sign would
+  // expire to 0 and be flipped to a free agent during enterOffseason.
+  //
+  // The authoritative persister (stores/finance.js resignPlayer) writes the
+  // guard fields onto the DB record: the legacy `resignedThisSeason` boolean
+  // AND a `resignedSeasonYear` stamp that processSeasonEnd compares (not
+  // consumes) so the skip is idempotent and survives sync round-trips. The
+  // boolean below keeps this engine helper's returned player self-consistent
+  // for any in-memory caller.
   const updatedPlayer = {
     ...player,
     contractYearsRemaining: years,

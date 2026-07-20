@@ -1,0 +1,363 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Campaign;
+use App\Models\RosterBuild;
+use App\Support\ProfanityScreen;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\Response;
+
+/**
+ * Community roster builds (Roster Editor IAP Part B). Web-only UI; every
+ * endpoint here is auth:sanctum + server-side custom_roster entitlement
+ * (the actual security boundary — the client checks are cosmetic).
+ *
+ * Storage: private `roster_builds` S3 disk. Blobs are streamed through the
+ * authenticated blob endpoint only; S3 keys are always server-generated and
+ * read back exclusively from DB rows — never from client input.
+ */
+class RosterBuildController extends Controller
+{
+    private const MAX_BLOB_BYTES = 40 * 1024 * 1024; // gz, generous for headshots
+    private const BUILD_FORMAT = 1;
+
+    /** 403 unless the caller owns the custom_roster unlock. */
+    private function gate(Request $request): ?JsonResponse
+    {
+        $profile = $request->user()?->profile;
+        if (!$profile || !$profile->hasUnlock('custom_roster')) {
+            return response()->json([
+                'error' => 'feature_not_unlocked',
+                'feature' => 'custom_roster',
+            ], 403);
+        }
+        return null;
+    }
+
+    /** Read + decode one synced campaign part off the default (campaigns) disk. */
+    private function readPart(string $clientId, string $part): ?array
+    {
+        $raw = Storage::get("campaigns/{$clientId}/{$part}.json.gz");
+        if ($raw === null) {
+            return null;
+        }
+        $json = @gzdecode($raw);
+        if ($json === false) {
+            return null;
+        }
+        $data = json_decode($json, true);
+        return is_array($data) ? $data : null;
+    }
+
+    /**
+     * POST /api/roster-builds — publish the caller's custom campaign roster.
+     */
+    public function publish(Request $request): JsonResponse
+    {
+        if ($resp = $this->gate($request)) {
+            return $resp;
+        }
+
+        $validated = $request->validate([
+            'campaign_client_id' => 'required|uuid',
+            'title' => 'required|string|max:100',
+            'description' => 'nullable|string|max:1000',
+        ]);
+
+        $user = $request->user();
+
+        // Ownership FIRST — the client-supplied id is only ever used inside
+        // this user-scoped lookup; all storage paths below derive from the
+        // resulting DB row.
+        $campaign = Campaign::where('client_id', $validated['campaign_client_id'])
+            ->where('user_id', $user->id)
+            ->first();
+        if (!$campaign) {
+            return response()->json(['message' => 'Campaign not found'], 404);
+        }
+
+        $clientId = $campaign->client_id;
+        $meta = $this->readPart($clientId, 'meta');
+        if (!$meta || empty($meta['teams']) || !is_array($meta['teams'])) {
+            return response()->json(['error' => 'campaign_not_synced'], 422);
+        }
+        // Only custom-roster campaigns are publishable.
+        $campaignRecord = $meta['campaign'] ?? [];
+        $isCustom = ($campaignRecord['customRoster'] ?? $campaignRecord['custom_roster'] ?? false) === true;
+        if (!$isCustom) {
+            return response()->json(['error' => 'not_a_custom_campaign'], 422);
+        }
+
+        ini_set('memory_limit', '512M'); // large player payloads (same as sync)
+
+        // Team id → abbreviation map + coaches keyed by abbreviation.
+        $abbrByTeamId = [];
+        $coaches = [];
+        foreach ($meta['teams'] as $team) {
+            $abbr = $team['abbreviation'] ?? null;
+            $tid = $team['id'] ?? null;
+            if (!$abbr || $tid === null) {
+                continue;
+            }
+            $abbrByTeamId[(string) $tid] = $abbr;
+            if (!empty($team['coach']) && is_array($team['coach'])) {
+                $coaches[$abbr] = $team['coach'];
+            }
+        }
+
+        // Collect + partition players by abbreviation (fa = no team).
+        $playersByAbbr = ['fa' => []];
+        $playerCount = 0;
+        foreach (['players_user', 'players_ai', 'players_fa'] as $part) {
+            $data = $this->readPart($clientId, $part);
+            foreach (($data['players'] ?? []) as $player) {
+                if (!is_array($player)) {
+                    continue;
+                }
+                $tid = $player['team_id'] ?? $player['teamId'] ?? null;
+                $abbr = $tid !== null ? ($abbrByTeamId[(string) $tid] ?? null) : null;
+                $bucket = $abbr ?? 'fa';
+                $playersByAbbr[$bucket] ??= [];
+                $playersByAbbr[$bucket][] = $player;
+                $playerCount++;
+            }
+        }
+        if ($playerCount === 0) {
+            return response()->json(['error' => 'campaign_not_synced'], 422);
+        }
+
+        // Profanity screen: title, description, and every player/coach name.
+        $texts = [$validated['title'], $validated['description'] ?? ''];
+        foreach ($playersByAbbr as $list) {
+            foreach ($list as $p) {
+                $texts[] = trim(($p['first_name'] ?? '') . ' ' . ($p['last_name'] ?? '') . ' ' . ($p['name'] ?? ''));
+            }
+        }
+        foreach ($coaches as $c) {
+            $texts[] = trim(($c['firstName'] ?? '') . ' ' . ($c['lastName'] ?? '') . ' ' . ($c['name'] ?? ''));
+        }
+        foreach ($texts as $text) {
+            if (($hit = ProfanityScreen::firstViolation($text)) !== null) {
+                return response()->json([
+                    'error' => 'content_rejected',
+                    'message' => 'A name or description contains disallowed language.',
+                    'fragment' => $hit,
+                ], 422);
+            }
+        }
+
+        // Headshots (optional part; may be absent for campaigns without any).
+        $headshotsPart = $this->readPart($clientId, 'headshots');
+        $headshots = [];
+        foreach (($headshotsPart['headshots'] ?? []) as $h) {
+            if (!empty($h['playerId']) && !empty($h['svgContent'])) {
+                $headshots[] = [
+                    'playerId' => $h['playerId'],
+                    'svgContent' => $h['svgContent'],
+                ];
+            }
+        }
+
+        $blob = [
+            'format' => self::BUILD_FORMAT,
+            'title' => $validated['title'],
+            'players' => $playersByAbbr,
+            'coaches' => $coaches,
+            'headshots' => $headshots,
+        ];
+        $json = json_encode($blob, JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            Log::error("Roster build encode failed for campaign {$clientId}: " . json_last_error_msg());
+            return response()->json(['message' => 'Failed to package build'], 500);
+        }
+        $compressed = gzencode($json, 6);
+        if (strlen($compressed) > self::MAX_BLOB_BYTES) {
+            return response()->json(['error' => 'build_too_large'], 422);
+        }
+
+        // Server-generated key only.
+        $key = 'builds/' . Str::uuid()->toString() . '.json.gz';
+        Storage::disk('roster_builds')->put($key, $compressed);
+
+        $build = RosterBuild::create([
+            'user_id' => $user->id,
+            'title' => $validated['title'],
+            'description' => $validated['description'] ?? null,
+            's3_key' => $key,
+            'size_bytes' => strlen($compressed),
+            'player_count' => $playerCount,
+            'status' => RosterBuild::STATUS_ACTIVE,
+        ]);
+
+        return response()->json(['build' => $this->present($build)], 201);
+    }
+
+    /** GET /api/roster-builds — the public board (active builds). */
+    public function index(Request $request): JsonResponse
+    {
+        if ($resp = $this->gate($request)) {
+            return $resp;
+        }
+        $sort = $request->query('sort') === 'downloads' ? 'downloads' : 'created_at';
+        $builds = RosterBuild::with('user:id,username')
+            ->where('status', RosterBuild::STATUS_ACTIVE)
+            ->orderByDesc($sort)
+            ->paginate(20);
+
+        return response()->json([
+            'builds' => collect($builds->items())->map(fn ($b) => $this->present($b)),
+            'page' => $builds->currentPage(),
+            'last_page' => $builds->lastPage(),
+            'total' => $builds->total(),
+        ]);
+    }
+
+    /** GET /api/roster-builds/mine — the caller's published builds. */
+    public function mine(Request $request): JsonResponse
+    {
+        if ($resp = $this->gate($request)) {
+            return $resp;
+        }
+        $builds = RosterBuild::where('user_id', $request->user()->id)
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get();
+        return response()->json(['builds' => $builds->map(fn ($b) => $this->present($b, includeStatus: true))]);
+    }
+
+    /** GET /api/roster-builds/downloads — the caller's "My Downloads". */
+    public function downloads(Request $request): JsonResponse
+    {
+        if ($resp = $this->gate($request)) {
+            return $resp;
+        }
+        $rows = DB::table('roster_build_downloads')
+            ->where('user_id', $request->user()->id)
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->pluck('roster_build_id');
+        $builds = RosterBuild::with('user:id,username')
+            ->whereIn('id', $rows)
+            ->where('status', RosterBuild::STATUS_ACTIVE)
+            ->get();
+        return response()->json(['builds' => $builds->map(fn ($b) => $this->present($b))]);
+    }
+
+    /** POST /api/roster-builds/{id}/download — attach to the caller's account. */
+    public function download(Request $request, int $id): JsonResponse
+    {
+        if ($resp = $this->gate($request)) {
+            return $resp;
+        }
+        $build = RosterBuild::where('id', $id)
+            ->where('status', RosterBuild::STATUS_ACTIVE)
+            ->first();
+        if (!$build) {
+            return response()->json(['message' => 'Build not found'], 404);
+        }
+
+        $inserted = DB::table('roster_build_downloads')->insertOrIgnore([
+            'user_id' => $request->user()->id,
+            'roster_build_id' => $build->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        if ($inserted) {
+            $build->increment('downloads');
+        }
+
+        return response()->json(['build' => $this->present($build->fresh())]);
+    }
+
+    /** GET /api/roster-builds/{id}/blob — stream the build payload (gzip JSON). */
+    public function blob(Request $request, int $id): Response
+    {
+        if ($resp = $this->gate($request)) {
+            return $resp;
+        }
+        $build = RosterBuild::where('id', $id)
+            ->where('status', RosterBuild::STATUS_ACTIVE)
+            ->first();
+        if (!$build) {
+            return response()->json(['message' => 'Build not found'], 404);
+        }
+        $raw = Storage::disk('roster_builds')->get($build->s3_key);
+        if ($raw === null) {
+            return response()->json(['message' => 'Build data unavailable'], 404);
+        }
+        return response($raw, 200, [
+            'Content-Type' => 'application/json',
+            'Content-Encoding' => 'gzip',
+            'Cache-Control' => 'private, max-age=3600',
+        ]);
+    }
+
+    /** POST /api/roster-builds/{id}/report — flag for review (auth only, no IAP gate). */
+    public function report(Request $request, int $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+        $build = RosterBuild::where('id', $id)
+            ->where('status', RosterBuild::STATUS_ACTIVE)
+            ->first();
+        if (!$build) {
+            return response()->json(['message' => 'Build not found'], 404);
+        }
+        $inserted = DB::table('roster_build_reports')->insertOrIgnore([
+            'user_id' => $request->user()->id,
+            'roster_build_id' => $build->id,
+            'reason' => $validated['reason'] ?? null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        if ($inserted) {
+            $build->increment('report_count');
+        }
+        return response()->json(['message' => 'Reported. Thank you.']);
+    }
+
+    /**
+     * DELETE /api/roster-builds/{id} — owner unpublish, or admin removal.
+     * Owner scope enforced in the query itself; global admins may remove any.
+     */
+    public function destroy(Request $request, int $id): JsonResponse
+    {
+        $user = $request->user();
+        $query = RosterBuild::where('id', $id);
+        if (!($user->global_admin ?? false)) {
+            $query->where('user_id', $user->id);
+        }
+        $build = $query->first();
+        if (!$build) {
+            return response()->json(['message' => 'Build not found'], 404);
+        }
+        $build->update(['status' => RosterBuild::STATUS_REMOVED]);
+        return response()->json(['message' => 'Build removed']);
+    }
+
+    private function present(RosterBuild $build, bool $includeStatus = false): array
+    {
+        $out = [
+            'id' => $build->id,
+            'title' => $build->title,
+            'description' => $build->description,
+            'author' => $build->relationLoaded('user') ? ($build->user->username ?? null) : null,
+            'player_count' => $build->player_count,
+            'size_bytes' => $build->size_bytes,
+            'downloads' => $build->downloads,
+            'created_at' => $build->created_at?->toIso8601String(),
+        ];
+        if ($includeStatus) {
+            $out['status'] = $build->status;
+            $out['report_count'] = $build->report_count;
+        }
+        return $out;
+    }
+}

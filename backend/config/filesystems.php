@@ -78,6 +78,23 @@ return [
             'report' => false,
         ],
 
+        // Community roster builds bucket (Roster Editor IAP Part B). Private —
+        // blobs are only ever streamed through authenticated, entitlement-
+        // gated endpoints (no public ACLs / presigned URLs). Same separate-
+        // bucket + fallback-credentials convention as `assets` above.
+        'roster_builds' => [
+            'driver' => 's3',
+            'key' => env('ROSTER_BUILDS_AWS_ACCESS_KEY_ID', env('AWS_ACCESS_KEY_ID')),
+            'secret' => env('ROSTER_BUILDS_AWS_SECRET_ACCESS_KEY', env('AWS_SECRET_ACCESS_KEY')),
+            'region' => env('ROSTER_BUILDS_AWS_DEFAULT_REGION', env('AWS_DEFAULT_REGION')),
+            'bucket' => env('ROSTER_BUILDS_AWS_BUCKET'),
+            'endpoint' => env('ROSTER_BUILDS_AWS_ENDPOINT', env('AWS_ENDPOINT')),
+            'url' => env('ROSTER_BUILDS_AWS_URL'),
+            'use_path_style_endpoint' => env('ROSTER_BUILDS_AWS_USE_PATH_STYLE_ENDPOINT', false),
+            'throw' => false,
+            'report' => false,
+        ],
+
     ],
 
     /*

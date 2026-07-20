@@ -295,10 +295,18 @@ export const useFinanceStore = defineStore('finance', () => {
       dbPlayer.contract_years_remaining = years
       dbPlayer.contractSalary = newSalary
       dbPlayer.contract_salary = newSalary
-      // One-shot flag so processSeasonEnd() doesn't immediately decrement the
-      // just-signed extension at the next season rollover. Cleared there.
+      // Guard so processSeasonEnd() doesn't immediately decrement the
+      // just-signed extension at the next season rollover (the new N-year deal
+      // begins NEXT season). Two layers: the legacy one-shot boolean (kept for
+      // back-compat), and a season-year STAMP that processSeasonEnd COMPARES
+      // rather than consumes — idempotent and robust to sync round-trips /
+      // stale pulls that could otherwise wipe a bare boolean. The stamp
+      // self-expires next season when the compared year advances.
+      const resignYear = campaign?.currentSeasonYear ?? campaign?.current_season_year ?? null
       dbPlayer.resignedThisSeason = true
       dbPlayer.resigned_this_season = true
+      dbPlayer.resignedSeasonYear = resignYear
+      dbPlayer.resigned_season_year = resignYear
 
       // Rebuild contract_details.salaries to match the new term so any
       // downstream code that reads the year-by-year breakdown sees the
@@ -346,6 +354,8 @@ export const useFinanceStore = defineStore('finance', () => {
           contract_details: newDetails,
           resignedThisSeason: true,
           resigned_this_season: true,
+          resignedSeasonYear: campaign?.currentSeasonYear ?? campaign?.current_season_year ?? null,
+          resigned_season_year: campaign?.currentSeasonYear ?? campaign?.current_season_year ?? null,
         }
       }
 

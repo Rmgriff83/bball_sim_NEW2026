@@ -702,8 +702,9 @@ class GameSimulator {
 
   /**
    * User timeout: burn one, reset momentum to even (kills either team's run —
-   * calling one while YOU have the run wastes it) and give the user's on-court
-   * five a real breather (energy back, fatigue recovery).
+   * calling one while YOU have the run wastes it) and give BOTH teams' on-court
+   * fives a real breather (energy back, fatigue recovery) — a timeout stops play
+   * for everyone on the floor, so the opponent's starters rest too.
    */
   _applyTimeout() {
     if (this.userTimeoutsRemaining <= 0) return false
@@ -719,8 +720,9 @@ class GameSimulator {
     this.momentum.away = 50
     this.momentumCooldown = { home: 0, away: 0 }
 
-    const lineup = userIsHome ? this.homeLineup : this.awayLineup
-    for (const p of lineup) {
+    // Both on-court fives rest during the stoppage — not just the team that
+    // called the timeout.
+    for (const p of [...this.homeLineup, ...this.awayLineup]) {
       p.fatigue = Math.max(0, (p.fatigue ?? 0) - 10)
       p.energy = Math.min(100, (p.energy ?? 100) + 20)
     }
@@ -802,6 +804,14 @@ class GameSimulator {
     for (const p of [...this.homePlayers, ...this.awayPlayers]) {
       p.energy = 100
       p.lastEnergyTickGameMinutes = 0
+      // Snapshot season fatigue so the play-by-play per-action accrual
+      // (PlayExecutionEngine.accumulateFatigue) stays EPHEMERAL — it drives the
+      // live display, shot penalty, and sub triggers during the game, but is
+      // restored in finalizeGame() so it never leaks into the persisted season
+      // meter. Post-game evolution then applies only the tuned minute-bracket
+      // delta. Without this the bulk AI path (sim + evolution on the same
+      // objects) double-counted the huge accrual and pinned AI at 100.
+      p._fatigueAtGameStart = p.fatigue ?? 0
     }
 
     // Determine if user's team is home or away
@@ -986,9 +996,12 @@ class GameSimulator {
       targetMinutes = team.lineup_settings.target_minutes
     }
 
-    // Fallback to defaults if empty
+    // Fallback to defaults if empty. Pass the team's strategy so the fallback
+    // still respects the starter MPG cap (otherwise it hands out ~39-MPG
+    // uncapped starters — the old over-minutes behavior leaking through).
     if (!targetMinutes || Object.keys(targetMinutes).length === 0) {
-      targetMinutes = getDefaultTargetMinutes(players, starterIds)
+      const fbStrategy = team?.coaching_scheme?.substitution || 'staggered'
+      targetMinutes = getDefaultTargetMinutes(players, starterIds, fbStrategy)
     }
 
     // restMode post-processing for the user's team during fast-sim.
@@ -1374,6 +1387,13 @@ class GameSimulator {
         }
       }
     }
+
+    // Bench players recover fatigue in-game, symmetric to the on-court per-action
+    // accrual — so a rested player's fatigue ticks DOWN on the live screen and he
+    // returns fresher. Ephemeral (restored in finalizeGame like the accrual), so
+    // it only affects the live display + in-game shot/sub decisions, not the
+    // persisted season meter.
+    this._recoverBenchFatigue(duration)
 
     this.possessionCount++
 
@@ -2707,15 +2727,42 @@ class GameSimulator {
   // =========================================================================
 
   /**
+   * In-game bench fatigue recovery, called once per possession with the
+   * possession's game-minute `duration`. Every player NOT in either on-court
+   * lineup recovers fatigue proportional to the elapsed time, stamina-scaled
+   * (mirrors the energy-regen scaling). This is the counterpart to the on-court
+   * per-action accrual and, like it, is EPHEMERAL — restored to the pre-game
+   * value in finalizeGame — so it drives the live display + in-game shot/sub
+   * decisions without touching the persisted season meter.
+   */
+  _recoverBenchFatigue(duration) {
+    if (!(duration > 0)) return
+    const onCourt = new Set([...this.homeLineup, ...this.awayLineup].map(p => String(p.id)))
+    const BASE = 1.0 // fatigue recovered per game-minute on the bench (tunable)
+    for (const p of [...this.homePlayers, ...this.awayPlayers]) {
+      if (!p?.id || onCourt.has(String(p.id))) continue
+      const stam = p.attributes?.physical?.stamina ?? p.attributes?.stamina ?? 75
+      const rate = BASE * (0.75 + (stam / 100) * 0.75) // stam 70 → ~1.28/game-min
+      p.fatigue = Math.max(0, (p.fatigue ?? 0) - rate * duration)
+    }
+  }
+
+  /**
    * Calculate fatigue modifier.
    */
   calculateFatigueModifier(player) {
     const stamina = (player.attributes && player.attributes.physical && player.attributes.physical.stamina) || 70
     const fatigue = player.fatigue || 0
 
+    // Stamina damps the impact (a high-stamina star tires less severely), but
+    // the coefficient (0.40) is steep enough that riding a player into the red
+    // is a real cost: at fatigue 100 / stamina 70 this is ~-26% (was ~-16% at
+    // 0.25). Applied to the shooter's make probability AND — separately — to a
+    // fatigued defender's rating in PlayExecutionEngine, so fatigue bites on
+    // both ends.
     const fatigueImpact = (fatigue / 100) * (1 - stamina / 200)
 
-    return 1 - fatigueImpact * 0.25
+    return 1 - fatigueImpact * 0.40
   }
 
   /**
@@ -3016,6 +3063,20 @@ class GameSimulator {
    * Finalize game and return complete results.
    */
   finalizeGame() {
+    // Restore each player's pre-game fatigue: the in-game per-action accrual is
+    // ephemeral (see the snapshot in initializeGameFromData). This runs after
+    // all quarters (so the live display / shot penalty / sub triggers already
+    // used the accrued values) and BEFORE the bulk worker hands these same
+    // objects to processPostGame — so post-game evolution adds only the
+    // minute-bracket delta to the season fatigue instead of stacking the huge
+    // accrual on top. Matches the (already-correct) user-game path.
+    for (const p of [...this.homePlayers, ...this.awayPlayers]) {
+      if (p && p._fatigueAtGameStart !== undefined) {
+        p.fatigue = p._fatigueAtGameStart
+        delete p._fatigueAtGameStart
+      }
+    }
+
     const homeBoxScoreFormatted = Object.values(this.homeBoxScore).map(s => this.formatBoxScoreStats(s))
     const awayBoxScoreFormatted = Object.values(this.awayBoxScore).map(s => this.formatBoxScoreStats(s))
 
