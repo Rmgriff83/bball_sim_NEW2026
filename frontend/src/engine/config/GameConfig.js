@@ -469,19 +469,37 @@ export const RETIREMENT = {
 // =============================================================================
 
 export const FATIGUE = {
+  // Graduated per-game accrual by minutes played. Brackets are CONTIGUOUS (each
+  // `max` == the next `min`) so a fractional-minute value can't fall through the
+  // gaps to the high-gain fallback. Heavy minutes cost progressively more so
+  // riding a starter 38+ min is meaningfully taxing vs a 30-min night. Gain is
+  // further scaled by stamina/durability in updateFatigue (see the widened
+  // multiplier there). All bases are tunable.
   minute_thresholds: [
-    // 0-18 mins: light duty / bench role -- player stays loose, net fatigue
-    // RECOVERY. Real benchwarmers playing under ~20 min/game don't
-    // accumulate noticeable wear across an 82-game season.
-    { min: 0, max: 18, type: "recovery", base: 6.4 },
-    // 19-30 mins: significant role -- moderate fatigue gain
-    { min: 19, max: 30, type: "gain", base: 2.2 },
-    // 31+ mins: heavy minutes -- significant fatigue gain
-    { min: 31, max: 48, type: "gain", base: 3.0 },
+    // 0-12 mins: token / deep bench -- net RECOVERY.
+    { min: 0, max: 12, type: "recovery", base: 4.0 },
+    // 12-21 mins: light role -- minimal gain.
+    { min: 12, max: 21, type: "gain", base: 1.0 },
+    // 21-28 mins: rotation role -- moderate gain.
+    { min: 21, max: 28, type: "gain", base: 3.0 },
+    // 28-33 mins: starter minutes -- heavy gain.
+    { min: 28, max: 33, type: "gain", base: 5.0 },
+    // 33-38 mins: heavy starter load.
+    { min: 33, max: 38, type: "gain", base: 7.0 },
+    // 38+ mins (incl. overtime): very heavy -- steepest gain.
+    { min: 38, max: 100, type: "gain", base: 9.5 },
   ],
   max_fatigue: 100,
-  weekly_recovery: 23.0,
-  rest_day_recovery: 23.0,
+  weekly_recovery: 23.0, // dead code (processWeeklyEvolution unwired) — untouched
+  // DNP (minutes === 0) recovery: a scheduled game the player sat out. Meaningful
+  // rest but NOT a full reset — resting a gassed star one game shouldn't wipe
+  // weeks of accumulated fatigue.
+  rest_day_recovery: 9.0,
+  // Per calendar OFF-DAY recovery, applied league-wide during date advance
+  // (processMultiDayRestRecovery). Sized to LAG the accrual so a heavily-used
+  // starter's fatigue climbs over a stretch (forcing rest) while a well-managed
+  // or high-stamina player stays sustainable. Tunable.
+  off_day_recovery: 3.0,
   // The in-game performance penalty is computed in GameSimulator
   // (calculateFatigueModifier): (fatigue/100) * (1 - stamina/200) * 0.25.
   // These two legacy keys are kept for backward compat with anything that

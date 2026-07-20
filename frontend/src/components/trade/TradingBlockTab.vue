@@ -9,6 +9,7 @@ import { GlassCard, StatBadge, LoadingSpinner } from '@/components/ui'
 import { Repeat, Users, ArrowRightLeft } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
+import PositionFilterBar from './PositionFilterBar.vue'
 
 function getPositionColor(position) {
   const colors = {
@@ -34,6 +35,13 @@ const tradeStore = useTradeStore()
 const loading = ref(true)
 const userBlockPlayers = ref([])
 const leagueBlockPlayers = ref([])
+const positionFilter = ref('all') // 'all' | 'PG' | 'SG' | 'SF' | 'PF' | 'C'
+
+function _matchesPosition(player) {
+  return positionFilter.value === 'all' || getPlayerPosition(player) === positionFilter.value
+}
+const filteredUserBlock = computed(() => userBlockPlayers.value.filter(_matchesPosition))
+const filteredLeagueBlock = computed(() => leagueBlockPlayers.value.filter(_matchesPosition))
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 const playerStatsMap = ref({})
@@ -204,6 +212,9 @@ onMounted(async () => {
     </div>
 
     <template v-else>
+      <!-- Position filter (applies to both sections) -->
+      <PositionFilterBar v-model="positionFilter" />
+
       <!-- User Trading Block -->
       <div class="block-section">
         <h3 class="section-title">Your Trading Block</h3>
@@ -213,9 +224,12 @@ onMounted(async () => {
             <p>No players on your trading block. Open a player's detail modal and tap the trade block toggle to add them.</p>
           </div>
         </GlassCard>
+        <div v-else-if="filteredUserBlock.length === 0" class="filter-empty">
+          No {{ positionFilter }} players on your trading block.
+        </div>
         <div v-else class="players-grid">
           <div
-            v-for="player in userBlockPlayers"
+            v-for="player in filteredUserBlock"
             :key="player.id"
             class="player-card"
             @click="openPlayer(player)"
@@ -264,9 +278,12 @@ onMounted(async () => {
             <p>No AI teams have players on the trading block yet.</p>
           </div>
         </GlassCard>
+        <div v-else-if="filteredLeagueBlock.length === 0" class="filter-empty">
+          No {{ positionFilter }} players on the league trading block.
+        </div>
         <div v-else class="players-grid">
           <div
-            v-for="player in leagueBlockPlayers"
+            v-for="player in filteredLeagueBlock"
             :key="player.id"
             class="player-card"
             @click="openPlayer(player)"
@@ -367,6 +384,12 @@ onMounted(async () => {
   font-size: 0.85rem;
   max-width: 400px;
   margin: 0;
+}
+
+.filter-empty {
+  padding: 1rem;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
 }
 
 .players-grid {

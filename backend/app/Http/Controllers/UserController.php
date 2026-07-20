@@ -9,6 +9,7 @@ use App\Services\SocialTokenVerifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
@@ -349,8 +350,14 @@ class UserController extends Controller
      */
     public function updateTokens(Request $request): JsonResponse
     {
+        // Positive ceiling: client-side awards are small (largest legit
+        // single credit is the 3,500 championship payout) — purchases are
+        // credited exclusively by the payment webhooks, never through this
+        // endpoint, so an implausibly large client-stated credit is rejected
+        // outright. Spends (negative) are already bounded by the balance
+        // guard in creditTokens.
         $validated = $request->validate([
-            'amount' => 'required|integer|not_in:0',
+            'amount' => 'required|integer|not_in:0|between:-100000,5000',
         ]);
 
         $user = $request->user();
@@ -365,6 +372,16 @@ class UserController extends Controller
         if ($newBalance === null) {
             return response()->json(['message' => 'Insufficient tokens'], 422);
         }
+
+        // Audit line for every client-driven token movement. The 2026-07-10
+        // credit-loss investigation stalled for a week because spends left
+        // no server-side trace — this line makes any future balance dispute
+        // answerable straight from the log.
+        Log::notice('Tokens adjusted', [
+            'user_id' => $user->id,
+            'amount' => $validated['amount'],
+            'new_balance' => $newBalance,
+        ]);
 
         return response()->json([
             'tokens' => $newBalance,

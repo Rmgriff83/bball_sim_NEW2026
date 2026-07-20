@@ -24,19 +24,12 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
   <div class="home-page">
     <!-- Hero Section -->
     <main class="hero-section">
-      <!-- Animated gradient background -->
-      <div class="hero-gradient-bg">
-        <div class="gradient-orb orb-1"></div>
-        <div class="gradient-orb orb-2"></div>
-        <div class="gradient-orb orb-3"></div>
-      </div>
-
       <div class="hero-content">
         <!-- Logo/Title -->
         <div class="hero-badge">DYNASTY BASKETBALL</div>
         <h1 class="hero-title">BBALL SIM</h1>
         <p class="hero-subtitle">
-          Build your dynasty. Manage your roster. Chase championships.
+          Manage your team. Chase Championships. Build your dynasty.
         </p>
 
         <!-- CTA Buttons -->
@@ -181,10 +174,8 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
         </div>
       </div>
 
-      <!-- Retro Effects -->
-      <div class="retro-grid"></div>
-      <div class="scanlines"></div>
-      <div class="vignette"></div>
+      <!-- Scanlines are now a global body::after (see assets/styles/main.css);
+           the retro grid + vignette overlays were removed as too heavy. -->
     </main>
 
     <!-- Features Section -->
@@ -228,22 +219,7 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
 
     <!-- Footer -->
     <footer class="home-footer">
-      <p>Basketball Simulator &copy; 2026</p>
-      <div class="footer-links">
-        <a
-          class="footer-link"
-          href="https://bball-sim.com/support"
-          target="_blank"
-          rel="noopener"
-        >Contact Us</a>
-        <span class="footer-sep">·</span>
-        <a
-          class="footer-link"
-          href="https://bball-sim.com/privacy"
-          target="_blank"
-          rel="noopener"
-        >Privacy</a>
-      </div>
+      <p>Bball Sim - Dynasty Basketball &copy; 2026</p>
     </footer>
   </div>
 </template>
@@ -264,84 +240,6 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
   padding: 4rem 1.5rem;
   position: relative;
   overflow: hidden;
-}
-
-/* Animated gradient background */
-.hero-gradient-bg {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.gradient-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.6;
-}
-
-.orb-1 {
-  width: 500px;
-  height: 500px;
-  background: rgba(232, 90, 79, 0.4);
-  top: 10%;
-  left: 10%;
-  animation: float1 12s ease-in-out infinite;
-}
-
-.orb-2 {
-  width: 400px;
-  height: 400px;
-  background: rgba(255, 193, 37, 0.35);
-  top: 50%;
-  right: 10%;
-  animation: float2 14s ease-in-out infinite;
-}
-
-.orb-3 {
-  width: 450px;
-  height: 450px;
-  background: rgba(147, 51, 234, 0.3);
-  bottom: 10%;
-  left: 40%;
-  animation: float3 16s ease-in-out infinite;
-}
-
-@keyframes float1 {
-  0%, 100% {
-    transform: translate(0, 0);
-  }
-  33% {
-    transform: translate(15%, 20%);
-  }
-  66% {
-    transform: translate(5%, -10%);
-  }
-}
-
-@keyframes float2 {
-  0%, 100% {
-    transform: translate(0, 0);
-  }
-  33% {
-    transform: translate(-20%, -15%);
-  }
-  66% {
-    transform: translate(-10%, 10%);
-  }
-}
-
-@keyframes float3 {
-  0%, 100% {
-    transform: translate(0, 0);
-  }
-  33% {
-    transform: translate(-10%, -20%);
-  }
-  66% {
-    transform: translate(15%, -5%);
-  }
 }
 
 /* Cosmic button */
@@ -416,21 +314,8 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
   font-weight: 400;
   letter-spacing: 0.05em;
   line-height: 1;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--color-primary);
   margin-bottom: 1rem;
-  animation: textGlow 3s ease-in-out infinite;
-}
-
-@keyframes textGlow {
-  0%, 100% {
-    filter: drop-shadow(0 0 20px rgba(232, 90, 79, 0.4));
-  }
-  50% {
-    filter: drop-shadow(0 0 30px rgba(255, 193, 37, 0.5));
-  }
 }
 
 .hero-subtitle {
@@ -493,41 +378,6 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
     width: 156px;
     height: 49px;
   }
-}
-
-/* Retro grid */
-.retro-grid {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 60px 60px;
-  pointer-events: none;
-  mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
-  -webkit-mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
-}
-
-/* Scanlines overlay */
-.scanlines {
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(100, 116, 139, 0.06) 2px,
-    rgba(100, 116, 139, 0.06) 4px
-  );
-  pointer-events: none;
-}
-
-/* CRT vignette */
-.vignette {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.4) 100%);
-  pointer-events: none;
 }
 
 /* Features Section */
@@ -631,27 +481,6 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
   flex-direction: column;
   align-items: center;
   gap: 6px;
-}
-
-.footer-links {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.footer-sep {
-  color: var(--color-text-tertiary);
-  opacity: 0.5;
-}
-
-.footer-link {
-  color: var(--color-text-secondary);
-  text-decoration: none;
-  transition: color 0.2s ease;
-}
-
-.footer-link:hover {
-  color: var(--color-text-primary);
 }
 
 /* Responsive */

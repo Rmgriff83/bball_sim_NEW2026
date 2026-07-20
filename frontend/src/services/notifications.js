@@ -121,10 +121,12 @@ export async function ensurePermission() {
 
 /**
  * Second contextual permission ask (the first is at training start): fires
- * after the user completes a game sim, so users who never touch training
- * still get one natural chance to opt in. One-shot per device — the flag is
- * set BEFORE requesting so this hook can only ever fire the OS prompt once,
- * and users who already granted/denied elsewhere are never re-prompted.
+ * after the user completes a game sim, so users who never touch training still
+ * get one natural chance to opt in. One-shot per device — the flag is set AFTER
+ * the request attempt (never before), so a transient/non-'prompt' state can't
+ * permanently self-disable this hook before the OS prompt ever gets a chance.
+ * Users who already granted/denied elsewhere are never re-prompted (the
+ * `display === 'prompt'` guard makes it a no-op).
  */
 const GAME_PROMPT_DONE_KEY = 'notif.gamePermissionAsked'
 
@@ -136,10 +138,12 @@ export async function maybeAskPermissionAfterGame() {
   try {
     const { LocalNotifications } = await _plugin()
     const { display } = await LocalNotifications.checkPermissions()
-    try { localStorage.setItem(GAME_PROMPT_DONE_KEY, 'true') } catch { /* ignore */ }
     if (display === 'prompt' || display === 'prompt-with-rationale') {
       await LocalNotifications.requestPermissions()
     }
+    // Consume the one-shot only after we've actually had the chance to prompt
+    // (or found permission already resolved) — never before the request.
+    try { localStorage.setItem(GAME_PROMPT_DONE_KEY, 'true') } catch { /* ignore */ }
   } catch { /* best-effort */ }
 }
 

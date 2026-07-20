@@ -16,6 +16,14 @@ use Stripe\Webhook as StripeWebhook;
 class PaymentController extends Controller
 {
     /**
+     * Set by applyBundle() when a webhook credits tokens; consumed by
+     * verifyTokenCredit() after the surrounding transaction commits.
+     *
+     * @var array{user_id: int, expected: ?int}|null
+     */
+    private ?array $lastTokenCredit = null;
+
+    /**
      * Create a Stripe Checkout Session for a token bundle.
      * POST /api/payments/checkout-session  (auth:sanctum)
      *
@@ -112,6 +120,10 @@ class PaymentController extends Controller
                 ]);
             }
             return response('Fulfillment failed', 500);
+        }
+
+        if ($status === 'fulfilled') {
+            $this->verifyTokenCredit(['source' => 'stripe', 'event_id' => $event->id]);
         }
 
         return $status === 'already_processed'
@@ -217,6 +229,54 @@ class PaymentController extends Controller
                 'tokens' => (int) $bundle['tokens'],
                 'new_balance' => $newBalance,
             ]);
+            // Stash for the post-commit read-back (verifyTokenCredit) so a
+            // credit that silently fails to persist is caught in-line.
+            $this->lastTokenCredit = [
+                'user_id' => $user->id,
+                'expected' => $newBalance,
+            ];
+        }
+    }
+
+    /**
+     * Post-commit verification: re-read the credited balance with a FRESH
+     * query after the webhook's transaction has committed and compare it to
+     * what creditTokens reported inside the transaction.
+     *
+     * Added after the 2026-07-10 incident where three credits logged success
+     * yet the balance the app read never reflected them — had this line
+     * existed, the discrepancy would have been visible in the very next log
+     * line instead of taking a week to reconstruct. A mismatch is logged at
+     * error level (never thrown — the purchase itself already committed).
+     */
+    private function verifyTokenCredit(array $logContext): void
+    {
+        if ($this->lastTokenCredit === null) {
+            return; // this fulfillment credited no tokens (pure unlock)
+        }
+
+        $credit = $this->lastTokenCredit;
+        $this->lastTokenCredit = null;
+
+        $rewards = DB::table('user_profiles')
+            ->where('user_id', $credit['user_id'])
+            ->value('rewards');
+        $fresh = (int) (json_decode($rewards ?? '{}', true)['tokens'] ?? 0);
+
+        if ($fresh === $credit['expected']) {
+            Log::notice('Payment credit verified', $logContext + [
+                'user_id' => $credit['user_id'],
+                'balance' => $fresh,
+            ]);
+        } else {
+            // A concurrent legitimate spend/earn in the microseconds since
+            // commit can also land here — the paired values let an
+            // investigator tell drift from loss at a glance.
+            Log::error('Payment credit verification mismatch', $logContext + [
+                'user_id' => $credit['user_id'],
+                'expected' => $credit['expected'],
+                'actual' => $fresh,
+            ]);
         }
     }
 
@@ -279,6 +339,10 @@ class PaymentController extends Controller
                 ]);
             }
             return response('Fulfillment failed', 500);
+        }
+
+        if ($status === 'fulfilled') {
+            $this->verifyTokenCredit(['source' => 'revenuecat', 'event_id' => $event['id']]);
         }
 
         return $status === 'already_processed'

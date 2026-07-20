@@ -26,11 +26,11 @@ const { synergies, loadSynergies } = useBadgeSynergies()
 const isNative = Capacitor.isNativePlatform()
 const restoringPurchases = ref(false)
 
-// Features unlocked via one-time IAP — currently just headshot_editor.
-// Displayed in the Purchases section so the user can see what they own
-// without going to /store.
+// Features unlocked via one-time IAP. Displayed in the Purchases section so
+// the user can see what they own without going to /store.
 const unlockedFeatureCatalog = [
-  { id: 'headshot_editor', label: 'Headshot Editor' }
+  { id: 'headshot_editor', label: 'Headshot Editor' },
+  { id: 'custom_roster', label: 'Roster Editor' }
 ]
 
 const ownedFeatures = computed(() =>

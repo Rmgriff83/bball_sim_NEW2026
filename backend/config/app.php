@@ -54,6 +54,11 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    // Public web-app origin (the Vue web build). Used by the app→web login
+    // handoff to build the /autologin URL. The root domain hosts the
+    // WordPress marketing site; the web app lives on the play. subdomain.
+    'web_url' => env('WEB_APP_URL', 'https://play.bball-sim.com'),
+
     /*
     |--------------------------------------------------------------------------
     | Frontend URL

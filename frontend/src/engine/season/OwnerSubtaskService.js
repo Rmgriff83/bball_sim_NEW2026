@@ -39,8 +39,8 @@ const EXPECTATION_RANK = { rebuild: 0, develop: 1, playoffs: 2, contender: 3, ch
 // with DIFFERENT ids (the All-Star goal: all_star_2 / all_star_3 / all_star_4)
 // map to one family so only the current tier's version is shown, with the
 // cumulative progress carried over as a head start. Every other recurring goal
-// (add_badges, quality_coach, hire_medical, retain_stars) already shares a
-// single id across tiers, so id === family collapses it naturally.
+// (add_badges, quality_coach, retain_stars) already shares a single id across
+// tiers, so id === family collapses it naturally.
 function _taskFamily(id) {
   return typeof id === 'string' && id.startsWith('all_star') ? 'all_star' : id;
 }
@@ -146,6 +146,7 @@ function _subtasksForExpectation(expectation, ctx) {
           description: 'Employ a scout rated 3 stars or better.',
           met: _tier(settings, 'scout') >= 3,
           weight: w,
+          hire: true,
         },
       ];
     case 'develop':
@@ -164,6 +165,7 @@ function _subtasksForExpectation(expectation, ctx) {
           description: 'Employ a development trainer rated 3 stars or better.',
           met: _tier(settings, 'staff_trainer') >= 3,
           weight: w,
+          hire: true,
         },
         {
           id: 'retain_stars',
@@ -176,18 +178,12 @@ function _subtasksForExpectation(expectation, ctx) {
     case 'playoffs':
       return [
         {
-          id: 'hire_medical',
-          label: 'Hire a quality physician',
-          description: 'Employ a team physician rated 3 stars or better.',
-          met: _tier(settings, 'trainer') >= 3,
-          weight: w,
-        },
-        {
           id: 'quality_coach',
           label: 'Employ a quality head coach',
           description: 'Have a head coach rated 80 or better.',
           met: _coachRating(coach) >= 80,
           weight: w,
+          hire: true,
         },
         {
           id: 'all_star_2',
@@ -197,22 +193,23 @@ function _subtasksForExpectation(expectation, ctx) {
           progress: { current: allStars, target: 2 },
           weight: w,
         },
+        {
+          id: 'retain_stars',
+          label: 'Retain & keep your stars happy',
+          description: 'Keep the star players you had at signing and maintain their morale.',
+          met: _retainStarsMet(roster, progress?.starPlayerIdsAtSign),
+          weight: w,
+        },
       ];
     case 'contender':
       return [
-        {
-          id: 'hire_medical',
-          label: 'Hire a quality physician',
-          description: 'Employ a team physician rated 3 stars or better.',
-          met: _tier(settings, 'trainer') >= 3,
-          weight: w,
-        },
         {
           id: 'quality_coach',
           label: 'Employ a top head coach',
           description: 'Have a head coach rated 85 or better.',
           met: _coachRating(coach) >= 85,
           weight: w,
+          hire: true,
         },
         {
           id: 'all_star_3',
@@ -229,22 +226,24 @@ function _subtasksForExpectation(expectation, ctx) {
           met: _retainStarsMet(roster, progress?.starPlayerIdsAtSign),
           weight: w,
         },
+        {
+          id: 'add_badges',
+          label: 'Develop the roster (badges)',
+          description: 'Add at least 5 player badges over the contract (training or purchases).',
+          met: badges >= 5,
+          progress: { current: badges, target: 5 },
+          weight: w,
+        },
       ];
     case 'championship':
       return [
-        {
-          id: 'hire_medical',
-          label: 'Hire an elite physician',
-          description: 'Employ a team physician rated 4 stars.',
-          met: _tier(settings, 'trainer') >= 4,
-          weight: w,
-        },
         {
           id: 'quality_coach',
           label: 'Employ a top head coach',
           description: 'Have a head coach rated 85 or better.',
           met: _coachRating(coach) >= 85,
           weight: w,
+          hire: true,
         },
         {
           id: 'all_star_4',
@@ -328,18 +327,38 @@ export function evaluateSubtasks({
     expectation ?? tiers[0]
   );
 
-  // Active goals from the current tier.
-  const currentTasks = _subtasksForExpectation(currentTier, ctx);
-  const currentFamilies = new Set(currentTasks.map((t) => _taskFamily(t.id)));
+  // Starting tier = the LOWEST-rank tier in the contract's history. Every tier has
+  // exactly one token-costing HIRE goal (tagged `hire`), and we lock that single
+  // hire to the tier the contract was SIGNED at — so a mid-season or season-end
+  // raise adds only the higher tier's non-hire goals and never introduces (or
+  // escalates) another paid hire. That caps the contract at one significant-cost
+  // hire, addressing the "trap to buy tokens" complaint.
+  const initialTier = tiers.reduce(
+    (best, t) => ((EXPECTATION_RANK[t] ?? 99) < (EXPECTATION_RANK[best] ?? 99) ? t : best),
+    tiers[0]
+  );
+
+  // Non-hire goals come from the current (highest) tier; the one hire comes from
+  // the starting tier. When no raise has happened these are the same tier, so the
+  // task set is identical to the pre-lock behavior.
+  const currentNonHire = _subtasksForExpectation(currentTier, ctx).filter((t) => !t.hire);
+  const lockedHires = _subtasksForExpectation(initialTier, ctx).filter((t) => t.hire);
+
+  const currentFamilies = new Set(
+    [...currentNonHire, ...lockedHires].map((t) => _taskFamily(t.id))
+  );
 
   // Retain only COMPLETED one-off goals from earlier tiers whose metric isn't
-  // already represented by a current-tier goal (uncompleted olds are replaced;
-  // same-metric completed lowers collapse into the current goal's head start).
+  // already represented (uncompleted olds are replaced; same-metric completed
+  // lowers collapse into the current goal's head start). Hire goals are handled
+  // by the lock above and never re-enter here — otherwise a completed
+  // intermediate-tier hire could smuggle a second paid hire back onto the list.
   const extras = [];
   const seenExtra = new Set();
   for (const tier of tiers) {
     if (tier === currentTier) continue;
     for (const task of _subtasksForExpectation(tier, ctx)) {
+      if (task.hire) continue;
       if (!task.met) continue;
       if (currentFamilies.has(_taskFamily(task.id))) continue;
       if (seenExtra.has(task.id)) continue;
@@ -348,7 +367,7 @@ export function evaluateSubtasks({
     }
   }
 
-  const list = [...currentTasks, ...extras];
+  const list = [...currentNonHire, ...lockedHires, ...extras];
 
   // Global salary-cap sub-task, weighted by money-consciousness.
   list.push({

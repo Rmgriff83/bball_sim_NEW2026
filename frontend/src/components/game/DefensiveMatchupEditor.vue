@@ -260,12 +260,15 @@ function isDefault(opponent, index) {
 .compact .me-name { font-size: 0.78rem; }
 .compact .me-hint { display: none; }
 
-[data-theme='light'] .me-row-wrap {
+/* Light-mode restyle applies only to the standalone (pre-game) instance —
+   the compact instance lives inside the dark coaches overlay and must keep
+   the dark-mode look in both themes. */
+[data-theme='light'] .matchup-editor:not(.compact) .me-row-wrap {
   background: rgba(0, 0, 0, 0.03);
   border-color: rgba(0, 0, 0, 0.1);
 }
-[data-theme='light'] .me-picker { background: rgba(0, 0, 0, 0.04); }
-[data-theme='light'] .me-pick {
+[data-theme='light'] .matchup-editor:not(.compact) .me-picker { background: rgba(0, 0, 0, 0.04); }
+[data-theme='light'] .matchup-editor:not(.compact) .me-pick {
   background: #fff;
   border-color: rgba(0, 0, 0, 0.12);
 }

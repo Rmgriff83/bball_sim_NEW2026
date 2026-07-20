@@ -63,6 +63,15 @@ const newCampaignName = ref('')
 const selectedTeam = ref(null)
 const customTeamName = ref('')
 const selectedDraftMode = ref('standard')
+// Full Custom Roster editor (custom_roster IAP). Default 'generated' keeps the
+// current behavior; 'custom' routes to the gated roster-setup editor after
+// creation. Available for standard AND fantasy campaigns.
+const selectedLeagueRoster = ref('generated')
+const canCustomRoster = computed(() => authStore.hasFeature('custom_roster'))
+const leagueRosterOptions = [
+  { value: 'generated', label: 'Generated', description: 'Auto-built league rosters (default)' },
+  { value: 'custom', label: 'Custom', description: 'Edit every team before the season starts' },
+]
 const creating = ref(false)
 const createError = ref(null)
 
@@ -184,6 +193,7 @@ function openCreateModal() {
   selectedTeam.value = null
   customTeamName.value = ''
   selectedDraftMode.value = 'standard'
+  selectedLeagueRoster.value = 'generated'
   document.body.style.overflow = 'hidden'
 }
 
@@ -278,15 +288,25 @@ async function createCampaign() {
     if (selectedDraftMode.value === 'fantasy') {
       payload.draft_mode = 'fantasy'
     }
+    // Belt-and-suspenders gate: only honor the custom flag when the IAP is owned.
+    const useCustomRoster = canCustomRoster.value && selectedLeagueRoster.value === 'custom'
+    if (useCustomRoster) {
+      payload.custom_roster = true
+    }
 
     const campaign = await campaignStore.createCampaign(payload)
 
     audio.affirm()
     closeCreateModal()
     // Defer navigation until the user answers "have you played before?".
-    pendingNavigation.value = selectedDraftMode.value === 'fantasy'
-      ? `/campaign/${campaign.id}/draft`
-      : `/campaign/${campaign.id}`
+    // Custom rosters take precedence: both standard and fantasy custom campaigns
+    // open the roster-setup editor first (fantasy proceeds to the draft room on
+    // finalize).
+    pendingNavigation.value = useCustomRoster
+      ? `/campaign/${campaign.id}/roster-setup`
+      : selectedDraftMode.value === 'fantasy'
+        ? `/campaign/${campaign.id}/draft`
+        : `/campaign/${campaign.id}`
     showPlayedBeforeModal.value = true
   } catch (err) {
     createError.value = err.message || 'Failed to create campaign'
@@ -523,6 +543,19 @@ function getDifficultyLabel(value) {
                    campaigns saved at other difficulties still render the
                    right label on the campaign list. -->
 
+              <!-- GM Level (career, profile-global) -->
+              <div class="form-group gm-level-group">
+                <span class="gm-level-label">Your GM Level</span>
+                <span
+                  class="gm-level-badge"
+                  :style="{ backgroundColor: gmLevelBadge.color, color: gmLevelBadge.text }"
+                  :title="`Your GM career level: ${gmLevelBadge.label}`"
+                >
+                  <Medal :size="14" />
+                  {{ gmLevelBadge.label }}
+                </span>
+              </div>
+
               <!-- Draft Mode Selection -->
               <div class="form-group">
                 <label class="form-label">Draft Mode</label>
@@ -541,17 +574,24 @@ function getDifficultyLabel(value) {
                 </div>
               </div>
 
-              <!-- GM Level (career, profile-global) -->
-              <div class="form-group gm-level-group">
-                <span class="gm-level-label">Your GM Level</span>
-                <span
-                  class="gm-level-badge"
-                  :style="{ backgroundColor: gmLevelBadge.color, color: gmLevelBadge.text }"
-                  :title="`Your GM career level: ${gmLevelBadge.label}`"
-                >
-                  <Medal :size="14" />
-                  {{ gmLevelBadge.label }}
-                </span>
+              <!-- League Roster Selection — gated by the custom_roster IAP.
+                   Hidden entirely when the user doesn't own the unlock;
+                   createCampaign defaults to 'generated' otherwise. -->
+              <div v-if="canCustomRoster" class="form-group">
+                <label class="form-label">League Roster</label>
+                <div class="difficulty-grid">
+                  <button
+                    v-for="opt in leagueRosterOptions"
+                    :key="opt.value"
+                    type="button"
+                    class="difficulty-option"
+                    :class="{ selected: selectedLeagueRoster === opt.value }"
+                    @click="selectedLeagueRoster = opt.value"
+                  >
+                    <span class="difficulty-name">{{ opt.label }}</span>
+                    <span class="difficulty-desc">{{ opt.description }}</span>
+                  </button>
+                </div>
               </div>
 
               <!-- Team Selection -->

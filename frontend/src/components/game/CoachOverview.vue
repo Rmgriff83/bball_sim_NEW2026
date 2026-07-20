@@ -355,7 +355,7 @@ const timeoutTitle = computed(() => {
 }
 
 .co-timeout-btn.is-armed {
-  background: #d4502f;
+  background: #d4502f!important;
   border-color: rgba(255, 255, 255, 0.35);
   color: #fff;
   box-shadow: 0 4px 14px -3px rgba(239, 106, 79, 0.95);
@@ -437,5 +437,76 @@ const timeoutTitle = computed(() => {
   .co-coach-name {
     margin-top: 0;
   }
+}
+
+/* ── Light mode ──────────────────────────────────────────────────────────
+   The strip sits on the page background (above the canvas), so unlike the
+   coaches overlay it adapts: light glass shell, dark text, dark-alpha
+   borders. The coral armed/continue accents work in both themes. */
+[data-theme="light"] .coach-overview {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(45, 40, 56, 0.12);
+}
+
+[data-theme="light"] .co-cluster {
+  background: rgba(45, 40, 56, 0.04);
+  border-color: rgba(45, 40, 56, 0.1);
+}
+
+[data-theme="light"] .co-cluster.is-clickable:hover {
+  background: rgba(45, 40, 56, 0.08);
+  border-color: rgba(45, 40, 56, 0.18);
+}
+
+[data-theme="light"] .co-avatar {
+  background: #f3ece4;
+}
+
+[data-theme="light"] .co-ovr-badge {
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+[data-theme="light"] .co-coach-name {
+  color: #2d2838;
+}
+
+[data-theme="light"] .co-chip-offense {
+  color: #b3402c;
+  background: rgba(239, 106, 79, 0.12);
+}
+
+[data-theme="light"] .co-chip-defense {
+  color: #1d5cb5;
+  background: rgba(47, 128, 237, 0.1);
+}
+
+[data-theme="light"] .co-timeout-btn {
+  background: rgba(45, 40, 56, 0.06);
+}
+
+[data-theme="light"] .co-timeout-btn.is-ready {
+  border-color: rgba(45, 40, 56, 0.2);
+  color: #2d2838;
+}
+
+[data-theme="light"] .co-to-pip {
+  background: rgba(45, 40, 56, 0.18);
+}
+
+[data-theme="light"] .co-action-btn {
+  border-color: rgba(45, 40, 56, 0.18);
+  background: rgba(45, 40, 56, 0.05);
+  color: #2d2838;
+}
+
+[data-theme="light"] .co-action-btn:hover:not(:disabled) {
+  background: rgba(45, 40, 56, 0.1);
+}
+
+/* Keep the coral fills (armed timeout / continue) — they read well on light. */
+[data-theme="light"] .co-action-continue {
+  background: #ef6a4f;
+  border-color: transparent;
+  color: #fff;
 }
 </style>

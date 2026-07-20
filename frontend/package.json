@@ -23,6 +23,7 @@
     "release": "npm run build && firebase deploy --only hosting && npm run build:native && cap sync && npm run bundle:android"
   },
   "dependencies": {
+    "@capacitor-community/in-app-review": "^8.0.0",
     "@capacitor/android": "^8.3.4",
     "@capacitor/app": "^8.1.0",
     "@capacitor/cli": "^8.3.4",

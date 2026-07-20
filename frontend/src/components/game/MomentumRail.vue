@@ -128,4 +128,16 @@ const fillStyle = computed(() => {
     padding-right: 20px;
   }
 }
+
+/* Light mode — the white-alpha track is invisible on the light page; flip the
+   track/border/center-line to dark alphas. The colored fill + team tokens
+   already read fine on light. */
+[data-theme="light"] .rail-track {
+  background: rgba(45, 40, 56, 0.1);
+  border-color: rgba(45, 40, 56, 0.2);
+}
+
+[data-theme="light"] .rail-center {
+  background: rgba(45, 40, 56, 0.4);
+}
 </style>

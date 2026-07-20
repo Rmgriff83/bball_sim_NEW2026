@@ -30,20 +30,24 @@ const routes = [
     name: 'home',
     component: lazyLoad(() => import('@/views/HomeView.vue'))
   },
-  // Web-only — Apple's App Store reviewer hits these URLs on the web,
-  // they have no purpose inside the iOS app. VITE_NATIVE_BUILD is set by
-  // `npm run build:ios`, so these routes (including their dynamic imports)
-  // are dead-code-eliminated from the iOS bundle.
+  // Web-only routes. VITE_NATIVE_BUILD is set by `npm run build:ios`, so
+  // these (including their dynamic imports) are dead-code-eliminated from
+  // the native bundles. Support/privacy pages moved to the WordPress site
+  // on the root domain (2026-07); the web app lives at play.bball-sim.com.
   ...(import.meta.env.VITE_NATIVE_BUILD ? [] : [
+    // Community roster board + the app→web login handoff landing (Roster
+    // Editor IAP Part B). Web-only by design — the app binaries carry no UGC
+    // browse/share surface.
     {
-      path: '/support',
-      name: 'support',
-      component: lazyLoad(() => import('@/views/SupportView.vue'))
+      path: '/autologin',
+      name: 'autologin',
+      component: lazyLoad(() => import('@/views/community/AutoLoginView.vue'))
     },
     {
-      path: '/privacy',
-      name: 'privacy',
-      component: lazyLoad(() => import('@/views/PrivacyView.vue'))
+      path: '/community',
+      name: 'community',
+      component: lazyLoad(() => import('@/views/community/CommunityView.vue')),
+      meta: { requiresAuth: true }
     }
   ]),
   {
@@ -105,6 +109,14 @@ const routes = [
     name: 'fantasy-draft',
     component: lazyLoad(() => import('@/views/draft/DraftRoomView.vue')),
     meta: { requiresAuth: true }
+  },
+  {
+    // Full Custom Roster editor (custom_roster IAP). Top-level (like the
+    // fantasy draft room) so it renders full-screen without the campaign chrome.
+    path: '/campaign/:id/roster-setup',
+    name: 'roster-setup',
+    component: lazyLoad(() => import('@/views/roster/RosterSetupView.vue')),
+    meta: { requiresAuth: true, requiresCustomRoster: true, hideBottomNav: true }
   },
   {
     path: '/campaign/:id',
@@ -216,6 +228,12 @@ router.beforeEach(async (to, from, next) => {
   // the URL directly — the entry-point button is already hidden in
   // PlayerDetailModal when hasFeature is false, but routing must enforce it.
   if (to.meta.requiresHeadshotEditor && !authStore.hasFeature?.('headshot_editor')) {
+    next({ name: 'store' })
+    return
+  }
+
+  // Entitlement gate for the Custom Roster editor (custom_roster IAP).
+  if (to.meta.requiresCustomRoster && !authStore.hasFeature?.('custom_roster')) {
     next({ name: 'store' })
     return
   }

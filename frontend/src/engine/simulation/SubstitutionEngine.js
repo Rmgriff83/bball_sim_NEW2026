@@ -6,12 +6,31 @@
  * preserved exactly.
  *
  * Player objects expected shape:
- *   { id, position, secondary_position, overall_rating (or overallRating),
- *     is_injured (or isInjured) }
+ *   { id, position, secondary_position, tertiary_position (both optional),
+ *     overall_rating (or overallRating), is_injured (or isInjured) }
  *
  * BoxScore expected shape:
  *   { [playerId]: { minutes: Number, ... } }
  */
+
+// All positions a player (or sit/bench candidate projection) can play:
+// primary + optional secondary/tertiary. Tolerates either casing and absent
+// fields (legacy saves have no tertiary).
+function playablePositions(p) {
+  return [
+    p?.position,
+    p?.secondary_position ?? p?.secondaryPosition ?? null,
+    p?.tertiary_position ?? p?.tertiaryPosition ?? null,
+  ].filter(Boolean);
+}
+
+// Do two players/candidates share ANY playable position? Generalizes the old
+// hand-enumerated primary/secondary cross-checks (and closes their missing
+// secondary-vs-secondary combinations) while adding tertiary support.
+function sharesPlayablePosition(a, b) {
+  const bp = playablePositions(b);
+  return playablePositions(a).some((pos) => bp.includes(pos));
+}
 
 const CHECK_INTERVAL_MINUTES = 2.0;
 const VARIANCE_RANGE = 0.15;
@@ -28,11 +47,11 @@ const TOTAL_GAME_MINUTES = 48.0;
 // The cap is applied EVERYWHERE a per-player clamp is needed — no more
 // scattered Math.min(48, ...) sites that bypass the cap.
 export const AI_STARTER_MPG_CAPS = {
-  tight_rotation:  38,
-  staggered:       36,
-  platoon:         34,
-  deep_bench:      32,
-  load_management: 30,
+  tight_rotation:  34,
+  staggered:       32,
+  platoon:         31,
+  deep_bench:      30,
+  load_management: 28,
 };
 
 export function aiStarterCapFor(strategy) {
@@ -188,9 +207,6 @@ function findBenchReplacement(
   gameElapsed,
   currentLineupIds
 ) {
-  const position = sitCandidate.position;
-  const secondaryPosition = sitCandidate.secondary_position;
-
   const candidates = [];
 
   for (const player of benchPlayers) {
@@ -199,16 +215,9 @@ function findBenchReplacement(
       continue;
     }
 
-    // Must be able to play the position
-    const playerPos = player.position ?? '';
-    const playerSecondary = player.secondary_position ?? null;
-    const canPlay =
-      playerPos === position ||
-      playerSecondary === position ||
-      playerPos === secondaryPosition ||
-      playerSecondary === secondaryPosition;
-
-    if (!canPlay) {
+    // Must be able to play the position (any of primary/secondary/tertiary
+    // on either side)
+    if (!sharesPlayablePosition(player, sitCandidate)) {
       continue;
     }
 
@@ -268,14 +277,7 @@ function findBenchReplacement(
       if (currentLineupIds.includes(player.id)) continue;
       const target = targetMinutes[player.id] ?? 0;
       if (target > 0) continue;   // already handled by Tier 1/2 above
-      const playerPos = player.position ?? '';
-      const playerSecondary = player.secondary_position ?? null;
-      const canPlay =
-        playerPos === position ||
-        playerSecondary === position ||
-        playerPos === secondaryPosition ||
-        playerSecondary === secondaryPosition;
-      if (!canPlay) continue;
+      if (!sharesPlayablePosition(player, sitCandidate)) continue;
       const fatiguePenalty = (player.fatigue ?? 0) * 0.15;
       candidates.push({
         player,
@@ -432,19 +434,27 @@ export function evaluateSubstitutions(
   const isLoadManagement = strategy === 'load_management';
 
   // In-game hard fatigue cap, applied any time the engine is making
-  // sub decisions in the regular season — both AI teams AND the
-  // user's own team when they fast-sim a game (vs playing it live).
-  // The only case this skips is user-live games (`isUserTeamLive`),
-  // where the user manually controls subs. Pregame minute haircuts
-  // in computeAITargetMinutes already reduce a fatigued starter's
-  // target, but a close-game stretch or a behind-pace bench can
-  // still drift them into the deep-red zone mid-game. This gate is
-  // the safety net: any player at ≥85 fatigue gets force-sat and
-  // can't be subbed back in until they recover below 85.
-  const AI_HARD_FATIGUE_CAP = 85;
-  // "Engine-controlled" means the simulator is deciding subs (not the
-  // user). Covers AI teams + the user's team during fast-sim. Skipped
-  // in playoff games — engine rides stars hard when it matters.
+  // sub decisions — both AI teams AND the user's own team when they
+  // fast-sim a game (vs playing it live). The only case this skips is
+  // user-live games (`isUserTeamLive`), where the user manually controls
+  // subs. Pregame minute haircuts in computeAITargetMinutes already reduce
+  // a fatigued starter's target, but a close-game stretch or a behind-pace
+  // bench can still drift them into the deep-red zone mid-game. This gate is
+  // the safety net: a player at/above the cap gets force-sat and can't be
+  // subbed back in until they recover below it.
+  //
+  // Regular season sits at 80; playoffs/OT ride stars HARD but still cap at
+  // 92 so no one is pinned literally to 100. (Energy gates below stay fully
+  // gloves-off in the playoffs — only this hard fatigue ceiling applies.)
+  const AI_HARD_FATIGUE_CAP = 80;
+  const HIGH_STAKES_FATIGUE_CAP = 92;
+  const hardFatigueCap = isPlayoff ? HIGH_STAKES_FATIGUE_CAP : AI_HARD_FATIGUE_CAP;
+  // Engine-controlled = the simulator decides subs (AI teams + user fast-sim),
+  // i.e. any game except a user-live one. The hard fatigue cap applies here in
+  // ALL games (at the stakes-scaled threshold above).
+  const isEngineControlled = !isUserTeamLive;
+  // The ENERGY gates below remain regular-season-only (gloves off on energy in
+  // the playoffs); the hard fatigue cap is what protects high-stakes games.
   const isEngineControlledRegularSeason = !isUserTeamLive && !isPlayoff;
 
   // In-game energy: depletes while a player is on the floor and
@@ -508,12 +518,12 @@ export function evaluateSubstitutions(
         if (isLoadManagement && (player.fatigue ?? 0) >= LOAD_MANAGEMENT_FATIGUE_THRESHOLD) {
           continue;
         }
-        // Regular-season hard fatigue cap: don't sub in any player
-        // whose fatigue is ≥85, regardless of which team they're on.
-        // Applies to AI teams AND user teams when the user is fast-
-        // simming (the engine, not the user, is making sub decisions).
-        // Skipped only when the user is playing live (manual control).
-        if (isEngineControlledRegularSeason && (player.fatigue ?? 0) >= AI_HARD_FATIGUE_CAP) {
+        // Hard fatigue cap: don't sub in any player at/above the (stakes-
+        // scaled) cap, regardless of which team they're on. Applies to AI
+        // teams AND user teams when the user is fast-simming (the engine, not
+        // the user, is making sub decisions). Skipped only when the user is
+        // playing live (manual control).
+        if (isEngineControlled && (player.fatigue ?? 0) >= hardFatigueCap) {
           continue;
         }
         // Energy re-entry gate: a player whose energy hasn't recovered
@@ -558,23 +568,24 @@ export function evaluateSubstitutions(
         paceDelta: 999,
         position: playerMap[playerId]?.position ?? 'SF',
         secondary_position: playerMap[playerId]?.secondary_position ?? null,
+        tertiary_position: playerMap[playerId]?.tertiary_position ?? null,
       });
       continue;
     }
 
-    // Regular-season hard fatigue cap: same force-sit treatment as
-    // load_management but always-on regardless of chosen strategy.
-    // Applies to AI teams AND user teams during fast-sim (any time
-    // the engine is making sub decisions). Triggers at ≥85 fatigue
-    // rather than 75 so it's a safety net, not the primary tool —
-    // computeAITargetMinutes handles the bulk of fatigue management
-    // pregame.
-    if (isEngineControlledRegularSeason && fatigue >= AI_HARD_FATIGUE_CAP) {
+    // Hard fatigue cap: same force-sit treatment as load_management but
+    // always-on regardless of chosen strategy. Applies to AI teams AND user
+    // teams during fast-sim (any time the engine is making sub decisions).
+    // Triggers at the stakes-scaled cap (80 regular / 92 playoffs) so it's a
+    // safety net — computeAITargetMinutes handles the bulk of fatigue
+    // management pregame.
+    if (isEngineControlled && fatigue >= hardFatigueCap) {
       sitCandidates.push({
         id: playerId,
         paceDelta: 999,
         position: playerMap[playerId]?.position ?? 'SF',
         secondary_position: playerMap[playerId]?.secondary_position ?? null,
+        tertiary_position: playerMap[playerId]?.tertiary_position ?? null,
       });
       continue;
     }
@@ -594,6 +605,7 @@ export function evaluateSubstitutions(
         paceDelta: 999,
         position: playerMap[playerId]?.position ?? 'SF',
         secondary_position: playerMap[playerId]?.secondary_position ?? null,
+        tertiary_position: playerMap[playerId]?.tertiary_position ?? null,
       });
       continue;
     }
@@ -607,6 +619,7 @@ export function evaluateSubstitutions(
         paceDelta,
         position: playerMap[playerId]?.position ?? 'SF',
         secondary_position: playerMap[playerId]?.secondary_position ?? null,
+        tertiary_position: playerMap[playerId]?.tertiary_position ?? null,
       });
     }
   }
@@ -631,6 +644,7 @@ export function evaluateSubstitutions(
         deficit,
         position: player.position ?? 'SF',
         secondary_position: player.secondary_position ?? null,
+        tertiary_position: player.tertiary_position ?? null,
       });
     }
   }
@@ -642,13 +656,7 @@ export function evaluateSubstitutions(
   // (most ahead of pace at a compatible position) even if they haven't hit pace_threshold
   for (const benchCandidate of behindPaceCandidates) {
     // Check if there's already a sit candidate at a compatible position
-    const alreadyCovered = sitCandidates.some((c) => {
-      const posMatch =
-        c.position === benchCandidate.position ||
-        c.position === benchCandidate.secondary_position ||
-        c.secondary_position === benchCandidate.position;
-      return posMatch;
-    });
+    const alreadyCovered = sitCandidates.some((c) => sharesPlayablePosition(c, benchCandidate));
 
     if (alreadyCovered) continue;
 
@@ -663,17 +671,8 @@ export function evaluateSubstitutions(
       const onCourtPlayer = playerMap[playerId];
       if (!onCourtPlayer) continue;
 
-      // Check position compatibility
-      const onCourtPos = onCourtPlayer.position ?? 'SF';
-      const onCourtSecondary = onCourtPlayer.secondary_position ?? null;
-      const canSwap =
-        onCourtPos === benchCandidate.position ||
-        onCourtPos === benchCandidate.secondary_position ||
-        onCourtSecondary === benchCandidate.position ||
-        benchCandidate.position === onCourtPos ||
-        benchCandidate.secondary_position === onCourtPos;
-
-      if (!canSwap) continue;
+      // Check position compatibility (primary/secondary/tertiary, both sides)
+      if (!sharesPlayablePosition(onCourtPlayer, benchCandidate)) continue;
 
       const actualMinutes = boxScore[playerId]?.minutes ?? 0;
       const targetPct = targetPcts[playerId] ?? 0.5;
@@ -686,8 +685,9 @@ export function evaluateSubstitutions(
         bestSwapOut = {
           id: playerId,
           paceDelta,
-          position: onCourtPos,
-          secondary_position: onCourtSecondary,
+          position: onCourtPlayer.position ?? 'SF',
+          secondary_position: onCourtPlayer.secondary_position ?? null,
+          tertiary_position: onCourtPlayer.tertiary_position ?? null,
         };
       }
     }
@@ -1063,20 +1063,37 @@ export function generateRoleAwareTargetMinutes(roster, starterIds, strategy) {
 export function computeAITargetMinutes(roster, starterIds, strategy, { isPlayoff = false } = {}) {
   const base = generateRoleAwareTargetMinutes(roster, starterIds, strategy);
 
-  if (isPlayoff) return base;
+  const playerOf = (id) => roster.find((r) => r?.id === id);
+
+  // Playoffs ride stars harder but are no longer a free-for-all: skip the
+  // pregame fatigue haircut and restMode sit (a coach won't bench a star for a
+  // whole playoff game), but still cap at regular cap + 4 MPG so no one is
+  // pinned at 40+ every night. Extreme fatigue is caught mid-game by the
+  // stakes-scaled hard cap (92) in evaluateSubstitutions.
+  if (isPlayoff) {
+    const PLAYOFF_CAP = aiStarterCapFor(strategy) + 4;
+    const adjustedPo = {};
+    for (const [id, mins] of Object.entries(base)) {
+      adjustedPo[id] = Math.max(0, Math.round(Math.min(PLAYOFF_CAP, mins)));
+    }
+    return adjustedPo;
+  }
 
   const STARTER_CAP = aiStarterCapFor(strategy);
-  const playerOf = (id) => roster.find((r) => r?.id === id);
 
   const adjusted = {};
   for (const [id, mins] of Object.entries(base)) {
     const p = playerOf(id);
     const f = p?.fatigue ?? 0;
     let m = mins;
+    // Rest fatigued starters earlier and harder (tiered): the previous single
+    // ≥50 → ×0.85 let stars ride heavy minutes while still red.
     if (p?.restMode === true) {
       m = 0;
-    } else if (f >= 50) {
-      m = m * 0.85;
+    } else if (f >= 60) {
+      m = m * 0.78;
+    } else if (f >= 40) {
+      m = m * 0.90;
     }
     // Final cap respects the team's strategy. base already clamped
     // at the same cap inside generateRoleAwareTargetMinutes, but
@@ -1130,9 +1147,10 @@ export function applyVariance(targetMinutes) {
  * @param {Array} starterIds - Array of starter player IDs
  * @returns {Object} { [playerId]: targetMinutes }
  */
-export function getDefaultTargetMinutes(roster, starterIds) {
+export function getDefaultTargetMinutes(roster, starterIds, strategy = 'staggered') {
   const targetMinutes = {};
   const bench = [];
+  const STARTER_CAP = aiStarterCapFor(strategy);
 
   // Identify healthy starters and bench
   let healthyStarterCount = 0;
@@ -1155,7 +1173,9 @@ export function getDefaultTargetMinutes(roster, starterIds) {
   }
 
   // Healthy starters split 192 minutes evenly. 192 / 5 = 38.4 — distribute
-  // the remainder across the first N starters so the total lands at 192.
+  // the remainder across the first N starters, then clamp to the strategy's
+  // starter cap so the fallback can't leak ~39-MPG uncapped starters (the
+  // bench budget below absorbs any shortfall; a sub-240 total is fine).
   const baseStarterMins =
     healthyStarterCount > 0 ? Math.floor(192 / healthyStarterCount) : 0;
   const starterRemainder = 192 - baseStarterMins * healthyStarterCount;
@@ -1164,7 +1184,7 @@ export function getDefaultTargetMinutes(roster, starterIds) {
   for (const id of Object.keys(targetMinutes)) {
     if (targetMinutes[id] === null) {
       const extra = starterIdx < starterRemainder ? 1 : 0;
-      targetMinutes[id] = Math.min(baseStarterMins + extra, 48);
+      targetMinutes[id] = Math.min(baseStarterMins + extra, STARTER_CAP);
       starterTotal += targetMinutes[id];
       starterIdx++;
     }

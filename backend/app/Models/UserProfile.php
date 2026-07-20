@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 
 class UserProfile extends Model
 {
@@ -92,21 +93,39 @@ class UserProfile extends Model
     /**
      * Adjust the user's token balance by $amount (positive = credit, negative = spend).
      * Returns the new balance, or null if the change would push the balance negative.
+     *
+     * Implemented as ONE atomic UPDATE with in-database JSON arithmetic
+     * (2026-07 token-credit-loss incident hardening) rather than the previous
+     * PHP read-modify-write of the whole rewards blob. Two properties matter:
+     *  - the increment is computed from the row's CURRENT committed value, so
+     *    a concurrent writer holding a stale copy can never make this credit
+     *    vanish (no lost-update window);
+     *  - the spend guard rides in the WHERE clause, so "affected 0 rows" IS
+     *    the insufficient-balance answer — check and decrement are one
+     *    indivisible statement.
      */
     public function creditTokens(int $amount): ?int
     {
-        $rewards = $this->rewards ?? self::defaultRewards();
-        $newBalance = ($rewards['tokens'] ?? 0) + $amount;
+        $tokensExpr = "COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(rewards, '$.tokens')) AS SIGNED), 0)";
 
-        if ($newBalance < 0) {
-            return null;
+        $query = static::query()->whereKey($this->getKey());
+        if ($amount < 0) {
+            $query->whereRaw("{$tokensExpr} >= ?", [-$amount]);
         }
 
-        $rewards['tokens'] = $newBalance;
-        $this->rewards = $rewards;
-        $this->save();
+        $affected = $query->update([
+            // $amount is an int-typed parameter — interpolation is safe.
+            'rewards' => DB::raw("JSON_SET(COALESCE(rewards, '{}'), '$.tokens', {$tokensExpr} + {$amount})"),
+            'updated_at' => now(),
+        ]);
 
-        return $newBalance;
+        if ($affected === 0) {
+            return null; // spend guard rejected — balance unchanged
+        }
+
+        $this->refresh();
+
+        return $this->getTokens();
     }
 
     /**

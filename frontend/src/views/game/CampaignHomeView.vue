@@ -29,6 +29,8 @@ import CoachResignModal from '@/components/team/CoachResignModal.vue'
 import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import OwnerCheckInModal from '@/components/team/OwnerCheckInModal.vue'
 import OwnerWelcomeModal from '@/components/team/OwnerWelcomeModal.vue'
+import ReviewNagModal from '@/components/common/ReviewNagModal.vue'
+import { useReviewNagStore } from '@/stores/reviewNag'
 import DraftLotteryModal from '@/components/draft/DraftLotteryModal.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
@@ -72,6 +74,7 @@ const financeStore = useFinanceStore()
 const authStore = useAuthStore()
 const syncStore = useSyncStore()
 const walkthroughStore = useWalkthroughStore()
+const reviewNagStore = useReviewNagStore()
 
 const showSimulateModal = ref(false)
 const simSeasonMode = ref(false)
@@ -2066,6 +2069,34 @@ function handleCloseOwnerCheckIn() {
   // The owner check-in is the new-season landing modal; chain the coach re-sign
   // prompt after it so an expiring head coach gets surfaced.
   maybeShowCoachDecisionModal()
+  // One-time review nag: after the season-start check-in, once the user has a
+  // full season under their belt. If the coach prompt (or anything else) is
+  // up, this defers — the coach modal's close handlers re-invoke it.
+  maybeShowReviewNag()
+}
+
+// Show the one-time review nag when (a) the user has completed at least one
+// full season (gameYear increments at rollover, so >= 2 means season 1 is
+// done), and (b) no blocking modal is on screen. The reviewNag store enforces
+// "at most once per user, ever"; missing a window here simply means it tries
+// again at the next season-start check-in.
+function maybeShowReviewNag() {
+  const camp = campaignStore.currentCampaign
+  if (!camp || (camp.gameYear ?? camp.game_year ?? 1) < 2) return
+  if (
+    showOwnerCheckInModal.value ||
+    showOwnerWelcomeModal.value ||
+    showContractDecisionModal.value ||
+    showRetirementModal.value ||
+    showAllStarModal.value ||
+    showSeasonAwardsModal.value ||
+    showNewSeasonModal.value ||
+    showCoachResignModal.value ||
+    showHireCoachModal.value
+  ) {
+    return
+  }
+  reviewNagStore.maybeShow()
 }
 
 // --- Coach re-sign decision (expiring head coach) ---------------------------
@@ -2131,6 +2162,7 @@ async function handleCoachResigned() {
         : `Re-signed ${coach?.name ?? 'your coach'}`,
       4000
     )
+    maybeShowReviewNag()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError(err?.message || 'Failed to re-sign coach')
@@ -2162,6 +2194,7 @@ async function handleCoachHired() {
     console.warn('[CampaignHome] failed to clear pending coach decision:', err)
   }
   coachDecisionData.value = null
+  maybeShowReviewNag()
 }
 
 // Dismiss ("decide later") → leave the team coachless; don't re-pop this year.
@@ -2169,6 +2202,7 @@ async function handleCloseCoachResign() {
   showCoachResignModal.value = false
   await _stampCoachDecisionDismissed()
   coachDecisionData.value = null
+  maybeShowReviewNag()
 }
 
 // New-season summary closed → the owner's check-in is the next (first) thing the
@@ -2738,6 +2772,8 @@ async function handleConfirmSimulate() {
       })
       gameStore.weeklySummaryData = null
     }
+
+    askPushAfterSim()
   } catch (err) {
     // Remove loading toast and show error
     toastStore.removeMinimalToast(loadingToastId)
@@ -2749,6 +2785,18 @@ async function handleConfirmSimulate() {
 async function handleSimToEndFromModal() {
   showSimulateModal.value = false
   await handleSimToEnd()
+}
+
+// Second contextual notification-permission ask (the first is at training
+// start): a returning user who sims from the home screen never mounts GameView,
+// so trigger it here too. One-shot per device inside the service; short delay so
+// the OS prompt doesn't collide with the game-result toast. Fire-and-forget.
+function askPushAfterSim() {
+  setTimeout(() => {
+    import('@/services/notifications')
+      .then(n => n.maybeAskPermissionAfterGame())
+      .catch(() => {})
+  }, 1500)
 }
 
 async function handleSimToEnd() {
@@ -2846,6 +2894,8 @@ async function handleSimToEnd() {
       })
       gameStore.weeklySummaryData = null
     }
+
+    askPushAfterSim()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
     toastStore.showError('Sim to end failed. Please try again.')
@@ -3248,6 +3298,8 @@ async function handleSimToNextPlayoffRound() {
   } else {
     toastStore.showSuccess('Next round is ready!')
   }
+
+  askPushAfterSim()
 }
 
 function handleCloseSimulateModal() {
@@ -4491,6 +4543,10 @@ function handleCloseSimulateModal() {
       :season-year="ownerCheckInData?.seasonYear"
       @close="handleCloseOwnerCheckIn"
     />
+
+    <!-- One-time review nag: chained after the season-start owner check-in
+         (and the coach re-sign prompt) once a full season is complete. -->
+    <ReviewNagModal />
 
     <!-- Draft Lottery results (pops immediately after the lottery runs) -->
     <DraftLotteryModal

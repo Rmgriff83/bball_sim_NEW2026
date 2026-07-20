@@ -196,12 +196,17 @@ function getRoleBlueprint(mode) {
   // 75 OVR and a long tail of replacement-level depth.
   switch (tier) {
     case 1:
+      // Contenders keep ONE clear star but lose the guaranteed SECOND 80+ anchor
+      // that no other team type gets — that dual-anchor top-2 (plus the 90+
+      // auto-promotion and tier-1 coach stack) is what made top teams juggernauts.
+      // The 2nd slot is now a strong starter (76-80), and every band trimmed a
+      // couple OVR. Top-5 mean ~79.6 → ~77.6.
       return [
-        { role: 'superstar', min: 85, max: 89 },
-        { role: 'star',      min: 81, max: 85 },
-        { role: 'starter',   min: 74, max: 78 },
-        { role: 'starter',   min: 74, max: 78 },
-        { role: 'starter',   min: 74, max: 78 },
+        { role: 'superstar', min: 83, max: 87 },
+        { role: 'starter',   min: 76, max: 80 },
+        { role: 'starter',   min: 73, max: 77 },
+        { role: 'starter',   min: 73, max: 77 },
+        { role: 'starter',   min: 73, max: 77 },
         { role: 'rotation',  min: 66, max: 72 },
         { role: 'rotation',  min: 66, max: 72 },
         { role: 'rotation',  min: 66, max: 72 },
@@ -360,19 +365,19 @@ function generateTeamRoster({ campaignId, team, mode, startYear, usedNames, team
 function validateAndRebalance(players) {
   const count90Plus = players.filter(p => p.overallRating >= 90).length
 
-  // Target 3-6 superstars league-wide. The blueprints intentionally produce
-  // a thinner top end (and a bigger 56-69 tail) so we don't aggressively
-  // promote players just to hit a quota — promote at most 1 if we're
-  // significantly short.
-  if (count90Plus < 3) {
+  // Guarantee ~1 genuine elite player league-wide, but softly — the compressed
+  // contender bands top out at 87, so this is now the ONLY source of a 90+
+  // player. Keep it a gentle bump (cap 91) so a contender's superstar can't
+  // balloon to 91-93 on top of the rest of the boost.
+  if (count90Plus < 1) {
     const candidates = players
       .filter(p => p.overallRating >= 85 && p.overallRating < 90)
       .sort((a, b) => b.overallRating - a.overallRating)
-    const promotions = Math.min(3 - count90Plus, 1, candidates.length)
+    const promotions = Math.min(1, candidates.length)
     for (let i = 0; i < promotions; i++) {
       const p = candidates[i]
-      const bump = randInt(2, 4)
-      p.overallRating = Math.min(94, p.overallRating + bump)
+      const bump = randInt(1, 3)
+      p.overallRating = Math.min(91, p.overallRating + bump)
       p.overall_rating = p.overallRating
     }
   }

@@ -141,6 +141,21 @@ onMounted(async () => {
     await campaignStore.fetchCampaign(campaignId.value)
   }
 
+  // Redirect to the Custom Roster editor if setup is incomplete. Takes
+  // precedence over the fantasy-draft redirect so a custom+fantasy campaign
+  // authors its rosters/pool first, then proceeds to the draft on finalize.
+  // Legacy saves lack `customRoster` (falsy) → no redirect. The headshot-editor
+  // child routes are exempt so the roster editor can hand off to them mid-setup
+  // (they return the user straight back to /roster-setup).
+  const headshotRoutes = ['headshot-editor', 'coach-headshot-editor', 'personnel-headshot-editor']
+  const inHeadshotEditor = headshotRoutes.includes(route.name)
+  if (!inHeadshotEditor
+      && (campaign.value?.customRoster ?? campaign.value?.custom_roster)
+      && !(campaign.value?.rosterSetupCompleted ?? campaign.value?.roster_setup_completed)) {
+    router.replace(`/campaign/${campaignId.value}/roster-setup`)
+    return
+  }
+
   // Redirect to draft room if fantasy draft is incomplete
   if (campaign.value?.draft_mode === 'fantasy' && !campaign.value?.draft_completed) {
     router.replace(`/campaign/${campaignId.value}/draft`)

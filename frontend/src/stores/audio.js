@@ -125,6 +125,14 @@ export const useAudioStore = defineStore('audio', () => {
     if (suppressNextClickSound) { suppressNextClickSound = false; return }
     play('navigate')
   }
+  // Global-listener variant of cancel(): played when the app-wide click
+  // listener detects a modal close button or a backdrop (click-off) click.
+  // Respects the one-shot suppression flag so modals that already play their
+  // own dedicated sound (cancel/affirm/purchase) don't double-fire.
+  function cancelFromGlobalClick() {
+    if (suppressNextClickSound) { suppressNextClickSound = false; return }
+    play('cancel')
+  }
   function purchase() { play('purchase') }
   // Tertiary tap — fires for events the user didn't trigger (e.g. AI draft
   // picks). No click-suppression needed since it's not called from a click.
@@ -291,6 +299,7 @@ export const useAudioStore = defineStore('audio', () => {
     purchase,
     tertiary,
     suppressClickSound,
+    cancelFromGlobalClick,
     playMusic,
     stopMusic,
     playGameSfx,

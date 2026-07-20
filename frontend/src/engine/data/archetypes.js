@@ -343,3 +343,34 @@ export function detectArchetype(player) {
  * declare `archetypeTags` without typoing.
  */
 export const ARCHETYPE_NAMES = ARCHETYPES.map(a => a.name)
+
+// ---------------------------------------------------------------------------
+// Archetype seed templates (Custom Roster editor only)
+// ---------------------------------------------------------------------------
+// Each seed is a STARTING POINT the user picks and then tweaks — the opposite
+// data flow from `detectArchetype` (which derives the label from attributes).
+// The editor fills any attribute not listed here with a neutral baseline, then
+// applies these defining attributes so the resulting profile clears the
+// matching archetype's `matches()` predicate; the label then re-derives live as
+// the user edits. Keyed by archetype id. `heightInches` seeds a vital when the
+// archetype gates on height.
+export const ARCHETYPE_SEEDS = {
+  'lead-guard': { position: 'PG', attrs: { offense: { passIQ: 84, passVision: 84, ballHandling: 82, midRange: 76, threePoint: 74 }, mental: { basketballIQ: 84 } } },
+  'combo-guard': { position: 'SG', attrs: { offense: { threePoint: 82, midRange: 80, shotIQ: 78, ballHandling: 78 }, physical: { speedWithBall: 76 } } },
+  'three-and-d-guard': { position: 'SG', attrs: { offense: { threePoint: 82, passIQ: 58 }, defense: { perimeterDefense: 82 } } },
+  'slasher': { position: 'PG', attrs: { offense: { drivingDunk: 84, drawFoul: 80, layup: 82, threePoint: 62 }, physical: { speed: 84, acceleration: 84 } } },
+  'two-way-wing': { position: 'SF', attrs: { offense: { threePoint: 80, midRange: 78, drivingDunk: 78 }, defense: { perimeterDefense: 82 }, mental: { basketballIQ: 80 } } },
+  'point-forward': { position: 'SF', heightInches: 79, attrs: { offense: { passIQ: 82, passVision: 82, ballHandling: 76 } } },
+  'three-and-d-wing': { position: 'SF', attrs: { offense: { threePoint: 80, passIQ: 58 }, defense: { perimeterDefense: 80 } } },
+  'slashing-wing': { position: 'SF', attrs: { offense: { drivingDunk: 84, drawFoul: 80, threePoint: 60 }, physical: { strength: 80 } } },
+  'stretch-4': { position: 'PF', heightInches: 81, attrs: { offense: { threePoint: 80 }, defense: { interiorDefense: 70 } } },
+  'power-forward-bruiser': { position: 'PF', attrs: { offense: { threePoint: 55 }, defense: { interiorDefense: 82, defensiveRebound: 82 }, physical: { strength: 84 } } },
+  'point-center': { position: 'C', heightInches: 82, attrs: { offense: { passIQ: 82, passVision: 82 }, mental: { basketballIQ: 86 } } },
+  'stretch-5': { position: 'C', heightInches: 83, attrs: { offense: { threePoint: 78 }, defense: { block: 76 } } },
+  'drop-big': { position: 'C', attrs: { defense: { block: 84, interiorDefense: 84, helpDefenseIQ: 80, perimeterDefense: 60 } } },
+  'rim-runner': { position: 'C', attrs: { offense: { standingDunk: 84, hands: 78, threePoint: 45 }, physical: { vertical: 84 } } },
+  'old-school-bruiser': { position: 'C', attrs: { offense: { postHook: 82, postFade: 78, postControl: 78, threePoint: 55 }, physical: { strength: 82 } } },
+}
+
+// Baseline every unspecified attribute is set to when a seed is applied.
+export const ARCHETYPE_SEED_BASELINE = 68

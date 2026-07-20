@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { Capacitor } from '@capacitor/core'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
@@ -7,16 +8,20 @@ import { useGameStore } from '@/stores/game'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import { useAppUpdateStore } from '@/stores/appUpdate'
 import { ToastContainer, MinimalToast } from '@/components/ui'
 import BreakingNewsModal from '@/components/game/BreakingNewsModal.vue'
 import WalkthroughOverlay from '@/components/walkthrough/WalkthroughOverlay.vue'
+import UpdateNagModal from '@/components/common/UpdateNagModal.vue'
 
+const router = useRouter()
 const authStore = useAuthStore()
 const breakingNewsStore = useBreakingNewsStore()
 const gameStore = useGameStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
 const walkthroughStore = useWalkthroughStore()
+const appUpdateStore = useAppUpdateStore()
 
 // Sim-pause-flagged breaking news (e.g. the trade-deadline warning) replaces
 // the old separate SimPauseModal for that reason. The user MUST resolve via
@@ -63,10 +68,28 @@ onMounted(() => {
   // the background. The training-ready notification is managed separately by
   // the team store at session start/claim.
   if (Capacitor.isNativePlatform()) {
+    // Soft update-nag: if this build is behind the latest, prompt to update.
+    // Fire-and-forget; native-only + fail-open inside the store/service.
+    appUpdateStore.check()
+
     // Cold start = the user came back — clear the ladder.
     import('@/services/notifications').then(n => n.cancelRetentionReminders()).catch(() => {})
 
     import('@capacitor/app').then(({ App }) => {
+      // Deep-link return from the web community flow. The web sends
+      // bballsim://open?path=<app-relative-route> — route straight there.
+      // Only app-relative paths are honored (no external redirect surface).
+      App.addListener('appUrlOpen', ({ url }) => {
+        try {
+          const parsed = new URL(url)
+          if (parsed.protocol !== 'bballsim:') return
+          const path = parsed.searchParams.get('path')
+          if (path && path.startsWith('/')) {
+            router.push(path)
+          }
+        } catch { /* malformed link — ignore */ }
+      })
+
       App.addListener('appStateChange', ({ isActive }) => {
         if (isActive) {
           import('@/services/notifications').then(n => n.cancelRetentionReminders()).catch(() => {})
@@ -108,4 +131,5 @@ onMounted(() => {
     @pause="handleBreakingNewsPause"
   />
   <WalkthroughOverlay />
+  <UpdateNagModal />
 </template>
