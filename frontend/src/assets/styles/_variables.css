@@ -63,6 +63,10 @@
      ═══════════════════════════════════════════════════════════ */
   --glass-bg: rgba(37, 32, 48, 0.8);
   --glass-bg-light: rgba(45, 40, 56, 0.9);
+  /* Elevated modal/popup surface. Several modals referenced this token with a
+     hardcoded dark fallback before it existed — defining it per-theme is what
+     makes those containers readable in light mode. */
+  --glass-bg-elevated: rgba(30, 35, 45, 0.98);
   --glass-border: rgba(255, 255, 255, 0.1);
   --glass-border-focus: rgba(232, 90, 79, 0.5);
 
@@ -161,6 +165,7 @@
 
   --glass-bg: rgb(255 255 255 / 72%);
   --glass-bg-light: rgba(253, 248, 243, 0.95);
+  --glass-bg-elevated: rgba(255, 255, 255, 0.98);
   --glass-border: rgba(45, 40, 56, 0.1);
   --glass-border-focus: rgba(232, 90, 79, 0.5);
 

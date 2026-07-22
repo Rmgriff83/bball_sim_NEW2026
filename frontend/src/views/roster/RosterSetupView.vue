@@ -1,21 +1,26 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useRosterEditorStore } from '@/stores/rosterEditor'
 import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
+import { useAudioStore } from '@/stores/audio'
+import { useToastStore } from '@/stores/toast'
 import { storeToRefs } from 'pinia'
-import { Loader2, Users, ClipboardList, ShieldCheck, ArrowLeft, AlertTriangle, Check, Plus, Save, Globe, Download } from 'lucide-vue-next'
+import { Loader2, Users, ClipboardList, ShieldCheck, ArrowLeft, AlertTriangle, Check, Plus, Save, Download, Sparkles } from 'lucide-vue-next'
 import { Capacitor } from '@capacitor/core'
 import api from '@/composables/useApi'
 import RosterAttributeTable from '@/components/roster/RosterAttributeTable.vue'
 import SelectedPlayerHeader from '@/components/roster/SelectedPlayerHeader.vue'
 import PlayerDetailsEditorModal from '@/components/roster/PlayerDetailsEditorModal.vue'
 import CoachEditor from '@/components/roster/CoachEditor.vue'
+import RosterTeamHeader from '@/components/roster/RosterTeamHeader.vue'
+import TeamHistoryEditorModal from '@/components/roster/TeamHistoryEditorModal.vue'
 import PositionFilterBar from '@/components/trade/PositionFilterBar.vue'
 import TeamLogo from '@/components/common/TeamLogo.vue'
-import { SALARY_CAP, LUXURY_TAX } from '@/engine/data/salaryScale'
+import { SALARY_CAP } from '@/engine/data/salaryScale'
+import { CANONICAL_ATTRIBUTES } from '@/engine/data/attributeSchema'
 import { MAX_ROSTER_SIZE } from '@/engine/finance/FinanceManager'
 
 const route = useRoute()
@@ -25,6 +30,7 @@ const authStore = useAuthStore()
 const {
   teams, activeTeam, activeRoster, freeAgents, isFantasy, hasStarted,
   userTeamId, loading, saving, error, selectedId, selectedPlayer, isDirty, dirtyIds,
+  teamOveralls,
 } = storeToRefs(store)
 
 const campaignId = computed(() => route.params.id)
@@ -32,6 +38,7 @@ const view = ref('teams')          // 'teams' | 'roster' | 'pool'
 const tableMode = ref('current')   // 'current' | 'ceiling'
 const editingPlayer = ref(null)
 const editingCoachTeam = ref(null)
+const editingHistoryTeam = ref(null)
 const showAck = ref(false)
 const ackConfirmed = ref(false)
 const showFinalize = ref(false)
@@ -80,6 +87,11 @@ onMounted(async () => {
   const resuming = store.campaignId === campaignId.value && hasStarted.value
     && (store.activeTeamId || freeAgents.value.length)
   if (resuming) {
+    // The surviving store snapshot may hold stale TEAM records — the coach
+    // headshot editor round-trip renames coaches/saves headshot flags onto
+    // the team rows directly. Cheap single IDB read; players are refreshed
+    // per-branch below.
+    await store.refreshTeams()
     const prevSelected = store.selectedId
     if (isDirty.value) {
       // Other rows have unsaved edits — don't clobber them with a refetch;
@@ -145,6 +157,7 @@ async function pickDownloaded() {
   try {
     const res = await api.get(`/api/roster-builds/${selectedBuildId.value}/blob`)
     await store.applyDownloadedBuild(res.data)
+    store.refreshTeamOveralls()
   } catch (err) {
     store.error = err?.message || 'Failed to apply the downloaded roster'
   } finally {
@@ -155,6 +168,40 @@ async function pickDownloaded() {
 async function pickStart(mode) {
   await store.chooseStart(mode)
   if (isFantasy.value) { await store.openPool(); view.value = 'pool' }
+  else store.refreshTeamOveralls()
+}
+
+// Re-derive the team-grid overall badges whenever the grid comes back into
+// view — roster edits saved in a team view change its computed overall.
+watch(view, (v) => {
+  if (v === 'teams') store.refreshTeamOveralls()
+})
+
+// --- Save feedback -----------------------------------------------------------
+// Every roster-editor save (bulk table saves + the details modals) reports the
+// outcome the way the rest of the app does: affirmation SFX + minimal toast on
+// success, cancel SFX + toast on failure. suppressClickSound runs in the
+// click stack so the triggering button's generic tap doesn't stack on top.
+// Returns success so callers keep modals open on failure.
+async function saveWithFeedback(op, successMsg) {
+  const audio = useAudioStore()
+  const toast = useToastStore()
+  audio.suppressClickSound()
+  try {
+    await op()
+    audio.affirm()
+    toast.showSuccess(successMsg)
+    return true
+  } catch (err) {
+    audio.cancel()
+    toast.showError(err?.message || 'Save failed — please try again')
+    return false
+  }
+}
+
+function saveDirtyWithFeedback() {
+  const n = dirtyIds.value.size
+  return saveWithFeedback(() => store.saveDirty(), `Saved ${n} player${n === 1 ? '' : 's'}`)
 }
 
 // --- Dirty-state guards -----------------------------------------------------
@@ -168,8 +215,8 @@ function guardThen(action) {
 async function guardSave() {
   const action = pendingGuardAction.value
   pendingGuardAction.value = null
-  await store.saveDirty()
-  action?.()
+  const ok = await saveDirtyWithFeedback()
+  if (ok) action?.()
 }
 
 async function guardDiscard() {
@@ -209,6 +256,13 @@ function backToTeams() {
   })
 }
 
+// Header back button on the team-select (and start-choice) screens. The
+// dirty guard prompts Save/Discard first; onBeforeRouteLeave re-checks and
+// passes once the guard has resolved the changes.
+function backToCampaigns() {
+  guardThen(() => router.push('/campaigns'))
+}
+
 // --- Player editing ---------------------------------------------------------
 function onTableEdited(player) {
   store.markDirtyPlayer(player.id)
@@ -219,6 +273,50 @@ async function addTeamPlayer() {
   if (p) editingPlayer.value = p
 }
 
+// "Clamp to overall" (Potential mode): a per-player STICKY state. Checking it
+// snaps every growth ceiling to the attribute's current value AND keeps them
+// tracking as attributes change on the Overall tab (the table's bump honors
+// `player.ceilingsClamped`), so potential stays equal to overall — a finished
+// vet. Manually editing a ceiling opts back out (the table clears the flag).
+// The flag persists on the player, so a resumed edit session keeps it.
+function setCeilingsClamped(on) {
+  const p = selectedPlayer.value
+  if (!p) return
+  p.ceilingsClamped = !!on
+  if (on) {
+    p.attributeCaps = p.attributeCaps ?? {}
+    for (const cat of Object.keys(CANONICAL_ATTRIBUTES)) {
+      p.attributeCaps[cat] = p.attributeCaps[cat] ?? {}
+      for (const key of CANONICAL_ATTRIBUTES[cat]) {
+        const cur = p.attributes?.[cat]?.[key]
+        if (typeof cur === 'number') p.attributeCaps[cat][key] = cur
+      }
+    }
+  }
+  store.markDirtyPlayer(p.id)
+}
+
+// Fill the active team to the 15-man cap with generated role players
+// (scratch-mode QoL). Same success/failure feedback as saves.
+const generatingFill = ref(false)
+async function generateRemaining() {
+  if (generatingFill.value) return
+  generatingFill.value = true
+  const audio = useAudioStore()
+  const toast = useToastStore()
+  audio.suppressClickSound()
+  try {
+    const n = await store.fillRoster()
+    audio.affirm()
+    toast.showSuccess(`Generated ${n} player${n === 1 ? '' : 's'}`)
+  } catch (err) {
+    audio.cancel()
+    toast.showError(err?.message || 'Generation failed — please try again')
+  } finally {
+    generatingFill.value = false
+  }
+}
+
 async function addPoolPlayer() {
   const p = await store.addPoolPlayer()
   if (p) editingPlayer.value = p
@@ -227,8 +325,11 @@ async function addPoolPlayer() {
 function editPlayer(p) { editingPlayer.value = p }
 
 // Row tap: first tap selects (chevrons + hero header); tapping the already
-// selected row opens the full details modal.
+// selected row opens the full details modal. Rows are table cells, not
+// <button>s, so the global click-sound listener doesn't cover them — play
+// the generic tap explicitly.
 function onRowSelect(p) {
+  useAudioStore().navigate()
   if (selectedId.value === p.id) {
     editPlayer(p)
     return
@@ -238,12 +339,25 @@ function onRowSelect(p) {
 function closePlayerEditor() { editingPlayer.value = null }
 
 async function onPlayerSaved(p) {
-  await store.savePlayer(p)
-  editingPlayer.value = null
+  const ok = await saveWithFeedback(() => store.savePlayer(p), 'Player saved')
+  if (ok) editingPlayer.value = null
 }
 
-async function removePlayer(p) {
-  await store.removePlayer(p, view.value === 'pool')
+// Row ✕ opens a confirm first — deletion is immediate and unrecoverable
+// (it doesn't ride the dirty/save flow), so no accidental taps.
+const pendingRemovePlayer = ref(null)
+
+function removePlayer(p) {
+  // The row ✕ uses @click.stop (so the tap doesn't also select the row),
+  // which hides it from the global click-sound listener — tap explicitly.
+  useAudioStore().navigate()
+  pendingRemovePlayer.value = p
+}
+
+async function confirmRemovePlayer() {
+  const p = pendingRemovePlayer.value
+  pendingRemovePlayer.value = null
+  if (p) await store.removePlayer(p, view.value === 'pool')
 }
 
 // Headshot handoff — persist first (nothing lost), capture the return route,
@@ -261,8 +375,14 @@ function editCoach(team) { editingCoachTeam.value = team }
 function closeCoachEditor() { editingCoachTeam.value = null }
 
 async function onCoachSaved(team) {
-  await store.saveTeamCoach(team)
-  editingCoachTeam.value = null
+  const ok = await saveWithFeedback(() => store.saveTeamCoach(team), 'Coach saved')
+  if (ok) editingCoachTeam.value = null
+}
+
+// Team-history saves share the coach editor's immediate whole-team save path.
+async function onHistorySaved(team) {
+  const ok = await saveWithFeedback(() => store.saveTeamCoach(team), 'Team history saved')
+  if (ok) editingHistoryTeam.value = null
 }
 
 function coachName(team) {
@@ -274,24 +394,51 @@ function coachName(team) {
 // --- Payroll meter (display only) -------------------------------------------
 const teamPayroll = computed(() =>
   activeRoster.value.reduce((sum, p) => sum + (Number(p.contractSalary ?? p.contract_salary) || 0), 0))
-const payrollClass = computed(() => {
-  if (teamPayroll.value >= LUXURY_TAX) return 'tax'
-  if (teamPayroll.value >= SALARY_CAP) return 'over'
-  return 'ok'
-})
-function fmtM(v) { return `$${(v / 1_000_000).toFixed(1)}M` }
 
 // --- Finalize ---------------------------------------------------------------
+const shortTeamCount = ref(0)
+const generatingRest = ref(false)
+
 async function openFinalize() {
   guardThen(async () => {
     validating.value = true
     try {
       finalizeProblems.value = await store.validate()
+      shortTeamCount.value = await store.countShortTeams()
       showFinalize.value = true
     } finally {
       validating.value = false
     }
   })
+}
+
+// "Generate the rest & continue" — fills every under-populated NON-user team
+// to 15, then re-validates: clean → straight into finalize; problems left
+// (e.g. the user's own team is short) → the list refreshes in place.
+async function generateRestAndContinue() {
+  if (generatingRest.value) return
+  generatingRest.value = true
+  const audio = useAudioStore()
+  const toast = useToastStore()
+  audio.suppressClickSound()
+  try {
+    const { teams: filled, players } = await store.fillAllTeamRosters({ excludeTeamId: userTeamId.value })
+    finalizeProblems.value = await store.validate()
+    shortTeamCount.value = await store.countShortTeams()
+    if (!finalizeProblems.value.length) {
+      audio.affirm()
+      toast.showSuccess(`Generated ${players} players across ${filled} teams`)
+      await confirmFinalize()
+    } else {
+      audio.affirm()
+      toast.showSuccess(`Generated ${players} players across ${filled} teams — remaining issues listed`)
+    }
+  } catch (err) {
+    audio.cancel()
+    toast.showError(err?.message || 'Generation failed — please try again')
+  } finally {
+    generatingRest.value = false
+  }
 }
 
 async function confirmFinalize() {
@@ -314,27 +461,15 @@ async function confirmFinalize() {
         <button v-if="view !== 'teams'" class="rs-back" @click="backToTeams">
           <ArrowLeft :size="18" /> Teams
         </button>
-        <h1 class="rs-title">
-          <TeamLogo
-            v-if="view === 'roster' && activeTeam"
-            :abbreviation="activeTeam.abbreviation"
-            :color="activeTeam.primaryColor ?? activeTeam.primary_color ?? activeTeam.color"
-            :size="24"
-          />
-          <ClipboardList v-else :size="20" />
-          {{ view === 'roster' && activeTeam
-            ? (activeTeam.name ?? activeTeam.abbreviation)
-            : view === 'pool' ? 'Draft Pool' : 'Roster Editor' }}
+        <button v-else class="rs-back" @click="backToCampaigns">
+          <ArrowLeft :size="18" /> Campaigns
+        </button>
+        <h1 v-if="view === 'pool'" class="rs-title">
+          <ClipboardList :size="20" /> Draft Pool
         </h1>
-        <span v-if="view === 'roster' && !isFantasy" class="rs-payroll" :class="payrollClass">
-          {{ fmtM(teamPayroll) }} <em>/ cap {{ fmtM(SALARY_CAP) }}</em>
-        </span>
       </div>
       <div class="rs-header-actions">
-        <button class="rs-community-btn" title="Community roster board (web)" @click="openCommunity">
-          <Globe :size="15" /> Community
-        </button>
-        <button v-if="isDirty" class="rs-save-btn" :disabled="saving" @click="store.saveDirty()">
+        <button v-if="isDirty" class="rs-save-btn" :disabled="saving" @click="saveDirtyWithFeedback">
           <Loader2 v-if="saving" :size="15" class="spin" />
           <Save v-else :size="15" />
           Save Changes ({{ dirtyIds.size }})
@@ -393,6 +528,7 @@ async function confirmFinalize() {
 
     <!-- Team grid -->
     <section v-else-if="view === 'teams'" class="rs-teams">
+      <h2 class="rs-teams-title"><ClipboardList :size="22" /> Roster Editor</h2>
       <div class="rs-team-grid">
         <button
           v-for="team in teams"
@@ -408,6 +544,9 @@ async function confirmFinalize() {
               :size="28"
             />
             <span class="rs-team-abbr">{{ team.abbreviation }}</span>
+            <span v-if="teamOveralls[team.id] != null" class="rs-team-ovr" title="Current team overall">
+              {{ teamOveralls[team.id] }}
+            </span>
           </span>
           <span class="rs-team-name">{{ team.name }}</span>
           <span class="rs-team-coach">HC: {{ coachName(team) }}</span>
@@ -417,6 +556,10 @@ async function confirmFinalize() {
       <p v-if="isFantasy" class="rs-note">
         Fantasy draft: edit the draftable player pool, then finish to start the draft.
         <button class="rs-link" @click="openPool">Edit draft pool →</button>
+      </p>
+      <p class="rs-note" style="text-align: center;">
+        Looking for community rosters?
+        <button class="rs-link" @click="openCommunity">Browse the Community board →</button>
       </p>
     </section>
 
@@ -428,13 +571,25 @@ async function confirmFinalize() {
       </p>
 
       <template v-if="view === 'pool' || !isFantasy">
+        <!-- No selection in a team view → team overview header (overall /
+             owner / editable history). A selected row swaps in the player hero. -->
+        <RosterTeamHeader
+          v-if="view === 'roster' && !selectedPlayer"
+          :team="activeTeam"
+          :roster="activeRoster"
+          :payroll="isFantasy ? null : teamPayroll"
+          :salary-cap="SALARY_CAP"
+          @edit-history="editingHistoryTeam = activeTeam"
+        />
         <SelectedPlayerHeader
+          v-else
           :player="selectedPlayer"
           :campaign-id="campaignId"
           :can-edit-headshot="hasHeadshotEditor"
           @edit="editPlayer"
           @edit-headshot="editHeadshot"
           @edited="onTableEdited"
+          @deselect="store.selectedId = null"
         />
 
         <div class="rs-toolbar">
@@ -443,13 +598,25 @@ async function confirmFinalize() {
               class="rs-mode"
               :class="{ active: tableMode === 'current' }"
               @click="tableMode = 'current'"
-            >Current</button>
+            >Overall</button>
             <button
               class="rs-mode ceiling"
               :class="{ active: tableMode === 'ceiling' }"
               @click="tableMode = 'ceiling'"
-            >Ceilings</button>
+            >Potential</button>
           </div>
+          <label
+            v-if="tableMode === 'ceiling' && selectedPlayer"
+            class="rs-clamp-check"
+            title="Keep every growth ceiling equal to the attribute's current value — potential tracks overall as you edit (a finished vet). Editing a ceiling by hand unchecks it."
+          >
+            <input
+              type="checkbox"
+              :checked="!!selectedPlayer.ceilingsClamped"
+              @change="setCeilingsClamped($event.target.checked)"
+            />
+            Clamp to overall
+          </label>
           <PositionFilterBar v-model="posSort" />
           <span class="rs-toolbar-hint">
             {{ tableMode === 'ceiling'
@@ -465,13 +632,26 @@ async function confirmFinalize() {
           @select="onRowSelect"
           @edited="onTableEdited"
           @remove="removePlayer"
+          @deselect="store.selectedId = null"
         />
 
-        <button v-if="!rosterFull" class="rs-add-btn" @click="view === 'pool' ? addPoolPlayer() : addTeamPlayer()">
-          <Plus :size="16" /> Add Player
-          <em v-if="view === 'roster'" class="rs-add-count">({{ activeRoster.length }}/{{ MAX_ROSTER_SIZE }})</em>
-        </button>
-        <p v-else class="rs-roster-full">Roster full ({{ MAX_ROSTER_SIZE }}/{{ MAX_ROSTER_SIZE }}) — remove a player to add another.</p>
+        <div v-if="!rosterFull" class="rs-add-row">
+          <button class="rs-add-btn" @click="view === 'pool' ? addPoolPlayer() : addTeamPlayer()">
+            <Plus :size="16" /> Add Player
+            <em v-if="view === 'roster'" class="rs-add-count">({{ activeRoster.length }}/{{ MAX_ROSTER_SIZE }})</em>
+          </button>
+          <button
+            v-if="view === 'roster' && !isFantasy"
+            class="rs-add-btn rs-generate-btn"
+            :disabled="generatingFill"
+            @click="generateRemaining"
+          >
+            <Loader2 v-if="generatingFill" :size="16" class="spin" />
+            <Sparkles v-else :size="16" />
+            Generate remaining ({{ MAX_ROSTER_SIZE - activeRoster.length }})
+          </button>
+        </div>
+        <p v-else-if="view === 'roster'" class="rs-roster-full">Roster full ({{ MAX_ROSTER_SIZE }}/{{ MAX_ROSTER_SIZE }}) — remove a player to add another.</p>
       </template>
 
       <div v-if="view === 'roster'" class="rs-coach-row">
@@ -493,6 +673,22 @@ async function confirmFinalize() {
           original. Your builds are saved to your account only.
         </p>
         <button class="rs-modal-primary" @click="acceptAck">I understand</button>
+      </div>
+    </div>
+
+    <!-- Remove-player confirm -->
+    <div v-if="pendingRemovePlayer" class="rs-modal-overlay">
+      <div class="rs-modal">
+        <h3><AlertTriangle :size="18" /> Remove player</h3>
+        <p>
+          Remove
+          <strong>{{ pendingRemovePlayer.name ?? ((pendingRemovePlayer.firstName ?? '') + ' ' + (pendingRemovePlayer.lastName ?? '')) }}</strong>
+          from the {{ view === 'pool' ? 'draft pool' : 'roster' }}? This can't be undone.
+        </p>
+        <div class="rs-modal-actions">
+          <button class="rs-modal-secondary rs-modal-cancel" @click="pendingRemovePlayer = null">Cancel</button>
+          <button class="rs-modal-primary" @click="confirmRemovePlayer">Remove</button>
+        </div>
       </div>
     </div>
 
@@ -518,7 +714,19 @@ async function confirmFinalize() {
           <ul class="rs-problems">
             <li v-for="(prob, i) in finalizeProblems" :key="i">{{ prob }}</li>
           </ul>
-          <button class="rs-modal-secondary" @click="showFinalize = false">Keep editing</button>
+          <div class="rs-modal-actions">
+            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Keep editing</button>
+            <button
+              v-if="shortTeamCount > 0"
+              class="rs-modal-primary"
+              :disabled="generatingRest"
+              @click="generateRestAndContinue"
+            >
+              <Loader2 v-if="generatingRest" :size="16" class="spin" />
+              <Sparkles v-else :size="16" />
+              Generate the rest &amp; continue
+            </button>
+          </div>
         </template>
         <template v-else>
           <h3><Check :size="18" /> Start the season?</h3>
@@ -527,7 +735,7 @@ async function confirmFinalize() {
             develop players afterward through normal gameplay.
           </p>
           <div class="rs-modal-actions">
-            <button class="rs-modal-secondary" @click="showFinalize = false">Not yet</button>
+            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Not yet</button>
             <button class="rs-modal-primary" :disabled="saving" @click="confirmFinalize">
               <Loader2 v-if="saving" :size="16" class="spin" /> Start Season
             </button>
@@ -555,6 +763,15 @@ async function confirmFinalize() {
       :can-edit-headshot="hasHeadshotEditor"
       @save="onCoachSaved"
       @close="closeCoachEditor"
+    />
+
+    <!-- Team history editor -->
+    <TeamHistoryEditorModal
+      :show="!!editingHistoryTeam"
+      :team="editingHistoryTeam"
+      :current-season-year="store.campaign?.currentSeasonYear ?? store.campaign?.current_season_year ?? null"
+      @save="onHistorySaved"
+      @close="editingHistoryTeam = null"
     />
   </div>
 </template>
@@ -608,23 +825,6 @@ async function confirmFinalize() {
   white-space: nowrap;
 }
 
-.rs-payroll {
-  font-size: 0.72rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.rs-payroll em {
-  font-style: normal;
-  font-weight: 600;
-  color: var(--color-text-tertiary);
-}
-
-.rs-payroll.ok { color: var(--color-success); }
-.rs-payroll.over { color: var(--color-warning); }
-.rs-payroll.tax { color: var(--color-error); }
-
 .rs-back {
   display: inline-flex;
   align-items: center;
@@ -635,23 +835,6 @@ async function confirmFinalize() {
   font-weight: 600;
   cursor: pointer;
   padding: 4px 6px;
-}
-
-.rs-community-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--glass-bg);
-  color: var(--color-text-primary);
-  border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  padding: 9px 14px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.rs-community-btn:hover {
-  border-color: var(--color-primary);
 }
 
 .rs-build-select {
@@ -727,6 +910,17 @@ async function confirmFinalize() {
 .rs-start-desc { color: var(--color-text-secondary); font-size: 0.85rem; }
 
 .rs-teams { padding: 18px; max-width: 1024px; margin: 0 auto; }
+
+.rs-teams-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.6rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  margin: 0 0 14px;
+}
 .rs-team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
 
 .rs-team-card {
@@ -747,13 +941,24 @@ async function confirmFinalize() {
 .rs-team-card.is-user { border-color: var(--color-primary); background: rgba(232, 90, 79, 0.08); }
 .rs-team-head { display: flex; align-items: center; gap: 8px; }
 .rs-team-abbr { font-weight: 800; font-size: 1.1rem; }
+
+.rs-team-ovr {
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--color-primary);
+}
 .rs-team-name { font-size: 0.85rem; color: var(--color-text-secondary); }
 .rs-team-coach { font-size: 0.72rem; color: var(--color-text-tertiary); }
 
 .rs-team-tag {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: -6px;
+  right: 4px;
   font-size: 0.62rem;
   background: var(--color-primary);
   color: #fff;
@@ -779,6 +984,33 @@ async function confirmFinalize() {
   border: 1px solid var(--glass-border);
   border-radius: 10px;
   overflow: hidden;
+}
+
+.rs-clamp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border: 1px dashed var(--glass-border);
+  border-radius: 10px;
+  background: var(--glass-bg);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.rs-clamp-check:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.rs-clamp-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
 }
 
 .rs-mode {
@@ -821,6 +1053,15 @@ async function confirmFinalize() {
   font-weight: 600;
   cursor: pointer;
 }
+
+.rs-add-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rs-generate-btn:disabled { opacity: 0.6; }
 
 .rs-add-btn {
   display: inline-flex;
@@ -877,7 +1118,7 @@ async function confirmFinalize() {
 
 .rs-modal h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
 .rs-modal p { color: var(--color-text-secondary); font-size: 0.9rem; line-height: 1.5; margin: 0 0 18px; }
-.rs-problems { margin: 0 0 18px; padding-left: 18px; font-size: 0.85rem; color: var(--color-text-secondary); }
+.rs-problems { margin: 0 0 18px; padding-left: 18px; font-size: 0.85rem; color: var(--color-text-secondary); max-height: 75vh; overflow: auto; }
 .rs-problems li { margin-bottom: 4px; }
 .rs-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
 

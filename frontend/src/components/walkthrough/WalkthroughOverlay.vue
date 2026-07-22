@@ -455,6 +455,22 @@ function reposition() {
   })
 }
 
+// Safety net: a running tour whose host view gets navigated away by something
+// OUTSIDE the tour (e.g. CampaignView's roster-setup resume redirect racing a
+// ghost-mounted CampaignHomeView's maybeStart) would otherwise survive as an
+// orphaned global overlay on the new page. Abort — not finish — so the tour
+// stays un-done and re-fires at its legitimate moment. Route changes the tour
+// itself requested are fine: those land exactly on the current step's declared
+// `route`, which the guard accepts.
+watch(
+  () => route.name,
+  (name) => {
+    if (!store.isRunning) return
+    if (store.currentStep?.route && store.currentStep.route === name) return
+    store.abort()
+  }
+)
+
 watch(
   () => [store.activeKey, store.stepIndex],
   ([key]) => {

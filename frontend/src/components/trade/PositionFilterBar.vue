@@ -62,4 +62,22 @@ function select(value) {
   background: rgba(96, 165, 250, 0.22);
   border-color: rgba(96, 165, 250, 0.6);
 }
+
+/* Light mode: the white-alpha pill chrome above vanishes on the cream
+   background — swap to dark-alpha. Active POSITION pills keep their inline
+   solid colors + white text (readable in both themes); the active "All"
+   keeps its light-blue tint, so its text goes dark blue instead of white. */
+[data-theme="light"] .pos-btn {
+  border-color: rgba(45, 40, 56, 0.2);
+  background: rgba(45, 40, 56, 0.05);
+  color: var(--color-text-secondary);
+}
+
+[data-theme="light"] .pos-btn:hover {
+  background: rgba(45, 40, 56, 0.1);
+}
+
+[data-theme="light"] .pos-btn.active:first-child {
+  color: #1d4ed8;
+}
 </style>

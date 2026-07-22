@@ -83,7 +83,7 @@ const unlockBundles = [
     id: 'custom_roster_unlock',
     kind: 'unlock',
     feature: 'custom_roster',
-    price: '$7.99',
+    price: '$8.99',
     label: 'Roster Editor',
     description: 'Build your own league. When you start a new campaign, choose the Custom roster option to edit every team — players, attributes, growth potential, badges, names, and head coaches — before the season begins. Start from a generated league and tweak it, or build every team from scratch. One-time purchase, applies to all future campaigns.'
   }

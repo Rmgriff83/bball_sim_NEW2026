@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, nextTick } from 'vue'
-import { Brush, SlidersHorizontal, Pencil, Check } from 'lucide-vue-next'
+import { Brush, SlidersHorizontal, Pencil, Check, X } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { deriveOverallFromAttributes, derivePotential } from '@/engine/evolution/PlayerEvolution'
 import { detectArchetype } from '@/engine/data/archetypes'
@@ -16,7 +16,7 @@ const props = defineProps({
   canEditHeadshot: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['edit', 'edit-headshot', 'edited'])
+const emit = defineEmits(['edit', 'edit-headshot', 'edited', 'deselect'])
 
 // Inline quick-edit for the player name. Writes both casings + the combined
 // `name`, then reports the edit upward so it joins the dirty/save flow.
@@ -160,6 +160,17 @@ function posColor(pos) {
       </div>
     </div>
 
+    <!-- sph-cancel: the global click-sound listener keys on *-cancel/*-close
+         classes to play the dismiss SFX instead of the generic tap. -->
+    <button
+      class="sph-deselect sph-cancel"
+      title="Back to team overview"
+      aria-label="Deselect player"
+      @click.stop="emit('deselect')"
+    >
+      <X :size="14" />
+    </button>
+
     <div class="sph-right">
       <div class="sph-ratings">
         <div class="sph-rating">
@@ -217,8 +228,19 @@ function posColor(pos) {
   min-width: 0;
 }
 
+/* Same circular avatar backing + brush overlay as the in-game
+   PlayerDetailModal header (.modal-player-avatar / .edit-headshot-overlay). */
 .sph-avatar {
   position: relative;
+  width: 92px;
+  height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.25);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.9);
   flex-shrink: 0;
 }
 
@@ -233,10 +255,17 @@ function posColor(pos) {
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #a855f7, #7c3aed);
-  border: 2px solid var(--color-bg-secondary);
+  border: 2px solid var(--color-bg-secondary, #1a1520);
   color: #fff;
   cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: filter 0.15s ease, transform 0.15s ease;
   padding: 0;
+}
+
+.sph-edit-headshot:hover {
+  filter: brightness(1.1);
+  transform: scale(1.05);
 }
 
 .sph-info {
@@ -453,6 +482,41 @@ function posColor(pos) {
     align-items: center;
     justify-content: space-between;
     width: 100%;
+  }
+}
+
+/* Corner deselect — returns to the team overview header. Sits in the card's
+   top-right corner; the ratings block clears it via its own padding. */
+.sph-deselect {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--glass-border);
+  color: white;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sph-deselect:hover {
+  color: var(--color-text-primary);
+  background: rgba(26, 21, 32, 0.6);
+}
+
+.sph-right {
+  padding-top: 16px;
+}
+
+@media (max-width: 560px) {
+  .sph-right {
+    padding-top: 0;
   }
 }
 </style>

@@ -103,6 +103,8 @@ import {
   effectiveOwner,
   updateOwnerExpectation,
   initOwnerExpectation,
+  deriveExpectationTierFromRoster,
+  deriveOwnerExpectationFromRoster,
 } from '../season/OwnerExpectationService'
 import { listCoachHeadshots } from '../../services/headshotPremades'
 import {
@@ -2814,9 +2816,17 @@ export async function switchUserTeam(campaignId, newTeamAbbreviation) {
   // Reset owner expectation to the NEW owner's baseline (it ratchets up over
   // future seasons). Otherwise the prior franchise's expectation would carry
   // over and the new owner's welcome / check-in would state the wrong mandate.
+  // Custom-roster campaigns derive the baseline from the new team's ACTUAL
+  // roster — authored leagues don't follow the static per-franchise tiers.
   const newOwner = findOwnerForTeam(newTeam.abbreviation)
-  if (newOwner) campaign.settings.ownerExpectation = initOwnerExpectation(newOwner)
-  else delete campaign.settings.ownerExpectation
+  if (campaign.customRoster ?? campaign.custom_roster) {
+    const newRoster = await PlayerRepository.getByTeam(campaignId, newTeam.id)
+    campaign.settings.ownerExpectation = deriveOwnerExpectationFromRoster(newRoster)
+  } else if (newOwner) {
+    campaign.settings.ownerExpectation = initOwnerExpectation(newOwner)
+  } else {
+    delete campaign.settings.ownerExpectation
+  }
 
   // Clear the new-job welcome marker so the new owner's welcome fires once.
   delete campaign.settings.ownerWelcomeShownKey
@@ -2992,6 +3002,20 @@ export async function startNewSeason(campaignId) {
   const _coachUserTier = _coachUserTeam
     ? getEffectiveExpectation(campaign, findOwnerForTeam(_coachUserTeam.abbreviation)).tier
     : null
+  // Refresh every team's persisted mandate from its CURRENT roster each
+  // season (saveBulk below persists it). The AI direction bias prefers
+  // team.effectiveExpectation over the static owner tier, so franchises that
+  // drafted/traded their way up — or arrived via an authored custom roster —
+  // stop carrying a stale mandate. The user team instead carries the live
+  // ratcheted owner expectation.
+  for (const team of teams) {
+    if (team.id === campaign.teamId) {
+      if (_coachUserTier) team.effectiveExpectation = _coachUserTier
+      continue
+    }
+    team.effectiveExpectation =
+      deriveExpectationTierFromRoster(coachRostersByTeam.get(team.id) ?? [])
+  }
   const directionForTeam = (team) => {
     const t = (_coachUserTier && team.id === campaign.teamId)
       ? { ...team, effectiveExpectation: _coachUserTier }

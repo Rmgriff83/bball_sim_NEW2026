@@ -205,6 +205,17 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
     finish()
   }
 
+  // End the active run WITHOUT marking it done — for when navigation yanks the
+  // tour's host view out from under the global overlay (e.g. CampaignView's
+  // roster-setup resume redirect racing a ghost-mounted CampaignHomeView).
+  // The tour stays armed and fires again at its legitimate moment.
+  function abort() {
+    activeKey.value = null
+    stepIndex.value = 0
+    requestedTab.value = null
+    requestedAction.value = null
+  }
+
   function requestTab(view, tab) {
     requestedTab.value = { view, tab }
   }
@@ -243,6 +254,7 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
     back,
     finish,
     skip,
+    abort,
     requestTab,
     requestAction,
   }

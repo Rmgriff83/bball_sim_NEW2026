@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, onBeforeUnmount } from 'vue'
+import { useAudioStore } from '@/stores/audio'
 import { ChevronUp, ChevronDown, X } from 'lucide-vue-next'
 import { CANONICAL_ATTRIBUTES } from '@/engine/data/attributeSchema'
 import { deriveOverallFromAttributes, derivePotential } from '@/engine/evolution/PlayerEvolution'
@@ -17,7 +18,15 @@ const props = defineProps({
   removable: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['select', 'edited', 'remove'])
+const emit = defineEmits(['select', 'edited', 'remove', 'deselect'])
+
+// Corner ✕ on the selected row's identity cell. @click.stop keeps it from
+// re-triggering row select (which would open the details modal), which also
+// hides it from the global click-sound listener — play the dismiss SFX here.
+function deselect() {
+  useAudioStore().cancel()
+  emit('deselect')
+}
 
 const CATEGORIES = [
   { key: 'offense', label: 'Offense' },
@@ -93,6 +102,9 @@ function clearHold() {
 
 function startHold(p, cat, key, delta) {
   clearHold()
+  // One tap per press (not per repeat tick). The chevrons' @click.stop.prevent
+  // keeps the global click-sound listener from hearing them, so play it here.
+  useAudioStore().navigate()
   bump(p, cat, key, delta) // immediate tick on press
   let ticks = 0
   const startInterval = (ms) => setInterval(() => {
@@ -115,6 +127,11 @@ onBeforeUnmount(() => {
 
 const isCeiling = computed(() => props.mode === 'ceiling')
 
+// Potential (ceiling) mode hides the Mental group — those attributes can't be
+// upgraded mid-campaign, so growth ceilings for them are meaningless noise.
+const visibleCategories = computed(() =>
+  isCeiling.value ? CATEGORIES.filter((c) => c.key !== 'mental') : CATEGORIES)
+
 function cellValue(p, cat, key) {
   if (isCeiling.value) {
     return p.attributeCaps?.[cat]?.[key] ?? p.attributes?.[cat]?.[key] ?? 0
@@ -130,14 +147,24 @@ function bump(p, cat, key, delta) {
   const cap = p.attributeCaps[cat][key] ?? cur
 
   if (isCeiling.value) {
+    // Hand-editing a ceiling opts out of the "clamp to overall" state — the
+    // user is deliberately giving this player growth headroom again.
+    if (p.ceilingsClamped) p.ceilingsClamped = false
     // Ceilings float in [current, 99].
     p.attributeCaps[cat][key] = Math.max(cur, Math.min(99, cap + delta))
   } else {
-    // Current floats in [25, 99]; raising it above its ceiling drags the
-    // ceiling up with it (a cap below current is never allowed).
+    // Current floats in [25, 99].
     const next = Math.max(25, Math.min(99, cur + delta))
     p.attributes[cat][key] = next
-    if ((p.attributeCaps[cat][key] ?? next) < next) p.attributeCaps[cat][key] = next
+    if (p.ceilingsClamped) {
+      // Clamped player: the ceiling TRACKS the current value exactly (both
+      // directions) so potential stays equal to overall.
+      p.attributeCaps[cat][key] = next
+    } else if ((p.attributeCaps[cat][key] ?? next) < next) {
+      // Raising current above its ceiling drags the ceiling up with it
+      // (a cap below current is never allowed).
+      p.attributeCaps[cat][key] = next
+    }
   }
   emit('edited', p)
 }
@@ -166,7 +193,7 @@ function money(p) {
           <tr class="rat-group-row">
             <th class="rat-identity-col rat-sticky" rowspan="2">Player</th>
             <th
-              v-for="cat in CATEGORIES"
+              v-for="cat in visibleCategories"
               :key="cat.key"
               class="rat-group-th"
               :colspan="CANONICAL_ATTRIBUTES[cat.key].length"
@@ -177,7 +204,7 @@ function money(p) {
           </tr>
           <!-- Attribute headers (tap for the full attribute name) -->
           <tr class="rat-attr-row">
-            <template v-for="cat in CATEGORIES" :key="cat.key">
+            <template v-for="cat in visibleCategories" :key="cat.key">
               <th
                 v-for="key in CANONICAL_ATTRIBUTES[cat.key]"
                 :key="key"
@@ -201,17 +228,28 @@ function money(p) {
           >
             <!-- Sticky identity cell -->
             <td class="rat-identity-col rat-sticky">
+              <button
+                v-if="p.id === selectedId"
+                class="rat-deselect"
+                title="Deselect"
+                aria-label="Deselect row"
+                @click.stop="deselect"
+              >
+                <X :size="10" />
+              </button>
               <span class="rat-name">{{ p.name ?? ((p.firstName ?? '') + ' ' + (p.lastName ?? '')) }}</span>
               <span class="rat-sub">
                 <span class="rat-pos">{{ p.position }}</span>
                 <span class="rat-mini">OVR <strong>{{ ovr(p) }}</strong></span>
                 <span class="rat-mini pot">POT <strong>{{ pot(p) }}</strong></span>
               </span>
-              <span class="rat-money">{{ money(p) }}</span>
+              <!-- Contract line only on the selected row — unselected rows
+                   shrink, putting extra emphasis on the highlighted one. -->
+              <span v-if="p.id === selectedId" class="rat-money">{{ money(p) }}</span>
             </td>
 
             <!-- Attribute cells -->
-            <template v-for="cat in CATEGORIES" :key="cat.key">
+            <template v-for="cat in visibleCategories" :key="cat.key">
               <td
                 v-for="key in CANONICAL_ATTRIBUTES[cat.key]"
                 :key="key"
@@ -375,10 +413,11 @@ thead .rat-sticky {
 }
 
 /* Selected row: grows via vertical padding (pushes neighbors — never
-   overlaps) with a subtle accent ring drawn by borders. */
+   overlaps) with a subtle accent ring drawn by borders, and slightly larger
+   type across the row for extra emphasis. */
 .rat-row.selected td {
-  padding-top: 8px;
-  padding-bottom: 8px;
+  padding-top: 11px;
+  padding-bottom: 11px;
   background: rgba(232, 90, 79, 0.09);
   border-top: 1px solid var(--color-primary);
   border-bottom: 1px solid var(--color-primary);
@@ -387,6 +426,47 @@ thead .rat-sticky {
 .rat-row.selected .rat-sticky {
   background: var(--color-bg-tertiary);
   border-right-color: var(--color-primary);
+}
+
+.rat-row.selected .rat-name {
+  font-size: 1.02em;
+}
+
+/* Tiny corner deselect on the selected row's identity cell (sticky cells are
+   positioned, so absolute anchors to the cell). */
+.rat-deselect {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.rat-deselect:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-primary);
+}
+
+.rat-row.selected .rat-pos,
+.rat-row.selected .rat-mini {
+  font-size: 0.7rem;
+}
+
+.rat-row.selected .rat-money {
+  font-size: 0.68rem;
+}
+
+.rat-row.selected .rat-val {
+  font-size: 1.08em;
 }
 
 .rat-name {
@@ -467,8 +547,8 @@ thead .rat-sticky {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 15px;
+  width: 36px;
+  height: 25px;
   padding: 0;
   border: 1px solid var(--glass-border);
   border-radius: 4px;

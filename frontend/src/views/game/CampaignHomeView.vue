@@ -1057,11 +1057,13 @@ onMounted(async () => {
       // calls at the end of onMounted no-op on this cached/switch path (the
       // identity guard sees the stale campaign), so this is where they actually
       // run when switching between campaigns.
-      maybeShowOwnerCheckIn()
-      maybeShowExpectationRaise()
-      maybeShowCoachDecisionModal()
-      walkthroughStore.maybeStart('campaignHome')
-      maybeStartOffseasonTour()
+      if (!inRosterSetup()) {
+        maybeShowOwnerCheckIn()
+        maybeShowExpectationRaise()
+        maybeShowCoachDecisionModal()
+        walkthroughStore.maybeStart('campaignHome')
+        maybeStartOffseasonTour()
+      }
     }).catch(err => console.error('Failed to refresh campaign:', err))
     // Also check playoff status in background
     checkPlayoffStatus()
@@ -1096,25 +1098,32 @@ onMounted(async () => {
     }
   }
 
-  // Owner Check-In — the FIRST thing the user sees on a fresh campaign / new
-  // season. The minimal owner-welcome is NOT shown here: a brand-new campaign
-  // already gets the full season-start check-in, so showing both would be a
-  // redundant double owner conversation. The quick welcome only fires when the
-  // user MOVES JOBS mid-campaign (handleSwitchTeam). Suspends tours until dismissed.
-  maybeShowOwnerCheckIn()
+  // Skip the check-in / tours entirely when this mount is transient: a custom
+  // roster campaign still in setup is about to be redirected to /roster-setup
+  // by CampaignView's guard, and anything fired here either haunts the roster
+  // editor (the app-global walkthrough overlay) or burns its fire-once flag on
+  // a modal the user never sees (owner check-in stamps on show).
+  if (!inRosterSetup()) {
+    // Owner Check-In — the FIRST thing the user sees on a fresh campaign / new
+    // season. The minimal owner-welcome is NOT shown here: a brand-new campaign
+    // already gets the full season-start check-in, so showing both would be a
+    // redundant double owner conversation. The quick welcome only fires when the
+    // user MOVES JOBS mid-campaign (handleSwitchTeam). Suspends tours until dismissed.
+    maybeShowOwnerCheckIn()
 
-  // Expiring head-coach re-sign prompt (guarded so it won't stack on the check-in;
-  // its close handler re-invokes this).
-  maybeShowCoachDecisionModal()
+    // Expiring head-coach re-sign prompt (guarded so it won't stack on the check-in;
+    // its close handler re-invokes this).
+    maybeShowCoachDecisionModal()
 
-  // First-visit onboarding tour (no-op unless enabled and not yet seen).
-  walkthroughStore.maybeStart('campaignHome')
+    // First-visit onboarding tour (no-op unless enabled and not yet seen).
+    walkthroughStore.maybeStart('campaignHome')
 
-  // First-time offseason tour — fires only in the entry offseason phase
-  // (before free agency starts) so the ENTER FREE AGENCY anchor is visible
-  // for its step. maybeStart() is a safe no-op if conditions aren't met
-  // or the tour has already been completed/skipped.
-  maybeStartOffseasonTour()
+    // First-time offseason tour — fires only in the entry offseason phase
+    // (before free agency starts) so the ENTER FREE AGENCY anchor is visible
+    // for its step. maybeStart() is a safe no-op if conditions aren't met
+    // or the tour has already been completed/skipped.
+    maybeStartOffseasonTour()
+  }
 })
 
 // Centralized trigger for the offseason walkthrough. Gated on three
@@ -1979,6 +1988,19 @@ async function maybeShowExpectationRaise() {
   } catch (err) {
     console.warn('[CampaignHome] failed to clear expectation-raise marker:', err)
   }
+}
+
+// True while this mount belongs to a custom-roster campaign that hasn't
+// finished roster setup — CampaignView's guard is about to replace the route
+// with /roster-setup, making this a ghost mount whose tours/modals must not
+// fire. Unknown or mismatched campaign data also counts as "in setup": the
+// cached/switch refresh path re-fires the triggers with fresh data through
+// its own gated call, so deferring is always safe.
+function inRosterSetup() {
+  const c = campaignStore.currentCampaign
+  if (!c || c.id !== campaignId.value) return true
+  return !!((c.customRoster ?? c.custom_roster)
+    && !(c.rosterSetupCompleted ?? c.roster_setup_completed))
 }
 
 function maybeShowOwnerCheckIn() {

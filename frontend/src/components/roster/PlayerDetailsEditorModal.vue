@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { X, Sparkles, Brush, RefreshCw } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { CANONICAL_ATTRIBUTES, normalizePlayerAttributes } from '@/engine/data/attributeSchema'
@@ -23,7 +23,6 @@ const props = defineProps({
 const emit = defineEmits(['save', 'close', 'edit-headshot'])
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C']
-const BADGE_STEPS = [null, ...PLAYER_BADGE_LEVELS]
 const TRAIT_LABELS = {
   team_player: 'Team Player', ball_hog: 'Ball Hog', mentor: 'Mentor',
   hot_head: 'Hot Head', media_darling: 'Media Darling', quiet: 'Quiet',
@@ -51,6 +50,21 @@ draft.personality = draft.personality ?? {}
 draft.personality.traits = Array.isArray(draft.personality.traits) ? draft.personality.traits : []
 
 const selectedArchetype = ref('')
+
+// Silent-discard guard: a long editing session ending on an accidental
+// backdrop tap (or ✕) used to evaporate every unsaved edit with no warning.
+// Snapshot the draft at open; any close request with a changed draft asks
+// first.
+const _initialSnapshot = JSON.stringify(draft)
+const confirmDiscard = ref(false)
+
+function requestClose() {
+  if (JSON.stringify(draft) !== _initialSnapshot) {
+    confirmDiscard.value = true
+    return
+  }
+  emit('close')
+}
 
 // ---- Live derived ----------------------------------------------------------
 const liveOverall = computed(() => deriveOverallFromAttributes(draft.attributes, draft.position))
@@ -94,7 +108,10 @@ const availableToAdd = computed(() =>
 function addBadge(id) {
   if (!id || badgeRowIds.value.includes(id)) return
   badgeRowIds.value = [...badgeRowIds.value, id]
+  // Fresh manual adds start fully at bronze: current level AND an explicit
+  // bronze ceiling (not Auto, which could read higher from the derived cap).
   setBadge(id, 'bronze')
+  setBadgeCap(id, 'bronze')
 }
 
 function removeBadgeRow(id) {
@@ -131,6 +148,13 @@ function setBadge(badgeId, level) {
   }
   if (idx >= 0) draft.badges[idx] = { ...draft.badges[idx], id: badgeId, level, source: 'authored' }
   else draft.badges.push({ id: badgeId, level, source: 'authored' })
+  // A ceiling can never sit below the current level: raising the level drags
+  // an explicit (or 'none') cap up with it. Auto caps need no write — their
+  // effective value already floors at the current level (effectiveAutoCap).
+  const cap = draft.badgeCaps?.[badgeId]
+  if (cap !== undefined && (cap === 'none' || compareBadgeLevels(cap, level) < 0)) {
+    draft.badgeCaps[badgeId] = level
+  }
 }
 
 function setBadgeCap(badgeId, value) {
@@ -147,9 +171,44 @@ const derivedCaps = computed(() => {
   return Object.fromEntries(BADGES.map((b) => [b.id, getDerivedMaxBadgeLevel(probe, b)]))
 })
 
-function autoLabel(badgeId) {
+// The Auto cap's EFFECTIVE value: the derived ceiling, floored at the badge's
+// current level — Auto can never read below what the player already holds,
+// and raising the current level raises Auto with it.
+function effectiveAutoCap(badgeId) {
   const derived = derivedCaps.value[badgeId]
-  return `Auto (${derived ? derived.toUpperCase() : 'NONE'})`
+  const lvl = currentBadgeLevel(badgeId)
+  if (!lvl) return derived
+  if (!derived || compareBadgeLevels(derived, lvl) < 0) return lvl
+  return derived
+}
+
+function autoLabel(badgeId) {
+  const auto = effectiveAutoCap(badgeId)
+  return `Auto (${auto ? auto.toUpperCase() : 'NONE'})`
+}
+
+// Explicit Max options below the current level are unpickable (as is 'None'
+// while a level is held) — the ceiling can't undercut the current level.
+function capOptionDisabled(badgeId, lvl) {
+  const cur = currentBadgeLevel(badgeId)
+  return !!cur && compareBadgeLevels(lvl, cur) < 0
+}
+
+// Tier swatch colors for the Lvl/Max selects — native <select> popups can't
+// color their options (iOS ignores option styling), so a live dot next to
+// each select shows the chosen tier's color instead.
+const LEVEL_COLORS = { bronze: '#cd7f32', silver: '#c0c0c0', gold: '#ffd700', hof: '#a855f7' }
+
+function levelColor(lvl) {
+  return LEVEL_COLORS[lvl] ?? 'transparent'
+}
+
+// The Max select's effective tier: explicit cap, or the effective Auto cap
+// (derived floored at the current level); 'none' renders the empty swatch.
+function capSwatchColor(badgeId) {
+  const cap = draft.badgeCaps?.[badgeId]
+  if (cap === 'none') return 'transparent'
+  return levelColor(cap || effectiveAutoCap(badgeId))
 }
 
 // Keep authored ceilings consistent: an explicit cap below the authored level
@@ -166,6 +225,16 @@ function sanitizeBadgeCaps() {
 }
 
 // ---- Archetype template ----------------------------------------------------
+// A picked-but-unapplied template still counts as intent: save() auto-applies
+// it (see stampDraft). Without this, selecting an archetype and hitting Save
+// Player silently discarded the choice — the original bug report.
+const archetypeApplied = ref(false)
+const archetypeNote = ref('')
+watch(selectedArchetype, () => {
+  archetypeApplied.value = false
+  archetypeNote.value = ''
+})
+
 function applyArchetype() {
   const seed = ARCHETYPE_SEEDS[selectedArchetype.value]
   if (!seed) return
@@ -187,6 +256,8 @@ function applyArchetype() {
       draft.attributeCaps[cat][key] = Math.min(99, draft.attributes[cat][key] + 8)
     }
   }
+  archetypeApplied.value = true
+  archetypeNote.value = 'Applied — attributes and ceilings re-seeded.'
 }
 
 // ---- Contract --------------------------------------------------------------
@@ -381,6 +452,9 @@ function sanitizePersonality() {
 
 // ---- Save ------------------------------------------------------------------
 function stampDraft() {
+  // A selected-but-unapplied archetype template applies on save — picking one
+  // and saving is the same intent as picking + Apply + saving.
+  if (selectedArchetype.value && !archetypeApplied.value) applyArchetype()
   syncName()
   sanitizePositions()
   sanitizeVitals()
@@ -414,12 +488,12 @@ const POSITION_COLORS = {
 
 <template>
   <Teleport to="body">
-    <div class="pdem-overlay" @click.self="emit('close')">
+    <div class="pdem-overlay" @click.self="requestClose">
       <div class="pdem-container">
         <!-- Chrome header -->
         <header class="pdem-chrome">
           <h2 class="pdem-title">Edit Player</h2>
-          <button class="pdem-close" aria-label="Close" @click="emit('close')">
+          <button class="pdem-close" aria-label="Close" @click="requestClose">
             <X :size="18" />
           </button>
         </header>
@@ -591,6 +665,10 @@ const POSITION_COLORS = {
               </select>
               <button class="pdem-apply" :disabled="!selectedArchetype" @click="applyArchetype">Apply</button>
             </div>
+            <p v-if="archetypeNote" class="pdem-note">{{ archetypeNote }}</p>
+            <p v-else-if="selectedArchetype && !archetypeApplied" class="pdem-note">
+              Will apply when you save (or tap Apply to preview the new ratings now).
+            </p>
           </div>
 
           <!-- Badges — the player's loadout + Add Badge -->
@@ -603,11 +681,14 @@ const POSITION_COLORS = {
             </div>
             <p class="pdem-note">
               <strong>Max</strong> caps what the in-game badge store can upgrade to
-              during the campaign — Auto shows the derived cap; pick a level (or None)
-              to override it.
+              during the campaign — Auto follows the derived cap and never sits below
+              the current level; pick a level to override it. Remove a badge with ✕.
             </p>
             <p v-if="!badgeRowIds.length" class="pdem-note">No badges yet — add one below.</p>
             <div v-for="id in badgeRowIds" :key="id" class="pdem-badge-row">
+              <button class="pdem-badge-remove" title="Remove badge" @click="removeBadgeRow(id)">
+                <X :size="13" />
+              </button>
               <div class="pdem-badge-info">
                 <span class="pdem-badge-name">{{ badgeDef(id)?.name ?? id }}</span>
                 <span class="pdem-badge-cat pdem-badge-desc">{{ badgeDef(id)?.description }}</span>
@@ -615,33 +696,37 @@ const POSITION_COLORS = {
               <div class="pdem-badge-selects">
                 <label class="pdem-badge-select">
                   <span>Lvl</span>
+                  <span class="pdem-lvl-swatch" :style="{ background: levelColor(currentBadgeLevel(id)) }" />
                   <select
                     class="pdem-input sm"
-                    :value="currentBadgeLevel(id) ?? ''"
-                    @change="setBadge(id, $event.target.value || null)"
+                    :value="currentBadgeLevel(id) ?? 'bronze'"
+                    @change="setBadge(id, $event.target.value)"
                   >
-                    <option v-for="lvl in BADGE_STEPS" :key="lvl ?? 'none'" :value="lvl ?? ''">
-                      {{ lvl ? lvl.toUpperCase() : 'None' }}
+                    <option v-for="lvl in PLAYER_BADGE_LEVELS" :key="lvl" :value="lvl">
+                      {{ lvl.toUpperCase() }}
                     </option>
                   </select>
                 </label>
                 <label class="pdem-badge-select">
                   <span>Max</span>
+                  <span class="pdem-lvl-swatch" :style="{ background: capSwatchColor(id) }" />
                   <select
                     class="pdem-input sm"
                     :value="draft.badgeCaps?.[id] ?? ''"
                     @change="setBadgeCap(id, $event.target.value)"
                   >
                     <option value="">{{ autoLabel(id) }}</option>
-                    <option value="none">None</option>
-                    <option v-for="lvl in PLAYER_BADGE_LEVELS" :key="lvl" :value="lvl">
+                    <option value="none" :disabled="!!currentBadgeLevel(id)">None</option>
+                    <option
+                      v-for="lvl in PLAYER_BADGE_LEVELS"
+                      :key="lvl"
+                      :value="lvl"
+                      :disabled="capOptionDisabled(id, lvl)"
+                    >
                       {{ lvl.toUpperCase() }}
                     </option>
                   </select>
                 </label>
-                <button class="pdem-badge-remove" title="Remove badge" @click="removeBadgeRow(id)">
-                  <X :size="13" />
-                </button>
               </div>
             </div>
 
@@ -684,10 +769,11 @@ const POSITION_COLORS = {
                 <span>Signed</span>
                 <input v-model.number="contract.signedYear" type="number" min="2015" max="2025" class="pdem-input" />
               </label>
-              <label class="pdem-field pdem-ntc">
-                <span>No-Trade</span>
-                <input v-model="contract.noTradeClause" type="checkbox" class="pdem-check" />
-              </label>
+              <!-- No-Trade clause is deliberately NOT exposed here: the field
+                   exists on contracts (generation even assigns it to some 88+
+                   OVR stars) but nothing in the trade engine/UI consumes it
+                   yet. The value passes through saves untouched so it's ready
+                   when NTC gameplay lands. -->
             </div>
             <div class="pdem-salaries">
               <div v-for="(s, i) in contract.salaries" :key="i" class="pdem-salary-row">
@@ -742,15 +828,66 @@ const POSITION_COLORS = {
         </main>
 
         <footer class="pdem-foot">
-          <button class="pdem-cancel" @click="emit('close')">Cancel</button>
+          <button class="pdem-cancel" @click="requestClose">Cancel</button>
           <button class="pdem-save" @click="save">Save Player</button>
         </footer>
+
+        <!-- Unsaved-changes discard confirm -->
+        <div v-if="confirmDiscard" class="pdem-discard-overlay">
+          <div class="pdem-discard-box">
+            <p>Discard unsaved changes to this player?</p>
+            <div class="pdem-discard-actions">
+              <button class="pdem-save" @click="confirmDiscard = false">Keep editing</button>
+              <button class="pdem-cancel pdem-discard-confirm" @click="confirmDiscard = false; emit('close')">
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </Teleport>
 </template>
 
 <style scoped>
+/* Discard-confirm overlay sits inside the modal container. */
+.pdem-discard-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 20px;
+}
+
+.pdem-discard-box {
+  background: var(--glass-bg-elevated, var(--color-bg-secondary));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl, 16px);
+  padding: 20px;
+  max-width: 320px;
+  text-align: center;
+}
+
+.pdem-discard-box p {
+  margin: 0 0 14px;
+  font-size: 0.92rem;
+  color: var(--color-text-primary);
+}
+
+.pdem-discard-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.pdem-discard-confirm {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: var(--color-error, #ef4444);
+}
+
 .pdem-overlay {
   position: fixed;
   inset: 0;
@@ -764,6 +901,7 @@ const POSITION_COLORS = {
 }
 
 .pdem-container {
+  position: relative; /* anchors the discard-confirm overlay */
   width: 100%;
   max-width: 42rem;
   max-height: 90vh;
@@ -1032,17 +1170,6 @@ const POSITION_COLORS = {
   flex: 1;
 }
 
-.pdem-check {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--color-primary);
-}
-
-.pdem-ntc {
-  align-items: flex-start;
-  justify-content: flex-end;
-}
-
 .pdem-note {
   margin: 0;
   font-size: 0.78rem;
@@ -1082,7 +1209,6 @@ const POSITION_COLORS = {
   justify-content: center;
   width: 24px;
   height: 24px;
-  align-self: flex-end;
   border-radius: 6px;
   border: 1px solid rgba(239, 68, 68, 0.35);
   background: rgba(239, 68, 68, 0.1);
@@ -1128,28 +1254,45 @@ const POSITION_COLORS = {
   text-transform: capitalize;
 }
 
+/* Lvl over Max, stacked; each row is label-left / select-right so the
+   stacked block stays compact and the selects align. */
 .pdem-badge-selects {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   flex-shrink: 0;
 }
 
 .pdem-badge-select {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
   font-size: 0.58rem;
   color: var(--color-text-tertiary);
   text-transform: uppercase;
   font-weight: 700;
 }
 
+.pdem-badge-select > span {
+  width: 26px;
+  text-align: right;
+}
+
+/* Tier color dot — reflects the select's current value live. Overrides the
+   generic label-span sizing above. */
+.pdem-badge-select > span.pdem-lvl-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
 .pdem-badge-desc {
   display: block;
   max-width: 260px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   text-transform: none;
 }
 

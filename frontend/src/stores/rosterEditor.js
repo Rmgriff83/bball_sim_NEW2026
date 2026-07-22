@@ -26,6 +26,8 @@ import {
   derivePotential,
   ensureAttributeCaps,
 } from '@/engine/evolution/PlayerEvolution'
+import { computeTeamOverall } from '@/utils/teamOverall'
+import { deriveOwnerExpectationFromRoster, deriveExpectationTierFromRoster } from '@/engine/season/OwnerExpectationService'
 
 // Minimum players a team must carry before the campaign can start.
 export const MIN_ROSTER_SIZE = 8
@@ -37,6 +39,7 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
   const activeTeamId = ref(null)
   const activeRoster = ref([])     // players for the active team (lazy-loaded)
   const freeAgents = ref([])       // fantasy: the draftable pool
+  const teamOveralls = ref({})     // teamId → computed overall (team-grid badges)
 
   const loading = ref(false)
   const saving = ref(false)
@@ -132,21 +135,52 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
       campaignId.value = id
       campaign.value = await CampaignRepository.get(id)
       if (!campaign.value) throw new Error('Campaign not found')
-      const all = await TeamRepository.getAllForCampaign(id)
-      // Stable display order: user team first, then alphabetical by abbreviation.
-      teams.value = all.sort((a, b) => {
-        if (a.id === userTeamId.value) return -1
-        if (b.id === userTeamId.value) return 1
-        return (a.abbreviation ?? '').localeCompare(b.abbreviation ?? '')
-      })
+      await refreshTeams()
       activeTeamId.value = null
       activeRoster.value = []
+      await refreshTeamOveralls()
     } catch (e) {
       error.value = e?.message ?? 'Failed to load the roster editor'
       throw e
     } finally {
       loading.value = false
     }
+  }
+
+  // Re-read the team records from IDB (embedded coach included), keeping the
+  // stable display order (user team first, then alphabetical). Needed when an
+  // EXTERNAL editor wrote teams while this store's snapshot survived a
+  // navigation — e.g. the coach headshot editor round-trip renames the coach
+  // and saves the team; without this the roster editor shows the stale coach
+  // until a hard reload.
+  async function refreshTeams() {
+    if (!campaignId.value) return
+    const all = await TeamRepository.getAllForCampaign(campaignId.value)
+    teams.value = all.sort((a, b) => {
+      if (a.id === userTeamId.value) return -1
+      if (b.id === userTeamId.value) return 1
+      return (a.abbreviation ?? '').localeCompare(b.abbreviation ?? '')
+    })
+  }
+
+  // Recompute every team's current overall (one bulk IDB read, grouped by
+  // team). Display-only — feeds the badges on the team-select grid; failures
+  // just leave stale/absent badges. Excludes free agents and retirees via
+  // the canonical computeTeamOverall filters.
+  async function refreshTeamOveralls() {
+    if (!campaignId.value) return
+    try {
+      const all = await PlayerRepository.getAllForCampaign(campaignId.value)
+      const byTeam = {}
+      for (const p of all) {
+        const tid = p.teamId ?? p.team_id
+        if (!tid) continue
+        ;(byTeam[tid] ??= []).push(p)
+      }
+      const map = {}
+      for (const t of teams.value) map[t.id] = computeTeamOverall(byTeam[t.id] ?? [])
+      teamOveralls.value = map
+    } catch { /* display-only */ }
   }
 
   // Persist the chosen start mode. 'scratch' empties every team's roster; the
@@ -202,8 +236,9 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
   async function openTeam(teamId) {
     activeTeamId.value = teamId
     activeRoster.value = await PlayerRepository.getByTeam(campaignId.value, teamId)
-    // Auto-select the top row so the hero header is never empty.
-    selectedId.value = activeRoster.value[0]?.id ?? null
+    // No auto-selection: with nothing selected the view shows the TEAM
+    // header (overall / owner / editable history) instead of a player hero.
+    selectedId.value = null
   }
 
   async function openPool() {
@@ -237,6 +272,101 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     return player
   }
 
+  // Fill the active team up to the 15-man cap with generated players —
+  // scratch-mode QoL so a hand-built core doesn't require tapping Add Player
+  // a dozen times. Each fill takes the position the roster is thinnest at
+  // (ties resolve PG→C) and a randomized bench-grade overall so the results
+  // read as role players, not fifteen identical 70s. Selection is left
+  // untouched. Returns the number of players generated.
+  // Generate players for `team` until `roster` (mutated in place) reaches the
+  // 15-man cap: each fill takes the thinnest position (ties PG→C) and a
+  // randomized bench-grade overall. Returns the new players (not persisted).
+  function _generateFillPlayers(team, roster) {
+    const added = []
+    while (roster.length < MAX_ROSTER_SIZE) {
+      const counts = Object.fromEntries(POSITIONS.map((pos) => [pos, 0]))
+      for (const p of roster) {
+        if (counts[p.position] !== undefined) counts[p.position]++
+      }
+      const position = POSITIONS.reduce((best, pos) => (counts[pos] < counts[best] ? pos : best))
+      const player = generatePlayer({
+        campaignId: campaignId.value,
+        teamId: team.id,
+        teamAbbreviation: team.abbreviation,
+        position,
+        overall: 60 + Math.floor(Math.random() * 15), // 60–74 bench/role grade
+      })
+      roster.push(player)
+      added.push(player)
+    }
+    return added
+  }
+
+  async function fillRoster() {
+    const team = activeTeam.value
+    if (!team) return 0
+    const added = _generateFillPlayers(team, activeRoster.value)
+    if (!added.length) return 0
+    await PlayerRepository.saveBulk(added.map((p) => cloneForPersist(p)))
+    _sync()
+    return added.length
+  }
+
+  // League-wide fill (the finalize modal's "generate the rest"): every team
+  // except `excludeTeamId` (the user's — their roster is theirs to author)
+  // gets topped up to 15. Returns { teams, players } counts.
+  async function fillAllTeamRosters({ excludeTeamId = null } = {}) {
+    const all = await PlayerRepository.getAllForCampaign(campaignId.value)
+    const byTeam = new Map()
+    for (const p of all) {
+      const tid = p.teamId ?? p.team_id
+      if (tid == null) continue
+      if (!byTeam.has(tid)) byTeam.set(tid, [])
+      byTeam.get(tid).push(p)
+    }
+    const added = []
+    let teamsFilled = 0
+    for (const team of teams.value) {
+      if (team.id === excludeTeamId) continue
+      const roster = byTeam.get(team.id) ?? []
+      const newPlayers = _generateFillPlayers(team, roster)
+      if (newPlayers.length) {
+        teamsFilled++
+        added.push(...newPlayers)
+      }
+    }
+    if (added.length) {
+      await PlayerRepository.saveBulk(added.map((p) => cloneForPersist(p)))
+      // Keep an open team view coherent if it got filled.
+      if (activeTeamId.value && activeTeamId.value !== excludeTeamId) {
+        activeRoster.value = await PlayerRepository.getByTeam(campaignId.value, activeTeamId.value)
+      }
+      await refreshTeamOveralls()
+      _sync()
+    }
+    return { teams: teamsFilled, players: added.length }
+  }
+
+  // How many NON-user teams sit below the minimum roster size — drives the
+  // finalize modal's "generate the rest" affordance. Fantasy: 0 (the pool
+  // fills rosters via the draft).
+  async function countShortTeams() {
+    if (isFantasy.value) return 0
+    const all = await PlayerRepository.getAllForCampaign(campaignId.value)
+    const counts = new Map()
+    for (const p of all) {
+      const tid = p.teamId ?? p.team_id
+      if (tid == null) continue
+      counts.set(tid, (counts.get(tid) ?? 0) + 1)
+    }
+    let short = 0
+    for (const team of teams.value) {
+      if (team.id === userTeamId.value) continue
+      if ((counts.get(team.id) ?? 0) < MIN_ROSTER_SIZE) short++
+    }
+    return short
+  }
+
   async function addPoolPlayer() {
     const position = POSITIONS[freeAgents.value.length % POSITIONS.length]
     const player = generatePlayer({
@@ -260,7 +390,9 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     if (i >= 0) list.value.splice(i, 1)
     _clearDirty(player.id)
     if (selectedId.value === player.id) {
-      selectedId.value = list.value[0]?.id ?? null
+      // Team view: drop back to the team header. Pool: keep a row selected
+      // (there's no team header to fall back to).
+      selectedId.value = fromPool ? (list.value[0]?.id ?? null) : null
     }
     _sync()
   }
@@ -325,6 +457,12 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
         const roster = await PlayerRepository.getByTeam(campaignId.value, team.id)
         if (roster.length < MIN_ROSTER_SIZE) {
           problems.push(`${team.abbreviation ?? team.name}: only ${roster.length} players (min ${MIN_ROSTER_SIZE}).`)
+        }
+        // The 15-man cap the rest of the game assumes (signings, AI logic).
+        // The Add Player UI already stops at 15; this catches oversized
+        // rosters arriving via imported builds or any other edge path.
+        if (roster.length > MAX_ROSTER_SIZE) {
+          problems.push(`${team.abbreviation ?? team.name}: ${roster.length} players — over the ${MAX_ROSTER_SIZE}-man limit.`)
         }
         _validatePlayers(roster, problems, team.abbreviation ?? team.name)
       }
@@ -418,6 +556,11 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
             (sum, p) => sum + (Number(p.contractSalary ?? p.contract_salary) || 0), 0)
           freshTeam.total_payroll = payroll
           freshTeam.totalPayroll = payroll
+          // Mandate follows the authored roster: the AI's direction bias
+          // prefers team.effectiveExpectation over the static owner tier, so
+          // a stacked "rebuild" franchise trades like the contender it is
+          // from day one (and vice versa).
+          freshTeam.effectiveExpectation = deriveExpectationTierFromRoster(teamPlayers)
           await TeamRepository.save(cloneForPersist(freshTeam))
         }
         const userPlayers = allPlayers.filter((p) => p.teamId === userTeamId.value)
@@ -430,11 +573,28 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
             target_minutes: userMinutes,
             rotation: [],
           }
+          // Owner expectation re-derived from the FINAL authored roster,
+          // replacing the static per-franchise seed from createCampaign.
+          // Check-in, subtasks, GM evaluation, and the season ratchet all
+          // read via getEffectiveExpectation and pick this up unchanged.
+          const derived = deriveOwnerExpectationFromRoster(userPlayers)
+          fresh.settings.ownerExpectation = derived
+          if (fresh.settings.gmContract) {
+            fresh.settings.gmContract.expectationTiers = [derived.tier]
+          }
         }
       }
 
       fresh.rosterSetupCompleted = true
       fresh.roster_setup_completed = true
+      // Authored data is authoritative — block the first-load legacy
+      // migrations that would rewrite it. backfillInitialRookies stamps the
+      // 60 youngest players with draftYear=currentSeasonYear +
+      // careerSeasons=0 when it finds no current-year rookies, steamrolling
+      // authored draft history. In a custom league, rookies are whoever the
+      // author gave the current draft year to (ROY/All-Rookie follow that).
+      fresh.settings = fresh.settings ?? {}
+      fresh.settings.initialRookiesBackfilled = true
       await CampaignRepository.save(cloneForPersist(fresh))
       campaign.value = fresh
       _sync()
@@ -463,12 +623,13 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
 
   return {
     campaignId, campaign, teams, activeTeamId, activeRoster, freeAgents,
+    teamOveralls, refreshTeamOveralls, refreshTeams,
     loading, saving, error,
     isFantasy, startMode, hasStarted, userTeamId, activeTeam,
     selectedId, selectedPlayer, dirtyIds, isDirty,
     select, markDirtyPlayer, saveDirty, discardDirty, refreshPlayerFromDb,
     load, chooseStart, openTeam, openPool, applyDownloadedBuild,
-    addPlayer, addPoolPlayer, removePlayer,
+    addPlayer, addPoolPlayer, removePlayer, fillRoster, fillAllTeamRosters, countShortTeams,
     refreshDerived, savePlayer, saveTeamCoach,
     validate, finalize, $reset,
   }
