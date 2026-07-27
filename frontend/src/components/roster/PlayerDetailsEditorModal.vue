@@ -19,6 +19,9 @@ const props = defineProps({
   player: { type: Object, required: true },
   campaignId: { type: [String, Number], required: true },
   canEditHeadshot: { type: Boolean, default: false },
+  // Latest allowed contract-signed / draft year — the campaign's current
+  // season (2026 for new campaigns; legacy custom campaigns pass 2025).
+  maxSignedYear: { type: Number, default: 2026 },
 })
 const emit = defineEmits(['save', 'close', 'edit-headshot'])
 
@@ -50,6 +53,17 @@ draft.personality = draft.personality ?? {}
 draft.personality.traits = Array.isArray(draft.personality.traits) ? draft.personality.traits : []
 
 const selectedArchetype = ref('')
+
+// Talent level for the archetype apply — scales the whole seeded attribute
+// set so the same archetype shape can be authored at any caliber.
+const TALENT_TIERS = [
+  { key: 'superstar', label: 'Superstar', target: 92 },
+  { key: 'allstar', label: 'All-Star', target: 86 },
+  { key: 'starter', label: 'Starter', target: 80 },
+  { key: 'role', label: 'Role Player', target: 74 },
+  { key: 'bench', label: 'Bench', target: 68 },
+]
+const selectedTalent = ref('starter')
 
 // Silent-discard guard: a long editing session ending on an accidental
 // backdrop tap (or ✕) used to evaporate every unsaved edit with no warning.
@@ -157,6 +171,22 @@ function setBadge(badgeId, level) {
   }
 }
 
+// The Lvl select's handler. None (null) = "doesn't own it yet, can earn it
+// later up to Max": drop the owned entry but keep the row alive as a
+// cap-only authored availability — materializing an explicit cap first when
+// the badge was on Auto (rows exist via owned ∪ capped; a level-less Auto
+// row would silently vanish on reopen).
+function setBadgeLevel(badgeId, level) {
+  if (!level) {
+    if (draft.badgeCaps?.[badgeId] === undefined) {
+      setBadgeCap(badgeId, effectiveAutoCap(badgeId) ?? 'bronze')
+    }
+    setBadge(badgeId, null)
+    return
+  }
+  setBadge(badgeId, level)
+}
+
 function setBadgeCap(badgeId, value) {
   draft.badgeCaps = draft.badgeCaps ?? {}
   if (value === '') delete draft.badgeCaps[badgeId] // Auto (derived)
@@ -230,16 +260,24 @@ function sanitizeBadgeCaps() {
 // Player silently discarded the choice — the original bug report.
 const archetypeApplied = ref(false)
 const archetypeNote = ref('')
-watch(selectedArchetype, () => {
+// Changing EITHER selection re-arms the pending apply (talent alone counts:
+// re-applying the same archetype at a new tier is a real intent).
+watch([selectedArchetype, selectedTalent], () => {
   archetypeApplied.value = false
   archetypeNote.value = ''
 })
 
-function applyArchetype() {
+function applyArchetype({ preserveVitals = false } = {}) {
   const seed = ARCHETYPE_SEEDS[selectedArchetype.value]
   if (!seed) return
-  if (seed.position) draft.position = seed.position
-  if (seed.heightInches) { draft.heightInches = seed.heightInches; draft.height_inches = seed.heightInches }
+  // The save-time auto-apply preserves position/height — the user set those
+  // on the Vitals tab and the template must not silently stomp them (stomped
+  // positions were the original bug report). The explicit Apply button keeps
+  // full template semantics, physique included.
+  if (!preserveVitals) {
+    if (seed.position) draft.position = seed.position
+    if (seed.heightInches) { draft.heightInches = seed.heightInches; draft.height_inches = seed.heightInches }
+  }
   for (const cat of Object.keys(CANONICAL_ATTRIBUTES)) {
     for (const key of CANONICAL_ATTRIBUTES[cat]) {
       draft.attributes[cat][key] = ARCHETYPE_SEED_BASELINE
@@ -250,6 +288,30 @@ function applyArchetype() {
       if (draft.attributes[cat] && key in draft.attributes[cat]) draft.attributes[cat][key] = val
     }
   }
+
+  // Scale the seeded set to the chosen talent tier. The derived overall is
+  // ~linear in a uniform attribute shift (calibration slope 1.0478), so one
+  // measured delta plus a couple of ±1 refinement passes (clamping distorts
+  // the linearity at the 25/99 edges) lands within a point of the target
+  // while preserving the archetype's relative attribute shape.
+  const tier = TALENT_TIERS.find((t) => t.key === selectedTalent.value) ?? TALENT_TIERS[2]
+  const shiftAll = (delta) => {
+    if (!delta) return
+    for (const cat of Object.keys(CANONICAL_ATTRIBUTES)) {
+      for (const key of CANONICAL_ATTRIBUTES[cat]) {
+        const v = draft.attributes[cat][key] ?? ARCHETYPE_SEED_BASELINE
+        draft.attributes[cat][key] = Math.max(25, Math.min(99, v + delta))
+      }
+    }
+  }
+  const measured = deriveOverallFromAttributes(draft.attributes, draft.position)
+  shiftAll(Math.round((tier.target - measured) / 1.0478))
+  for (let i = 0; i < 2; i++) {
+    const now = deriveOverallFromAttributes(draft.attributes, draft.position)
+    if (Math.abs(now - tier.target) <= 1) break
+    shiftAll(now < tier.target ? 1 : -1)
+  }
+
   for (const cat of Object.keys(CANONICAL_ATTRIBUTES)) {
     draft.attributeCaps[cat] = draft.attributeCaps[cat] ?? {}
     for (const key of CANONICAL_ATTRIBUTES[cat]) {
@@ -257,12 +319,15 @@ function applyArchetype() {
     }
   }
   archetypeApplied.value = true
-  archetypeNote.value = 'Applied — attributes and ceilings re-seeded.'
+  archetypeNote.value =
+    `Applied — ${tier.label.toUpperCase()} build (OVR ${deriveOverallFromAttributes(draft.attributes, draft.position)}). Attributes and ceilings re-seeded.`
 }
 
 // ---- Contract --------------------------------------------------------------
 const MIN_SALARY = 1_000_000
-const MAX_SALARY = 60_000_000
+// High enough for the back years of a real 2026-era supermax (escalators push
+// past $70M/yr by year 4-5); still blocks nonsense like $500M entries.
+const MAX_SALARY = 80_000_000
 
 function clampSalary(raw) {
   const v = Number(raw)
@@ -295,7 +360,7 @@ function initContract() {
     salaries: resizeSalaries(salaries, years),
     option: optKey ? (details.options[optKey] ?? '') : '',
     noTradeClause: !!details.noTradeClause,
-    signedYear: Math.max(2015, Math.min(2025, Math.round(Number(details.signedYear)) || 2025)),
+    signedYear: Math.max(2015, Math.min(props.maxSignedYear, Math.round(Number(details.signedYear)) || props.maxSignedYear)),
   }
 }
 
@@ -321,7 +386,7 @@ const contractTotal = computed(() => contract.salaries.reduce((s, v) => s + v, 0
 function sanitizeContract() {
   onYearsChange()
   contract.salaries = contract.salaries.map(clampSalary)
-  contract.signedYear = Math.max(2015, Math.min(2025, Math.round(Number(contract.signedYear)) || 2025))
+  contract.signedYear = Math.max(2015, Math.min(props.maxSignedYear, Math.round(Number(contract.signedYear)) || props.maxSignedYear))
   const years = contract.years
   const details = {
     totalYears: years + (contract.option ? 1 : 0),
@@ -383,7 +448,7 @@ function sanitizePositions() {
 const history = reactive({
   college: draft.college ?? draft.school ?? '',
   country: draft.country ?? '',
-  draftYear: draft.draftYear ?? draft.draftInfo?.year ?? 2025,
+  draftYear: draft.draftYear ?? draft.draftInfo?.year ?? props.maxSignedYear,
   draftRound: draft.draftRound ?? draft.draftInfo?.round ?? null, // null = undrafted
   draftPick: draft.draftPick ?? draft.draftInfo?.pick ?? null,
   careerSeasons: draft.careerSeasons ?? draft.career_seasons ?? 0,
@@ -412,7 +477,7 @@ function sanitizeHistory() {
     draft.draftPick = null
     draft.draftInfo = null
   } else {
-    history.draftYear = fix(history.draftYear, 1990, 2025, 2025)
+    history.draftYear = fix(history.draftYear, 1990, props.maxSignedYear, props.maxSignedYear)
     history.draftRound = fix(history.draftRound, 1, 2, 1)
     history.draftPick = fix(history.draftPick, 1, 60, 1)
     draft.draftYear = history.draftYear
@@ -453,8 +518,9 @@ function sanitizePersonality() {
 // ---- Save ------------------------------------------------------------------
 function stampDraft() {
   // A selected-but-unapplied archetype template applies on save — picking one
-  // and saving is the same intent as picking + Apply + saving.
-  if (selectedArchetype.value && !archetypeApplied.value) applyArchetype()
+  // and saving is the same intent as picking + Apply + saving. Vitals are
+  // preserved: an implicit apply must not override authored position/height.
+  if (selectedArchetype.value && !archetypeApplied.value) applyArchetype({ preserveVitals: true })
   syncName()
   sanitizePositions()
   sanitizeVitals()
@@ -571,21 +637,9 @@ const POSITION_COLORS = {
                   <option v-for="p in POSITIONS.filter(x => x !== draft.position)" :key="p" :value="p">{{ p }}</option>
                 </select>
               </label>
-              <label class="pdem-field">
-                <span>3rd Pos</span>
-                <select
-                  :value="draft.tertiaryPosition ?? draft.tertiary_position ?? ''"
-                  class="pdem-input"
-                  @change="draft.tertiaryPosition = $event.target.value || null; draft.tertiary_position = draft.tertiaryPosition"
-                >
-                  <option value="">None</option>
-                  <option
-                    v-for="p in POSITIONS.filter(x => x !== draft.position && x !== (draft.secondaryPosition ?? draft.secondary_position))"
-                    :key="p"
-                    :value="p"
-                  >{{ p }}</option>
-                </select>
-              </label>
+              <!-- Tertiary position deliberately not editable — nothing in the
+                   sim/UI consumes it. Existing values pass through saves
+                   untouched (sanitizePositions only dedupes them). -->
               <label class="pdem-field">
                 <span>Jersey #</span>
                 <input v-model.number="draft.jerseyNumber" type="number" min="0" max="99" class="pdem-input" @input="draft.jersey_number = draft.jerseyNumber" />
@@ -638,7 +692,7 @@ const POSITION_COLORS = {
                 </label>
                 <label class="pdem-field">
                   <span>Draft Year</span>
-                  <input v-model.number="history.draftYear" type="number" min="1990" max="2025" class="pdem-input" />
+                  <input v-model.number="history.draftYear" type="number" min="1990" :max="maxSignedYear" class="pdem-input" />
                 </label>
               </template>
               <label class="pdem-field">
@@ -665,6 +719,14 @@ const POSITION_COLORS = {
               </select>
               <button class="pdem-apply" :disabled="!selectedArchetype" @click="applyArchetype">Apply</button>
             </div>
+            <label class="pdem-field pdem-talent-row">
+              <span>Talent level</span>
+              <select v-model="selectedTalent" class="pdem-input">
+                <option v-for="t in TALENT_TIERS" :key="t.key" :value="t.key">
+                  {{ t.label }} (~{{ t.target }} OVR)
+                </option>
+              </select>
+            </label>
             <p v-if="archetypeNote" class="pdem-note">{{ archetypeNote }}</p>
             <p v-else-if="selectedArchetype && !archetypeApplied" class="pdem-note">
               Will apply when you save (or tap Apply to preview the new ratings now).
@@ -682,7 +744,9 @@ const POSITION_COLORS = {
             <p class="pdem-note">
               <strong>Max</strong> caps what the in-game badge store can upgrade to
               during the campaign — Auto follows the derived cap and never sits below
-              the current level; pick a level to override it. Remove a badge with ✕.
+              the current level; pick a level to override it. Set <strong>Lvl</strong>
+              to None to make a badge earnable later (up to Max) without owning it
+              now. Remove a badge with ✕.
             </p>
             <p v-if="!badgeRowIds.length" class="pdem-note">No badges yet — add one below.</p>
             <div v-for="id in badgeRowIds" :key="id" class="pdem-badge-row">
@@ -699,9 +763,10 @@ const POSITION_COLORS = {
                   <span class="pdem-lvl-swatch" :style="{ background: levelColor(currentBadgeLevel(id)) }" />
                   <select
                     class="pdem-input sm"
-                    :value="currentBadgeLevel(id) ?? 'bronze'"
-                    @change="setBadge(id, $event.target.value)"
+                    :value="currentBadgeLevel(id) ?? ''"
+                    @change="setBadgeLevel(id, $event.target.value || null)"
                   >
+                    <option value="">None</option>
                     <option v-for="lvl in PLAYER_BADGE_LEVELS" :key="lvl" :value="lvl">
                       {{ lvl.toUpperCase() }}
                     </option>
@@ -767,7 +832,7 @@ const POSITION_COLORS = {
               </label>
               <label class="pdem-field">
                 <span>Signed</span>
-                <input v-model.number="contract.signedYear" type="number" min="2015" max="2025" class="pdem-input" />
+                <input v-model.number="contract.signedYear" type="number" min="2015" :max="maxSignedYear" class="pdem-input" />
               </label>
               <!-- No-Trade clause is deliberately NOT exposed here: the field
                    exists on contracts (generation even assigns it to some 88+
@@ -780,7 +845,7 @@ const POSITION_COLORS = {
                 <span>Year {{ i + 1 }}{{ i === 0 ? ' (this season)' : '' }}</span>
                 <span class="pdem-salary-input">
                   $<input
-                    type="number" min="1" max="60" step="0.1" class="pdem-input sm"
+                    type="number" min="1" max="80" step="0.1" class="pdem-input sm"
                     :value="salaryM(i)"
                     @change="setSalaryM(i, $event.target.value)"
                   />M
@@ -1186,6 +1251,10 @@ const POSITION_COLORS = {
   align-items: center;
   gap: 8px;
   color: var(--color-text-secondary);
+}
+
+.pdem-talent-row {
+  max-width: 260px;
 }
 
 .pdem-apply {

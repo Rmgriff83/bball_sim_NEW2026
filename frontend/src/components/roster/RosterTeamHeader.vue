@@ -16,9 +16,12 @@ const props = defineProps({
   // Current payroll in dollars; null hides the financial line (fantasy mode).
   payroll: { type: Number, default: null },
   salaryCap: { type: Number, default: null },
+  // Luxury-tax line: over-cap-but-under-tax is the normal NBA operating band
+  // (amber); only above the tax reads as red. Null → legacy 2-tier behavior.
+  luxuryTax: { type: Number, default: null },
 })
 
-const emit = defineEmits(['edit-history'])
+const emit = defineEmits(['edit-history', 'edit-identity'])
 
 const overall = computed(() => computeTeamOverall(props.roster))
 
@@ -26,8 +29,19 @@ const payrollM = computed(() =>
   props.payroll == null ? null : (props.payroll / 1_000_000).toFixed(1))
 const capM = computed(() =>
   props.salaryCap == null ? null : `$${Math.round(props.salaryCap / 1_000_000)}M`)
-const overCap = computed(() =>
-  props.payroll != null && props.salaryCap != null && props.payroll > props.salaryCap)
+const capTier = computed(() => {
+  if (props.payroll == null || props.salaryCap == null) return 'ok'
+  if (props.payroll <= props.salaryCap) return 'ok'
+  if (props.luxuryTax != null && props.payroll <= props.luxuryTax) return 'warn'
+  return 'over'
+})
+const capTitle = computed(() => ({
+  ok: 'Payroll is under the salary cap',
+  warn: 'Payroll is over the cap but under the luxury tax',
+  over: props.luxuryTax != null
+    ? 'Payroll is over the luxury tax'
+    : 'Payroll is over the salary cap',
+}[capTier.value]))
 
 const franchise = computed(() => props.team?.franchise_history ?? null)
 
@@ -89,7 +103,17 @@ function seasonResult(entry) {
           :size="64"
         />
         <div class="rth-info">
-          <h3 class="rth-name">{{ team.name }}</h3>
+          <h3 class="rth-name">
+            {{ team.name }}
+            <button
+              class="rth-rename-btn"
+              type="button"
+              title="Rename this team"
+              @click="emit('edit-identity')"
+            >
+              <Pencil :size="13" />
+            </button>
+          </h3>
           <span class="rth-abbr">{{ team.abbreviation }} · {{ team.conference }} · {{ team.division }}</span>
           <OwnerQuickInfo :team-abbreviation="team.abbreviation" />
         </div>
@@ -105,8 +129,8 @@ function seasonResult(entry) {
         <span
           v-if="payrollM != null"
           class="rth-payroll"
-          :class="overCap ? 'over' : 'ok'"
-          :title="overCap ? 'Payroll is over the salary cap' : 'Payroll is under the salary cap'"
+          :class="capTier"
+          :title="capTitle"
         >
           {{ payrollM }}M<em v-if="capM"> / {{ capM }}</em>
         </span>
@@ -196,7 +220,27 @@ function seasonResult(entry) {
   letter-spacing: 0.02em;
   line-height: 1.1;
   color: #1a1520;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
+
+.rth-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 7px;
+  background: rgba(26, 21, 32, 0.08);
+  border: 1px solid rgba(26, 21, 32, 0.18);
+  color: #1a1520;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.rth-rename-btn:hover { background: rgba(26, 21, 32, 0.16); }
 
 .rth-abbr {
   font-size: 0.72rem;
@@ -250,6 +294,7 @@ function seasonResult(entry) {
 }
 
 .rth-payroll.ok { color: var(--color-success, #4ade80); }
+.rth-payroll.warn { color: #f59e0b; }
 .rth-payroll.over { color: var(--color-error, #ef4444); }
 
 .rth-ovr-num {

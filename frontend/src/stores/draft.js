@@ -8,7 +8,7 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { initializeAllTeamLineups } from '@/engine/ai/AILineupService'
 import { assignRookieContract, assignUndraftedContract } from '@/engine/draft/RookieContractService'
 import { rollDraftPicks } from '@/engine/draft/DraftPickService'
-import { SALARY_CAP } from '@/engine/data/salaryScale'
+import { SALARY_CAP, capNumbersFor } from '@/engine/data/salaryScale'
 import { useAudioStore } from '@/stores/audio'
 
 // Fantasy-draft over-cap penalty: once the user's payroll exceeds the cap, they
@@ -23,6 +23,9 @@ export const useDraftStore = defineStore('draft', () => {
   const currentPickIndex = ref(0)
   const userTeamId = ref(null)
   const userTeamAbbr = ref(null)
+  // Campaign-scoped cap (2026 campaigns store their own set; legacy saves
+  // resolve to the old constant via capNumbersFor).
+  const campaignSalaryCap = ref(SALARY_CAP)
   const timerSeconds = ref(60)
   // When true, the pick clock is frozen (e.g. the onboarding walkthrough is
   // showing). startTimer() still resets the seconds but won't tick; resumeTimer()
@@ -109,7 +112,7 @@ export const useDraftStore = defineStore('draft', () => {
 
   // Penalty engages once the user's drafted payroll is OVER the league cap.
   const userCapPenaltyActive = computed(() =>
-    draftMode.value === 'fantasy' && userPayroll.value > SALARY_CAP
+    draftMode.value === 'fantasy' && userPayroll.value > campaignSalaryCap.value
   )
 
   // While the penalty is active, only contracts below OVERCAP_MAX_SALARY may be
@@ -164,6 +167,7 @@ export const useDraftStore = defineStore('draft', () => {
     teams.value = teamsList
     userTeamId.value = campaign.teamId || campaign.team?.id || campaign.team_id
     userTeamAbbr.value = campaign.team?.abbreviation
+    campaignSalaryCap.value = capNumbersFor(campaign).salaryCap
 
     draftResults.value = []
     currentPickIndex.value = 0
@@ -531,6 +535,12 @@ export const useDraftStore = defineStore('draft', () => {
       const cached = await get(cacheKey)
       if (!cached) return false
 
+      // Re-resolve the campaign's cap on resume (the cache predates the ref).
+      try {
+        const campaign = await CampaignRepository.get(campaignId)
+        if (campaign) campaignSalaryCap.value = capNumbersFor(campaign).salaryCap
+      } catch { /* legacy fallback already in the ref */ }
+
       draftResults.value = cached.draftResults || []
       currentPickIndex.value = cached.currentPickIndex || 0
       draftOrder.value = cached.draftOrder || []
@@ -677,6 +687,7 @@ export const useDraftStore = defineStore('draft', () => {
     teams.value = teamsList
     userTeamId.value = campaign.teamId || campaign.team?.id || campaign.team_id
     userTeamAbbr.value = campaign.team?.abbreviation || campaign.teamAbbreviation
+    campaignSalaryCap.value = capNumbersFor(campaign).salaryCap
     teamDirections.value = directions || {}
 
     draftOrder.value = draftOrderSlots
@@ -893,7 +904,7 @@ export const useDraftStore = defineStore('draft', () => {
     userPayroll,
     userCapPenaltyActive,
     isPlayerDraftEligible,
-    salaryCap: SALARY_CAP,
+    salaryCap: campaignSalaryCap,
     overCapMaxSalary: OVERCAP_MAX_SALARY,
     teamRosters,
     recentPicks,

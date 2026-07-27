@@ -12,7 +12,7 @@ import {
 import { combinedSatisfaction, injuryReliefWins } from '@/engine/season/OwnerService'
 import { evaluateSubtasks } from '@/engine/season/OwnerSubtaskService'
 import { getEffectiveExpectation, effectiveOwner } from '@/engine/season/OwnerExpectationService'
-import { SALARY_CAP } from '@/engine/data/teams'
+import { capNumbersFor } from '@/engine/data/salaryScale'
 import { useAuthStore } from '@/stores/auth'
 import { gmLevelLabel, gmLevelColor } from '@/engine/data/gmLevels'
 import { Crown, Target, Gauge, FileSignature, Wallet, CheckCircle2, Circle, ListChecks, Medal, Banknote } from 'lucide-vue-next'
@@ -100,7 +100,7 @@ const subtaskResult = computed(() => {
     progress: progress.value,
     userTeamId: campaign.value?.teamId ?? team.value?.id ?? null,
     coach: teamStore.coach ?? team.value?.coach ?? null,
-    salaryCap: SALARY_CAP,
+    salaryCap: capNumbersFor(campaign.value).salaryCap,
   })
 })
 

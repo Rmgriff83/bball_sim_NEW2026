@@ -96,6 +96,41 @@ const totalPayroll = computed(() => summary.value?.total_payroll || financeStore
 const capSpace = computed(() => salaryCap.value - totalPayroll.value)
 const rosterCount = computed(() => roster.value.length)
 
+// Threshold ladder — campaign-scoped tax/apron lines from the finance summary
+// (null on summaries built before the passthrough → ladder hidden).
+const luxuryTax = computed(() => summary.value?.luxury_tax ?? null)
+const firstApron = computed(() => summary.value?.first_apron ?? null)
+const secondApron = computed(() => summary.value?.second_apron ?? null)
+
+const capThresholds = computed(() => {
+  if (!luxuryTax.value) return []
+  return [
+    { key: 'cap', label: 'Salary Cap', value: salaryCap.value },
+    { key: 'tax', label: 'Luxury Tax', value: luxuryTax.value },
+    { key: 'apron1', label: 'First Apron', value: firstApron.value },
+    { key: 'apron2', label: 'Second Apron', value: secondApron.value },
+  ].filter(t => t.value > 0)
+})
+
+// Where the payroll sits between the lines. Being over the cap but under the
+// tax is the normal NBA operating band — amber, not alarming.
+const capStatus = computed(() => {
+  if (!luxuryTax.value) return null
+  const p = totalPayroll.value
+  if (p <= salaryCap.value) return { label: 'Under Cap', cls: 'status-under' }
+  if (p <= luxuryTax.value) return { label: 'Over Cap', cls: 'status-overcap' }
+  if (firstApron.value && p <= firstApron.value) return { label: 'Taxpayer', cls: 'status-tax' }
+  if (secondApron.value && p <= secondApron.value) return { label: 'First Apron', cls: 'status-apron1' }
+  return { label: 'Second Apron', cls: 'status-apron2' }
+})
+
+function thresholdDelta(t) {
+  const diff = totalPayroll.value - t.value
+  return diff > 0
+    ? `${formatLargeSalary(diff)} over`
+    : `${formatLargeSalary(-diff)} below`
+}
+
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C']
 
 const positionCounts = computed(() => {
@@ -601,6 +636,28 @@ onMounted(() => {
           </div>
         </div>
 
+        <!-- Cap threshold ladder — payroll position vs cap/tax/aprons -->
+        <div v-if="capThresholds.length" class="cap-ladder">
+          <div class="cap-ladder-header">
+            <span class="cap-ladder-title">League Thresholds</span>
+            <span v-if="capStatus" class="cap-status-chip" :class="capStatus.cls">{{ capStatus.label }}</span>
+          </div>
+          <div class="cap-ladder-rows">
+            <div
+              v-for="t in capThresholds"
+              :key="t.key"
+              class="cap-ladder-row"
+              :class="{ crossed: totalPayroll > t.value }"
+            >
+              <span class="cap-ladder-label">{{ t.label }}</span>
+              <span class="cap-ladder-value">{{ formatLargeSalary(t.value) }}</span>
+              <span class="cap-ladder-delta" :class="totalPayroll > t.value ? 'is-over' : 'is-below'">
+                {{ thresholdDelta(t) }}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <!-- Expiring Contracts Alert -->
         <div v-if="expiringContracts.length > 0" class="expiring-alert">
           <Calendar :size="18" />
@@ -1023,6 +1080,96 @@ onMounted(() => {
 }
 
 [data-theme="light"] .position-counts {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* Cap threshold ladder */
+.cap-ladder {
+  margin-top: 1rem;
+  padding: 0.75rem 0.85rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+}
+
+.cap-ladder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.cap-ladder-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.cap-status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.3;
+}
+
+.cap-status-chip.status-under { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+.cap-status-chip.status-overcap { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+.cap-status-chip.status-tax { background: rgba(245, 158, 11, 0.22); color: #f59e0b; }
+.cap-status-chip.status-apron1 { background: rgba(249, 115, 22, 0.18); color: #f97316; }
+.cap-status-chip.status-apron2 { background: rgba(239, 68, 68, 0.18); color: #ef4444; }
+
+.cap-ladder-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.cap-ladder-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.3rem 0.35rem;
+  border-radius: 6px;
+}
+
+.cap-ladder-row.crossed {
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.cap-ladder-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.cap-ladder-value {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cap-ladder-delta {
+  min-width: 92px;
+  text-align: right;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cap-ladder-delta.is-below { color: #22c55e; }
+.cap-ladder-delta.is-over { color: #ef4444; }
+
+[data-theme="light"] .cap-ladder {
   background: rgba(0, 0, 0, 0.03);
 }
 

@@ -30,6 +30,7 @@ import { pickBestOffer } from '../ai/FreeAgentDecisionService'
 import { buildSeasonStatsLookup } from '../finance/FinanceManager'
 import { FREE_AGENCY_DURATION_DAYS } from '../season/SeasonDeadlines'
 import { SALARY_CAP } from '../data/teams'
+import { capNumbersFor } from '../data/salaryScale'
 
 /**
  * Run the entire offseason in one shot:
@@ -390,6 +391,7 @@ export async function simFreeAgencyDay(campaignId) {
     campaignId,
     gameYear,
     getPlayerStatsFn,
+    capNumbers: capNumbersFor(campaign),
   })
 
   campaign.settings.freeAgencyDay = day
@@ -603,7 +605,7 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
       return true
     })
     .reduce((sum, p) => sum + (p.contractSalary ?? p.contract_salary ?? 0), 0)
-  const userCapSpace = SALARY_CAP - userRosterPayroll
+  const userCapSpace = (capNumbersFor(campaign).salaryCap ?? SALARY_CAP) - userRosterPayroll
   // Bird-rights signings (re-signing your own player from last season) don't
   // count toward the cap-overflow check — real NBA teams can exceed the cap
   // to retain their own free agents. Only the NEW outside signings need to

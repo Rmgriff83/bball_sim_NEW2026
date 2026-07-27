@@ -131,15 +131,21 @@ function calculateTeamPayroll(roster) {
   return roster.reduce((sum, p) => sum + (p.contractSalary ?? p.contract_salary ?? 0), 0);
 }
 
-function getCapSituation(roster) {
+function getCapSituation(roster, capNumbers = null) {
+  const salaryCap = capNumbers?.salaryCap ?? SALARY_CAP;
+  const luxuryTax = capNumbers?.luxuryTax ?? LUXURY_TAX_LINE;
   const payroll = calculateTeamPayroll(roster);
-  const capSpace = SALARY_CAP - payroll;
+  const capSpace = salaryCap - payroll;
   return {
     payroll,
     capSpace,
-    isOverCap: payroll > SALARY_CAP,
-    isInTax: payroll > LUXURY_TAX_LINE,
+    isOverCap: payroll > salaryCap,
+    isInTax: payroll > luxuryTax,
     capRoom: Math.max(0, capSpace),
+    // Carried so downstream gates key off the campaign's numbers, not the
+    // legacy constants (pre-2026 saves resolve to the same values).
+    salaryCap,
+    luxuryTax,
   };
 }
 
@@ -257,10 +263,11 @@ export function processTeamCuts({
   teamAbbreviation,
   getPlayerStatsFn = () => null,
   draftCapital = { draftRichness: 0.5 },
+  capNumbers = null,
 }) {
   const cuts = [];
   let updatedPlayers = [...leaguePlayers];
-  const capSituation = getCapSituation(roster);
+  const capSituation = getCapSituation(roster, capNumbers);
 
   // Sort roster by rating descending to identify top players
   const sortedByRating = [...roster].sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
@@ -609,10 +616,11 @@ export function processTeamSignings({
       if (capSituation) {
         const projectedPayroll = calculateTeamPayroll(teamRoster) + contract.salary;
         const isContending = direction === 'contending' || direction === 'title_contender' || direction === 'win_now';
-        if (projectedPayroll > LUXURY_TAX_LINE && !isContending) {
+        const taxLine = capSituation.luxuryTax ?? LUXURY_TAX_LINE;
+        if (projectedPayroll > taxLine && !isContending) {
           if (incumbent) {
             // Bird rights — let it ride up to the payroll ceiling.
-            if (projectedPayroll > BIRD_RIGHTS_PAYROLL_CEILING) continue;
+            if (projectedPayroll > Math.floor(taxLine * 1.2)) continue;
           } else if (teamRoster.length < TARGET_ROSTER_SIZE) {
             // Vet-min over-cap signing to fill a needed slot.
             contract.salary = getVeteranMinSalary(player);
@@ -744,6 +752,7 @@ export function runAIRosterManagement({
   skipExtensions = false,
   skipSignings = false,
   skipBackfill = false,
+  capNumbers = null,
 }) {
   const results = {
     cuts: [],
@@ -758,7 +767,7 @@ export function runAIRosterManagement({
     const teamRoster = getTeamRoster(currentPlayers, team.abbreviation);
     const direction = analyzeTeamDirection(team, teamRoster, context);
     const draftCapital = assessDraftCapital(team, gameYear);
-    const capSituation = getCapSituation(teamRoster);
+    const capSituation = getCapSituation(teamRoster, capNumbers);
 
     // Step 1: Evaluate & cut overpaid/underperforming players
     const cutResults = processTeamCuts({
@@ -768,13 +777,14 @@ export function runAIRosterManagement({
       teamAbbreviation: team.abbreviation,
       getPlayerStatsFn,
       draftCapital,
+      capNumbers,
     });
     results.cuts.push(...cutResults.cuts);
     currentPlayers = cutResults.updatedPlayers;
 
     // Refresh roster and cap after cuts
     const rosterAfterCuts = getTeamRoster(currentPlayers, team.abbreviation);
-    const capAfterCuts = getCapSituation(rosterAfterCuts);
+    const capAfterCuts = getCapSituation(rosterAfterCuts, capNumbers);
 
     // Step 2: Re-sign expiring players (cap-aware) — skipped when the offseason
     // FA window will handle these signings instead.
@@ -795,7 +805,7 @@ export function runAIRosterManagement({
     // Step 3: Sign free agents (cap-aware, target 13) — skipped during offseason
     // entry so the FA window has a real pool to bid on.
     const rosterAfterExtensions = getTeamRoster(currentPlayers, team.abbreviation);
-    const capAfterExtensions = getCapSituation(rosterAfterExtensions);
+    const capAfterExtensions = getCapSituation(rosterAfterExtensions, capNumbers);
 
     if (!skipSignings && rosterAfterExtensions.length < TARGET_ROSTER_SIZE) {
       const signingResults = processTeamSignings({
@@ -1014,6 +1024,7 @@ export function generateAIFreeAgencyOffers({
   campaignId,
   gameYear = 1,
   getPlayerStatsFn = () => null,
+  capNumbers = null,
 }) {
   const placed = [];
   if (!offersMap) return placed;
@@ -1038,7 +1049,7 @@ export function generateAIFreeAgencyOffers({
 
     const direction = analyzeTeamDirection(team, teamRoster, context);
     const draftCapital = assessDraftCapital(team, gameYear);
-    const baseCap = getCapSituation(teamRoster);
+    const baseCap = getCapSituation(teamRoster, capNumbers);
 
     const pendingForTeam = teamPendingOffersTotal(offersMap, team.id);
     if (pendingForTeam >= MAX_OFFERS_PER_TEAM_PER_WINDOW) continue;
@@ -1120,7 +1131,8 @@ export function generateAIFreeAgencyOffers({
           // Bird rights: bypass cap. Just enforce the payroll ceiling so
           // even Bird-blessed teams can't bloat past ~$200M.
           const currentPayroll = calculateTeamPayroll(teamRoster) + pendingCommitment;
-          if (currentPayroll + offer.salary > BIRD_RIGHTS_PAYROLL_CEILING) continue;
+          const birdCeiling = Math.floor((baseCap.luxuryTax ?? LUXURY_TAX_LINE) * 1.2);
+          if (currentPayroll + offer.salary > birdCeiling) continue;
         } else {
           const expected = playerMarketValue(player);
           const remainingRoom = Math.max(0, Math.max(0, adjustedCap.capRoom) - pendingCommitment);

@@ -14,6 +14,7 @@ import {
   dropPlayer as financeDropPlayer,
   DEFAULT_SALARY_CAP,
 } from '@/engine/finance/FinanceManager'
+import { capNumbersFor } from '@/engine/data/salaryScale'
 import { useTeamStore } from '@/stores/team'
 import { useSyncStore } from '@/stores/sync'
 import { useToastStore } from '@/stores/toast'
@@ -116,6 +117,7 @@ export const useFinanceStore = defineStore('finance', () => {
       const summary = getFinanceSummary({
         roster: players || [],
         salaryCap: teamSalaryCap,
+        capNumbers: capNumbersFor(campaign),
         currentSeasonYear: seasonYear,
       })
 
@@ -168,6 +170,7 @@ export const useFinanceStore = defineStore('finance', () => {
       const summary = getFinanceSummary({
         roster: players || [],
         salaryCap: teamSalaryCap,
+        capNumbers: capNumbersFor(campaign),
         currentSeasonYear: seasonYear,
       })
       financeSummary.value = summary
@@ -453,6 +456,7 @@ export const useFinanceStore = defineStore('finance', () => {
       financeSummary.value = getFinanceSummary({
         roster: players || [],
         salaryCap: teamSalaryCap,
+        capNumbers: capNumbersFor(campaign),
         currentSeasonYear: seasonYear,
       })
 
@@ -806,6 +810,7 @@ export const useFinanceStore = defineStore('finance', () => {
         financeSummary.value = getFinanceSummary({
           roster: players || [],
           salaryCap: teamSalaryCap,
+          capNumbers: capNumbersFor(campaign),
           currentSeasonYear: seasonYear,
         })
       }

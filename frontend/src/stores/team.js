@@ -1639,7 +1639,7 @@ export const useTeamStore = defineStore('team', () => {
         patch.draftPick = null
         patch.draftInfo = null
       } else {
-        const year = Math.max(1990, Math.min(2025, Math.round(Number(fields.draft.year)) || 2025))
+        const year = Math.max(1990, Math.min(2026, Math.round(Number(fields.draft.year)) || 2026))
         const round = Math.max(1, Math.min(2, Math.round(Number(fields.draft.round)) || 1))
         const pick = Math.max(1, Math.min(60, Math.round(Number(fields.draft.pick)) || 1))
         patch.draftYear = year

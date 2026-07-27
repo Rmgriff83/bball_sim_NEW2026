@@ -20,6 +20,7 @@ import { processGameRewards, TOKENS_PER_SYNERGY, WIN_MULTIPLIER, WIN_BONUS_TOKEN
 import { NewsService } from '@/engine/season/NewsService'
 import { processAiToAiTrades, computeAiTradingBlock, analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
 import { buildPickValueFn } from '@/engine/ai/PickValuationService'
+import { capNumbersFor } from '@/engine/data/salaryScale'
 import { selectBestLineup } from '@/engine/ai/AILineupService'
 import { AllStarService } from '@/engine/season/AllStarService'
 import { getSeasonDeadlines } from '@/engine/season/SeasonDeadlines'
@@ -718,6 +719,7 @@ export const useGameStore = defineStore('game', () => {
         difficulty,
         getPickValueFn,
         userTeamId,
+        luxuryTax: capNumbersFor(campaign).luxuryTax,
       })
 
       if (result.trades.length === 0) return

@@ -17,9 +17,10 @@ import PlayerDetailsEditorModal from '@/components/roster/PlayerDetailsEditorMod
 import CoachEditor from '@/components/roster/CoachEditor.vue'
 import RosterTeamHeader from '@/components/roster/RosterTeamHeader.vue'
 import TeamHistoryEditorModal from '@/components/roster/TeamHistoryEditorModal.vue'
+import TeamIdentityEditorModal from '@/components/roster/TeamIdentityEditorModal.vue'
 import PositionFilterBar from '@/components/trade/PositionFilterBar.vue'
 import TeamLogo from '@/components/common/TeamLogo.vue'
-import { SALARY_CAP } from '@/engine/data/salaryScale'
+import { capNumbersFor } from '@/engine/data/salaryScale'
 import { CANONICAL_ATTRIBUTES } from '@/engine/data/attributeSchema'
 import { MAX_ROSTER_SIZE } from '@/engine/finance/FinanceManager'
 
@@ -39,6 +40,7 @@ const tableMode = ref('current')   // 'current' | 'ceiling'
 const editingPlayer = ref(null)
 const editingCoachTeam = ref(null)
 const editingHistoryTeam = ref(null)
+const editingIdentityTeam = ref(null)
 const showAck = ref(false)
 const ackConfirmed = ref(false)
 const showFinalize = ref(false)
@@ -385,6 +387,12 @@ async function onHistorySaved(team) {
   if (ok) editingHistoryTeam.value = null
 }
 
+// Team renames (name + city) reuse the same whole-team upsert.
+async function onIdentitySaved(team) {
+  const ok = await saveWithFeedback(() => store.saveTeamCoach(team), 'Team renamed')
+  if (ok) editingIdentityTeam.value = null
+}
+
 function coachName(team) {
   const c = team?.coach
   if (!c) return 'No coach'
@@ -394,6 +402,10 @@ function coachName(team) {
 // --- Payroll meter (display only) -------------------------------------------
 const teamPayroll = computed(() =>
   activeRoster.value.reduce((sum, p) => sum + (Number(p.contractSalary ?? p.contract_salary) || 0), 0))
+
+// Campaign-scoped cap set (2026 campaigns store their own; legacy resolves to
+// the old constants).
+const campaignCaps = computed(() => capNumbersFor(store.campaign))
 
 // --- Finalize ---------------------------------------------------------------
 const shortTeamCount = ref(0)
@@ -578,8 +590,10 @@ async function confirmFinalize() {
           :team="activeTeam"
           :roster="activeRoster"
           :payroll="isFantasy ? null : teamPayroll"
-          :salary-cap="SALARY_CAP"
+          :salary-cap="campaignCaps.salaryCap"
+          :luxury-tax="campaignCaps.luxuryTax"
           @edit-history="editingHistoryTeam = activeTeam"
+          @edit-identity="editingIdentityTeam = activeTeam"
         />
         <SelectedPlayerHeader
           v-else
@@ -749,6 +763,7 @@ async function confirmFinalize() {
       v-if="editingPlayer"
       :player="editingPlayer"
       :campaign-id="campaignId"
+      :max-signed-year="Math.max(store.campaign?.currentSeasonYear ?? store.campaign?.current_season_year ?? 2026, 2026)"
       :can-edit-headshot="hasHeadshotEditor"
       @save="onPlayerSaved"
       @close="closePlayerEditor"
@@ -772,6 +787,14 @@ async function confirmFinalize() {
       :current-season-year="store.campaign?.currentSeasonYear ?? store.campaign?.current_season_year ?? null"
       @save="onHistorySaved"
       @close="editingHistoryTeam = null"
+    />
+
+    <!-- Team rename (name + city; abbreviation fixed) -->
+    <TeamIdentityEditorModal
+      :show="!!editingIdentityTeam"
+      :team="editingIdentityTeam"
+      @save="onIdentitySaved"
+      @close="editingIdentityTeam = null"
     />
   </div>
 </template>

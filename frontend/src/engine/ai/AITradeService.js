@@ -1793,8 +1793,9 @@ function _findAiToAiTrade({
 
     const team1Payroll = _calculateTeamPayroll(team1Roster);
     const team2Payroll = _calculateTeamPayroll(team2Roster);
-    if (team1Payroll + team1IncomingSalary - team1OutgoingSalary > LUXURY_TAX_LINE) continue;
-    if (team2Payroll + team2IncomingSalary - team2OutgoingSalary > LUXURY_TAX_LINE) continue;
+    const taxLine = context?.luxuryTax ?? LUXURY_TAX_LINE;
+    if (team1Payroll + team1IncomingSalary - team1OutgoingSalary > taxLine) continue;
+    if (team2Payroll + team2IncomingSalary - team2OutgoingSalary > taxLine) continue;
 
     // Evaluate from both perspectives
     const eval1 = evaluateTrade({
@@ -1851,6 +1852,7 @@ export function processAiToAiTrades({
   difficulty = 'pro',
   getPickValueFn = () => 5,
   userTeamId = null,
+  luxuryTax = null,
 }) {
   const empty = { trades: [], playerMoves: [], pickMoves: [], newsEvents: [] };
 
@@ -1858,6 +1860,7 @@ export function processAiToAiTrades({
   if (!isBeforeDeadline(currentDate, seasonYear)) return empty;
 
   const context = buildContext({ standings, teams: allTeams, seasonPhase: 'regular_season' });
+  context.luxuryTax = luxuryTax ?? LUXURY_TAX_LINE;
 
   // Build player lookup
   const playerMap = new Map();

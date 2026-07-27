@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { TeamRepository } from '@/engine/db/TeamRepository'
-import { SALARY_CAP } from '@/engine/data/teams'
+import { capNumbersFor } from '@/engine/data/salaryScale'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
@@ -430,7 +430,7 @@ export const useTradeStore = defineStore('trade', () => {
             ...t,
             record: { wins, losses },
             direction,
-            cap_space: SALARY_CAP - totalPayroll,
+            cap_space: capNumbersFor(campaign).salaryCap - totalPayroll,
             roster: teamRoster,
             picks: teamPicks,
             topAssets,

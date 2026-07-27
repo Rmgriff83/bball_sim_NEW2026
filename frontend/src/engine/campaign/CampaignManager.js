@@ -10,7 +10,7 @@
 // =============================================================================
 
 import { TEAMS, SALARY_CAP, TEAM_TIERS } from '../data/teams'
-import { baseSalaryForRating, veteranMinSalary } from '../data/salaryScale'
+import { baseSalaryForRating, veteranMinSalary, CAP_SET_2026, capNumbersFor } from '../data/salaryScale'
 import { recomputeAllTimeHighs, recomputeHighsLeaders, mergeHighsBoards } from '../stats/careerHighs'
 import { PlayerHeadshotRepository } from '../db/PlayerHeadshotRepository'
 import {
@@ -908,7 +908,7 @@ function generateContract(overall, age) {
       salaries,
       options: randInt(0, 1) ? { [`year${yearsRemaining + 1}`]: randInt(0, 1) ? 'player' : 'team' } : {},
       noTradeClause: overall >= 88 && !!randInt(0, 1),
-      signedYear: 2025 - randInt(0, 3),
+      signedYear: 2026 - randInt(0, 3), // new-campaign baseline (2026 start)
     },
   }
 }
@@ -1130,7 +1130,10 @@ export async function createCampaign(options) {
 
   const isFantasy = draftMode === 'fantasy'
   const campaignId = generateUUID()
-  const startYear = 2025
+  // New campaigns start in the 2026-27 season on the 2026 cap set; existing
+  // campaigns keep their created-at year and (via the capNumbersFor
+  // fallback) the legacy 2025-26 economy.
+  const startYear = 2026
 
   // -------------------------------------------------------------------------
   // 1. Create campaign record
@@ -1138,7 +1141,7 @@ export async function createCampaign(options) {
   const campaign = {
     id: campaignId,
     name,
-    currentDate: '2025-10-21',  // NBA season start
+    currentDate: `${startYear}-10-21`,  // NBA season start
     gameYear: 1,
     phase: 'regular_season',
     difficulty,
@@ -1164,6 +1167,10 @@ export async function createCampaign(options) {
       // one-shot cap/contract rebase (rescaleContracts) skips them — this also
       // preserves the creation-time ±variance the migration would otherwise flatten.
       salaryCapRebaseDone: true,
+      // Campaign-scoped cap/tax/apron set (2026-27). Readers resolve via
+      // capNumbersFor(campaign) with the legacy constants as fallback, so
+      // pre-2026 saves are untouched.
+      capNumbers: { ...CAP_SET_2026 },
     },
     lastPlayedAt: new Date().toISOString(),
   }
@@ -1186,7 +1193,7 @@ export async function createCampaign(options) {
         TEAMS.map(t => ({ abbreviation: t.abbreviation, facilities: t.facilities })),
         teamAbbreviation
       )
-  const teams = generateTeams(campaignId, teamModes)
+  const teams = generateTeams(campaignId, teamModes, CAP_SET_2026.salaryCap)
 
   // Seed the user-facing free-agent coach pool (8 candidates across 3 tiers).
   campaign.settings.availableCoaches = generateCoachPool(teams)
@@ -1300,7 +1307,7 @@ export async function createCampaign(options) {
   // -------------------------------------------------------------------------
   const seasonData = SeasonManager.initializeSeason(teams, startYear, campaignId)
   const gamesCreated = SeasonManager.generateSchedule(
-    seasonData, teams, userTeam.id, startYear, '2025-10-21'
+    seasonData, teams, userTeam.id, startYear, `${startYear}-10-21`
   )
 
   // Persist season data to IndexedDB
@@ -2419,6 +2426,7 @@ export async function enterOffseason(campaignId) {
     skipExtensions: true,
     skipSignings: true,
     skipBackfill: true,
+    capNumbers: capNumbersFor(campaign),
   })
 
   // 4. All players with contract_years_remaining === 0 (not re-signed) → free agent
@@ -2594,7 +2602,7 @@ export async function enterOffseason(campaignId) {
           progress: gmc.progress ?? {},
           userTeamId,
           coach: userTeam?.coach ?? null,
-          salaryCap: SALARY_CAP,
+          salaryCap: capNumbersFor(campaign).salaryCap,
         })
         // Soften the win bar if the GM lost star talent to injury this season.
         const injuryRelief = injuryReliefWins({
@@ -3256,7 +3264,7 @@ export async function startNewSeason(campaignId) {
  *   double-stacking elite coaches every campaign.
  * @returns {Array} Array of 30 team objects ready for IndexedDB
  */
-export function generateTeams(campaignId, modes = null) {
+export function generateTeams(campaignId, modes = null, salaryCap = SALARY_CAP) {
   const usedCoachNames = new Set()
 
   const teams = TEAMS.map((template, index) => {
@@ -3285,8 +3293,8 @@ export function generateTeams(campaignId, modes = null) {
       primary_color: template.primary_color,
       secondary_color: template.secondary_color,
       facilities: template.facilities,
-      salaryCap: SALARY_CAP,
-      salary_cap: SALARY_CAP,
+      salaryCap,
+      salary_cap: salaryCap,
       totalPayroll: 0,
       total_payroll: 0,
       luxuryTaxBill: 0,
@@ -3865,7 +3873,7 @@ export function generatePlayer(options) {
     : null
 
   // Birth date: current year minus age, with random day offset
-  const birthYear = 2025 - age
+  const birthYear = 2026 - age
   const birthMonth = String(randInt(1, 12)).padStart(2, '0')
   const birthDay = String(randInt(1, 28)).padStart(2, '0')
   const birthDate = `${birthYear}-${birthMonth}-${birthDay}`
@@ -3907,9 +3915,9 @@ export function generatePlayer(options) {
     // combined procedural + premade map.
     headshot,
     // Stamp the season the player entered so the first birthday tick
-    // doesn't immediately re-age them. Uses 2025 as the league baseline
-    // (matches the birthYear math above).
-    _lastBirthdayYear: 2025,
+    // doesn't immediately re-age them. Uses 2026 as the league baseline
+    // (matches the birthYear math above and the new-campaign start year).
+    _lastBirthdayYear: 2026,
 
     // Ratings
     overallRating: overall,

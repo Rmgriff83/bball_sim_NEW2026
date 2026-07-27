@@ -46,6 +46,28 @@ class SyncController extends Controller
         // pullSnapshot.
         ini_set('memory_limit', '512M');
 
+        // Compressed envelope: new clients gzip the whole part payload and
+        // send {gz: <base64>} so large parts fit under the proxy's body-size
+        // limit (the raw JSON of a big headshots/players part tripped nginx
+        // 413s). Inflate and swap the request input so every downstream
+        // validation / entitlement path runs unchanged. Old clients simply
+        // never send `gz` and fall straight through.
+        $gz = $request->input('gz');
+        if (is_string($gz) && $gz !== '') {
+            $bin = base64_decode($gz, true);
+            $json = ($bin !== false) ? @gzdecode($bin) : false;
+            // 64MB inflated ceiling — zip-bomb guard (authed users only, but
+            // cheap insurance; largest legitimate parts are well under this).
+            if ($json === false || strlen($json) > 64 * 1024 * 1024) {
+                return response()->json(['message' => 'Invalid compressed payload.'], 422);
+            }
+            $decoded = json_decode($json, true);
+            if (!is_array($decoded)) {
+                return response()->json(['message' => 'Invalid compressed payload.'], 422);
+            }
+            $request->replace($decoded);
+        }
+
         $part = $request->input('part');
         $userId = $request->user()->id;
 
@@ -245,6 +267,19 @@ class SyncController extends Controller
             ];
         }
 
+        // Batched part upload: an array part too large for one request body
+        // arrives as n sequential chunks (batch = {i, n}); each chunk has
+        // already passed the full per-part validation above. Chunks accumulate
+        // in temp files and only replace the stored part at finalize, so an
+        // interrupted sequence never clobbers the last good snapshot.
+        $batch = $request->input('batch');
+        if ($part !== 'meta' && is_array($batch)
+            && isset($batch['i'], $batch['n'])
+            && (int) $batch['n'] > 1 && (int) $batch['n'] <= 500
+            && (int) $batch['i'] >= 0 && (int) $batch['i'] < (int) $batch['n']) {
+            return $this->storeSnapshotChunk($clientId, $part, $data, (int) $batch['i'], (int) $batch['n'], $campaign, $userId);
+        }
+
         try {
             $json = json_encode($data, JSON_UNESCAPED_UNICODE);
 
@@ -282,6 +317,85 @@ class SyncController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error("Error storing {$part} for campaign {$clientId}: " . $e->getMessage());
+            return response()->json(['message' => "Failed to store {$part}"], 500);
+        }
+    }
+
+    /**
+     * Accumulate one chunk of a batched part upload; on the final chunk,
+     * concatenate all chunks into the SAME `{part}.json.gz` artifact the
+     * unchunked path writes (pull paths and old stored blobs are untouched).
+     *
+     * Concatenation is done on the raw JSON strings — never json_decode of
+     * the combined array — so peak memory stays flat regardless of part size
+     * (the Validator/decode OOM scars on this controller are why).
+     */
+    private function storeSnapshotChunk(string $clientId, string $part, array $data, int $i, int $n, $campaign, int $userId): JsonResponse
+    {
+        $field = $part === 'headshots' ? 'headshots' : ($part === 'seasons' ? 'seasons' : 'players');
+        $chunkDir = "campaigns/{$clientId}/_chunks/{$part}";
+
+        try {
+            // First chunk wipes leftovers from any aborted prior sequence, so
+            // a restart can never interleave stale chunks into the merge.
+            if ($i === 0) {
+                Storage::deleteDirectory($chunkDir);
+            }
+
+            $chunkJson = json_encode($data[$field] ?? [], JSON_UNESCAPED_UNICODE);
+            if ($chunkJson === false) {
+                Log::error("Failed to encode {$part} chunk {$i} for campaign {$clientId}: " . json_last_error_msg());
+                return response()->json(['message' => "Failed to encode {$part}"], 500);
+            }
+            Storage::put("{$chunkDir}/{$i}.json", $chunkJson);
+
+            if ($i < $n - 1) {
+                return response()->json([
+                    'success' => true,
+                    'part' => $part,
+                    'chunk' => $i,
+                    'finalized' => false,
+                ]);
+            }
+
+            // Finalize: every chunk 0..n-1 must be present (a gap means the
+            // client aborted/restarted mid-sequence — make it start over).
+            $pieces = [];
+            for ($c = 0; $c < $n; $c++) {
+                $path = "{$chunkDir}/{$c}.json";
+                if (!Storage::exists($path)) {
+                    Storage::deleteDirectory($chunkDir);
+                    return response()->json(['message' => 'Missing chunk, restart part upload'], 409);
+                }
+                // Strip the outer [] so the chunk arrays join into one.
+                $inner = trim(substr(trim(Storage::get($path)), 1, -1));
+                if ($inner !== '') {
+                    $pieces[] = $inner;
+                }
+            }
+
+            $json = '{"' . $field . '":[' . implode(',', $pieces) . '],"clientUpdatedAt":'
+                . json_encode($data['clientUpdatedAt'], JSON_UNESCAPED_UNICODE) . '}';
+
+            $compressed = gzencode($json, 6);
+            if ($compressed === false) {
+                Log::error("Failed to compress {$part} for campaign {$clientId}");
+                return response()->json(['message' => "Failed to compress {$part}"], 500);
+            }
+
+            Storage::put("campaigns/{$clientId}/{$part}.json.gz", $compressed);
+            Storage::deleteDirectory($chunkDir);
+
+            Log::info("Sync push ok: user={$userId} campaign={$clientId} part={$part} chunks={$n}");
+
+            return response()->json([
+                'success' => true,
+                'part' => $part,
+                'finalized' => true,
+                'serverUpdatedAt' => $campaign->fresh()->updated_at->toISOString(),
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Error storing {$part} chunk {$i} for campaign {$clientId}: " . $e->getMessage());
             return response()->json(['message' => "Failed to store {$part}"], 500);
         }
     }

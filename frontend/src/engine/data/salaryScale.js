@@ -15,17 +15,57 @@
 // =============================================================================
 
 // --- League-wide thresholds -------------------------------------------------
+// LEGACY (2025-26) set — every campaign created before the 2026 rebase reads
+// these via the capNumbersFor fallback, so their economy never shifts.
 export const SALARY_CAP = 154_600_000;
 export const LUXURY_TAX = 187_900_000; // ≈ 121.5% of the cap
 export const FIRST_APRON = 195_900_000;
 export const SECOND_APRON = 207_800_000;
 
+// --- Per-campaign cap sets ---------------------------------------------------
+// NEW campaigns (created 2026-07+) start in season 2026 and stamp CAP_SET_2026
+// into campaign.settings.capNumbers at creation; the tax/aprons here are
+// derived with the 2025-26 ratios (×1.2154 / ×1.2672 / ×1.3441) — swap in the
+// official figures when the league publishes them.
+export const CAP_SET_2026 = {
+  salaryCap: 164_961_000,
+  luxuryTax: 200_500_000,
+  firstApron: 209_000_000,
+  secondApron: 221_700_000,
+};
+
+export const CAP_SET_LEGACY = {
+  salaryCap: SALARY_CAP,
+  luxuryTax: LUXURY_TAX,
+  firstApron: FIRST_APRON,
+  secondApron: SECOND_APRON,
+};
+
+/**
+ * The cap/tax/apron numbers for a campaign: its stored set when present, else
+ * the legacy constants (every pre-rebase save — no migration, by design).
+ * Accepts the campaign object or its settings object; tolerant of partial
+ * stored sets (each field falls back individually).
+ */
+export function capNumbersFor(campaignOrSettings) {
+  const settings = campaignOrSettings?.settings ?? campaignOrSettings;
+  const stored = settings?.capNumbers;
+  if (!stored) return CAP_SET_LEGACY;
+  return {
+    salaryCap: stored.salaryCap ?? CAP_SET_LEGACY.salaryCap,
+    luxuryTax: stored.luxuryTax ?? CAP_SET_LEGACY.luxuryTax,
+    firstApron: stored.firstApron ?? CAP_SET_LEGACY.firstApron,
+    secondApron: stored.secondApron ?? CAP_SET_LEGACY.secondApron,
+  };
+}
+
 // --- Maximum salary (first-year), by years of service -----------------------
-// 0–6 yrs → 25% of cap, 7–9 → 30%, 10+ → 35%.
-export function maxSalary(experienceYears = 0) {
+// 0–6 yrs → 25% of cap, 7–9 → 30%, 10+ → 35%. Pass the campaign's cap for
+// post-2026 campaigns; defaults to the legacy cap.
+export function maxSalary(experienceYears = 0, salaryCap = SALARY_CAP) {
   const yrs = Number(experienceYears) || 0;
   const pct = yrs >= 10 ? 0.35 : yrs >= 7 ? 0.30 : 0.25;
-  return Math.round((SALARY_CAP * pct) / 10_000) * 10_000;
+  return Math.round((salaryCap * pct) / 10_000) * 10_000;
 }
 
 // --- Veteran minimum -------------------------------------------------------

@@ -27,6 +27,7 @@ import {
   ensureAttributeCaps,
 } from '@/engine/evolution/PlayerEvolution'
 import { computeTeamOverall } from '@/utils/teamOverall'
+import { CAP_SET_2026 } from '@/engine/data/salaryScale'
 import { deriveOwnerExpectationFromRoster, deriveExpectationTierFromRoster } from '@/engine/season/OwnerExpectationService'
 
 // Minimum players a team must carry before the campaign can start.
@@ -128,6 +129,31 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     s.markDirty('custom_roster')
   }
 
+  // One-time upgrade for in-progress custom builds that predate the 2026 cap
+  // rebase. An un-finalized campaign has no live economy yet, so it's safe to
+  // move it onto the 2026 cap set; finalized/live campaigns never load this
+  // store and keep their legacy numbers. Idempotent — keyed on the absence of
+  // settings.capNumbers. The 2025 start year/schedule stays (baked into
+  // schedule dates and generated birth years at creation).
+  async function _upgradeCapNumbers() {
+    const c = campaign.value
+    if (!c) return
+    if (c.settings?.capNumbers) return
+    const isCustom = (c.customRoster ?? c.custom_roster) === true
+    const finalized = (c.rosterSetupCompleted ?? c.roster_setup_completed) === true
+    if (!isCustom || finalized) return
+    c.settings = c.settings ?? {}
+    c.settings.capNumbers = { ...CAP_SET_2026 }
+    await CampaignRepository.save(cloneForPersist(c))
+    const all = await TeamRepository.getAllForCampaign(campaignId.value)
+    await TeamRepository.saveBulk(all.map((t) => cloneForPersist({
+      ...t,
+      salaryCap: CAP_SET_2026.salaryCap,
+      salary_cap: CAP_SET_2026.salaryCap,
+    })))
+    _sync()
+  }
+
   async function load(id) {
     loading.value = true
     error.value = null
@@ -135,6 +161,7 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
       campaignId.value = id
       campaign.value = await CampaignRepository.get(id)
       if (!campaign.value) throw new Error('Campaign not found')
+      await _upgradeCapNumbers()
       await refreshTeams()
       activeTeamId.value = null
       activeRoster.value = []

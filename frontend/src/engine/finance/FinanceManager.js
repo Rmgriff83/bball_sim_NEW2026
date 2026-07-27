@@ -204,7 +204,7 @@ export function enrichPlayerData(player, stats = null) {
  * @param {number} [params.currentSeasonYear]
  * @returns {object}
  */
-export function getFinanceSummary({ roster, salaryCap = DEFAULT_SALARY_CAP, currentSeasonYear = new Date().getFullYear() }) {
+export function getFinanceSummary({ roster, salaryCap = DEFAULT_SALARY_CAP, currentSeasonYear = new Date().getFullYear(), capNumbers = null }) {
   const totalPayroll = roster.reduce((sum, p) => sum + parseFloat(p.contractSalary ?? p.contract_salary ?? 0), 0);
 
   return {
@@ -213,6 +213,11 @@ export function getFinanceSummary({ roster, salaryCap = DEFAULT_SALARY_CAP, curr
     cap_space: salaryCap - totalPayroll,
     roster_count: roster.length,
     current_season: currentSeasonYear,
+    // Threshold ladder (campaign-scoped via capNumbersFor; null when the
+    // caller doesn't supply a set — UI hides the ladder rows in that case).
+    luxury_tax: capNumbers?.luxuryTax ?? null,
+    first_apron: capNumbers?.firstApron ?? null,
+    second_apron: capNumbers?.secondApron ?? null,
   };
 }
 

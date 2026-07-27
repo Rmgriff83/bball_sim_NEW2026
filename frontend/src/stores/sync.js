@@ -16,6 +16,137 @@ const PUSH_STAGGER_MS = 250 // pause between sequential part uploads so each req
 // campaign record that the player/season/headshot parts attach to.
 const PUSH_PARTS = ['meta', 'players_user', 'players_ai', 'players_fa', 'seasons', 'headshots']
 
+// The array field per part that can be split across batched requests. `meta`
+// is deliberately absent — it's campaign + 30 teams, always small, and it's
+// what creates the server-side campaign row so it must land whole.
+const PART_ARRAY_FIELD = {
+  players_user: 'players',
+  players_ai: 'players',
+  players_fa: 'players',
+  seasons: 'seasons',
+  headshots: 'headshots',
+}
+
+// Target ceiling for any single request body on the wire — safely under a
+// 1MB proxy `client_max_body_size` (the strictest plausible limit).
+const WIRE_BUDGET_BYTES = 900 * 1024
+// The server rejects batch counts above 500 (and would then treat each chunk
+// as a full-part write — corrupting). Never send more.
+const MAX_BATCH_CHUNKS = 500
+
+/**
+ * gzip + base64 a string via the browser-native CompressionStream. Returns
+ * null when the API is unavailable (WebView < 16.4) or anything throws —
+ * callers fall back to plain JSON, which is exactly the legacy wire format.
+ */
+async function _gzipBase64(str) {
+  try {
+    if (typeof CompressionStream === 'undefined') return null
+    const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'))
+    const bytes = new Uint8Array(await new Response(stream).arrayBuffer())
+    // btoa needs a binary string; build it in slices so multi-MB buffers
+    // don't blow the fromCharCode argument limit.
+    let bin = ''
+    const SLICE = 0x8000
+    for (let i = 0; i < bytes.length; i += SLICE) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + SLICE))
+    }
+    return btoa(bin)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Greedy-pack items into chunks whose serialized size stays under `budget`
+ * bytes (a single oversized item still gets its own chunk). Returns [items]
+ * untouched when everything fits in one.
+ */
+function _chunkArrayByBytes(items, budget) {
+  const chunks = []
+  let current = []
+  let size = 0
+  for (const item of items) {
+    const itemSize = JSON.stringify(item).length + 1
+    if (current.length > 0 && size + itemSize > budget) {
+      chunks.push(current)
+      current = []
+      size = 0
+    }
+    current.push(item)
+    size += itemSize
+  }
+  if (current.length > 0) chunks.push(current)
+  return chunks
+}
+
+/**
+ * POST one payload, gz-wrapped as `{gz: <base64>}` when compression is
+ * available AND actually shrinks the body; otherwise the legacy plain JSON.
+ */
+async function _postWire(api, campaignId, payload, timeout) {
+  const raw = JSON.stringify(payload)
+  const b64 = await _gzipBase64(raw)
+  const body = b64 && b64.length + 24 < raw.length ? { gz: b64 } : payload
+  return api.post(`/api/sync/${campaignId}/push`, body, { timeout })
+}
+
+/**
+ * Push one part, splitting its array field into `batch: {i, n}` requests when
+ * it exceeds the current byte budget. On a 413 the budget halves (floor
+ * 128KB) and the part restarts from chunk 0 — safe, because the server only
+ * replaces the stored part on the final chunk and chunk 0 wipes temp state.
+ * A part that still 413s (or overflows the server's batch cap) throws with
+ * `err.tooLarge = true` so the caller can surface a size-specific message.
+ */
+async function _postPart(api, campaignId, part, payload) {
+  const field = PART_ARRAY_FIELD[part]
+  const timeout = part === 'headshots' ? 30000 : 20000
+  const compressionAvailable = typeof CompressionStream !== 'undefined'
+  // Compressed budgets can be generous: this JSON/SVG compresses ≥4x, which
+  // comfortably covers base64's +33% too.
+  let rawBudget = compressionAvailable ? 4 * WIRE_BUDGET_BYTES : WIRE_BUDGET_BYTES
+
+  for (let attempt = 0; ; attempt++) {
+    const chunks = field ? _chunkArrayByBytes(payload[field], rawBudget) : null
+    if (chunks && chunks.length > MAX_BATCH_CHUNKS) {
+      const err = new Error(`Sync part "${part}" exceeds the maximum upload size`)
+      err.tooLarge = true
+      err.part = part
+      throw err
+    }
+    try {
+      if (!chunks || chunks.length <= 1) {
+        await _postWire(api, campaignId, payload, timeout)
+      } else {
+        for (let i = 0; i < chunks.length; i++) {
+          if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, PUSH_STAGGER_MS))
+          }
+          await _postWire(api, campaignId, {
+            part,
+            batch: { i, n: chunks.length },
+            [field]: chunks[i],
+            clientUpdatedAt: payload.clientUpdatedAt,
+          }, timeout)
+        }
+      }
+      return
+    } catch (err) {
+      const is413 = err?.response?.status === 413
+      if (is413 && field && attempt < 4 && rawBudget > 128 * 1024) {
+        rawBudget = Math.max(128 * 1024, Math.floor(rawBudget / 2))
+        continue
+      }
+      if (is413) {
+        err.tooLarge = true
+        err.part = part
+      }
+      throw err
+    }
+  }
+}
+
 export const useSyncStore = defineStore('sync', () => {
   // State
   const isSyncing = ref(false)
@@ -580,7 +711,11 @@ export const useSyncStore = defineStore('sync', () => {
       toastStore.showSuccess('Saved to cloud', 2000)
     } catch (err) {
       syncError.value = err.message || 'Sync failed'
-      if (err.failedParts && err.failedParts.length > 0) {
+      if (err.tooLargeParts && err.tooLargeParts.length > 0) {
+        // Size-specific: retrying the identical payload can't succeed, so
+        // don't pretend it will. Local data is untouched either way.
+        toastStore.showError(`Cloud save failed: "${err.tooLargeParts.join(', ')}" is too large for the server — your data is safe on this device`, 5000)
+      } else if (err.failedParts && err.failedParts.length > 0) {
         const total = PUSH_PARTS.length
         toastStore.showError(`Sync partial: ${err.failedParts.length} of ${total} files failed - will retry`, 3500)
       } else {
@@ -694,6 +829,7 @@ export const useSyncStore = defineStore('sync', () => {
     }
 
     const failed = []
+    const tooLargeParts = []
     let first = true
     // meta must succeed before any other part on a brand-new campaign (server
     // creates the Campaign row on the meta push), so we always lead with it
@@ -716,7 +852,7 @@ export const useSyncStore = defineStore('sync', () => {
       }
       first = false
       try {
-        await api.post(`/api/sync/${campaignId}/push`, payloads[part], { timeout: 20000 })
+        await _postPart(api, campaignId, part, payloads[part])
         partsSet.delete(part)
         // A successful push means the server row now exists — re-enable pulls.
         _serverMissing.delete(campaignId)
@@ -730,6 +866,7 @@ export const useSyncStore = defineStore('sync', () => {
           continue
         }
         failed.push(part)
+        if (err?.tooLarge) tooLargeParts.push(part)
         // If meta failed on a fresh push, the other player/season requests
         // will 404 ("Campaign not found"). Skip them this cycle.
         if (part === 'meta') {
@@ -741,6 +878,7 @@ export const useSyncStore = defineStore('sync', () => {
     if (failed.length > 0) {
       const err = new Error(`Sync partial: ${failed.length} of ${order.length} parts failed`)
       err.failedParts = failed
+      err.tooLargeParts = tooLargeParts
       throw err
     }
   }

@@ -42,7 +42,7 @@ import { evaluateSubtasks } from '@/engine/season/OwnerSubtaskService'
 import { buildOwnerCheckIn } from '@/engine/season/OwnerCheckInService'
 import { findOwnerForTeam, EXPECTATION_BLURB_DEFAULT, EXPECTATION_LABEL } from '@/engine/data/owners'
 import { getEffectiveExpectation, effectiveOwner } from '@/engine/season/OwnerExpectationService'
-import { SALARY_CAP } from '@/engine/data/teams'
+import { capNumbersFor } from '@/engine/data/salaryScale'
 import { aiFinishUserTeamSetup } from '@/engine/campaign/UserTeamFinalizer'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
@@ -2036,7 +2036,7 @@ function maybeShowOwnerCheckIn() {
     progress: gmc?.progress ?? {},
     userTeamId: camp.teamId ?? teamStore.team?.id ?? null,
     coach: teamStore.coach ?? teamStore.team?.coach ?? null,
-    salaryCap: SALARY_CAP,
+    salaryCap: capNumbersFor(camp).salaryCap,
   })
 
   const signedYear = gmc?.signedSeasonYear ?? year
