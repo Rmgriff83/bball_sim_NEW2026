@@ -53,6 +53,26 @@ function _rebindPlayer(raw, { campaignId, teamId, teamAbbreviation }) {
   player.games_played_this_season = 0
   player.minutesPlayedThisSeason = 0
   player.minutes_played_this_season = 0
+  // A build is ROSTER data only — scrub every trace of the SOURCE campaign's
+  // in-progress season (stat snapshots, evolution logs, earned training
+  // points, regression accumulators). Authored flavor (personality, draft
+  // history, career seasons, award counts) stays.
+  for (const key of [
+    'season_stats', 'seasonStats',
+    'season_playoff_stats', 'seasonPlayoffStats',
+    'recent_performances', 'recentPerformances',
+    'streak_data', 'streakData',
+    'development_history', 'developmentHistory',
+    'upgrade_points', 'upgradePoints',
+    'offense_upgrade_points', 'offenseUpgradePoints',
+    'defense_upgrade_points', 'defenseUpgradePoints',
+    '_overallExact',
+  ]) {
+    delete player[key]
+  }
+  for (const key of Object.keys(player)) {
+    if (key.startsWith('_seasonDrop_')) delete player[key]
+  }
   player.updatedAt = new Date().toISOString()
   normalizePlayerAttributes(player)
   // Round attributes + ceilings to integers. The SOURCE campaign's players

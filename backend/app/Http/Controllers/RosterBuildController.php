@@ -143,6 +143,28 @@ class RosterBuildController extends Controller
                 if (!empty($player['isDraftProspect']) || !empty($player['is_draft_prospect'])) {
                     continue;
                 }
+                // A build is ROSTER data only — strip the source campaign's
+                // in-progress season state (stat snapshots, evolution logs,
+                // earned training points). The importer also strips these
+                // client-side for blobs published before this deploy.
+                foreach ([
+                    'season_stats', 'seasonStats',
+                    'season_playoff_stats', 'seasonPlayoffStats',
+                    'recent_performances', 'recentPerformances',
+                    'streak_data', 'streakData',
+                    'development_history', 'developmentHistory',
+                    'upgrade_points', 'upgradePoints',
+                    'offense_upgrade_points', 'offenseUpgradePoints',
+                    'defense_upgrade_points', 'defenseUpgradePoints',
+                    '_overallExact',
+                ] as $seasonKey) {
+                    unset($player[$seasonKey]);
+                }
+                foreach (array_keys($player) as $pk) {
+                    if (str_starts_with((string) $pk, '_seasonDrop_')) {
+                        unset($player[$pk]);
+                    }
+                }
                 $tid = $player['team_id'] ?? $player['teamId'] ?? null;
                 $abbr = $tid !== null ? ($abbrByTeamId[(string) $tid] ?? null) : null;
                 $bucket = $abbr ?? 'fa';

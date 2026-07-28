@@ -199,7 +199,9 @@ async function pickDownloaded() {
     const picked = downloadedBuilds.value.find((b) => b.id === selectedBuildId.value)
     const blob = await _fetchBuildBlob(selectedBuildId.value)
     await store.applyDownloadedBuild(blob)
-    store.refreshTeamOveralls()
+    // Awaited so the import overlay only lifts once the team grid's overall
+    // badges reflect the imported roster (not the doomed generated one).
+    await store.refreshTeamOveralls()
     audio.affirm()
     toast.showSuccess(`"${picked?.title ?? 'Roster'}" applied — tweak anything, then start your season`)
   } catch (err) {
@@ -520,6 +522,15 @@ async function confirmFinalize() {
 
 <template>
   <div class="roster-setup">
+    <!-- Import-in-progress overlay: the grid behind still shows the
+         about-to-be-wiped generated league until the build finishes
+         applying — hide it rather than let it read as wrong data. -->
+    <div v-if="importing" class="rs-import-overlay">
+      <Loader2 :size="42" class="spin" />
+      <p class="rs-import-title">Applying imported roster…</p>
+      <p class="rs-import-sub">Installing players, coaches, and headshots — this takes a few seconds.</p>
+    </div>
+
     <!-- Sticky header bar -->
     <header class="rs-header">
       <div class="rs-header-left">
@@ -1175,6 +1186,50 @@ async function confirmFinalize() {
   color: var(--color-text-tertiary);
   border: 1px dashed var(--glass-border);
   border-radius: 10px;
+}
+
+/* Full-page import overlay — above the rs-modal layer (z 40) so nothing on
+   the page is interactive while the imported roster installs. */
+.rs-import-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(10, 12, 18, 0.82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #fff;
+}
+
+.rs-import-overlay .spin { color: var(--color-primary); }
+
+.rs-import-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.rs-import-sub {
+  margin: 0;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.7);
+  max-width: 320px;
+  line-height: 1.45;
+}
+
+[data-theme="light"] .rs-import-overlay {
+  background: rgba(245, 246, 250, 0.88);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .rs-import-sub {
+  color: var(--color-text-secondary);
 }
 
 .rs-modal-overlay {
