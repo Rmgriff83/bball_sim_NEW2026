@@ -30,7 +30,10 @@ class ProfanityScreen
      */
     private const TOKEN_TERMS = [
         'ass', 'tits', 'cum', 'fag', 'coon', 'gook', 'homo',
-        'dick', 'cock', 'spic',
+        'cock', 'spic',
+        // 'dick' is deliberately absent — it's a legitimate first name
+        // (Dick Vitale et al.) and too ambiguous even as an exact token.
+        // Abusive uses are covered by the report/takedown flow.
     ];
 
     /**
