@@ -133,18 +133,22 @@ const visibleCategories = computed(() =>
   isCeiling.value ? CATEGORIES.filter((c) => c.key !== 'mental') : CATEGORIES)
 
 function cellValue(p, cat, key) {
+  // Rounded for display: players evolved through games in a source campaign
+  // (imported builds) can carry fractional attributes.
   if (isCeiling.value) {
-    return p.attributeCaps?.[cat]?.[key] ?? p.attributes?.[cat]?.[key] ?? 0
+    return Math.round(p.attributeCaps?.[cat]?.[key] ?? p.attributes?.[cat]?.[key] ?? 0)
   }
-  return p.attributes?.[cat]?.[key] ?? 0
+  return Math.round(p.attributes?.[cat]?.[key] ?? 0)
 }
 
 function bump(p, cat, key, delta) {
   if (!p.attributes?.[cat]) return
   p.attributeCaps = p.attributeCaps ?? {}
   p.attributeCaps[cat] = p.attributeCaps[cat] ?? {}
-  const cur = p.attributes[cat][key] ?? 25
-  const cap = p.attributeCaps[cat][key] ?? cur
+  // Snap to integers on edit — evolved source-campaign players (imports) can
+  // carry fractional values; the first bump normalizes the cell.
+  const cur = Math.round(p.attributes[cat][key] ?? 25)
+  const cap = Math.round(p.attributeCaps[cat][key] ?? cur)
 
   if (isCeiling.value) {
     // Hand-editing a ceiling opts out of the "clamp to overall" state — the

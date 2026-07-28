@@ -9,7 +9,8 @@ import { GlassCard, BaseButton, LoadingSpinner } from '@/components/ui'
 import HasPlayedBeforeModal from '@/components/walkthrough/HasPlayedBeforeModal.vue'
 import HeadshotEditorPromoModal from '@/components/store/HeadshotEditorPromoModal.vue'
 import { shouldShowPromo, markPromoShown } from '@/services/promoGate'
-import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2, Trophy, Star, Medal } from 'lucide-vue-next'
+import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2, Trophy, Star, Medal, Globe } from 'lucide-vue-next'
+import { useCommunityLink } from '@/composables/useCommunityLink'
 import { gmLevelLabel, gmLevelColor } from '@/engine/data/gmLevels'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import TeamPicker from '@/components/team/TeamPicker.vue'
@@ -21,6 +22,7 @@ const router = useRouter()
 const route = useRoute()
 const campaignStore = useCampaignStore()
 const authStore = useAuthStore()
+const { hasCommunity, openCommunity } = useCommunityLink()
 const audio = useAudioStore()
 const walkthroughStore = useWalkthroughStore()
 
@@ -341,6 +343,10 @@ function getDifficultyLabel(value) {
             <LayoutDashboard :size="18" />
             <span>Dashboard</span>
           </router-link>
+          <button v-if="hasCommunity" class="nav-link" @click="openCommunity()">
+            <Globe :size="18" />
+            <span>Community</span>
+          </button>
           <router-link to="/profile" class="nav-link">
             <User :size="18" />
             <span>Profile</span>

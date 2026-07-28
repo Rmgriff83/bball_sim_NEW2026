@@ -706,7 +706,10 @@ const canEditFlavor = computed(() =>
 const editingHistory = ref(false)
 const editingPersonality = ref(false)
 const flavorSaving = ref(false)
-const historyForm = reactive({ college: '', country: '', draftRound: null, draftPick: 1, draftYear: 2025, careerSeasons: 0 })
+// Latest authorable draft year = the campaign's current season (a current-year
+// draftee IS the rookie class); 2026 fallback matches the new-campaign baseline.
+const maxDraftYear = computed(() => props.currentSeasonYear ?? 2026)
+const historyForm = reactive({ college: '', country: '', draftRound: null, draftPick: 1, draftYear: null, careerSeasons: 0 })
 const personalityForm = reactive({ traits: [], morale: 80, chemistry: 75, mediaProfile: 'normal' })
 
 function startHistoryEdit() {
@@ -716,7 +719,7 @@ function startHistoryEdit() {
   const di = p.draftInfo ?? null
   historyForm.draftRound = p.draftRound ?? di?.round ?? null
   historyForm.draftPick = p.draftPick ?? di?.pick ?? 1
-  historyForm.draftYear = p.draftYear ?? di?.year ?? 2025
+  historyForm.draftYear = p.draftYear ?? di?.year ?? maxDraftYear.value
   historyForm.careerSeasons = p.careerSeasons ?? p.career_seasons ?? 0
   editingHistory.value = true
 }
@@ -2344,7 +2347,7 @@ function formatChange(change) {
                       </label>
                       <label class="flavor-field">
                         <span>Draft Year</span>
-                        <input v-model.number="historyForm.draftYear" type="number" min="1990" max="2025" class="flavor-input" />
+                        <input v-model.number="historyForm.draftYear" type="number" min="1990" :max="maxDraftYear" class="flavor-input" />
                       </label>
                     </template>
                     <label class="flavor-field">

@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
@@ -93,6 +94,22 @@ class RosterBuildController extends Controller
         if (!$isCustom) {
             return response()->json(['error' => 'not_a_custom_campaign'], 422);
         }
+        // Only FINALIZED builds are publishable — an un-finalized campaign is
+        // still in the roster editor and its snapshot is a half-built league.
+        $isFinalized = ($campaignRecord['rosterSetupCompleted'] ?? $campaignRecord['roster_setup_completed'] ?? false) === true;
+        if (!$isFinalized) {
+            return response()->json(['error' => 'campaign_not_finalized'], 422);
+        }
+        // One live publish per campaign. Importing a build into a SEPARATE
+        // campaign and publishing that is fine (different client id); removing
+        // a published build frees its campaign for a re-publish.
+        $alreadyPublished = RosterBuild::where('user_id', $user->id)
+            ->where('campaign_client_id', $clientId)
+            ->where('status', RosterBuild::STATUS_ACTIVE)
+            ->exists();
+        if ($alreadyPublished) {
+            return response()->json(['error' => 'already_published'], 422);
+        }
 
         ini_set('memory_limit', '512M'); // large player payloads (same as sync)
 
@@ -118,6 +135,12 @@ class RosterBuildController extends Controller
             $data = $this->readPart($clientId, $part);
             foreach (($data['players'] ?? []) as $player) {
                 if (!is_array($player)) {
+                    continue;
+                }
+                // Draft prospects are generated scouting content, not roster —
+                // every campaign creates its own class, so they never travel
+                // in a build (the importer also skips them for old blobs).
+                if (!empty($player['isDraftProspect']) || !empty($player['is_draft_prospect'])) {
                     continue;
                 }
                 $tid = $player['team_id'] ?? $player['teamId'] ?? null;
@@ -157,10 +180,18 @@ class RosterBuildController extends Controller
         $headshots = [];
         foreach (($headshotsPart['headshots'] ?? []) as $h) {
             if (!empty($h['playerId']) && !empty($h['svgContent'])) {
-                $headshots[] = [
+                $entry = [
                     'playerId' => $h['playerId'],
                     'svgContent' => $h['svgContent'],
                 ];
+                // Personnel entries (coach headshots) ride in the synced
+                // headshots part with a `kind` discriminator and the personnel
+                // id on playerId. Carry the kind so importers can restore
+                // them; current importers skip unmapped ids harmlessly.
+                if (!empty($h['kind'])) {
+                    $entry['kind'] = $h['kind'];
+                }
+                $headshots[] = $entry;
             }
         }
 
@@ -182,11 +213,23 @@ class RosterBuildController extends Controller
         }
 
         // Server-generated key only.
-        $key = 'builds/' . Str::uuid()->toString() . '.json.gz';
-        Storage::disk('roster_builds')->put($key, $compressed);
+        $key = 'rosters/' . Str::uuid()->toString() . '.json.gz';
+        // The disk is configured throw=false, so a failed write (bucket
+        // missing/misconfigured, credentials revoked) returns false instead
+        // of throwing. Without this check we'd insert an "active" board row
+        // whose blob 404s on every download.
+        $stored = Storage::disk('roster_builds')->put($key, $compressed);
+        if ($stored === false) {
+            Log::error("Roster build S3 write failed for campaign {$clientId} (key {$key}) — check ROSTER_BUILDS_AWS_* config");
+            return response()->json([
+                'error' => 'storage_unavailable',
+                'message' => 'Upload storage is temporarily unavailable. Please try again later.',
+            ], 503);
+        }
 
         $build = RosterBuild::create([
             'user_id' => $user->id,
+            'campaign_client_id' => $clientId,
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
             's3_key' => $key,
@@ -291,6 +334,16 @@ class RosterBuildController extends Controller
         if ($raw === null) {
             return response()->json(['message' => 'Build data unavailable'], 404);
         }
+        // raw=1: send the gz bytes as an opaque octet-stream and let the
+        // client inflate explicitly. The legacy Content-Encoding:gzip route
+        // is fragile — dev proxies/service workers that decompress the body
+        // while leaving the header produce ERR_CONTENT_DECODING_FAILED.
+        if ($request->query('raw')) {
+            return response($raw, 200, [
+                'Content-Type' => 'application/octet-stream',
+                'Cache-Control' => 'private, max-age=3600',
+            ]);
+        }
         return response($raw, 200, [
             'Content-Type' => 'application/json',
             'Content-Encoding' => 'gzip',
@@ -319,8 +372,38 @@ class RosterBuildController extends Controller
         ]);
         if ($inserted) {
             $build->increment('report_count');
+            $this->sendReportNotice($build->fresh(), $request->user()->id, $validated['reason'] ?? null);
         }
         return response()->json(['message' => 'Reported. Thank you.']);
+    }
+
+    /**
+     * Fire-and-forget admin notice for a NEW report. Mail failure must never
+     * fail the report request — the report row + count are already committed.
+     */
+    private function sendReportNotice(RosterBuild $build, int $reporterId, ?string $reason): void
+    {
+        try {
+            $owner = $build->user;
+            $lines = [
+                'A community roster build was reported.',
+                '',
+                "Build: #{$build->id} — \"{$build->title}\"",
+                'Reports so far: ' . $build->report_count,
+                'Owner: user #' . $build->user_id . ($owner?->email ? " ({$owner->email})" : ''),
+                'Source campaign: ' . ($build->campaign_client_id ?? 'unknown (pre-column build)'),
+                'Reporter: user #' . $reporterId,
+                'Reason: ' . ($reason !== null && $reason !== '' ? $reason : '(none given)'),
+                '',
+                "Remove it with: DELETE /api/roster-builds/{$build->id} (as a global_admin account).",
+            ];
+            Mail::raw(implode("\n", $lines), function ($message) use ($build) {
+                $message->to(config('app.admin_email'))
+                    ->subject("[BballSim] Roster build #{$build->id} reported (count: {$build->report_count})");
+            });
+        } catch (\Throwable $e) {
+            Log::warning("Report-notice email failed for build {$build->id}: " . $e->getMessage());
+        }
     }
 
     /**
@@ -357,6 +440,9 @@ class RosterBuildController extends Controller
         if ($includeStatus) {
             $out['status'] = $build->status;
             $out['report_count'] = $build->report_count;
+            // Owner-only view ("mine") — lets the publish picker exclude
+            // campaigns that already have a live build.
+            $out['campaign_client_id'] = $build->campaign_client_id;
         }
         return $out;
     }

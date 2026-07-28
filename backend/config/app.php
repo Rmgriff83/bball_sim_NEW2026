@@ -59,6 +59,9 @@ return [
     // WordPress marketing site; the web app lives on the play. subdomain.
     'web_url' => env('WEB_APP_URL', 'https://play.bball-sim.com'),
 
+    // Where operational notices land (community roster-build reports, etc.).
+    'admin_email' => env('ADMIN_NOTICE_EMAIL', 'dev@growthdyn.com'),
+
     /*
     |--------------------------------------------------------------------------
     | Frontend URL

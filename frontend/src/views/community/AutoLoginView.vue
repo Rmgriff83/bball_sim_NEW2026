@@ -24,6 +24,11 @@ onMounted(async () => {
   }
   try {
     await authStore.loginWithHandoff(nonce)
+    // Only the NATIVE app lands users here (handoff mint → system browser).
+    // Mark the session so web pages know "Back to app" should use the
+    // bballsim:// deep link; ordinary web visitors never get this flag and
+    // navigate in-app instead.
+    try { sessionStorage.setItem('bball_from_native_app', '1') } catch { /* private mode */ }
     router.replace(destination)
   } catch {
     failed.value = true

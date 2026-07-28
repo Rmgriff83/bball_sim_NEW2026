@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('title', 100);
             $table->text('description')->nullable();
             // S3 key inside the roster_builds disk — always server-generated
-            // (builds/{uuid}.json.gz), never derived from client input.
+            // (rosters/{uuid}.json.gz), never derived from client input.
             $table->string('s3_key');
             $table->unsignedBigInteger('size_bytes')->default(0);
             $table->unsignedInteger('player_count')->default(0);

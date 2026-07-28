@@ -434,7 +434,7 @@ function assignHeadshotsByOverall(players) {
  * @returns {{ players: Array, modes: Object }} Players (15×teams.length) and the mode map
  */
 export function generateLeagueRosters(campaignId, teams, opts = {}) {
-  const { startYear = 2025, userTeamAbbreviation = null, modes: providedModes = null } = opts
+  const { startYear = 2026, userTeamAbbreviation = null, modes: providedModes = null } = opts
   const usedNames = new Set()
   const allPlayers = []
 
@@ -520,7 +520,7 @@ function tagInitialRookies(allPlayers, startYear, { target = 60, maxAge = 22 } =
  * @param {number} [opts.count=530] - Total pool size (mirrors the legacy master pool)
  * @returns {Array}
  */
-export function generateFreeAgentPool(campaignId, { startYear = 2025, count = 530 } = {}) {
+export function generateFreeAgentPool(campaignId, { startYear = 2026, count = 530 } = {}) {
   const usedNames = new Set()
   const pool = []
 

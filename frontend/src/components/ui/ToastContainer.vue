@@ -1,7 +1,7 @@
 <script setup>
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
-import { X, ExternalLink, Trophy, XCircle, Binoculars, BadgeCheck, Coins, Crown, CalendarCheck, Medal, TrendingUp } from 'lucide-vue-next'
+import { X, ExternalLink, Trophy, XCircle, Binoculars, BadgeCheck, Coins, Crown, CalendarCheck, Medal, TrendingUp, Download } from 'lucide-vue-next'
 
 const toastStore = useToastStore()
 const router = useRouter()
@@ -12,6 +12,7 @@ const ACHIEVEMENT_ICONS = {
   conference_championship: Crown,
   playoff_berth: CalendarCheck,
   gm_promotion: Medal,
+  roster_import: Download,
 }
 function achievementIcon(type) {
   return ACHIEVEMENT_ICONS[type] || Trophy
@@ -188,7 +189,7 @@ function isWin(toast) {
               <component :is="achievementIcon(toast.achievementType)" :size="22" />
             </div>
             <div class="toast-content">
-              <div class="game-result-header achievement-header">Achievement Unlocked</div>
+              <div class="game-result-header achievement-header">{{ toast.header || 'Achievement Unlocked' }}</div>
               <div class="achievement-label">{{ toast.label }}</div>
               <div v-if="toast.subtitle" class="achievement-subtitle">{{ toast.subtitle }}</div>
             </div>
@@ -530,6 +531,11 @@ function isWin(toast) {
   color: #34d399;
   background: rgba(52, 211, 153, 0.16);
   box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.25);
+}
+.achievement-badge--roster_import {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.16);
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25);
 }
 .achievement-header {
   color: #facc15;

@@ -45,6 +45,22 @@ function formatSalary(salary) {
   return tradeStore.formatSalary(salary)
 }
 
+// Dual-cased reads: players that round-tripped through the cloud (community
+// roster imports) may carry only snake_case fields.
+function playerName(p) {
+  return `${p?.firstName ?? p?.first_name ?? ''} ${p?.lastName ?? p?.last_name ?? ''}`.trim() || 'Unknown'
+}
+
+function playerOverall(p) {
+  return p?.overallRating ?? p?.overall_rating ?? '?'
+}
+
+function playerContract(p) {
+  const salary = p?.contractSalary ?? p?.contract_salary ?? 0
+  const years = p?.contractYearsRemaining ?? p?.contract_years_remaining ?? 1
+  return `${formatSalary(salary)} | ${years}yr`
+}
+
 function getPlayerAge(player) {
   const age = player?.age
   if (age === null || age === undefined) return '?'
@@ -131,13 +147,13 @@ function handleKeydown(e) {
                       <div class="player-info-row">
                         <PlayerAvatar :player="asset.player" :size="32" />
                         <div class="player-details">
-                          <span class="player-name">{{ asset.player.firstName }} {{ asset.player.lastName }}</span>
+                          <span class="player-name">{{ playerName(asset.player) }}</span>
                           <span class="player-meta">{{ asset.player.position }} | Age {{ getPlayerAge(asset.player) }}</span>
                         </div>
-                        <div class="player-rating-badge">{{ asset.player.overallRating }}</div>
+                        <div class="player-rating-badge">{{ playerOverall(asset.player) }}</div>
                       </div>
                       <div class="player-contract">
-                        {{ formatSalary(asset.player.contractSalary) }} | {{ asset.player.contractYearsRemaining ?? 1 }}yr
+                        {{ playerContract(asset.player) }}
                       </div>
                       <div v-if="asset.seasonStats" class="player-season-stats">
                         <span class="stat-block">
@@ -198,13 +214,13 @@ function handleKeydown(e) {
                       <div class="player-info-row">
                         <PlayerAvatar :player="asset.player" :size="32" />
                         <div class="player-details">
-                          <span class="player-name">{{ asset.player.firstName }} {{ asset.player.lastName }}</span>
+                          <span class="player-name">{{ playerName(asset.player) }}</span>
                           <span class="player-meta">{{ asset.player.position }} | Age {{ getPlayerAge(asset.player) }}</span>
                         </div>
-                        <div class="player-rating-badge">{{ asset.player.overallRating }}</div>
+                        <div class="player-rating-badge">{{ playerOverall(asset.player) }}</div>
                       </div>
                       <div class="player-contract">
-                        {{ formatSalary(asset.player.contractSalary) }} | {{ asset.player.contractYearsRemaining ?? 1 }}yr
+                        {{ playerContract(asset.player) }}
                       </div>
                       <div v-if="asset.seasonStats" class="player-season-stats">
                         <span class="stat-block">

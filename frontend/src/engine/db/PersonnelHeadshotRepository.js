@@ -62,6 +62,26 @@ export const PersonnelHeadshotRepository = {
     })
   },
 
+  // Bulk-write records pulled from the cloud, preserving their fields
+  // (notably updatedAt — the newer-record comparison in sync depends on it).
+  // Mirrors PlayerHeadshotRepository.saveBulkFromRemote.
+  async saveBulkFromRemote(records) {
+    const db = await ensureStoreUpgraded('personnelHeadshots')
+    const tx = db.transaction('personnelHeadshots', 'readwrite')
+    const fallback = new Date().toISOString()
+    for (const record of records) {
+      if (!record || !record.campaignId || !record.id) continue
+      tx.store.put({
+        campaignId: record.campaignId,
+        kind: _normalizeKind(record.kind),
+        id: record.id,
+        svgContent: record.svgContent,
+        updatedAt: record.updatedAt || fallback,
+      })
+    }
+    await tx.done
+  },
+
   async deleteAllForCampaign(campaignId) {
     return withDB(async db => {
       if (!_hasStore(db)) return

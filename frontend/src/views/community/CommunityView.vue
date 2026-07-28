@@ -33,18 +33,43 @@ const publishDescription = ref('')
 const publishAck = ref(false)
 const publishing = ref(false)
 
-// Return-to-app deep link: the handoff passes ?campaign=<clientId>, so we can
-// send the user straight back to that campaign's roster-setup page.
+// Return-to-app: the handoff passes ?campaign=<clientId>, so we can send the
+// user straight back to that campaign's roster-setup page. Visitors who came
+// from the NATIVE app (via the /autologin handoff, which stamps this session
+// flag) go back through the bballsim:// deep link; ordinary web-app visitors
+// just navigate in-app — firing the deep link in a plain browser errors with
+// "scheme does not have a registered handler".
+const fromNativeApp = (() => {
+  try { return sessionStorage.getItem('bball_from_native_app') === '1' } catch { return false }
+})()
 const returnCampaign = computed(() => String(route.query.campaign ?? ''))
-const backToAppUrl = computed(() => {
-  const path = returnCampaign.value
-    ? `/campaign/${returnCampaign.value}/roster-setup`
-    : '/campaigns'
-  return `bballsim://open?path=${encodeURIComponent(path)}`
-})
+const backPath = computed(() => (returnCampaign.value
+  ? `/campaign/${returnCampaign.value}/roster-setup`
+  : '/campaigns'))
+const backToAppUrl = computed(() => `bballsim://open?path=${encodeURIComponent(backPath.value)}`)
 
+// Campaigns whose custom roster already has a LIVE build on the board — each
+// campaign can only be published once (removing a build frees it again).
+const publishedCampaignIds = ref(new Set())
+async function fetchPublishedCampaigns() {
+  try {
+    const res = await api.get('/api/roster-builds/mine', { skipErrorToast: true })
+    publishedCampaignIds.value = new Set(
+      (res.data?.builds ?? [])
+        .filter((b) => b.status === 'active' && b.campaign_client_id)
+        .map((b) => b.campaign_client_id)
+    )
+  } catch { /* picker just won't pre-filter; the server still enforces */ }
+}
+
+// Only FINISHED custom builds are publishable — an un-finalized campaign is
+// still in the roster editor and its cloud snapshot is a half-built league.
+// Campaigns already published stay out of the picker.
 const customCampaigns = computed(() =>
-  (campaignStore.campaigns ?? []).filter((c) => c.customRoster ?? c.custom_roster))
+  (campaignStore.campaigns ?? []).filter((c) =>
+    (c.customRoster ?? c.custom_roster)
+    && (c.rosterSetupCompleted ?? c.roster_setup_completed)
+    && !publishedCampaignIds.value.has(c.id)))
 
 async function fetchBoard() {
   loading.value = true
@@ -73,10 +98,16 @@ const downloadedIds = computed(() => new Set(myDownloads.value.map((b) => b.id))
 async function downloadBuild(build) {
   try {
     await api.post(`/api/roster-builds/${build.id}/download`)
-    toastStore.showSuccess('Saved to your account — find it in the app under "Start from Downloaded".', 5000)
+    // Rich callout + affirmation chime (played inside showAchievement).
+    toastStore.showAchievement({
+      header: 'Roster Imported',
+      label: build.title,
+      subtitle: 'Imported to your account — available when starting any new custom campaign.',
+      type: 'roster_import',
+    })
     fetchMyDownloads()
   } catch (err) {
-    toastStore.showError(err?.response?.data?.message || 'Download failed')
+    toastStore.showError(err?.response?.data?.message || 'Import failed')
   }
 }
 
@@ -104,8 +135,10 @@ async function publish() {
     publishTitle.value = ''
     publishDescription.value = ''
     publishAck.value = false
+    publishCampaignId.value = ''
     tab.value = 'board'
     fetchBoard()
+    fetchPublishedCampaigns()
   } catch (err) {
     const data = err?.response?.data
     if (data?.error === 'content_rejected') {
@@ -114,6 +147,13 @@ async function publish() {
       toastStore.showError('This campaign has not finished syncing yet — open it in the app first, then retry.')
     } else if (data?.error === 'not_a_custom_campaign') {
       toastStore.showError('Only custom-roster campaigns can be published.')
+    } else if (data?.error === 'campaign_not_finalized') {
+      toastStore.showError('Finish building this roster in the app (start the campaign) before publishing it.')
+    } else if (data?.error === 'already_published') {
+      toastStore.showError('This campaign\'s roster is already on the board — each campaign can only be published once.')
+      fetchPublishedCampaigns()
+    } else if (data?.error === 'storage_unavailable') {
+      toastStore.showError('Upload storage is temporarily unavailable — please try again shortly.')
     } else {
       toastStore.showError(data?.message || 'Publish failed')
     }
@@ -132,6 +172,7 @@ onMounted(async () => {
   if (!isOwner.value) return
   fetchBoard()
   fetchMyDownloads()
+  fetchPublishedCampaigns()
   await campaignStore.fetchCampaigns().catch(() => {})
   if (returnCampaign.value && customCampaigns.value.some((c) => c.id === returnCampaign.value)) {
     publishCampaignId.value = returnCampaign.value
@@ -143,9 +184,12 @@ onMounted(async () => {
   <div class="community">
     <header class="cm-header">
       <h1 class="cm-title"><Globe :size="22" /> Community Rosters</h1>
-      <a class="cm-back-app" :href="backToAppUrl">
+      <a v-if="fromNativeApp" class="cm-back-app" :href="backToAppUrl">
         <ArrowLeft :size="15" /> Back to app
       </a>
+      <router-link v-else class="cm-back-app" :to="backPath">
+        <ArrowLeft :size="15" /> Back to app
+      </router-link>
     </header>
 
     <!-- Upsell for non-owners (server enforces regardless) -->
@@ -164,7 +208,7 @@ onMounted(async () => {
           <Upload :size="13" /> Publish
         </button>
         <button class="cm-tab" :class="{ active: tab === 'downloads' }" @click="tab = 'downloads'; fetchMyDownloads()">
-          My Downloads
+          My Imports
         </button>
       </nav>
 
@@ -173,7 +217,7 @@ onMounted(async () => {
         <div class="cm-toolbar">
           <select v-model="sort" class="cm-select" @change="page = 1; fetchBoard()">
             <option value="created_at">Newest</option>
-            <option value="downloads">Most downloaded</option>
+            <option value="downloads">Most imported</option>
           </select>
         </div>
         <div v-if="loading" class="cm-loading"><Loader2 :size="26" class="spin" /></div>
@@ -184,7 +228,7 @@ onMounted(async () => {
               <span class="cm-card-title">{{ b.title }}</span>
               <span class="cm-card-meta">
                 by {{ b.author ?? 'Unknown' }} · {{ b.player_count }} players ·
-                {{ fmtSize(b.size_bytes) }} · {{ b.downloads }} downloads
+                {{ fmtSize(b.size_bytes) }} · {{ b.downloads }} imports
               </span>
               <p v-if="b.description" class="cm-card-desc">{{ b.description }}</p>
             </div>
@@ -196,7 +240,7 @@ onMounted(async () => {
               >
                 <Check v-if="downloadedIds.has(b.id)" :size="14" />
                 <Download v-else :size="14" />
-                {{ downloadedIds.has(b.id) ? 'Saved' : 'Download' }}
+                {{ downloadedIds.has(b.id) ? 'Imported' : 'Import' }}
               </button>
               <button class="cm-ghost" title="Report this roster" @click="reportBuild(b)">
                 <Flag :size="13" />
@@ -236,9 +280,9 @@ onMounted(async () => {
           <label class="cm-ack">
             <input v-model="publishAck" type="checkbox" />
             <span>
-              I confirm this roster is my own original content and does not use real
-              players', teams', or other people's names or likenesses. I understand
-              reported content may be removed.
+              I'm responsible for the content I publish and have the right to share
+              it. Content may be removed in response to reports or rights-holder
+              requests.
             </span>
           </label>
           <button
@@ -256,8 +300,8 @@ onMounted(async () => {
       <!-- My Downloads -->
       <section v-else>
         <p v-if="!myDownloads.length" class="cm-empty">
-          Nothing saved yet — download a roster from the board and it will show up
-          in the app under "Start from Downloaded".
+          Nothing imported yet — import a roster from the board and it will appear
+          under "Imports" when starting a custom campaign in the app.
         </p>
         <div v-else class="cm-list">
           <div v-for="b in myDownloads" :key="b.id" class="cm-card">

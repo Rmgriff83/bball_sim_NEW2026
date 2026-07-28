@@ -12,7 +12,8 @@ import { useToastStore } from '@/stores/toast'
 import { BottomNav } from '@/components/ui'
 import SimPauseModal from '@/components/calendar/SimPauseModal.vue'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
-import { ArrowLeft, Play, User, FolderOpen, LogOut, ShoppingBag } from 'lucide-vue-next'
+import { ArrowLeft, Play, User, FolderOpen, LogOut, ShoppingBag, Globe } from 'lucide-vue-next'
+import { useCommunityLink } from '@/composables/useCommunityLink'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +25,7 @@ const syncStore = useSyncStore()
 const playoffStore = usePlayoffStore()
 const teamStore = useTeamStore()
 const toastStore = useToastStore()
+const { hasCommunity, openCommunity } = useCommunityLink()
 
 const campaignId = computed(() => route.params.id)
 const campaign = computed(() => campaignStore.currentCampaign)
@@ -357,6 +359,9 @@ function closeMobileMenu() {
 
         <!-- Right: User Actions (Desktop) -->
         <div v-if="!isMobile" class="header-right">
+          <button v-if="hasCommunity" class="header-icon-btn" title="Community Rosters" @click="openCommunity()">
+            <Globe :size="16" />
+          </button>
           <router-link to="/store" class="header-icon-btn" title="Store">
             <ShoppingBag :size="16" />
           </router-link>
@@ -392,6 +397,14 @@ function closeMobileMenu() {
 
       <!-- Mobile Navigation Slide-in -->
       <div v-if="isMobile" ref="mobileMenuRef" class="mobile-nav" :class="{ open: mobileMenuOpen }">
+        <button
+          v-if="hasCommunity"
+          class="mobile-nav-link"
+          @click="closeMobileMenu(); openCommunity()"
+        >
+          <Globe :size="14" />
+          Community
+        </button>
         <router-link
           to="/store"
           class="mobile-nav-link"

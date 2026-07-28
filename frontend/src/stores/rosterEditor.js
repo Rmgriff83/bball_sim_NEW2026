@@ -249,11 +249,22 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
       const result = await importRosterBuild(campaignId.value, blob)
       campaign.value.settings = campaign.value.settings ?? {}
       campaign.value.settings.customRosterStartMode = 'downloaded'
+      // The import wiped + re-id'd every player. Stamp the install so the
+      // sync pull-merge stops "resurrecting" the OLD players still sitting
+      // in the cloud snapshot (absent-local records normally merge in as
+      // new-device additions — here they'd double every roster to 30).
+      campaign.value.settings.rosterInstalledAt = new Date().toISOString()
       await CampaignRepository.save(cloneForPersist(campaign.value))
       // Coaches changed on the team records — refresh the list.
       teams.value = _sortTeams(await TeamRepository.getAllForCampaign(campaignId.value))
       dirtyIds.value = new Set()
       _sync()
+      // Replace the cloud snapshot right away so the stale pre-import roster
+      // can't linger there. Best-effort: if it fails (offline), the
+      // rosterInstalledAt guard above still blocks resurrection on pull.
+      try {
+        await useSyncStore().pushChanges(campaignId.value, { isolated: true })
+      } catch { /* retried by the normal event-driven sync */ }
       return result
     } finally {
       saving.value = false

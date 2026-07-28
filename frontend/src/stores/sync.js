@@ -7,6 +7,8 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { PlayerHeadshotRepository } from '@/engine/db/PlayerHeadshotRepository'
+import { PersonnelHeadshotRepository } from '@/engine/db/PersonnelHeadshotRepository'
+import { hydratePlayerKeys } from '@/engine/db/playerKeyHydration'
 
 const SYNC_COOLDOWN_MS = 300000 // 5 minutes — minimum time between event-driven syncs
 const PUSH_STAGGER_MS = 250 // pause between sequential part uploads so each request lands independently
@@ -33,6 +35,29 @@ const WIRE_BUDGET_BYTES = 900 * 1024
 // The server rejects batch counts above 500 (and would then treat each chunk
 // as a full-part write — corrupting). Never send more.
 const MAX_BATCH_CHUNKS = 500
+
+// Personnel headshot kinds (coach etc.). Personnel entries ride in the same
+// `headshots` sync part as player entries, discriminated by `kind` and with
+// the personnel id mapped onto `playerId` (the field the backend validates as
+// required). Old clients pulling a new snapshot write these into
+// playerHeadshots as harmless orphan rows — no crash, and they can't render
+// coach customs today anyway.
+const PERSONNEL_HEADSHOT_KINDS = new Set(['coach', 'scout', 'physician', 'staff_trainer', 'analyst'])
+
+function _isPersonnelHeadshot(h) {
+  return PERSONNEL_HEADSHOT_KINDS.has(h?.kind)
+}
+
+// Sync wire entry → personnelHeadshots record (playerId carried the id).
+function _toPersonnelRecord(h) {
+  return {
+    campaignId: h.campaignId,
+    kind: h.kind,
+    id: h.playerId ?? h.id,
+    svgContent: h.svgContent,
+    updatedAt: h.updatedAt,
+  }
+}
 
 /**
  * gzip + base64 a string via the browser-native CompressionStream. Returns
@@ -308,7 +333,21 @@ export const useSyncStore = defineStore('sync', () => {
     const teams = await TeamRepository.getAllForCampaign(campaignId)
     const players = await PlayerRepository.getAllForCampaign(campaignId)
     const seasons = await SeasonRepository.getAllForCampaign(campaignId)
-    const headshots = await PlayerHeadshotRepository.getAllByCampaign(campaignId)
+    const playerHeadshots = await PlayerHeadshotRepository.getAllByCampaign(campaignId)
+    const personnelHeadshots = await PersonnelHeadshotRepository.getAllByCampaign(campaignId)
+    // Personnel (coach/staff) headshots share the headshots part: the entry
+    // keeps its `kind` and maps its id onto `playerId` so backend validation
+    // (`headshots.*.playerId required`) passes unchanged.
+    const headshots = [
+      ...playerHeadshots,
+      ...personnelHeadshots.map(p => ({
+        campaignId: p.campaignId,
+        playerId: p.id,
+        kind: p.kind,
+        svgContent: p.svgContent,
+        updatedAt: p.updatedAt,
+      })),
+    ]
 
     // Historical seasons (anything older than the campaign's current season
     // year) are reduced to a minimal record-and-awards shell. The schedule
@@ -639,52 +678,8 @@ export const useSyncStore = defineStore('sync', () => {
    * Rebuild camelCase keys from snake_case when restoring from a stripped snapshot.
    * Ensures restored players have the same shape as locally-created ones.
    */
-  function _hydratePlayerKeys(player) {
-    const p = { ...player }
-
-    // Identity
-    if (p.first_name && !p.firstName) p.firstName = p.first_name
-    if (p.last_name && !p.lastName) p.lastName = p.last_name
-    if (p.secondary_position !== undefined && !p.secondaryPosition) p.secondaryPosition = p.secondary_position
-    if (p.jersey_number !== undefined && !p.jerseyNumber) p.jerseyNumber = p.jersey_number
-    if (p.height_inches !== undefined && !p.heightInches) p.heightInches = p.height_inches
-    if (p.weight_lbs !== undefined && !p.weightLbs) p.weightLbs = p.weight_lbs
-    if (p.birth_date && !p.birthDate) p.birthDate = p.birth_date
-
-    // Ratings
-    if (p.overall_rating !== undefined && !p.overallRating) p.overallRating = p.overall_rating
-    if (p.potential_rating !== undefined && !p.potentialRating) p.potentialRating = p.potential_rating
-
-    // Contract
-    if (p.contract_years_remaining !== undefined && p.contractYearsRemaining === undefined) p.contractYearsRemaining = p.contract_years_remaining
-    if (p.contract_salary !== undefined && p.contractSalary === undefined) p.contractSalary = p.contract_salary
-    if (p.contract_details && !p.contractDetails) p.contractDetails = p.contract_details
-
-    // Status
-    if (p.is_injured !== undefined && p.isInjured === undefined) p.isInjured = p.is_injured
-    if (p.injury_details !== undefined && !p.injuryDetails) p.injuryDetails = p.injury_details
-
-    // Evolution
-    if (p.development_history && !p.developmentHistory) p.developmentHistory = p.development_history
-    if (p.recent_performances && !p.recentPerformances) p.recentPerformances = p.recent_performances
-    if (p.streak_data !== undefined && p.streakData === undefined) p.streakData = p.streak_data
-    if (p.upgrade_points !== undefined && p.upgradePoints === undefined) p.upgradePoints = p.upgrade_points
-    if (p.games_played_this_season !== undefined && p.gamesPlayedThisSeason === undefined) p.gamesPlayedThisSeason = p.games_played_this_season
-    if (p.minutes_played_this_season !== undefined && p.minutesPlayedThisSeason === undefined) p.minutesPlayedThisSeason = p.minutes_played_this_season
-    if (p.career_seasons !== undefined && p.careerSeasons === undefined) p.careerSeasons = p.career_seasons
-
-    // Awards
-    if (p.all_star_selections !== undefined && p.allStarSelections === undefined) p.allStarSelections = p.all_star_selections
-    if (p.mvp_awards !== undefined && p.mvpAwards === undefined) p.mvpAwards = p.mvp_awards
-    if (p.finals_mvp_awards !== undefined && p.finalsMvpAwards === undefined) p.finalsMvpAwards = p.finals_mvp_awards
-    if (p.rookie_of_the_year !== undefined && p.rookieOfTheYear === undefined) p.rookieOfTheYear = p.rookie_of_the_year
-    if (p.all_nba_selections !== undefined && p.allNbaSelections === undefined) p.allNbaSelections = p.all_nba_selections
-    if (p.all_nba_first_team !== undefined && p.allNbaFirstTeam === undefined) p.allNbaFirstTeam = p.all_nba_first_team
-    if (p.all_rookie_team !== undefined && p.allRookieTeam === undefined) p.allRookieTeam = p.all_rookie_team
-    if (p.all_defensive_team !== undefined && p.allDefensiveTeam === undefined) p.allDefensiveTeam = p.all_defensive_team
-
-    return p
-  }
+  // Shared with the community roster-build importer.
+  const _hydratePlayerKeys = hydratePlayerKeys
 
   /**
    * Trigger immediate sync (for "Save to Cloud" button).
@@ -1085,7 +1080,28 @@ export const useSyncStore = defineStore('sync', () => {
 
     if (data.players && Array.isArray(data.players) && data.players.length > 0) {
       const localPlayers = await PlayerRepository.getAllForCampaign(campaignId)
-      const playersToWrite = _pickNewerRecords(data.players, localPlayers, p => p.id)
+      // Roster-replacement guard: applying a community roster build WIPES the
+      // local players and installs a fresh set with brand-new ids. Until the
+      // post-import push lands, the cloud snapshot still holds the OLD
+      // players — whose ids no longer exist locally, so the absent-local
+      // branch of _pickNewerRecords would "resurrect" them and double every
+      // roster (30-man teams). When the local campaign records a roster
+      // install NEWER than the remote snapshot, drop remote players that
+      // don't exist locally — they're pre-import records, not new-device
+      // additions. Absent flag (all non-imported campaigns) → unchanged.
+      const localCampaignForGuard = await CampaignRepository.get(campaignId)
+      const installedAtRaw = localCampaignForGuard?.settings?.rosterInstalledAt
+      const installedAt = installedAtRaw ? new Date(installedAtRaw).getTime() : 0
+      let remotePlayers = data.players
+      if (installedAt > 0 && remoteUpdatedAt <= installedAt) {
+        const localIds = new Set(localPlayers.map(p => p.id))
+        const before = remotePlayers.length
+        remotePlayers = remotePlayers.filter(p => localIds.has(p.id))
+        if (remotePlayers.length < before) {
+          console.log(`[Sync] Dropped ${before - remotePlayers.length} pre-import players from remote snapshot (roster install is newer)`)
+        }
+      }
+      const playersToWrite = _pickNewerRecords(remotePlayers, localPlayers, p => p.id)
       if (playersToWrite.length > 0) {
         const hydrated = playersToWrite.map(_hydratePlayerKeys)
         await PlayerRepository.saveBulkFromRemote(hydrated)
@@ -1096,17 +1112,35 @@ export const useSyncStore = defineStore('sync', () => {
     }
 
     if (data.headshots && Array.isArray(data.headshots) && data.headshots.length > 0) {
-      const localHeadshots = await PlayerHeadshotRepository.getAllByCampaign(campaignId)
-      const headshotsToWrite = _pickNewerRecords(
-        data.headshots,
-        localHeadshots,
-        h => `${h.campaignId}:${h.playerId}`
-      )
-      if (headshotsToWrite.length > 0) {
-        await PlayerHeadshotRepository.saveBulkFromRemote(headshotsToWrite)
-        console.log(`[Sync] Updating ${headshotsToWrite.length} custom headshots from remote`)
-      } else {
-        console.log('[Sync] All local headshots are up to date')
+      const remotePlayerHs = data.headshots.filter(h => !_isPersonnelHeadshot(h))
+      const remotePersonnelHs = data.headshots.filter(_isPersonnelHeadshot).map(_toPersonnelRecord)
+
+      if (remotePlayerHs.length > 0) {
+        const localHeadshots = await PlayerHeadshotRepository.getAllByCampaign(campaignId)
+        const headshotsToWrite = _pickNewerRecords(
+          remotePlayerHs,
+          localHeadshots,
+          h => `${h.campaignId}:${h.playerId}`
+        )
+        if (headshotsToWrite.length > 0) {
+          await PlayerHeadshotRepository.saveBulkFromRemote(headshotsToWrite)
+          console.log(`[Sync] Updating ${headshotsToWrite.length} custom headshots from remote`)
+        } else {
+          console.log('[Sync] All local headshots are up to date')
+        }
+      }
+
+      if (remotePersonnelHs.length > 0) {
+        const localPersonnel = await PersonnelHeadshotRepository.getAllByCampaign(campaignId)
+        const personnelToWrite = _pickNewerRecords(
+          remotePersonnelHs,
+          localPersonnel,
+          h => `${h.campaignId}:${h.kind}:${h.id}`
+        )
+        if (personnelToWrite.length > 0) {
+          await PersonnelHeadshotRepository.saveBulkFromRemote(personnelToWrite)
+          console.log(`[Sync] Updating ${personnelToWrite.length} personnel headshots from remote`)
+        }
       }
     }
 
@@ -1210,7 +1244,14 @@ export const useSyncStore = defineStore('sync', () => {
       }
 
       if (Array.isArray(data.headshots) && data.headshots.length > 0) {
-        await PlayerHeadshotRepository.saveBulkFromRemote(data.headshots)
+        const playerHs = data.headshots.filter(h => !_isPersonnelHeadshot(h))
+        const personnelHs = data.headshots.filter(_isPersonnelHeadshot).map(_toPersonnelRecord)
+        if (playerHs.length > 0) {
+          await PlayerHeadshotRepository.saveBulkFromRemote(playerHs)
+        }
+        if (personnelHs.length > 0) {
+          await PersonnelHeadshotRepository.saveBulkFromRemote(personnelHs)
+        }
       }
 
       lastSyncAt.value = new Date().toISOString()

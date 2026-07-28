@@ -11,6 +11,7 @@ import { storeToRefs } from 'pinia'
 import { Loader2, Users, ClipboardList, ShieldCheck, ArrowLeft, AlertTriangle, Check, Plus, Save, Download, Sparkles } from 'lucide-vue-next'
 import { Capacitor } from '@capacitor/core'
 import api from '@/composables/useApi'
+import { getToken } from '@/composables/useTokenStorage'
 import RosterAttributeTable from '@/components/roster/RosterAttributeTable.vue'
 import SelectedPlayerHeader from '@/components/roster/SelectedPlayerHeader.vue'
 import PlayerDetailsEditorModal from '@/components/roster/PlayerDetailsEditorModal.vue'
@@ -153,15 +154,57 @@ async function fetchDownloadedBuilds() {
   }
 }
 
+// Fetch a build blob. Preferred path asks the server for the raw gz bytes
+// (octet-stream, no Content-Encoding — immune to proxies/service workers
+// that decompress the body but leave the header, which surfaces as
+// ERR_CONTENT_DECODING_FAILED) and inflates explicitly. Uses bare fetch()
+// (not the axios client) so nothing can coerce the body to a lossy string,
+// and inflates in a LOOP so an accidentally double-gzipped object still
+// resolves. WebViews without DecompressionStream use the legacy route.
+async function _fetchBuildBlob(id) {
+  if (typeof DecompressionStream === 'undefined') {
+    const res = await api.get(`/api/roster-builds/${id}/blob`)
+    return res.data
+  }
+  const token = await getToken()
+  const base = import.meta.env.VITE_API_URL || ''
+  const resp = await fetch(`${base}/api/roster-builds/${id}/blob?raw=1`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!resp.ok) {
+    throw new Error(resp.status === 404 ? 'This roster is no longer available' : `Import fetch failed (${resp.status})`)
+  }
+  let bytes = new Uint8Array(await resp.arrayBuffer())
+  // Tolerate stray leading whitespace (a single space from PHP stray-output
+  // bugs corrupted the stream once — harmless to JSON, fatal to gunzip).
+  let start = 0
+  while (start < bytes.length && (bytes[start] === 0x20 || bytes[start] === 0x0a || bytes[start] === 0x0d || bytes[start] === 0x09)) start++
+  if (start > 0) bytes = bytes.subarray(start)
+  // Inflate while the payload still starts with the gzip magic bytes (guards
+  // gz-of-gz artifacts from manual bucket surgery); cap the loop for safety.
+  for (let pass = 0; pass < 3 && bytes[0] === 0x1f && bytes[1] === 0x8b; pass++) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+    bytes = new Uint8Array(await new Response(stream).arrayBuffer())
+  }
+  return JSON.parse(new TextDecoder().decode(bytes))
+}
+
 async function pickDownloaded() {
   if (!selectedBuildId.value || importing.value) return
   importing.value = true
+  const audio = useAudioStore()
+  const toast = useToastStore()
+  audio.suppressClickSound()
   try {
-    const res = await api.get(`/api/roster-builds/${selectedBuildId.value}/blob`)
-    await store.applyDownloadedBuild(res.data)
+    const picked = downloadedBuilds.value.find((b) => b.id === selectedBuildId.value)
+    const blob = await _fetchBuildBlob(selectedBuildId.value)
+    await store.applyDownloadedBuild(blob)
     store.refreshTeamOveralls()
+    audio.affirm()
+    toast.showSuccess(`"${picked?.title ?? 'Roster'}" applied — tweak anything, then start your season`)
   } catch (err) {
-    store.error = err?.message || 'Failed to apply the downloaded roster'
+    audio.cancel()
+    store.error = err?.message || 'Failed to apply the imported roster'
   } finally {
     importing.value = false
   }
@@ -453,6 +496,16 @@ async function generateRestAndContinue() {
   }
 }
 
+// "Start Season" accept — affirmation chime instead of the generic tap.
+// (generateRestAndContinue calls confirmFinalize directly; it already plays
+// its own affirm, so the sound lives here rather than in confirmFinalize.)
+async function acceptFinalize() {
+  const audio = useAudioStore()
+  audio.suppressClickSound()
+  audio.affirm()
+  await confirmFinalize()
+}
+
 async function confirmFinalize() {
   const id = campaignId.value
   const fantasy = isFantasy.value
@@ -519,8 +572,8 @@ async function confirmFinalize() {
         </button>
         <div v-if="downloadedBuilds.length" class="rs-start-card rs-start-downloaded">
           <Download :size="28" />
-          <span class="rs-start-name">Start from Downloaded</span>
-          <span class="rs-start-desc">Use a community roster you saved on the web.</span>
+          <span class="rs-start-name">Imports</span>
+          <span class="rs-start-desc">Start from a roster you imported from the Community board — tweak anything before you start.</span>
           <select v-model="selectedBuildId" class="rs-build-select" @click.stop>
             <option v-for="b in downloadedBuilds" :key="b.id" :value="b.id">
               {{ b.title }}{{ b.author ? ` — ${b.author}` : '' }}
@@ -750,7 +803,7 @@ async function confirmFinalize() {
           </p>
           <div class="rs-modal-actions">
             <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Not yet</button>
-            <button class="rs-modal-primary" :disabled="saving" @click="confirmFinalize">
+            <button class="rs-modal-primary" :disabled="saving" @click="acceptFinalize">
               <Loader2 v-if="saving" :size="16" class="spin" /> Start Season
             </button>
           </div>
@@ -873,6 +926,8 @@ async function confirmFinalize() {
 
 .rs-start-downloaded {
   cursor: default;
+  /* Imports card gets its own full-width row under the two start options. */
+  flex-basis: 100%;
 }
 
 .rs-save-btn {
@@ -911,8 +966,11 @@ async function confirmFinalize() {
 .rs-start { max-width: 760px; margin: 0 auto; padding: 40px 18px; text-align: center; }
 .rs-start h2 { margin: 0 0 6px; }
 .rs-sub { color: var(--color-text-secondary); margin: 0 0 24px; }
-.rs-start-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-@media (max-width: 640px) { .rs-start-grid { grid-template-columns: 1fr; } }
+/* Flex layout: the two start options split the top row 50/50; the Imports
+   card wraps to its own full-width row below. */
+.rs-start-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+.rs-start-grid > .rs-start-card { flex: 1 1 220px; }
+@media (max-width: 640px) { .rs-start-grid { flex-direction: column; } }
 
 .rs-start-card {
   display: flex;

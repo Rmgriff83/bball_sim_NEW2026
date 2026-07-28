@@ -105,7 +105,7 @@ export const useToastStore = defineStore('toast', () => {
   // Achievement unlocked (championship, conference title, playoff berth, GM
   // promotion, …) — a rich callout mirroring the token-award toast, with an
   // affirmation chime. `type` drives the icon/accent in ToastContainer.
-  function showAchievement({ label, subtitle = '', type = '' }) {
+  function showAchievement({ label, subtitle = '', type = '', header = '' }) {
     try {
       const audio = useAudioStore()
       audio.play('affirm')
@@ -116,6 +116,9 @@ export const useToastStore = defineStore('toast', () => {
       label,
       subtitle,
       achievementType: type,
+      // Optional header override — the rich callout is reused for non-award
+      // notices (e.g. roster imports); default stays "Achievement Unlocked".
+      header,
       duration: 6000,
     })
   }

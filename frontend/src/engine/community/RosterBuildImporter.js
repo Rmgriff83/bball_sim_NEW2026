@@ -24,12 +24,17 @@ import { CampaignRepository } from '../db/CampaignRepository'
 import { TeamRepository } from '../db/TeamRepository'
 import { PlayerRepository } from '../db/PlayerRepository'
 import { PlayerHeadshotRepository } from '../db/PlayerHeadshotRepository'
+import { CoachHeadshotRepository } from '../db/CoachHeadshotRepository'
+import { hydratePlayerKeys } from '../db/playerKeyHydration'
 import { normalizePlayerAttributes } from '../data/attributeSchema'
 import { generateUUID } from '../campaign/CampaignManager'
 
 // Fields that must be re-stamped for the new campaign rather than imported.
 function _rebindPlayer(raw, { campaignId, teamId, teamAbbreviation }) {
-  const player = { ...raw }
+  // Blob players come from the sync snapshot, which strips camelCase
+  // duplicates — rebuild them so camelCase-reading UI (trade modals etc.)
+  // sees names/contracts.
+  const player = hydratePlayerKeys(raw)
   player.campaignId = campaignId
   player.id = generateUUID()
   player.teamId = teamId
@@ -50,6 +55,19 @@ function _rebindPlayer(raw, { campaignId, teamId, teamAbbreviation }) {
   player.minutes_played_this_season = 0
   player.updatedAt = new Date().toISOString()
   normalizePlayerAttributes(player)
+  // Round attributes + ceilings to integers. The SOURCE campaign's players
+  // may have evolved through games (per-game development applies fractional
+  // changes by design), but an imported roster is a fresh start and the
+  // editor authors in whole numbers.
+  for (const group of [player.attributes, player.attributeCaps]) {
+    if (!group || typeof group !== 'object') continue
+    for (const cat of Object.values(group)) {
+      if (!cat || typeof cat !== 'object') continue
+      for (const key of Object.keys(cat)) {
+        if (typeof cat[key] === 'number') cat[key] = Math.round(cat[key])
+      }
+    }
+  }
   return player
 }
 
@@ -71,8 +89,16 @@ export async function importRosterBuild(campaignId, build) {
   const teams = await TeamRepository.getAllForCampaign(campaignId)
   const teamByAbbr = new Map(teams.map((t) => [t.abbreviation, t]))
 
-  // Wipe the generated league — the build replaces it wholesale.
+  // Wipe the generated league — the build replaces it wholesale — but KEEP
+  // this campaign's own draft-prospect class (generated at creation with the
+  // correct year+1 draft year; the scouting tab depends on it). A build is
+  // the league ROSTER; prospects are generated scouting content.
+  const existing = await PlayerRepository.getAllForCampaign(campaignId)
+  const ownProspects = existing.filter((p) => p.isDraftProspect)
   await PlayerRepository.deleteAllForCampaign(campaignId)
+  if (ownProspects.length) {
+    await PlayerRepository.saveBulk(ownProspects)
+  }
 
   const idMap = new Map() // original build player id -> new player id
   const toSave = []
@@ -83,6 +109,10 @@ export async function importRosterBuild(campaignId, build) {
     if (abbr !== 'fa' && !team) continue // build team not in this league — skip
     for (const raw of list) {
       if (!raw || typeof raw !== 'object') continue
+      // Blobs published before the server-side filter carry the SOURCE
+      // campaign's prospects (wrong draft year for this campaign) — skip
+      // them; this campaign's own class was preserved above.
+      if (raw.isDraftProspect || raw.is_draft_prospect) continue
       const originalId = raw.id
       const player = _rebindPlayer(raw, {
         campaignId,
@@ -94,13 +124,51 @@ export async function importRosterBuild(campaignId, build) {
     }
   }
   if (!toSave.length) throw new Error('Roster build contains no players')
+
+  // Align draft years with the TARGET campaign's season. Builds published
+  // from older campaigns carry their source-era classes (e.g. a 2025-start
+  // league's rookies are tagged draftYear 2025) — imported into a 2026
+  // campaign, no player matches `draftYear === currentSeasonYear` and the
+  // rookie rankings sit empty. Shift the whole timeline forward so the
+  // build's NEWEST class becomes the current rookie class and class spacing
+  // (sophomores, vets) is preserved. Never shift down (same-year sources are
+  // a no-op; authored future classes stay authored), and skip absurd gaps.
+  const seasonYear = campaign.currentSeasonYear ?? campaign.current_season_year ?? null
+  if (seasonYear != null) {
+    let maxDraftYear = null
+    for (const p of toSave) {
+      const dy = p.draftYear ?? p.draft_year ?? null
+      if (typeof dy === 'number' && dy >= 1990 && dy <= 2100) {
+        if (maxDraftYear == null || dy > maxDraftYear) maxDraftYear = dy
+      }
+    }
+    const shift = maxDraftYear != null ? seasonYear - maxDraftYear : 0
+    if (shift > 0 && shift <= 30) {
+      for (const p of toSave) {
+        const dy = p.draftYear ?? p.draft_year ?? null
+        if (typeof dy !== 'number') continue
+        p.draftYear = dy + shift
+        p.draft_year = dy + shift
+        if (p.draftInfo && typeof p.draftInfo.year === 'number') {
+          p.draftInfo = { ...p.draftInfo, year: p.draftInfo.year + shift }
+        }
+      }
+      console.log(`[Import] Shifted draft years +${shift} to align with season ${seasonYear}`)
+    }
+  }
+
   await PlayerRepository.saveBulk(toSave)
 
-  // Coaches — replace per team by abbreviation, fresh ids.
+  // Coaches — replace per team by abbreviation, fresh ids. The original id →
+  // new id map drives the coach-headshot remap below (blob coach headshot
+  // entries are keyed by the ORIGINAL coach id on their playerId field).
+  const coachIdMap = new Map()
   for (const [abbr, coach] of Object.entries(build.coaches ?? {})) {
     const team = teamByAbbr.get(abbr)
     if (!team || !coach || typeof coach !== 'object') continue
+    const originalCoachId = coach.id ?? null
     team.coach = { ...coach, id: generateUUID() }
+    if (originalCoachId) coachIdMap.set(originalCoachId, team.coach.id)
     // Keep the sim-facing scheme mirror aligned with the imported coach.
     const off = coach.offensiveScheme ?? coach.offensive_scheme
     const def = coach.defensiveScheme ?? coach.defensive_scheme
@@ -115,9 +183,20 @@ export async function importRosterBuild(campaignId, build) {
     await TeamRepository.save(team)
   }
 
-  // Headshots — remap original player ids to the fresh ones.
+  // Headshots — remap original ids to the fresh ones. Entries with
+  // kind === 'coach' are coach headshots (playerId carries the original
+  // coach id); other personnel kinds aren't part of a roster build. The
+  // coach's has_custom_headshot flag already rode in on the coach object.
   let headshotCount = 0
   for (const h of build.headshots ?? []) {
+    if (h?.kind === 'coach') {
+      const newCoachId = coachIdMap.get(h?.playerId)
+      if (!newCoachId || !h?.svgContent) continue
+      await CoachHeadshotRepository.save(campaignId, newCoachId, h.svgContent)
+      headshotCount++
+      continue
+    }
+    if (h?.kind) continue // non-coach personnel — not applicable to imports
     const newId = idMap.get(h?.playerId)
     if (!newId || !h?.svgContent) continue
     await PlayerHeadshotRepository.save(campaignId, newId, h.svgContent)

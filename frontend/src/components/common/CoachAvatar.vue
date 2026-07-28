@@ -34,6 +34,7 @@ import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { UserCog, Brush } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
+import { useSyncStore } from '@/stores/sync'
 import { getCoachHeadshotByName } from '@/services/headshotPremades'
 import { CoachHeadshotRepository } from '@/engine/db/CoachHeadshotRepository'
 
@@ -89,7 +90,10 @@ const resolvedSrc = computed(() => {
 // the coach has been marked has_custom_headshot. Mirrors the player resolver
 // pattern.
 async function _loadCustomSvg() {
-  const cid = props.campaignId
+  // Same fallback PlayerAvatar uses: surfaces that don't pass a campaignId
+  // (HireCoachModal, campaign cards) still resolve the active campaign's
+  // custom headshot instead of silently never showing it.
+  const cid = props.campaignId ?? useSyncStore().activeCampaignId
   const coachId = props.coach?.id
   const hasCustom = props.coach?.hasCustomHeadshot ?? props.coach?.has_custom_headshot
   if (!cid || !coachId || !hasCustom) {

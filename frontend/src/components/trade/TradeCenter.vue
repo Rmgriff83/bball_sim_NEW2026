@@ -320,13 +320,15 @@ function addPlayerToOffer(player) {
   tradeStore.addToUserOffering({
     type: 'player',
     id: player.id,
-    firstName: player.firstName,
-    lastName: player.lastName,
+    // Dual-cased reads — imported (cloud round-tripped) players can be
+    // snake_case-only.
+    firstName: player.firstName ?? player.first_name,
+    lastName: player.lastName ?? player.last_name,
     position: player.position,
-    secondaryPosition: player.secondaryPosition,
-    overallRating: player.overallRating,
-    contractSalary: player.contractSalary,
-    contractYearsRemaining: player.contractYearsRemaining,
+    secondaryPosition: player.secondaryPosition ?? player.secondary_position,
+    overallRating: player.overallRating ?? player.overall_rating,
+    contractSalary: player.contractSalary ?? player.contract_salary,
+    contractYearsRemaining: player.contractYearsRemaining ?? player.contract_years_remaining,
     tradeValue: player.tradeValue,
     age: player.age,
     height: player.height,
@@ -352,13 +354,15 @@ function addPlayerToRequest(player) {
   tradeStore.addToUserRequesting({
     type: 'player',
     id: player.id,
-    firstName: player.firstName,
-    lastName: player.lastName,
+    // Dual-cased reads — imported (cloud round-tripped) players can be
+    // snake_case-only.
+    firstName: player.firstName ?? player.first_name,
+    lastName: player.lastName ?? player.last_name,
     position: player.position,
-    secondaryPosition: player.secondaryPosition,
-    overallRating: player.overallRating,
-    contractSalary: player.contractSalary,
-    contractYearsRemaining: player.contractYearsRemaining,
+    secondaryPosition: player.secondaryPosition ?? player.secondary_position,
+    overallRating: player.overallRating ?? player.overall_rating,
+    contractSalary: player.contractSalary ?? player.contract_salary,
+    contractYearsRemaining: player.contractYearsRemaining ?? player.contract_years_remaining,
     tradeValue: player.tradeValue,
     age: player.age,
     height: player.height,

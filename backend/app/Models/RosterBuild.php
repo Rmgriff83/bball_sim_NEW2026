@@ -12,6 +12,7 @@ class RosterBuild extends Model
 
     protected $fillable = [
         'user_id',
+        'campaign_client_id',
         'title',
         'description',
         's3_key',

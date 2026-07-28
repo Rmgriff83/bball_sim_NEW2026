@@ -4,11 +4,13 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { GlassCard, BaseButton } from '@/components/ui'
-import { Gamepad2, Plus, User, LogOut, LayoutDashboard, Trophy, ShoppingBag, Crown, CalendarCheck } from 'lucide-vue-next'
+import { Gamepad2, Plus, User, LogOut, LayoutDashboard, Trophy, ShoppingBag, Crown, CalendarCheck, Globe } from 'lucide-vue-next'
+import { useCommunityLink } from '@/composables/useCommunityLink'
 import { backfillCampaignAchievements } from '@/engine/campaign/CampaignManager'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const { hasCommunity, openCommunity } = useCommunityLink()
 const campaignStore = useCampaignStore()
 const user = computed(() => authStore.user)
 
@@ -112,6 +114,10 @@ onMounted(async () => {
             <ShoppingBag :size="18" />
             <span>Store</span>
           </router-link>
+          <button v-if="hasCommunity" class="nav-link" @click="openCommunity()">
+            <Globe :size="18" />
+            <span>Community</span>
+          </button>
           <router-link to="/profile" class="nav-link">
             <User :size="18" />
             <span>Profile</span>

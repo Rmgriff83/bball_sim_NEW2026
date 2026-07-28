@@ -4020,13 +4020,13 @@ export function generatePlayer(options) {
  * @param {number} [options.careerSeasons] - If omitted, derived from age band
  * @param {number} [options.jerseyNumber]
  * @param {Set<string>} [options.usedNames] - Collision-avoidance set
- * @param {number} [options.startYear=2025]
+ * @param {number} [options.startYear=2026]
  * @returns {Object} Player object ready for IndexedDB
  */
 export function generateVeteran(options) {
   const {
     role = 'rotation',
-    startYear = 2025,
+    startYear = 2026,
   } = options
   // Note: `options.usedNames` (if present) is consumed by generatePlayer below,
   // which now owns nationality-aware name selection + dedup.
