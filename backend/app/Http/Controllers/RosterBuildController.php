@@ -156,21 +156,30 @@ class RosterBuildController extends Controller
         }
 
         // Profanity screen: title, description, and every player/coach name.
-        $texts = [$validated['title'], $validated['description'] ?? ''];
-        foreach ($playersByAbbr as $list) {
+        // Each entry is labeled so a rejection can NAME the offending field —
+        // "content_rejected" with no location left publishers hunting through
+        // 450 players.
+        $texts = [
+            ['label' => 'the title', 'text' => $validated['title']],
+            ['label' => 'the description', 'text' => $validated['description'] ?? ''],
+        ];
+        foreach ($playersByAbbr as $abbr => $list) {
             foreach ($list as $p) {
-                $texts[] = trim(($p['first_name'] ?? '') . ' ' . ($p['last_name'] ?? '') . ' ' . ($p['name'] ?? ''));
+                $name = trim(($p['first_name'] ?? '') . ' ' . ($p['last_name'] ?? '') . ' ' . ($p['name'] ?? ''));
+                $texts[] = ['label' => "player \"{$name}\" ({$abbr})", 'text' => $name];
             }
         }
-        foreach ($coaches as $c) {
-            $texts[] = trim(($c['firstName'] ?? '') . ' ' . ($c['lastName'] ?? '') . ' ' . ($c['name'] ?? ''));
+        foreach ($coaches as $abbr => $c) {
+            $name = trim(($c['firstName'] ?? '') . ' ' . ($c['lastName'] ?? '') . ' ' . ($c['name'] ?? ''));
+            $texts[] = ['label' => "coach \"{$name}\" ({$abbr})", 'text' => $name];
         }
-        foreach ($texts as $text) {
-            if (($hit = ProfanityScreen::firstViolation($text)) !== null) {
+        foreach ($texts as $entry) {
+            if (($hit = ProfanityScreen::firstViolation($entry['text'])) !== null) {
                 return response()->json([
                     'error' => 'content_rejected',
-                    'message' => 'A name or description contains disallowed language.',
+                    'message' => "Disallowed language in {$entry['label']}.",
                     'fragment' => $hit,
+                    'source' => $entry['label'],
                 ], 422);
             }
         }

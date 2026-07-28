@@ -17,14 +17,20 @@ class ProfanityScreen
      * produces false positives (the classic "Scunthorpe problem").
      */
     private const SUBSTRING_TERMS = [
-        'fuck', 'shit', 'cunt', 'nigg', 'faggot', 'kike', 'spic ', 'wetback',
+        'fuck', 'shit', 'cunt', 'nigg', 'faggot', 'kike', 'wetback',
         'chink', 'beaner', 'tranny', 'retard', 'rape', 'nazi', 'hitler',
-        'porn', 'penis', 'vagina', 'cock ', 'dick ', 'whore', 'slut',
+        'porn', 'penis', 'vagina', 'whore', 'slut',
     ];
 
-    /** Exact-token matches (word-boundary). */
+    /**
+     * Exact-token matches (word-boundary). Short/ambiguous terms live here,
+     * NOT in the substring list — the old space-suffixed substring trick
+     * ('dick ') still matched the END of legitimate surnames ("Redick",
+     * "Riddick") whenever another word followed.
+     */
     private const TOKEN_TERMS = [
         'ass', 'tits', 'cum', 'fag', 'coon', 'gook', 'homo',
+        'dick', 'cock', 'spic',
     ];
 
     /**

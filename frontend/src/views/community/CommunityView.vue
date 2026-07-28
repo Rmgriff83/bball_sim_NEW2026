@@ -142,7 +142,12 @@ async function publish() {
   } catch (err) {
     const data = err?.response?.data
     if (data?.error === 'content_rejected') {
-      toastStore.showError('Publish blocked: a name or description contains disallowed language.')
+      toastStore.showError(
+        data.source
+          ? `Publish blocked: disallowed language in ${data.source}. Rename it in the app, sync, and retry.`
+          : 'Publish blocked: a name or description contains disallowed language.',
+        6000
+      )
     } else if (data?.error === 'campaign_not_synced') {
       toastStore.showError('This campaign has not finished syncing yet — open it in the app first, then retry.')
     } else if (data?.error === 'not_a_custom_campaign') {
