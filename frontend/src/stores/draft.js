@@ -816,7 +816,8 @@ export const useDraftStore = defineStore('draft', () => {
       }
 
       // 4. Consume used picks and generate year+5 picks
-      await rollDraftPicks(allTeams, campaignId, gameYear, gameYear + 5)
+      const pickCalendarBase = (campaign.currentSeasonYear ?? campaign.current_season_year ?? 2025) - gameYear + 1
+      await rollDraftPicks(allTeams, campaignId, gameYear, gameYear + 5, pickCalendarBase)
 
       // 5. Mark rookie draft completed for this year
       campaign[`rookieDraftCompleted_${gameYear}`] = true

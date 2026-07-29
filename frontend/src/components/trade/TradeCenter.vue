@@ -2,6 +2,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTradeStore } from '@/stores/trade'
+import { useCampaignStore } from '@/stores/campaign'
+import { pickCalendarYear } from './tradeAssetFormat'
 import { useTeamStore } from '@/stores/team'
 import { useFinanceStore } from '@/stores/finance'
 import { useToastStore } from '@/stores/toast'
@@ -29,6 +31,7 @@ const emit = defineEmits(['trade-completed', 'prefill-consumed'])
 
 const router = useRouter()
 const tradeStore = useTradeStore()
+const campaignStore = useCampaignStore()
 const teamStore = useTeamStore()
 const financeStore = useFinanceStore()
 const toastStore = useToastStore()
@@ -440,8 +443,7 @@ function togglePickSelection(pick) {
 }
 
 function formatPickYear(year) {
-  if (year == null) return ''
-  return year < 100 ? 2024 + year : year
+  return pickCalendarYear(year, campaignStore.currentCampaign)
 }
 
 function isPlayerSelected(playerId) {

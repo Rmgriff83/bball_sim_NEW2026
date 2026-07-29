@@ -33,14 +33,24 @@ import { deriveOwnerExpectationFromRoster, deriveExpectationTierFromRoster } fro
 // Minimum players a team must carry before the campaign can start.
 export const MIN_ROSTER_SIZE = 8
 
+// Authored free-agent pool bounds for CUSTOM (non-fantasy) campaigns — the
+// pool must be a real market (min) without flooding the league (max).
+export const MIN_FA_POOL = 20
+export const MAX_FA_POOL = 50
+
+// Max TOTAL badge rows per authored player — learned levels AND cap-only
+// "earnable later" rows both count. Editor rule (UI + finalize validation).
+export const MAX_PLAYER_BADGES = 15
+
 export const useRosterEditorStore = defineStore('rosterEditor', () => {
   const campaignId = ref(null)
   const campaign = ref(null)
   const teams = ref([])            // 30 teams, each with embedded `.coach`
   const activeTeamId = ref(null)
   const activeRoster = ref([])     // players for the active team (lazy-loaded)
-  const freeAgents = ref([])       // fantasy: the draftable pool
+  const freeAgents = ref([])       // fantasy: the draftable pool; standard custom: the FA market
   const teamOveralls = ref({})     // teamId → computed overall (team-grid badges)
+  const faCount = ref(0)           // live FA-pool size (standard custom: FA card badge)
 
   const loading = ref(false)
   const saving = ref(false)
@@ -207,6 +217,11 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
       const map = {}
       for (const t of teams.value) map[t.id] = computeTeamOverall(byTeam[t.id] ?? [])
       teamOveralls.value = map
+      // FA-pool badge count (teamless, excluding scouting prospects/retirees).
+      faCount.value = all.filter((p) =>
+        !(p.teamId ?? p.team_id)
+        && !(p.isDraftProspect || p.is_draft_prospect)
+        && !(p.isRetired || p.is_retired)).length
     } catch { /* display-only */ }
   }
 
@@ -280,7 +295,11 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
   }
 
   async function openPool() {
-    freeAgents.value = await PlayerRepository.getFreeAgents(campaignId.value)
+    // Prospect filter is defensive: the FA index shouldn't include the
+    // scouting class, but a stray flag must not surface it in the editor.
+    freeAgents.value = (await PlayerRepository.getFreeAgents(campaignId.value))
+      .filter((p) => !(p.isDraftProspect || p.is_draft_prospect))
+    faCount.value = freeAgents.value.length
     selectedId.value = freeAgents.value[0]?.id ?? null
   }
 
@@ -406,6 +425,9 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
   }
 
   async function addPoolPlayer() {
+    // Standard custom campaigns cap the authored FA market; the fantasy
+    // draft pool stays uncapped (it needs 15 × teams).
+    if (!isFantasy.value && freeAgents.value.length >= MAX_FA_POOL) return null
     const position = POSITIONS[freeAgents.value.length % POSITIONS.length]
     const player = generatePlayer({
       campaignId: campaignId.value,
@@ -415,10 +437,43 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
       overall: 70,
     })
     freeAgents.value.push(player)
+    faCount.value = freeAgents.value.length
     selectedId.value = player.id
     await PlayerRepository.save(cloneForPersist(player))
     _sync()
     return player
+  }
+
+  // Top the FA pool up to `target` with generated bench/role-grade players
+  // (the finalize modal's "generate the rest" + the pool view's fill button).
+  async function fillFreeAgentPool(target = MIN_FA_POOL) {
+    await openPool()
+    const added = []
+    while (freeAgents.value.length + added.length < target) {
+      const idx = freeAgents.value.length + added.length
+      added.push(generatePlayer({
+        campaignId: campaignId.value,
+        teamId: null,
+        teamAbbreviation: 'FA',
+        position: POSITIONS[idx % POSITIONS.length],
+        overall: 58 + Math.floor(Math.random() * 12), // 58–69 market grade
+      }))
+    }
+    if (!added.length) return 0
+    await PlayerRepository.saveBulk(added.map((p) => cloneForPersist(p)))
+    freeAgents.value.push(...added)
+    faCount.value = freeAgents.value.length
+    _sync()
+    return added.length
+  }
+
+  // How many FAs short of the minimum the pool is (0 for fantasy — its pool
+  // has its own draft-size rule). Drives the finalize modal's generate CTA.
+  async function freeAgentShortfall() {
+    if (isFantasy.value) return 0
+    const pool = (await PlayerRepository.getFreeAgents(campaignId.value))
+      .filter((p) => !(p.isDraftProspect || p.is_draft_prospect))
+    return Math.max(0, MIN_FA_POOL - pool.length)
   }
 
   async function removePlayer(player, fromPool = false) {
@@ -426,6 +481,7 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     const list = fromPool ? freeAgents : activeRoster
     const i = list.value.findIndex((p) => p.id === player.id)
     if (i >= 0) list.value.splice(i, 1)
+    if (fromPool) faCount.value = freeAgents.value.length
     _clearDirty(player.id)
     if (selectedId.value === player.id) {
       // Team view: drop back to the team header. Pool: keep a row selected
@@ -433,6 +489,48 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
       selectedId.value = fromPool ? (list.value[0]?.id ?? null) : null
     }
     _sync()
+  }
+
+  // Author draft-pick ownership: move picks between teams' draftPicks arrays
+  // (mirrors the trade path's transfer mechanics — currentOwnerId both
+  // casings + isTraded; original_team_abbreviation NEVER changes, it's the
+  // "via X" credit and the draft-order slot key). Assignments:
+  // [{ pickId, newOwnerId }]. Persists every touched team.
+  async function reassignDraftPicks(assignments) {
+    if (!Array.isArray(assignments) || !assignments.length) return 0
+    const teamById = new Map(teams.value.map((t) => [t.id, t]))
+    // Global pick locator — a pick lives on exactly one team's array.
+    const locate = (pickId) => {
+      for (const t of teams.value) {
+        const idx = (t.draftPicks ?? []).findIndex((p) => p.id === pickId)
+        if (idx >= 0) return { team: t, idx }
+      }
+      return null
+    }
+    const touched = new Set()
+    let moved = 0
+    for (const { pickId, newOwnerId } of assignments) {
+      const loc = locate(pickId)
+      const dest = teamById.get(newOwnerId)
+      if (!loc || !dest || loc.team.id === newOwnerId) continue
+      const [pick] = loc.team.draftPicks.splice(loc.idx, 1)
+      pick.currentOwnerId = dest.id
+      pick.current_owner_id = dest.id
+      const traded = dest.id !== (pick.originalTeamId ?? pick.original_team_id)
+      pick.isTraded = traded
+      pick.is_traded = traded
+      dest.draftPicks = dest.draftPicks ?? []
+      dest.draftPicks.push(pick)
+      touched.add(loc.team.id)
+      touched.add(dest.id)
+      moved++
+    }
+    for (const id of touched) {
+      const t = teamById.get(id)
+      if (t) await TeamRepository.save(cloneForPersist(t))
+    }
+    if (moved) _sync()
+    return moved
   }
 
   // Recompute a player's derived overall + potential from its authored
@@ -504,6 +602,17 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
         }
         _validatePlayers(roster, problems, team.abbreviation ?? team.name)
       }
+      // Authored FA market bounds — the pool must exist (signings, AI
+      // backfill) without flooding the league.
+      const pool = (await PlayerRepository.getFreeAgents(campaignId.value))
+        .filter((p) => !(p.isDraftProspect || p.is_draft_prospect))
+      if (pool.length < MIN_FA_POOL) {
+        problems.push(`Free agents: only ${pool.length} in the pool (min ${MIN_FA_POOL}).`)
+      }
+      if (pool.length > MAX_FA_POOL) {
+        problems.push(`Free agents: ${pool.length} in the pool — over the ${MAX_FA_POOL} limit.`)
+      }
+      _validatePlayers(pool, problems, 'Free agents')
     }
     for (const team of teams.value) {
       const coach = team.coach
@@ -517,6 +626,20 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
   function _validatePlayers(players, problems, label) {
     for (const p of players) {
       if (!(p.name || p.firstName)) { problems.push(`${label}: a player has no name.`); break }
+    }
+    // Badge stack cap — learned badges plus cap-only rows both count. First
+    // offender per group (matches the ceiling check) so imports of stacked
+    // rosters don't flood the modal.
+    for (const p of players) {
+      const badgeCount = new Set([
+        ...(p.badges ?? []).map((b) => b.id),
+        ...Object.keys(p.badgeCaps ?? {}),
+      ]).size
+      if (badgeCount > MAX_PLAYER_BADGES) {
+        const pName = p.name ?? (`${p.firstName ?? ''} ${p.lastName ?? ''}`.trim() || 'A player')
+        problems.push(`${label}: ${pName} has ${badgeCount} badges — max ${MAX_PLAYER_BADGES}.`)
+        break
+      }
     }
     // ceiling >= attribute for every attribute (prevents a cap forcing a down-clamp)
     for (const p of players) {
@@ -661,6 +784,7 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
 
   return {
     campaignId, campaign, teams, activeTeamId, activeRoster, freeAgents,
+    faCount, fillFreeAgentPool, freeAgentShortfall,
     teamOveralls, refreshTeamOveralls, refreshTeams,
     loading, saving, error,
     isFantasy, startMode, hasStarted, userTeamId, activeTeam,
@@ -668,7 +792,7 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     select, markDirtyPlayer, saveDirty, discardDirty, refreshPlayerFromDb,
     load, chooseStart, openTeam, openPool, applyDownloadedBuild,
     addPlayer, addPoolPlayer, removePlayer, fillRoster, fillAllTeamRosters, countShortTeams,
-    refreshDerived, savePlayer, saveTeamCoach,
+    refreshDerived, savePlayer, saveTeamCoach, reassignDraftPicks,
     validate, finalize, $reset,
   }
 })

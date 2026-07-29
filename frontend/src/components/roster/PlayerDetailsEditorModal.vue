@@ -7,6 +7,7 @@ import { deriveOverallFromAttributes, derivePotential, ensureAttributeCaps } fro
 import { detectArchetype, ARCHETYPES, ARCHETYPE_SEEDS, ARCHETYPE_SEED_BASELINE } from '@/engine/data/archetypes'
 import { PLAYER_BADGE_LEVELS, compareBadgeLevels, getDerivedMaxBadgeLevel } from '@/engine/data/playerBadgeStore'
 import { BADGES } from '@/engine/data/badges'
+import { MAX_PLAYER_BADGES } from '@/stores/rosterEditor'
 import { PERSONALITY_TRAITS, pickBadgesByFit, getBadgeLevel, _badgeCountForOvr } from '@/engine/campaign/CampaignManager'
 
 // Tabbed player editor for the Roster Editor — the "everything the attribute
@@ -121,6 +122,8 @@ const availableToAdd = computed(() =>
 
 function addBadge(id) {
   if (!id || badgeRowIds.value.includes(id)) return
+  // Hard cap — learned badges and cap-only "earnable later" rows both count.
+  if (badgeRowIds.value.length >= MAX_PLAYER_BADGES) return
   badgeRowIds.value = [...badgeRowIds.value, id]
   // Fresh manual adds start fully at bronze: current level AND an explicit
   // bronze ceiling (not Auto, which could read higher from the derived cap).
@@ -795,8 +798,8 @@ const POSITION_COLORS = {
               </div>
             </div>
 
-            <label class="pdem-add-badge">
-              <span>Add Badge</span>
+            <label v-if="badgeRowIds.length < MAX_PLAYER_BADGES" class="pdem-add-badge">
+              <span>Add Badge ({{ badgeRowIds.length }}/{{ MAX_PLAYER_BADGES }})</span>
               <select
                 class="pdem-input"
                 :value="''"
@@ -808,6 +811,9 @@ const POSITION_COLORS = {
                 </optgroup>
               </select>
             </label>
+            <p v-else class="pdem-note">
+              Badge limit reached ({{ MAX_PLAYER_BADGES }}) — remove one to add another.
+            </p>
           </div>
 
           <!-- Contract -->

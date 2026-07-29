@@ -605,3 +605,48 @@ export function generateFreeAgentPool(campaignId, { startYear = 2026, count = 53
 
   return pool
 }
+
+/**
+ * Small starting free-agent pool for CUSTOM roster campaigns. Standard
+ * (non-custom) campaigns deliberately start with 0 FAs (the pool forms via
+ * cuts/expiring contracts — live-tuned economy, don't change it); custom
+ * leagues author their pool in the roster editor and this seeds the
+ * "generated" start mode with a bench/role-grade market.
+ *
+ * @param {string} campaignId
+ * @param {object} [opts]
+ * @param {number} [opts.startYear=2026]
+ * @param {number} [opts.count=30]
+ * @returns {Array} free-agent player records (not persisted)
+ */
+export function generateInitialFreeAgents(campaignId, { startYear = 2026, count = 30 } = {}) {
+  const usedNames = new Set()
+  const pool = []
+  for (let i = 0; i < count; i++) {
+    const position = pickRandom(['PG', 'SG', 'SF', 'PF', 'C'])
+    // Mostly bench grade with a sprinkle of usable rotation pieces, so the
+    // pool reads like a real offseason leftovers market.
+    const overall = i % 5 === 0 ? randInt(66, 72) : randInt(58, 67)
+    const player = generateVeteran({
+      campaignId,
+      teamId: null,
+      teamAbbreviation: 'FA',
+      position,
+      overall,
+      role: i % 5 === 0 ? 'rotation' : 'bench',
+      jerseyNumber: randInt(0, 99),
+      teamIndex: 0,
+      posIndex: i,
+      startYear,
+      usedNames,
+    })
+    player.isFreeAgent = 1
+    player.is_free_agent = 1
+    player.teamId = null
+    player.team_id = null
+    player.teamAbbreviation = 'FA'
+    player.team_abbreviation = 'FA'
+    pool.push(player)
+  }
+  return pool
+}

@@ -22,7 +22,8 @@ are just "as of last edit" snapshots.
 - [ ] Draft the store "What's new" notes. **Google Play caps this at 500
       characters** — count before pasting.
 - [ ] If a release adds/changes a **Capacitor plugin** (e.g. the review nag's
-      `@capacitor-community/in-app-review`, added 2026-07): run
+      `@capacitor-community/in-app-review`, added 2026-07; the community
+      links' `@capacitor/browser`, added 2026-07-29): run
       `npx cap sync` and rebuild BOTH native apps — plugin features only work
       in binaries built after the sync (older binaries fall back gracefully).
 - [ ] If a release adds a **new IAP product**: deploy the backend catalog
@@ -52,14 +53,14 @@ change every time.
 
 ### Android — `frontend/android/app/build.gradle`
 - [ ] **`versionCode`** — increment by 1 (Play REJECTS an upload that reuses a
-      versionCode). _As of last edit: `30`._
+      versionCode). _As of last edit: `33`._
 - [ ] `versionName` — bump if the user-facing version changed (e.g. `2.34` →
       `2.35`). _As of last edit: `"2.35"`._
 
 ### iOS — `frontend/ios/App/App.xcodeproj/project.pbxproj`
 (Both the Debug and Release configs — there are two of each.)
 - [ ] **`CURRENT_PROJECT_VERSION`** — increment (iOS build number). _As of last
-      edit: `16`._
+      edit: `19`._
 - [ ] `MARKETING_VERSION` — bump if the user-facing version changed. _As of last
       edit: `2.35`._
 

@@ -203,6 +203,40 @@ export async function importRosterBuild(campaignId, build) {
     await TeamRepository.save(team)
   }
 
+  // Authored pick trades — blob `picks` holds TRADED picks only, keyed by
+  // abbreviation + the game-year counter (team UUIDs are campaign-specific,
+  // so ownership is recreated against THIS campaign's own pick records).
+  // Old blobs have no `picks` key → every team keeps its own picks.
+  if (Array.isArray(build.picks) && build.picks.length) {
+    const touched = new Set()
+    for (const entry of build.picks) {
+      const destTeam = teamByAbbr.get(entry?.heldBy)
+      if (!destTeam || !entry?.original || entry.year == null || entry.round == null) continue
+      // Locate the matching pick wherever it currently lives.
+      let src = null
+      let idx = -1
+      for (const t of teams) {
+        const i = (t.draftPicks ?? []).findIndex((p) =>
+          p.original_team_abbreviation === entry.original
+          && p.year === entry.year && p.round === entry.round)
+        if (i >= 0) { src = t; idx = i; break }
+      }
+      if (!src || src.id === destTeam.id) continue
+      const [pick] = src.draftPicks.splice(idx, 1)
+      pick.currentOwnerId = destTeam.id
+      pick.current_owner_id = destTeam.id
+      pick.isTraded = true
+      pick.is_traded = true
+      destTeam.draftPicks = destTeam.draftPicks ?? []
+      destTeam.draftPicks.push(pick)
+      touched.add(src.id)
+      touched.add(destTeam.id)
+    }
+    for (const t of teams) {
+      if (touched.has(t.id)) await TeamRepository.save(t)
+    }
+  }
+
   // Headshots — remap original ids to the fresh ones. Entries with
   // kind === 'coach' are coach headshots (playerId carries the original
   // coach id); other personnel kinds aren't part of a roster build. The

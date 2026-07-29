@@ -9,9 +9,9 @@ import { useAudioStore } from '@/stores/audio'
 import { useToastStore } from '@/stores/toast'
 import { storeToRefs } from 'pinia'
 import { Loader2, Users, ClipboardList, ShieldCheck, ArrowLeft, AlertTriangle, Check, Plus, Save, Download, Sparkles } from 'lucide-vue-next'
-import { Capacitor } from '@capacitor/core'
 import api from '@/composables/useApi'
 import { getToken } from '@/composables/useTokenStorage'
+import { useCommunityLink } from '@/composables/useCommunityLink'
 import RosterAttributeTable from '@/components/roster/RosterAttributeTable.vue'
 import SelectedPlayerHeader from '@/components/roster/SelectedPlayerHeader.vue'
 import PlayerDetailsEditorModal from '@/components/roster/PlayerDetailsEditorModal.vue'
@@ -19,11 +19,13 @@ import CoachEditor from '@/components/roster/CoachEditor.vue'
 import RosterTeamHeader from '@/components/roster/RosterTeamHeader.vue'
 import TeamHistoryEditorModal from '@/components/roster/TeamHistoryEditorModal.vue'
 import TeamIdentityEditorModal from '@/components/roster/TeamIdentityEditorModal.vue'
+import TeamDraftPicksModal from '@/components/roster/TeamDraftPicksModal.vue'
 import PositionFilterBar from '@/components/trade/PositionFilterBar.vue'
 import TeamLogo from '@/components/common/TeamLogo.vue'
 import { capNumbersFor } from '@/engine/data/salaryScale'
 import { CANONICAL_ATTRIBUTES } from '@/engine/data/attributeSchema'
 import { MAX_ROSTER_SIZE } from '@/engine/finance/FinanceManager'
+import { MIN_FA_POOL, MAX_FA_POOL } from '@/stores/rosterEditor'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,6 +44,7 @@ const editingPlayer = ref(null)
 const editingCoachTeam = ref(null)
 const editingHistoryTeam = ref(null)
 const editingIdentityTeam = ref(null)
+const editingPicksTeam = ref(null)
 const showAck = ref(false)
 const ackConfirmed = ref(false)
 const showFinalize = ref(false)
@@ -80,7 +83,11 @@ const tablePlayers = computed(() => {
     })
 })
 // Team rosters honor the game-wide 15-man cap; the fantasy pool is uncapped.
-const rosterFull = computed(() => view.value === 'roster' && activeRoster.value.length >= MAX_ROSTER_SIZE)
+const rosterFull = computed(() =>
+  (view.value === 'roster' && activeRoster.value.length >= MAX_ROSTER_SIZE)
+  // Standard custom campaigns cap the authored FA market; the fantasy draft
+  // pool stays uncapped (it needs 15 × teams).
+  || (view.value === 'pool' && !isFantasy.value && freeAgents.value.length >= MAX_FA_POOL))
 
 onMounted(async () => {
   // Returning mid-edit (e.g. from the headshot editor round-trip): the Pinia
@@ -132,16 +139,12 @@ const downloadedBuilds = ref([])
 const selectedBuildId = ref(null)
 const importing = ref(false)
 
-async function openCommunity() {
-  const returnTo = `/community?campaign=${encodeURIComponent(campaignId.value)}`
-  if (!Capacitor.isNativePlatform()) {
-    router.push(returnTo)
-    return
-  }
-  try {
-    const res = await api.post('/api/auth/handoff', { return_to: returnTo })
-    window.open(res.data.url, '_system')
-  } catch { /* handoff mint failed — non-fatal, user can retry */ }
+// Shared handoff flow (native: @capacitor/browser after the mint — plain
+// window.open dies post-await in WKWebView; web: in-SPA route). Threads this
+// campaign's id so the community page preselects it + links back here.
+const { openCommunity: openCommunityLink } = useCommunityLink()
+function openCommunity() {
+  return openCommunityLink(campaignId.value)
 }
 
 async function fetchDownloadedBuilds() {
@@ -438,6 +441,13 @@ async function onIdentitySaved(team) {
   if (ok) editingIdentityTeam.value = null
 }
 
+// Draft-pick ownership authoring — moves picks between teams' arrays.
+async function onPicksSaved(assignments) {
+  if (!assignments.length) { editingPicksTeam.value = null; return }
+  const ok = await saveWithFeedback(() => store.reassignDraftPicks(assignments), 'Draft picks updated')
+  if (ok) editingPicksTeam.value = null
+}
+
 function coachName(team) {
   const c = team?.coach
   if (!c) return 'No coach'
@@ -452,8 +462,28 @@ const teamPayroll = computed(() =>
 // the old constants).
 const campaignCaps = computed(() => capNumbersFor(store.campaign))
 
+// Fill the free-agent pool to the 20-player minimum (standard custom only).
+async function generateFaRemaining() {
+  if (generatingFill.value) return
+  generatingFill.value = true
+  const audio = useAudioStore()
+  const toast = useToastStore()
+  audio.suppressClickSound()
+  try {
+    const n = await store.fillFreeAgentPool()
+    audio.affirm()
+    toast.showSuccess(`Generated ${n} free agent${n === 1 ? '' : 's'}`)
+  } catch (err) {
+    audio.cancel()
+    toast.showError(err?.message || 'Generation failed — please try again')
+  } finally {
+    generatingFill.value = false
+  }
+}
+
 // --- Finalize ---------------------------------------------------------------
 const shortTeamCount = ref(0)
+const faShortfall = ref(0)
 const generatingRest = ref(false)
 
 async function openFinalize() {
@@ -462,6 +492,7 @@ async function openFinalize() {
     try {
       finalizeProblems.value = await store.validate()
       shortTeamCount.value = await store.countShortTeams()
+      faShortfall.value = await store.freeAgentShortfall()
       showFinalize.value = true
     } finally {
       validating.value = false
@@ -480,15 +511,17 @@ async function generateRestAndContinue() {
   audio.suppressClickSound()
   try {
     const { teams: filled, players } = await store.fillAllTeamRosters({ excludeTeamId: userTeamId.value })
+    const faAdded = await store.fillFreeAgentPool()
     finalizeProblems.value = await store.validate()
     shortTeamCount.value = await store.countShortTeams()
+    faShortfall.value = await store.freeAgentShortfall()
     if (!finalizeProblems.value.length) {
       audio.affirm()
-      toast.showSuccess(`Generated ${players} players across ${filled} teams`)
+      toast.showSuccess(`Generated ${players + faAdded} players${faAdded ? ` (incl. ${faAdded} free agents)` : ''} across ${filled} teams`)
       await confirmFinalize()
     } else {
       audio.affirm()
-      toast.showSuccess(`Generated ${players} players across ${filled} teams — remaining issues listed`)
+      toast.showSuccess(`Generated ${players + faAdded} players${faAdded ? ` (incl. ${faAdded} free agents)` : ''} — remaining issues listed`)
     }
   } catch (err) {
     audio.cancel()
@@ -541,7 +574,9 @@ async function confirmFinalize() {
           <ArrowLeft :size="18" /> Campaigns
         </button>
         <h1 v-if="view === 'pool'" class="rs-title">
-          <ClipboardList :size="20" /> Draft Pool
+          <ClipboardList v-if="isFantasy" :size="20" />
+          <Users v-else :size="20" />
+          {{ isFantasy ? 'Draft Pool' : 'Free Agents' }}
         </h1>
       </div>
       <div class="rs-header-actions">
@@ -628,6 +663,16 @@ async function confirmFinalize() {
           <span class="rs-team-coach">HC: {{ coachName(team) }}</span>
           <span v-if="team.id === userTeamId" class="rs-team-tag">Your team</span>
         </button>
+        <!-- Authored free-agent market (standard custom campaigns) -->
+        <button v-if="!isFantasy" class="rs-team-card rs-fa-card" @click="openPool">
+          <span class="rs-team-head">
+            <Users :size="26" class="rs-fa-icon" />
+            <span class="rs-team-abbr">FA</span>
+            <span class="rs-team-ovr" title="Players in the free-agent pool">{{ store.faCount }}</span>
+          </span>
+          <span class="rs-team-name">Free Agents</span>
+          <span class="rs-team-coach">{{ MIN_FA_POOL }}–{{ MAX_FA_POOL }} players required</span>
+        </button>
       </div>
       <p v-if="isFantasy" class="rs-note">
         Fantasy draft: edit the draftable player pool, then finish to start the draft.
@@ -658,6 +703,7 @@ async function confirmFinalize() {
           :luxury-tax="campaignCaps.luxuryTax"
           @edit-history="editingHistoryTeam = activeTeam"
           @edit-identity="editingIdentityTeam = activeTeam"
+          @edit-draft-picks="editingPicksTeam = activeTeam"
         />
         <SelectedPlayerHeader
           v-else
@@ -717,6 +763,17 @@ async function confirmFinalize() {
           <button class="rs-add-btn" @click="view === 'pool' ? addPoolPlayer() : addTeamPlayer()">
             <Plus :size="16" /> Add Player
             <em v-if="view === 'roster'" class="rs-add-count">({{ activeRoster.length }}/{{ MAX_ROSTER_SIZE }})</em>
+            <em v-else-if="!isFantasy" class="rs-add-count">({{ freeAgents.length }}/{{ MAX_FA_POOL }})</em>
+          </button>
+          <button
+            v-if="view === 'pool' && !isFantasy && freeAgents.length < MIN_FA_POOL"
+            class="rs-add-btn rs-generate-btn"
+            :disabled="generatingFill"
+            @click="generateFaRemaining"
+          >
+            <Loader2 v-if="generatingFill" :size="16" class="spin" />
+            <Sparkles v-else :size="16" />
+            Generate remaining ({{ MIN_FA_POOL - freeAgents.length }})
           </button>
           <button
             v-if="view === 'roster' && !isFantasy"
@@ -761,7 +818,7 @@ async function confirmFinalize() {
         <p>
           Remove
           <strong>{{ pendingRemovePlayer.name ?? ((pendingRemovePlayer.firstName ?? '') + ' ' + (pendingRemovePlayer.lastName ?? '')) }}</strong>
-          from the {{ view === 'pool' ? 'draft pool' : 'roster' }}? This can't be undone.
+          from the {{ view === 'pool' ? (isFantasy ? 'draft pool' : 'free agent pool') : 'roster' }}? This can't be undone.
         </p>
         <div class="rs-modal-actions">
           <button class="rs-modal-secondary rs-modal-cancel" @click="pendingRemovePlayer = null">Cancel</button>
@@ -795,7 +852,7 @@ async function confirmFinalize() {
           <div class="rs-modal-actions">
             <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Keep editing</button>
             <button
-              v-if="shortTeamCount > 0"
+              v-if="shortTeamCount > 0 || faShortfall > 0"
               class="rs-modal-primary"
               :disabled="generatingRest"
               @click="generateRestAndContinue"
@@ -859,6 +916,16 @@ async function confirmFinalize() {
       :team="editingIdentityTeam"
       @save="onIdentitySaved"
       @close="editingIdentityTeam = null"
+    />
+
+    <!-- Draft-pick ownership editor -->
+    <TeamDraftPicksModal
+      :show="!!editingPicksTeam"
+      :team="editingPicksTeam"
+      :teams="teams"
+      :campaign="store.campaign"
+      @save="onPicksSaved"
+      @close="editingPicksTeam = null"
     />
   </div>
 </template>
@@ -1031,6 +1098,11 @@ async function confirmFinalize() {
 
 .rs-team-card:hover { border-color: var(--color-primary); }
 .rs-team-card.is-user { border-color: var(--color-primary); background: rgba(232, 90, 79, 0.08); }
+
+/* Free-agent market card — same shell as a team card, dashed accent so it
+   reads as a pool rather than a franchise. */
+.rs-fa-card { border-style: dashed; }
+.rs-fa-icon { color: var(--color-primary); flex-shrink: 0; }
 .rs-team-head { display: flex; align-items: center; gap: 8px; }
 .rs-team-abbr { font-weight: 800; font-size: 1.1rem; }
 

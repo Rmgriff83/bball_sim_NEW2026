@@ -1064,7 +1064,7 @@ export const useSyncStore = defineStore('sync', () => {
                 pick_number: null,
                 projected_position: null,
                 isTraded: false,
-                display_name: `${draftYear} Round ${round} (${team.abbreviation})`,
+                display_name: `${(campaignAfter?.currentSeasonYear ?? 2025) - startGameYear + 1 + draftYear} Round ${round} (${team.abbreviation})`,
                 trade_value: round === 1 ? 5 : 0.5,
               })
             }

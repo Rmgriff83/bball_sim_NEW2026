@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useTradeStore } from '@/stores/trade'
+import { useCampaignStore } from '@/stores/campaign'
+import { pickCalendarYear } from './tradeAssetFormat'
 import { useAudioStore } from '@/stores/audio'
 import { X, ArrowLeftRight, Check, XCircle, AlertTriangle, MessageSquare } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -68,8 +70,7 @@ function getPlayerAge(player) {
 }
 
 function formatPickYear(year) {
-  if (year == null) return ''
-  return year < 100 ? 2024 + year : year
+  return pickCalendarYear(year, useCampaignStore().currentCampaign)
 }
 
 function handleClose() {

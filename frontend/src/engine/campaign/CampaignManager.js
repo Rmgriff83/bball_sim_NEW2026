@@ -55,7 +55,7 @@ import {
   HISPANIC_LAST_NAMES,
   pickNameForCountry,
 } from '../data/playerNames'
-import { generateLeagueRosters, generateFreeAgentPool, assignCampaignModes } from '../draft/LeagueRosterGenerator'
+import { generateLeagueRosters, generateFreeAgentPool, generateInitialFreeAgents, assignCampaignModes } from '../draft/LeagueRosterGenerator'
 
 // Maps the per-campaign campaignMode to a coach tier. Replaces the static
 // TEAM_TIERS lookup so a team's coach quality follows whatever role the
@@ -1277,6 +1277,14 @@ export async function createCampaign(options) {
     campaign.settings = campaign.settings ?? {}
     campaign.settings.teamModes = result.modes
 
+    // Custom leagues author a starting free-agent pool in the roster editor
+    // (validated 20–50 at finalize); seed the "generated" start mode with a
+    // bench/role-grade market. NON-custom standard campaigns keep their
+    // deliberate 0-FA start (pool forms via cuts/expiries — live economy).
+    if (customRoster) {
+      allPlayers = [...allPlayers, ...generateInitialFreeAgents(campaignId, { startYear })]
+    }
+
     await PlayerRepository.saveBulk(allPlayers)
 
     // Update team payroll from the generated roster. The mode assignment
@@ -1403,6 +1411,9 @@ export async function createCampaign(options) {
   // 8. Generate draft picks (5 years, rounds 1 & 2 for every team)
   // -------------------------------------------------------------------------
   const currentGameYear = campaign.gameYear ?? 1
+  // Calendar label base: the year-N pick is exercised in the draft at the end
+  // of season (currentSeasonYear + N - gameYear) → calendar base + N.
+  const pickCalendarBase = (campaign.currentSeasonYear ?? startYear) - currentGameYear + 1
   for (const team of teams) {
     const picks = []
     for (let yearOffset = 0; yearOffset < 5; yearOffset++) {
@@ -1419,7 +1430,7 @@ export async function createCampaign(options) {
           pick_number: null,
           projected_position: null,
           isTraded: false,
-          display_name: `${draftYear} Round ${round} (${team.abbreviation})`,
+          display_name: `${pickCalendarBase + draftYear} Round ${round} (${team.abbreviation})`,
           trade_value: round === 1 ? 5 : 0.5,
         })
       }

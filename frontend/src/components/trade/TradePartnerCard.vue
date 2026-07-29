@@ -4,7 +4,8 @@ import { useTradeStore } from '@/stores/trade'
 import { StatBadge } from '@/components/ui'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { Check, Star, Info, TrendingUp, TrendingDown, Minus, RotateCcw } from 'lucide-vue-next'
-import { getAssetStars, getPositionColor, formatContractYears, formatPickYear } from './tradeAssetFormat'
+import { getAssetStars, getPositionColor, formatContractYears, pickCalendarYear } from './tradeAssetFormat'
+import { useCampaignStore } from '@/stores/campaign'
 
 const props = defineProps({
   team: { type: Object, required: true },
@@ -20,6 +21,11 @@ const props = defineProps({
 const emit = defineEmits(['toggle-asset', 'view-player'])
 
 const tradeStore = useTradeStore()
+const campaignStore = useCampaignStore()
+
+function formatPickYear(year) {
+  return pickCalendarYear(year, campaignStore.currentCampaign)
+}
 
 const isFlipped = ref(false)
 const backTab = ref('players')
@@ -122,8 +128,14 @@ function flip() { isFlipped.value = !isFlipped.value }
         </button>
       </div>
 
-      <!-- BACK -->
+      <!-- BACK — content only mounts once flipped. All ~29 cards mount in a
+           single frame on the partner step, and rendering every hidden back
+           face (full roster + a PlayerAvatar per player, ~580 components)
+           blew WKWebView's tile-memory budget: the iOS web-content process
+           was jettisoned and Capacitor reloaded the SPA. The face shell
+           stays so the 3D flip animation is unchanged. -->
       <div class="tp-face tp-back">
+        <template v-if="isFlipped">
         <div class="tp-back-header">
           <button type="button" class="tp-back-btn" @click="flip">
             <RotateCcw :size="13" /> Back
@@ -225,6 +237,7 @@ function flip() { isFlipped.value = !isFlipped.value }
             <div v-if="picks.length === 0" class="tp-empty">No draft picks</div>
           </template>
         </div>
+        </template>
       </div>
     </div>
   </div>
@@ -526,4 +539,52 @@ function flip() { isFlipped.value = !isFlipped.value }
   font-size: 12px;
   color: rgba(255, 255, 255, 0.4);
 }
+
+/* ---- Light mode ---- */
+[data-theme="light"] .tp-face {
+  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.03);
+}
+[data-theme="light"] .tp-card.is-partner .tp-face {
+  border-color: rgba(37, 99, 235, 0.55);
+  background: rgba(37, 99, 235, 0.08);
+}
+[data-theme="light"] .tp-header { border-bottom-color: rgba(0, 0, 0, 0.08); }
+[data-theme="light"] .tp-partner-check { color: #2563eb; }
+[data-theme="light"] .tp-name { color: var(--color-text-secondary); }
+[data-theme="light"] .tp-cap { color: var(--color-text-tertiary); }
+[data-theme="light"] .tp-topassets-label { color: var(--color-text-tertiary); }
+[data-theme="light"] .tp-top-pick {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+[data-theme="light"] .tp-flip-btn {
+  border-color: rgba(37, 99, 235, 0.4);
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+}
+[data-theme="light"] .tp-flip-btn:hover { background: rgba(37, 99, 235, 0.18); }
+[data-theme="light"] .tp-back-header { border-bottom-color: rgba(0, 0, 0, 0.08); }
+[data-theme="light"] .tp-back-btn {
+  border-color: rgba(0, 0, 0, 0.2);
+  color: var(--color-text-primary);
+}
+[data-theme="light"] .tp-back-tab {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-secondary);
+}
+[data-theme="light"] .tp-back-tab.active {
+  background: rgba(37, 99, 235, 0.14);
+  color: #1d4ed8;
+}
+[data-theme="light"] .tp-asset-row:hover { background: rgba(0, 0, 0, 0.05); }
+[data-theme="light"] .tp-asset-row.selected { background: rgba(37, 99, 235, 0.14); }
+[data-theme="light"] .tp-asset-line2 { color: var(--color-text-secondary); }
+[data-theme="light"] .tp-statline { color: #047857; }
+[data-theme="light"] .tp-pick-via { color: var(--color-text-tertiary); }
+[data-theme="light"] .tp-info-btn { color: rgba(0, 0, 0, 0.45); }
+[data-theme="light"] .tp-info-btn:hover { background: rgba(0, 0, 0, 0.08); color: #000; }
+[data-theme="light"] .tp-asset-check { color: #2563eb; }
+[data-theme="light"] .star.empty { color: rgba(0, 0, 0, 0.2); }
+[data-theme="light"] .tp-empty { color: var(--color-text-tertiary); }
 </style>

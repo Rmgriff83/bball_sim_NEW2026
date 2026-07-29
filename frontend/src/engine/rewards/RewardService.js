@@ -14,6 +14,10 @@ import { ACHIEVEMENTS } from '../data/achievements';
 const TOKENS_PER_SYNERGY = 1;
 const WIN_MULTIPLIER = 1.5;
 const WIN_BONUS_TOKENS = 2;
+// Hard ceiling on the TOTAL tokens a single game can award (win bonus
+// included) — synergy counts scale with roster construction, and authored
+// rosters (roster editor) could otherwise farm outsized per-game payouts.
+const MAX_TOKENS_PER_GAME = 21;
 
 // =============================================================================
 // SYNERGY COUNTING
@@ -73,7 +77,7 @@ export function processGameRewards({ animationData, isHome, didWin, synergiesAct
 
   return {
     synergies_activated: synergyCount,
-    tokens_awarded: synergyTokens + winBonus,
+    tokens_awarded: Math.min(MAX_TOKENS_PER_GAME, synergyTokens + winBonus),
     win_bonus: winBonus,
     win_bonus_applied: didWin,
   };
@@ -176,4 +180,5 @@ export {
   TOKENS_PER_SYNERGY,
   WIN_MULTIPLIER,
   WIN_BONUS_TOKENS,
+  MAX_TOKENS_PER_GAME,
 };

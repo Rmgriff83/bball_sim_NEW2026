@@ -12,6 +12,7 @@ import { GlassCard, LoadingSpinner } from '@/components/ui'
 import { DollarSign, Users, TrendingUp, Calendar, FileText, ArrowDown, ArrowUp, FastForward } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import ContractCard from './ContractCard.vue'
+import { pickCalendarYear } from '@/components/trade/tradeAssetFormat'
 import ResignModal from './ResignModal.vue'
 import SignFreeAgentModal from './SignFreeAgentModal.vue'
 import DropPlayerModal from './DropPlayerModal.vue'
@@ -202,8 +203,7 @@ const userDraftPicks = computed(() => {
 })
 
 function formatPickYear(year) {
-  if (year == null) return ''
-  return year < 100 ? 2024 + year : year
+  return pickCalendarYear(year, campaignStore.currentCampaign)
 }
 
 // Re-sign deadline gate. Flipped by _processMidSeasonEvents on Feb 5 alongside
@@ -358,7 +358,10 @@ async function handleResignConfirm(data) {
     toastStore.showSuccess('Player re-signed')
   } catch (err) {
     console.error('Failed to re-sign player:', err)
-    toastStore.showError('Failed to re-sign player')
+    // Close the modal so its "Deal Accepted!" banner can't sit on screen
+    // contradicting the error toast.
+    financeStore.closeResignModal()
+    toastStore.showError(err?.message || 'Failed to re-sign player')
   } finally {
     resignLoading.value = false
   }

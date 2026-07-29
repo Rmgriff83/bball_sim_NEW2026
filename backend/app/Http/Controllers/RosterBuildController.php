@@ -128,6 +128,39 @@ class RosterBuildController extends Controller
             }
         }
 
+        // Authored pick trades: TRADED picks only (holder ≠ originator),
+        // expressed entirely in abbreviations + the game-year counter so the
+        // importer can recreate ownership in any campaign (team UUIDs are
+        // campaign-specific). Additive optional blob key — old importers
+        // ignore it.
+        $tradedPicks = [];
+        foreach ($meta['teams'] as $team) {
+            foreach (($team['draftPicks'] ?? []) as $pick) {
+                if (!is_array($pick)) {
+                    continue;
+                }
+                $ownerId = $pick['currentOwnerId'] ?? $pick['current_owner_id'] ?? null;
+                $originalId = $pick['originalTeamId'] ?? $pick['original_team_id'] ?? null;
+                $originalAbbr = $pick['original_team_abbreviation'] ?? null;
+                if ($ownerId === null || $originalId === null || !$originalAbbr) {
+                    continue;
+                }
+                if ((string) $ownerId === (string) $originalId) {
+                    continue; // untraded — importer's defaults cover it
+                }
+                $heldBy = $abbrByTeamId[(string) $ownerId] ?? null;
+                if (!$heldBy) {
+                    continue;
+                }
+                $tradedPicks[] = [
+                    'original' => $originalAbbr,
+                    'year' => $pick['year'] ?? null,
+                    'round' => $pick['round'] ?? null,
+                    'heldBy' => $heldBy,
+                ];
+            }
+        }
+
         // Collect + partition players by abbreviation (fa = no team).
         $playersByAbbr = ['fa' => []];
         $playerCount = 0;
@@ -232,6 +265,7 @@ class RosterBuildController extends Controller
             'players' => $playersByAbbr,
             'coaches' => $coaches,
             'headshots' => $headshots,
+            'picks' => $tradedPicks,
         ];
         $json = json_encode($blob, JSON_UNESCAPED_UNICODE);
         if ($json === false) {

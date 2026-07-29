@@ -472,4 +472,47 @@ function isBlockSelected(id) { return requestingIds.value.has(`player:${id}`) }
   background: #dc2626;
   color: #fff;
 }
+
+/* ---- Light mode ---- */
+[data-theme="light"] .tp-step-desc { color: var(--color-text-secondary); }
+[data-theme="light"] .tp-requesting-label { color: #1d4ed8; }
+[data-theme="light"] .tp-chip { background: rgba(0, 0, 0, 0.06); }
+[data-theme="light"] .tp-chip-x { color: rgba(0, 0, 0, 0.45); }
+[data-theme="light"] .tp-chip-x:hover { color: #000; }
+[data-theme="light"] .tp-tab {
+  border-color: rgba(0, 0, 0, 0.15);
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-text-secondary);
+}
+[data-theme="light"] .tp-tab.active {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.4);
+  color: #1d4ed8;
+}
+[data-theme="light"] .tp-block-empty { color: var(--color-text-tertiary); }
+[data-theme="light"] .tp-block-row {
+  border-color: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+}
+[data-theme="light"] .tp-block-row:hover { background: rgba(0, 0, 0, 0.06); }
+[data-theme="light"] .tp-block-row.selected {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.45);
+}
+[data-theme="light"] .tp-block-team { color: #1d4ed8; }
+[data-theme="light"] .tp-block-line2 { color: var(--color-text-secondary); }
+[data-theme="light"] .tp-statline { color: #047857; }
+[data-theme="light"] .tp-info-btn { color: rgba(0, 0, 0, 0.45); }
+[data-theme="light"] .tp-info-btn:hover { background: rgba(0, 0, 0, 0.08); color: #000; }
+[data-theme="light"] .tp-asset-check { color: #2563eb; }
+[data-theme="light"] .star.empty { color: rgba(0, 0, 0, 0.2); }
+[data-theme="light"] .tp-confirm {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.12);
+}
+[data-theme="light"] .tp-confirm-body { color: var(--color-text-secondary); }
+[data-theme="light"] .tp-btn.ghost {
+  border-color: rgba(0, 0, 0, 0.25);
+  color: var(--color-text-primary);
+}
 </style>

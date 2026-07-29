@@ -250,7 +250,8 @@ export async function simFullOffseason(campaignId) {
   }
 
   // 7. Roll draft picks: consume this year's, generate year+5
-  await rollDraftPicks(teams, campaignId, gameYear, gameYear + 5)
+  const pickCalendarBase = (campaign.currentSeasonYear ?? 2025) - gameYear + 1
+  await rollDraftPicks(teams, campaignId, gameYear, gameYear + 5, pickCalendarBase)
 
   // 8. Mark draft completed
   campaign[`rookieDraftCompleted_${gameYear}`] = true

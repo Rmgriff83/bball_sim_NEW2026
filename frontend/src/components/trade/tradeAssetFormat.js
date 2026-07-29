@@ -40,9 +40,29 @@ export function formatContractYears(years) {
   return `${years} yrs`
 }
 
+// DEPRECATED — hardcoded 2025-era base; use pickCalendarYear with the
+// campaign so 2026-start campaigns anchor correctly. Kept for any stale
+// caller (renders the old labels rather than crashing).
 export function formatPickYear(year) {
   if (year == null) return ''
   return year < 100 ? 2024 + year : year
+}
+
+/**
+ * Calendar year of a draft pick. Stored pick years are a GAME-YEAR counter
+ * (1, 2, 3…) — load-bearing for ownership matching — so display derives the
+ * calendar from the campaign: the year-N pick is exercised in the draft at
+ * the end of season (currentSeasonYear + N − gameYear), i.e. calendar
+ * (currentSeasonYear − gameYear + 1 + N). A season-2026 campaign's first
+ * draft is 2027, matching the prospect class's `currentSeasonYear + 1`
+ * labeling. Values ≥ 100 are already absolute and pass through.
+ */
+export function pickCalendarYear(year, campaign) {
+  if (year == null) return ''
+  if (year >= 100) return year
+  const seasonYear = campaign?.currentSeasonYear ?? campaign?.current_season_year ?? 2025
+  const gameYear = campaign?.gameYear ?? campaign?.game_year ?? 1
+  return seasonYear - gameYear + 1 + year
 }
 
 // Build a per-game stats object the PlayerDetailModal can render. Matches the

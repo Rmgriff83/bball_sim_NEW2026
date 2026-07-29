@@ -25,7 +25,7 @@ function generateUUID() {
  * @param {string} campaignId
  * @param {number} targetYear - The year to generate picks for
  */
-export function generateNewDraftPicks(teams, campaignId, targetYear) {
+export function generateNewDraftPicks(teams, campaignId, targetYear, calendarBase = null) {
   for (const team of teams) {
     if (!team.draftPicks) team.draftPicks = []
 
@@ -49,7 +49,7 @@ export function generateNewDraftPicks(teams, campaignId, targetYear) {
           pick_number: null,
           projected_position: null,
           isTraded: false,
-          display_name: `${targetYear} Round ${round} (${team.abbreviation})`,
+          display_name: `${calendarBase != null ? calendarBase + targetYear : targetYear} Round ${round} (${team.abbreviation})`,
           trade_value: round === 1 ? 5 : 0.5,
         })
       }
@@ -78,8 +78,8 @@ export function consumeDraftPicks(teams, completedYear) {
  * @param {number} completedYear - Year just drafted
  * @param {number} futureYear - Year to generate new picks for (typically completedYear + 5)
  */
-export async function rollDraftPicks(teams, campaignId, completedYear, futureYear) {
+export async function rollDraftPicks(teams, campaignId, completedYear, futureYear, calendarBase = null) {
   consumeDraftPicks(teams, completedYear)
-  generateNewDraftPicks(teams, campaignId, futureYear)
+  generateNewDraftPicks(teams, campaignId, futureYear, calendarBase)
   await TeamRepository.saveBulk(teams)
 }

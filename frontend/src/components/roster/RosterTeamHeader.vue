@@ -5,7 +5,7 @@
 // owner snapshot, and the same franchise-totals + season-history info the
 // in-game LeagueView team popup renders — with an Edit History entry point.
 import { computed } from 'vue'
-import { ScrollText, Pencil } from 'lucide-vue-next'
+import { ScrollText, Pencil, Ticket } from 'lucide-vue-next'
 import TeamLogo from '@/components/common/TeamLogo.vue'
 import OwnerQuickInfo from '@/components/team/OwnerQuickInfo.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
@@ -21,7 +21,7 @@ const props = defineProps({
   luxuryTax: { type: Number, default: null },
 })
 
-const emit = defineEmits(['edit-history', 'edit-identity'])
+const emit = defineEmits(['edit-history', 'edit-identity', 'edit-draft-picks'])
 
 const overall = computed(() => computeTeamOverall(props.roster))
 
@@ -147,6 +147,9 @@ function seasonResult(entry) {
     <div class="rth-history">
       <div class="rth-history-head">
         <span class="rth-history-title"><ScrollText :size="13" /> Team History</span>
+        <button class="rth-edit-btn" @click="emit('edit-draft-picks')">
+          <Ticket :size="12" /> Draft Picks
+        </button>
         <button class="rth-edit-btn" @click="emit('edit-history')">
           <Pencil :size="12" /> Edit History
         </button>

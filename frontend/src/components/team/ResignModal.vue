@@ -134,14 +134,16 @@ function handleResign() {
   const roll = Math.random() * 100
   if (roll < retentionPct.value) {
     negotiationResult.value = 'success'
-    setTimeout(() => {
-      emit('confirm', {
-        playerId: props.player.id,
-        years: selectedYears.value,
-        salary: offeredSalary.value,
-      })
-      negotiationResult.value = null
-    }, 1200)
+    // Emit IMMEDIATELY — the old 1200ms celebratory delay raced the user
+    // closing the modal: closeResignModal() nulls the player prop, the timer
+    // then read `props.player.id` and threw UNCAUGHT, so confirm never fired
+    // and the re-sign silently never persisted. The banner stays up while
+    // the parent persists; the store closes the modal on success.
+    emit('confirm', {
+      playerId: props.player.id,
+      years: selectedYears.value,
+      salary: offeredSalary.value,
+    })
   } else {
     negotiationResult.value = 'declined'
   }
