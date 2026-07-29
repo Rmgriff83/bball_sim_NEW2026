@@ -53,14 +53,14 @@ change every time.
 
 ### Android — `frontend/android/app/build.gradle`
 - [ ] **`versionCode`** — increment by 1 (Play REJECTS an upload that reuses a
-      versionCode). _As of last edit: `33`._
+      versionCode). _As of last edit: `34`._
 - [ ] `versionName` — bump if the user-facing version changed (e.g. `2.34` →
       `2.35`). _As of last edit: `"2.35"`._
 
 ### iOS — `frontend/ios/App/App.xcodeproj/project.pbxproj`
 (Both the Debug and Release configs — there are two of each.)
 - [ ] **`CURRENT_PROJECT_VERSION`** — increment (iOS build number). _As of last
-      edit: `19`._
+      edit: `20`._
 - [ ] `MARKETING_VERSION` — bump if the user-facing version changed. _As of last
       edit: `2.35`._
 

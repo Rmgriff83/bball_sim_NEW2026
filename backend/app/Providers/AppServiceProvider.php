@@ -3,7 +3,10 @@
 namespace App\Providers;
 
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
 use Illuminate\Notifications\Messages\MailMessage;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -21,6 +24,18 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Override Laravel's DEFAULT 'api' limiter (60 req/min per user) —
+        // the game client is legitimately chatty: a chunked sync push alone
+        // can be dozens of requests in a burst, after which EVERY api call
+        // (including unrelated taps like the community handoff mint) 429s
+        // for the rest of the minute. 300/min per user keeps real abuse
+        // bounded while never throttling normal play; sensitive endpoints
+        // keep their own tighter per-route throttles (handoff 6/min,
+        // publish 5/day, report 10/hr).
+        RateLimiter::for('api', function (Request $request) {
+            return Limit::perMinute(300)->by($request->user()?->getAuthIdentifier() ?: $request->ip());
+        });
+
         // Build the password reset link against the SPA frontend so it lands
         // in the app's /reset-password route (which reads ?token= & ?email=),
         // not the API. The base is config-driven so it follows domain moves.
