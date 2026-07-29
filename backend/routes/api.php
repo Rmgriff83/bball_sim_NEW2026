@@ -89,9 +89,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/sync/{clientId}/pull', [SyncController::class, 'pullSnapshot'])->whereUuid('clientId');
     Route::delete('/sync/{clientId}', [SyncController::class, 'deleteCampaign'])->whereUuid('clientId');
 
-    // One-time app→web login handoff mint (Community flow).
+    // One-time app→web login handoff mint (Community flow). Generous limit:
+    // minting is a cheap, authed, self-serve action producing a single-use
+    // 60s nonce — a tight limit only punishes legitimate retries. The
+    // exchange endpoint carries its own throttle.
     Route::post('/auth/handoff', [LoginHandoffController::class, 'mint'])
-        ->middleware('throttle:6,1');
+        ->middleware('throttle:30,1');
 
     // Community roster builds (Roster Editor IAP Part B — web-only UI; every
     // endpoint enforces the custom_roster unlock server-side except report).
