@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from 'vue'
+import { Capacitor } from '@capacitor/core'
 import { Heart, MessageCircle, Star, Send } from 'lucide-vue-next'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import { useReviewNagStore } from '@/stores/reviewNag'
@@ -20,9 +21,12 @@ async function rateNow() {
   if (ratingBusy.value) return
   ratingBusy.value = true
   try {
-    const shown = await requestInAppReview()
-    // Web / plugin failure / pre-plugin binary → store page fallback so the
-    // tap always lands somewhere useful.
+    // iOS rations SKStoreReviewController (~3/yr) and a resolved plugin call
+    // doesn't mean the sheet displayed — deep-link to the App Store review
+    // composer instead so the tap always visibly lands. Android's Play
+    // in-app widget is reliable, so it keeps the native flow (web / plugin
+    // failure / pre-plugin binary all fall back to the store page).
+    const shown = Capacitor.getPlatform() !== 'ios' && await requestInAppReview()
     if (!shown) openStore(writeReviewUrl())
   } finally {
     ratingBusy.value = false

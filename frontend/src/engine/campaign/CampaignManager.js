@@ -10,7 +10,7 @@
 // =============================================================================
 
 import { TEAMS, SALARY_CAP, TEAM_TIERS } from '../data/teams'
-import { baseSalaryForRating, veteranMinSalary, CAP_SET_2026, capNumbersFor } from '../data/salaryScale'
+import { baseSalaryForRating, veteranMinSalary, CAP_SET_2026, capNumbersFor, capLineForExpectation } from '../data/salaryScale'
 import { recomputeAllTimeHighs, recomputeHighsLeaders, mergeHighsBoards } from '../stats/careerHighs'
 import { PlayerHeadshotRepository } from '../db/PlayerHeadshotRepository'
 import {
@@ -96,7 +96,7 @@ import {
 import { AwardService } from '../season/AwardService'
 import { AllStarService } from '../season/AllStarService'
 import { starPlayerIds, evaluateSubtasks } from '../season/OwnerSubtaskService'
-import { combinedSatisfaction, injuryReliefWins, EXTEND_THRESHOLD } from '../season/OwnerService'
+import { combinedSatisfaction, injuryReliefWins, capBreachPenalty, EXTEND_THRESHOLD } from '../season/OwnerService'
 import { findOwnerForTeam, EXPECTATION_LABEL } from '../data/owners'
 import {
   getEffectiveExpectation,
@@ -2405,6 +2405,40 @@ export async function enterOffseason(campaignId) {
     }
   }
 
+  // 2b. Apron penalty (Penalty C): any team FINISHING the season over the
+  // second apron has NEXT year's first-round pick frozen to the end of round
+  // 1 (buildRookieDraftOrder reads team.apronFrozenFirstYears). Measured on
+  // season-end payroll, before offseason contract expiry. Additive field —
+  // absent on old saves means no freeze; guarded against duplicate stamps.
+  {
+    const { secondApron } = capNumbersFor(campaign)
+    const frozenDraftYear = (campaign.gameYear ?? 1) + 1
+    const frozenTeams = []
+    for (const team of teams) {
+      const ctx = teamContextMap[team.abbreviation]
+      const payroll = (ctx?.roster ?? []).reduce(
+        (s, p) => s + (p.contractSalary ?? p.contract_salary ?? 0), 0
+      )
+      if (payroll <= secondApron) continue
+      if (!Array.isArray(team.apronFrozenFirstYears)) team.apronFrozenFirstYears = []
+      if (!team.apronFrozenFirstYears.includes(frozenDraftYear)) {
+        team.apronFrozenFirstYears.push(frozenDraftYear)
+        frozenTeams.push(team)
+      }
+      if (team.id === campaign.teamId) {
+        campaign.settings = campaign.settings ?? {}
+        campaign.settings.pendingApronPickFreeze = {
+          year: currentYear,
+          draftYear: frozenDraftYear,
+          message: 'Finished the season over the second apron — next year\'s first-round pick drops to the end of round 1.',
+        }
+      }
+    }
+    if (frozenTeams.length > 0) {
+      await TeamRepository.saveBulk(frozenTeams)
+    }
+  }
+
   // Process season end (aging, retirement, contract decrement, stat resets — injuries preserved).
   // Pass currentYear so a mid-season re-sign stamped with this season's year is
   // recognized and its fresh term is not decremented on the way into the offseason.
@@ -2546,6 +2580,11 @@ export async function enterOffseason(campaignId) {
     overallRating: r.overallRating ?? r.overall_rating,
     primaryTeamAbbreviation: r.previousTeamAbbreviation,
     headshot: r.headshot ?? null,
+    // Custom-headshot flag: without it PlayerAvatar never does the IDB
+    // custom-SVG lookup and authored players' retirement cards fall back to
+    // a default/hash premade face. Both casings — the avatar reads either.
+    hasCustomHeadshot: r.hasCustomHeadshot ?? r.has_custom_headshot ?? false,
+    has_custom_headshot: r.hasCustomHeadshot ?? r.has_custom_headshot ?? false,
     careerSeasons: r.retirementSummary?.careerSeasons ?? r.careerSeasons ?? r.career_seasons ?? 0,
     careerHighOvr: r.retirementSummary?.careerHighOvr,
     lastSeasonStats: r.retirementSummary?.lastSeasonStats,
@@ -2601,6 +2640,10 @@ export async function enterOffseason(campaignId) {
           madePlayoffs: curEntry.playoffSeed != null || curEntry.madePlayoffs === true,
         } : null
 
+        const campCapNumbers = capNumbersFor(campaign)
+        const ownerCapLine = capLineForExpectation(eff.tier, campCapNumbers, {
+          moneyConsciousness: owner.moneyConsciousness,
+        })
         const subResult = evaluateSubtasks({
           owner,
           expectation: eff.tier,
@@ -2613,7 +2656,8 @@ export async function enterOffseason(campaignId) {
           progress: gmc.progress ?? {},
           userTeamId,
           coach: userTeam?.coach ?? null,
-          salaryCap: capNumbersFor(campaign).salaryCap,
+          salaryCap: campCapNumbers.salaryCap,
+          capLine: ownerCapLine,
         })
         // Soften the win bar if the GM lost star talent to injury this season.
         const injuryRelief = injuryReliefWins({
@@ -2631,6 +2675,14 @@ export async function enterOffseason(campaignId) {
           currentPlayoff,
           injuryRelief,
           subtaskScore: subResult.subtaskScore,
+          // Owner wrath: breaching the mandated payroll line directly drags the
+          // contract-end verdict, scaled by how money-conscious the owner is.
+          capBreachPenalty: capBreachPenalty({
+            payroll,
+            capLine: ownerCapLine,
+            capNumbers: campCapNumbers,
+            moneyConsciousness: owner.moneyConsciousness,
+          }),
         })
 
         // Patience tilts the bar: a ruthless owner (1) demands more, a patient
@@ -2861,6 +2913,46 @@ export async function switchUserTeam(campaignId, newTeamAbbreviation) {
  * @param {string} campaignId
  * @returns {Promise<Object>} { campaign, seasonData, gamesCreated, releasedPlayers }
  */
+/**
+ * User override from the end-of-season RetirementModal: reverse a player's
+ * retirement for this year. The player returns as a FREE AGENT — their
+ * pre-retirement contract was zeroed by processRetirements and their old
+ * team's roster slot may already be backfilled, and the offseason FA pool
+ * is the realistic landing spot anyway. `previousTeam*` breadcrumbs are
+ * kept (the FA incumbent logic reads them — fitting for a returning vet).
+ * No "eligible again" flag is needed: the retirement roll runs every
+ * rollover against non-retired players.
+ *
+ * @returns {object|null} the updated player, or null when not retired/found
+ */
+export async function unretirePlayer(campaignId, playerId) {
+  const player = await PlayerRepository.get(campaignId, playerId)
+  if (!player || !(player.isRetired || player.is_retired)) return null
+
+  player.isRetired = false
+  player.is_retired = false
+  delete player.retiredAt
+  delete player.retirementSummary
+  player.teamId = null
+  player.team_id = null
+  player.teamAbbreviation = 'FA'
+  player.team_abbreviation = 'FA'
+  player.isFreeAgent = 1
+  player.is_free_agent = 1
+  await PlayerRepository.save(player)
+
+  // Drop the row from the pending-retirements stash so a refresh doesn't
+  // resurrect it in the modal.
+  const campaign = await CampaignRepository.get(campaignId)
+  if (campaign?.settings?.pendingRetirements) {
+    campaign.settings.pendingRetirements =
+      campaign.settings.pendingRetirements.filter((r) => r.id !== playerId)
+    await CampaignRepository.save(campaign)
+  }
+
+  return player
+}
+
 export async function startNewSeason(campaignId) {
   const campaign = await CampaignRepository.get(campaignId)
   if (!campaign) throw new Error(`Campaign ${campaignId} not found`)

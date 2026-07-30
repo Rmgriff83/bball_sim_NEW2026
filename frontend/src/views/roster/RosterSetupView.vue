@@ -26,6 +26,8 @@ import { capNumbersFor } from '@/engine/data/salaryScale'
 import { CANONICAL_ATTRIBUTES } from '@/engine/data/attributeSchema'
 import { MAX_ROSTER_SIZE } from '@/engine/finance/FinanceManager'
 import { MIN_FA_POOL, MAX_FA_POOL } from '@/stores/rosterEditor'
+import { ARCHETYPES, ARCHETYPE_SEEDS } from '@/engine/data/archetypes'
+import { applyArchetypeToPlayer, TALENT_TIERS } from '@/engine/data/archetypeApply'
 
 const route = useRoute()
 const router = useRouter()
@@ -318,11 +320,6 @@ function onTableEdited(player) {
   store.markDirtyPlayer(player.id)
 }
 
-async function addTeamPlayer() {
-  const p = await store.addPlayer()
-  if (p) editingPlayer.value = p
-}
-
 // "Clamp to overall" (Potential mode): a per-player STICKY state. Checking it
 // snaps every growth ceiling to the attribute's current value AND keeps them
 // tracking as attributes change on the Overall tab (the table's bump honors
@@ -365,11 +362,6 @@ async function generateRemaining() {
   } finally {
     generatingFill.value = false
   }
-}
-
-async function addPoolPlayer() {
-  const p = await store.addPoolPlayer()
-  if (p) editingPlayer.value = p
 }
 
 function editPlayer(p) { editingPlayer.value = p }
@@ -478,6 +470,46 @@ async function generateFaRemaining() {
     toast.showError(err?.message || 'Generation failed — please try again')
   } finally {
     generatingFill.value = false
+  }
+}
+
+// --- Add-player modal -------------------------------------------------------
+// Authors usually pick a build right after creating a player — front-load the
+// archetype/talent choice. "Random player" keeps the old base-70 behavior.
+// Selections persist across adds in the session (bulk-authoring speedup).
+const showAddPlayer = ref(false)
+const addArchetype = ref('')      // '' = Random player
+const addTalent = ref('starter')
+const addingPlayer = ref(false)
+const addableArchetypes = ARCHETYPES.filter((a) => ARCHETYPE_SEEDS[a.id])
+
+async function confirmAddPlayer() {
+  if (addingPlayer.value) return
+  addingPlayer.value = true
+  const audio = useAudioStore()
+  const toast = useToastStore()
+  audio.suppressClickSound()
+  try {
+    const p = await (view.value === 'pool' ? store.addPoolPlayer() : store.addPlayer())
+    if (!p) {
+      audio.cancel()
+      toast.showError('Roster is full — remove a player first')
+      return
+    }
+    if (addArchetype.value) {
+      applyArchetypeToPlayer(p, addArchetype.value, addTalent.value)
+      store.refreshDerived(p)
+      await store.savePlayer(p)
+    }
+    audio.affirm()
+    showAddPlayer.value = false
+    // Straight into the details editor for naming/vitals (old add behavior).
+    editingPlayer.value = p
+  } catch (err) {
+    audio.cancel()
+    toast.showError(err?.message || 'Failed to create the player')
+  } finally {
+    addingPlayer.value = false
   }
 }
 
@@ -760,7 +792,7 @@ async function confirmFinalize() {
         />
 
         <div v-if="!rosterFull" class="rs-add-row">
-          <button class="rs-add-btn" @click="view === 'pool' ? addPoolPlayer() : addTeamPlayer()">
+          <button class="rs-add-btn" @click="showAddPlayer = true">
             <Plus :size="16" /> Add Player
             <em v-if="view === 'roster'" class="rs-add-count">({{ activeRoster.length }}/{{ MAX_ROSTER_SIZE }})</em>
             <em v-else-if="!isFantasy" class="rs-add-count">({{ freeAgents.length }}/{{ MAX_FA_POOL }})</em>
@@ -836,6 +868,38 @@ async function confirmFinalize() {
           <button class="rs-modal-secondary" @click="guardDiscard">Discard</button>
           <button class="rs-modal-primary" :disabled="saving" @click="guardSave">
             <Loader2 v-if="saving" :size="16" class="spin" /> Save
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add player (archetype + talent up front) -->
+    <div v-if="showAddPlayer" class="rs-modal-overlay">
+      <div class="rs-modal">
+        <h3><Plus :size="18" /> New Player</h3>
+        <label class="rs-add-field">
+          <span>Archetype</span>
+          <select v-model="addArchetype" class="rs-add-select">
+            <option value="">Random player</option>
+            <option v-for="a in addableArchetypes" :key="a.id" :value="a.id">{{ a.name }}</option>
+          </select>
+        </label>
+        <label class="rs-add-field">
+          <span>Talent level</span>
+          <select v-model="addTalent" class="rs-add-select" :disabled="!addArchetype">
+            <option v-for="t in TALENT_TIERS" :key="t.key" :value="t.key">{{ t.label }}</option>
+          </select>
+        </label>
+        <p class="rs-note" style="margin-top: 6px;">
+          {{ addArchetype
+            ? 'Attributes and ceilings are seeded from the build — tweak everything after.'
+            : 'Generates a neutral ~70 overall base to author from scratch.' }}
+        </p>
+        <div class="rs-modal-actions">
+          <button class="rs-modal-secondary rs-modal-cancel" @click="showAddPlayer = false">Cancel</button>
+          <button class="rs-modal-primary" :disabled="addingPlayer" @click="confirmAddPlayer">
+            <Loader2 v-if="addingPlayer" :size="16" class="spin" />
+            Create Player
           </button>
         </div>
       </div>
@@ -1259,6 +1323,33 @@ async function confirmFinalize() {
   border: 1px dashed var(--glass-border);
   border-radius: 10px;
 }
+
+/* Add-player modal fields */
+.rs-add-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.rs-add-select {
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--glass-border);
+  font-size: 0.9rem;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+}
+
+.rs-add-select:disabled { opacity: 0.5; }
 
 /* Full-page import overlay — above the rs-modal layer (z 40) so nothing on
    the page is interactive while the imported roster installs. */

@@ -10,6 +10,7 @@ import AllStarModal from '@/components/game/AllStarModal.vue'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { getSeasonDeadlines } from '@/engine/season/SeasonDeadlines'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-vue-next'
 
@@ -47,6 +48,33 @@ const showGameModal = ref(false)
 // Team record (wins-losses) — single global source of truth (gameStore.userRecord),
 // shared with the campaign home so both stay live + consistent.
 const teamRecord = computed(() => gameStore.userRecord)
+
+// Season milestone markers by date key (YYYY-MM-DD): trade deadline,
+// contract-extension (re-sign) deadline, All-Star selection day. They
+// currently share Feb 5, so a day can carry several labels — the cell shows
+// one badge with all of them in the tooltip + the legend line below the grid.
+const deadlineMarkers = computed(() => {
+  const y = seasonYear.value
+  if (!y) return {}
+  const d = getSeasonDeadlines(y)
+  const map = {}
+  const add = (date, label) => {
+    if (!date) return
+    ;(map[date] = map[date] ?? []).push(label)
+  }
+  add(d.tradeDeadline, 'Trade Deadline')
+  add(d.resignDeadline, 'Extension Deadline')
+  add(d.allStarDate, 'All-Star Selections')
+  return map
+})
+
+// Legend line under the grid — "Feb 5 — Trade Deadline · Extension Deadline · …"
+const deadlineLegend = computed(() =>
+  Object.entries(deadlineMarkers.value).map(([date, labels]) => {
+    const [, m, day] = date.split('-').map(Number)
+    const monthName = new Date(2000, m - 1, 1).toLocaleString('en-US', { month: 'short' })
+    return { date, label: `${monthName} ${day} — ${labels.join(' · ')}` }
+  }))
 
 // Parse a date string into local time (avoids UTC shift from new Date('YYYY-MM-DD'))
 function parseLocalDate(dateStr) {
@@ -580,12 +608,20 @@ watch(focusDate, () => {
                 'game-in-progress': dayData.games[0] && isGameInProgress(dayData.games[0]),
                 'game-upcoming': dayData.games[0] && !dayData.games[0].is_complete && !isGameInProgress(dayData.games[0]),
                 'game-next': dayData.games[0] && isNextGame(dayData.games[0]) && !isGameInProgress(dayData.games[0]),
-                'game-playoff': dayData.games[0]?.is_playoff
+                'game-playoff': dayData.games[0]?.is_playoff,
+                'has-deadline': !!deadlineMarkers[dayData.dateKey]
               }"
               @click="handleDayClick(dayData)"
             >
               <!-- Day number in corner -->
               <span class="day-number">{{ dayData.day }}</span>
+
+              <!-- Season milestone marker (trade/extension deadline, All-Star) -->
+              <span
+                v-if="deadlineMarkers[dayData.dateKey]"
+                class="deadline-badge"
+                :title="deadlineMarkers[dayData.dateKey].join(' · ')"
+              >★</span>
 
               <!-- PO badge for playoff games -->
               <span
@@ -643,6 +679,13 @@ watch(focusDate, () => {
               </div>
             </button>
           </div>
+        </div>
+
+        <!-- Season milestone legend -->
+        <div v-if="deadlineLegend.length" class="deadline-legend">
+          <span v-for="item in deadlineLegend" :key="item.date" class="deadline-legend-item">
+            <span class="deadline-badge inline">★</span> {{ item.label }}
+          </span>
         </div>
 
         <!-- Navigation at Bottom -->
@@ -848,6 +891,43 @@ watch(focusDate, () => {
 }
 
 /* Calendar Day */
+/* Season milestone markers (trade/extension deadline, All-Star day) */
+.deadline-badge {
+  position: absolute;
+  bottom: 3px;
+  left: 4px;
+  font-size: 0.6rem;
+  line-height: 1;
+  color: #fbbf24;
+  text-shadow: 0 0 4px rgba(251, 191, 36, 0.5);
+  pointer-events: none;
+}
+
+.deadline-badge.inline {
+  position: static;
+  pointer-events: auto;
+  text-shadow: none;
+}
+
+.calendar-day.has-deadline {
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.35);
+}
+
+.deadline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 8px 2px 0;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+}
+
+.deadline-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .calendar-day {
   aspect-ratio: 1;
   min-height: 0;

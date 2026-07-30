@@ -819,8 +819,14 @@ export const useDraftStore = defineStore('draft', () => {
       const pickCalendarBase = (campaign.currentSeasonYear ?? campaign.current_season_year ?? 2025) - gameYear + 1
       await rollDraftPicks(allTeams, campaignId, gameYear, gameYear + 5, pickCalendarBase)
 
-      // 5. Mark rookie draft completed for this year
+      // 5. Mark rookie draft completed for this year and leave the draft
+      // phase. Normalizing to 'offseason' mirrors OffseasonOrchestrator —
+      // startNewSeason expects it, and it re-enables offseason trading
+      // (userTradingAllowed blocks 'offseason_draft'; without this flip the
+      // whole post-draft offseason rejected trades as "deadline passed").
+      // The draft CTA is guarded by the completed flag, not the phase.
       campaign[`rookieDraftCompleted_${gameYear}`] = true
+      campaign.phase = 'offseason'
       await CampaignRepository.save(campaign)
 
       // 6. Clear draft cache

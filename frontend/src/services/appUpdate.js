@@ -38,8 +38,19 @@ export async function checkForUpdate() {
 }
 
 /** Open the store externally (system handler → Play Store / App Store app). */
-export function openStore(url) {
+export async function openStore(url) {
   try {
-    window.open(url, '_system')
-  } catch { /* best-effort */ }
+    if (Capacitor.isNativePlatform()) {
+      // window.open('_system') is a Cordova-ism Capacitor ignores, and
+      // WKWebView drops window.open after an await — Browser.open is a
+      // native call and always fires (same fix as useCommunityLink.js).
+      const { Browser } = await import('@capacitor/browser')
+      await Browser.open({ url })
+      return
+    }
+    window.open(url, '_blank', 'noopener')
+  } catch {
+    // Fail-open fallback (e.g. plugin missing in an ancient binary).
+    try { window.open(url, '_system') } catch { /* best-effort */ }
+  }
 }

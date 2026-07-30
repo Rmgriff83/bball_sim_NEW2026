@@ -20,6 +20,13 @@ const props = defineProps({
     type: Number,
     default: 0
   },
+  // Room left under the SECOND APRON (secondApron - payroll). Non-minimum
+  // signings are blocked only past this line (the engine's apron ops lock);
+  // capSpace stays for display. Null → fall back to the legacy cap gate.
+  apronRoom: {
+    type: Number,
+    default: null
+  },
   rosterCount: {
     type: Number,
     default: 0
@@ -86,11 +93,15 @@ const isUpdate = computed(() => props.mode === 'offer' && !!userExistingOffer.va
 // ---------------------------------------------------------------------------
 const proposedSalary = computed(() => offerSalary.value)
 
-const exceedsCap = computed(() => proposedSalary.value > props.capSpace)
+// The hard gate matches the engine (FinanceManager.signFreeAgent): non-minimum
+// signings are allowed all the way up to the SECOND APRON — spending past the
+// cap is a penalized choice, not a block. Legacy fallback: capSpace.
+const signingRoom = computed(() => props.apronRoom ?? props.capSpace)
+const exceedsCap = computed(() => proposedSalary.value > signingRoom.value)
 const rosterFull = computed(() => props.rosterCount >= 15)
 
-// A minimum-salary contract is always allowed, even over the cap (the NBA
-// minimum exception). Anything above the minimum needs real cap space.
+// A minimum-salary contract is always allowed, even over the apron (the NBA
+// minimum exception).
 const isMinimumDeal = computed(() => offerSalary.value <= minSalary.value)
 const capBlocked = computed(() => exceedsCap.value && !isMinimumDeal.value)
 
@@ -346,7 +357,7 @@ const interestLevel = computed(() =>
       </div>
       <div v-else-if="mode === 'instant' && capBlocked" class="warning-box">
         <AlertTriangle :size="18" />
-        <span>Over the cap — you can only sign minimum-salary players. Lower the offer to the minimum ({{ formatSalary(minSalary) }}) or clear cap space.</span>
+        <span>Over the second apron — you can only sign minimum-salary players. Lower the offer to the minimum ({{ formatSalary(minSalary) }}) or shed salary.</span>
       </div>
       <div v-else-if="mode === 'instant' && (interestScore ?? 0) < SIGN_THRESHOLD" class="warning-box warning-box-soft">
         <AlertTriangle :size="18" />
@@ -354,11 +365,11 @@ const interestLevel = computed(() =>
       </div>
       <div v-else-if="mode === 'instant' && exceedsCap && isMinimumDeal" class="warning-box warning-box-soft">
         <AlertTriangle :size="18" />
-        <span>Minimum-salary deal — allowed even though you're over the cap.</span>
+        <span>Minimum-salary deal — allowed even over the second apron.</span>
       </div>
       <div v-else-if="mode === 'offer' && exceedsCap" class="warning-box warning-box-soft">
         <AlertTriangle :size="18" />
-        <span>This offer would put you over the cap. You can still submit it — if more bids than your cap can fit ultimately accept, you'll pick which signings to keep at the end of free agency.</span>
+        <span>This offer would push you past the second apron. You can still submit it — if more bids than your room can fit ultimately accept, you'll pick which signings to keep at the end of free agency.</span>
       </div>
     </div>
           </main>

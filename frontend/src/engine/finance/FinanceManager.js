@@ -5,7 +5,7 @@
 // Translated from PHP: backend/app/Services/FinanceService.php
 // =============================================================================
 
-import { SALARY_CAP as DEFAULT_SALARY_CAP, veteranMinSalary } from '../data/salaryScale';
+import { SALARY_CAP as DEFAULT_SALARY_CAP, SECOND_APRON as DEFAULT_SECOND_APRON, veteranMinSalary } from '../data/salaryScale';
 import { playerMarketValue } from '../ai/ResignValuationService';
 
 const DEFAULT_FREE_AGENT_SALARY = 8_000_000; // $8M — last-ditch fallback only
@@ -363,7 +363,7 @@ export function validateSigning({ salary, capMode = 'normal', currentPayroll, sa
  * @param {number} params.salaryCap
  * @returns {{ success: boolean, player?: object, updatedLeaguePlayers?: Array, error?: string }}
  */
-export function signFreeAgent({ playerId, leaguePlayers, currentRoster, salary = null, years = null, salaryCap = DEFAULT_SALARY_CAP }) {
+export function signFreeAgent({ playerId, leaguePlayers, currentRoster, salary = null, years = null, salaryCap = DEFAULT_SALARY_CAP, capNumbers = null }) {
   // Validate roster size
   if (currentRoster.length >= MAX_ROSTER_SIZE) {
     return { success: false, error: 'Roster is full (15 players maximum)' };
@@ -406,17 +406,20 @@ export function signFreeAgent({ playerId, leaguePlayers, currentRoster, salary =
   );
   const offerYears = Math.max(1, Math.min(5, Math.round(years ?? DEFAULT_FREE_AGENT_YEARS)));
 
-  // Cap rule: a minimum-salary contract is always allowed (the NBA minimum
-  // exception — even over the cap). Anything above the minimum requires real
-  // cap space, so an over-the-cap team can only add minimum-salary players.
+  // Apron rule: a minimum-salary contract is always allowed (the minimum
+  // exception). Non-minimum signings are allowed all the way up to the SECOND
+  // APRON — spending past the cap is a choice with owner-side consequences,
+  // not a hard block. Above the second apron, only minimum deals remain
+  // (the CBA-style ops lock).
   const currentPayroll = currentRoster.reduce(
     (sum, p) => sum + parseFloat(p.contractSalary ?? p.contract_salary ?? 0), 0
   );
   const isMinimumDeal = offerSalary <= minSalary;
-  if (!isMinimumDeal && currentPayroll + offerSalary > salaryCap) {
+  const secondApron = capNumbers?.secondApron ?? DEFAULT_SECOND_APRON;
+  if (!isMinimumDeal && currentPayroll + offerSalary > secondApron) {
     return {
       success: false,
-      error: 'Over the cap — you can only sign minimum-salary players.',
+      error: 'Over the second apron — you can only sign minimum-salary players.',
     };
   }
 

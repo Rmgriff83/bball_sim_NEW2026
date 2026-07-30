@@ -720,6 +720,7 @@ export const useGameStore = defineStore('game', () => {
         getPickValueFn,
         userTeamId,
         luxuryTax: capNumbersFor(campaign).luxuryTax,
+        capNumbers: capNumbersFor(campaign),
       })
 
       if (result.trades.length === 0) return

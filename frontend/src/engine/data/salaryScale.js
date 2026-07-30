@@ -59,6 +59,57 @@ export function capNumbersFor(campaignOrSettings) {
   };
 }
 
+// --- Owner cap mandates -------------------------------------------------------
+// The spending line an owner holds their GM to, scaled by ambition: a rebuild
+// owner wants a clean cap sheet, a title owner tolerates the second apron.
+// Order matters — index math implements the stingy-owner downgrade.
+const CAP_LINE_LADDER = [
+  { key: 'cap', label: 'Stay under the salary cap', field: 'salaryCap' },
+  { key: 'apron1', label: 'Stay under the first apron', field: 'firstApron' },
+  { key: 'apron2', label: 'Stay under the second apron', field: 'secondApron' },
+];
+
+const EXPECTATION_CAP_LEVEL = {
+  rebuild: 0,
+  develop: 1,
+  playoffs: 1,
+  contender: 2,
+  championship: 2,
+};
+
+/**
+ * The owner's mandated payroll line for an expectation tier.
+ * Especially stingy owners (moneyConsciousness >= 5) mandate ONE level below
+ * their tier's normal line (apron2 → apron1, apron1 → cap; cap is the floor).
+ * Unknown tier → the salary cap (safest). Returns { key, label, amount }.
+ */
+export function capLineForExpectation(tier, capNumbers = CAP_SET_LEGACY, { moneyConsciousness = 3 } = {}) {
+  let level = EXPECTATION_CAP_LEVEL[tier] ?? 0;
+  if ((Number(moneyConsciousness) || 3) >= 5) level = Math.max(0, level - 1);
+  const line = CAP_LINE_LADDER[level];
+  return {
+    key: line.key,
+    label: line.label,
+    amount: capNumbers?.[line.field] ?? CAP_SET_LEGACY[line.field],
+  };
+}
+
+/**
+ * Where a payroll sits between the league lines. Shared by FinancesTab and
+ * the league-page team popup so the tiers/wording stay identical. Being over
+ * the cap but under the tax is the normal operating band — amber, not alarming.
+ * Returns { key, label, cls }.
+ */
+export function capStatusFor(payroll, capNumbers = CAP_SET_LEGACY) {
+  const p = Number(payroll) || 0;
+  const n = capNumbers ?? CAP_SET_LEGACY;
+  if (p <= n.salaryCap) return { key: 'under', label: 'Under Cap', cls: 'status-under' };
+  if (p <= n.luxuryTax) return { key: 'overcap', label: 'Over Cap', cls: 'status-overcap' };
+  if (n.firstApron && p <= n.firstApron) return { key: 'tax', label: 'Taxpayer', cls: 'status-tax' };
+  if (n.secondApron && p <= n.secondApron) return { key: 'apron1', label: 'First Apron', cls: 'status-apron1' };
+  return { key: 'apron2', label: 'Second Apron', cls: 'status-apron2' };
+}
+
 // --- Maximum salary (first-year), by years of service -----------------------
 // 0–6 yrs → 25% of cap, 7–9 → 30%, 10+ → 35%. Pass the campaign's cap for
 // post-2026 campaigns; defaults to the legacy cap.

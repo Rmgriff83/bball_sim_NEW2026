@@ -16,9 +16,19 @@ const props = defineProps({
     type: Number,
     default: null,
   },
+  // Player ids the user has un-retired this cycle (parent-confirmed) —
+  // their rows flip to a disabled "Returning as FA" state.
+  unretiredIds: {
+    type: Object, // Set
+    default: () => new Set(),
+  },
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'unretire'])
+
+function isUnretired(r) {
+  return props.unretiredIds?.has?.(r.id) ?? false
+}
 
 function close() {
   emit('close')
@@ -125,6 +135,13 @@ function formatStat(value) {
                       </div>
                     </div>
                     <div class="retiree-ovr">{{ r.overallRating ?? '—' }}</div>
+                    <button
+                      v-if="!isUnretired(r)"
+                      class="unretire-btn"
+                      title="Override this retirement — the player returns to the free-agent pool"
+                      @click="emit('unretire', r)"
+                    >Un-retire</button>
+                    <span v-else class="unretired-tag">Returning as FA ✓</span>
                   </li>
                 </ul>
               </div>
@@ -132,6 +149,10 @@ function formatStat(value) {
           </main>
 
           <footer class="modal-footer">
+            <p class="unretire-hint">
+              Un-retired players return to the free-agent pool and may retire
+              again next season.
+            </p>
             <button class="btn-confirm" @click="close">Continue</button>
           </footer>
         </div>
@@ -324,9 +345,40 @@ function formatStat(value) {
 
 .modal-footer {
   display: flex;
+  align-items: center;
   gap: 12px;
   padding: 16px 20px;
   border-top: 1px solid var(--glass-border);
+}
+
+.unretire-hint {
+  flex: 1;
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  text-align: left;
+}
+
+.unretire-btn {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.unretire-btn:hover { border-color: var(--color-primary); }
+
+.unretired-tag {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #22c55e;
 }
 
 .btn-confirm {

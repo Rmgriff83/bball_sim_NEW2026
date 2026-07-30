@@ -292,12 +292,19 @@ export const useTradeStore = defineStore('trade', () => {
   //      (prevents TradeExecutor.movePlayer from silently no-op'ing one side and
   //      committing a lopsided trade).
   // userGiving / userReceiving are API-format asset lists ({ type, playerId|pickId }).
-  function _assertTradeAllowed({ userGiving, userReceiving, getPlayerFn, currentDate, seasonYear, userTeamId, aiTeamId, campaign }) {
+  function _assertTradeAllowed({ userGiving, userReceiving, getPlayerFn, currentDate, seasonYear, userTeamId, aiTeamId, campaign, userPayroll = 0 }) {
     if (!userTradingAllowed(campaign, currentDate, seasonYear)) {
       throw new Error('The trade deadline has passed — no more trades can be made this season.')
     }
 
-    const capCheck = validateSalaryCap({ userGiving, userReceiving, capMode: 'normal', getPlayerFn })
+    const capCheck = validateSalaryCap({
+      userGiving,
+      userReceiving,
+      capMode: 'normal',
+      getPlayerFn,
+      currentPayroll: userPayroll,
+      capNumbers: capNumbersFor(campaign),
+    })
     if (!capCheck.valid) {
       throw new Error(capCheck.reason || 'Trade violates salary-cap matching rules.')
     }
@@ -597,11 +604,19 @@ export const useTradeStore = defineStore('trade', () => {
       // Attach the engine-backed salary-cap verdict (125% + $100K matching, hard
       // block on the execute paths) so the wizard reflects the same rule the
       // executor enforces rather than its own ad-hoc client check.
+      const wizardUserTeamId = campaign?.teamId ?? campaign?.team_id
       const capCheck = validateSalaryCap({
         userGiving: proposal.aiReceives,
         userReceiving: proposal.aiGives,
         capMode: 'normal',
         getPlayerFn,
+        currentPayroll: allPlayers.reduce((s, p) => {
+          const tid = p.teamId ?? p.team_id
+          return String(tid) === String(wizardUserTeamId)
+            ? s + parseFloat(p.contractSalary ?? p.contract_salary ?? 0)
+            : s
+        }, 0),
+        capNumbers: capNumbersFor(campaign),
       })
       result.capValid = capCheck.valid
       result.capReason = capCheck.valid ? null : capCheck.reason
@@ -669,6 +684,7 @@ export const useTradeStore = defineStore('trade', () => {
         userTeamId,
         aiTeamId: selectedTeam.value.id,
         campaign,
+        userPayroll: userRoster.reduce((s, p) => s + parseFloat(p.contractSalary ?? p.contract_salary ?? 0), 0),
       })
 
       // Collect all draft picks from both teams for the executor
@@ -1111,6 +1127,7 @@ export const useTradeStore = defineStore('trade', () => {
         userTeamId,
         aiTeamId: aiTeam.id,
         campaign,
+        userPayroll: userRoster.reduce((s, p) => s + parseFloat(p.contractSalary ?? p.contract_salary ?? 0), 0),
       })
 
       // Collect all draft picks from both teams for the executor

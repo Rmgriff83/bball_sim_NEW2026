@@ -9,10 +9,10 @@ import {
   MONEY_CONSCIOUSNESS_LABEL,
   EXPECTATION_BLURB_DEFAULT,
 } from '@/engine/data/owners'
-import { combinedSatisfaction, injuryReliefWins } from '@/engine/season/OwnerService'
+import { combinedSatisfaction, injuryReliefWins, capBreachPenalty } from '@/engine/season/OwnerService'
 import { evaluateSubtasks } from '@/engine/season/OwnerSubtaskService'
 import { getEffectiveExpectation, effectiveOwner } from '@/engine/season/OwnerExpectationService'
-import { capNumbersFor } from '@/engine/data/salaryScale'
+import { capNumbersFor, capLineForExpectation } from '@/engine/data/salaryScale'
 import { useAuthStore } from '@/stores/auth'
 import { gmLevelLabel, gmLevelColor } from '@/engine/data/gmLevels'
 import { Crown, Target, Gauge, FileSignature, Wallet, CheckCircle2, Circle, ListChecks, Medal, Banknote } from 'lucide-vue-next'
@@ -79,6 +79,17 @@ const effectiveExpectation = computed(() =>
   owner.value ? getEffectiveExpectation(campaign.value, owner.value) : null
 )
 
+// The owner's mandated payroll line — scales with the live expectation tier
+// (rebuild → cap … championship → 2nd apron; stingy owners one level tighter).
+const ownerCapLine = computed(() => {
+  if (!owner.value) return null
+  return capLineForExpectation(
+    effectiveExpectation.value?.tier,
+    capNumbersFor(campaign.value),
+    { moneyConsciousness: owner.value.moneyConsciousness },
+  )
+})
+
 // Sub-tasks: evaluate the owner's per-expectation checklist against current state.
 const subtaskResult = computed(() => {
   if (!owner.value) return { subtasks: [], subtaskScore: 0, metCount: 0, total: 0 }
@@ -101,6 +112,7 @@ const subtaskResult = computed(() => {
     userTeamId: campaign.value?.teamId ?? team.value?.id ?? null,
     coach: teamStore.coach ?? team.value?.coach ?? null,
     salaryCap: capNumbersFor(campaign.value).salaryCap,
+    capLine: ownerCapLine.value,
   })
 })
 
@@ -114,6 +126,14 @@ const satisfaction = computed(() => {
     lastSeason: lastSeason.value,
     subtaskScore: subtaskResult.value.subtaskScore,
     contractProgress: contractProgress.value,
+    // Owner wrath: live payroll above the mandated line drags the meter now,
+    // not just at contract end.
+    capBreachPenalty: capBreachPenalty({
+      payroll: teamStore.totalSalary ?? 0,
+      capLine: ownerCapLine.value,
+      capNumbers: capNumbersFor(campaign.value),
+      moneyConsciousness: owner.value.moneyConsciousness,
+    }),
     // Don't let a star's injury crater the live meter.
     injuryRelief: injuryReliefWins({
       roster: teamStore.roster ?? [],

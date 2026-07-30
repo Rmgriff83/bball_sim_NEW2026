@@ -20,6 +20,9 @@ import PlayerDetailModal from './PlayerDetailModal.vue'
 import EndOfFreeAgencyModal from './EndOfFreeAgencyModal.vue'
 import UserFreeAgencyOffers from './UserFreeAgencyOffers.vue'
 import { isPastResignDeadline, isInFreeAgencyPeriod, FREE_AGENCY_DURATION_DAYS } from '@/engine/season/SeasonDeadlines'
+import { capNumbersFor, capStatusFor, capLineForExpectation } from '@/engine/data/salaryScale'
+import { findOwnerForTeam } from '@/engine/data/owners'
+import { getEffectiveExpectation } from '@/engine/season/OwnerExpectationService'
 
 const props = defineProps({
   campaignId: {
@@ -113,16 +116,31 @@ const capThresholds = computed(() => {
   ].filter(t => t.value > 0)
 })
 
-// Where the payroll sits between the lines. Being over the cap but under the
-// tax is the normal NBA operating band — amber, not alarming.
+// Where the payroll sits between the lines — the shared helper keeps this
+// chip identical to the league-page team popup. Being over the cap but under
+// the tax is the normal NBA operating band — amber, not alarming.
 const capStatus = computed(() => {
   if (!luxuryTax.value) return null
-  const p = totalPayroll.value
-  if (p <= salaryCap.value) return { label: 'Under Cap', cls: 'status-under' }
-  if (p <= luxuryTax.value) return { label: 'Over Cap', cls: 'status-overcap' }
-  if (firstApron.value && p <= firstApron.value) return { label: 'Taxpayer', cls: 'status-tax' }
-  if (secondApron.value && p <= secondApron.value) return { label: 'First Apron', cls: 'status-apron1' }
-  return { label: 'Second Apron', cls: 'status-apron2' }
+  return capStatusFor(totalPayroll.value, {
+    salaryCap: salaryCap.value,
+    luxuryTax: luxuryTax.value,
+    firstApron: firstApron.value,
+    secondApron: secondApron.value,
+  })
+})
+
+// The OWNER'S mandated line (expectation-scaled; stingy owners one level
+// tighter) — tagged on the matching ladder row so the player always knows
+// which threshold their job depends on.
+const ownerCapLineKey = computed(() => {
+  const campaign = campaignStore.currentCampaign
+  const abbr = campaign?.teamAbbreviation ?? teamStore.team?.abbreviation ?? null
+  const owner = findOwnerForTeam(abbr)
+  if (!owner) return null
+  const tier = getEffectiveExpectation(campaign, owner)?.tier
+  return capLineForExpectation(tier, capNumbersFor(campaign), {
+    moneyConsciousness: owner.moneyConsciousness,
+  }).key
 })
 
 function thresholdDelta(t) {
@@ -652,7 +670,10 @@ onMounted(() => {
               class="cap-ladder-row"
               :class="{ crossed: totalPayroll > t.value }"
             >
-              <span class="cap-ladder-label">{{ t.label }}</span>
+              <span class="cap-ladder-label">
+                {{ t.label }}
+                <span v-if="t.key === ownerCapLineKey" class="owner-limit-tag" title="Your owner expects payroll kept at or under this line">Owner limit</span>
+              </span>
               <span class="cap-ladder-value">{{ formatLargeSalary(t.value) }}</span>
               <span class="cap-ladder-delta" :class="totalPayroll > t.value ? 'is-over' : 'is-below'">
                 {{ thresholdDelta(t) }}
@@ -922,6 +943,7 @@ onMounted(() => {
       :show="showSignModal"
       :player="selectedPlayer"
       :cap-space="capSpace"
+      :apron-room="secondApron ? secondApron - totalPayroll : null"
       :roster-count="rosterCount"
       :loading="signLoading"
       :mode="signModalMode"
@@ -1171,6 +1193,27 @@ onMounted(() => {
 
 .cap-ladder-delta.is-below { color: #22c55e; }
 .cap-ladder-delta.is-over { color: #ef4444; }
+
+/* The owner's mandated line — the threshold the GM's job depends on */
+.owner-limit-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: rgba(139, 92, 246, 0.16);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  vertical-align: middle;
+}
+
+[data-theme="light"] .owner-limit-tag {
+  background: rgba(139, 92, 246, 0.12);
+  color: #7c3aed;
+}
 
 [data-theme="light"] .cap-ladder {
   background: rgba(0, 0, 0, 0.03);

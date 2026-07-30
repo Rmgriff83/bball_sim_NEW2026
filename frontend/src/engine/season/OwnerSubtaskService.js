@@ -288,6 +288,10 @@ function _subtasksForExpectation(expectation, ctx) {
  * @param {object} [params.progress]       - gmContract.progress { allStarAppearances, badgesAdded, starPlayerIdsAtSign }
  * @param {string|number} [params.userTeamId]
  * @param {number} [params.salaryCap]      - injected SALARY_CAP (defaults to league value)
+ * @param {object} [params.capLine]        - injected owner mandate { amount, label } from
+ *                                           capLineForExpectation (data/salaryScale.js). When
+ *                                           absent, falls back to the plain salary cap so
+ *                                           legacy callers keep the original behavior.
  * @returns {{ subtasks: Array<{id,label,description,met,weight}>, subtaskScore: number, metCount: number, total: number }}
  */
 export function evaluateSubtasks({
@@ -303,6 +307,7 @@ export function evaluateSubtasks({
   userTeamId = null,
   coach = null,
   salaryCap = DEFAULT_SALARY_CAP,
+  capLine = null,
 } = {}) {
   const moneyConsciousness = Math.max(1, Math.min(5, _num(owner?.moneyConsciousness, 3)));
 
@@ -369,12 +374,19 @@ export function evaluateSubtasks({
 
   const list = [...currentNonHire, ...lockedHires, ...extras];
 
-  // Global salary-cap sub-task, weighted by money-consciousness.
+  // Global payroll sub-task, weighted by money-consciousness. The line scales
+  // with the owner's ambition when the caller injects `capLine` (rebuild → cap,
+  // playoffs → first apron, championship → second apron; stingy owners one
+  // level tighter) — legacy callers without it keep the plain salary cap.
+  const mandateAmount = _num(capLine?.amount, 0) > 0 ? capLine.amount : salaryCap;
+  const mandateLabel = capLine?.label || 'Stay under the salary cap';
   list.push({
     id: 'under_cap',
-    label: 'Stay under the salary cap',
-    description: 'Keep total payroll at or below the salary cap.',
-    met: _num(payroll, 0) <= salaryCap,
+    label: mandateLabel,
+    description: mandateAmount === salaryCap && !capLine
+      ? 'Keep total payroll at or below the salary cap.'
+      : `Keep total payroll at or below $${(mandateAmount / 1_000_000).toFixed(1)}M.`,
+    met: _num(payroll, 0) <= mandateAmount,
     weight: moneyConsciousness,
     global: true,
   });

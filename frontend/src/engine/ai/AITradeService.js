@@ -8,7 +8,7 @@
 // =============================================================================
 
 import { calculateRetentionScore } from './MotivationService';
-import { LUXURY_TAX } from '../data/salaryScale';
+import { LUXURY_TAX, capLineForExpectation } from '../data/salaryScale';
 import { findOwnerForTeam } from '../data/owners';
 
 const TRADE_DEADLINE_MONTH = 2; // February
@@ -1482,6 +1482,20 @@ export function processTradeDeadlineEvents({ currentDate, seasonYear, settings =
 const LUXURY_TAX_LINE = LUXURY_TAX;
 
 /**
+ * A team's mandate line for AI-AI trade gating — the owner's expectation-
+ * scaled spending line (mirrors AIContractService.teamCapLine; kept local to
+ * avoid a circular import). Falls back to 'playoffs' (1st apron) when neither
+ * a live effectiveExpectation nor a static owner tier resolves.
+ */
+function _teamMandateLine(team, capNumbers = null) {
+  const owner = team ? findOwnerForTeam(team.abbreviation) : null;
+  const tier = team?.effectiveExpectation ?? owner?.expectation ?? 'playoffs';
+  return capLineForExpectation(tier, capNumbers ?? undefined, {
+    moneyConsciousness: owner?.moneyConsciousness,
+  }).amount;
+}
+
+/**
  * Find target players from any roster that match a team's need.
  * Adapts findTargetPlayers() for bilateral AI-to-AI use.
  */
@@ -1791,11 +1805,16 @@ function _findAiToAiTrade({
       }
     }
 
+    // Cap check: each side must respect its OWN mandate line (owner-expectation
+    // scaled — a contender's line is the 2nd apron, a rebuilder's the cap). A
+    // team already above its line may still trade if the deal REDUCES payroll.
     const team1Payroll = _calculateTeamPayroll(team1Roster);
     const team2Payroll = _calculateTeamPayroll(team2Roster);
-    const taxLine = context?.luxuryTax ?? LUXURY_TAX_LINE;
-    if (team1Payroll + team1IncomingSalary - team1OutgoingSalary > taxLine) continue;
-    if (team2Payroll + team2IncomingSalary - team2OutgoingSalary > taxLine) continue;
+    const capNumbers = context?.capNumbers ?? null;
+    const team1Post = team1Payroll + team1IncomingSalary - team1OutgoingSalary;
+    const team2Post = team2Payroll + team2IncomingSalary - team2OutgoingSalary;
+    if (team1Post > _teamMandateLine(team1, capNumbers) && team1Post >= team1Payroll) continue;
+    if (team2Post > _teamMandateLine(team2, capNumbers) && team2Post >= team2Payroll) continue;
 
     // Evaluate from both perspectives
     const eval1 = evaluateTrade({
@@ -1853,6 +1872,7 @@ export function processAiToAiTrades({
   getPickValueFn = () => 5,
   userTeamId = null,
   luxuryTax = null,
+  capNumbers = null,
 }) {
   const empty = { trades: [], playerMoves: [], pickMoves: [], newsEvents: [] };
 
@@ -1860,7 +1880,9 @@ export function processAiToAiTrades({
   if (!isBeforeDeadline(currentDate, seasonYear)) return empty;
 
   const context = buildContext({ standings, teams: allTeams, seasonPhase: 'regular_season' });
-  context.luxuryTax = luxuryTax ?? LUXURY_TAX_LINE;
+  context.luxuryTax = luxuryTax ?? capNumbers?.luxuryTax ?? LUXURY_TAX_LINE;
+  // Full campaign cap set for per-team mandate-line gating (null → legacy set).
+  context.capNumbers = capNumbers;
 
   // Build player lookup
   const playerMap = new Map();

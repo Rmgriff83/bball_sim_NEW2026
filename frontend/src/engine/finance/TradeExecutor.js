@@ -29,6 +29,8 @@ function getPlayerName(player) {
  * @param {function} params.getPlayerFn - (playerId) => player object or null
  * @param {number} [params.currentPayroll] - User team's current payroll
  * @param {number} [params.salaryCap] - Team salary cap
+ * @param {object} [params.capNumbers] - Campaign cap set ({ secondApron }) for the
+ *   second-apron rule in normal mode; omitted → the rule is skipped (legacy callers)
  * @returns {{ valid: boolean, reason?: string, incoming_salary?: number, outgoing_salary?: number, max_incoming?: number }}
  */
 export function validateSalaryCap({
@@ -38,6 +40,7 @@ export function validateSalaryCap({
   getPlayerFn,
   currentPayroll = 0,
   salaryCap = SALARY_CAP,
+  capNumbers = null,
 }) {
   if (capMode === 'easy') {
     return { valid: true };
@@ -57,6 +60,24 @@ export function validateSalaryCap({
           incoming_salary: incomingSalary,
           outgoing_salary: outgoingSalary,
           max_incoming: maxIncoming,
+        };
+      }
+    }
+
+    // Second-apron ops lock: a team whose POST-trade payroll sits above the
+    // second apron cannot take back more salary than it sends out. Requires
+    // the caller to thread currentPayroll + capNumbers (old callers skip it).
+    const secondApron = capNumbers?.secondApron ?? 0;
+    if (secondApron > 0 && currentPayroll > 0) {
+      const postTradePayroll = currentPayroll + incomingSalary - outgoingSalary;
+      if (postTradePayroll > secondApron && incomingSalary > outgoingSalary) {
+        return {
+          valid: false,
+          reason: 'Second-apron teams must send out more salary than they take back.',
+          incoming_salary: incomingSalary,
+          outgoing_salary: outgoingSalary,
+          current_payroll: currentPayroll,
+          second_apron: secondApron,
         };
       }
     }

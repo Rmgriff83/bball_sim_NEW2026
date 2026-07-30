@@ -4,6 +4,12 @@ import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
+
+// Display team for a leaderboard row: the LIVE player record wins (trades
+// update it immediately); the season-stats snapshot is only the fallback
+// (retired/pruned players keep their last label).
+const currentTeamIdOf = (playerInfo, stats) =>
+  playerInfo?.teamId ?? playerInfo?.team_id ?? stats.teamId ?? null
 import { scoreMVPCandidate, MVP_MIN_GAMES_PCT } from '@/engine/season/AwardService'
 import { recomputeHighsLeaders, mergeHighsBoards } from '@/engine/stats/careerHighs'
 import { buildChampionsHistory, buildMvpHistory, buildRotyHistory, buildDpoyHistory } from '@/engine/stats/campaignRecords'
@@ -157,11 +163,15 @@ export const useLeagueStore = defineStore('league', () => {
 
       const seasonYear = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? new Date().getFullYear()
 
-      // Read player stats and teams from IndexedDB
-      const [playerStats, teams] = await Promise.all([
+      // Read player stats, teams, and live player records (trades update the
+      // player record's team; the stats entries keep a stale snapshot).
+      const [playerStats, teams, players] = await Promise.all([
         SeasonRepository.getPlayerStats(campaignId, seasonYear),
         TeamRepository.getAllForCampaign(campaignId),
+        PlayerRepository.getAllForCampaign(campaignId),
       ])
+      const playersById = {}
+      for (const p of (players || [])) playersById[String(p.id)] = p
 
       if (!playerStats || typeof playerStats !== 'object') {
         playerLeaders.value = []
@@ -202,14 +212,15 @@ export const useLeagueStore = defineStore('league', () => {
           ? ((stats.ftm ?? stats.freeThrowsMade ?? 0) / fta) * 100
           : 0
 
-        // Enrich with team data
-        const team = teamsById[stats.teamId] || null
+        // Enrich with team data — CURRENT team from the live player record.
+        const liveTeamId = currentTeamIdOf(playersById[String(playerId)], stats)
+        const team = teamsById[liveTeamId] || null
         const teamAbbreviation = team?.abbreviation ?? stats.teamAbbreviation ?? stats.team_abbreviation ?? ''
 
         leaders.push({
           playerId,
           name: stats.playerName ?? stats.player_name ?? 'Unknown',
-          teamId: stats.teamId ?? null,
+          teamId: liveTeamId,
           teamAbbreviation,
           teamColor: team?.primary_color ?? '#6B7280',
           position: stats.position ?? '',
@@ -254,11 +265,14 @@ export const useLeagueStore = defineStore('league', () => {
 
       const seasonYear = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? new Date().getFullYear()
 
-      const [playerStats, teams, seasonData] = await Promise.all([
+      const [playerStats, teams, seasonData, players] = await Promise.all([
         SeasonRepository.getPlayerStats(campaignId, seasonYear),
         TeamRepository.getAllForCampaign(campaignId),
         SeasonRepository.get(campaignId, seasonYear),
+        PlayerRepository.getAllForCampaign(campaignId),
       ])
+      const playersById = {}
+      for (const p of (players || [])) playersById[String(p.id)] = p
 
       if (!playerStats || typeof playerStats !== 'object') {
         mvpRace.value = []
@@ -314,7 +328,9 @@ export const useLeagueStore = defineStore('league', () => {
           fieldGoalsAttempted: stats.fga ?? stats.fieldGoalsAttempted ?? 0,
         }
 
-        const teamId = stats.teamId ?? null
+        // CURRENT team (live player record) — the candidate's win% story
+        // follows the team he's on now, not where the stats accrued.
+        const teamId = currentTeamIdOf(playersById[String(playerId)], stats)
         const teamWinPct = teamWinPctById[teamId] ?? 0
         const mvpScore = scoreMVPCandidate(normalized, teamWinPct)
 
@@ -421,7 +437,8 @@ export const useLeagueStore = defineStore('league', () => {
         // since this ranking is about individual production, not awards races)
         const score = (ppg * 3) + (rpg * 2) + (apg * 2.5) + (spg * 2) + (bpg * 1.5) - (tovpg * 0.5)
 
-        const team = teamsById[stats.teamId] || null
+        const liveTeamId = currentTeamIdOf(playerInfo, stats)
+        const team = teamsById[liveTeamId] || null
         const teamAbbreviation = team?.abbreviation ?? stats.teamAbbreviation ?? stats.team_abbreviation ?? ''
 
         const fallbackName = playerInfo
@@ -431,7 +448,7 @@ export const useLeagueStore = defineStore('league', () => {
         rookies.push({
           playerId,
           name: stats.playerName ?? stats.player_name ?? (fallbackName || 'Unknown'),
-          teamId: stats.teamId ?? null,
+          teamId: liveTeamId,
           teamAbbreviation,
           teamColor: team?.primary_color ?? '#6B7280',
           position: stats.position ?? playerInfo?.position ?? '',

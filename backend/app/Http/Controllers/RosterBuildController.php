@@ -124,7 +124,28 @@ class RosterBuildController extends Controller
             }
             $abbrByTeamId[(string) $tid] = $abbr;
             if (!empty($team['coach']) && is_array($team['coach'])) {
-                $coaches[$abbr] = $team['coach'];
+                $coach = $team['coach'];
+                // Strip the source campaign's accrued coaching record — a
+                // build is roster data; importers reset these to zero anyway
+                // (belt for old importers + smaller blobs).
+                unset(
+                    $coach['career_stats'],
+                    $coach['career_wins'],
+                    $coach['career_losses'],
+                    $coach['playoff_wins'],
+                    $coach['playoff_losses'],
+                    $coach['championships'],
+                    $coach['conference_titles'],
+                    $coach['seasons_coached'],
+                    // Per-campaign lifecycle state — importers stamp these
+                    // fresh (hiredSeason, budgets) on install.
+                    $coach['actionsRemaining'],
+                    $coach['trainActionsRemaining'],
+                    $coach['activeTraining'],
+                    $coach['hiredSeason'],
+                    $coach['seasonsWithTeam'],
+                );
+                $coaches[$abbr] = $coach;
             }
         }
 
@@ -190,6 +211,24 @@ class RosterBuildController extends Controller
                     'offense_upgrade_points', 'offenseUpgradePoints',
                     'defense_upgrade_points', 'defenseUpgradePoints',
                     '_overallExact',
+                    // Accrued-by-play state (mirrors the importer's strip):
+                    // single-game highs, per-season archives, career team
+                    // counters, season-end awards, re-sign flags.
+                    'careerHighs', 'career_highs',
+                    'seasonHighs', 'season_highs',
+                    'seasonHistory', 'season_history',
+                    'playerCareer', 'player_career',
+                    'awards',
+                    'all_star_selections', 'allStarSelections',
+                    'mvp_awards', 'mvpAwards',
+                    'finals_mvp_awards', 'finalsMvpAwards',
+                    'rookie_of_the_year', 'rookieOfTheYear',
+                    'all_nba_selections', 'allNbaSelections',
+                    'all_nba_first_team', 'allNbaFirstTeam',
+                    'all_rookie_team', 'allRookieTeam',
+                    'all_defensive_team', 'allDefensiveTeam',
+                    'resignedThisSeason', 'resigned_this_season',
+                    'resignedSeasonYear', 'resigned_season_year',
                 ] as $seasonKey) {
                     unset($player[$seasonKey]);
                 }

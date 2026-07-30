@@ -9,7 +9,8 @@ import { analyzeTeamDirection, buildContext } from './AITradeService';
 import { calculateRetentionScore, getMarketSize } from './MotivationService';
 import { playerMarketValue } from './ResignValuationService';
 import { FREE_AGENCY_DURATION_DAYS } from '../season/SeasonDeadlines';
-import { SALARY_CAP, LUXURY_TAX, veteranMinSalary } from '../data/salaryScale';
+import { SALARY_CAP, LUXURY_TAX, FIRST_APRON, SECOND_APRON, veteranMinSalary, capLineForExpectation } from '../data/salaryScale';
+import { findOwnerForTeam } from '../data/owners';
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
@@ -25,11 +26,16 @@ const TARGET_ROSTER_SIZE = 14;
 const MAX_ROSTER_SIZE = 15;
 const MINIMUM_SEASON_ROSTER = 14;
 
-// Bird-rights hard ceiling. Real NBA Bird rights have no per-deal cap (just
-// the league max), but teams can't recklessly stack maxes forever — we cap
-// total team payroll at ~20% above the luxury-tax line so AI Bird re-signs
-// don't produce $300M payrolls.
-const BIRD_RIGHTS_PAYROLL_CEILING = Math.floor(LUXURY_TAX_LINE * 1.2);
+// Bird-rights headroom above a team's mandate line: incumbents may be
+// re-signed a little past the line (that's what Bird rights are for), but the
+// team payroll is still hard-capped at min(1.2 × luxury tax, line + grace).
+const BIRD_GRACE_ABOVE_LINE = 5_000_000;
+
+function birdCeilingFor(capLine, luxuryTax) {
+  const legacyCeiling = Math.floor((luxuryTax ?? LUXURY_TAX_LINE) * 1.2);
+  const line = capLine?.amount ?? 0;
+  return line > 0 ? Math.min(legacyCeiling, line + BIRD_GRACE_ABOVE_LINE) : legacyCeiling;
+}
 
 // Re-exported for back-compat; delegates to the canonical vet-min helper.
 export function getVeteranMinSalary(player) {
@@ -134,6 +140,8 @@ function calculateTeamPayroll(roster) {
 function getCapSituation(roster, capNumbers = null) {
   const salaryCap = capNumbers?.salaryCap ?? SALARY_CAP;
   const luxuryTax = capNumbers?.luxuryTax ?? LUXURY_TAX_LINE;
+  const firstApron = capNumbers?.firstApron ?? FIRST_APRON;
+  const secondApron = capNumbers?.secondApron ?? SECOND_APRON;
   const payroll = calculateTeamPayroll(roster);
   const capSpace = salaryCap - payroll;
   return {
@@ -146,7 +154,33 @@ function getCapSituation(roster, capNumbers = null) {
     // legacy constants (pre-2026 saves resolve to the same values).
     salaryCap,
     luxuryTax,
+    firstApron,
+    secondApron,
   };
+}
+
+/**
+ * The spending line an AI team hard-respects — its owner's expectation-scaled
+ * mandate (rebuild → cap, develop/playoffs → 1st apron, contender/championship
+ * → 2nd apron; stingy owners one level tighter). Resolution order: the live
+ * effectiveExpectation stamped on the team (user team / season-end refresh),
+ * the static owner tier by abbreviation, then the analyzed direction mapped to
+ * a tier. Returns { key, label, amount }.
+ */
+export function teamCapLine(team, capNumbers = null, direction = null) {
+  const owner = team ? findOwnerForTeam(team.abbreviation) : null;
+  const directionTier =
+    direction === 'contending' || direction === 'title_contender' || direction === 'win_now'
+      ? 'contender'
+      : direction === 'ascending'
+        ? 'playoffs'
+        : direction === 'rebuilding'
+          ? 'rebuild'
+          : null;
+  const tier = team?.effectiveExpectation ?? owner?.expectation ?? directionTier ?? 'playoffs';
+  return capLineForExpectation(tier, capNumbers ?? undefined, {
+    moneyConsciousness: owner?.moneyConsciousness,
+  });
 }
 
 // =============================================================================
@@ -524,6 +558,7 @@ export function processTeamExtensions({
   getPlayerStatsFn = () => null,
   capSituation = null,
   draftCapital = null,
+  capLine = null,
 }) {
   const extensions = [];
   const updatedPlayers = [...leaguePlayers];
@@ -540,6 +575,15 @@ export function processTeamExtensions({
 
     if (shouldResign) {
       const contract = calculateContractOffer(player, direction, capSituation, playerStats);
+
+      // Bird-ceiling gate: an extension may carry the team past its mandate
+      // line (Bird rights), but never past min(1.2×tax, line + grace). The
+      // expiring salary is already inside `payroll`, so swap it for the new one.
+      if (capSituation && capLine) {
+        const oldSalary = player.contractSalary ?? player.contract_salary ?? 0;
+        const projectedPayroll = capSituation.payroll - oldSalary + contract.salary;
+        if (projectedPayroll > birdCeilingFor(capLine, capSituation.luxuryTax)) continue;
+      }
 
       // Update player in league players array
       for (let i = 0; i < updatedPlayers.length; i++) {
@@ -580,6 +624,7 @@ export function processTeamSignings({
   teamId = null,
   currentRosterCount,
   capSituation = null,
+  capLine = null,
 }) {
   const signings = [];
   let updatedPlayers = [...leaguePlayers];
@@ -610,20 +655,26 @@ export function processTeamSignings({
     if (shouldSign) {
       const contract = calculateContractOffer(player, direction, capSituation, getPlayerStatsFn(player.id));
 
-      // Cap check: skip if signing would push team over luxury tax (unless
-      // contending OR re-signing an incumbent via Bird rights OR open slot
-      // can be filled at vet min).
+      // Hard cap check against the team's OWN mandate line (owner-expectation
+      // scaled; contenders get headroom naturally because their line is the
+      // 2nd apron). No contender bypass — every AI team respects its line.
       if (capSituation) {
-        const projectedPayroll = calculateTeamPayroll(teamRoster) + contract.salary;
-        const isContending = direction === 'contending' || direction === 'title_contender' || direction === 'win_now';
-        const taxLine = capSituation.luxuryTax ?? LUXURY_TAX_LINE;
-        if (projectedPayroll > taxLine && !isContending) {
-          if (incumbent) {
-            // Bird rights — let it ride up to the payroll ceiling.
-            if (projectedPayroll > Math.floor(taxLine * 1.2)) continue;
-          } else if (teamRoster.length < TARGET_ROSTER_SIZE) {
-            // Vet-min over-cap signing to fill a needed slot.
-            contract.salary = getVeteranMinSalary(player);
+        const currentPayroll = calculateTeamPayroll(teamRoster);
+        const projectedPayroll = currentPayroll + contract.salary;
+        const line = capLine?.amount ?? capSituation.luxuryTax ?? LUXURY_TAX_LINE;
+        const secondApron = capSituation.secondApron ?? SECOND_APRON;
+        const minSalary = getVeteranMinSalary(player);
+        if (incumbent) {
+          // Bird rights — may exceed the line slightly, up to the hard ceiling.
+          if (projectedPayroll > birdCeilingFor(capLine, capSituation.luxuryTax)) continue;
+        } else if (projectedPayroll > line) {
+          if (
+            teamRoster.length < TARGET_ROSTER_SIZE &&
+            currentPayroll + minSalary <= secondApron
+          ) {
+            // Vet-min over-the-line signing to fill a needed slot (the minimum
+            // exception) — still never past the second apron.
+            contract.salary = minSalary;
             contract.years = 1;
           } else {
             continue;
@@ -768,6 +819,7 @@ export function runAIRosterManagement({
     const direction = analyzeTeamDirection(team, teamRoster, context);
     const draftCapital = assessDraftCapital(team, gameYear);
     const capSituation = getCapSituation(teamRoster, capNumbers);
+    const capLine = teamCapLine(team, capNumbers, direction);
 
     // Step 1: Evaluate & cut overpaid/underperforming players
     const cutResults = processTeamCuts({
@@ -797,6 +849,7 @@ export function runAIRosterManagement({
         getPlayerStatsFn,
         capSituation: capAfterCuts,
         draftCapital,
+        capLine,
       });
       results.extensions.push(...extensionResults.extensions);
       currentPlayers = extensionResults.updatedPlayers;
@@ -815,6 +868,7 @@ export function runAIRosterManagement({
         teamId: team.id,
         currentRosterCount: rosterAfterExtensions.length,
         capSituation: capAfterExtensions,
+        capLine,
       });
       results.signings.push(...signingResults.signings);
       currentPlayers = signingResults.updatedPlayers;
@@ -1050,6 +1104,7 @@ export function generateAIFreeAgencyOffers({
     const direction = analyzeTeamDirection(team, teamRoster, context);
     const draftCapital = assessDraftCapital(team, gameYear);
     const baseCap = getCapSituation(teamRoster, capNumbers);
+    const capLine = teamCapLine(team, capNumbers, direction);
 
     const pendingForTeam = teamPendingOffersTotal(offersMap, team.id);
     if (pendingForTeam >= MAX_OFFERS_PER_TEAM_PER_WINDOW) continue;
@@ -1113,48 +1168,37 @@ export function generateAIFreeAgencyOffers({
 
       const offer = calculateContractOffer(player, direction, adjustedCap, getPlayerStatsFn(player.id));
 
-      // Cap-aware budgeting:
-      //  • Contenders can dip into tax (with a $20M per-deal sanity cap).
-      //  • Bird-rights incumbents → keep the full-market offer regardless of
-      //    cap (capped by BIRD_RIGHTS_PAYROLL_CEILING so payrolls don't
-      //    spiral past ~120% of the tax line).
-      //  • Over-cap teams with open roster slots → vet-min flier instead of
-      //    skipping. This is the real-NBA "minimum exception": teams over
-      //    the cap can still sign players to vet-min deals to fill holes.
-      //  • Elite-talent flier (existing): fitted offer in remaining cap room.
-      const isContending = direction === 'contending' || direction === 'title_contender' || direction === 'win_now';
-      const projectedCommitment = pendingCommitment + offer.salary;
-      const overCap = projectedCommitment > Math.max(0, adjustedCap.capRoom);
+      // Cap-aware budgeting against the team's OWN mandate line (no contender
+      // bypass — a contender's line is simply the 2nd apron):
+      //  • Bird-rights incumbents → may pass the line, hard-capped at
+      //    min(1.2×tax, line + grace).
+      //  • Non-incumbent offers must keep payroll + pending commitments at or
+      //    under the line, with two escape hatches: an elite-talent flier
+      //    fitted into remaining room, or a vet-min flier when the team needs
+      //    bodies (the minimum exception — still never past the 2nd apron).
+      const currentPayroll = calculateTeamPayroll(teamRoster) + pendingCommitment;
+      const line = capLine.amount;
       const needsBodies = teamRoster.length < TARGET_ROSTER_SIZE;
-      if (!isContending && overCap) {
-        if (incumbent) {
-          // Bird rights: bypass cap. Just enforce the payroll ceiling so
-          // even Bird-blessed teams can't bloat past ~$200M.
-          const currentPayroll = calculateTeamPayroll(teamRoster) + pendingCommitment;
-          const birdCeiling = Math.floor((baseCap.luxuryTax ?? LUXURY_TAX_LINE) * 1.2);
-          if (currentPayroll + offer.salary > birdCeiling) continue;
+      if (incumbent) {
+        if (currentPayroll + offer.salary > birdCeilingFor(capLine, baseCap.luxuryTax)) continue;
+      } else if (currentPayroll + offer.salary > line) {
+        const expected = playerMarketValue(player);
+        const remainingRoom = Math.max(0, line - currentPayroll);
+        if (rating >= 80 && remainingRoom >= expected * 0.25) {
+          // Elite-talent flier — fit into remaining room under the line.
+          offer.salary = Math.floor(remainingRoom * 0.9);
+          offer.years = Math.min(offer.years, 2);
+        } else if (
+          needsBodies &&
+          currentPayroll + getVeteranMinSalary(player) <= (baseCap.secondApron ?? SECOND_APRON)
+        ) {
+          // Vet-min over-the-line signing — only when the team actually needs
+          // bodies. 1 year so it doesn't lock space beyond the immediate need.
+          offer.salary = getVeteranMinSalary(player);
+          offer.years = 1;
         } else {
-          const expected = playerMarketValue(player);
-          const remainingRoom = Math.max(0, Math.max(0, adjustedCap.capRoom) - pendingCommitment);
-          if (rating >= 80 && remainingRoom >= expected * 0.25) {
-            // Elite-talent flier — fit into remaining room.
-            offer.salary = Math.floor(remainingRoom * 0.9);
-            offer.years = Math.min(offer.years, 2);
-          } else if (needsBodies) {
-            // Vet-min over-cap signing — only when the team actually needs
-            // bodies. Caps the deal at 1 year so it doesn't lock cap space
-            // beyond the immediate need.
-            offer.salary = getVeteranMinSalary(player);
-            offer.years = 1;
-          } else {
-            continue;
-          }
+          continue;
         }
-      }
-      if (isContending) {
-        // Contenders can dip into tax but cap each pending offer at $20M
-        // unless re-signing their own incumbent (Bird rights override).
-        if (!incumbent && offer.salary > 20_000_000 && pendingCommitment > 0) continue;
       }
 
       // Dedup: if team already has an offer to this player, only re-offer mid-window with a salary bump

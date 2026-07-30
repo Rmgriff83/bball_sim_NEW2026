@@ -14,6 +14,7 @@ import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import CareerHighsPanel from '@/components/team/CareerHighsPanel.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
+import { capNumbersFor, capStatusFor } from '@/engine/data/salaryScale'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
 
@@ -166,6 +167,27 @@ const loadingTeamRoster = ref(false)
 const teamModalTab = ref('roster')
 
 const selectedTeamCoach = computed(() => selectedTeam.value?.team?.coach || null)
+
+// Minimal cap picture for the team popup: payroll (stored total_payroll,
+// falling back to summing the fetched roster's salaries) + a status chip
+// sharing FinancesTab's tiers via capStatusFor.
+const selectedTeamPayroll = computed(() => {
+  const t = selectedTeam.value?.team
+  const stored = t?.total_payroll ?? t?.totalPayroll ?? null
+  if (typeof stored === 'number' && stored > 0) return stored
+  return selectedTeamRoster.value.reduce(
+    (s, p) => s + (p.contractSalary ?? p.contract_salary ?? 0), 0
+  )
+})
+
+const selectedTeamCapStatus = computed(() => {
+  if (!(selectedTeamPayroll.value > 0)) return null
+  return capStatusFor(selectedTeamPayroll.value, capNumbersFor(campaignStore.currentCampaign))
+})
+
+function formatPayrollM(amount) {
+  return `$${(amount / 1_000_000).toFixed(1)}M`
+}
 
 // Average overall of the team's available roster (healthy, non-FA, non-retired)
 // — same calc the other team-logo badges use. Reactive on the modal's roster.
@@ -1397,6 +1419,10 @@ function formatSalary(salary) {
                 <div class="team-card-info">
                   <h3 class="team-card-name">{{ selectedTeam.team?.name }}</h3>
                   <div class="team-card-record">{{ selectedTeam.wins }}-{{ selectedTeam.losses }}</div>
+                  <div v-if="selectedTeamCapStatus" class="team-card-cap">
+                    <span class="team-cap-payroll">{{ formatPayrollM(selectedTeamPayroll) }}</span>
+                    <span class="team-cap-chip" :class="selectedTeamCapStatus.cls">{{ selectedTeamCapStatus.label }}</span>
+                  </div>
                 </div>
               </div>
 
@@ -3935,6 +3961,36 @@ function formatSalary(salary) {
   color: #1a1520;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
+
+/* Minimal cap picture (payroll + status chip, FinancesTab palette) */
+.team-card-cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.team-cap-payroll {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #1a1520;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+.team-cap-chip {
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.team-cap-chip.status-under { background: rgba(34, 197, 94, 0.15); color: #16a34a; }
+.team-cap-chip.status-overcap { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.team-cap-chip.status-tax { background: rgba(245, 158, 11, 0.22); color: #b45309; }
+.team-cap-chip.status-apron1 { background: rgba(249, 115, 22, 0.18); color: #c2410c; }
+.team-cap-chip.status-apron2 { background: rgba(239, 68, 68, 0.18); color: #dc2626; }
 
 /* Quick Stats */
 .team-quick-stats {

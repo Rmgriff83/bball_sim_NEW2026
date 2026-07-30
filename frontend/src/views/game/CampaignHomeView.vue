@@ -36,13 +36,13 @@ import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
 import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
 import StartSeasonBlockerModal from '@/components/game/StartSeasonBlockerModal.vue'
-import { enterOffseason, startNewSeason, backfillPlayerAwards, resignGmContract, switchUserTeam } from '@/engine/campaign/CampaignManager'
+import { enterOffseason, startNewSeason, backfillPlayerAwards, resignGmContract, switchUserTeam, unretirePlayer } from '@/engine/campaign/CampaignManager'
 import { gmLevelLabel } from '@/engine/data/gmLevels'
 import { evaluateSubtasks } from '@/engine/season/OwnerSubtaskService'
 import { buildOwnerCheckIn } from '@/engine/season/OwnerCheckInService'
 import { findOwnerForTeam, EXPECTATION_BLURB_DEFAULT, EXPECTATION_LABEL } from '@/engine/data/owners'
 import { getEffectiveExpectation, effectiveOwner } from '@/engine/season/OwnerExpectationService'
-import { capNumbersFor } from '@/engine/data/salaryScale'
+import { capNumbersFor, capLineForExpectation } from '@/engine/data/salaryScale'
 import { aiFinishUserTeamSetup } from '@/engine/campaign/UserTeamFinalizer'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
@@ -1060,6 +1060,7 @@ onMounted(async () => {
       if (!inRosterSetup()) {
         maybeShowOwnerCheckIn()
         maybeShowExpectationRaise()
+        maybeShowApronPickFreeze()
         maybeShowCoachDecisionModal()
         walkthroughStore.maybeStart('campaignHome')
         maybeStartOffseasonTour()
@@ -1705,6 +1706,30 @@ async function maybeShowRetirementModal() {
   }
 }
 
+// Per-player retirement override — the player returns to the FA pool and is
+// eligible to retire again next season (the roll runs every rollover).
+const unretiredIds = ref(new Set())
+
+async function handleUnretire(retiree) {
+  const audio = useAudioStore()
+  audio.suppressClickSound()
+  try {
+    const player = await unretirePlayer(campaignId.value, retiree.id)
+    if (!player) {
+      audio.cancel()
+      toastStore.showError('Could not un-retire this player')
+      return
+    }
+    unretiredIds.value = new Set([...unretiredIds.value, retiree.id])
+    audio.affirm()
+    toastStore.showSuccess(`${retiree.name} is coming back — available in free agency`)
+    useSyncStore().markDirty()
+  } catch (err) {
+    audio.cancel()
+    toastStore.showError(err?.message || 'Could not un-retire this player')
+  }
+}
+
 async function handleCloseRetirementModal() {
   showRetirementModal.value = false
   // Hard-clear `pendingRetirements` from settings (alongside stamping the
@@ -1990,6 +2015,35 @@ async function maybeShowExpectationRaise() {
   }
 }
 
+// Surface the apron pick-freeze penalty (stamped at season end when the user
+// finished over the second apron). Rich toast, fires once — clears the marker.
+async function maybeShowApronPickFreeze() {
+  const camp = campaignStore.currentCampaign
+  if (!camp || camp.id !== campaignId.value) return
+  const freeze = camp.settings?.pendingApronPickFreeze
+  if (!freeze) return
+  if (isGameInProgress.value) return
+
+  toastStore.showAchievement({
+    header: 'Apron Penalty',
+    label: 'First-round pick frozen',
+    subtitle: freeze.message
+      ?? 'Finished the season over the second apron — next year\'s first-round pick drops to the end of round 1.',
+  })
+
+  try {
+    await CampaignRepository.updateSettings(campaignId.value, { pendingApronPickFreeze: null })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        pendingApronPickFreeze: null,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to clear apron-freeze marker:', err)
+  }
+}
+
 // True while this mount belongs to a custom-roster campaign that hasn't
 // finished roster setup — CampaignView's guard is about to replace the route
 // with /roster-setup, making this a ghost mount whose tours/modals must not
@@ -2024,6 +2078,7 @@ function maybeShowOwnerCheckIn() {
   // Live (ratcheted) expectation for this campaign — falls back to the owner's
   // static baseline for older saves.
   const eff = getEffectiveExpectation(camp, owner)
+  const campCapNumbers = capNumbersFor(camp)
   const subResult = evaluateSubtasks({
     owner,
     expectation: eff.tier,
@@ -2036,7 +2091,8 @@ function maybeShowOwnerCheckIn() {
     progress: gmc?.progress ?? {},
     userTeamId: camp.teamId ?? teamStore.team?.id ?? null,
     coach: teamStore.coach ?? teamStore.team?.coach ?? null,
-    salaryCap: capNumbersFor(camp).salaryCap,
+    salaryCap: campCapNumbers.salaryCap,
+    capLine: capLineForExpectation(eff.tier, campCapNumbers, { moneyConsciousness: owner.moneyConsciousness }),
   })
 
   const signedYear = gmc?.signedSeasonYear ?? year
@@ -2772,6 +2828,7 @@ async function handleConfirmSimulate() {
       lastSimResult.value = null
       // Owner may have raised expectations mid-season after this run's results.
       await maybeShowExpectationRaise()
+      await maybeShowApronPickFreeze()
       await checkPlayoffStatus()
       // Check for trade proposals after user game sim
       await checkTradeDeadline()
@@ -4486,7 +4543,9 @@ function handleCloseSimulateModal() {
       :show="showRetirementModal"
       :retirees="retireesForModal"
       :season="pendingRetirementsYear"
+      :unretired-ids="unretiredIds"
       @close="handleCloseRetirementModal"
+      @unretire="handleUnretire"
     />
 
     <!-- GM contract-end decision (Part 2): extend (re-sign) or pick a new team -->

@@ -413,6 +413,7 @@ export const useFinanceStore = defineStore('finance', () => {
         salary: offer.salary ?? null,
         years: offer.years ?? null,
         salaryCap: financeSummary.value?.salary_cap ?? DEFAULT_SALARY_CAP,
+        capNumbers: capNumbersFor(campaign),
       })
 
       if (!result.success) throw new Error(result.error || 'Failed to sign free agent')

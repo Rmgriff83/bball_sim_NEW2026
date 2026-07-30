@@ -30,7 +30,7 @@ import { pickBestOffer } from '../ai/FreeAgentDecisionService'
 import { buildSeasonStatsLookup } from '../finance/FinanceManager'
 import { FREE_AGENCY_DURATION_DAYS } from '../season/SeasonDeadlines'
 import { SALARY_CAP } from '../data/teams'
-import { capNumbersFor } from '../data/salaryScale'
+import { capNumbersFor, veteranMinSalary } from '../data/salaryScale'
 
 /**
  * Run the entire offseason in one shot:
@@ -606,16 +606,21 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
       return true
     })
     .reduce((sum, p) => sum + (p.contractSalary ?? p.contract_salary ?? 0), 0)
-  const userCapSpace = (capNumbersFor(campaign).salaryCap ?? SALARY_CAP) - userRosterPayroll
+  // Outside signings can push all the way to the SECOND APRON (spending past
+  // the cap is a penalized choice, not a block — the ops lock only bites above
+  // apron 2). Bird-rights re-signs and minimum-salary deals are exempt.
+  const userCapNumbers = capNumbersFor(campaign)
+  const userCapSpace = (userCapNumbers.secondApron ?? userCapNumbers.salaryCap ?? SALARY_CAP) - userRosterPayroll
   // Bird-rights signings (re-signing your own player from last season) don't
-  // count toward the cap-overflow check — real NBA teams can exceed the cap
-  // to retain their own free agents. Only the NEW outside signings need to
-  // fit in available room.
+  // count toward the overflow check — real NBA teams can exceed the cap to
+  // retain their own free agents. Minimum-salary offers ride the minimum
+  // exception. Only the NEW non-minimum outside signings need to fit.
   const isUserIncumbent = (player) => {
     const prev = player?.previousTeamId ?? player?.previous_team_id ?? null
     return prev != null && String(prev) === String(userTeamId)
   }
-  const nonBirdSignings = pendingUserSignings.filter(x => !isUserIncumbent(x.player))
+  const isMinOffer = (x) => (x.offer?.salary || 0) <= veteranMinSalary(x.player)
+  const nonBirdSignings = pendingUserSignings.filter(x => !isUserIncumbent(x.player) && !isMinOffer(x))
   const pendingTotal = nonBirdSignings.reduce((s, x) => s + (x.offer?.salary || 0), 0)
 
   let pendingChoice = null
@@ -634,10 +639,11 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
   } else if (pendingUserSignings.length > 0) {
     // User won more than they can afford on outside signings — surface a
     // choice in the modal for NON-Bird signings. Bird-rights incumbents
-    // auto-finalize since Bird rights bypass the cap; the user shouldn't
+    // auto-finalize since Bird rights bypass the cap, and minimum-salary
+    // deals auto-finalize under the minimum exception; the user shouldn't
     // be forced to "pick" between keeping their own player and a free
     // agent that's competing for the same cap dollars.
-    for (const { player, offer } of pendingUserSignings.filter(x => isUserIncumbent(x.player))) {
+    for (const { player, offer } of pendingUserSignings.filter(x => isUserIncumbent(x.player) || isMinOffer(x))) {
       playerUpdates.push(buildUserSigningUpdate(player, offer))
       accepted.push({
         playerId: player.id,

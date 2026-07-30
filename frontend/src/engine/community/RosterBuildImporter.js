@@ -26,6 +26,7 @@ import { PlayerRepository } from '../db/PlayerRepository'
 import { PlayerHeadshotRepository } from '../db/PlayerHeadshotRepository'
 import { CoachHeadshotRepository } from '../db/CoachHeadshotRepository'
 import { hydratePlayerKeys } from '../db/playerKeyHydration'
+import { getCoachActionBudget, getCoachTrainBudget } from '../data/coaches'
 import { normalizePlayerAttributes } from '../data/attributeSchema'
 import { generateUUID } from '../campaign/CampaignManager'
 
@@ -67,6 +68,25 @@ function _rebindPlayer(raw, { campaignId, teamId, teamAbbreviation }) {
     'offense_upgrade_points', 'offenseUpgradePoints',
     'defense_upgrade_points', 'defenseUpgradePoints',
     '_overallExact',
+    // Single-game highs (feed the record boards), per-season stat archives,
+    // career team-result counters, and season-end awards — all accrued by
+    // the SOURCE campaign's play, none editor-authorable. Authored history
+    // (draft info, careerSeasons, college/country, personality) stays.
+    'careerHighs', 'career_highs',
+    'seasonHighs', 'season_highs',
+    'seasonHistory', 'season_history',
+    'playerCareer', 'player_career',
+    'awards',
+    'all_star_selections', 'allStarSelections',
+    'mvp_awards', 'mvpAwards',
+    'finals_mvp_awards', 'finalsMvpAwards',
+    'rookie_of_the_year', 'rookieOfTheYear',
+    'all_nba_selections', 'allNbaSelections',
+    'all_nba_first_team', 'allNbaFirstTeam',
+    'all_rookie_team', 'allRookieTeam',
+    'all_defensive_team', 'allDefensiveTeam',
+    'resignedThisSeason', 'resigned_this_season',
+    'resignedSeasonYear', 'resigned_season_year',
   ]) {
     delete player[key]
   }
@@ -189,6 +209,25 @@ export async function importRosterBuild(campaignId, build) {
     const originalCoachId = coach.id ?? null
     team.coach = { ...coach, id: generateUUID() }
     if (originalCoachId) coachIdMap.set(originalCoachId, team.coach.id)
+    // Fresh start — the SOURCE campaign's simmed games accrued onto the
+    // coach's record (career_stats + legacy flat fields). A build is roster
+    // data; records restart at zero like generation stamps them.
+    delete team.coach.career_stats
+    team.coach.career_wins = 0
+    team.coach.career_losses = 0
+    team.coach.playoff_wins = 0
+    team.coach.playoff_losses = 0
+    team.coach.championships = 0
+    team.coach.conference_titles = 0
+    team.coach.seasons_coached = 0
+    // Per-campaign lifecycle: stamp like a fresh hire (mirrors
+    // CampaignManager's hydrateHire) — the source coach's consumed action/
+    // training budgets otherwise arrive as 0 for the whole first season.
+    team.coach.hiredSeason = campaign.currentSeasonYear ?? campaign.current_season_year ?? 2026
+    team.coach.seasonsWithTeam = 0
+    team.coach.activeTraining = null
+    team.coach.actionsRemaining = getCoachActionBudget(team.coach)
+    team.coach.trainActionsRemaining = getCoachTrainBudget(team.coach)
     // Keep the sim-facing scheme mirror aligned with the imported coach.
     const off = coach.offensiveScheme ?? coach.offensive_scheme
     const def = coach.defensiveScheme ?? coach.defensive_scheme

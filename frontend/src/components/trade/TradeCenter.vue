@@ -11,6 +11,7 @@ import { useAudioStore } from '@/stores/audio'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { validateSalaryCap } from '@/engine/finance/TradeExecutor'
+import { capNumbersFor } from '@/engine/data/salaryScale'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowRight, ArrowLeft, X, Check, AlertCircle, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus, Package, Users, Repeat, AlertTriangle, CheckCircle, Info, Star, Calendar, DollarSign } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -133,10 +134,17 @@ const tradeValidation = computed(() => {
       userReceiving: userRequesting.value.map(toApi),
       capMode: 'normal',
       getPlayerFn,
+      currentPayroll: teamStore.totalSalary ?? 0,
+      capNumbers: capNumbersFor(campaignStore.currentCampaign),
     })
     if (!cap.valid) {
-      const overBy = (cap.incoming_salary ?? incomingSalary) - (cap.max_incoming ?? 0)
-      issues.push(`Incoming salary exceeds limit by ${formatSalary(Math.max(0, overBy))}. Add more outgoing salary or reduce incoming.`)
+      if (cap.max_incoming != null) {
+        const overBy = (cap.incoming_salary ?? incomingSalary) - (cap.max_incoming ?? 0)
+        issues.push(`Incoming salary exceeds limit by ${formatSalary(Math.max(0, overBy))}. Add more outgoing salary or reduce incoming.`)
+      } else {
+        // Second-apron rule (no 125% ceiling in play) — show the engine's reason.
+        issues.push(cap.reason || 'Trade violates salary-cap rules.')
+      }
     }
 
     // Warn about significant salary imbalance

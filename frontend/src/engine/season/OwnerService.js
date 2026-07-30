@@ -195,6 +195,35 @@ export function computeOwnerSatisfaction({ owner, currentWins = 0, currentLosses
   return { value, label, color, expectedWins: expected };
 }
 
+// --- Cap-mandate breach wrath (apron economy) --------------------------------
+// Spending past the owner's mandated payroll line is allowed, but it directly
+// angers the owner beyond the failed under_cap sub-task. Scaled by severity and
+// by how money-conscious the owner is.
+const CAP_BREACH_BASE = 8;
+
+/**
+ * Satisfaction penalty (a NEGATIVE number, or 0) for payroll above the owner's
+ * mandated line. Severity 1 = over the mandate; severity 2 = ALSO over the
+ * second apron when the mandate sits below it. Scaled by moneyConsciousness/3,
+ * so a tightfisted owner (5) breached past apron 2 costs ~27 points while a
+ * spend-happy title owner (1) barely over loses ~3.
+ *
+ * @param {object} params
+ * @param {number} params.payroll
+ * @param {object} params.capLine - { amount } from capLineForExpectation
+ * @param {object} [params.capNumbers] - { secondApron } for the severity-2 check
+ * @param {number} [params.moneyConsciousness] - owner 1-5 (default 3)
+ * @returns {number} 0 or a negative penalty
+ */
+export function capBreachPenalty({ payroll = 0, capLine = null, capNumbers = null, moneyConsciousness = 3 } = {}) {
+  const line = capLine?.amount ?? 0;
+  if (!(line > 0) || !(payroll > line)) return 0;
+  const secondApron = capNumbers?.secondApron ?? 0;
+  const severity = secondApron > line && payroll > secondApron ? 2 : 1;
+  const mc = _clamp(moneyConsciousness ?? 3, 1, 5);
+  return -Math.round(CAP_BREACH_BASE * severity * (mc / 3));
+}
+
 // The owner judges the GM on overall wins (60%) and concrete sub-tasks (40%).
 export const WINS_WEIGHT = 0.6;
 export const SUBTASK_WEIGHT = 0.4;
@@ -225,7 +254,9 @@ const NEUTRAL_SATISFACTION = 50;
  * @param {object|null} [params.lastSeason]
  * @param {number} [params.subtaskScore] - 0-100 from OwnerSubtaskService.evaluateSubtasks
  * @param {number} [params.contractProgress] - 0-1 through the contract (default 1 = full weight)
- * @returns {{ value, label, color, winsSatisfaction, subtaskScore, effectiveSubtaskScore, subtaskTimeWeight, contractProgress, expectedWins }}
+ * @param {number} [params.capBreachPenalty] - 0 or negative, from capBreachPenalty() — the
+ *   owner's wrath for payroll above their mandated line, applied to the blended value
+ * @returns {{ value, label, color, winsSatisfaction, subtaskScore, effectiveSubtaskScore, subtaskTimeWeight, contractProgress, expectedWins, capBreachPenalty }}
  */
 export function combinedSatisfaction({
   owner,
@@ -237,6 +268,7 @@ export function combinedSatisfaction({
   expectedWins = null,
   currentPlayoff = null,
   injuryRelief = 0,
+  capBreachPenalty: breachPenalty = 0,
 } = {}) {
   const wins = computeOwnerSatisfaction({ owner, currentWins, currentLosses, lastSeason, expectedWins, currentPlayoff, injuryRelief });
   const subScore = _clamp(Math.round(subtaskScore || 0), 0, 100);
@@ -248,8 +280,9 @@ export function combinedSatisfaction({
   const subtaskTimeWeight = Math.pow(progress, gamma);
 
   const effectiveSubtask = NEUTRAL_SATISFACTION + (subScore - NEUTRAL_SATISFACTION) * subtaskTimeWeight;
+  const wrath = Math.min(0, Math.round(breachPenalty || 0));
   const value = _clamp(
-    Math.round(wins.value * WINS_WEIGHT + effectiveSubtask * SUBTASK_WEIGHT),
+    Math.round(wins.value * WINS_WEIGHT + effectiveSubtask * SUBTASK_WEIGHT) + wrath,
     0,
     100
   );
@@ -264,5 +297,6 @@ export function combinedSatisfaction({
     subtaskTimeWeight,
     contractProgress: progress,
     expectedWins: wins.expectedWins,
+    capBreachPenalty: wrath,
   };
 }

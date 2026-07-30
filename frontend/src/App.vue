@@ -85,6 +85,13 @@ onMounted(() => {
           if (parsed.protocol !== 'bballsim:') return
           const path = parsed.searchParams.get('path')
           if (path && path.startsWith('/')) {
+            // The community page opens in an in-app SFSafariViewController
+            // (@capacitor/browser) that stays presented ON TOP of the
+            // WebView — without closing it, the deep-link navigation
+            // happens invisibly underneath. No-op when nothing is open.
+            import('@capacitor/browser')
+              .then(({ Browser }) => Browser.close())
+              .catch(() => {})
             router.push(path)
           }
         } catch { /* malformed link — ignore */ }

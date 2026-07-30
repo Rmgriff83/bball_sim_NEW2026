@@ -4,7 +4,8 @@ import { X, Sparkles, Brush, RefreshCw } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { CANONICAL_ATTRIBUTES, normalizePlayerAttributes } from '@/engine/data/attributeSchema'
 import { deriveOverallFromAttributes, derivePotential, ensureAttributeCaps } from '@/engine/evolution/PlayerEvolution'
-import { detectArchetype, ARCHETYPES, ARCHETYPE_SEEDS, ARCHETYPE_SEED_BASELINE } from '@/engine/data/archetypes'
+import { detectArchetype, ARCHETYPES, ARCHETYPE_SEEDS } from '@/engine/data/archetypes'
+import { applyArchetypeToPlayer, TALENT_TIERS } from '@/engine/data/archetypeApply'
 import { PLAYER_BADGE_LEVELS, compareBadgeLevels, getDerivedMaxBadgeLevel } from '@/engine/data/playerBadgeStore'
 import { BADGES } from '@/engine/data/badges'
 import { MAX_PLAYER_BADGES } from '@/stores/rosterEditor'
@@ -57,13 +58,6 @@ const selectedArchetype = ref('')
 
 // Talent level for the archetype apply — scales the whole seeded attribute
 // set so the same archetype shape can be authored at any caliber.
-const TALENT_TIERS = [
-  { key: 'superstar', label: 'Superstar', target: 92 },
-  { key: 'allstar', label: 'All-Star', target: 86 },
-  { key: 'starter', label: 'Starter', target: 80 },
-  { key: 'role', label: 'Role Player', target: 74 },
-  { key: 'bench', label: 'Bench', target: 68 },
-]
 const selectedTalent = ref('starter')
 
 // Silent-discard guard: a long editing session ending on an accidental
@@ -271,59 +265,14 @@ watch([selectedArchetype, selectedTalent], () => {
 })
 
 function applyArchetype({ preserveVitals = false } = {}) {
-  const seed = ARCHETYPE_SEEDS[selectedArchetype.value]
-  if (!seed) return
-  // The save-time auto-apply preserves position/height — the user set those
-  // on the Vitals tab and the template must not silently stomp them (stomped
-  // positions were the original bug report). The explicit Apply button keeps
-  // full template semantics, physique included.
-  if (!preserveVitals) {
-    if (seed.position) draft.position = seed.position
-    if (seed.heightInches) { draft.heightInches = seed.heightInches; draft.height_inches = seed.heightInches }
-  }
-  for (const cat of Object.keys(CANONICAL_ATTRIBUTES)) {
-    for (const key of CANONICAL_ATTRIBUTES[cat]) {
-      draft.attributes[cat][key] = ARCHETYPE_SEED_BASELINE
-    }
-  }
-  for (const [cat, map] of Object.entries(seed.attrs ?? {})) {
-    for (const [key, val] of Object.entries(map)) {
-      if (draft.attributes[cat] && key in draft.attributes[cat]) draft.attributes[cat][key] = val
-    }
-  }
-
-  // Scale the seeded set to the chosen talent tier. The derived overall is
-  // ~linear in a uniform attribute shift (calibration slope 1.0478), so one
-  // measured delta plus a couple of ±1 refinement passes (clamping distorts
-  // the linearity at the 25/99 edges) lands within a point of the target
-  // while preserving the archetype's relative attribute shape.
-  const tier = TALENT_TIERS.find((t) => t.key === selectedTalent.value) ?? TALENT_TIERS[2]
-  const shiftAll = (delta) => {
-    if (!delta) return
-    for (const cat of Object.keys(CANONICAL_ATTRIBUTES)) {
-      for (const key of CANONICAL_ATTRIBUTES[cat]) {
-        const v = draft.attributes[cat][key] ?? ARCHETYPE_SEED_BASELINE
-        draft.attributes[cat][key] = Math.max(25, Math.min(99, v + delta))
-      }
-    }
-  }
-  const measured = deriveOverallFromAttributes(draft.attributes, draft.position)
-  shiftAll(Math.round((tier.target - measured) / 1.0478))
-  for (let i = 0; i < 2; i++) {
-    const now = deriveOverallFromAttributes(draft.attributes, draft.position)
-    if (Math.abs(now - tier.target) <= 1) break
-    shiftAll(now < tier.target ? 1 : -1)
-  }
-
-  for (const cat of Object.keys(CANONICAL_ATTRIBUTES)) {
-    draft.attributeCaps[cat] = draft.attributeCaps[cat] ?? {}
-    for (const key of CANONICAL_ATTRIBUTES[cat]) {
-      draft.attributeCaps[cat][key] = Math.min(99, draft.attributes[cat][key] + 8)
-    }
-  }
+  // Shared engine helper (also powers the add-player modal). preserveVitals:
+  // the save-time auto-apply must not stomp authored position/height; the
+  // explicit Apply button keeps full template semantics, physique included.
+  const result = applyArchetypeToPlayer(draft, selectedArchetype.value, selectedTalent.value, { preserveVitals })
+  if (!result) return
   archetypeApplied.value = true
   archetypeNote.value =
-    `Applied — ${tier.label.toUpperCase()} build (OVR ${deriveOverallFromAttributes(draft.attributes, draft.position)}). Attributes and ceilings re-seeded.`
+    `Applied — ${result.tier.label.toUpperCase()} build (OVR ${result.overall}). Attributes and ceilings re-seeded.`
 }
 
 // ---- Contract --------------------------------------------------------------

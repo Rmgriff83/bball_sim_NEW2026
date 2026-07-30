@@ -47,17 +47,15 @@ export function supportEmail() {
 
 /**
  * Open the user's mail client with the feedback pre-addressed + pre-filled.
- * `_system` routes to the OS mail handler on native; plain location works on web.
+ * Location navigation routes mailto: to the OS handler on native (Capacitor
+ * hands non-http schemes to the system) and works on web — window.open with
+ * the Cordova '_system' target silently no-ops in Capacitor's WKWebView.
  */
 export function sendFeedbackEmail(body) {
   const url = `mailto:${supportEmail()}`
     + `?subject=${encodeURIComponent('Bball Sim Feedback')}`
     + `&body=${encodeURIComponent(body ?? '')}`
   try {
-    if (Capacitor.isNativePlatform()) {
-      window.open(url, '_system')
-    } else {
-      window.location.href = url
-    }
+    window.location.href = url
   } catch { /* best-effort */ }
 }

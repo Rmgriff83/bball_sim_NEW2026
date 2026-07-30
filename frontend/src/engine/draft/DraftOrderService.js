@@ -59,7 +59,7 @@ export function buildRookieDraftOrder(teams, standings, gameYear, lotteryResult 
   // a properly constructed result, but defensive) fall back to their
   // reverse-standings index. Round 2 still walks teamRecords in standings
   // order, so we keep the original array intact.
-  const round1Order = (() => {
+  let round1Order = (() => {
     if (!lotteryResult?.actualOrder) return teamRecords
     // Keyed by abbreviation (stable) — see lotteryPositionMap. An id-keyed
     // lookup can miss for every team and silently fall back to reverse
@@ -71,6 +71,23 @@ export function buildRookieDraftOrder(teams, standings, gameYear, lotteryResult 
       return aPick - bPick
     })
   })()
+
+  // 3c. Apron penalty: a team that finished a season over the second apron has
+  // this draft's first frozen to the END of round 1 (stamped on the ORIGINAL
+  // team as apronFrozenFirstYears; see CampaignManager.enterOffseason). The
+  // slot moves with the pick, so a traded frozen first drafts at the back for
+  // its holder too. Stable order among multiple frozen teams; round 2 untouched.
+  const frozenAbbrs = new Set(
+    teams
+      .filter(t => Array.isArray(t.apronFrozenFirstYears) && t.apronFrozenFirstYears.includes(gameYear))
+      .map(t => t.abbreviation)
+  )
+  if (frozenAbbrs.size > 0) {
+    round1Order = [
+      ...round1Order.filter(r => !frozenAbbrs.has(r.team.abbreviation)),
+      ...round1Order.filter(r => frozenAbbrs.has(r.team.abbreviation)),
+    ]
+  }
 
   // 4. Build draft order: for each standing position, look up who owns the pick
   const draftOrder = []
