@@ -28,13 +28,16 @@ const MINIMUM_SEASON_ROSTER = 14;
 
 // Bird-rights headroom above a team's mandate line: incumbents may be
 // re-signed a little past the line (that's what Bird rights are for), but the
-// team payroll is still hard-capped at min(1.2 × luxury tax, line + grace).
+// team payroll is hard-capped at min(1.2 × luxury tax, line + grace, 2nd
+// apron). The apron clamp means an AI team NEVER re-signs itself into the
+// frozen-first-rounder penalty — the AI "respects" penalty C by construction.
 const BIRD_GRACE_ABOVE_LINE = 5_000_000;
 
-function birdCeilingFor(capLine, luxuryTax) {
+function birdCeilingFor(capLine, luxuryTax, secondApron = null) {
   const legacyCeiling = Math.floor((luxuryTax ?? LUXURY_TAX_LINE) * 1.2);
   const line = capLine?.amount ?? 0;
-  return line > 0 ? Math.min(legacyCeiling, line + BIRD_GRACE_ABOVE_LINE) : legacyCeiling;
+  const graced = line > 0 ? Math.min(legacyCeiling, line + BIRD_GRACE_ABOVE_LINE) : legacyCeiling;
+  return secondApron > 0 ? Math.min(graced, secondApron) : graced;
 }
 
 // Re-exported for back-compat; delegates to the canonical vet-min helper.
@@ -582,7 +585,7 @@ export function processTeamExtensions({
       if (capSituation && capLine) {
         const oldSalary = player.contractSalary ?? player.contract_salary ?? 0;
         const projectedPayroll = capSituation.payroll - oldSalary + contract.salary;
-        if (projectedPayroll > birdCeilingFor(capLine, capSituation.luxuryTax)) continue;
+        if (projectedPayroll > birdCeilingFor(capLine, capSituation.luxuryTax, capSituation.secondApron)) continue;
       }
 
       // Update player in league players array
@@ -666,7 +669,7 @@ export function processTeamSignings({
         const minSalary = getVeteranMinSalary(player);
         if (incumbent) {
           // Bird rights — may exceed the line slightly, up to the hard ceiling.
-          if (projectedPayroll > birdCeilingFor(capLine, capSituation.luxuryTax)) continue;
+          if (projectedPayroll > birdCeilingFor(capLine, capSituation.luxuryTax, capSituation.secondApron)) continue;
         } else if (projectedPayroll > line) {
           if (
             teamRoster.length < TARGET_ROSTER_SIZE &&
@@ -1180,7 +1183,7 @@ export function generateAIFreeAgencyOffers({
       const line = capLine.amount;
       const needsBodies = teamRoster.length < TARGET_ROSTER_SIZE;
       if (incumbent) {
-        if (currentPayroll + offer.salary > birdCeilingFor(capLine, baseCap.luxuryTax)) continue;
+        if (currentPayroll + offer.salary > birdCeilingFor(capLine, baseCap.luxuryTax, baseCap.secondApron)) continue;
       } else if (currentPayroll + offer.salary > line) {
         const expected = playerMarketValue(player);
         const remainingRoom = Math.max(0, line - currentPayroll);

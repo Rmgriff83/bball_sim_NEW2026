@@ -3,7 +3,7 @@
     v-if="walkthroughKey && !walkthroughStore.isRunning"
     type="button"
     class="wt-replay-btn"
-    :class="`wt-replay-${variant}`"
+    :class="[`wt-replay-${variant}`, { 'wt-replay-flush': flush }]"
     title="Replay walkthrough"
     aria-label="Replay walkthrough"
     @click="replay"
@@ -24,12 +24,18 @@ const props = defineProps({
   // 'page' pins fixed to the viewport's bottom-left; 'modal' pins absolute to
   // the nearest positioned ancestor (the player-detail modal content).
   variant: { type: String, default: 'page' },
+  // Step to start the replay from — hosts pass a non-zero index when the
+  // current page state makes the tour's earlier steps impossible.
+  startIndex: { type: Number, default: 0 },
+  // Pages without the floating bottom nav (e.g. the roster editor) sit the
+  // button at the true bottom-left instead of clearing the 70px nav island.
+  flush: { type: Boolean, default: false },
 })
 
 const walkthroughStore = useWalkthroughStore()
 
 function replay() {
-  walkthroughStore.forceStart(props.walkthroughKey)
+  walkthroughStore.forceStart(props.walkthroughKey, props.startIndex)
 }
 </script>
 
@@ -72,6 +78,11 @@ function replay() {
   .wt-replay-page {
     bottom: 16px;
   }
+}
+
+/* Flush: the host page has no bottom nav at any breakpoint. */
+.wt-replay-page.wt-replay-flush {
+  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 12px);
 }
 
 /* Modal variant: pins to the modal content's bottom-left (the parent provides

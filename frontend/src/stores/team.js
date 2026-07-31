@@ -1610,7 +1610,7 @@ export const useTeamStore = defineStore('team', () => {
    * @param {{year:number, round:number, pick:number}|null} [fields.draft]
    *   Draft history; explicit null = undrafted. Omit to leave unchanged.
    * @param {number} [fields.careerSeasons]
-   * @param {{traits?:string[], morale?:number, chemistry?:number, mediaProfile?:string}} [fields.personality]
+   * @param {{traits?:string[], chemistry?:number, mediaProfile?:string}} [fields.personality] — morale is sim-managed, not writable here
    */
   async function updatePlayerFlavor(campaignId, playerId, fields = {}) {
     if (!campaignId || !playerId) throw new Error('Missing campaign or player')
@@ -1657,16 +1657,15 @@ export const useTeamStore = defineStore('team', () => {
     }
     if (fields.personality && typeof fields.personality === 'object') {
       const p = fields.personality
-      // Shallow-merge onto the existing personality so motivations/chemistry
-      // history and any future keys survive.
+      // Shallow-merge onto the existing personality so motivations/morale
+      // and any future keys survive. Morale is deliberately NOT writable
+      // through flavor editing — it's sim-managed (games, coach meetings);
+      // exposing it here let users pin a star's happiness mid-season.
       const merged = { ...(playerRecord.personality ?? {}) }
       if (Array.isArray(p.traits)) merged.traits = p.traits.slice(0, 3)
-      if (Number.isFinite(p.morale)) merged.morale = Math.max(0, Math.min(99, Math.round(p.morale)))
       if (Number.isFinite(p.chemistry)) merged.chemistry = Math.max(0, Math.min(99, Math.round(p.chemistry)))
       if (['low_key', 'normal', 'high_profile'].includes(p.mediaProfile)) merged.mediaProfile = p.mediaProfile
       patch.personality = merged
-      // Legacy top-level morale mirror (same convention as holdCoachMeeting).
-      if (Number.isFinite(p.morale)) patch.morale = merged.morale
     }
 
     Object.assign(playerRecord, patch)

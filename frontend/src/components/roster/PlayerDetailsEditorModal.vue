@@ -10,6 +10,8 @@ import { PLAYER_BADGE_LEVELS, compareBadgeLevels, getDerivedMaxBadgeLevel } from
 import { BADGES } from '@/engine/data/badges'
 import { MAX_PLAYER_BADGES } from '@/stores/rosterEditor'
 import { PERSONALITY_TRAITS, pickBadgesByFit, getBadgeLevel, _badgeCountForOvr } from '@/engine/campaign/CampaignManager'
+import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 
 // Tabbed player editor for the Roster Editor — the "everything the attribute
 // table doesn't own" modal, styled after the in-game PlayerDetailModal shell
@@ -43,6 +45,22 @@ const TABS = [
 ]
 
 const activeTab = ref('vitals')
+
+// Roster-editor onboarding: the Archetype and Badges tabs each get a one-shot
+// mini-tour on first open (chained after the editor-intro tour; forceStart
+// mirrors the paid-feature pattern — runs once for every user, gated only by
+// the per-key done flag).
+const walkthroughStore = useWalkthroughStore()
+const PDEM_TAB_TOURS = { archetype: 'rosterEditorArchetype', badges: 'rosterEditorBadges' }
+watch(activeTab, (tab) => {
+  const key = PDEM_TAB_TOURS[tab]
+  if (!key) return
+  if (walkthroughStore.isRunning || walkthroughStore.isDone(key)) return
+  walkthroughStore.forceStart(key)
+})
+
+// "?" replay: tab-scoped mini-tour where one exists, the editor intro elsewhere.
+const replayTourKey = computed(() => PDEM_TAB_TOURS[activeTab.value] ?? 'rosterEditorPlayer')
 
 // Deep, clone-safe working copy so Cancel discards edits and no Vue proxy
 // reaches persistence directly.
@@ -518,7 +536,7 @@ const POSITION_COLORS = {
 
         <main class="pdem-content">
           <!-- Cosmic hero header -->
-          <div class="pdem-hero">
+          <div class="pdem-hero" data-tour="pdem-hero">
             <div class="pdem-avatar">
               <PlayerAvatar :player="draft" :size="72" :campaign-id="campaignId" />
               <button
@@ -547,7 +565,7 @@ const POSITION_COLORS = {
           </div>
 
           <!-- Subtabs -->
-          <div class="pdem-tabs">
+          <div class="pdem-tabs" data-tour="pdem-edit-tabs">
             <button
               v-for="tab in TABS"
               :key="tab.key"
@@ -655,7 +673,7 @@ const POSITION_COLORS = {
           </div>
 
           <!-- Archetype -->
-          <div v-else-if="activeTab === 'archetype'" class="pdem-panel">
+          <div v-else-if="activeTab === 'archetype'" class="pdem-panel" data-tour="pdem-arch-section">
             <div class="pdem-current-arch">
               Detected archetype: <strong>{{ liveArchetype }}</strong>
             </div>
@@ -686,7 +704,7 @@ const POSITION_COLORS = {
           </div>
 
           <!-- Badges — the player's loadout + Add Badge -->
-          <div v-else-if="activeTab === 'badges'" class="pdem-panel">
+          <div v-else-if="activeTab === 'badges'" class="pdem-panel" data-tour="pdem-badges-panel">
             <div class="pdem-suggest-row top">
               <button class="pdem-apply" @click="refreshBadges">
                 <RefreshCw :size="13" /> Refresh Badges
@@ -747,7 +765,7 @@ const POSITION_COLORS = {
               </div>
             </div>
 
-            <label v-if="badgeRowIds.length < MAX_PLAYER_BADGES" class="pdem-add-badge">
+            <label v-if="badgeRowIds.length < MAX_PLAYER_BADGES" class="pdem-add-badge" data-tour="pdem-add-badge">
               <span>Add Badge ({{ badgeRowIds.length }}/{{ MAX_PLAYER_BADGES }})</span>
               <select
                 class="pdem-input"
@@ -845,6 +863,7 @@ const POSITION_COLORS = {
               </label>
             </div>
           </div>
+          <WalkthroughReplayButton :walkthrough-key="replayTourKey" variant="modal" />
         </main>
 
         <footer class="pdem-foot">
@@ -979,6 +998,9 @@ const POSITION_COLORS = {
   overflow-y: auto;
   padding: 16px 20px;
   scrollbar-width: none;
+  /* Positioning context for the walkthrough replay "?" (modal variant),
+     matching PlayerDetailModal's content-anchored placement. */
+  position: relative;
 }
 
 .pdem-content::-webkit-scrollbar {

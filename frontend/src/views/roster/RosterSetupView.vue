@@ -1,7 +1,9 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useRosterEditorStore } from '@/stores/rosterEditor'
+import { useWalkthroughStore } from '@/stores/walkthrough'
+import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
@@ -34,7 +36,7 @@ const router = useRouter()
 const store = useRosterEditorStore()
 const authStore = useAuthStore()
 const {
-  teams, activeTeam, activeRoster, freeAgents, isFantasy, hasStarted,
+  teams, activeTeam, activeRoster, freeAgents, isFantasy, poolOnlyFantasy, hasStarted,
   userTeamId, loading, saving, error, selectedId, selectedPlayer, isDirty, dirtyIds,
   teamOveralls,
 } = storeToRefs(store)
@@ -87,9 +89,9 @@ const tablePlayers = computed(() => {
 // Team rosters honor the game-wide 15-man cap; the fantasy pool is uncapped.
 const rosterFull = computed(() =>
   (view.value === 'roster' && activeRoster.value.length >= MAX_ROSTER_SIZE)
-  // Standard custom campaigns cap the authored FA market; the fantasy draft
-  // pool stays uncapped (it needs 15 × teams).
-  || (view.value === 'pool' && !isFantasy.value && freeAgents.value.length >= MAX_FA_POOL))
+  // Authored FA markets are capped; only the imported-fantasy draft pool is
+  // uncapped (it holds every player, 15 × teams and then some).
+  || (view.value === 'pool' && !poolOnlyFantasy.value && freeAgents.value.length >= MAX_FA_POOL))
 
 onMounted(async () => {
   // Returning mid-edit (e.g. from the headshot editor round-trip): the Pinia
@@ -121,11 +123,20 @@ onMounted(async () => {
   } else {
     await store.load(campaignId.value)
   }
+  // One-way door: once the roster is finalized the campaign is LIVE — this
+  // editor mutates raw player records (morale, attributes, contracts), which
+  // would bypass the entire sim if reachable mid-season. Bounce home.
+  const setupDone = store.campaign?.rosterSetupCompleted
+    ?? store.campaign?.roster_setup_completed
+  if (setupDone) {
+    router.replace(`/campaign/${campaignId.value}`)
+    return
+  }
   ackConfirmed.value = localStorage.getItem(ACK_KEY) === '1'
   if (!hasStarted.value && !ackConfirmed.value) showAck.value = true
-  // Community downloads power the "Start from Downloaded" card (standard
-  // campaigns only — the importer doesn't support fantasy yet).
-  if (!hasStarted.value && !isFantasy.value) fetchDownloadedBuilds()
+  // Community downloads power the "Start from Downloaded" card. Fantasy
+  // campaigns import too — the build's players all land in the draft pool.
+  if (!hasStarted.value) fetchDownloadedBuilds()
 })
 
 function acceptAck() {
@@ -133,6 +144,7 @@ function acceptAck() {
   ackConfirmed.value = true
   showAck.value = false
 }
+
 
 // --- Community (Part B) -----------------------------------------------------
 // All sharing/browsing lives on the WEB build. Native: one-time login handoff
@@ -204,11 +216,25 @@ async function pickDownloaded() {
     const picked = downloadedBuilds.value.find((b) => b.id === selectedBuildId.value)
     const blob = await _fetchBuildBlob(selectedBuildId.value)
     await store.applyDownloadedBuild(blob)
-    // Awaited so the import overlay only lifts once the team grid's overall
-    // badges reflect the imported roster (not the doomed generated one).
-    await store.refreshTeamOveralls()
-    audio.affirm()
-    toast.showSuccess(`"${picked?.title ?? 'Roster'}" applied — tweak anything, then start your season`)
+    if (isFantasy.value) {
+      // Fantasy: the import pooled every player — land on the draft pool
+      // (the team grid would just show 30 empty rosters).
+      await store.openPool()
+      view.value = 'pool'
+    } else {
+      // Awaited so the import overlay only lifts once the team grid's overall
+      // badges reflect the imported roster (not the doomed generated one).
+      await store.refreshTeamOveralls()
+    }
+    // Full rich callout (not the minimal toast) — showAchievement plays the
+    // affirmation sound itself, so no separate audio.affirm() here.
+    toast.showAchievement({
+      header: 'Roster Applied',
+      label: picked?.title ?? 'Imported Roster',
+      subtitle: isFantasy.value
+        ? 'All players are in your draft pool — edit anyone, then finish to start the draft.'
+        : 'Tweak anything you like, then start your season.',
+    })
   } catch (err) {
     audio.cancel()
     store.error = err?.message || 'Failed to apply the imported roster'
@@ -219,8 +245,9 @@ async function pickDownloaded() {
 
 async function pickStart(mode) {
   await store.chooseStart(mode)
-  if (isFantasy.value) { await store.openPool(); view.value = 'pool' }
-  else store.refreshTeamOveralls()
+  // Scratch/generated author a full league in BOTH modes (fantasy pools
+  // everyone at draft time) — land on the team grid like a standard campaign.
+  store.refreshTeamOveralls()
 }
 
 // Re-derive the team-grid overall badges whenever the grid comes back into
@@ -405,6 +432,9 @@ async function confirmRemovePlayer() {
 // Headshot handoff — persist first (nothing lost), capture the return route,
 // then jump to the existing headshot editor.
 async function editHeadshot(player) {
+  // Entitlement backstop — the brush buttons are v-if gated on this too, but
+  // no emit path may route a non-owner into the paid editor.
+  if (!hasHeadshotEditor.value) return
   await store.savePlayer(player)
   editingPlayer.value = null
   const returnStore = useHeadshotEditorReturnStore()
@@ -478,6 +508,98 @@ async function generateFaRemaining() {
 // archetype/talent choice. "Random player" keeps the old base-70 behavior.
 // Selections persist across adds in the session (bulk-authoring speedup).
 const showAddPlayer = ref(false)
+
+// --- Roster-editor walkthrough chain -----------------------------------------
+// A paid feature, so the tours run once for EVERY user (forceStart bypasses
+// the global new-player gate, like the headshot editor); the per-key done
+// flags keep the chain ordered and stop re-fires. Each tour ends where the
+// next begins: grid overview → (tap your team) → team page → coach → fork
+// (row flow / add-player prompt) → player editor modal → tab mini-tours.
+const walkthroughStore = useWalkthroughStore()
+function startEditorTour(key) {
+  if (walkthroughStore.isRunning) return
+  if (walkthroughStore.isDone(key)) return
+  walkthroughStore.forceStart(key)
+}
+
+// Grid tour: fires once the start mode is chosen and the team grid is up
+// (also covers resuming a mid-setup campaign). Waits out the ack modal AND
+// the import overlay — applyDownloadedBuild stamps the start mode mid-import,
+// which would otherwise pop the tour under the busy overlay before the
+// "Roster Applied" callout.
+watch([hasStarted, view, showAck, importing], ([started, v, ack, busy]) => {
+  if (started && v === 'teams' && !ack && !busy) nextTick(() => startEditorTour('rosterEditorGrid'))
+}, { immediate: true })
+
+// Fork: continue with the row flow when the table has player rows, or prompt
+// "create your first player" when it's empty (scratch, fantasy-import team
+// pages). The ONLY branch condition is visible rows — the per-key done flags
+// handle ordering. Guarded so it never fires over a running tour or an open
+// modal.
+function maybeForkRowFlow(force = false) {
+  if (view.value !== 'roster') return
+  if (walkthroughStore.isRunning) return
+  if (editingPlayer.value || showAddPlayer.value) return
+  nextTick(() => {
+    if (walkthroughStore.isRunning) return
+    if (editingPlayer.value || showAddPlayer.value) return
+    const key = tablePlayers.value.length > 0 ? 'rosterEditorRows' : 'rosterEditorScratch'
+    // force: chaining directly off the team tour — replays must continue too,
+    // so bypass the done flag (the caller guards against self-retrigger loops).
+    if (force) walkthroughStore.forceStart(key)
+    else startEditorTour(key)
+  })
+}
+
+// Team tour: fires on entering a team's roster page; when it's already done
+// (or was skipped), fall straight through to the fork.
+watch(view, (v) => {
+  if (v !== 'roster') return
+  nextTick(() => {
+    startEditorTour('rosterEditorTeam')
+    maybeForkRowFlow()
+  })
+})
+
+// Chain: the moment ANY roster-editor tour ends (finish, skip, or abort),
+// try the fork. Ending the TEAM tour forces the continuation (so replays
+// chain through the row flow too); every other tour ending uses the
+// done-gated fork — crucially, the row/scratch tours ending must NOT force,
+// or they'd retrigger themselves forever.
+watch(() => walkthroughStore.activeKey, (now, prev) => {
+  if (now === null && typeof prev === 'string' && prev.startsWith('rosterEditor')) {
+    maybeForkRowFlow(prev === 'rosterEditorTeam')
+  }
+})
+
+// "?" replay affordance — one key per screen: the grid tour on the team
+// grid, the team-page tour on a roster. With a player row SELECTED the team
+// header isn't rendered (the selected-player header replaces it), so the
+// team tour's first target can't resolve — replay the ROW tour instead,
+// starting at the selected-header tip (step 2; step 1's "tap to select"
+// is moot and its tap would open the editor). Start screen and pool: none.
+const replayTourKey = computed(() => {
+  if (!hasStarted.value) return null
+  if (view.value === 'teams') return 'rosterEditorGrid'
+  if (view.value === 'roster') return selectedPlayer.value ? 'rosterEditorRows' : 'rosterEditorTeam'
+  return null
+})
+const replayStartIndex = computed(() =>
+  (view.value === 'roster' && selectedPlayer.value) ? 1 : 0
+)
+
+// Player-editor modal tours: intro on open; on close, clear any in-flight
+// rosterEditor tour so the spotlight can't dangle over a dismissed modal
+// (mirrors TeamManagementView.closePlayerModal).
+watch(editingPlayer, (p) => {
+  if (p) {
+    nextTick(() => startEditorTour('rosterEditorPlayer'))
+  } else {
+    if (walkthroughStore.activeKey?.startsWith('rosterEditor')) walkthroughStore.skip()
+    // Editor closed — resume the chain (scratch users reach the row flow here).
+    maybeForkRowFlow()
+  }
+})
 const addArchetype = ref('')      // '' = Random player
 const addTalent = ref('starter')
 const addingPlayer = ref(false)
@@ -606,9 +728,9 @@ async function confirmFinalize() {
           <ArrowLeft :size="18" /> Campaigns
         </button>
         <h1 v-if="view === 'pool'" class="rs-title">
-          <ClipboardList v-if="isFantasy" :size="20" />
+          <ClipboardList v-if="poolOnlyFantasy" :size="20" />
           <Users v-else :size="20" />
-          {{ isFantasy ? 'Draft Pool' : 'Free Agents' }}
+          {{ poolOnlyFantasy ? 'Draft Pool' : 'Free Agents' }}
         </h1>
       </div>
       <div class="rs-header-actions">
@@ -678,6 +800,7 @@ async function confirmFinalize() {
           :key="team.id"
           class="rs-team-card"
           :class="{ 'is-user': team.id === userTeamId }"
+          :data-tour="team.id === userTeamId ? 'rse-user-team' : null"
           @click="openTeam(team)"
         >
           <span class="rs-team-head">
@@ -695,20 +818,21 @@ async function confirmFinalize() {
           <span class="rs-team-coach">HC: {{ coachName(team) }}</span>
           <span v-if="team.id === userTeamId" class="rs-team-tag">Your team</span>
         </button>
-        <!-- Authored free-agent market (standard custom campaigns) -->
-        <button v-if="!isFantasy" class="rs-team-card rs-fa-card" @click="openPool">
+        <!-- Authored free-agent market (imported fantasy: the full draft pool) -->
+        <button class="rs-team-card rs-fa-card" @click="openPool">
           <span class="rs-team-head">
             <Users :size="26" class="rs-fa-icon" />
-            <span class="rs-team-abbr">FA</span>
-            <span class="rs-team-ovr" title="Players in the free-agent pool">{{ store.faCount }}</span>
+            <span class="rs-team-abbr">{{ poolOnlyFantasy ? 'POOL' : 'FA' }}</span>
+            <span class="rs-team-ovr" :title="poolOnlyFantasy ? 'Players in the draft pool' : 'Players in the free-agent pool'">{{ store.faCount }}</span>
           </span>
-          <span class="rs-team-name">Free Agents</span>
-          <span class="rs-team-coach">{{ MIN_FA_POOL }}–{{ MAX_FA_POOL }} players required</span>
+          <span class="rs-team-name">{{ poolOnlyFantasy ? 'Draft Pool' : 'Free Agents' }}</span>
+          <span class="rs-team-coach">{{ poolOnlyFantasy ? `${teams.length * 15}+ players required` : `${MIN_FA_POOL}–${MAX_FA_POOL} players required` }}</span>
         </button>
       </div>
       <p v-if="isFantasy" class="rs-note">
-        Fantasy draft: edit the draftable player pool, then finish to start the draft.
-        <button class="rs-link" @click="openPool">Edit draft pool →</button>
+        Fantasy draft: every player you author — team rosters and free agents —
+        enters the draft pool when the draft starts. Teams re-draft their
+        rosters; undrafted players become free agents.
       </p>
       <p class="rs-note" style="text-align: center;">
         Looking for community rosters?
@@ -718,19 +842,19 @@ async function confirmFinalize() {
 
     <!-- Roster / pool editor -->
     <section v-else class="rs-editor">
-      <p v-if="view === 'roster' && isFantasy" class="rs-note">
-        Fantasy draft: team rosters are filled during the draft. Edit this team's coach below,
-        and build the draftable players in the pool.
+      <p v-if="isFantasy" class="rs-note">
+        Fantasy draft: everyone authored here enters the draft pool when the
+        draft starts — teams re-draft their rosters, and undrafted players
+        become free agents.
       </p>
 
-      <template v-if="view === 'pool' || !isFantasy">
         <!-- No selection in a team view → team overview header (overall /
              owner / editable history). A selected row swaps in the player hero. -->
         <RosterTeamHeader
           v-if="view === 'roster' && !selectedPlayer"
           :team="activeTeam"
           :roster="activeRoster"
-          :payroll="isFantasy ? null : teamPayroll"
+          :payroll="teamPayroll"
           :salary-cap="campaignCaps.salaryCap"
           :luxury-tax="campaignCaps.luxuryTax"
           @edit-history="editingHistoryTeam = activeTeam"
@@ -748,8 +872,16 @@ async function confirmFinalize() {
           @deselect="store.selectedId = null"
         />
 
+      <div v-if="view === 'roster'" class="rs-coach-row" data-tour="rse-coach-row">
+        <div>
+          <span class="rs-coach-label">Head Coach</span>
+          <span class="rs-coach-name">{{ coachName(activeTeam) }}</span>
+        </div>
+        <button class="rs-edit-btn" @click="editCoach(activeTeam)">Edit Coach</button>
+      </div>
+
         <div class="rs-toolbar">
-          <div class="rs-mode-toggle">
+          <div class="rs-mode-toggle" data-tour="rse-mode-toggle">
             <button
               class="rs-mode"
               :class="{ active: tableMode === 'current' }"
@@ -792,13 +924,13 @@ async function confirmFinalize() {
         />
 
         <div v-if="!rosterFull" class="rs-add-row">
-          <button class="rs-add-btn" @click="showAddPlayer = true">
+          <button class="rs-add-btn" data-tour="rse-add-btn" @click="showAddPlayer = true">
             <Plus :size="16" /> Add Player
             <em v-if="view === 'roster'" class="rs-add-count">({{ activeRoster.length }}/{{ MAX_ROSTER_SIZE }})</em>
-            <em v-else-if="!isFantasy" class="rs-add-count">({{ freeAgents.length }}/{{ MAX_FA_POOL }})</em>
+            <em v-else-if="!poolOnlyFantasy" class="rs-add-count">({{ freeAgents.length }}/{{ MAX_FA_POOL }})</em>
           </button>
           <button
-            v-if="view === 'pool' && !isFantasy && freeAgents.length < MIN_FA_POOL"
+            v-if="view === 'pool' && !poolOnlyFantasy && freeAgents.length < MIN_FA_POOL"
             class="rs-add-btn rs-generate-btn"
             :disabled="generatingFill"
             @click="generateFaRemaining"
@@ -808,7 +940,7 @@ async function confirmFinalize() {
             Generate remaining ({{ MIN_FA_POOL - freeAgents.length }})
           </button>
           <button
-            v-if="view === 'roster' && !isFantasy"
+            v-if="view === 'roster'"
             class="rs-add-btn rs-generate-btn"
             :disabled="generatingFill"
             @click="generateRemaining"
@@ -819,15 +951,7 @@ async function confirmFinalize() {
           </button>
         </div>
         <p v-else-if="view === 'roster'" class="rs-roster-full">Roster full ({{ MAX_ROSTER_SIZE }}/{{ MAX_ROSTER_SIZE }}) — remove a player to add another.</p>
-      </template>
 
-      <div v-if="view === 'roster'" class="rs-coach-row">
-        <div>
-          <span class="rs-coach-label">Head Coach</span>
-          <span class="rs-coach-name">{{ coachName(activeTeam) }}</span>
-        </div>
-        <button class="rs-edit-btn" @click="editCoach(activeTeam)">Edit Coach</button>
-      </div>
     </section>
 
     <!-- Acknowledgement gate -->
@@ -850,7 +974,7 @@ async function confirmFinalize() {
         <p>
           Remove
           <strong>{{ pendingRemovePlayer.name ?? ((pendingRemovePlayer.firstName ?? '') + ' ' + (pendingRemovePlayer.lastName ?? '')) }}</strong>
-          from the {{ view === 'pool' ? (isFantasy ? 'draft pool' : 'free agent pool') : 'roster' }}? This can't be undone.
+          from the {{ view === 'pool' ? (poolOnlyFantasy ? 'draft pool' : 'free agent pool') : 'roster' }}? This can't be undone.
         </p>
         <div class="rs-modal-actions">
           <button class="rs-modal-secondary rs-modal-cancel" @click="pendingRemovePlayer = null">Cancel</button>
@@ -991,6 +1115,8 @@ async function confirmFinalize() {
       @save="onPicksSaved"
       @close="editingPicksTeam = null"
     />
+
+    <WalkthroughReplayButton :walkthrough-key="replayTourKey" :start-index="replayStartIndex" flush />
   </div>
 </template>
 
@@ -1264,7 +1390,8 @@ async function confirmFinalize() {
   justify-content: space-between;
   padding: 12px 14px;
   border-radius: var(--radius-lg, 12px);
-  margin-top: 16px;
+  /* Sits between the team/player header and the toolbar. */
+  margin: 12px 0;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
 }

@@ -4,6 +4,7 @@ import { useTradeStore } from '@/stores/trade'
 import { useTeamStore } from '@/stores/team'
 import { useFinanceStore } from '@/stores/finance'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
+import { useToastStore } from '@/stores/toast'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { GlassCard } from '@/components/ui'
 import { Inbox, ArrowLeftRight, AlertTriangle } from 'lucide-vue-next'
@@ -61,6 +62,11 @@ async function handleAccept(proposal) {
     emit('trade-completed')
   } catch (err) {
     console.error('Failed to accept proposal:', err)
+    // Close the modal so the error toast isn't buried under its overlay —
+    // a silently-open modal made a failed accept look like a no-op.
+    showProposalModal.value = false
+    selectedProposal.value = null
+    useToastStore().showError(tradeStore.error || 'This trade can no longer be completed.')
   }
 }
 

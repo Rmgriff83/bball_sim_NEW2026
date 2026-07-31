@@ -100,6 +100,10 @@ export function buildRookieDraftOrder(teams, standings, gameYear, lotteryResult 
     for (let i = 0; i < orderForRound.length; i++) {
       const { team: originalTeam } = orderForRound[i]
 
+      // Slots demoted by the apron penalty carry a display flag so every
+      // order surface (scout tab, lottery rows, draft ticker) can badge them.
+      const apronFrozen = round === 1 && frozenAbbrs.has(originalTeam.abbreviation)
+
       // Find the draft pick for this original team + year + round
       const pick = findDraftPick(teams, originalTeam.abbreviation, gameYear, round)
 
@@ -121,6 +125,7 @@ export function buildRookieDraftOrder(teams, standings, gameYear, lotteryResult 
           originalTeamColor: originalTeam.primary_color || '#666',
           isTraded: pick.isTraded || false,
           pickId: pick.id,
+          apronFrozen,
         })
       } else {
         // No pick found (shouldn't happen normally) — default to original team
@@ -135,6 +140,7 @@ export function buildRookieDraftOrder(teams, standings, gameYear, lotteryResult 
           originalTeamAbbr: originalTeam.abbreviation,
           isTraded: false,
           pickId: null,
+          apronFrozen,
         })
       }
 
@@ -184,6 +190,7 @@ export function buildLotteryResultRows(teams, standings, lotteryResult, pickYear
       pick: slot.pick,
       isLotteryTeam: slot.pick <= 14,
       isTraded: slot.isTraded,
+      apronFrozen: slot.apronFrozen === true,
       currentOwner: teamById.get(slot.teamId) ?? null,
       originalOwner: teamById.get(slot.originalTeamId) ?? null,
       delta,

@@ -224,10 +224,11 @@ function money(p) {
         </thead>
         <tbody>
           <tr
-            v-for="p in players"
+            v-for="(p, i) in players"
             :key="p.id"
             class="rat-row"
             :class="{ selected: p.id === selectedId }"
+            :data-tour="(selectedId ? p.id === selectedId : i === 0) ? 'rse-first-row' : null"
             @click="emit('select', p)"
           >
             <!-- Sticky identity cell -->

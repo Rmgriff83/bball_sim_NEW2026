@@ -95,7 +95,10 @@ function seasonResult(entry) {
 
 <template>
   <div v-if="team" class="rth">
-    <div class="rth-main">
+    <!-- data-tour: rse-team-header spotlights the identity/overall/payroll
+         block for the roster-editor walkthrough (not the whole card — the
+         history section below has its own tip). -->
+    <div class="rth-main" data-tour="rse-team-header">
       <div class="rth-left">
         <TeamLogo
           :abbreviation="team.abbreviation"
@@ -115,7 +118,6 @@ function seasonResult(entry) {
             </button>
           </h3>
           <span class="rth-abbr">{{ team.abbreviation }} · {{ team.conference }} · {{ team.division }}</span>
-          <OwnerQuickInfo :team-abbreviation="team.abbreviation" />
         </div>
       </div>
       <div class="rth-right">
@@ -137,6 +139,13 @@ function seasonResult(entry) {
       </div>
     </div>
 
+    <!-- Owner blurb on its own full-width row: freed from the info column so
+         the quote flows into the space under the team logo instead of
+         wrapping in the narrow strip beside it. -->
+    <div class="rth-owner-row" data-tour="rse-owner-row">
+      <OwnerQuickInfo :team-abbreviation="team.abbreviation" />
+    </div>
+
     <div class="rth-facilities" title="Facility levels (upgraded in-game with tokens)">
       <span class="rth-fac-label">Facilities</span>
       <span v-for="f in facilities" :key="f.key" class="rth-fac">
@@ -145,7 +154,7 @@ function seasonResult(entry) {
     </div>
 
     <div class="rth-history">
-      <div class="rth-history-head">
+      <div class="rth-history-head" data-tour="rse-history-picks">
         <span class="rth-history-title"><ScrollText :size="13" /> Team History</span>
         <button class="rth-edit-btn" @click="emit('edit-draft-picks')">
           <Ticket :size="12" /> Draft Picks
@@ -212,6 +221,13 @@ function seasonResult(entry) {
 }
 
 .rth-info { min-width: 0; }
+
+/* Full-width owner row under the logo/name line — gives the owner blurb the
+   whole card width instead of the narrow column beside the logo. */
+.rth-owner-row {
+  margin-top: 8px;
+  min-width: 0;
+}
 
 /* Ink palette matches SelectedPlayerHeader: dark text on the bright cosmic
    gradient, dark translucent chips with light text. */

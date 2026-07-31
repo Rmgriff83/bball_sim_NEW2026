@@ -416,7 +416,23 @@ export const useFinanceStore = defineStore('finance', () => {
         capNumbers: capNumbersFor(campaign),
       })
 
-      if (!result.success) throw new Error(result.error || 'Failed to sign free agent')
+      if (!result.success) {
+        // Self-correct a stale list: the pool can change off-screen (season
+        // rollover backfill, AI signings). If the target already has a team,
+        // drop the row and say WHO got them instead of the engine internals.
+        fetchFreeAgents(campaignId, { force: true }).catch(() => {})
+        const signedTeamId = dbPlayer.teamId ?? dbPlayer.team_id ?? null
+        const stillFa = dbPlayer.isFreeAgent === 1 || dbPlayer.is_free_agent === 1
+        if (signedTeamId != null && !stillFa) {
+          freeAgents.value = freeAgents.value.filter(p => p.id !== playerId)
+          const pName = dbPlayer.name
+            || `${dbPlayer.firstName ?? dbPlayer.first_name ?? ''} ${dbPlayer.lastName ?? dbPlayer.last_name ?? ''}`.trim()
+            || 'That player'
+          const abbr = dbPlayer.teamAbbreviation ?? dbPlayer.team_abbreviation
+          throw new Error(abbr ? `${pName} has already signed with ${abbr}.` : `${pName} has already signed elsewhere.`)
+        }
+        throw new Error(result.error || 'Failed to sign free agent')
+      }
 
       // Look up the signing team so we can stamp its abbreviation on the
       // player record. Without this the player stays labeled 'FA' in their

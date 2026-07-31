@@ -8,11 +8,15 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { initializeAllTeamLineups } from '@/engine/ai/AILineupService'
 import { assignRookieContract, assignUndraftedContract } from '@/engine/draft/RookieContractService'
 import { rollDraftPicks } from '@/engine/draft/DraftPickService'
-import { SALARY_CAP, capNumbersFor } from '@/engine/data/salaryScale'
+import { SALARY_CAP, CAP_SET_LEGACY, capNumbersFor } from '@/engine/data/salaryScale'
+import { teamCapLine } from '@/engine/ai/AIContractService'
 import { useAudioStore } from '@/stores/audio'
 
-// Fantasy-draft over-cap penalty: once the user's payroll exceeds the cap, they
-// may only draft players earning under this amount per year.
+// Fantasy-draft ops lock (apron economy): once the user's drafted payroll
+// exceeds the SECOND APRON, they may only draft players earning under this
+// amount per year — the draft's equivalent of the minimum-only signing rule.
+// Between the cap and apron 2, spending is unrestricted here and penalized
+// through the owner mandate/satisfaction system next season.
 const OVERCAP_MAX_SALARY = 5_000_000
 
 export const useDraftStore = defineStore('draft', () => {
@@ -24,8 +28,10 @@ export const useDraftStore = defineStore('draft', () => {
   const userTeamId = ref(null)
   const userTeamAbbr = ref(null)
   // Campaign-scoped cap (2026 campaigns store their own set; legacy saves
-  // resolve to the old constant via capNumbersFor).
+  // resolve to the old constant via capNumbersFor). campaignCapNumbers carries
+  // the full tax/apron ladder for the ops lock + the cap readout.
   const campaignSalaryCap = ref(SALARY_CAP)
+  const campaignCapNumbers = ref(CAP_SET_LEGACY)
   const timerSeconds = ref(60)
   // When true, the pick clock is frozen (e.g. the onboarding walkthrough is
   // showing). startTimer() still resets the seconds but won't tick; resumeTimer()
@@ -110,13 +116,16 @@ export const useDraftStore = defineStore('draft', () => {
     userRoster.value.reduce((sum, r) => sum + (r.contractSalary ?? r.contract_salary ?? 0), 0)
   )
 
-  // Penalty engages once the user's drafted payroll is OVER the league cap.
+  // Ops lock engages once the user's drafted payroll is over the SECOND APRON
+  // (apron economy — spending past the cap itself is allowed and penalized via
+  // the owner mandate next season, not blocked here).
   const userCapPenaltyActive = computed(() =>
-    draftMode.value === 'fantasy' && userPayroll.value > campaignSalaryCap.value
+    draftMode.value === 'fantasy'
+    && userPayroll.value > (campaignCapNumbers.value?.secondApron ?? CAP_SET_LEGACY.secondApron)
   )
 
-  // While the penalty is active, only contracts below OVERCAP_MAX_SALARY may be
-  // drafted by the user. Always true in rookie mode / when under the cap.
+  // While the lock is active, only contracts below OVERCAP_MAX_SALARY may be
+  // drafted by the user. Always true in rookie mode / while under apron 2.
   function isPlayerDraftEligible(player) {
     if (!userCapPenaltyActive.value) return true
     const salary = player?.contractSalary ?? player?.contract_salary ?? 0
@@ -167,7 +176,8 @@ export const useDraftStore = defineStore('draft', () => {
     teams.value = teamsList
     userTeamId.value = campaign.teamId || campaign.team?.id || campaign.team_id
     userTeamAbbr.value = campaign.team?.abbreviation
-    campaignSalaryCap.value = capNumbersFor(campaign).salaryCap
+    campaignCapNumbers.value = capNumbersFor(campaign)
+    campaignSalaryCap.value = campaignCapNumbers.value.salaryCap
 
     draftResults.value = []
     currentPickIndex.value = 0
@@ -292,13 +302,24 @@ export const useDraftStore = defineStore('draft', () => {
         pick.round
       )
     } else {
-      // Fantasy draft: existing behavior
+      // Fantasy draft: talent/fit scoring under an apron-economy budget — the
+      // team drafts at/under its owner mandate line (contenders' line is the
+      // 2nd apron), reserving filler money for its remaining slots.
       const teamPicks = (teamRosters.value[pick.teamId] || [])
+      const team = teams.value.find(t => t.id === pick.teamId)
+      const budget = team
+        ? {
+            line: teamCapLine(team, campaignCapNumbers.value).amount,
+            payroll: teamPicks.reduce((s, r) => s + (r.contractSalary ?? r.contract_salary ?? 0), 0),
+            picksRemaining: 15 - teamPicks.length,
+          }
+        : null
       selected = selectAIPick(
         availablePlayers.value,
         teamPicks,
         pick.round,
-        15
+        15,
+        budget
       )
     }
 
@@ -538,7 +559,10 @@ export const useDraftStore = defineStore('draft', () => {
       // Re-resolve the campaign's cap on resume (the cache predates the ref).
       try {
         const campaign = await CampaignRepository.get(campaignId)
-        if (campaign) campaignSalaryCap.value = capNumbersFor(campaign).salaryCap
+        if (campaign) {
+          campaignCapNumbers.value = capNumbersFor(campaign)
+          campaignSalaryCap.value = campaignCapNumbers.value.salaryCap
+        }
       } catch { /* legacy fallback already in the ref */ }
 
       draftResults.value = cached.draftResults || []
@@ -616,6 +640,33 @@ export const useDraftStore = defineStore('draft', () => {
         await PlayerRepository.saveBulk(playerUpdates)
       }
 
+      // Release every UNDRAFTED pool player still pointing at a team. Custom
+      // fantasy campaigns author a full league (players sit on teams when the
+      // draft starts) and the draft re-assigns everyone — anyone who went
+      // unselected becomes a free agent. No-op for pool-born players, which
+      // are FAs already.
+      const draftedIds = new Set(draftResults.value.map(r => r.playerId))
+      const releases = []
+      for (const p of allPlayers.value) {
+        if (draftedIds.has(p.id)) continue
+        if (p.isDraftProspect || p.is_draft_prospect) continue
+        const tid = p.teamId ?? p.team_id
+        const isFa = p.isFreeAgent === 1 || p.is_free_agent === 1
+        if (tid == null && isFa) continue
+        const plain = { ...toRaw(p) }
+        plain.teamId = null
+        plain.team_id = null
+        plain.teamAbbreviation = 'FA'
+        plain.team_abbreviation = 'FA'
+        plain.isFreeAgent = 1
+        plain.is_free_agent = 1
+        plain.campaignId = campaignId
+        releases.push(plain)
+      }
+      if (releases.length > 0) {
+        await PlayerRepository.saveBulk(releases)
+      }
+
       // Initialize lineups for all teams
       const allTeams = await TeamRepository.getAllForCampaign(campaignId)
       const allPlayersUpdated = await PlayerRepository.getAllForCampaign(campaignId)
@@ -642,6 +693,21 @@ export const useDraftStore = defineStore('draft', () => {
             subStrategy: lineupData.subStrategy,
           })
         }
+      }
+
+      // Re-stamp payrolls from the DRAFTED rosters — custom fantasy campaigns
+      // carry creation-time payrolls from the authored league, which are stale
+      // once the draft re-assigns everyone (trade cap displays read these).
+      // Fetched fresh so the lineup writes above aren't clobbered.
+      for (const team of allTeams) {
+        const rosterPayroll = allPlayersUpdated
+          .filter(p => (p.teamId ?? p.team_id) === team.id)
+          .reduce((s, p) => s + (p.contractSalary ?? p.contract_salary ?? 0), 0)
+        const fresh = await TeamRepository.get(campaignId, team.id)
+        if (!fresh) continue
+        fresh.total_payroll = rosterPayroll
+        fresh.totalPayroll = rosterPayroll
+        await TeamRepository.save(fresh)
       }
 
       // Save user's lineup to campaign.settings (canonical source for user lineup)
@@ -687,7 +753,8 @@ export const useDraftStore = defineStore('draft', () => {
     teams.value = teamsList
     userTeamId.value = campaign.teamId || campaign.team?.id || campaign.team_id
     userTeamAbbr.value = campaign.team?.abbreviation || campaign.teamAbbreviation
-    campaignSalaryCap.value = capNumbersFor(campaign).salaryCap
+    campaignCapNumbers.value = capNumbersFor(campaign)
+    campaignSalaryCap.value = campaignCapNumbers.value.salaryCap
     teamDirections.value = directions || {}
 
     draftOrder.value = draftOrderSlots
@@ -912,6 +979,7 @@ export const useDraftStore = defineStore('draft', () => {
     userCapPenaltyActive,
     isPlayerDraftEligible,
     salaryCap: campaignSalaryCap,
+    capNumbers: campaignCapNumbers,
     overCapMaxSalary: OVERCAP_MAX_SALARY,
     teamRosters,
     recentPicks,

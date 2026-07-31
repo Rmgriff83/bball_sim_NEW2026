@@ -129,15 +129,41 @@ function scorePlayer(player, teamPicks, currentRound, totalRounds) {
   return score
 }
 
+// Bench-grade contract price in the generated pool (~60 OVR) — the budget
+// reserve assumed per unfilled roster slot so a team never drafts itself into
+// a corner where it can't finish 15 picks under its owner's line.
+const MIN_FILLER_SALARY = 2_500_000
+
+function salaryOf(p) {
+  return p?.contractSalary ?? p?.contract_salary ?? 0
+}
+
 /**
  * Select a player for an AI team to draft.
  * Returns the selected player object from availablePlayers.
+ *
+ * @param {object|null} budget - optional apron-economy discipline:
+ *   { line, payroll, picksRemaining }. Candidates are filtered to those the
+ *   team can afford while reserving MIN_FILLER_SALARY per remaining slot, so
+ *   every AI team exits the draft at/under its owner mandate line. Omitted →
+ *   unconstrained (legacy behavior).
  */
-export function selectAIPick(availablePlayers, teamPicks, currentRound, totalRounds = 15) {
+export function selectAIPick(availablePlayers, teamPicks, currentRound, totalRounds = 15, budget = null) {
   if (availablePlayers.length === 0) return null
 
+  let eligiblePool = availablePlayers
+  if (budget && budget.line > 0) {
+    const reserve = Math.max(0, (budget.picksRemaining ?? 1) - 1) * MIN_FILLER_SALARY
+    const room = budget.line - (budget.payroll ?? 0) - reserve
+    const affordable = availablePlayers.filter(p => salaryOf(p) <= room)
+    // Nothing affordable (deep-pool edge) → cheapest body available.
+    eligiblePool = affordable.length
+      ? affordable
+      : [[...availablePlayers].sort((a, b) => salaryOf(a) - salaryOf(b))[0]]
+  }
+
   // Score all available players
-  const scored = availablePlayers.map(player => ({
+  const scored = eligiblePool.map(player => ({
     player,
     score: scorePlayer(player, teamPicks, currentRound, totalRounds),
   }))

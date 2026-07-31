@@ -40,7 +40,7 @@ export const MAX_FA_POOL = 50
 
 // Max TOTAL badge rows per authored player — learned levels AND cap-only
 // "earnable later" rows both count. Editor rule (UI + finalize validation).
-export const MAX_PLAYER_BADGES = 15
+export const MAX_PLAYER_BADGES = 12
 
 export const useRosterEditorStore = defineStore('rosterEditor', () => {
   const campaignId = ref(null)
@@ -126,9 +126,15 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
 
   const isFantasy = computed(() =>
     (campaign.value?.draftMode ?? campaign.value?.draft_mode) === 'fantasy')
-  // Which "start" the user picked ('generated' | 'scratch'); null until chosen.
+  // Which "start" the user picked ('generated' | 'scratch' | 'downloaded');
+  // null until chosen.
   const startMode = computed(() => campaign.value?.settings?.customRosterStartMode ?? null)
   const hasStarted = computed(() => !!startMode.value)
+  // Imported builds in a fantasy campaign skip team authoring entirely — every
+  // player was routed into the draft pool. Scratch/generated fantasy authors a
+  // full league exactly like a standard campaign (interchangeable), and the
+  // draft pools everyone at draft time.
+  const poolOnlyFantasy = computed(() => isFantasy.value && startMode.value === 'downloaded')
   const userTeamId = computed(() => campaign.value?.teamId ?? campaign.value?.team_id ?? null)
 
   const activeTeam = computed(() => teams.value.find(t => t.id === activeTeamId.value) ?? null)
@@ -232,15 +238,12 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     if (!campaign.value) return
     campaign.value.settings = campaign.value.settings ?? {}
     campaign.value.settings.customRosterStartMode = mode
-    if (mode === 'scratch' && !isFantasy.value) {
+    if (mode === 'scratch') {
       // Wipe all team rosters (and the free-agent pool) so the user builds from
-      // nothing. Teams keep their coach; players are deleted.
+      // nothing. Teams keep their coach; players are deleted. Identical for
+      // fantasy — authoring is interchangeable; the draft pools everyone later.
       await PlayerRepository.deleteAllForCampaign(campaignId.value)
       activeRoster.value = []
-      freeAgents.value = []
-    } else if (mode === 'scratch' && isFantasy.value) {
-      // Fantasy scratch: empty the draftable pool.
-      await PlayerRepository.deleteAllForCampaign(campaignId.value)
       freeAgents.value = []
     }
     await CampaignRepository.save(cloneForPersist(campaign.value))
@@ -405,10 +408,10 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
   }
 
   // How many NON-user teams sit below the minimum roster size — drives the
-  // finalize modal's "generate the rest" affordance. Fantasy: 0 (the pool
-  // fills rosters via the draft).
+  // finalize modal's "generate the rest" affordance. Pool-only fantasy
+  // (imported build): 0 — team rosters come from the draft, not authoring.
   async function countShortTeams() {
-    if (isFantasy.value) return 0
+    if (poolOnlyFantasy.value) return 0
     const all = await PlayerRepository.getAllForCampaign(campaignId.value)
     const counts = new Map()
     for (const p of all) {
@@ -425,9 +428,9 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
   }
 
   async function addPoolPlayer() {
-    // Standard custom campaigns cap the authored FA market; the fantasy
-    // draft pool stays uncapped (it needs 15 × teams).
-    if (!isFantasy.value && freeAgents.value.length >= MAX_FA_POOL) return null
+    // Authored FA markets are capped; only the imported-fantasy draft pool is
+    // uncapped (it holds every player, 15 × teams and then some).
+    if (!poolOnlyFantasy.value && freeAgents.value.length >= MAX_FA_POOL) return null
     const position = POSITIONS[freeAgents.value.length % POSITIONS.length]
     const player = generatePlayer({
       campaignId: campaignId.value,
@@ -467,10 +470,11 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     return added.length
   }
 
-  // How many FAs short of the minimum the pool is (0 for fantasy — its pool
-  // has its own draft-size rule). Drives the finalize modal's generate CTA.
+  // How many FAs short of the minimum the pool is (0 for pool-only fantasy —
+  // its pool has its own draft-size rule). Drives the finalize modal's
+  // generate CTA.
   async function freeAgentShortfall() {
-    if (isFantasy.value) return 0
+    if (poolOnlyFantasy.value) return 0
     const pool = (await PlayerRepository.getFreeAgents(campaignId.value))
       .filter((p) => !(p.isDraftProspect || p.is_draft_prospect))
     return Math.max(0, MIN_FA_POOL - pool.length)
@@ -578,7 +582,19 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
   // human-readable problems (empty = ready to finalize).
   async function validate() {
     const problems = []
-    if (isFantasy.value) {
+    // Legacy shape: fantasy setups created before scratch/generated authored
+    // full leagues hold ONLY a draft pool (every team roster empty). Let a
+    // draft-ready pre-change pool still finalize; anything short of that
+    // (including a fresh scratch with nothing authored) gets the standard
+    // per-team guidance of the new interchangeable model.
+    let legacyPoolOnly = false
+    if (isFantasy.value && !poolOnlyFantasy.value) {
+      const all = await PlayerRepository.getAllForCampaign(campaignId.value)
+      const live = all.filter((p) => !(p.isDraftProspect || p.is_draft_prospect))
+      const teamsEmpty = !live.some((p) => (p.teamId ?? p.team_id) != null)
+      legacyPoolOnly = teamsEmpty && live.length >= teams.value.length * 15
+    }
+    if (poolOnlyFantasy.value || legacyPoolOnly) {
       const pool = await PlayerRepository.getFreeAgents(campaignId.value)
       // The fantasy draft runs 15 rounds × every team — one player per pick.
       // An under-filled pool doesn't crash the draft, but the late rounds
@@ -787,7 +803,7 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     faCount, fillFreeAgentPool, freeAgentShortfall,
     teamOveralls, refreshTeamOveralls, refreshTeams,
     loading, saving, error,
-    isFantasy, startMode, hasStarted, userTeamId, activeTeam,
+    isFantasy, poolOnlyFantasy, startMode, hasStarted, userTeamId, activeTeam,
     selectedId, selectedPlayer, dirtyIds, isDirty,
     select, markDirtyPlayer, saveDirty, discardDirty, refreshPlayerFromDb,
     load, chooseStart, openTeam, openPool, applyDownloadedBuild,

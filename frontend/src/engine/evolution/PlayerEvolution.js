@@ -963,6 +963,11 @@ function processRetirements(allPlayers, currentYear) {
     const ovr = player.overallRating ?? player.overall_rating ?? 0;
     const careerHighOvr = Math.max(player.careerHighOvr ?? 0, ovr);
     const lastSeasonStats = _summarizeLastSeasonStats(player);
+    // Snapshot the live contract BEFORE it's zeroed below — the retirement
+    // veto restores a mid-contract retiree to their team on these terms.
+    const contractYears = player.contractYearsRemaining ?? player.contract_years_remaining ?? 0;
+    const contractSalary = player.contractSalary ?? player.contract_salary ?? 0;
+    const contractDetails = player.contractDetails ?? player.contract_details ?? null;
 
     player.isRetired = true;
     player.is_retired = true;
@@ -987,6 +992,13 @@ function processRetirements(allPlayers, currentYear) {
       lastSeasonStats,
       age,
       primaryTeamAbbreviation: teamAbbr,
+      // Pre-retirement contract (yearsRemaining >= 1 → the veto puts the
+      // player back on their team; absent/0 → free-agent pool).
+      contract: {
+        salary: contractSalary,
+        yearsRemaining: contractYears,
+        details: contractDetails,
+      },
     };
 
     retirees.push(player);

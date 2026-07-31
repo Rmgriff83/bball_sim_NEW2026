@@ -18,7 +18,7 @@ import { baseSalaryForRating, veteranMinSalary as vetMin, maxSalary } from '../d
 
 // --- Tunables ---------------------------------------------------------------
 export const MAX_DISCOUNT = 0.25;        // most a happy player will shave off market
-export const INCUMBENT_PREMIUM = 1.20;   // Bird-rights ceiling above market
+export const INCUMBENT_PREMIUM = 1.50;   // Bird-rights ceiling above market (league-max capped)
 export const INCUMBENT_MAX_YEARS = 5;    // incumbent extra year vs FA's 4
 
 function _num(v, d = 0) {
@@ -167,7 +167,10 @@ export function evaluateResignOffer(player, offer = {}, context = {}) {
   let base = calculateRetentionScore(player, { ...context, expectedSalary: marketValue }, salary);
   if (salary > marketValue) {
     const over = _clamp((salary - marketValue) / Math.max(1, incumbentMax - marketValue), 0, 1);
-    base += over * 8; // generosity / Bird-premium bump
+    // Generosity / Bird-premium bump — worth up to +15 at the (now 1.5×
+    // market, league-max capped) incumbent ceiling, so a big overpay can
+    // genuinely flip an on-the-fence star.
+    base += over * 15;
   }
 
   const ceiling = _retentionCeiling(player, context, marketValue);

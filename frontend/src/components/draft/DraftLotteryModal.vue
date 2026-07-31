@@ -6,6 +6,7 @@ import { computed, watch } from 'vue'
 import { X, Star, ArrowUp, ArrowDown, ArrowRightLeft } from 'lucide-vue-next'
 import { buildLotteryResultRows } from '@/engine/draft/DraftOrderService'
 import TeamLogo from '@/components/common/TeamLogo.vue'
+import ApronPickBadge from '@/components/common/ApronPickBadge.vue'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -66,6 +67,7 @@ watch(() => props.show, (open) => {
               <div class="lottery-row__pick">
                 <span class="pick-number">{{ row.pick }}</span>
                 <span v-if="row.isLotteryTeam" class="pick-tag">Lottery</span>
+                <ApronPickBadge v-if="row.apronFrozen" />
               </div>
 
               <div class="lottery-row__team">

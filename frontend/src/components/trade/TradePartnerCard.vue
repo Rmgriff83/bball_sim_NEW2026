@@ -3,8 +3,12 @@ import { ref, computed } from 'vue'
 import { useTradeStore } from '@/stores/trade'
 import { StatBadge } from '@/components/ui'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import ApronPickBadge from '@/components/common/ApronPickBadge.vue'
 import { Check, Star, Info, TrendingUp, TrendingDown, Minus, RotateCcw } from 'lucide-vue-next'
 import { getAssetStars, getPositionColor, formatContractYears, pickCalendarYear } from './tradeAssetFormat'
+import { capNumbersFor } from '@/engine/data/salaryScale'
+import { isPickApronFrozen } from '@/engine/finance/TradeExecutor'
+import { useToastStore } from '@/stores/toast'
 import { useCampaignStore } from '@/stores/campaign'
 
 const props = defineProps({
@@ -34,6 +38,13 @@ const topAssets = computed(() => props.team.topAssets ?? [])
 const roster = computed(() => props.team.roster ?? [])
 const picks = computed(() => props.team.picks ?? [])
 
+// Apron ops lock: this team is over the first apron, so it refuses (and the
+// engine rejects) any deal where it takes back more salary than it sends.
+const apronRestricted = computed(() => {
+  const payroll = props.team.live_payroll ?? props.team.total_payroll ?? props.team.totalPayroll ?? 0
+  return payroll > capNumbersFor(campaignStore.currentCampaign).firstApron
+})
+
 function pName(p) {
   const f = p.firstName ?? p.first_name ?? ''
   const l = p.lastName ?? p.last_name ?? ''
@@ -57,6 +68,10 @@ function togglePlayer(player) {
   emit('toggle-asset', { team: props.team, kind: 'player', item: player })
 }
 function togglePick(pick) {
+  if (isPickApronFrozen(pick)) {
+    useToastStore().showError("This pick is frozen by the apron penalty and can't be traded.")
+    return
+  }
   emit('toggle-asset', { team: props.team, kind: 'pick', item: pick })
 }
 function viewPlayer(player, ev) {
@@ -87,7 +102,14 @@ function flip() { isFlipped.value = !isFlipped.value }
               {{ tradeStore.getDirectionLabel(team.direction) }}
             </span>
           </div>
-          <div class="tp-cap">Cap space: {{ tradeStore.formatSalary(team.cap_space ?? 0) }}</div>
+          <div class="tp-cap">
+            Cap space: {{ tradeStore.formatSalary(team.cap_space ?? 0) }}
+            <span
+              v-if="apronRestricted"
+              class="tp-hardcap"
+              title="Over the first apron — this team won't take back more salary than they send out."
+            >HARD CAP</span>
+          </div>
         </div>
 
         <div class="tp-topassets">
@@ -115,6 +137,7 @@ function flip() { isFlipped.value = !isFlipped.value }
               <span class="tp-top-name">
                 R{{ a.item.round }}
                 <span v-if="a.item.original_team_abbreviation" class="tp-pick-via">via {{ a.item.original_team_abbreviation }}</span>
+                <ApronPickBadge v-if="a.item.apronFrozen ?? a.item.apron_frozen" compact />
               </span>
               <span class="tp-top-stars">
                 <Star v-for="s in getAssetStars(a.item)" :key="`ps${s}`" :size="9" class="star filled" />
@@ -215,7 +238,7 @@ function flip() { isFlipped.value = !isFlipped.value }
               v-for="pick in picks"
               :key="pick.id"
               class="tp-asset-row pick"
-              :class="{ selected: isPickSelected(pick.id), locked }"
+              :class="{ selected: isPickSelected(pick.id), locked, frozen: isPickApronFrozen(pick) }"
               @click="togglePick(pick)"
             >
               <div class="tp-pick-year">{{ formatPickYear(pick.year) }}</div>
@@ -225,6 +248,7 @@ function flip() { isFlipped.value = !isFlipped.value }
                   <span v-if="pick.original_team_abbreviation" class="tp-pick-via">
                     (via {{ pick.original_team_abbreviation }})
                   </span>
+                  <ApronPickBadge v-if="pick.apronFrozen ?? pick.apron_frozen" />
                 </div>
                 <div v-if="pick.projected_position" class="tp-asset-line2">
                   Projected #{{ pick.projected_position }}
@@ -322,6 +346,21 @@ function flip() { isFlipped.value = !isFlipped.value }
   margin-top: 4px;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.55);
+}
+
+/* Over-the-first-apron marker — this team can't take back net salary. */
+.tp-hardcap {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 0.18);
+  border: 1px solid rgba(249, 115, 22, 0.45);
+  color: #f97316;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  cursor: help;
 }
 
 .tp-topassets {
@@ -449,6 +488,11 @@ function flip() { isFlipped.value = !isFlipped.value }
 }
 .tp-asset-row.locked {
   opacity: 0.72;
+}
+/* Apron-frozen pick — visible but untradeable. */
+.tp-asset-row.frozen {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .tp-asset-main {
   flex: 1;

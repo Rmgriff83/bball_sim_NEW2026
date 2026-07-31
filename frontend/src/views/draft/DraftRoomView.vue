@@ -28,6 +28,7 @@ import { useSyncStore } from '@/stores/sync'
 import { computeScoutReveal } from '@/engine/scouting/scoutReveal'
 import { generateAndSaveRookieClass } from '@/engine/draft/RookieGenerationService'
 import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
+import ApronPickBadge from '@/components/common/ApronPickBadge.vue'
 import { analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
 import { getEffectiveExpectation } from '@/engine/season/OwnerExpectationService'
 import { findOwnerForTeam } from '@/engine/data/owners'
@@ -239,7 +240,7 @@ function handleDraftPick(playerId) {
   if (!playerId) return
   const player = draftStore.allPlayers.find(p => p.id === playerId)
   if (player && ineligible(player)) {
-    toastStore.showError('Over the salary cap — only contracts under $5M can be drafted.')
+    toastStore.showError('Over the second apron — only contracts under $5M can be drafted.')
     return
   }
   audio.affirm()
@@ -283,6 +284,17 @@ const pickProgress = computed(() => {
   const total = draftStore.draftOrder.length
   if (!total) return '0 / 0'
   return `${draftStore.currentPickIndex + (draftStore.isDraftComplete ? 0 : 1)} / ${total}`
+})
+
+// The user's next few pick NUMBERS — makes the snake order legible. Slot 3
+// picks #3, then #58/#63: without this readout the even-round gap reads as
+// a bug. Fantasy only (the rookie draft is 2 linear rounds).
+const userUpcomingPicks = computed(() => {
+  if (isRookieMode.value || draftStore.isDraftComplete) return []
+  return draftStore.draftOrder
+    .filter((slot, i) => i > draftStore.currentPickIndex && slot.teamId === draftStore.userTeamId)
+    .slice(0, 3)
+    .map(s => s.pick)
 })
 
 // Get visible ticker slots centered on current pick
@@ -677,10 +689,21 @@ onUnmounted(() => {
       <!-- Header Bar -->
       <header class="draft-header">
         <div class="header-left">
-          <h1 class="draft-title">{{ isRookieMode ? 'ROOKIE DRAFT' : 'FANTASY DRAFT' }}</h1>
+          <h1 class="draft-title">
+            {{ isRookieMode ? 'ROOKIE DRAFT' : 'FANTASY DRAFT' }}
+            <span
+              v-if="!isRookieMode"
+              class="snake-chip"
+              title="Snake draft — the pick order reverses every round, so an early pick means a long wait in even rounds"
+            >SNAKE</span>
+          </h1>
           <span class="campaign-label">{{ campaignStore.currentCampaign?.name }}</span>
         </div>
         <div class="header-right">
+          <div v-if="userUpcomingPicks.length" class="your-picks" title="Your upcoming pick numbers (snake order)">
+            <span class="round-label">YOUR NEXT {{ userUpcomingPicks.length > 1 ? 'PICKS' : 'PICK' }}</span>
+            <span class="your-picks-nums">{{ userUpcomingPicks.map(p => `#${p}`).join(' · ') }}</span>
+          </div>
           <div class="round-indicator">
             <span class="round-label">ROUND</span>
             <span class="round-number">{{ draftStore.currentRound }}</span>
@@ -701,6 +724,11 @@ onUnmounted(() => {
               'user-team': slot.teamId === draftStore.userTeamId,
             }"
           >
+            <span
+              v-if="slot.teamId === draftStore.userTeamId && !slot.isCompleted"
+              class="ticker-you"
+            >YOU</span>
+            <ApronPickBadge v-if="slot.apronFrozen" compact class="ticker-apron" />
             <span class="ticker-badge" :class="{ picked: slot.isCompleted && slot.result }">
               {{ slot.isCompleted && slot.result ? slot.result.playerName?.split(' ').pop() : `#${slot.pick}` }}
             </span>
@@ -832,6 +860,16 @@ onUnmounted(() => {
                   <Timer :size="12" />
                   <span>{{ commishLine }}</span>
                 </div>
+                <!-- Snake-order breadcrumb: while others pick, show when the
+                     user is up again. The desktop header carries the same
+                     readout, but the header is hidden on mobile. -->
+                <div
+                  v-if="!draftStore.isUserPick && userUpcomingPicks.length"
+                  class="clock-your-next"
+                >
+                  Your next pick: <strong>#{{ userUpcomingPicks[0] }}</strong>
+                  <span class="cyn-snake">(snake order)</span>
+                </div>
               </div>
             </div>
             <div v-else class="clock-content draft-complete">
@@ -933,7 +971,7 @@ onUnmounted(() => {
                       </div>
                       <div v-if="!isRookieMode" class="ri-contract">
                         {{ formatContract(player) }}
-                        <span v-if="ineligible(player)" class="overcap-chip">OVER CAP</span>
+                        <span v-if="ineligible(player)" class="overcap-chip">APRON LOCK</span>
                       </div>
                     </div>
 
@@ -1266,6 +1304,50 @@ onUnmounted(() => {
   color: var(--color-primary);
 }
 
+/* Snake-order chip beside the fantasy title. The title paints its text with
+   background-clip, so the chip must reset the transparent fill. */
+.snake-chip {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 10px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  font-family: var(--font-sans, inherit);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--color-text-secondary);
+  -webkit-text-fill-color: var(--color-text-secondary);
+  cursor: help;
+}
+
+/* Upcoming user pick numbers — the snake explainer at a glance. */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.your-picks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+}
+
+.your-picks-nums {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--color-primary);
+  white-space: nowrap;
+}
+
 /* Draft Ticker */
 .draft-ticker {
   overflow-x: auto;
@@ -1320,6 +1402,33 @@ onUnmounted(() => {
 
 .ticker-slot.user-team.completed {
   opacity: 0.8;
+}
+
+/* Apron-frozen slot marker — bottom edge so it doesn't collide with the
+   top-mounted YOU flag. */
+.ticker-apron {
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* "YOU" flag on the user's upcoming slots — shows where their turns sit
+   relative to the snake bend when scanning the strip. */
+.ticker-you {
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  pointer-events: none;
 }
 
 @keyframes pulse-border {
@@ -1694,6 +1803,24 @@ onUnmounted(() => {
   font-weight: 700;
   letter-spacing: 0.1em;
   color: var(--clock-accent);
+}
+
+/* Snake breadcrumb — its own implicit row spanning the clock grid. */
+.clock-your-next {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.clock-your-next strong {
+  color: var(--color-primary);
+  font-weight: 800;
+}
+
+.cyn-snake {
+  opacity: 0.7;
+  font-size: 0.68rem;
 }
 
 .clock-commish {

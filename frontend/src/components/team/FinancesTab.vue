@@ -11,6 +11,7 @@ import { useWalkthroughStore } from '@/stores/walkthrough'
 import { GlassCard, LoadingSpinner } from '@/components/ui'
 import { DollarSign, Users, TrendingUp, Calendar, FileText, ArrowDown, ArrowUp, FastForward } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import ApronPickBadge from '@/components/common/ApronPickBadge.vue'
 import ContractCard from './ContractCard.vue'
 import { pickCalendarYear } from '@/components/trade/tradeAssetFormat'
 import ResignModal from './ResignModal.vue'
@@ -186,6 +187,16 @@ const filteredFreeAgents = computed(() => {
   })
   return sorted
 })
+
+// The FA pool changes off-screen (season-rollover backfill, AI signings, FA
+// resolution), and the store caches it per campaign — re-read from IndexedDB
+// every time the sub-tab is shown so the list never offers a player who
+// already signed elsewhere. Cheap: one indexed query + enrichment.
+watch(activeSubTab, (tab) => {
+  if (tab === 'free-agents') {
+    financeStore.fetchFreeAgents(props.campaignId, { force: true }).catch(() => {})
+  }
+}, { immediate: true })
 
 // Pagination for the free-agents list — the offseason pool is large, so we
 // render a page at a time with a "Show More" button (mirrors ScoutingView).
@@ -597,7 +608,11 @@ onMounted(() => {
 
     <template v-else>
       <!-- Financial Overview Header -->
-      <GlassCard padding="lg" :hoverable="false" class="overview-card" data-tour="gm-finances-overview">
+      <GlassCard padding="lg" :hoverable="false" class="overview-card">
+        <!-- Wrapper anchors the walkthrough's "Financial Overview" tip to the
+             stats + position mix only; the thresholds ladder below has its
+             own tip (gm-cap-ladder). -->
+        <div data-tour="gm-finances-overview">
         <div class="overview-grid">
           <div class="overview-item">
             <div class="overview-icon cap">
@@ -656,9 +671,10 @@ onMounted(() => {
             <span class="position-count-value">{{ positionCounts[pos] }}</span>
           </div>
         </div>
+        </div>
 
         <!-- Cap threshold ladder — payroll position vs cap/tax/aprons -->
-        <div v-if="capThresholds.length" class="cap-ladder">
+        <div v-if="capThresholds.length" class="cap-ladder" data-tour="gm-cap-ladder">
           <div class="cap-ladder-header">
             <span class="cap-ladder-title">League Thresholds</span>
             <span v-if="capStatus" class="cap-status-chip" :class="capStatus.cls">{{ capStatus.label }}</span>
@@ -916,6 +932,7 @@ onMounted(() => {
                 <div class="pick-asset-info">
                   <span class="pick-asset-name">Round {{ pick.round }}</span>
                   <span v-if="pick.original_team_abbreviation" class="pick-asset-team">({{ pick.original_team_abbreviation }})</span>
+                  <ApronPickBadge v-if="pick.apronFrozen ?? pick.apron_frozen" />
                   <div v-if="pick.projected_position" class="pick-asset-projection">
                     Projected #{{ pick.projected_position }}
                   </div>

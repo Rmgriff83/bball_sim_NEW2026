@@ -18,7 +18,10 @@
 // stays un-finalized so the user can inspect/tweak; Finalize's existing
 // lineup + payroll rebuild handles the rest.
 //
-// v1 constraint: standard custom campaigns only (fantasy deferred).
+// Fantasy campaigns: the build's players are all routed into the draftable
+// pool (teamId null / FA-flagged) instead of onto team rosters — the fantasy
+// draft assigns teams. Coaches, authored pick trades, and headshots apply the
+// same as standard campaigns.
 
 import { CampaignRepository } from '../db/CampaignRepository'
 import { TeamRepository } from '../db/TeamRepository'
@@ -122,9 +125,9 @@ export async function importRosterBuild(campaignId, build) {
   }
   const campaign = await CampaignRepository.get(campaignId)
   if (!campaign) throw new Error('Campaign not found')
-  if ((campaign.draftMode ?? campaign.draft_mode) === 'fantasy') {
-    throw new Error('Downloaded rosters are not supported for fantasy draft campaigns yet')
-  }
+  // Fantasy campaigns draft their rosters — every build player goes into the
+  // draftable pool instead of onto the build's team assignments.
+  const isFantasy = (campaign.draftMode ?? campaign.draft_mode) === 'fantasy'
 
   const teams = await TeamRepository.getAllForCampaign(campaignId)
   const teamByAbbr = new Map(teams.map((t) => [t.abbreviation, t]))
@@ -145,8 +148,10 @@ export async function importRosterBuild(campaignId, build) {
 
   for (const [abbr, list] of Object.entries(build.players)) {
     if (!Array.isArray(list)) continue
-    const team = abbr === 'fa' ? null : teamByAbbr.get(abbr)
-    if (abbr !== 'fa' && !team) continue // build team not in this league — skip
+    // Fantasy: ignore the build's team assignments entirely — every player
+    // (rostered or FA) lands in the pool, so no abbreviation matching either.
+    const team = isFantasy || abbr === 'fa' ? null : teamByAbbr.get(abbr)
+    if (!isFantasy && abbr !== 'fa' && !team) continue // build team not in this league — skip
     for (const raw of list) {
       if (!raw || typeof raw !== 'object') continue
       // Blobs published before the server-side filter carry the SOURCE

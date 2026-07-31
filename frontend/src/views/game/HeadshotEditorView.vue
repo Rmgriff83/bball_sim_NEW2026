@@ -15,6 +15,7 @@ import { useTeamStore } from '@/stores/team'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { useToastStore } from '@/stores/toast'
+import { useAuthStore } from '@/stores/auth'
 import { useAudioStore } from '@/stores/audio'
 import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
 import {
@@ -504,6 +505,14 @@ watch(() => walkthroughStore.requestedAction, (req) => {
 })
 
 onMounted(async () => {
+  // Entitlement gate: the editor is a paid feature. The brush buttons that
+  // route here are all v-if gated, but a direct URL (or stale bookmark) must
+  // bounce non-owners rather than open the editor.
+  if (!useAuthStore().hasFeature('headshot_editor')) {
+    toastStore.showError('The Headshot Editor is a separate purchase — grab it from the store to edit faces.')
+    router.replace(`/campaign/${route.params.id}`)
+    return
+  }
   window.addEventListener('resize', handleResize)
   // Filter premades by audience so the coach editor's bottom strip only
   // shows coach-tagged snapshots.

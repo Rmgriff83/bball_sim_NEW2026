@@ -106,6 +106,8 @@ function applyBeforeSave() {
 }
 
 function editHeadshot() {
+  // Entitlement backstop — mirrors the v-if on the brush button.
+  if (!props.canEditHeadshot) return
   applyBeforeSave()
   emit('save', JSON.parse(JSON.stringify(draft)))
   const returnStore = useHeadshotEditorReturnStore()

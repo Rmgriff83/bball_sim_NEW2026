@@ -91,7 +91,7 @@ function posColor(pos) {
 </script>
 
 <template>
-  <div v-if="player" class="sph">
+  <div v-if="player" class="sph" data-tour="rse-selected-header">
     <div class="sph-left">
       <div class="sph-avatar">
         <PlayerAvatar :player="player" :size="84" :campaign-id="campaignId" />

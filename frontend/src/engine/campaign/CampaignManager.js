@@ -1187,7 +1187,9 @@ export async function createCampaign(options) {
   // (the latter gates which teams are eligible for the 'contender' boost). The
   // same modes map is later threaded into generateLeagueRosters so it doesn't
   // re-roll a different assignment.
-  const teamModes = isFantasy
+  // Custom fantasy generates a full league (see roster branch below), so it
+  // needs the mode map too; only bare (non-custom) fantasy skips it.
+  const teamModes = (isFantasy && !customRoster)
     ? null
     : assignCampaignModes(
         TEAMS.map(t => ({ abbreviation: t.abbreviation, facilities: t.facilities })),
@@ -1255,7 +1257,11 @@ export async function createCampaign(options) {
   // -------------------------------------------------------------------------
   let allPlayers = []
 
-  if (!isFantasy) {
+  // Custom fantasy campaigns generate a FULL league (teams + FA market) just
+  // like standard custom — roster authoring is interchangeable between the
+  // two modes; the fantasy draft pools every authored player at draft time.
+  // Only NON-custom fantasy keeps the bare 530-player draft pool.
+  if (!isFantasy || customRoster) {
     // Standard mode: generate ~450 procedural players (15 per team) with
     // realistic mode-driven talent distribution. Every team — including the
     // user's chosen team — is bucketed into contender/average/rebuilder
@@ -2406,13 +2412,15 @@ export async function enterOffseason(campaignId) {
   }
 
   // 2b. Apron penalty (Penalty C): any team FINISHING the season over the
-  // second apron has NEXT year's first-round pick frozen to the end of round
-  // 1 (buildRookieDraftOrder reads team.apronFrozenFirstYears). Measured on
-  // season-end payroll, before offseason contract expiry. Additive field —
-  // absent on old saves means no freeze; guarded against duplicate stamps.
+  // second apron has its next OWNED future first-round pick frozen to the end
+  // of round 1 (buildRookieDraftOrder reads team.apronFrozenFirstYears).
+  // "Owned" matters: a first already traded away is skipped — the acquirer
+  // must not eat the offender's penalty. Measured on season-end payroll,
+  // before offseason contract expiry. Additive field — absent on old saves
+  // means no freeze; guarded against duplicate stamps.
   {
     const { secondApron } = capNumbersFor(campaign)
-    const frozenDraftYear = (campaign.gameYear ?? 1) + 1
+    const baseGameYear = campaign.gameYear ?? 1
     const frozenTeams = []
     for (const team of teams) {
       const ctx = teamContextMap[team.abbreviation]
@@ -2421,16 +2429,32 @@ export async function enterOffseason(campaignId) {
       )
       if (payroll <= secondApron) continue
       if (!Array.isArray(team.apronFrozenFirstYears)) team.apronFrozenFirstYears = []
-      if (!team.apronFrozenFirstYears.includes(frozenDraftYear)) {
-        team.apronFrozenFirstYears.push(frozenDraftYear)
-        frozenTeams.push(team)
+      // First future year whose own original first is still in this team's
+      // hands and not already frozen by a prior season's breach.
+      let frozenPick = null
+      let frozenDraftYear = null
+      for (let y = baseGameYear + 1; y <= baseGameYear + 5; y++) {
+        if (team.apronFrozenFirstYears.includes(y)) continue
+        const pick = (team.draftPicks ?? []).find((p) =>
+          p.round === 1 && p.year === y
+          && p.original_team_abbreviation === team.abbreviation)
+        if (pick) { frozenPick = pick; frozenDraftYear = y; break }
       }
+      if (frozenDraftYear == null) continue // every own future first traded/frozen
+      team.apronFrozenFirstYears.push(frozenDraftYear)
+      // Flag the pick record too (additive) so pick/trade UIs can surface it.
+      frozenPick.apronFrozen = true
+      frozenPick.apron_frozen = true
+      frozenTeams.push(team)
       if (team.id === campaign.teamId) {
+        const draftsAway = frozenDraftYear - baseGameYear
         campaign.settings = campaign.settings ?? {}
         campaign.settings.pendingApronPickFreeze = {
           year: currentYear,
           draftYear: frozenDraftYear,
-          message: 'Finished the season over the second apron — next year\'s first-round pick drops to the end of round 1.',
+          message: draftsAway === 1
+            ? 'Finished the season over the second apron — next year\'s first-round pick drops to the end of round 1.'
+            : `Finished the season over the second apron — your next owned first-round pick (${draftsAway} drafts out) drops to the end of round 1.`,
         }
       }
     }
@@ -2525,28 +2549,21 @@ export async function enterOffseason(campaignId) {
     })
   }
 
-  // 4d. Prune retirees from the pool. Retired player objects have no UI
-  // surface (the RetirementModal reads the denormalized pendingRetirements
-  // snapshot stashed below), so keeping them only grows the players_fa sync
-  // part and IndexedDB without bound (+~80/season). Their single-game records
-  // are folded into the persistent settings.allTimeHighs board first, so the
-  // All-Time records tab keeps them forever. The filter also sweeps any
-  // pre-existing retirees (older saves, or rows resurrected by a stale cloud
-  // pull), making the prune self-healing season over season.
-  const prunedRetirees = updatedPlayers.filter(p => p.isRetired || p.is_retired)
-  if (prunedRetirees.length > 0) {
+  // 4d. Fold retirees' single-game records into the persistent
+  // settings.allTimeHighs board (max-merge — re-merging at rollover is
+  // harmless) so the All-Time records tab keeps them forever. The retiree
+  // RECORDS are deliberately KEPT through the offseason: the RetirementModal's
+  // un-retire veto needs the full player row (attributes, contract stash,
+  // headshot) to restore. The pool prune that keeps players_fa sync from
+  // growing unbounded now happens at startNewSeason, once the veto window
+  // has closed.
+  const seasonRetirees = updatedPlayers.filter(p => p.isRetired || p.is_retired)
+  if (seasonRetirees.length > 0) {
     campaign.settings = campaign.settings ?? {}
     campaign.settings.allTimeHighs = mergeHighsBoards(
       campaign.settings.allTimeHighs ?? {},
-      recomputeHighsLeaders(prunedRetirees, 'careerHighs'),
+      recomputeHighsLeaders(seasonRetirees, 'careerHighs'),
     )
-    updatedPlayers = updatedPlayers.filter(p => !(p.isRetired || p.is_retired))
-    await PlayerRepository.deleteBulk(campaignId, prunedRetirees.map(p => p.id))
-    for (const p of prunedRetirees) {
-      try {
-        await PlayerHeadshotRepository.delete(campaignId, p.id)
-      } catch { /* no headshot row — fine */ }
-    }
   }
 
   await PlayerRepository.saveBulk(
@@ -2927,18 +2944,71 @@ export async function switchUserTeam(campaignId, newTeamAbbreviation) {
  */
 export async function unretirePlayer(campaignId, playerId) {
   const player = await PlayerRepository.get(campaignId, playerId)
-  if (!player || !(player.isRetired || player.is_retired)) return null
+  if (!player || !(player.isRetired || player.is_retired)) {
+    // Record already pruned (saves from before the deferred-prune fix): the
+    // veto can't restore anything — self-clean the dead modal row so it
+    // stops offering an action that can't work.
+    const staleCampaign = await CampaignRepository.get(campaignId)
+    if (staleCampaign?.settings?.pendingRetirements?.some((r) => r.id === playerId)) {
+      staleCampaign.settings.pendingRetirements =
+        staleCampaign.settings.pendingRetirements.filter((r) => r.id !== playerId)
+      await CampaignRepository.save(staleCampaign)
+    }
+    return null
+  }
+
+  // Contract-aware restoration: a player who retired MID-CONTRACT returns to
+  // their team on the stashed terms (roster space permitting); an expired
+  // deal — or a legacy retiree with no stashed contract — hits the FA pool.
+  const stashedContract = player.retirementSummary?.contract ?? null
+  const prevTeamId = player.previousTeamId ?? player.previous_team_id ?? null
+  let restoredTeam = null
+  if (stashedContract && (stashedContract.yearsRemaining ?? 0) >= 1 && prevTeamId != null) {
+    const team = await TeamRepository.get(campaignId, prevTeamId)
+    if (team) {
+      const roster = await PlayerRepository.getByTeam(campaignId, prevTeamId)
+      if (roster.length < 15) restoredTeam = team
+    }
+  }
 
   player.isRetired = false
   player.is_retired = false
   delete player.retiredAt
   delete player.retirementSummary
-  player.teamId = null
-  player.team_id = null
-  player.teamAbbreviation = 'FA'
-  player.team_abbreviation = 'FA'
-  player.isFreeAgent = 1
-  player.is_free_agent = 1
+
+  if (restoredTeam) {
+    player.teamId = restoredTeam.id
+    player.team_id = restoredTeam.id
+    player.teamAbbreviation = restoredTeam.abbreviation
+    player.team_abbreviation = restoredTeam.abbreviation
+    player.isFreeAgent = 0
+    player.is_free_agent = 0
+    player.contractSalary = stashedContract.salary ?? 0
+    player.contract_salary = stashedContract.salary ?? 0
+    player.contractYearsRemaining = stashedContract.yearsRemaining
+    player.contract_years_remaining = stashedContract.yearsRemaining
+    if (stashedContract.details) {
+      player.contractDetails = stashedContract.details
+      player.contract_details = stashedContract.details
+    }
+    delete player.previousTeamId
+    delete player.previous_team_id
+    delete player.previousTeamAbbreviation
+    delete player.previous_team_abbreviation
+    // Keep the team's cap picture honest — the trade system reads this.
+    const payroll = (restoredTeam.total_payroll ?? restoredTeam.totalPayroll ?? 0)
+      + (stashedContract.salary ?? 0)
+    restoredTeam.total_payroll = payroll
+    restoredTeam.totalPayroll = payroll
+    await TeamRepository.save(restoredTeam)
+  } else {
+    player.teamId = null
+    player.team_id = null
+    player.teamAbbreviation = 'FA'
+    player.team_abbreviation = 'FA'
+    player.isFreeAgent = 1
+    player.is_free_agent = 1
+  }
   await PlayerRepository.save(player)
 
   // Drop the row from the pending-retirements stash so a refresh doesn't
@@ -2975,6 +3045,31 @@ export async function startNewSeason(campaignId) {
 
   const currentYear = campaign.currentSeasonYear ?? 2025
   const nextYear = currentYear + 1
+
+  // 0. Prune retired players — their veto window (the offseason retirement
+  // modal) is now closed. Records were kept through the offseason so
+  // unretirePlayer could restore them; deleting here keeps players_fa sync
+  // and IndexedDB from growing unbounded (+~80/season). Career highs were
+  // merged into settings.allTimeHighs at season end; re-merge (max-merge,
+  // idempotent) so rows resurrected by a stale cloud pull or created by
+  // older saves are still folded in — self-healing season over season.
+  {
+    const poolPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+    const retiredRows = poolPlayers.filter(p => p.isRetired || p.is_retired)
+    if (retiredRows.length > 0) {
+      campaign.settings = campaign.settings ?? {}
+      campaign.settings.allTimeHighs = mergeHighsBoards(
+        campaign.settings.allTimeHighs ?? {},
+        recomputeHighsLeaders(retiredRows, 'careerHighs'),
+      )
+      await PlayerRepository.deleteBulk(campaignId, retiredRows.map(p => p.id))
+      for (const p of retiredRows) {
+        try {
+          await PlayerHeadshotRepository.delete(campaignId, p.id)
+        } catch { /* no headshot row — fine */ }
+      }
+    }
+  }
 
   // 1. Release un-re-signed expired contracts (including user team)
   let allPlayers = await PlayerRepository.getAllForCampaign(campaignId)

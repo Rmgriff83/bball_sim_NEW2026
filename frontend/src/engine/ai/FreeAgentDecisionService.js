@@ -101,11 +101,15 @@ export function scoreOfferForPlayer(player, offer, teamContext, stats = null) {
   if (yearGap === 0) score += 4
   else if (yearGap === 1) score += 2
 
-  // Money premium beyond expected: extra incentive for money-motivated players
+  // Money premium beyond expected: overpaying ALWAYS helps (flat component)
+  // and helps money-motivated players most. Saturates at 1.75× market — the
+  // user's slider ceiling — where it's worth +6 flat plus up to +10.5 for a
+  // fully money-driven player. This is the apron economy's enticement lever.
   const salaryRatio = expected > 0 ? offer.salary / expected : 1
   const moneyWeight = getWeight(player, 'money')
-  if (salaryRatio > 1.1) {
-    score += Math.min(8, (salaryRatio - 1.1) * 20) * moneyWeight
+  if (salaryRatio > 1) {
+    const over = Math.min(salaryRatio - 1, 0.75)
+    score += over * (8 + 14 * moneyWeight)
   }
 
   return Math.round(Math.max(0, Math.min(100, score)))

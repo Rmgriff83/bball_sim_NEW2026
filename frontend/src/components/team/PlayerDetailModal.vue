@@ -710,7 +710,9 @@ const flavorSaving = ref(false)
 // draftee IS the rookie class); 2026 fallback matches the new-campaign baseline.
 const maxDraftYear = computed(() => props.currentSeasonYear ?? 2026)
 const historyForm = reactive({ college: '', country: '', draftRound: null, draftPick: 1, draftYear: null, careerSeasons: 0 })
-const personalityForm = reactive({ traits: [], morale: 80, chemistry: 75, mediaProfile: 'normal' })
+// Morale is deliberately NOT editable here — it's a sim-managed stat (games,
+// coach meetings, streaks); flavor editing covers traits/chemistry/profile.
+const personalityForm = reactive({ traits: [], chemistry: 75, mediaProfile: 'normal' })
 
 function startHistoryEdit() {
   const p = props.player ?? {}
@@ -727,7 +729,6 @@ function startHistoryEdit() {
 function startPersonalityEdit() {
   const pers = props.player?.personality ?? {}
   personalityForm.traits = Array.isArray(pers.traits) ? [...pers.traits] : []
-  personalityForm.morale = pers.morale ?? props.player?.morale ?? 80
   personalityForm.chemistry = pers.chemistry ?? 75
   personalityForm.mediaProfile = ['low_key', 'normal', 'high_profile'].includes(pers.mediaProfile)
     ? pers.mediaProfile : 'normal'
@@ -771,7 +772,6 @@ async function savePersonalityEdit() {
     const patch = await teamStore.updatePlayerFlavor(props.campaignId, pid, {
       personality: {
         traits: personalityForm.traits,
-        morale: Number(personalityForm.morale),
         chemistry: Number(personalityForm.chemistry),
         mediaProfile: personalityForm.mediaProfile,
       },
@@ -2203,10 +2203,6 @@ function formatChange(change) {
                       </button>
                     </div>
                     <div class="flavor-grid">
-                      <label class="flavor-field">
-                        <span>Morale</span>
-                        <input v-model.number="personalityForm.morale" type="number" min="0" max="99" class="flavor-input" />
-                      </label>
                       <label class="flavor-field">
                         <span>Chemistry</span>
                         <input v-model.number="personalityForm.chemistry" type="number" min="0" max="99" class="flavor-input" />

@@ -1722,7 +1722,11 @@ async function handleUnretire(retiree) {
     }
     unretiredIds.value = new Set([...unretiredIds.value, retiree.id])
     audio.affirm()
-    toastStore.showSuccess(`${retiree.name} is coming back — available in free agency`)
+    // Mid-contract retirees go back to their team; expired deals hit the pool.
+    const backAbbr = player.teamAbbreviation ?? player.team_abbreviation
+    toastStore.showSuccess(backAbbr && backAbbr !== 'FA'
+      ? `${retiree.name} is coming back — re-joining ${backAbbr} on their existing contract`
+      : `${retiree.name} is coming back — available in free agency`)
     useSyncStore().markDirty()
   } catch (err) {
     audio.cancel()
@@ -3112,8 +3116,12 @@ async function handleAcceptProposal(proposal) {
       showTradeProposalModal.value = true
     }
   } catch (err) {
+    // Close the modal FIRST — the error toast renders under the modal
+    // overlay, so leaving it open made a failed accept look like a no-op.
+    showTradeProposalModal.value = false
+    currentProposal.value = null
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(tradeStore.error || 'Failed to accept trade')
+    toastStore.showError(tradeStore.error || 'This trade can no longer be completed.')
   } finally {
     proposalActionBusy.value = false
   }

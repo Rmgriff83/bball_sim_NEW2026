@@ -10,11 +10,12 @@ import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
-import { validateSalaryCap } from '@/engine/finance/TradeExecutor'
+import { validateSalaryCap, isPickApronFrozen } from '@/engine/finance/TradeExecutor'
 import { capNumbersFor } from '@/engine/data/salaryScale'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowRight, ArrowLeft, X, Check, AlertCircle, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus, Package, Users, Repeat, AlertTriangle, CheckCircle, Info, Star, Calendar, DollarSign } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import ApronPickBadge from '@/components/common/ApronPickBadge.vue'
 import TradePartnerStep from './TradePartnerStep.vue'
 
 const props = defineProps({
@@ -94,6 +95,22 @@ const wizardTitle = computed(() => {
     return 'Trade Response'
   }
   return 'Confirm Trade'
+})
+
+// Apron ops lock (first apron): a team currently over it can't take back more
+// salary than it sends. Drives the wizard restriction banners for both sides;
+// the engine (validateSalaryCap / evaluateTrade) enforces the actual rule.
+const campaignFirstApron = computed(() =>
+  capNumbersFor(campaignStore.currentCampaign).firstApron
+)
+const userApronRestricted = computed(() =>
+  (teamStore.totalSalary ?? 0) > campaignFirstApron.value
+)
+const partnerApronRestricted = computed(() => {
+  const t = selectedTeam.value
+  if (!t) return false
+  const payroll = t.live_payroll ?? t.total_payroll ?? t.totalPayroll ?? 0
+  return payroll > campaignFirstApron.value
 })
 
 // Trade validation logic
@@ -358,6 +375,7 @@ function addPickToOffer(pick) {
     tradeValue: pick.trade_value,
     originalTeamAbbreviation: pick.original_team_abbreviation,
     projectedPosition: pick.projected_position,
+    apronFrozen: (pick.apronFrozen ?? pick.apron_frozen) === true,
   })
 }
 
@@ -392,6 +410,7 @@ function addPickToRequest(pick) {
     tradeValue: pick.trade_value,
     originalTeamAbbreviation: pick.original_team_abbreviation,
     projectedPosition: pick.projected_position,
+    apronFrozen: (pick.apronFrozen ?? pick.apron_frozen) === true,
   })
 }
 
@@ -435,6 +454,10 @@ function togglePlayerSelection(player) {
 }
 
 function togglePickSelection(pick) {
+  if (isPickApronFrozen(pick)) {
+    toastStore.showError("This pick is frozen by the apron penalty and can't be traded.")
+    return
+  }
   if (wizardStep.value === 1) {
     if (tradeStore.isInOffering('pick', pick.id)) {
       removeFromOffer({ type: 'pick', id: pick.id })
@@ -651,6 +674,16 @@ function formatAge(age) {
             <!-- Content -->
             <main class="wizard-modal-content">
               <div class="wizard-content">
+        <!-- Apron ops-lock banners: surfaced up front so a doomed deal shape
+             is obvious before the validation panel rejects it. -->
+        <div v-if="wizardStep < 3 && userApronRestricted" class="apron-restriction-banner">
+          <AlertTriangle :size="15" />
+          <span>Apron restriction — you're over the first apron: you must send out more salary than you take back.</span>
+        </div>
+        <div v-if="wizardStep === 2 && partnerApronRestricted" class="apron-restriction-banner partner">
+          <AlertTriangle :size="15" />
+          <span>{{ selectedTeam?.abbreviation }} is over the first apron — they won't take back more salary than they send out.</span>
+        </div>
         <!-- Trade Slots Summary + Validation -->
         <div v-if="wizardStep < 3 && (userOffering.length > 0 || userRequesting.length > 0)" class="wizard-trade-summary">
           <div class="wizard-trade-summary-row">
@@ -669,6 +702,7 @@ function formatAge(age) {
                     <template v-else>
                       <span class="wizard-slot-pick-badge">{{ formatPickYear(asset.year) }}</span>
                       <span class="wizard-slot-name">R{{ asset.round }}</span>
+                      <ApronPickBadge v-if="asset.apronFrozen" compact />
                     </template>
                     <span class="wizard-slot-stars">
                       <Star v-for="s in getAssetStars(asset)" :key="`ss-${s}`" :size="10" class="star filled" />
@@ -701,6 +735,7 @@ function formatAge(age) {
                     <template v-else>
                       <span class="wizard-slot-pick-badge">{{ formatPickYear(asset.year) }}</span>
                       <span class="wizard-slot-name">R{{ asset.round }}</span>
+                      <ApronPickBadge v-if="asset.apronFrozen" compact />
                     </template>
                     <span class="wizard-slot-stars">
                       <Star v-for="s in getAssetStars(asset)" :key="`rss-${s}`" :size="10" class="star filled" />
@@ -831,7 +866,7 @@ function formatAge(age) {
               v-for="pick in wizardPicks"
               :key="pick.id"
               class="wizard-asset-card pick"
-              :class="{ selected: isPickSelected(pick.id) }"
+              :class="{ selected: isPickSelected(pick.id), frozen: isPickApronFrozen(pick) }"
               @click="togglePickSelection(pick)"
             >
               <div class="wizard-asset-card-content">
@@ -839,6 +874,7 @@ function formatAge(age) {
                 <div class="wizard-asset-info">
                   <span class="wizard-asset-name">Round {{ pick.round }}</span>
                   <span v-if="pick.original_team_abbreviation" class="wizard-asset-pick-team">({{ pick.original_team_abbreviation }})</span>
+                  <ApronPickBadge v-if="pick.apronFrozen ?? pick.apron_frozen" />
                   <div v-if="pick.projected_position" class="wizard-asset-projection">
                     Projected #{{ pick.projected_position }}
                   </div>
@@ -924,6 +960,7 @@ function formatAge(age) {
                         <div class="modal-pick-info">
                           <span class="modal-pick-round">Round {{ asset.round }}</span>
                           <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
+                          <ApronPickBadge v-if="asset.apronFrozen" />
                           <div class="modal-star-rating">
                             <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
                             <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
@@ -995,6 +1032,7 @@ function formatAge(age) {
                         <div class="modal-pick-info">
                           <span class="modal-pick-round">Round {{ asset.round }}</span>
                           <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
+                          <ApronPickBadge v-if="asset.apronFrozen" />
                           <div class="modal-star-rating">
                             <Star v-for="s in getAssetStars(asset)" :key="s" :size="12" class="star filled" />
                             <Star v-for="s in (5 - getAssetStars(asset))" :key="`e-${s}`" :size="12" class="star empty" />
@@ -3221,6 +3259,24 @@ function formatAge(age) {
 }
 
 /* Wizard Trade Summary (replaces step indicator) */
+/* Apron ops-lock banner — amber warning strip above the wizard slots. */
+.apron-restriction-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(249, 115, 22, 0.12);
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  color: #f97316;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.apron-restriction-banner svg { flex-shrink: 0; }
+
 .wizard-trade-summary {
   margin-bottom: 1rem;
   padding-bottom: 1rem;
@@ -3516,6 +3572,12 @@ function formatAge(age) {
   background: rgba(59, 130, 246, 0.15);
   border-color: var(--color-primary);
   box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+}
+
+/* Apron-frozen pick — visible but untradeable. */
+.wizard-asset-card.pick.frozen {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .wizard-asset-card.pick:hover {

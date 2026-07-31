@@ -403,6 +403,9 @@ export const useTradeStore = defineStore('trade', () => {
         rostersByTeamId.get(tid).push(p)
       }
       const context = buildContext({ standings, teams: allTeams, seasonPhase: 'regular_season' })
+      // Campaign cap set → evaluateTrade's apron ops lock (AI refuses net
+      // salary in while over the first apron).
+      context.capNumbers = capNumbersFor(campaign)
 
       // Current-season + playoff stat maps for the enriched partner cards /
       // trade-block rows (keyed by playerId). Same source/shape as the Trading
@@ -438,6 +441,11 @@ export const useTradeStore = defineStore('trade', () => {
             record: { wins, losses },
             direction,
             cap_space: capNumbersFor(campaign).salaryCap - totalPayroll,
+            // Fresh roster-summed payroll (the stored total_payroll can lag a
+            // trade/signing) — drives the apron hard-cap chip + wizard banner.
+            live_payroll: teamRoster.reduce(
+              (s, p) => s + (p.contractSalary ?? p.contract_salary ?? 0), 0
+            ),
             roster: teamRoster,
             picks: teamPicks,
             topAssets,
@@ -570,6 +578,9 @@ export const useTradeStore = defineStore('trade', () => {
 
       const standings = seasonData?.standings ?? { east: [], west: [] }
       const context = buildContext({ standings, teams: allTeams, seasonPhase: 'regular_season' })
+      // Campaign cap set → evaluateTrade's apron ops lock (AI refuses net
+      // salary in while over the first apron).
+      context.capNumbers = capNumbersFor(campaign)
       const getPickValueFn = buildPickValueFn({ allTeams, standings, allPlayers, currentSeasonYear: year })
 
       // Build the proposal in AI format: aiReceives = what user is offering, aiGives = what user is requesting
@@ -919,6 +930,34 @@ export const useTradeStore = defineStore('trade', () => {
       // 2. Expire stale proposals
       expireStaleProposals(allProposals, currentDate)
 
+      // 2b. Self-heal: expire pending proposals the user can't legally accept
+      // (salary matching / second-apron rules — validateSalaryCap is the same
+      // gate the accept path hard-blocks with). Covers offers persisted by
+      // builds that generated without this check; no migration needed.
+      const userRoster = allPlayers.filter(p => {
+        const tid = p.teamId ?? p.team_id
+        return tid == userTeamId
+      })
+      const userPayroll = userRoster.reduce(
+        (s, p) => s + parseFloat(p.contractSalary ?? p.contract_salary ?? 0), 0
+      )
+      const campCapNumbers = capNumbersFor(campaign)
+      for (const p of allProposals) {
+        if (p.status !== 'pending') continue
+        const check = validateSalaryCap({
+          userGiving: p.proposal?.aiReceives ?? [],
+          userReceiving: p.proposal?.aiGives ?? [],
+          capMode: 'normal',
+          getPlayerFn,
+          currentPayroll: userPayroll,
+          capNumbers: campCapNumbers,
+        })
+        if (!check.valid) {
+          p.status = 'expired'
+          p.resolved_at = currentDate
+        }
+      }
+
       // 3. Load trading block
       const tradingBlockIds = campaign?.settings?.tradingBlock ?? []
       userTradingBlock.value = tradingBlockIds
@@ -930,10 +969,6 @@ export const useTradeStore = defineStore('trade', () => {
       let newProposals = []
       if (shouldGenerate) {
         const aiTeams = allTeams.filter(t => t.id !== userTeamId)
-        const userRoster = allPlayers.filter(p => {
-          const tid = p.teamId ?? p.team_id
-          return tid == userTeamId
-        })
 
         const standings = seasonData?.standings ?? { east: [], west: [] }
 
@@ -971,6 +1006,10 @@ export const useTradeStore = defineStore('trade', () => {
           getTeamPicksFn,
           getPickValueFn,
           userTradingBlock: tradingBlockIds,
+          // Generation-time salary gate: never offer what the accept path
+          // would block (125% matching + second-apron rule).
+          userPayroll,
+          capNumbers: campCapNumbers,
         })
 
         // Track last generation date so we don't re-generate on same game day

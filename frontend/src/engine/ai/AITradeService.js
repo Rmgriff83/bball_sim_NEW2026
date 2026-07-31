@@ -8,8 +8,20 @@
 // =============================================================================
 
 import { calculateRetentionScore } from './MotivationService';
-import { LUXURY_TAX, capLineForExpectation } from '../data/salaryScale';
+import { LUXURY_TAX, FIRST_APRON, capLineForExpectation } from '../data/salaryScale';
 import { findOwnerForTeam } from '../data/owners';
+import { validateSalaryCap, isPickApronFrozen } from '../finance/TradeExecutor';
+
+// Salary total of a trade-asset list (picks carry no salary).
+function _assetSalary(assets, getPlayerFn) {
+  let total = 0;
+  for (const a of assets ?? []) {
+    if (a.type !== 'player') continue;
+    const p = getPlayerFn(a.playerId);
+    if (p) total += p.contractSalary ?? p.contract_salary ?? 0;
+  }
+  return total;
+}
 
 const TRADE_DEADLINE_MONTH = 2; // February
 const TRADE_DEADLINE_DAY = 5;
@@ -856,6 +868,26 @@ export function evaluateTrade({
   const diffConfig = getDifficultyConfig(difficulty);
   const teamDirection = analyzeTeamDirection(team, teamRoster, context);
 
+  // Apron ops lock (mirrors the user-side validateSalaryCap rule): an AI team
+  // whose current payroll sits over the FIRST apron refuses any deal that
+  // takes back more salary than it sends out — before any value scoring.
+  const aiPayroll = (teamRoster ?? []).reduce(
+    (s, p) => s + (p.contractSalary ?? p.contract_salary ?? 0), 0
+  );
+  const firstApron = context?.capNumbers?.firstApron ?? FIRST_APRON;
+  if (aiPayroll > firstApron) {
+    const salaryIn = _assetSalary(proposal.aiReceives, getPlayerFn);
+    const salaryOut = _assetSalary(proposal.aiGives, getPlayerFn);
+    if (salaryIn > salaryOut) {
+      return {
+        decision: 'reject',
+        reason: `${team.name ?? team.abbreviation} is over the first apron and can't take back more salary than they send out.`,
+        team_direction: teamDirection,
+        value_analysis: { receiving: 0, giving: 0, net: 0 },
+      };
+    }
+  }
+
   const receiving = calculateReceivingValue({
     assets: proposal.aiReceives,
     direction: teamDirection,
@@ -1121,6 +1153,8 @@ export function findTargetPlayers(userRoster, need, direction, tradingBlock = []
 export function buildAiOffer({ aiRoster, targetPlayer, direction, teamPicks = [], getPlayerFn }) {
   const targetValue = getPlayerTradeValue(targetPlayer);
   const assets = [];
+  // Apron-frozen picks are untradeable — never offer them.
+  teamPicks = teamPicks.filter(pk => !isPickApronFrozen(pk));
 
   // Sort AI roster by rating (offer mid-tier players, not their stars)
   const sortedRoster = [...aiRoster].sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
@@ -1236,6 +1270,8 @@ export function generateWeeklyProposals({
   getPlayerStatsFn = () => null,
   getPickValueFn = () => 5,
   userTradingBlock = [],
+  userPayroll = 0,
+  capNumbers = null,
 }) {
   if (!userRoster || userRoster.length === 0) return [];
 
@@ -1254,6 +1290,10 @@ export function generateWeeklyProposals({
   const isDeadlineMonth = daysUntilDeadline >= 0 && daysUntilDeadline <= 30;
 
   const context = buildContext({ standings, teams: allTeams, seasonPhase });
+  // Campaign cap set for the apron ops lock — evaluateTrade (the AI's own
+  // verification below) reads it, so an over-apron-1 AI never proposes a
+  // deal that takes back more salary than it sends.
+  context.capNumbers = capNumbers;
   const newProposals = [];
 
   // Pre-compute cooldown: 30-day window for rejected/expired proposals
@@ -1395,6 +1435,20 @@ export function generateWeeklyProposals({
     });
 
     if (verification.decision !== 'accept') continue;
+
+    // The offer must also be EXECUTABLE from the user's side — the same
+    // salary-matching rules the accept path hard-blocks with (125% + $100K,
+    // second-apron more-out-than-in). Without this, lopsided-salary offers
+    // reach the user only to die at accept time.
+    const userSideCheck = validateSalaryCap({
+      userGiving: [{ type: 'player', playerId: target.id }],
+      userReceiving: aiOffer.assets,
+      capMode: 'normal',
+      getPlayerFn,
+      currentPayroll: userPayroll,
+      capNumbers,
+    });
+    if (!userSideCheck.valid) continue;
 
     // Build the proposal
     const expiresAt = new Date(current);
@@ -1815,6 +1869,11 @@ function _findAiToAiTrade({
     const team2Post = team2Payroll + team2IncomingSalary - team2OutgoingSalary;
     if (team1Post > _teamMandateLine(team1, capNumbers) && team1Post >= team1Payroll) continue;
     if (team2Post > _teamMandateLine(team2, capNumbers) && team2Post >= team2Payroll) continue;
+    // Apron ops lock: a side currently over the FIRST apron can't take back
+    // more salary than it sends out (same rule the user + AI offers obey).
+    const aiAiFirstApron = capNumbers?.firstApron ?? FIRST_APRON;
+    if (team1Payroll > aiAiFirstApron && team1IncomingSalary > team1OutgoingSalary) continue;
+    if (team2Payroll > aiAiFirstApron && team2IncomingSalary > team2OutgoingSalary) continue;
 
     // Evaluate from both perspectives
     const eval1 = evaluateTrade({
@@ -1912,6 +1971,7 @@ export function processAiToAiTrades({
     const dir = analyzeTeamDirection(team, roster, context);
     const picks = (team.draftPicks || []).filter(pk =>
       (pk.currentOwnerId ?? pk.current_owner_id) === team.id
+      && !isPickApronFrozen(pk) // frozen firsts are untradeable
     );
     const tradingBlock = team.tradingBlock || computeAiTradingBlock({ roster, direction: dir });
     teamInfoMap.set(team.id, { team, roster, dir, picks, tradingBlock });

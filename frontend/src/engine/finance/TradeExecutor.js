@@ -64,16 +64,31 @@ export function validateSalaryCap({
       }
     }
 
-    // Second-apron ops lock: a team whose POST-trade payroll sits above the
-    // second apron cannot take back more salary than it sends out. Requires
-    // the caller to thread currentPayroll + capNumbers (old callers skip it).
+    // Apron ops lock: a team whose CURRENT payroll sits above the FIRST apron
+    // cannot take back more salary than it sends out (the restriction tightens
+    // at apron 2 only in wording — same rule, same trigger). Requires the
+    // caller to thread currentPayroll + capNumbers (old callers skip it).
+    const firstApron = capNumbers?.firstApron ?? 0;
     const secondApron = capNumbers?.secondApron ?? 0;
+    if (firstApron > 0 && currentPayroll > firstApron && incomingSalary > outgoingSalary) {
+      const band = secondApron > 0 && currentPayroll > secondApron ? 'second' : 'first';
+      return {
+        valid: false,
+        reason: `Over the ${band} apron — you must send out more salary than you take back.`,
+        incoming_salary: incomingSalary,
+        outgoing_salary: outgoingSalary,
+        current_payroll: currentPayroll,
+        first_apron: firstApron,
+      };
+    }
+    // Post-trade guard: a team still under apron 1 can't take in enough to
+    // land PAST the second apron in one move.
     if (secondApron > 0 && currentPayroll > 0) {
       const postTradePayroll = currentPayroll + incomingSalary - outgoingSalary;
       if (postTradePayroll > secondApron && incomingSalary > outgoingSalary) {
         return {
           valid: false,
-          reason: 'Second-apron teams must send out more salary than they take back.',
+          reason: 'This trade would take you past the second apron — you must send out more salary than you take back.',
           incoming_salary: incomingSalary,
           outgoing_salary: outgoingSalary,
           current_payroll: currentPayroll,
@@ -101,6 +116,16 @@ export function validateSalaryCap({
     incoming_salary: incomingSalary,
     outgoing_salary: outgoingSalary,
   };
+}
+
+/**
+ * Apron-frozen pick check — a first-rounder demoted by the second-apron
+ * penalty is UNTRADEABLE until its draft passes (the flag dies with the pick
+ * when rollDraftPicks replaces it). Single source for the UI guards, the AI
+ * paths, and the execution hard block.
+ */
+export function isPickApronFrozen(pick) {
+  return (pick?.apronFrozen ?? pick?.apron_frozen) === true;
 }
 
 /**
@@ -242,6 +267,16 @@ export function executeTrade({
   let updatedLeaguePlayers = [...leaguePlayers];
   let updatedUserRoster = [...userRoster];
   let updatedDraftPicks = [...draftPicks];
+
+  // Hard block: apron-frozen picks never move. The wizard/AI paths already
+  // refuse them; this backstops stale offers built before the rule.
+  for (const asset of tradeDetails.assets) {
+    if (asset.type !== 'pick') continue;
+    const pick = updatedDraftPicks.find(p => p.id === asset.pickId);
+    if (pick && isPickApronFrozen(pick)) {
+      throw new Error("Frozen first-round picks can't be traded until their draft passes.");
+    }
+  }
 
   for (const asset of tradeDetails.assets) {
     if (asset.type === 'player') {

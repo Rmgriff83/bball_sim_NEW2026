@@ -5,7 +5,8 @@ import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { StatBadge, LoadingSpinner } from '@/components/ui'
 import { useFreeAgentInterest } from '@/composables/useFreeAgentInterest'
 import { playerMarketValue } from '@/engine/ai/ResignValuationService'
-import { veteranMinSalary } from '@/engine/data/salaryScale'
+import { veteranMinSalary, maxSalary, capNumbersFor } from '@/engine/data/salaryScale'
+import { useCampaignStore } from '@/stores/campaign'
 
 const props = defineProps({
   show: {
@@ -60,11 +61,21 @@ const expectedSalary = computed(() =>
 const minSalary = computed(() => (props.player ? veteranMinSalary(props.player) : 1_300_000))
 
 // Slider reaches down to the veteran minimum (so the user can deliberately offer
-// a minimum deal) and up to ~25% over market. $250K step.
+// a minimum deal) and up to a GENEROUS overpay band — with the apron economy,
+// spending is a lever, so the ceiling is ~1.75× market (at least market+$5M),
+// hard-capped at the player's league-max contract (25/30/35% of cap by
+// experience, mirroring resignAsk). $250K step.
+const campaignStore = useCampaignStore()
 const salaryMin = computed(() => Math.floor(minSalary.value / 250_000) * 250_000)
-const salaryMax = computed(() =>
-  Math.max(salaryMin.value + 250_000, Math.ceil((expectedSalary.value * 1.25) / 250_000) * 250_000)
-)
+const salaryMax = computed(() => {
+  const experience = props.player?.careerSeasons
+    ?? props.player?.career_seasons
+    ?? Math.max(0, (props.player?.age ?? 27) - 19)
+  const leagueMax = maxSalary(experience, capNumbersFor(campaignStore.currentCampaign).salaryCap)
+  const generous = Math.max(expectedSalary.value * 1.75, expectedSalary.value + 5_000_000)
+  const ceiling = Math.min(leagueMax, generous)
+  return Math.max(salaryMin.value + 250_000, Math.ceil(ceiling / 250_000) * 250_000)
+})
 
 const offerYears = ref(2)
 const offerSalary = ref(0)

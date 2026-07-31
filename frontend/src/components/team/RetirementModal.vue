@@ -138,10 +138,10 @@ function formatStat(value) {
                     <button
                       v-if="!isUnretired(r)"
                       class="unretire-btn"
-                      title="Override this retirement — the player returns to the free-agent pool"
+                      title="Override this retirement — the player returns to their team if under contract, otherwise to the free-agent pool"
                       @click="emit('unretire', r)"
                     >Un-retire</button>
-                    <span v-else class="unretired-tag">Returning as FA ✓</span>
+                    <span v-else class="unretired-tag">Returning ✓</span>
                   </li>
                 </ul>
               </div>
@@ -150,8 +150,9 @@ function formatStat(value) {
 
           <footer class="modal-footer">
             <p class="unretire-hint">
-              Un-retired players return to the free-agent pool and may retire
-              again next season.
+              Un-retired players return to their team if they have contract
+              years remaining (otherwise to the free-agent pool) and may
+              retire again next season.
             </p>
             <button class="btn-confirm" @click="close">Continue</button>
           </footer>

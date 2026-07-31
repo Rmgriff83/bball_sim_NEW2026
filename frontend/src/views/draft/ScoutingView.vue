@@ -11,6 +11,7 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
+import ApronPickBadge from '@/components/common/ApronPickBadge.vue'
 import { useSyncStore } from '@/stores/sync'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
@@ -658,6 +659,10 @@ onMounted(async () => {
                     <span class="origin-team-abbr" :style="{ color: slot.originalTeamColor }">{{ slot.originalTeamAbbr }}</span>
                     pick ({{ slot.originalTeamName }})
                   </span>
+                </div>
+                <div v-if="slot.apronFrozen" class="pick-origin">
+                  <ApronPickBadge />
+                  <span class="origin-text">Moved to the back of round 1 — {{ slot.originalTeamAbbr }} finished over the second apron</span>
                 </div>
               </div>
               <span

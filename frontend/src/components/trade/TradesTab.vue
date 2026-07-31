@@ -67,20 +67,30 @@ watch(() => tradeStore.negotiationPrefill, (val) => {
 })
 
 onMounted(async () => {
+  // Negotiation handoff (the user clicked Negotiate on an inbound proposal
+  // and we're routing in): open the wizard IMMEDIATELY. The fetches below —
+  // especially fetchPendingProposals, which reads the whole player table and
+  // re-runs proposal generation — used to gate the entire tab behind the
+  // loading spinner, so the wizard took seconds to appear. TradeCenter does
+  // its own data loading with its own spinner, so it doesn't need these.
+  const negotiating = !!tradeStore.negotiationPrefill
+  if (negotiating) {
+    consumeNegotiationFromStore()
+    loading.value = false
+  }
   try {
-    await Promise.all([
+    const work = Promise.all([
       financeStore.fetchFinanceSummary(props.campaignId),
       tradeStore.fetchPendingProposals(props.campaignId),
       tradeStore.loadUserTradingBlock(props.campaignId),
     ])
+    if (!negotiating) await work
+    else work.catch(err => console.warn('TradesTab background load error:', err))
   } catch (err) {
     console.warn('TradesTab mount error:', err)
   } finally {
     loading.value = false
   }
-  // Honor a negotiation handoff that arrived before this tab mounted
-  // (the user clicked Negotiate from CampaignHomeView and we're routing in).
-  if (tradeStore.negotiationPrefill) consumeNegotiationFromStore()
 })
 </script>
 

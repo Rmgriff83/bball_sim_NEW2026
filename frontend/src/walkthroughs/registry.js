@@ -343,7 +343,16 @@ export const WALKTHROUGHS = {
       tab: { view: 'gm', tab: 'finances' },
       placement: 'bottom',
       title: 'Financial Overview',
-      body: "At a glance: your salary cap, total payroll, remaining cap space, and roster count (out of 15). Stay under the cap and keep room to sign free agents.",
+      body: "At a glance: your salary cap, total payroll, cap space, roster count, and your position mix. You're allowed to spend past the cap — but the deeper you go, the harsher the league's penalties. More on that next.",
+    },
+    {
+      target: 'gm-cap-ladder',
+      tab: { view: 'gm', tab: 'finances' },
+      placement: 'bottom',
+      title: 'League Thresholds & Penalties',
+      body: "The league's spending lines — Salary Cap, Luxury Tax, First Apron, Second Apron — with a chip showing where your payroll sits. Over the First Apron, trades can't bring back more salary than you send out. Over the Second, only minimum-salary signings are allowed — and finishing a season there drops your next first-round pick to the end of round 1. The 'Owner limit' tag marks the line your owner expects you to respect; blow past it and your job security takes the hit.",
+      // Ladder is hidden on legacy finance summaries without the tax passthrough.
+      skipIfMissing: true,
     },
     {
       target: 'gm-roster-card',
@@ -984,6 +993,144 @@ export const WALKTHROUGHS = {
       placement: 'center',
       title: "You're Set",
       body: 'Have fun. You can come back and re-edit anytime from any player.',
+    },
+  ],
+
+  // ===========================================================================
+  // Custom Roster Editor (paid feature) — a CHAIN of small tours, each ending
+  // where the next begins. Started with forceStart (first use, any player) by
+  // RosterSetupView; the chain gates on isDone flags. Interactive steps finish
+  // their tour BEFORE the tapped element's handler runs, which is what hands
+  // off cleanly from grid → team page → row flow → player editor modal.
+  // ===========================================================================
+
+  rosterEditorGrid: [
+    {
+      placement: 'center',
+      route: 'roster-setup',
+      title: 'Your League, Your Rules',
+      body: "This is the Roster Editor. Every team card opens that franchise's roster, coach, history, and draft picks for editing. The Free Agents card holds the league's starting signing market — you author that pool too. Shape everything to your liking, then Finish & Start Season locks it in.",
+    },
+    {
+      target: 'rse-user-team',
+      route: 'roster-setup',
+      placement: 'bottom',
+      interactive: true,
+      title: 'Start With Your Team',
+      body: "This one's yours. Tap your team card to open its roster and start editing.",
+    },
+  ],
+
+  rosterEditorTeam: [
+    {
+      target: ['rse-team-header', 'rse-owner-row'],
+      route: 'roster-setup',
+      placement: 'bottom',
+      title: 'The Team at a Glance',
+      body: "Team overall, owner, payroll against the cap, and facilities. The pencil next to the name renames the city and team — the 3-letter abbreviation stays fixed.",
+    },
+    {
+      target: 'rse-history-picks',
+      route: 'roster-setup',
+      placement: 'bottom',
+      title: 'History & Draft Picks',
+      body: "Author this franchise's past — titles, playoff runs, season records — with Edit History. Draft Picks lets you re-assign future firsts and seconds to other teams; traded picks carry their 'via' credit into the campaign.",
+    },
+    {
+      target: 'rse-coach-row',
+      route: 'roster-setup',
+      placement: 'top',
+      title: 'The Head Coach',
+      body: 'Every team keeps a head coach — edit their name, ratings, schemes, and badges here. Own the Headshot Editor too? Then you can redraw their face as well.',
+    },
+  ],
+
+  rosterEditorScratch: [
+    {
+      target: 'rse-add-btn',
+      route: 'roster-setup',
+      placement: 'top',
+      interactive: true,
+      title: 'Create Your First Player',
+      body: 'This roster is empty — tap Add Player to create one. Pick an archetype and talent level for the base, then fine-tune every detail.',
+    },
+  ],
+
+  rosterEditorRows: [
+    {
+      target: 'rse-first-row',
+      route: 'roster-setup',
+      placement: 'bottom',
+      interactive: true,
+      title: 'Select a Player',
+      body: 'Tap a player once to select their row.',
+    },
+    {
+      target: 'rse-selected-header',
+      route: 'roster-setup',
+      placement: 'bottom',
+      title: 'The Selected Player',
+      body: 'Selecting a row swaps in this player header — name (tap the pencil to rename), positions, jersey number, vitals, archetype, and contract, with overall and potential tracking your edits live.',
+    },
+    {
+      target: ['rse-first-row', 'rse-mode-toggle'],
+      route: 'roster-setup',
+      placement: 'bottom',
+      title: 'Overall vs. Potential',
+      body: "With a row selected, the chevrons adjust each attribute directly. The Overall / Potential toggle switches what you're editing: current ratings, or the growth ceilings each attribute can develop to over a career.",
+    },
+    {
+      target: 'rse-first-row',
+      route: 'roster-setup',
+      placement: 'bottom',
+      interactive: true,
+      title: 'Open the Full Editor',
+      body: 'Tap the selected row again to open the full player editor.',
+    },
+  ],
+
+  rosterEditorPlayer: [
+    {
+      target: 'pdem-hero',
+      route: 'roster-setup',
+      placement: 'bottom',
+      title: 'The Player Editor',
+      body: 'Everything else about a player lives here — name, vitals, and position. If you own the Headshot Editor, the brush on the avatar opens it.',
+    },
+    {
+      target: 'pdem-edit-tabs',
+      route: 'roster-setup',
+      placement: 'bottom',
+      title: 'Six Tabs, Full Control',
+      body: 'Vitals, history, archetype, badges, contract, and personality. Two deserve a closer look — open the Archetype or Badges tab for a quick tour of each.',
+    },
+  ],
+
+  rosterEditorArchetype: [
+    {
+      target: 'pdem-arch-section',
+      route: 'roster-setup',
+      placement: 'bottom',
+      title: 'Archetype Rebuilds',
+      body: "Pick an archetype and a talent tier, then Apply to rebuild the player's base attributes in one tap — a fast way to rough out a player before tweaking individual ratings.",
+    },
+  ],
+
+  rosterEditorBadges: [
+    {
+      target: 'pdem-badges-panel',
+      route: 'roster-setup',
+      placement: 'top',
+      title: 'Levels & Ceilings',
+      body: 'Each badge carries a current level (Lvl) and a top level (Max). Set Lvl to None with a Max to make the badge earnable only through campaign play — or grant it now at any tier. Players hold at most 12 badges total.',
+    },
+    {
+      target: 'pdem-add-badge',
+      route: 'roster-setup',
+      placement: 'top',
+      skipIfMissing: true,
+      title: 'Add From the Catalog',
+      body: 'Add any badge from the full catalog, grouped by category.',
     },
   ],
 }

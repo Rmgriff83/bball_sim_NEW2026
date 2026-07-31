@@ -71,6 +71,8 @@ function buildPickAsset(k) {
     tradeValue: k.trade_value,
     originalTeamAbbreviation: k.original_team_abbreviation,
     projectedPosition: k.projected_position,
+    // Apron-penalty marker rides along so summary/review views can badge it.
+    apronFrozen: (k.apronFrozen ?? k.apron_frozen) === true,
   }
 }
 

@@ -147,12 +147,15 @@ export const useWalkthroughStore = defineStore('walkthrough', () => {
   // Same as maybeStart but bypasses the global `enabled` flag AND the per-key
   // `isDone` flag. Used for opt-in feature tours (e.g. the headshot editor
   // first-visit walkthrough) that should run even for experienced players who
-  // have turned off the campaign tours.
-  function forceStart(key) {
+  // have turned off the campaign tours. `startIndex` lets a replay begin at
+  // a mid-tour step when the page state makes earlier steps impossible
+  // (e.g. the roster editor's row tour with a player already selected).
+  function forceStart(key, startIndex = 0) {
     if (activeKey.value) return
     if (!WALKTHROUGHS[key]) return
     activeKey.value = key
-    stepIndex.value = 0
+    const max = (WALKTHROUGHS[key]?.length ?? 1) - 1
+    stepIndex.value = Math.max(0, Math.min(max, startIndex))
   }
 
   const isRunning = computed(() => !!activeKey.value)
