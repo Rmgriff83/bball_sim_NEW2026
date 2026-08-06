@@ -712,6 +712,7 @@ export const useTradeStore = defineStore('trade', () => {
         draftPicks: allDraftPicks,
         userTeam: { id: userTeamId, abbreviation: userTeam.abbreviation },
         currentDate,
+        currentSeasonId: seasonYear,
       })
 
       // Persist player changes: stamp the FULL team identity on all moved
@@ -1183,6 +1184,7 @@ export const useTradeStore = defineStore('trade', () => {
         draftPicks: allDraftPicks,
         userTeam: { id: userTeamId, abbreviation: userTeam.abbreviation },
         currentDate,
+        currentSeasonId: seasonYear,
       })
 
       // Persist player moves — stamp the FULL team identity (both casings +

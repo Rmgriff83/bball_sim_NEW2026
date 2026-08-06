@@ -25,6 +25,8 @@ import { getCoachActionBudget, getCoachTrainBudget, getCoachResignCost, getCoach
 import { selectBestCoachingScheme } from '@/engine/coaching/CoachStrategyService'
 import api from '@/composables/useApi'
 import { cloneForPersist } from '@/utils/cloneForPersist'
+import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
+import { useBreakingNewsStore } from '@/stores/breakingNews'
 
 /**
  * Convert a raw playerStats record (cumulative totals) into the per-game
@@ -1155,7 +1157,7 @@ export const useTeamStore = defineStore('team', () => {
           ? `${trainee.firstName ?? trainee.first_name ?? ''} ${trainee.lastName ?? trainee.last_name ?? ''}`.trim() || null
           : null
         import('@/services/notifications').then(n =>
-          n.scheduleTrainingReady({ playerName, endsAt })
+          n.scheduleTrainingReady({ playerName, endsAt, campaignId })
         ).catch(() => {})
       } catch { /* notifications are best-effort */ }
 
@@ -1275,6 +1277,16 @@ export const useTeamStore = defineStore('team', () => {
    * fresh 2-season contract, and removes the candidate from
    * campaign.settings.availableCoaches. Mirrors the scout/trainer hire flow.
    */
+  // Log a coaching move into the season news feed (News Desk / LATEST NEWS).
+  // Fire-and-forget: news must never fail the underlying roster action.
+  function _logCoachNews(campaignId, item) {
+    try {
+      useBreakingNewsStore().addToFeed(item, campaignId)
+    } catch (err) {
+      console.warn('[Team] coach news logging failed:', err)
+    }
+  }
+
   async function hireCoach(campaignId, coachId) {
     loading.value = true
     error.value = null
@@ -1390,6 +1402,21 @@ export const useTeamStore = defineStore('team', () => {
         }
       }
 
+      // News: the hire — and, on a replacement, the outgoing coach's exit.
+      const newsDate = campaign.currentDate ?? campaign.current_date ?? null
+      if (isReplacement && outgoingCoach?.name) {
+        _logCoachNews(campaignId, BreakingNewsService.coachFired({
+          coachName: outgoingCoach.name,
+          teamName: teamData.name,
+          date: newsDate,
+        }))
+      }
+      _logCoachNews(campaignId, BreakingNewsService.coachHired({
+        coachName: newCoach.name,
+        teamName: teamData.name,
+        date: newsDate,
+      }))
+
       useSyncStore().markDirty()
       return { coach: newCoach }
     } catch (err) {
@@ -1447,6 +1474,12 @@ export const useTeamStore = defineStore('team', () => {
 
       coach.value = teamData.coach
       if (team.value) team.value.coach = teamData.coach
+
+      _logCoachNews(campaignId, BreakingNewsService.coachExtended({
+        coachName: teamData.coach.name,
+        teamName: teamData.name,
+        date: campaign.currentDate ?? campaign.current_date ?? null,
+      }))
 
       useSyncStore().markDirty()
       return { coach: teamData.coach, cost }
@@ -1509,6 +1542,12 @@ export const useTeamStore = defineStore('team', () => {
 
       coach.value = restored
       if (team.value) team.value.coach = restored
+
+      _logCoachNews(campaignId, BreakingNewsService.coachExtended({
+        coachName: restored.name,
+        teamName: teamData.name,
+        date: campaign.currentDate ?? campaign.current_date ?? null,
+      }))
 
       useSyncStore().markDirty()
       return { coach: restored, cost }
@@ -1579,6 +1618,14 @@ export const useTeamStore = defineStore('team', () => {
 
       coach.value = null
       if (team.value) team.value.coach = null
+
+      if (firedCoach?.name) {
+        _logCoachNews(campaignId, BreakingNewsService.coachFired({
+          coachName: firedCoach.name,
+          teamName: teamData.name,
+          date: campaign.currentDate ?? campaign.current_date ?? null,
+        }))
+      }
 
       useSyncStore().markDirty()
     } catch (err) {

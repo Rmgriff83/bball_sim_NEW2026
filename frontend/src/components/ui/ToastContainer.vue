@@ -35,6 +35,12 @@ function goToScouting(toast) {
   toastStore.removeToast(toast.id)
 }
 
+function goToLeagueTrades(toast) {
+  if (!toast.campaignId) return
+  router.push(`/campaign/${toast.campaignId}/league?tab=trades`)
+  toastStore.removeToast(toast.id)
+}
+
 function goToOwnerTab(toast) {
   if (!toast.campaignId) return
   router.push(`/campaign/${toast.campaignId}/team?tab=owner`)
@@ -113,15 +119,32 @@ function isWin(toast) {
               <Binoculars :size="20" />
             </div>
             <div class="toast-content">
-              <div class="game-result-header">SCOUTING REPORT</div>
-              <div class="weekly-summary-body">
+              <div class="game-result-header">{{ toast.aiTrades?.length ? 'WEEKLY REPORT' : 'SCOUTING REPORT' }}</div>
+              <div v-if="toast.scoutingPointsEarned > 0" class="weekly-summary-body">
                 <span class="weekly-summary-value">+{{ toast.scoutingPointsEarned }}</span>
                 <span class="weekly-summary-label">
                   scouting point{{ toast.scoutingPointsEarned !== 1 ? 's' : '' }} earned
                 </span>
               </div>
-              <div v-if="toast.campaignId" class="toast-footer">
-                <button class="box-score-link" @click="goToScouting(toast)">
+              <template v-if="toast.aiTrades?.length">
+                <div
+                  v-for="trade in toast.aiTrades.slice(0, 2)"
+                  :key="trade.id"
+                  class="weekly-trade-line"
+                >
+                  <span class="weekly-trade-teams">{{ trade.teamA?.abbr }} ⇄ {{ trade.teamB?.abbr }}</span>
+                  {{ (trade.receivedA?.[0] ?? '') }} ↔ {{ (trade.receivedB?.[0] ?? '') }}
+                </div>
+                <div v-if="toast.aiTrades.length > 2" class="weekly-trade-line weekly-trade-more">
+                  +{{ toast.aiTrades.length - 2 }} more league trade{{ toast.aiTrades.length - 2 === 1 ? '' : 's' }}
+                </div>
+              </template>
+              <div v-if="toast.campaignId" class="toast-footer weekly-footer">
+                <button v-if="toast.aiTrades?.length" class="box-score-link" @click="goToLeagueTrades(toast)">
+                  <span>View Trades</span>
+                  <ExternalLink :size="14" />
+                </button>
+                <button v-if="toast.scoutingPointsEarned > 0" class="box-score-link" @click="goToScouting(toast)">
                   <span>Go to Scouting</span>
                   <ExternalLink :size="14" />
                 </button>
@@ -407,6 +430,33 @@ function isWin(toast) {
   align-items: baseline;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.weekly-trade-line {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.weekly-trade-teams {
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-right: 6px;
+}
+
+.weekly-trade-more {
+  font-style: italic;
+  color: var(--color-text-tertiary);
+}
+
+.weekly-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .weekly-summary-value {

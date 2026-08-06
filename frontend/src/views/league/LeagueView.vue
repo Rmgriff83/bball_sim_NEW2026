@@ -6,6 +6,9 @@ import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
 import { useGameStore } from '@/stores/game'
 import { usePlayoffStore } from '@/stores/playoff'
+import { useTradeStore } from '@/stores/trade'
+import { TeamRepository } from '@/engine/db/TeamRepository'
+import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { X, ChevronLeft, Star } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
@@ -129,9 +132,72 @@ function getLeadersSortIcon(column) {
   return leadersSortDirection.value === 'desc' ? ' ▼' : ' ▲'
 }
 
+// --- League trades tab (full-season breakdown) -------------------------------
+// Reads seasonData.tradeHistory via the trade store (user + AI-AI trades).
+// Legacy AI-AI entries written before enrichment lack playerName/pickDisplay,
+// so names resolve at display time from the player table (no data rewrite).
+const tradeStore = useTradeStore()
+const leagueTrades = ref([])
+const tradesLoading = ref(false)
+
+function formatTradeDate(dateStr) {
+  if (!dateStr) return ''
+  const [y, m, d] = String(dateStr).split('T')[0].split(' ')[0].split('-').map(Number)
+  if (!y || !m || !d) return String(dateStr)
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+async function fetchLeagueTrades() {
+  tradesLoading.value = true
+  try {
+    await tradeStore.fetchTradeHistory(campaignId.value)
+    const raw = tradeStore.tradeHistory ?? []
+    const teams = await TeamRepository.getAllForCampaign(campaignId.value)
+    const teamById = new Map(teams.map(t => [String(t.id), t]))
+    let nameById = null
+    if (raw.some(t => (t.assets ?? []).some(a => a.type === 'player' && !a.playerName))) {
+      const all = await PlayerRepository.getAllForCampaign(campaignId.value)
+      nameById = new Map(all.map(p => [
+        p.id,
+        p.name ?? `${p.firstName ?? p.first_name ?? ''} ${p.lastName ?? p.last_name ?? ''}`.trim(),
+      ]))
+    }
+    const assetLabel = (a) => {
+      if (a.type === 'player') {
+        const base = a.playerName ?? nameById?.get(a.playerId) ?? 'Player'
+        const salary = parseFloat(a.salary ?? 0)
+        return salary > 0 ? `${base} ($${salary.toFixed(1)}M)` : base
+      }
+      return a.pickDisplay ?? 'Draft pick'
+    }
+    leagueTrades.value = [...raw]
+      .sort((a, b) => String(b.trade_date ?? '').localeCompare(String(a.trade_date ?? '')))
+      .map(t => {
+        const sides = (t.teams ?? []).map(teamId => {
+          const team = teamById.get(String(teamId))
+          return {
+            id: teamId,
+            name: t.team_names?.[teamId] ?? team?.name ?? 'Team',
+            abbr: team?.abbreviation ?? '',
+            color: team?.primary_color ?? team?.primaryColor ?? '#666',
+            received: (t.assets ?? []).filter(a => a.to === teamId).map(assetLabel),
+          }
+        })
+        return { id: t.id, date: t.trade_date, sides }
+      })
+  } catch (err) {
+    console.error('Failed to fetch league trades:', err)
+    leagueTrades.value = []
+  } finally {
+    tradesLoading.value = false
+  }
+}
+
 // Watch for tab change to fetch leaders
 watch(activeTab, async (newTab) => {
-  if (newTab === 'leaders') {
+  if (newTab === 'trades') {
+    await fetchLeagueTrades()
+  } else if (newTab === 'leaders') {
     try {
       await leagueStore.fetchPlayerLeaders(campaignId.value, { force: true })
       leadersFetched.value = true
@@ -305,6 +371,20 @@ const loadingPlayerFromLeaders = ref(false)
 // logic has to live in both places. Reads both camelCase and snake_case
 // fields; returns null when neither is populated so the section hides
 // cleanly on a legacy player record that pre-dates the field.
+// Career trade log (player.tradeLog) — newest first; hidden when absent.
+const playerTradeLog = computed(() => {
+  const log = selectedPlayer.value?.tradeLog ?? selectedPlayer.value?.trade_log ?? []
+  return Array.isArray(log) ? [...log].reverse() : []
+})
+
+function formatTradeLogDate(entry) {
+  const d = entry?.date ? String(entry.date).split('T')[0].split(' ')[0] : null
+  if (!d) return entry?.seasonYear ?? ''
+  const [y, m, day] = d.split('-').map(Number)
+  if (!y || !m || !day) return d
+  return new Date(y, m - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 const playerOrigin = computed(() => {
   const p = selectedPlayer.value
   if (!p) return null
@@ -457,6 +537,14 @@ const seasonProgressPercent = computed(() => {
 })
 
 onMounted(async () => {
+  // Deep-link tab selection (?tab=trades from the weekly-report toast, etc.).
+  // Setting activeTab here fires the existing watch, which loads that tab's
+  // data (league trades included).
+  const requestedTab = route.query.tab
+  const VALID_TABS = ['standings', 'playoffs', 'games', 'leaders', 'mvp', 'rookies', 'trades', 'alltime']
+  if (typeof requestedTab === 'string' && VALID_TABS.includes(requestedTab)) {
+    activeTab.value = requestedTab
+  }
   try {
     await Promise.all([
       leagueStore.fetchStandings(campaignId.value),
@@ -821,6 +909,13 @@ function formatSalary(salary) {
               @click="activeTab = 'rookies'"
             >
               Rookie Rankings
+            </button>
+            <button
+              class="tab-btn"
+              :class="{ active: activeTab === 'trades' }"
+              @click="activeTab = 'trades'"
+            >
+              Trades
             </button>
             <button
               class="tab-btn"
@@ -1381,6 +1476,44 @@ function formatSalary(salary) {
             <div v-if="leagueStore.rookieLeaders.length === 0 && !leagueStore.loadingRookies" class="empty-state">
               <p>No rookie stats available yet.</p>
               <p class="text-sm text-secondary">Rookies will appear here once they've played at least one game.</p>
+            </div>
+          </div>
+        </GlassCard>
+      </template>
+
+      <!-- League Trades View -->
+      <template v-else-if="activeTab === 'trades'">
+        <GlassCard padding="none" :hoverable="false">
+          <div class="leaders-header">
+            <h3 class="h4">Season Trades</h3>
+            <p class="text-secondary text-sm">Every trade across the league this season, newest first</p>
+          </div>
+
+          <div v-if="tradesLoading" class="loading-state opacity-60">
+            <LoadingSpinner size="md" />
+          </div>
+
+          <div v-else-if="leagueTrades.length === 0" class="empty-state">
+            <p>No trades this season.</p>
+            <p class="text-sm text-secondary">League trades show up here as they happen — check back after the next week of games.</p>
+          </div>
+
+          <div v-else class="trades-list">
+            <div v-for="t in leagueTrades" :key="t.id" class="trade-card">
+              <div class="trade-card-date">{{ formatTradeDate(t.date) }}</div>
+              <div class="trade-card-sides">
+                <div v-for="side in t.sides" :key="side.id" class="trade-card-side">
+                  <div class="trade-side-team">
+                    <TeamLogo :abbreviation="side.abbr" :color="side.color" :size="22" />
+                    <span class="trade-side-name">{{ side.name }}</span>
+                    <span class="trade-side-recv">receive</span>
+                  </div>
+                  <ul class="trade-side-assets">
+                    <li v-for="(label, i) in side.received" :key="i">{{ label }}</li>
+                    <li v-if="!side.received.length" class="trade-side-none">Future considerations</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </div>
         </GlassCard>
@@ -2060,6 +2193,17 @@ function formatSalary(salary) {
                       <span class="origin-label">From</span>
                       <span class="origin-value">{{ playerOrigin.school }}</span>
                       <span v-if="playerOrigin.country" class="origin-country">{{ playerOrigin.country }}</span>
+                    </div>
+                  </div>
+
+                  <!-- Trade history (permanent career trade log) -->
+                  <div v-if="playerTradeLog.length" class="player-history-section">
+                    <h4 class="player-attr-title">Trades</h4>
+                    <div class="trade-log-list">
+                      <div v-for="(t, i) in playerTradeLog" :key="`tl-${i}`" class="trade-log-row">
+                        <span class="trade-log-route">{{ t.fromAbbr || t.fromName || '—' }} → {{ t.toAbbr || t.toName || '—' }}</span>
+                        <span class="trade-log-date">{{ formatTradeLogDate(t) }}</span>
+                      </div>
                     </div>
                   </div>
 
@@ -3452,6 +3596,124 @@ function formatSalary(salary) {
 .empty-state p:first-child {
   font-size: 1rem;
   margin-bottom: 8px;
+}
+
+/* League trades tab */
+.trades-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 18px;
+}
+
+.trade-card {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px 14px;
+}
+
+.trade-card-date {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  margin-bottom: 10px;
+}
+
+.trade-card-sides {
+  display: flex;
+  gap: 14px;
+}
+
+.trade-card-side {
+  flex: 1;
+  min-width: 0;
+}
+
+.trade-side-team {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.trade-side-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trade-side-recv {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.trade-side-assets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.trade-side-assets li {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.trade-side-none {
+  font-style: italic;
+  color: var(--color-text-tertiary) !important;
+}
+
+/* Career trade log (inline player modal history tab) */
+.trade-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.trade-log-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border-left: 3px solid var(--color-accent, #e85a4f);
+}
+
+.trade-log-route {
+  color: var(--color-text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trade-log-date {
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .trade-card-sides {
+    flex-direction: column;
+    gap: 10px;
+  }
 }
 
 /* Contract Footer */

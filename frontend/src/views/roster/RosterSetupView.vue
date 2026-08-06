@@ -12,7 +12,7 @@ import { useToastStore } from '@/stores/toast'
 import { storeToRefs } from 'pinia'
 import { Loader2, Users, ClipboardList, ShieldCheck, ArrowLeft, AlertTriangle, Check, Plus, Save, Download, Sparkles } from 'lucide-vue-next'
 import api from '@/composables/useApi'
-import { getToken } from '@/composables/useTokenStorage'
+import { fetchBuildBlob } from '@/composables/useBuildBlob'
 import { useCommunityLink } from '@/composables/useCommunityLink'
 import RosterAttributeTable from '@/components/roster/RosterAttributeTable.vue'
 import SelectedPlayerHeader from '@/components/roster/SelectedPlayerHeader.vue'
@@ -42,6 +42,10 @@ const {
 } = storeToRefs(store)
 
 const campaignId = computed(() => route.params.id)
+// Builder roster workshop: the campaign is a standalone authoring project.
+// Finalize is replaced by "Validate for publishing" (the one-way door must
+// never close on a workshop) and back navigation goes to /builder.
+const isWorkshop = computed(() => store.campaign?.settings?.workshopMode === 'roster')
 const view = ref('teams')          // 'teams' | 'roster' | 'pool'
 const tableMode = ref('current')   // 'current' | 'ceiling'
 const editingPlayer = ref(null)
@@ -158,7 +162,9 @@ const importing = ref(false)
 // campaign's id so the community page preselects it + links back here.
 const { openCommunity: openCommunityLink } = useCommunityLink()
 function openCommunity() {
-  return openCommunityLink(campaignId.value)
+  // Workshop visits round-trip to /builder; campaign setup keeps the original
+  // roster-setup return path.
+  return openCommunityLink(campaignId.value, isWorkshop.value ? { back: 'builder' } : {})
 }
 
 async function fetchDownloadedBuilds() {
@@ -171,41 +177,6 @@ async function fetchDownloadedBuilds() {
   }
 }
 
-// Fetch a build blob. Preferred path asks the server for the raw gz bytes
-// (octet-stream, no Content-Encoding — immune to proxies/service workers
-// that decompress the body but leave the header, which surfaces as
-// ERR_CONTENT_DECODING_FAILED) and inflates explicitly. Uses bare fetch()
-// (not the axios client) so nothing can coerce the body to a lossy string,
-// and inflates in a LOOP so an accidentally double-gzipped object still
-// resolves. WebViews without DecompressionStream use the legacy route.
-async function _fetchBuildBlob(id) {
-  if (typeof DecompressionStream === 'undefined') {
-    const res = await api.get(`/api/roster-builds/${id}/blob`)
-    return res.data
-  }
-  const token = await getToken()
-  const base = import.meta.env.VITE_API_URL || ''
-  const resp = await fetch(`${base}/api/roster-builds/${id}/blob?raw=1`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!resp.ok) {
-    throw new Error(resp.status === 404 ? 'This roster is no longer available' : `Import fetch failed (${resp.status})`)
-  }
-  let bytes = new Uint8Array(await resp.arrayBuffer())
-  // Tolerate stray leading whitespace (a single space from PHP stray-output
-  // bugs corrupted the stream once — harmless to JSON, fatal to gunzip).
-  let start = 0
-  while (start < bytes.length && (bytes[start] === 0x20 || bytes[start] === 0x0a || bytes[start] === 0x0d || bytes[start] === 0x09)) start++
-  if (start > 0) bytes = bytes.subarray(start)
-  // Inflate while the payload still starts with the gzip magic bytes (guards
-  // gz-of-gz artifacts from manual bucket surgery); cap the loop for safety.
-  for (let pass = 0; pass < 3 && bytes[0] === 0x1f && bytes[1] === 0x8b; pass++) {
-    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
-    bytes = new Uint8Array(await new Response(stream).arrayBuffer())
-  }
-  return JSON.parse(new TextDecoder().decode(bytes))
-}
-
 async function pickDownloaded() {
   if (!selectedBuildId.value || importing.value) return
   importing.value = true
@@ -214,7 +185,7 @@ async function pickDownloaded() {
   audio.suppressClickSound()
   try {
     const picked = downloadedBuilds.value.find((b) => b.id === selectedBuildId.value)
-    const blob = await _fetchBuildBlob(selectedBuildId.value)
+    const blob = await fetchBuildBlob(selectedBuildId.value)
     await store.applyDownloadedBuild(blob)
     if (isFantasy.value) {
       // Fantasy: the import pooled every player — land on the draft pool
@@ -339,7 +310,7 @@ function backToTeams() {
 // dirty guard prompts Save/Discard first; onBeforeRouteLeave re-checks and
 // passes once the guard has resolved the changes.
 function backToCampaigns() {
-  guardThen(() => router.push('/campaigns'))
+  guardThen(() => router.push(isWorkshop.value ? '/builder' : '/campaigns'))
 }
 
 // --- Player editing ---------------------------------------------------------
@@ -696,6 +667,15 @@ async function acceptFinalize() {
 }
 
 async function confirmFinalize() {
+  // Workshop: no finalize, no navigation — stamp the publishable flag and
+  // keep editing. The web community publish accepts this in place of a
+  // finalized campaign.
+  if (isWorkshop.value) {
+    await store.markWorkshopPublishable()
+    showFinalize.value = false
+    useToastStore().showSuccess('Validated — publish this build from the Community board anytime.')
+    return
+  }
   const id = campaignId.value
   const fantasy = isFantasy.value
   await store.finalize()
@@ -725,7 +705,7 @@ async function confirmFinalize() {
           <ArrowLeft :size="18" /> Teams
         </button>
         <button v-else class="rs-back" @click="backToCampaigns">
-          <ArrowLeft :size="18" /> Campaigns
+          <ArrowLeft :size="18" /> {{ isWorkshop ? 'Builder' : 'Campaigns' }}
         </button>
         <h1 v-if="view === 'pool'" class="rs-title">
           <ClipboardList v-if="poolOnlyFantasy" :size="20" />
@@ -747,7 +727,7 @@ async function confirmFinalize() {
         >
           <Loader2 v-if="validating" :size="16" class="spin" />
           <ShieldCheck v-else :size="16" />
-          Finish &amp; Start Season
+          {{ isWorkshop ? 'Validate for Publishing' : 'Finish & Start Season' }}
         </button>
       </div>
     </header>
@@ -1048,6 +1028,19 @@ async function confirmFinalize() {
               <Loader2 v-if="generatingRest" :size="16" class="spin" />
               <Sparkles v-else :size="16" />
               Generate the rest &amp; continue
+            </button>
+          </div>
+        </template>
+        <template v-else-if="isWorkshop">
+          <h3><Check :size="18" /> Build validated</h3>
+          <p>
+            This build passes every league check. Mark it publishable and share
+            it from the Community board — you can keep editing it here anytime.
+          </p>
+          <div class="rs-modal-actions">
+            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Not yet</button>
+            <button class="rs-modal-primary" :disabled="saving" @click="acceptFinalize">
+              <Loader2 v-if="saving" :size="16" class="spin" /> Mark Publishable
             </button>
           </div>
         </template>

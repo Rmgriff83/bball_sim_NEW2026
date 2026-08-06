@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { useCampaignStore } from '@/stores/campaign'
 import { useSyncStore } from '@/stores/sync'
 
 export const useBreakingNewsStore = defineStore('breakingNews', () => {
@@ -30,6 +31,16 @@ export const useBreakingNewsStore = defineStore('breakingNews', () => {
         seasonData.news.push(newsRecord)
         await SeasonRepository.save(seasonData)
         useSyncStore().markDirty()
+        // Mirror into the loaded campaign's reactive news snapshot — the home
+        // News Desk reads currentCampaign.news from fetch time and would
+        // otherwise miss items persisted mid-session until a reload.
+        const campaignStore = useCampaignStore()
+        if (campaignStore.currentCampaign?.id === campaignId) {
+          const liveNews = Array.isArray(campaignStore.currentCampaign.news)
+            ? campaignStore.currentCampaign.news
+            : []
+          campaignStore.currentCampaign.news = [...liveNews, newsRecord].slice(-50)
+        }
       }
     } catch (err) {
       console.error('Failed to persist news:', err)

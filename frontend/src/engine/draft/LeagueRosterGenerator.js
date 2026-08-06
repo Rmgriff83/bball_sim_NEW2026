@@ -27,6 +27,7 @@
 // =============================================================================
 
 import { generateVeteran } from '../campaign/CampaignManager'
+import { CAP_SET_2026, maxSalary, veteranMinSalary } from '../data/salaryScale'
 
 // Scan the headshots assets folder at build time so we know what custom
 // portraits exist. Anything you drop into frontend/src/assets/headshots/
@@ -433,6 +434,75 @@ function assignHeadshotsByOverall(players) {
  * @param {string} [opts.userTeamAbbreviation] - User's team is always 'middle' (Tier 2.5)
  * @returns {{ players: Array, modes: Object }} Players (15×teams.length) and the mode map
  */
+// =============================================================================
+// Payroll normalization — generated teams land at NBA-realistic payrolls.
+// =============================================================================
+// The per-slot salary curve alone sums a 15-man generated roster to ~$120M —
+// $40M+ under the cap — because most slots are ≤72 OVR and youth discounts +
+// vet-min floors compress the total. Rather than inflating the shared
+// rating→salary curve (which also drives FA asks / re-signs / AI offers in
+// EXISTING campaigns), each generated team's contracts are scaled at
+// generation time to a per-tier target band. Tuned against CAP_SET_2026
+// (cap $164.96M / tax $200.5M / apron1 $209M):
+//   • contenders sit in tax territory but under apron 1 (trade lock),
+//   • the user's 'middle' team lands just UNDER the cap (fixes the huge
+//     day-1 cap surplus without tripping cap-mandate owners),
+//   • rebuilders stay under the cap so rebuild-tier AI mandate lines and
+//     owner `under_cap` sub-tasks are satisfied on day 1.
+// Generation-time only: existing campaigns and the shared market economy are
+// untouched. FA/fantasy pools skip this (their salaries feed market logic,
+// not team payrolls).
+const PAYROLL_TARGETS = {
+  contender: [188_000_000, 204_000_000],
+  average_strong: [172_000_000, 186_000_000],
+  middle: [156_000_000, 164_000_000],
+  average_weak: [148_000_000, 158_000_000],
+  rebuilder: [136_000_000, 150_000_000],
+}
+
+function normalizeTeamPayroll(players, mode) {
+  const band = PAYROLL_TARGETS[mode] ?? PAYROLL_TARGETS.average_weak
+  const target = band[0] + Math.random() * (band[1] - band[0])
+  const salaryOf = (p) => p.contractSalary ?? p.contract_salary ?? 0
+  const current = players.reduce((s, p) => s + salaryOf(p), 0)
+  if (current <= 0) return
+
+  const capOf = (p) => maxSalary(p.careerSeasons ?? p.career_seasons ?? 0, CAP_SET_2026.salaryCap)
+  const floorOf = (p) => veteranMinSalary(p)
+
+  // Restamps a player's first-year salary + the per-year escalation exactly
+  // as CampaignManager.generateContract shapes them (+5%/yr, $10K rounding).
+  const apply = (p, salary) => {
+    const rounded = Math.round(salary / 10000) * 10000
+    p.contractSalary = rounded
+    p.contract_salary = rounded
+    const years = p.contractYearsRemaining ?? p.contract_years_remaining ?? 1
+    const salaries = []
+    for (let i = 0; i < years; i++) {
+      salaries.push(Math.round(rounded * (1 + 0.05 * i) / 10000) * 10000)
+    }
+    if (p.contractDetails) p.contractDetails.salaries = salaries
+    if (p.contract_details) p.contract_details.salaries = salaries
+  }
+
+  const factor = target / current
+  for (const p of players) {
+    apply(p, Math.min(capOf(p), Math.max(floorOf(p), salaryOf(p) * factor)))
+  }
+
+  // Per-player clamps (vet-min floors on cheap benches, max-contract
+  // ceilings on stars) drift the sum off target — push the remainder onto
+  // the top earners with headroom.
+  const remainder = target - players.reduce((s, p) => s + salaryOf(p), 0)
+  if (Math.abs(remainder) > 2_000_000) {
+    const top = [...players].sort((a, b) => salaryOf(b) - salaryOf(a)).slice(0, 6)
+    const share = remainder / top.length
+    for (const p of top) {
+      apply(p, Math.min(capOf(p), Math.max(floorOf(p), salaryOf(p) + share)))
+    }
+  }
+}
+
 export function generateLeagueRosters(campaignId, teams, opts = {}) {
   const { startYear = 2026, userTeamAbbreviation = null, modes: providedModes = null } = opts
   const usedNames = new Set()
@@ -453,6 +523,7 @@ export function generateLeagueRosters(campaignId, teams, opts = {}) {
     team.aiDirection = MODE_TO_AI_DIRECTION[mode] ?? 'ascending'
 
     const roster = generateTeamRoster({ campaignId, team, mode, startYear, usedNames, teamIndex })
+    normalizeTeamPayroll(roster, mode)
     allPlayers.push(...roster)
   }
 

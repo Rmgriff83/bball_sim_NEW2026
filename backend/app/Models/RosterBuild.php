@@ -10,8 +10,12 @@ class RosterBuild extends Model
     public const STATUS_ACTIVE = 'active';
     public const STATUS_REMOVED = 'removed';
 
+    public const TYPE_ROSTER = 'roster';
+    public const TYPE_DRAFT_CLASS = 'draft_class';
+
     protected $fillable = [
         'user_id',
+        'type',
         'campaign_client_id',
         'title',
         'description',

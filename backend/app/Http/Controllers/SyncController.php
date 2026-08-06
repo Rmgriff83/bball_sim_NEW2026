@@ -16,8 +16,13 @@ class SyncController extends Controller
      */
     public function listCampaigns(Request $request): JsonResponse
     {
+        // Workshop campaigns (standalone Builder projects) are excluded unless
+        // explicitly requested — old app versions send no param and must never
+        // see them (a teams-less draft-class workshop would render as a broken
+        // campaign and eat one of the client's campaign slots).
         $campaigns = Campaign::where('user_id', $request->user()->id)
             ->whereNotNull('client_id')
+            ->when(!$request->query('include_workshop'), fn ($q) => $q->where('workshop', false))
             ->orderBy('updated_at', 'desc')
             ->get();
 
@@ -27,6 +32,11 @@ class SyncController extends Controller
                     'id' => $campaign->client_id,
                     'name' => $campaign->name,
                     'updatedAt' => $campaign->updated_at->toISOString(),
+                    // Additive: lets new clients route workshop stubs to the
+                    // Builder instead of the campaign list. Only present in
+                    // include_workshop responses in practice; old clients
+                    // never request those and ignore the key regardless.
+                    'workshop' => (bool) $campaign->workshop,
                 ];
             }),
         ]);
@@ -157,13 +167,21 @@ class SyncController extends Controller
 
         // For the meta part, create the campaign record if needed
         if ($part === 'meta') {
+            // teams: `present` (not `required`) — Laravel's `required` rejects
+            // an EMPTY array, but draft-class Builder workshops are teams-less
+            // campaigns and legitimately push `teams: []`. Every playable
+            // campaign still sends its 30 teams.
             $request->validate([
                 'campaign' => 'required|array',
-                'teams' => 'required|array',
+                'teams' => 'present|array',
                 'clientUpdatedAt' => 'required|string',
             ]);
 
             $campaignData = $request->input('campaign');
+            // Workshop flag rides in the pushed settings; stamping it onto the
+            // row is what lets listCampaigns hide Builder projects from old
+            // clients. Guarded read — pre-feature clients never send it.
+            $isWorkshop = !empty($campaignData['settings']['workshopMode']);
 
             // withTrashed + restore: see pushSnapshot — a meta push for a
             // soft-deleted campaign resurrects it instead of 500ing on the
@@ -184,6 +202,7 @@ class SyncController extends Controller
                     'name' => $campaignData['name'] ?? 'Campaign',
                     'current_date' => $campaignData['currentDate'] ?? $campaignData['current_date'] ?? '2025-10-21',
                     'difficulty' => $campaignData['difficulty'] ?? 'pro',
+                    'workshop' => $isWorkshop,
                 ]);
             }
 
@@ -303,6 +322,7 @@ class SyncController extends Controller
                 $campaign->update([
                     'name' => $request->input('campaign.name', $campaign->name),
                     'last_played_at' => now(),
+                    'workshop' => !empty($request->input('campaign.settings.workshopMode')),
                 ]);
             }
 

@@ -6,6 +6,7 @@ import { User, Trophy, Award, Medal, Star, Users, X, AlertTriangle, Zap, Shield,
 import { PERSONALITY_TRAITS } from '@/engine/campaign/CampaignManager'
 import { getCoachActionBudget, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { detectArchetype } from '@/engine/data/archetypes'
+import { getAttrCap } from '@/engine/evolution/PlayerEvolution'
 import CoachMeetingConfirmModal from './CoachMeetingConfirmModal.vue'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerBadgeStoreModal from '@/components/team/PlayerBadgeStoreModal.vue'
@@ -488,6 +489,14 @@ const isPotentialMaxed = computed(() => {
   return overall != null && potential != null && overall >= potential
 })
 
+// Whether an attribute has hit ITS OWN growth ceiling. Must use the same
+// per-attribute cap the store enforces (attributeCaps[category][attr], scalar
+// potential fallback for legacy saves) — gating on scalar potential alone
+// rendered a + button that upgradePlayerAttribute always rejected.
+function attrAtCap(category, attrKey, value) {
+  return value >= getAttrCap(props.player, category, attrKey)
+}
+
 // Handle upgrade button click
 function handleUpgrade(category, attrKey) {
   const pool = (category === 'defense') ? 'defense' : 'offense'
@@ -652,6 +661,21 @@ const playerOrigin = computed(() => {
   if (!school && !country) return null
   return { school: school || '—', country }
 })
+
+// Career trade log (player.tradeLog, stamped by every trade path) — newest
+// first. Old saves have no log; the section hides.
+const tradeHistoryList = computed(() => {
+  const log = props.player?.tradeLog ?? props.player?.trade_log ?? []
+  return Array.isArray(log) ? [...log].reverse() : []
+})
+
+function formatTradeLogDate(entry) {
+  const d = entry?.date ? String(entry.date).split('T')[0].split(' ')[0] : null
+  if (!d) return entry?.seasonYear ?? ''
+  const [y, m, day] = d.split('-').map(Number)
+  if (!y || !m || !day) return d
+  return new Date(y, m - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
 
 // Fatigue helpers
 const fatiguePercent = computed(() => Math.round(normalizedPlayer.value?.fatigue ?? 0))
@@ -1755,9 +1779,9 @@ function formatChange(change) {
                         :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
                       >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
                       <span
-                        v-if="hasOffenseUpgradePoints && !scoutingMode && value >= (normalizedPlayer.potentialRating ?? 99)"
+                        v-if="hasOffenseUpgradePoints && !scoutingMode && attrAtCap('offense', key, value)"
                         class="upgrade-max"
-                        title="At potential cap"
+                        title="At this attribute's ceiling"
                       >
                         MAX
                       </span>
@@ -1794,9 +1818,9 @@ function formatChange(change) {
                         :style="{ color: scoutingMode ? getScoutedAttrColor(key, value) : getAttrColor(value) }"
                       >{{ scoutingMode ? getScoutedAttrValue(key, value) : roundAttr(value) }}</span>
                       <span
-                        v-if="hasDefenseUpgradePoints && !scoutingMode && value >= (normalizedPlayer.potentialRating ?? 99)"
+                        v-if="hasDefenseUpgradePoints && !scoutingMode && attrAtCap('defense', key, value)"
                         class="upgrade-max"
-                        title="At potential cap"
+                        title="At this attribute's ceiling"
                       >
                         MAX
                       </span>
@@ -2383,6 +2407,17 @@ function formatChange(change) {
                     </div>
                   </div>
                 </template>
+
+                <!-- Trade history (permanent career trade log) -->
+                <div v-if="!scoutingMode && tradeHistoryList.length" class="history-section">
+                  <h4 class="history-section-title">Trades</h4>
+                  <div class="trade-log-list">
+                    <div v-for="(t, i) in tradeHistoryList" :key="`tl-${i}`" class="trade-log-row">
+                      <span class="trade-log-route">{{ t.fromAbbr || t.fromName || '—' }} → {{ t.toAbbr || t.toName || '—' }}</span>
+                      <span class="trade-log-date">{{ formatTradeLogDate(t) }}</span>
+                    </div>
+                  </div>
+                </div>
 
                 <!-- All Star Selections — hidden for draft prospects (none yet) -->
                 <div v-if="!scoutingMode" class="history-section">
@@ -4176,6 +4211,40 @@ function formatChange(change) {
   background: rgba(255, 255, 255, 0.03);
   border-radius: 8px;
   border-left: 3px solid var(--color-primary);
+}
+
+/* Career trade log */
+.trade-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.trade-log-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border-left: 3px solid var(--color-accent, #e85a4f);
+}
+
+.trade-log-route {
+  color: var(--color-text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trade-log-date {
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  flex-shrink: 0;
 }
 
 .allstar-season {

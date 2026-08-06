@@ -57,11 +57,14 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
-  function showWeeklySummary({ scoutingPointsEarned = 0, campaignId = null } = {}) {
-    if (scoutingPointsEarned <= 0) return null
+  function showWeeklySummary({ scoutingPointsEarned = 0, aiTrades = [], campaignId = null } = {}) {
+    // Surface the weekly report when there's anything to report — scouting
+    // points AND/OR league (AI-to-AI) trades that fired on the week boundary.
+    if (scoutingPointsEarned <= 0 && !(Array.isArray(aiTrades) && aiTrades.length)) return null
     return addToast({
       type: 'weekly-summary',
       scoutingPointsEarned,
+      aiTrades: Array.isArray(aiTrades) ? aiTrades : [],
       campaignId,
       duration: 6000
     })

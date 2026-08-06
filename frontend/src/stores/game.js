@@ -16,7 +16,7 @@ import { getEffectiveExpectation, maybeRaiseExpectationMidSeason } from '@/engin
 import { findOwnerForTeam } from '@/engine/data/owners'
 import { SeasonManager } from '@/engine/season/SeasonManager'
 import { PlayoffManager } from '@/engine/season/PlayoffManager'
-import { processGameRewards, TOKENS_PER_SYNERGY, WIN_MULTIPLIER, WIN_BONUS_TOKENS } from '@/engine/rewards/RewardService'
+import { processGameRewards } from '@/engine/rewards/RewardService'
 import { NewsService } from '@/engine/season/NewsService'
 import { processAiToAiTrades, computeAiTradingBlock, analyzeTeamDirection, buildContext } from '@/engine/ai/AITradeService'
 import { buildPickValueFn } from '@/engine/ai/PickValuationService'
@@ -30,6 +30,7 @@ import {
   computeFeaturedWindow,
 } from '@/engine/season/FeaturedPlayerService'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
+import { appendTradeLogEntry } from '@/engine/finance/TradeExecutor'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { processRecovery as processInjuryRecovery, isInjured as isPlayerInjured } from '@/engine/evolution/InjuryService'
 import { applySeasonalAging } from '@/engine/evolution/AttributeAging'
@@ -730,10 +731,28 @@ export const useGameStore = defineStore('game', () => {
       for (const move of result.playerMoves) {
         const player = allPlayers.find(p => p.id === move.playerId)
         if (!player) continue
+        // Permanent career trade-log entry (player popup history) — stamped
+        // BEFORE the team fields flip so from/to reflect the actual move.
+        const fromTeam = allTeams.find(t => t.id === move.fromTeamId)
+        const toTeam = allTeams.find(t => t.id === move.toTeamId)
+        appendTradeLogEntry(player, {
+          date: currentDate,
+          seasonYear: year,
+          fromId: move.fromTeamId,
+          toId: move.toTeamId,
+          fromName: fromTeam?.name ?? '',
+          toName: toTeam?.name ?? '',
+          fromAbbr: move.fromAbbr ?? fromTeam?.abbreviation ?? '',
+          toAbbr: move.toAbbr ?? toTeam?.abbreviation ?? '',
+        })
         player.teamId = move.toTeamId
         player.team_id = move.toTeamId
         player.teamAbbreviation = move.toAbbr
         player.team_abbreviation = move.toAbbr
+        // Repoint the seasonData stat row to the new team (same as the user
+        // trade paths) — leaders/team chips read the row's teamId, and the
+        // repoint preserves the old team in the row's history.
+        SeasonManager.updatePlayerStatsTeam(seasonData, move.playerId, move.toTeamId)
         playersToSave.push(player)
       }
       if (playersToSave.length > 0) {
@@ -771,19 +790,53 @@ export const useGameStore = defineStore('game', () => {
         if (team) await TeamRepository.save(team)
       }
 
-      // Record trade history
+      // Record trade history — enriched to the same asset shape the user-trade
+      // paths write (playerName/salary/pickDisplay + season_id), so the League
+      // trades breakdown renders every entry uniformly.
+      const playerById = new Map(allPlayers.map(p => [p.id, p]))
+      const pickById = new Map()
+      for (const t of allTeams) {
+        for (const pk of (t.draftPicks || [])) pickById.set(pk.id, pk)
+      }
+      const enrichAsset = (a) => {
+        if (a.type === 'player') {
+          const p = playerById.get(a.playerId)
+          const playerName = p
+            ? (p.name ?? `${p.firstName ?? p.first_name ?? ''} ${p.lastName ?? p.last_name ?? ''}`.trim())
+            : 'Player'
+          return {
+            ...a,
+            playerName: a.playerName ?? playerName,
+            salary: a.salary ?? (parseFloat(p?.contractSalary ?? p?.contract_salary ?? 0) || 0),
+          }
+        }
+        if (a.type === 'pick') {
+          const pk = pickById.get(a.pickId)
+          const orig = pk?.original_team_abbreviation ?? pk?.originalTeamAbbreviation
+          return {
+            ...a,
+            pickDisplay: a.pickDisplay ?? (pk ? `Rd ${pk.round} pick${orig ? ` (${orig})` : ''}` : 'Draft pick'),
+          }
+        }
+        return a
+      }
+
+      const assetLabel = (a) => (a.type === 'player' ? a.playerName : a.pickDisplay)
+      const tradeSummaries = []
       if (!seasonData.tradeHistory) seasonData.tradeHistory = []
       for (const trade of result.trades) {
         const assets = []
         for (const a of trade.team1Gives) {
-          assets.push({ ...a, from: trade.team1.id, to: trade.team2.id })
+          assets.push({ ...enrichAsset(a), from: trade.team1.id, to: trade.team2.id })
         }
         for (const a of trade.team2Gives) {
-          assets.push({ ...a, from: trade.team2.id, to: trade.team1.id })
+          assets.push({ ...enrichAsset(a), from: trade.team2.id, to: trade.team1.id })
         }
+        const entryId = `trade_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
         seasonData.tradeHistory.push({
-          id: `trade_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          id: entryId,
           trade_date: currentDate,
+          season_id: year,
           details: {
             teams: [trade.team1.id, trade.team2.id],
             team_names: {
@@ -793,29 +846,52 @@ export const useGameStore = defineStore('game', () => {
             assets,
           },
         })
+        // Compact per-trade summary for the weekly breakdown UI.
+        tradeSummaries.push({
+          id: entryId,
+          teamA: { id: trade.team1.id, name: trade.team1.name, abbr: trade.team1.abbreviation },
+          teamB: { id: trade.team2.id, name: trade.team2.name, abbr: trade.team2.abbreviation },
+          receivedA: assets.filter(x => x.to === trade.team1.id).map(assetLabel),
+          receivedB: assets.filter(x => x.to === trade.team2.id).map(assetLabel),
+        })
       }
 
       // Append news events
       if (!seasonData.news) seasonData.news = []
+      const newsToMirror = []
       for (const evt of result.newsEvents) {
-        seasonData.news.push({
+        const item = {
           id: `news_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           event_type: evt.event_type,
           headline: evt.headline,
           body: evt.body,
           date: evt.date,
-        })
+        }
+        seasonData.news.push(item)
+        newsToMirror.push(item)
       }
       if (seasonData.news.length > 50) {
         seasonData.news = seasonData.news.slice(-50)
+      }
+      // Mirror into the loaded campaign's reactive news snapshot — the home
+      // "LATEST NEWS" card reads it from fetch time and would otherwise miss
+      // mid-session AI trades until a reload.
+      const campaignStoreRef = useCampaignStore()
+      if (newsToMirror.length && campaignStoreRef.currentCampaign?.id === campaignId) {
+        const liveNews = Array.isArray(campaignStoreRef.currentCampaign.news)
+          ? campaignStoreRef.currentCampaign.news
+          : []
+        campaignStoreRef.currentCampaign.news = [...liveNews, ...newsToMirror].slice(-50)
       }
 
       // Save season data and mark dirty
       await SeasonRepository.save({ campaignId, year, ...seasonData })
       useSyncStore().markDirty()
+      return tradeSummaries
     } catch (err) {
       console.warn('[GameStore] AI-to-AI trade processing failed:', err)
     }
+    return []
   }
 
   /**
@@ -1059,12 +1135,31 @@ export const useGameStore = defineStore('game', () => {
    * Also awards scouting points for any new weeks that passed.
    * Returns { scoutingPointsEarned, previousWeek, currentWeek } for weekly summary.
    */
+  // _advanceDateIfNeeded persists week-boundary writes (AI-AI trades + their
+  // news) onto a FRESH season copy inside _processWeeklyAiTrades. Sim flows
+  // that hold their own seasonData object and save it later (wholesale via
+  // _persistGameResult / _simulateAiGamesBulk) would clobber those rows —
+  // graft the persisted fields into the held object after the advance so the
+  // later save carries them. tradeHistory/news are the only fields the weekly
+  // pass writes, so the graft can't regress sim-side in-memory state.
+  async function _reloadAdvanceWrites(campaignId, year, seasonData) {
+    try {
+      const fresh = await SeasonRepository.get(campaignId, year)
+      if (fresh?.tradeHistory) seasonData.tradeHistory = fresh.tradeHistory
+      if (fresh?.news) seasonData.news = fresh.news
+    } catch (err) {
+      // Non-fatal — worst case is the pre-fix behavior for this one week.
+      console.warn('[GameStore] failed to graft week-boundary season writes:', err)
+    }
+  }
+
   async function _advanceDateIfNeeded(campaignId, gameDate) {
     if (!gameDate) return {}
     const campaign = await CampaignRepository.get(campaignId)
     if (!campaign) return {}
 
     let scoutingPointsEarned = 0
+    let aiTrades = []
     let previousWeek = 0
     let currentWeek = 0
 
@@ -1131,9 +1226,10 @@ export const useGameStore = defineStore('game', () => {
         console.warn('[GameStore] Featured player refresh failed:', err)
       }
 
-      // Process AI-to-AI trades on Monday boundary
+      // Process AI-to-AI trades on Monday boundary; keep the executed-trade
+      // summaries so the weekly breakdown can list them.
       if (currentWeek > previousWeek) {
-        await _processWeeklyAiTrades(campaignId)
+        aiTrades = (await _processWeeklyAiTrades(campaignId)) ?? []
       }
 
       // Process mid-season events (trade deadline, All-Star) if date crosses trigger dates
@@ -1153,7 +1249,7 @@ export const useGameStore = defineStore('game', () => {
       }
     }
 
-    return { scoutingPointsEarned, previousWeek, currentWeek }
+    return { scoutingPointsEarned, previousWeek, currentWeek, aiTrades }
   }
 
   /**
@@ -1620,14 +1716,9 @@ export const useGameStore = defineStore('game', () => {
           isHome,
           didWin,
           synergiesActivated: synCount,
+          // Simmed (non-animated) games only earn 10% of synergy tokens; win bonus stays full
+          simReduction: mode !== 'animated',
         })
-
-        // Simmed (non-animated) games only earn 10% of synergy tokens; win bonus stays full
-        if (mode !== 'animated') {
-          const synergyTokens = rewards.tokens_awarded - (rewards.win_bonus || 0)
-          const reducedSynergy = synergyTokens > 0 ? Math.max(1, Math.round(synergyTokens * 0.1)) : 0
-          rewards.tokens_awarded = reducedSynergy + (rewards.win_bonus || 0)
-        }
 
         result.rewards = rewards
 
@@ -1680,6 +1771,7 @@ export const useGameStore = defineStore('game', () => {
           previousWeek: advanceResult.previousWeek,
           currentWeek: advanceResult.currentWeek,
           evolution: result.evolution || null,
+          aiTrades: advanceResult.aiTrades || [],
         }
       }
 
@@ -1763,19 +1855,15 @@ export const useGameStore = defineStore('game', () => {
         const didWin = isHome
           ? result.home_score > result.away_score
           : result.away_score > result.home_score
-        const winBonus = didWin ? WIN_BONUS_TOKENS : 0
-        const baseTokens = synergyCount * TOKENS_PER_SYNERGY
-        const fullSynergyTokens = didWin ? Math.ceil(baseTokens * WIN_MULTIPLIER) : baseTokens
-        const simSynergyTokens = fullSynergyTokens > 0 ? Math.max(1, Math.round(fullSynergyTokens * 0.1)) : 0
-        const totalTokens = simSynergyTokens + winBonus
-        result.rewards = {
-          synergies_activated: synergyCount,
-          tokens_awarded: totalTokens,
-          win_bonus: winBonus,
-          win_bonus_applied: didWin,
-        }
-        if (totalTokens > 0) {
-          await _accumulateAwardTokens(campaignId, { tokens_awarded: totalTokens })
+        const rewards = processGameRewards({
+          isHome,
+          didWin,
+          synergiesActivated: synergyCount,
+          simReduction: true,
+        })
+        result.rewards = rewards
+        if (rewards.tokens_awarded > 0) {
+          await _accumulateAwardTokens(campaignId, { tokens_awarded: rewards.tokens_awarded })
         }
 
         await _persistGameResult(campaignId, year, seasonData, userGame.id, result, true)
@@ -2111,6 +2199,7 @@ export const useGameStore = defineStore('game', () => {
             previousWeek: advanceResult.previousWeek,
             currentWeek: advanceResult.currentWeek,
             evolution: result.evolution || null,
+            aiTrades: advanceResult.aiTrades || [],
           }
         }
 
@@ -2255,12 +2344,9 @@ export const useGameStore = defineStore('game', () => {
         isHome,
         didWin,
         synergiesActivated: synCount,
+        // Sim-to-end only earns 10% of synergy tokens; win bonus stays full
+        simReduction: true,
       })
-
-      // Sim-to-end only earns 10% of synergy tokens; win bonus stays full
-      const synergyTokens = rewards.tokens_awarded - (rewards.win_bonus || 0)
-      const reducedSynergy = synergyTokens > 0 ? Math.max(1, Math.round(synergyTokens * 0.1)) : 0
-      rewards.tokens_awarded = reducedSynergy + (rewards.win_bonus || 0)
 
       result.rewards = rewards
 
@@ -2315,6 +2401,7 @@ export const useGameStore = defineStore('game', () => {
           previousWeek: advanceResult.previousWeek,
           currentWeek: advanceResult.currentWeek,
           evolution: result.evolution || null,
+          aiTrades: advanceResult.aiTrades || [],
         }
       }
 
@@ -2466,6 +2553,9 @@ export const useGameStore = defineStore('game', () => {
           const sun = new Date(sundayMs)
           const sundayStr = `${sun.getUTCFullYear()}-${String(sun.getUTCMonth() + 1).padStart(2, '0')}-${String(sun.getUTCDate()).padStart(2, '0')}`
           preGameAdvanceResult = await _advanceDateIfNeeded(campaignId, sundayStr)
+          if (preGameAdvanceResult.currentWeek > preGameAdvanceResult.previousWeek) {
+            await _reloadAdvanceWrites(campaignId, year, seasonData)
+          }
         }
       }
 
@@ -2508,12 +2598,9 @@ export const useGameStore = defineStore('game', () => {
           isHome,
           didWin,
           synergiesActivated: synCount,
+          // Simmed games only earn 10% of synergy tokens; win bonus stays full
+          simReduction: true,
         })
-
-        // Simmed games only earn 10% of synergy tokens; win bonus stays full
-        const synergyTokens = rewards.tokens_awarded - (rewards.win_bonus || 0)
-        const reducedSynergy = synergyTokens > 0 ? Math.max(1, Math.round(synergyTokens * 0.1)) : 0
-        rewards.tokens_awarded = reducedSynergy + (rewards.win_bonus || 0)
 
         result.rewards = rewards
 
@@ -2573,6 +2660,9 @@ export const useGameStore = defineStore('game', () => {
       if (!excludeUserGame) {
         const latestDate = nextUserGame?.gameDate || currentDate
         postGameAdvanceResult = await _advanceDateIfNeeded(campaignId, latestDate)
+        if (postGameAdvanceResult.currentWeek > postGameAdvanceResult.previousWeek) {
+          await _reloadAdvanceWrites(campaignId, year, seasonData)
+        }
       }
 
       // Build weekly summary — prefer pre-game boundary (shows report before the game),
@@ -2592,6 +2682,7 @@ export const useGameStore = defineStore('game', () => {
           previousWeek: weeklyResult.previousWeek,
           currentWeek: weeklyResult.currentWeek,
           evolution: userGameResult?.evolution || null,
+          aiTrades: weeklyResult.aiTrades || [],
         }
         weeklySummaryData.value = summaryData
       }
@@ -2752,7 +2843,13 @@ export const useGameStore = defineStore('game', () => {
 
         // 4. Advance the date — fires _processMidSeasonEvents (flag flips,
         // news, All-Star roster gen). It may flip simulationPaused inline.
-        await _advanceDateIfNeeded(campaignId, cursorDate)
+        const dayAdvanceResult = await _advanceDateIfNeeded(campaignId, cursorDate)
+        // Week rolled: graft the weekly pass's persisted writes (AI-AI trades
+        // + news) into this loop's held seasonData — later iterations save it
+        // wholesale and would otherwise clobber those rows.
+        if (dayAdvanceResult.currentWeek > dayAdvanceResult.previousWeek) {
+          await _reloadAdvanceWrites(campaignId, year, seasonData)
+        }
 
         // 5. POST-DAY pause: _processMidSeasonEvents may have raised an
         // inline pause (deadline warning when crossed via date advance, or
@@ -3268,10 +3365,12 @@ export const useGameStore = defineStore('game', () => {
         // No-progress guard: if the games we just simmed didn't actually get
         // marked complete (malformed bracket/schedule state), every further
         // pass would re-sim the same list — bail out loudly instead of looking
-        // like an endless sim.
+        // like an endless sim. Identity-based on purpose: completing a round
+        // legitimately ADDS the next round's (incomplete) games to the
+        // schedule mid-pass, so a schedule-wide count false-fires on rollover.
+        const simmedIds = new Set(aiGames.map(g => g.id))
         const stillIncomplete = seasonData.schedule.filter(g =>
-          g.isPlayoff && !g.isComplete && !g.isCancelled &&
-          g.homeTeamId !== userTeamId && g.awayTeamId !== userTeamId
+          simmedIds.has(g.id) && !g.isComplete && !g.isCancelled
         ).length
         if (stillIncomplete >= aiGames.length) {
           console.error('[Playoffs] no progress after simming a pass — aborting to avoid a stuck loop')

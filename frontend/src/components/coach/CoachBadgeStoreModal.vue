@@ -192,9 +192,9 @@ function goToStore() {
           <span class="token-amount">{{ tokens.toLocaleString() }}</span>
           <span class="token-label">tokens</span>
         </div>
-        <button type="button" class="buy-tokens-btn" @click="goToStore" title="Buy more tokens in the Store">
+        <button type="button" class="buy-tokens-btn" @click="goToStore" title="Get more tokens in the Store">
           <Plus :size="14" />
-          <span>Buy</span>
+          <span>Get Tokens</span>
         </button>
       </div>
       <p class="store-subtitle">Each badge upgrades through four tiers — bronze, silver, gold, HOF. Owned badges always apply.</p>
@@ -254,16 +254,18 @@ function goToStore() {
               </span>
               <button
                 class="badge-purchase-btn"
-                :disabled="!canAfford(badge) || purchasing !== null"
-                @click="purchase(badge)"
+                :disabled="purchasing !== null"
+                @click="canAfford(badge) ? purchase(badge) : goToStore()"
               >
-                <ChevronUp v-if="ownedLevel(badge)" :size="14" />
+                <ChevronUp v-if="ownedLevel(badge) && canAfford(badge)" :size="14" />
                 <span>
                   {{ purchasing === badge.id
                       ? 'Working...'
-                      : ownedLevel(badge)
-                        ? `Upgrade to ${levelLabel(nextLevel(badge))}`
-                        : 'Unlock Bronze' }}
+                      : !canAfford(badge)
+                        ? 'Get Tokens'
+                        : ownedLevel(badge)
+                          ? `Upgrade to ${levelLabel(nextLevel(badge))}`
+                          : 'Unlock Bronze' }}
                 </span>
               </button>
             </template>

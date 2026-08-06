@@ -28,6 +28,78 @@ class RosterBuildController extends Controller
     private const MAX_BLOB_BYTES = 40 * 1024 * 1024; // gz, generous for headshots
     private const BUILD_FORMAT = 1;
 
+    // Draft-class builds: the offseason draft makes exactly 60 picks and its
+    // just-in-time regeneration only fires on an EMPTY class — a 59-player
+    // class would strand picks. Generated classes are 80; 120 gives authors
+    // headroom. Blob cap is far below the roster cap (one class ≈ 80 players
+    // + a handful of SVGs, not a 450-player league).
+    private const MIN_CLASS_SIZE = 60;
+    private const MAX_CLASS_SIZE = 120;
+    private const MAX_DRAFT_CLASS_BLOB_BYTES = 10 * 1024 * 1024;
+
+    /**
+     * Season-state keys stripped from every published player: a build is
+     * roster/class data only, never the source campaign's in-progress season
+     * (stat snapshots, evolution logs, earned training points, award
+     * counters). Importers also strip these client-side for old blobs.
+     */
+    private const SEASON_STATE_KEYS = [
+        'season_stats', 'seasonStats',
+        'season_playoff_stats', 'seasonPlayoffStats',
+        'recent_performances', 'recentPerformances',
+        'streak_data', 'streakData',
+        'development_history', 'developmentHistory',
+        'upgrade_points', 'upgradePoints',
+        'offense_upgrade_points', 'offenseUpgradePoints',
+        'defense_upgrade_points', 'defenseUpgradePoints',
+        '_overallExact',
+        // Accrued-by-play state (mirrors the importer's strip): single-game
+        // highs, per-season archives, career team counters, season-end
+        // awards, re-sign flags.
+        'careerHighs', 'career_highs',
+        'seasonHighs', 'season_highs',
+        'seasonHistory', 'season_history',
+        'playerCareer', 'player_career',
+        'awards',
+        'all_star_selections', 'allStarSelections',
+        'mvp_awards', 'mvpAwards',
+        'finals_mvp_awards', 'finalsMvpAwards',
+        'rookie_of_the_year', 'rookieOfTheYear',
+        'all_nba_selections', 'allNbaSelections',
+        'all_nba_first_team', 'allNbaFirstTeam',
+        'all_rookie_team', 'allRookieTeam',
+        'all_defensive_team', 'allDefensiveTeam',
+        'resignedThisSeason', 'resigned_this_season',
+        'resignedSeasonYear', 'resigned_season_year',
+    ];
+
+    /** Strip in-progress season state from one published player record. */
+    private function stripSeasonState(array $player): array
+    {
+        foreach (self::SEASON_STATE_KEYS as $seasonKey) {
+            unset($player[$seasonKey]);
+        }
+        foreach (array_keys($player) as $pk) {
+            if (str_starts_with((string) $pk, '_seasonDrop_')) {
+                unset($player[$pk]);
+            }
+        }
+        return $player;
+    }
+
+    /**
+     * Content type for list endpoints: absent/unknown → 'roster'. Old app
+     * versions send no param at all, so they keep seeing exactly the roster
+     * board they saw before draft classes existed (every pre-migration row
+     * is 'roster' via the column default).
+     */
+    private function requestedType(Request $request): string
+    {
+        return $request->query('type') === RosterBuild::TYPE_DRAFT_CLASS
+            ? RosterBuild::TYPE_DRAFT_CLASS
+            : RosterBuild::TYPE_ROSTER;
+    }
+
     /** 403 unless the caller owns the custom_roster unlock. */
     private function gate(Request $request): ?JsonResponse
     {
@@ -69,7 +141,9 @@ class RosterBuildController extends Controller
             'campaign_client_id' => 'required|uuid',
             'title' => 'required|string|max:100',
             'description' => 'nullable|string|max:1000',
+            'type' => 'nullable|in:roster,draft_class',
         ]);
+        $type = $validated['type'] ?? RosterBuild::TYPE_ROSTER;
 
         $user = $request->user();
 
@@ -85,6 +159,17 @@ class RosterBuildController extends Controller
 
         $clientId = $campaign->client_id;
         $meta = $this->readPart($clientId, 'meta');
+
+        // Draft classes publish from ANY synced campaign (every campaign
+        // generates a class — no customRoster/finalized requirement, and
+        // draft-class workshop projects have no teams at all).
+        if ($type === RosterBuild::TYPE_DRAFT_CLASS) {
+            if (!$meta || !is_array($meta['campaign'] ?? null)) {
+                return response()->json(['error' => 'campaign_not_synced'], 422);
+            }
+            return $this->publishDraftClass($user, $clientId, $meta['campaign'], $validated);
+        }
+
         if (!$meta || empty($meta['teams']) || !is_array($meta['teams'])) {
             return response()->json(['error' => 'campaign_not_synced'], 422);
         }
@@ -96,15 +181,24 @@ class RosterBuildController extends Controller
         }
         // Only FINALIZED builds are publishable — an un-finalized campaign is
         // still in the roster editor and its snapshot is a half-built league.
+        // Exception: Builder roster workshops are never finalized (they stay
+        // editable forever); they publish once explicitly validated, which
+        // stamps settings.workshopPublishable.
+        $settings = is_array($campaignRecord['settings'] ?? null) ? $campaignRecord['settings'] : [];
         $isFinalized = ($campaignRecord['rosterSetupCompleted'] ?? $campaignRecord['roster_setup_completed'] ?? false) === true;
-        if (!$isFinalized) {
+        $isPublishableWorkshop = ($settings['workshopMode'] ?? null) === 'roster'
+            && ($settings['workshopPublishable'] ?? false) === true;
+        if (!$isFinalized && !$isPublishableWorkshop) {
             return response()->json(['error' => 'campaign_not_finalized'], 422);
         }
-        // One live publish per campaign. Importing a build into a SEPARATE
-        // campaign and publishing that is fine (different client id); removing
-        // a published build frees its campaign for a re-publish.
+        // One live publish per campaign PER TYPE (a campaign can have a
+        // roster build and a draft-class build live at once). Importing a
+        // build into a SEPARATE campaign and publishing that is fine
+        // (different client id); removing a published build frees its
+        // campaign for a re-publish.
         $alreadyPublished = RosterBuild::where('user_id', $user->id)
             ->where('campaign_client_id', $clientId)
+            ->where('type', RosterBuild::TYPE_ROSTER)
             ->where('status', RosterBuild::STATUS_ACTIVE)
             ->exists();
         if ($alreadyPublished) {
@@ -197,46 +291,7 @@ class RosterBuildController extends Controller
                 if (!empty($player['isDraftProspect']) || !empty($player['is_draft_prospect'])) {
                     continue;
                 }
-                // A build is ROSTER data only — strip the source campaign's
-                // in-progress season state (stat snapshots, evolution logs,
-                // earned training points). The importer also strips these
-                // client-side for blobs published before this deploy.
-                foreach ([
-                    'season_stats', 'seasonStats',
-                    'season_playoff_stats', 'seasonPlayoffStats',
-                    'recent_performances', 'recentPerformances',
-                    'streak_data', 'streakData',
-                    'development_history', 'developmentHistory',
-                    'upgrade_points', 'upgradePoints',
-                    'offense_upgrade_points', 'offenseUpgradePoints',
-                    'defense_upgrade_points', 'defenseUpgradePoints',
-                    '_overallExact',
-                    // Accrued-by-play state (mirrors the importer's strip):
-                    // single-game highs, per-season archives, career team
-                    // counters, season-end awards, re-sign flags.
-                    'careerHighs', 'career_highs',
-                    'seasonHighs', 'season_highs',
-                    'seasonHistory', 'season_history',
-                    'playerCareer', 'player_career',
-                    'awards',
-                    'all_star_selections', 'allStarSelections',
-                    'mvp_awards', 'mvpAwards',
-                    'finals_mvp_awards', 'finalsMvpAwards',
-                    'rookie_of_the_year', 'rookieOfTheYear',
-                    'all_nba_selections', 'allNbaSelections',
-                    'all_nba_first_team', 'allNbaFirstTeam',
-                    'all_rookie_team', 'allRookieTeam',
-                    'all_defensive_team', 'allDefensiveTeam',
-                    'resignedThisSeason', 'resigned_this_season',
-                    'resignedSeasonYear', 'resigned_season_year',
-                ] as $seasonKey) {
-                    unset($player[$seasonKey]);
-                }
-                foreach (array_keys($player) as $pk) {
-                    if (str_starts_with((string) $pk, '_seasonDrop_')) {
-                        unset($player[$pk]);
-                    }
-                }
+                $player = $this->stripSeasonState($player);
                 $tid = $player['team_id'] ?? $player['teamId'] ?? null;
                 $abbr = $tid !== null ? ($abbrByTeamId[(string) $tid] ?? null) : null;
                 $bucket = $abbr ?? 'fa';
@@ -333,12 +388,160 @@ class RosterBuildController extends Controller
 
         $build = RosterBuild::create([
             'user_id' => $user->id,
+            'type' => RosterBuild::TYPE_ROSTER,
             'campaign_client_id' => $clientId,
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
             's3_key' => $key,
             'size_bytes' => strlen($compressed),
             'player_count' => $playerCount,
+            'status' => RosterBuild::STATUS_ACTIVE,
+        ]);
+
+        return response()->json(['build' => $this->present($build)], 201);
+    }
+
+    /**
+     * Draft-class publish: assemble a rookie-only build from the campaign's
+     * synced snapshot. The class is the set of isDraftProspect players —
+     * preferring the CURRENT season's class (currentSeasonYear + 1), falling
+     * back to the newest class present (covers a snapshot pushed during the
+     * brief post-draft offseason window).
+     */
+    private function publishDraftClass($user, string $clientId, array $campaignRecord, array $validated): JsonResponse
+    {
+        $alreadyPublished = RosterBuild::where('user_id', $user->id)
+            ->where('campaign_client_id', $clientId)
+            ->where('type', RosterBuild::TYPE_DRAFT_CLASS)
+            ->where('status', RosterBuild::STATUS_ACTIVE)
+            ->exists();
+        if ($alreadyPublished) {
+            return response()->json(['error' => 'already_published'], 422);
+        }
+
+        ini_set('memory_limit', '512M'); // large player payloads (same as sync)
+
+        $seasonYear = $campaignRecord['currentSeasonYear'] ?? $campaignRecord['current_season_year'] ?? null;
+        $targetYear = is_numeric($seasonYear) ? ((int) $seasonYear + 1) : null;
+
+        // Prospects live wherever the client's sync partitioning put them
+        // (normally players_fa — teamId is null — but scan all parts).
+        $byYear = [];
+        foreach (['players_user', 'players_ai', 'players_fa'] as $part) {
+            $data = $this->readPart($clientId, $part);
+            foreach (($data['players'] ?? []) as $player) {
+                if (!is_array($player)) {
+                    continue;
+                }
+                if (empty($player['isDraftProspect']) && empty($player['is_draft_prospect'])) {
+                    continue;
+                }
+                $year = (int) ($player['draftYear'] ?? $player['draft_year'] ?? 0);
+                $byYear[$year][] = $this->stripSeasonState($player);
+            }
+        }
+        if (!$byYear) {
+            return response()->json(['error' => 'no_draft_class'], 422);
+        }
+        if ($targetYear !== null && !empty($byYear[$targetYear])) {
+            $classYear = $targetYear;
+        } else {
+            $classYear = max(array_keys($byYear));
+        }
+        $prospects = array_values($byYear[$classYear]);
+
+        $count = count($prospects);
+        if ($count < self::MIN_CLASS_SIZE) {
+            return response()->json(['error' => 'class_too_small', 'count' => $count, 'min' => self::MIN_CLASS_SIZE], 422);
+        }
+        if ($count > self::MAX_CLASS_SIZE) {
+            return response()->json(['error' => 'class_too_large', 'count' => $count, 'max' => self::MAX_CLASS_SIZE], 422);
+        }
+
+        // Profanity screen: title, description, every prospect name — labeled
+        // so a rejection can NAME the offending prospect.
+        $texts = [
+            ['label' => 'the title', 'text' => $validated['title']],
+            ['label' => 'the description', 'text' => $validated['description'] ?? ''],
+        ];
+        foreach ($prospects as $p) {
+            $name = trim(($p['first_name'] ?? '') . ' ' . ($p['last_name'] ?? '') . ' ' . ($p['name'] ?? ''));
+            $texts[] = ['label' => "prospect \"{$name}\"", 'text' => $name];
+        }
+        foreach ($texts as $entry) {
+            if (($hit = ProfanityScreen::firstViolation($entry['text'])) !== null) {
+                return response()->json([
+                    'error' => 'content_rejected',
+                    'message' => "Disallowed language in {$entry['label']}.",
+                    'fragment' => $hit,
+                    'source' => $entry['label'],
+                ], 422);
+            }
+        }
+
+        // Headshots: only entries mapped to a prospect in THIS class; coach/
+        // personnel entries (kind discriminator) never belong in a class.
+        $prospectIds = [];
+        foreach ($prospects as $p) {
+            $pid = $p['id'] ?? $p['player_id'] ?? null;
+            if ($pid !== null) {
+                $prospectIds[(string) $pid] = true;
+            }
+        }
+        $headshotsPart = $this->readPart($clientId, 'headshots');
+        $headshots = [];
+        foreach (($headshotsPart['headshots'] ?? []) as $h) {
+            if (!empty($h['kind'])) {
+                continue;
+            }
+            if (!empty($h['playerId']) && !empty($h['svgContent']) && isset($prospectIds[(string) $h['playerId']])) {
+                $headshots[] = [
+                    'playerId' => $h['playerId'],
+                    'svgContent' => $h['svgContent'],
+                ];
+            }
+        }
+
+        // No players/coaches/picks keys: old importers check build.players
+        // and reject this blob outright, which is exactly what we want.
+        $blob = [
+            'format' => self::BUILD_FORMAT,
+            'type' => RosterBuild::TYPE_DRAFT_CLASS,
+            'title' => $validated['title'],
+            'draftYear' => $classYear,
+            'prospects' => $prospects,
+            'headshots' => $headshots,
+        ];
+        $json = json_encode($blob, JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            Log::error("Draft-class build encode failed for campaign {$clientId}: " . json_last_error_msg());
+            return response()->json(['message' => 'Failed to package build'], 500);
+        }
+        $compressed = gzencode($json, 6);
+        if (strlen($compressed) > self::MAX_DRAFT_CLASS_BLOB_BYTES) {
+            return response()->json(['error' => 'build_too_large'], 422);
+        }
+
+        // Server-generated key only; same private disk, own prefix.
+        $key = 'draft-classes/' . Str::uuid()->toString() . '.json.gz';
+        $stored = Storage::disk('roster_builds')->put($key, $compressed);
+        if ($stored === false) {
+            Log::error("Draft-class build S3 write failed for campaign {$clientId} (key {$key}) — check ROSTER_BUILDS_AWS_* config");
+            return response()->json([
+                'error' => 'storage_unavailable',
+                'message' => 'Upload storage is temporarily unavailable. Please try again later.',
+            ], 503);
+        }
+
+        $build = RosterBuild::create([
+            'user_id' => $user->id,
+            'type' => RosterBuild::TYPE_DRAFT_CLASS,
+            'campaign_client_id' => $clientId,
+            'title' => $validated['title'],
+            'description' => $validated['description'] ?? null,
+            's3_key' => $key,
+            'size_bytes' => strlen($compressed),
+            'player_count' => $count,
             'status' => RosterBuild::STATUS_ACTIVE,
         ]);
 
@@ -353,6 +556,7 @@ class RosterBuildController extends Controller
         }
         $sort = $request->query('sort') === 'downloads' ? 'downloads' : 'created_at';
         $builds = RosterBuild::with('user:id,username')
+            ->where('type', $this->requestedType($request))
             ->where('status', RosterBuild::STATUS_ACTIVE)
             ->orderByDesc($sort)
             ->paginate(20);
@@ -372,6 +576,7 @@ class RosterBuildController extends Controller
             return $resp;
         }
         $builds = RosterBuild::where('user_id', $request->user()->id)
+            ->where('type', $this->requestedType($request))
             ->orderByDesc('created_at')
             ->limit(100)
             ->get();
@@ -391,6 +596,7 @@ class RosterBuildController extends Controller
             ->pluck('roster_build_id');
         $builds = RosterBuild::with('user:id,username')
             ->whereIn('id', $rows)
+            ->where('type', $this->requestedType($request))
             ->where('status', RosterBuild::STATUS_ACTIVE)
             ->get();
         return response()->json(['builds' => $builds->map(fn ($b) => $this->present($b))]);
@@ -533,6 +739,7 @@ class RosterBuildController extends Controller
     {
         $out = [
             'id' => $build->id,
+            'type' => $build->type ?? RosterBuild::TYPE_ROSTER,
             'title' => $build->title,
             'description' => $build->description,
             'author' => $build->relationLoaded('user') ? ($build->user->username ?? null) : null,

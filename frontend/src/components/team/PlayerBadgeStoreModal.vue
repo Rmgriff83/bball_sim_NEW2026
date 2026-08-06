@@ -122,6 +122,12 @@ function goToStore() {
   emit('close')
   router.push('/store')
 }
+
+// Short on tokens for this badge's next tier → the purchase button becomes a
+// "Get Tokens" store link instead of a dead disabled button.
+function cantAfford(entry) {
+  return tokens.value < (entry.nextCost ?? Infinity)
+}
 </script>
 
 <template>
@@ -139,9 +145,9 @@ function goToStore() {
             <span class="token-amount">{{ tokens.toLocaleString() }}</span>
             <span class="token-label">tokens</span>
           </div>
-          <button type="button" class="buy-tokens-btn" @click="goToStore" title="Buy more tokens in the Store">
+          <button type="button" class="buy-tokens-btn" @click="goToStore" title="Get more tokens in the Store">
             <Plus :size="14" />
-            <span>Buy</span>
+            <span>Get Tokens</span>
           </button>
         </div>
         <div v-if="player" class="player-summary">
@@ -224,15 +230,15 @@ function goToStore() {
               </span>
               <button
                 class="badge-purchase-btn"
-                :disabled="tokens < (entry.nextCost ?? Infinity) || purchasing !== null || !entry.nextLevel"
-                @click="purchase(entry)"
+                :disabled="purchasing !== null || !entry.nextLevel"
+                @click="cantAfford(entry) ? goToStore() : purchase(entry)"
               >
-                <ChevronUp v-if="entry.currentLevel" :size="14" />
+                <ChevronUp v-if="entry.currentLevel && !cantAfford(entry)" :size="14" />
                 <span>
                   {{ purchasing === entry.badge.id
                       ? 'Working...'
-                      : tokens < (entry.nextCost ?? Infinity)
-                        ? 'Insufficient'
+                      : cantAfford(entry)
+                        ? 'Get Tokens'
                         : entry.currentLevel
                           ? `Upgrade to ${levelLabel(entry.nextLevel)}`
                           : 'Unlock Bronze' }}

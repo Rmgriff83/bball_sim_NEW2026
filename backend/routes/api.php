@@ -102,7 +102,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/roster-builds/mine', [RosterBuildController::class, 'mine']);
     Route::get('/roster-builds/downloads', [RosterBuildController::class, 'downloads']);
     Route::post('/roster-builds', [RosterBuildController::class, 'publish'])
-        ->middleware('throttle:5,1440'); // 5 publishes/day
+        ->middleware('throttle:10,1440'); // 10 publishes/day (spans rosters + draft classes)
     Route::post('/roster-builds/{id}/download', [RosterBuildController::class, 'download'])->whereNumber('id');
     Route::get('/roster-builds/{id}/blob', [RosterBuildController::class, 'blob'])->whereNumber('id');
     Route::post('/roster-builds/{id}/report', [RosterBuildController::class, 'report'])

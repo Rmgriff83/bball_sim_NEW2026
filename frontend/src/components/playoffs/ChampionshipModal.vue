@@ -1,7 +1,6 @@
 <script setup>
-import { computed } from 'vue'
-import { Trophy, Star, Award, Crown } from 'lucide-vue-next'
-import BaseModal from '@/components/ui/BaseModal.vue'
+import { computed, watch, onUnmounted } from 'vue'
+import { Trophy, Star, Award, Crown, X } from 'lucide-vue-next'
 
 const props = defineProps({
   show: {
@@ -36,15 +35,26 @@ const userWon = computed(() => {
 const team1Wins = computed(() => series.value?.team1Wins ?? 0)
 const team2Wins = computed(() => series.value?.team2Wins ?? 0)
 
-const playoffRecord = computed(() => {
-  // Approximate from finals series
-  // In reality, this should track full playoff record
-  const winsInFinals = winner.value?.teamId === series.value?.team1?.teamId ? team1Wins.value : team2Wins.value
-  const lossesInFinals = winner.value?.teamId === series.value?.team1?.teamId ? team2Wins.value : team1Wins.value
+const runnerUp = computed(() => {
+  const s = series.value
+  if (!s?.team1 || !s?.team2 || !winner.value) return null
+  return winner.value.teamId === s.team1.teamId ? s.team2 : s.team1
+})
 
-  // Estimate: 3 prior rounds with average 4-1 per round = 12 wins
-  // This is a placeholder - ideally track actual playoff record
-  return `${12 + winsInFinals}-${3 + lossesInFinals}`
+// Real finals outcome, winner's wins first (e.g. "4-2").
+const seriesScore = computed(() => {
+  const a = team1Wins.value
+  const b = team2Wins.value
+  return `${Math.max(a, b)}-${Math.min(a, b)}`
+})
+
+const outcomeLine = computed(() => {
+  if (!winner.value || !runnerUp.value) return ''
+  const w = `${winner.value.city} ${winner.value.name}`
+  const r = `${runnerUp.value.city} ${runnerUp.value.name}`
+  return userWon.value
+    ? `Your ${w} defeated the ${r} ${seriesScore.value} to claim the title.`
+    : `The ${w} defeat the ${r} ${seriesScore.value} for the title.`
 })
 
 const seasonLabel = computed(() => {
@@ -55,11 +65,45 @@ const seasonLabel = computed(() => {
 function handleClose() {
   emit('close')
 }
+
+// Standard modal-shell behavior (SimulateConfirmModal pattern): lock body
+// scroll while open, Escape closes.
+function handleKeydown(e) {
+  if (e.key === 'Escape') handleClose()
+}
+
+watch(() => props.show, (isOpen) => {
+  if (isOpen) {
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', handleKeydown)
+  } else {
+    document.body.style.overflow = ''
+    document.removeEventListener('keydown', handleKeydown)
+  }
+})
+
+onUnmounted(() => {
+  document.body.style.overflow = ''
+  document.removeEventListener('keydown', handleKeydown)
+})
 </script>
 
 <template>
-  <BaseModal :show="show" title="Championship" size="lg" @close="handleClose">
-    <div class="championship-content">
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="show" class="modal-overlay" @click.self="handleClose">
+        <div class="modal-container">
+          <!-- Header -->
+          <header class="modal-header">
+            <h2 class="modal-title">Championship</h2>
+            <button class="btn-close" aria-label="Close" @click="handleClose">
+              <X :size="20" />
+            </button>
+          </header>
+
+          <!-- Content -->
+          <main class="modal-content">
+            <div class="championship-content">
       <!-- Confetti Animation -->
       <div class="confetti-layer">
         <div v-for="i in 50" :key="i" class="confetti-piece" :style="{
@@ -79,7 +123,7 @@ function handleClose() {
       <!-- Title -->
       <div class="title-section">
         <Crown :size="32" class="crown-icon" />
-        <h1 class="championship-title">LEAGUE CHAMPIONS!</h1>
+        <h1 class="championship-title">{{ userWon ? "YOU'RE THE CHAMPIONS!" : 'LEAGUE CHAMPIONS!' }}</h1>
       </div>
 
       <!-- Team Name -->
@@ -88,6 +132,9 @@ function handleClose() {
         <span class="team-name">{{ winner.name }}</span>
         <span class="season-label">{{ seasonLabel }}</span>
       </div>
+
+      <!-- Series outcome -->
+      <p v-if="outcomeLine" class="outcome-line">{{ outcomeLine }}</p>
 
       <!-- Finals MVP -->
       <div v-if="finalsMVP" class="mvp-section">
@@ -114,10 +161,10 @@ function handleClose() {
         </div>
       </div>
 
-      <!-- Playoff Record -->
+      <!-- Finals result -->
       <div class="record-section">
-        <span class="record-label">Playoff Record</span>
-        <span class="record-value">{{ playoffRecord }}</span>
+        <span class="record-label">Finals Result</span>
+        <span class="record-value">{{ seriesScore }}<template v-if="runnerUp"> vs {{ runnerUp.abbreviation ?? runnerUp.name }}</template></span>
       </div>
 
       <!-- Championship Count (if applicable) -->
@@ -125,24 +172,138 @@ function handleClose() {
         <Star :size="16" />
         <span>{{ winner.championships + 1 }}x Champions</span>
       </div>
-    </div>
+            </div>
+          </main>
 
-    <template #footer>
-      <button class="btn-championship" @click="handleClose">
-        <Trophy :size="18" />
-        <span>Continue to Offseason</span>
-      </button>
-    </template>
-  </BaseModal>
+          <!-- Footer -->
+          <footer class="modal-footer">
+            <button class="btn-championship" @click="handleClose">
+              <Trophy :size="18" />
+              <span>Continue</span>
+            </button>
+          </footer>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
+/* Global modal shell — mirrors SimulateConfirmModal (the app's popup-modal
+   design standard): dimmed blurred overlay, glass container, Bebas header
+   with X close, scrollable content, bordered footer. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+.modal-container {
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.modal-title {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.btn-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--glass-border);
+}
+
+/* Modal transition (standard scale-in/out) */
+.modal-enter-active {
+  transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+.modal-leave-active {
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-active .modal-container {
+  animation: scaleIn 0.3s cubic-bezier(0, 0, 0.2, 1);
+}
+.modal-leave-active .modal-container {
+  animation: scaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes scaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.95); }
+}
+
+@media (max-width: 480px) {
+  .modal-container {
+    max-height: 85vh;
+  }
+}
+
 .championship-content {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 2rem 1rem;
+  padding: 0.5rem 0;
   gap: 1.5rem;
   position: relative;
   overflow: hidden;
@@ -281,6 +442,14 @@ function handleClose() {
 .season-label {
   font-size: 0.875rem;
   color: var(--color-text-tertiary);
+}
+
+.outcome-line {
+  max-width: 340px;
+  margin: 0.35rem 0 1rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
 }
 
 /* Finals MVP */

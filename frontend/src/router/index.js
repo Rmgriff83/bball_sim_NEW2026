@@ -105,6 +105,14 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    // Builder — standalone roster / draft-class authoring workspace
+    // (custom_roster IAP). Projects are hidden "workshop campaigns".
+    path: '/builder',
+    name: 'builder',
+    component: lazyLoad(() => import('@/views/builder/BuilderHomeView.vue')),
+    meta: { requiresAuth: true, requiresCustomRoster: true, hideBottomNav: true }
+  },
+  {
     path: '/campaign/:id/draft',
     name: 'fantasy-draft',
     component: lazyLoad(() => import('@/views/draft/DraftRoomView.vue')),
@@ -116,6 +124,15 @@ const routes = [
     path: '/campaign/:id/roster-setup',
     name: 'roster-setup',
     component: lazyLoad(() => import('@/views/roster/RosterSetupView.vue')),
+    meta: { requiresAuth: true, requiresCustomRoster: true, hideBottomNav: true }
+  },
+  {
+    // Rookie Class editor (custom_roster IAP): the season-start "Generate &
+    // Edit" flow + Builder draft-class workshops. Its own onMounted guard
+    // bounces visits outside the setup window (non-workshop campaigns).
+    path: '/campaign/:id/rookie-class',
+    name: 'rookie-class',
+    component: lazyLoad(() => import('@/views/roster/DraftClassEditorView.vue')),
     meta: { requiresAuth: true, requiresCustomRoster: true, hideBottomNav: true }
   },
   {

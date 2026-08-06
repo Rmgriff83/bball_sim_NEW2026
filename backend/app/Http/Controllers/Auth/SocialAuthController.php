@@ -191,6 +191,10 @@ class SocialAuthController extends Controller
                 'avatar_url' => $user->avatar_url,
                 'settings' => $user->settings,
                 'email_verified' => $user->hasVerifiedEmail(),
+                // Brand-new account created by THIS social sign-in — the app
+                // uses it for the first-visit greeting. Additive: old clients
+                // ignore it.
+                'is_new' => $user->wasRecentlyCreated,
             ],
             'token' => $token,
         ]);

@@ -13,23 +13,23 @@
 export function assignRookieContract(pickNumber) {
   let salary, years, guaranteed
 
-  // Rookie scale aligned to the 2025-26 cap ($154.6M): #1 ≈ $13-14M, lottery
-  // ≈ $5-9M, mid/late-1st ≈ $2.5-4M, 2nd round near the minimum.
+  // Rookie scale aligned to the CAP_SET_2026 cap ($164.96M): #1 ≈ $14.5M,
+  // lottery ≈ $6-10M, mid/late-1st ≈ $3-5.5M, 2nd round near the minimum.
   if (pickNumber <= 5) {
-    salary = randomBetween(11000000, 14000000)
+    salary = randomBetween(11500000, 14500000)
     years = 4
     guaranteed = 2
   } else if (pickNumber <= 14) {
-    salary = randomBetween(5000000, 9000000)
+    salary = randomBetween(6000000, 10000000)
     years = 4
     guaranteed = 2
   } else if (pickNumber <= 30) {
-    salary = randomBetween(2500000, 4500000)
+    salary = randomBetween(3000000, 5500000)
     years = 4
     guaranteed = 2
   } else {
     // Round 2 picks (31-60)
-    salary = randomBetween(1100000, 2200000)
+    salary = randomBetween(1700000, 2600000)
     years = 2
     guaranteed = 0
   }
@@ -74,7 +74,7 @@ export function assignRookieContract(pickNumber) {
  * @returns {Object} Contract fields for undrafted free agent
  */
 export function assignUndraftedContract() {
-  const salary = 900000
+  const salary = 1200000
   const years = 1
 
   const contractDetails = {

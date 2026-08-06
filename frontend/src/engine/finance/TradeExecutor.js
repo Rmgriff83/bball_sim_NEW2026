@@ -249,6 +249,18 @@ export function buildTradeDetails({
  * @param {number} params.currentSeasonId
  * @returns {{ trade: object, updatedLeaguePlayers: Array, updatedUserRoster: Array, updatedDraftPicks: Array }}
  */
+/**
+ * Append a permanent entry to a player's career trade log (player.tradeLog).
+ * Additive field: created on first trade, capped so serial-trade journeymen
+ * can't bloat the record. Old saves simply have no log (readers ??-guard).
+ */
+export function appendTradeLogEntry(player, { date, seasonYear = null, fromId = null, toId = null, fromName = '', toName = '', fromAbbr = '', toAbbr = '' }) {
+  if (!player || typeof player !== 'object') return;
+  const log = Array.isArray(player.tradeLog) ? player.tradeLog : [];
+  log.push({ date, seasonYear, fromId, toId, fromName, toName, fromAbbr, toAbbr });
+  player.tradeLog = log.slice(-20);
+}
+
 export function executeTrade({
   tradeDetails,
   leaguePlayers,
@@ -291,10 +303,20 @@ export function executeTrade({
       updatedLeaguePlayers = result.leaguePlayers;
       updatedUserRoster = result.userRoster;
 
-      // Mark player as traded for motivation weight shifts at season end
+      // Mark player as traded (motivation weight shifts at season end) and
+      // append the permanent career trade-log entry (player popup history).
       const markTraded = (arr) => {
         const p = arr.find(pl => (pl.id ?? '') == asset.playerId);
-        if (p) p.wasTraded = true;
+        if (!p) return;
+        p.wasTraded = true;
+        appendTradeLogEntry(p, {
+          date: currentDate,
+          seasonYear: currentSeasonId ?? (parseInt(String(currentDate).slice(0, 4), 10) || null),
+          fromId: asset.from,
+          toId: asset.to,
+          fromName: tradeDetails.team_names?.[asset.from] ?? '',
+          toName: tradeDetails.team_names?.[asset.to] ?? '',
+        });
       };
       markTraded(updatedLeaguePlayers);
       markTraded(updatedUserRoster);

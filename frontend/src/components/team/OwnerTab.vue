@@ -141,6 +141,8 @@ const satisfaction = computed(() => {
       starPlayerIdsAtSign: progress.value?.starPlayerIdsAtSign ?? [],
       currentYear: campaign.value?.currentSeasonYear ?? campaign.value?.current_season_year ?? null,
     }),
+    // Championship goodwill (+15 per title, persisted by the owner congrats).
+    bonus: campaign.value?.settings?.ownerSatisfactionBonus ?? 0,
   })
 })
 

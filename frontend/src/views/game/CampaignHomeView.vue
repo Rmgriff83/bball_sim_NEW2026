@@ -28,6 +28,9 @@ import ContractDecisionModal from '@/components/team/ContractDecisionModal.vue'
 import CoachResignModal from '@/components/team/CoachResignModal.vue'
 import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import OwnerCheckInModal from '@/components/team/OwnerCheckInModal.vue'
+import OwnerCongratsModal from '@/components/team/OwnerCongratsModal.vue'
+import TeamLogo from '@/components/common/TeamLogo.vue'
+import NewsDeskCard from '@/components/game/NewsDeskCard.vue'
 import OwnerWelcomeModal from '@/components/team/OwnerWelcomeModal.vue'
 import ReviewNagModal from '@/components/common/ReviewNagModal.vue'
 import { useReviewNagStore } from '@/stores/reviewNag'
@@ -35,7 +38,13 @@ import DraftLotteryModal from '@/components/draft/DraftLotteryModal.vue'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
 import AllStarModal from '@/components/game/AllStarModal.vue'
 import NewSeasonModal from '@/components/game/NewSeasonModal.vue'
+import BannerCeremonyModal from '@/components/game/BannerCeremonyModal.vue'
+import RookieClassSetupModal from '@/components/game/RookieClassSetupModal.vue'
 import StartSeasonBlockerModal from '@/components/game/StartSeasonBlockerModal.vue'
+import { useDraftClassEditorStore } from '@/stores/draftClassEditor'
+import { fetchBuildBlob } from '@/composables/useBuildBlob'
+import { buildWorkshopClassBlob } from '@/engine/campaign/WorkshopService'
+import { useCommunityLink } from '@/composables/useCommunityLink'
 import { enterOffseason, startNewSeason, backfillPlayerAwards, resignGmContract, switchUserTeam, unretirePlayer } from '@/engine/campaign/CampaignManager'
 import { gmLevelLabel } from '@/engine/data/gmLevels'
 import { evaluateSubtasks } from '@/engine/season/OwnerSubtaskService'
@@ -48,8 +57,10 @@ import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { simFullOffseason, runDraftLotteryForCampaign } from '@/engine/draft/OffseasonOrchestrator'
+import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
+import { generateAndSaveRookieClass } from '@/engine/draft/RookieGenerationService'
 import { FREE_AGENCY_DURATION_DAYS, isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
-import { Play, Search, Users, User, Newspaper, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase, Dumbbell, HeartPulse, Telescope, BarChart3, Clock, Smile, Meh, Frown, Shield } from 'lucide-vue-next'
+import { Play, Search, Users, User, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase, Dumbbell, HeartPulse, Telescope, BarChart3, Clock, Smile, Meh, Frown, Shield } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
@@ -137,6 +148,39 @@ const contractDecisionBusy = ref(false)
 // first thing the user sees — onboarding tours are suspended until it's dismissed.
 const showOwnerCheckInModal = ref(false)
 const ownerCheckInData = ref(null)
+
+// Rookie-class setup (custom_roster owners): chained directly after the owner
+// check-in each season. Stamp semantics differ from the check-in on purpose —
+// `rookieClassSetupPending` persists from SHOW until a RESOLUTION (continue /
+// editor finish / import applied) stamps `rookieClassSetupShownYear`, so a
+// community round-trip or an app kill mid-flow re-offers the modal instead of
+// burning the once-per-season flag on an unresolved look.
+const showRookieClassModal = ref(false)
+const rookieClassBusy = ref(false)
+
+// Banner Night: one-time ceremony at the start of the season AFTER a
+// championship win, chained after the check-in + rookie-class setup. Closing
+// it flies the new mini banner into the record card (justHungYear drives the
+// hang animation on that banner only).
+const showBannerCeremonyModal = ref(false)
+// Owner's impromptu championship congrats (user won the title): text chain +
+// one-time rewards, consumed from settings.pendingOwnerTitleCongrats.
+const showOwnerCongratsModal = ref(false)
+const ownerCongratsData = ref(null)
+const ownerCongratsApplying = ref(false)
+const justHungYear = ref(null)
+let _justHungTimer = null
+
+// Franchise championship years (season START years), oldest → newest. Sourced
+// from the TEAM record's seasonHistory — per-franchise (follows team
+// switches) and covers both sim-earned titles and roster-editor-authored
+// history (same champion/year shape). campaign.achievements is deliberately
+// NOT used: it accumulates across team switches.
+const championshipBannerYears = computed(() =>
+  (teamStore.team?.seasonHistory ?? [])
+    .filter((s) => s?.champion && typeof s.year === 'number')
+    .map((s) => s.year)
+    .sort((a, b) => a - b))
 
 // Minimal owner "welcome" shown the moment a NEW GM job is accepted (a fresh
 // campaign or taking over a new franchise) — precedes the full season-start
@@ -915,13 +959,6 @@ function formatGameDate(dateStr) {
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-// Format news date
-function formatNewsDate(dateStr) {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
 // ---- Recent Games Ticker (idle detection) ----
 const showTicker = ref(false)
 let idleTimer = null
@@ -931,7 +968,7 @@ function resetIdleTimer() {
   if (showTicker.value) showTicker.value = false
   clearTimeout(idleTimer)
   idleTimer = setTimeout(() => {
-    if (recentLeagueGames.value.length > 0) {
+    if (tickerItems.value.length > 0) {
       showTicker.value = true
     }
   }, IDLE_TIMEOUT)
@@ -993,6 +1030,135 @@ const recentLeagueGames = computed(() => {
   return items
 })
 
+// ---- Offseason ticker modes -------------------------------------------------
+// The ticker swaps content by offseason sub-phase: free-agent board during the
+// FA window (incl. early offseason), the upcoming draft order once FA wraps,
+// the actual draft results once the draft completes, and back to recent
+// scores when the season starts. Sub-phase flags are the per-year top-level
+// campaign fields (freeAgencyCompleted_/rookieDraftCompleted_) — the phase
+// string alone can't distinguish post-FA from post-draft ('offseason' both).
+const tickerMode = computed(() => {
+  if (!isOffseason.value) return 'games'
+  if (rookieDraftCompleted.value) return 'draft_results'
+  if (freeAgencyCompleted.value) return 'draft_order'
+  return 'free_agents'
+})
+
+const tickerFreeAgents = ref([])
+const tickerDraftOrder = ref([])
+const tickerDraftPicks = ref([])
+
+const _playerDisplayName = (p) =>
+  p.name ?? `${p.firstName ?? p.first_name ?? ''} ${p.lastName ?? p.last_name ?? ''}`.trim()
+
+// freeAgencyDay is in the watch keys so the FA board refreshes as signings
+// happen day over day.
+watch([tickerMode, freeAgencyDay, campaignId], async ([mode]) => {
+  const id = campaignId.value
+  if (!id || mode === 'games') return
+  try {
+    if (mode === 'free_agents') {
+      const fas = await PlayerRepository.getFreeAgents(id)
+      if (campaignId.value !== id) return
+      tickerFreeAgents.value = fas
+        .filter((p) => !(p.isDraftProspect && p.rookieTier))
+        .sort((a, b) =>
+          (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
+        .slice(0, 25)
+    } else if (mode === 'draft_order') {
+      const camp = campaignStore.currentCampaign
+      const gameYear = camp?.gameYear ?? camp?.game_year ?? 1
+      const seasonYear = camp?.currentSeasonYear ?? camp?.current_season_year ?? 2025
+      const teams = await TeamRepository.getAllForCampaign(id)
+      const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+      const seasonData = await SeasonRepository.get(id, seasonYear)
+      const standings = seasonData?.standings || { east: [], west: [] }
+      // Only honor the lottery for THIS draft cycle (same staleness rule as
+      // ScoutingView) — a prior season's persisted lottery would freeze the
+      // board at last year's order.
+      const persisted = camp?.settings?.draftLottery ?? null
+      const lotteryResult = persisted?.year === seasonYear + 1 ? persisted : null
+      if (campaignId.value !== id) return
+      tickerDraftOrder.value = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
+    } else if (mode === 'draft_results') {
+      const camp = campaignStore.currentCampaign
+      const gameYear = camp?.gameYear ?? camp?.game_year ?? 1
+      const [all, teams] = await Promise.all([
+        PlayerRepository.getAllForCampaign(id),
+        TeamRepository.getAllForCampaign(id),
+      ])
+      if (campaignId.value !== id) return
+      const colorByAbbr = new Map(teams.map((t) => [t.abbreviation, t.primary_color ?? t.primaryColor ?? '#666']))
+      tickerDraftPicks.value = all
+        .filter((p) => (p.draftInfo?.year ?? p.draft_info?.year) === gameYear)
+        .sort((a, b) =>
+          (a.draftInfo?.pick ?? a.draft_info?.pick ?? 999) - (b.draftInfo?.pick ?? b.draft_info?.pick ?? 999))
+        .map((p) => {
+          const teamAbbr = p.draftInfo?.teamAbbreviation ?? p.draft_info?.teamAbbreviation ?? ''
+          return {
+            pick: p.draftInfo?.pick ?? p.draft_info?.pick,
+            round: p.draftInfo?.round ?? p.draft_info?.round ?? 1,
+            teamAbbr,
+            teamColor: colorByAbbr.get(teamAbbr) ?? '#666',
+            playerName: _playerDisplayName(p),
+          }
+        })
+    }
+  } catch (err) {
+    console.warn('[Ticker] failed to load offseason ticker data:', err)
+  }
+}, { immediate: true })
+
+// Unified item list the marquee renders. Games mode passes recentLeagueGames
+// through untouched; offseason modes prepend a label header (gt-date style)
+// and an RD 2 divider for the two draft modes.
+const tickerItems = computed(() => {
+  const mode = tickerMode.value
+  if (mode === 'free_agents') {
+    if (!tickerFreeAgents.value.length) return []
+    const items = [{ type: 'date', label: 'TOP FREE AGENTS', key: 'fa-hdr' }]
+    tickerFreeAgents.value.forEach((p, i) => {
+      items.push({
+        type: 'fa',
+        rank: i + 1,
+        name: _playerDisplayName(p),
+        overall: Math.round(p.overallRating ?? p.overall_rating ?? 0),
+        position: p.position ?? '',
+        key: 'fa-' + (p.id ?? i),
+      })
+    })
+    return items
+  }
+  if (mode === 'draft_order' || mode === 'draft_results') {
+    const source = mode === 'draft_order' ? tickerDraftOrder.value : tickerDraftPicks.value
+    if (!source.length) return []
+    const draftYear = (campaign.value?.currentSeasonYear ?? campaign.value?.current_season_year ?? 0) + 1
+    const items = [{
+      type: 'date',
+      label: `${draftYear} ${mode === 'draft_order' ? 'DRAFT ORDER' : 'DRAFT RESULTS'}`,
+      key: 'dr-hdr',
+    }]
+    let inRound2 = false
+    for (const slot of source) {
+      if (!inRound2 && (slot.round ?? 1) === 2) {
+        items.push({ type: 'date', label: 'RD 2', key: 'dr-rd2' })
+        inRound2 = true
+      }
+      items.push({
+        type: 'pick',
+        pick: slot.pick,
+        teamAbbr: slot.teamAbbr,
+        teamColor: slot.teamColor ?? '#666',
+        viaAbbr: mode === 'draft_order' && slot.isTraded ? slot.originalTeamAbbr : null,
+        playerName: mode === 'draft_results' ? slot.playerName : null,
+        key: 'pick-' + slot.pick,
+      })
+    }
+    return items
+  }
+  return recentLeagueGames.value
+})
+
 onMounted(async () => {
   startIdleDetection()
   // One-time backfill: reconstruct player.awards per-year history from
@@ -1006,6 +1172,7 @@ onMounted(async () => {
   if (gameStore.weeklySummaryData) {
     toastStore.showWeeklySummary({
       scoutingPointsEarned: gameStore.weeklySummaryData.scoutingPointsEarned ?? 0,
+      aiTrades: gameStore.weeklySummaryData.aiTrades ?? [],
       campaignId: campaignId.value,
     })
     gameStore.weeklySummaryData = null
@@ -1031,7 +1198,7 @@ onMounted(async () => {
 
   if (hasCachedData) {
     // Refresh in background, don't wait
-    fetchAll.then(() => {
+    fetchAll.then(async () => {
       // After refresh, check if a simulation batch is in progress
       const batchId = campaignStore.currentCampaign?.simulation_batch_id
       if (batchId) {
@@ -1059,6 +1226,15 @@ onMounted(async () => {
       // run when switching between campaigns.
       if (!inRosterSetup()) {
         maybeShowOwnerCheckIn()
+        // Unresolved rookie-class window (community round trip / app killed
+        // mid-flow) re-pops here; no-op unless the pending flag is set. Defers
+        // itself if the check-in just opened.
+        maybeShowRookieClassSetup()
+        // Banner Night: covers mounts where the check-in chain already ran
+        // (rookie editor round trip, cold load after a mid-chain kill).
+        maybeShowBannerCeremony()
+        // Un-consumed owner championship congrats (app killed mid-chain).
+        maybeShowOwnerTitleCongrats()
         maybeShowExpectationRaise()
         maybeShowApronPickFreeze()
         maybeShowCoachDecisionModal()
@@ -1112,6 +1288,15 @@ onMounted(async () => {
     // user MOVES JOBS mid-campaign (handleSwitchTeam). Suspends tours until dismissed.
     maybeShowOwnerCheckIn()
 
+    // Unresolved rookie-class window re-pop (pending flag; no-op otherwise).
+    maybeShowRookieClassSetup()
+
+    // Banner Night re-pop for mounts where the chain already ran.
+    maybeShowBannerCeremony()
+
+    // Un-consumed owner championship congrats (app killed mid-chain).
+    maybeShowOwnerTitleCongrats()
+
     // Expiring head-coach re-sign prompt (guarded so it won't stack on the check-in;
     // its close handler re-invokes this).
     maybeShowCoachDecisionModal()
@@ -1158,6 +1343,9 @@ function maybeStartOffseasonTour() {
     showContractDecisionModal.value ||
     showOwnerCheckInModal.value ||
     showOwnerWelcomeModal.value ||
+    showRookieClassModal.value ||
+    showBannerCeremonyModal.value ||
+    showOwnerCongratsModal.value ||
     showCoachResignModal.value ||
     showHireCoachModal.value
   ) {
@@ -1201,6 +1389,7 @@ onUnmounted(() => {
   showInjuryModal.value = false
   showRecoveryModal.value = false
   showOwnerCheckInModal.value = false
+  showOwnerCongratsModal.value = false
   showOwnerWelcomeModal.value = false
   showSimulateModal.value = false
   showCoachResignModal.value = false
@@ -1504,6 +1693,103 @@ function handleChampionshipClose() {
   }
 
   playoffStore.closeChampionshipModal()
+  // Champion-user chain: the owner's congrats text follows the recap.
+  maybeShowOwnerTitleCongrats()
+}
+
+// Fire-once stamp for the finals recap — set the moment the modal opens (either
+// path: finals game or bulk-sim/enter-offseason recap) so the pre-offseason
+// gate in handleEnterOffseason knows it was seen.
+watch(() => playoffStore.showChampionshipModal, (open) => {
+  if (!open) return
+  const camp = campaignStore.currentCampaign
+  const year = camp?.currentSeasonYear ?? camp?.current_season_year
+  if (!camp || camp.id !== campaignId.value || year == null) return
+  if (camp.settings?.finalsRecapShownYear === year) return
+  try {
+    CampaignRepository.updateSettings(campaignId.value, { finalsRecapShownYear: year })
+    campaignStore.currentCampaign.settings = {
+      ...campaignStore.currentCampaign.settings,
+      finalsRecapShownYear: year,
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to stamp finals recap marker:', err)
+  }
+})
+
+// --- Owner championship congrats (user won the title) ------------------------
+// Consumes settings.pendingOwnerTitleCongrats (stamped by the playoff store's
+// round-4 payout). Shows the impromptu owner text; the rewards (+1,000 tokens,
+// +15 satisfaction) apply exactly once on close.
+function maybeShowOwnerTitleCongrats() {
+  const camp = campaignStore.currentCampaign
+  if (!camp || camp.id !== campaignId.value) return false
+  const pending = camp.settings?.pendingOwnerTitleCongrats
+  if (!pending) return false
+  if (
+    showOwnerCongratsModal.value ||
+    playoffStore.showChampionshipModal ||
+    showOwnerCheckInModal.value ||
+    showOwnerWelcomeModal.value ||
+    showContractDecisionModal.value ||
+    showRetirementModal.value ||
+    showAllStarModal.value ||
+    showSeasonAwardsModal.value ||
+    showNewSeasonModal.value ||
+    showRookieClassModal.value ||
+    showBannerCeremonyModal.value ||
+    showCoachResignModal.value ||
+    showHireCoachModal.value
+  ) {
+    return false
+  }
+  const abbr = camp.teamAbbreviation ?? teamStore.team?.abbreviation ?? null
+  const owner = findOwnerForTeam(abbr)
+  if (!owner) return false
+  ownerCongratsData.value = {
+    owner,
+    seasonYear: pending.year ?? camp.currentSeasonYear ?? camp.current_season_year ?? null,
+  }
+  showOwnerCongratsModal.value = true
+  walkthroughStore.setSuspended(true)
+  return true
+}
+
+async function handleCloseOwnerCongrats() {
+  if (ownerCongratsApplying.value) return
+  ownerCongratsApplying.value = true
+  try {
+    // Same grant pattern as the playoff payouts: server returns the new
+    // authoritative balance.
+    const res = await api.post('/api/user/tokens', { amount: 1000 })
+    if (authStore.profile && typeof res.data?.tokens === 'number') {
+      authStore.profile.tokens = res.data.tokens
+    }
+    const bonus = (campaignStore.currentCampaign?.settings?.ownerSatisfactionBonus ?? 0) + 15
+    await CampaignRepository.updateSettings(campaignId.value, {
+      ownerSatisfactionBonus: bonus,
+      pendingOwnerTitleCongrats: null,
+    })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        ownerSatisfactionBonus: bonus,
+        pendingOwnerTitleCongrats: null,
+      }
+    }
+    useSyncStore().markDirty()
+    toastStore.showTokenAward({ label: "Owner's Championship Bonus", amount: 1000 })
+  } catch (err) {
+    // Token post failed (likely offline): keep the pending marker so the
+    // congrats re-offers — and re-awards — on the next surface.
+    console.warn('[CampaignHome] owner congrats rewards failed, will retry:', err)
+    toastStore.showError("Couldn't deliver the owner's bonus — it will retry shortly.")
+  } finally {
+    ownerCongratsApplying.value = false
+    showOwnerCongratsModal.value = false
+    ownerCongratsData.value = null
+    walkthroughStore.setSuspended(false)
+  }
 }
 
 // Handle entering the offseason (after champion declared or non-qualifying)
@@ -1530,6 +1816,20 @@ async function ensurePlayoffsComplete() {
 }
 
 async function handleEnterOffseason() {
+  // Pre-offseason gate: the finals recap — and, for champions, the owner's
+  // congrats — must be seen before the offseason processes (app-kill
+  // coverage; the normal flow already showed them at the moment of crowning).
+  // Each shows its modal and returns; the button proceeds on the next press.
+  const gateYear = campaign.value?.currentSeasonYear ?? campaign.value?.current_season_year
+  const gateSettings = campaignStore.currentCampaign?.settings ?? {}
+  if (gateYear != null && gateSettings.finalsRecapShownYear !== gateYear) {
+    const { SeasonRepository } = await import('@/engine/db/SeasonRepository')
+    const gateSeason = await SeasonRepository.get(campaignId.value, gateYear).catch(() => null)
+    const gateBracket = gateSeason?.playoffBracket
+    if (gateBracket?.champion && playoffStore.showChampionshipRecap(gateBracket)) return
+  }
+  if (gateSettings.pendingOwnerTitleCongrats && maybeShowOwnerTitleCongrats()) return
+
   advancingToNextSeason.value = true
   const loadingToastId = toastStore.showLoading('Processing offseason...')
   try {
@@ -2144,7 +2444,23 @@ function maybeShowOwnerCheckIn() {
 function handleCloseOwnerCheckIn() {
   showOwnerCheckInModal.value = false
   ownerCheckInData.value = null
-  // Resume onboarding now that the check-in has been seen.
+  // Rookie-class setup slots between the check-in and everything else. When it
+  // shows, tours stay suspended and the rest of the chain defers — its close
+  // handler runs the tail below.
+  if (maybeShowRookieClassSetup({ fromCheckInChain: true })) return
+  _runPostCheckInChain()
+}
+
+// The season-start chain tail that used to live inline in
+// handleCloseOwnerCheckIn — shared by the check-in close (no rookie modal)
+// and the rookie modal's close. Banner Night wedges in FIRST: it must follow
+// every owner/rookie conversation but precede the tours + coach/review tail.
+function _runPostCheckInChain() {
+  if (maybeShowBannerCeremony()) return
+  _runPostBannerChain()
+}
+
+function _runPostBannerChain() {
   walkthroughStore.setSuspended(false)
   walkthroughStore.maybeStart('campaignHome')
   maybeStartOffseasonTour()
@@ -2155,6 +2471,204 @@ function handleCloseOwnerCheckIn() {
   // full season under their belt. If the coach prompt (or anything else) is
   // up, this defers — the coach modal's close handlers re-invoke it.
   maybeShowReviewNag()
+}
+
+// --- Rookie-class setup (custom_roster) --------------------------------------
+
+const { openCommunity: openCommunityLink } = useCommunityLink()
+
+function _stampRookieClassSettings(patch) {
+  try {
+    CampaignRepository.updateSettings(campaignId.value, patch)
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        ...patch,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to stamp rookie-class settings:', err)
+  }
+}
+
+// Show the setup modal when appropriate. Entry points:
+//  • fromCheckInChain — the owner check-in just closed (once per season).
+//  • pending flag — an unresolved window re-pops on mount (community round
+//    trip, app killed mid-flow, "Generate & Edit" abandoned).
+//  • force — the ?rookieClass=1 deep-link return from the community page.
+// Returns true when the modal opened (callers defer the rest of the chain).
+function maybeShowRookieClassSetup({ fromCheckInChain = false, force = false } = {}) {
+  const camp = campaignStore.currentCampaign
+  if (!camp || camp.id !== campaignId.value) return false
+  if (!authStore.hasFeature('custom_roster')) return false
+  if (camp.phase !== 'regular_season') return false
+  const year = camp.currentSeasonYear ?? camp.current_season_year
+  if (year == null) return false
+  // Never stack over another blocking modal — the chain re-invokes via its
+  // own close handlers, and the pending flag survives regardless.
+  if (
+    showOwnerCheckInModal.value ||
+    showOwnerWelcomeModal.value ||
+    showContractDecisionModal.value ||
+    showRetirementModal.value ||
+    showAllStarModal.value ||
+    showSeasonAwardsModal.value ||
+    showNewSeasonModal.value ||
+    showCoachResignModal.value ||
+    showHireCoachModal.value
+  ) {
+    return false
+  }
+  if (showBannerCeremonyModal.value || showOwnerCongratsModal.value) return false
+  const pending = camp.settings?.rookieClassSetupPending === true
+  const shownThisYear = camp.settings?.rookieClassSetupShownYear === year
+  if (!force && !pending && !(fromCheckInChain && !shownThisYear)) return false
+
+  showRookieClassModal.value = true
+  walkthroughStore.setSuspended(true)
+  _stampRookieClassSettings({ rookieClassSetupPending: true, rookieClassSetupSeasonYear: year })
+  return true
+}
+
+// A resolution (continue / import applied / editor finish elsewhere) closes
+// the window for this season.
+function _resolveRookieClassSetup() {
+  const camp = campaignStore.currentCampaign
+  const year = camp?.currentSeasonYear ?? camp?.current_season_year ?? null
+  _stampRookieClassSettings({ rookieClassSetupPending: false, rookieClassSetupShownYear: year })
+  showRookieClassModal.value = false
+  _runPostCheckInChain()
+}
+
+async function handleRookieClassContinue() {
+  // Safety pass — idempotent; heals a legacy save that somehow lacks a class.
+  const camp = campaignStore.currentCampaign
+  const year = camp?.currentSeasonYear ?? camp?.current_season_year
+  if (year != null) {
+    try {
+      await generateAndSaveRookieClass(campaignId.value, year + 1)
+    } catch (err) {
+      console.warn('[CampaignHome] rookie-class safety generation failed:', err)
+    }
+  }
+  _resolveRookieClassSetup()
+}
+
+function handleRookieClassEdit() {
+  // Pending stays set — the editor's finish (or an abandon → re-pop) resolves.
+  showRookieClassModal.value = false
+  walkthroughStore.setSuspended(false)
+  router.push(`/campaign/${campaignId.value}/rookie-class`)
+}
+
+async function handleRookieClassImport(build) {
+  if (rookieClassBusy.value) return
+  rookieClassBusy.value = true
+  try {
+    // Local Builder projects assemble their blob from IndexedDB; community
+    // downloads fetch it from the server. Same shape either way.
+    const blob = build._workshopId
+      ? await buildWorkshopClassBlob(build._workshopId)
+      : await fetchBuildBlob(build.id)
+    const editor = useDraftClassEditorStore()
+    await editor.load(campaignId.value)
+    const result = await editor.applyImportedClass(blob)
+    toastStore.showAchievement({
+      header: 'Draft Class Applied',
+      label: build.title ?? 'Imported Class',
+      subtitle: `${result.prospectCount} prospects are on this season's scouting board.`,
+    })
+    _resolveRookieClassSetup()
+  } catch (err) {
+    toastStore.showError(err?.message || 'Failed to apply the draft class')
+  } finally {
+    rookieClassBusy.value = false
+  }
+}
+
+function handleRookieClassCommunity() {
+  // Round trip: community page → import → "Back to app" deep-links to
+  // /campaign/{id}?rookieClass=1, which force-reopens this modal. Pending
+  // stays set so even a plain relaunch re-offers it.
+  showRookieClassModal.value = false
+  walkthroughStore.setSuspended(false)
+  openCommunityLink(campaignId.value, { type: 'draft_class', back: 'rookie-class' })
+}
+
+// The community page's "Back to app" deep link lands on ?rookieClass=1 —
+// possibly without a remount (deep link into an already-mounted view), so a
+// watcher rather than onMounted-only handling. If the campaign isn't loaded
+// yet when this fires, the force is harmlessly lost: the pending flag was
+// stamped when the modal first showed, and the mount path's re-pop covers it.
+watch(() => route.query.rookieClass, (v) => {
+  if (!v) return
+  const cleaned = { ...route.query }
+  delete cleaned.rookieClass
+  router.replace({ query: cleaned })
+  maybeShowRookieClassSetup({ force: true })
+}, { immediate: true })
+
+// --- Banner Night (championship banner ceremony) -----------------------------
+
+// Show the ceremony when the user's franchise won the championship LAST
+// season and this season's ceremony hasn't run. There is no engine flag for
+// "won last season" — it's derived from the team's seasonHistory (the row
+// archiveSeasonData wrote at the end of the title season). Stamped on SHOW
+// (ownerCheckIn pattern): if the app dies mid-modal the banner still renders
+// statically on the record card, we just don't re-run the ceremony.
+function maybeShowBannerCeremony() {
+  const camp = campaignStore.currentCampaign
+  if (!camp || camp.id !== campaignId.value) return false
+  if (camp.phase !== 'regular_season') return false
+  const year = camp.currentSeasonYear ?? camp.current_season_year
+  if (year == null) return false
+  if (!championshipBannerYears.value.includes(year - 1)) return false
+  if (camp.settings?.bannerCeremonyShownYear === year) return false
+  if (
+    showOwnerCheckInModal.value ||
+    showOwnerWelcomeModal.value ||
+    showContractDecisionModal.value ||
+    showRetirementModal.value ||
+    showAllStarModal.value ||
+    showSeasonAwardsModal.value ||
+    showNewSeasonModal.value ||
+    showRookieClassModal.value ||
+    showOwnerCongratsModal.value ||
+    showCoachResignModal.value ||
+    showHireCoachModal.value
+  ) {
+    return false
+  }
+
+  showBannerCeremonyModal.value = true
+  walkthroughStore.setSuspended(true)
+  try {
+    CampaignRepository.updateSettings(campaignId.value, { bannerCeremonyShownYear: year })
+    if (campaignStore.currentCampaign?.id === campaignId.value) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        bannerCeremonyShownYear: year,
+      }
+    }
+  } catch (err) {
+    console.warn('[CampaignHome] failed to stamp banner ceremony marker:', err)
+  }
+  return true
+}
+
+function handleCloseBannerCeremony() {
+  showBannerCeremonyModal.value = false
+  // Fly the new banner into the record card: the mini banner for last
+  // season's title renders with the hang animation while justHungYear is set.
+  const camp = campaignStore.currentCampaign
+  const year = camp?.currentSeasonYear ?? camp?.current_season_year
+  if (year != null) {
+    justHungYear.value = year - 1
+    if (_justHungTimer) clearTimeout(_justHungTimer)
+    // Clear after the animation so later re-renders don't replay it.
+    _justHungTimer = setTimeout(() => { justHungYear.value = null }, 1600)
+  }
+  _runPostBannerChain()
 }
 
 // Show the one-time review nag when (a) the user has completed at least one
@@ -2173,6 +2687,9 @@ function maybeShowReviewNag() {
     showAllStarModal.value ||
     showSeasonAwardsModal.value ||
     showNewSeasonModal.value ||
+    showRookieClassModal.value ||
+    showBannerCeremonyModal.value ||
+    showOwnerCongratsModal.value ||
     showCoachResignModal.value ||
     showHireCoachModal.value
   ) {
@@ -2201,7 +2718,10 @@ function maybeShowCoachDecisionModal() {
     showRetirementModal.value ||
     showAllStarModal.value ||
     showSeasonAwardsModal.value ||
-    showNewSeasonModal.value
+    showNewSeasonModal.value ||
+    showRookieClassModal.value ||
+    showBannerCeremonyModal.value ||
+    showOwnerCongratsModal.value
   ) {
     return
   }
@@ -2365,7 +2885,19 @@ async function handleAiFinishStartSetup() {
     ])
     toastStore.removeMinimalToast(loadingToastId)
     const parts = []
-    if (result.coachHired) parts.push(`Hired ${result.coachHired.name}`)
+    if (result.coachHired) {
+      parts.push(`Hired ${result.coachHired.name}`)
+      // News: the front-office auto-hire is a real user-team coaching move.
+      try {
+        breakingNewsStore.addToFeed(BreakingNewsService.coachHired({
+          coachName: result.coachHired.name,
+          teamName: teamStore.team?.name ?? campaign.value?.teamAbbreviation ?? 'Your team',
+          date: campaign.value?.currentDate ?? campaign.value?.settings?.currentDate ?? null,
+        }), campaignId.value)
+      } catch (err) {
+        console.warn('[CampaignHome] coach hire news failed:', err)
+      }
+    }
     if (result.playersSigned?.length) parts.push(`signed ${result.playersSigned.length} player${result.playersSigned.length === 1 ? '' : 's'}`)
     // Defer a tick so the campaign / team refetch has settled before we
     // re-evaluate `startSeasonBlocked`.
@@ -2851,6 +3383,7 @@ async function handleConfirmSimulate() {
     if (response.weeklySummary) {
       toastStore.showWeeklySummary({
         scoutingPointsEarned: response.weeklySummary.scoutingPointsEarned ?? 0,
+        aiTrades: response.weeklySummary.aiTrades ?? [],
         campaignId: campaignId.value,
       })
       gameStore.weeklySummaryData = null
@@ -2973,6 +3506,7 @@ async function handleSimToEnd() {
     if (gameStore.weeklySummaryData) {
       toastStore.showWeeklySummary({
         scoutingPointsEarned: gameStore.weeklySummaryData.scoutingPointsEarned ?? 0,
+        aiTrades: gameStore.weeklySummaryData.aiTrades ?? [],
         campaignId: campaignId.value,
       })
       gameStore.weeklySummaryData = null
@@ -3382,6 +3916,9 @@ async function handleSimToNextPlayoffRound() {
       }),
       campaignId.value
     )
+    // The finals just resolved off-screen — show the recap (champion vs
+    // runner-up, series score, Finals MVP) like the play-the-finals path does.
+    playoffStore.showChampionshipRecap(playoffStore.bracket)
   } else {
     toastStore.showSuccess('Next round is ready!')
   }
@@ -3473,7 +4010,26 @@ function handleCloseSimulateModal() {
       </div>
 
       <!-- Record Card - Cosmic gradient -->
-      <section class="record-card card-cosmic" data-tour="home-record-card">
+      <section
+        class="record-card card-cosmic"
+        :class="{ 'has-banners': championshipBannerYears.length }"
+        data-tour="home-record-card"
+      >
+        <!-- Championship banners: one pennant per franchise title, hanging
+             from the card's top edge (absolute — card height unchanged).
+             justHungYear plays the Banner Night hang animation on the newest. -->
+        <div v-if="championshipBannerYears.length" class="champ-banner-row" aria-label="Championship banners">
+          <div
+            v-for="y in championshipBannerYears"
+            :key="y"
+            class="champ-banner"
+            :class="{ 'just-hung': y === justHungYear }"
+            :title="`${y}-${String((y + 1) % 100).padStart(2, '0')} League Champions`"
+          >
+            <Trophy :size="8" class="champ-banner-icon" />
+            <span class="champ-banner-year">'{{ String((y + 1) % 100).padStart(2, '0') }}</span>
+          </div>
+        </div>
         <div class="record-content">
           <div class="record-left">
             <span class="record-label">Record</span>
@@ -4186,73 +4742,13 @@ function handleCloseSimulateModal() {
         </div>
       </section>
 
-      <!-- Quick Actions Card -->
-      <section class="quick-actions-card glass-card-nebula" data-tour="home-quick-actions">
-        <h3 class="section-header">QUICK ACTIONS</h3>
-        <div class="quick-actions-grid">
-          <button class="action-box" @click="navigateToScout">
-            <div class="action-icon">
-              <Binoculars :size="24" />
-            </div>
-            <span class="action-label">Scout</span>
-          </button>
-          <button class="action-box" @click="navigateToRoster">
-            <div class="action-icon">
-              <Users :size="24" />
-            </div>
-            <span class="action-label">GM View</span>
-          </button>
-          <button v-if="playoffStore.isInPlayoffs && campaign?.phase === 'playoffs'" class="action-box playoffs" @click="router.push(`/campaign/${campaignId}/playoffs`)">
-            <div class="action-icon">
-              <Trophy :size="24" />
-            </div>
-            <span class="action-label">Bracket</span>
-          </button>
-          <!-- Offseason: the regular season is over, so surface the playoff
-               bracket here instead of standings. -->
-          <button v-else-if="isOffseason" class="action-box playoffs" @click="router.push(`/campaign/${campaignId}/playoffs`)">
-            <div class="action-icon">
-              <Trophy :size="24" />
-            </div>
-            <span class="action-label">Playoffs</span>
-          </button>
-          <button v-else class="action-box" @click="router.push(`/campaign/${campaignId}/league`)">
-            <div class="action-icon">
-              <TrendingUp :size="24" />
-            </div>
-            <span class="action-label">Standings</span>
-          </button>
-          <!-- Free Agency replaces Schedule during the offseason FA window;
-               Playoffs replaces it once the bracket is live; otherwise the
-               default regular-season Schedule link shows. -->
-          <button
-            v-if="isFreeAgencyActive"
-            class="action-box"
-            @click="navigateToFreeAgency"
-          >
-            <div class="action-icon">
-              <Briefcase :size="24" />
-            </div>
-            <span class="action-label">Free Agency</span>
-          </button>
-          <button
-            v-else-if="playoffStore.isInPlayoffs && !playoffStore.champion"
-            class="action-box"
-            @click="router.push(`/campaign/${campaignId}/playoffs`)"
-          >
-            <div class="action-icon">
-              <Trophy :size="24" />
-            </div>
-            <span class="action-label">Playoffs</span>
-          </button>
-          <button v-else class="action-box" @click="router.push(`/campaign/${campaignId}/team#schedule`)">
-            <div class="action-icon">
-              <Calendar :size="24" />
-            </div>
-            <span class="action-label">Schedule</span>
-          </button>
-        </div>
-      </section>
+      <!-- News Desk — live news reader (typewriter reading + minimal queue) -->
+      <NewsDeskCard
+        :news="news"
+        :current-date="currentDate"
+        :campaign-id="campaignId"
+        @open-all-star="openAllStarModal"
+      />
 
       <!-- Featured Player Card - Cosmic gradient -->
       <!-- Bi-weekly Featured Player. Selection refreshed every 14 days by
@@ -4330,6 +4826,74 @@ function handleCloseSimulateModal() {
         </div>
       </section>
 
+      <!-- Quick Actions Card -->
+      <section class="quick-actions-card glass-card-nebula" data-tour="home-quick-actions">
+        <h3 class="section-header">QUICK ACTIONS</h3>
+        <div class="quick-actions-grid">
+          <button class="action-box" @click="navigateToScout">
+            <div class="action-icon">
+              <Binoculars :size="24" />
+            </div>
+            <span class="action-label">Scout</span>
+          </button>
+          <button class="action-box" @click="navigateToRoster">
+            <div class="action-icon">
+              <Users :size="24" />
+            </div>
+            <span class="action-label">GM View</span>
+          </button>
+          <button v-if="playoffStore.isInPlayoffs && campaign?.phase === 'playoffs'" class="action-box playoffs" @click="router.push(`/campaign/${campaignId}/playoffs`)">
+            <div class="action-icon">
+              <Trophy :size="24" />
+            </div>
+            <span class="action-label">Bracket</span>
+          </button>
+          <!-- Offseason: the regular season is over, so surface the playoff
+               bracket here instead of standings. -->
+          <button v-else-if="isOffseason" class="action-box playoffs" @click="router.push(`/campaign/${campaignId}/playoffs`)">
+            <div class="action-icon">
+              <Trophy :size="24" />
+            </div>
+            <span class="action-label">Playoffs</span>
+          </button>
+          <button v-else class="action-box" @click="router.push(`/campaign/${campaignId}/league`)">
+            <div class="action-icon">
+              <TrendingUp :size="24" />
+            </div>
+            <span class="action-label">Standings</span>
+          </button>
+          <!-- Free Agency replaces Schedule during the offseason FA window;
+               Playoffs replaces it once the bracket is live; otherwise the
+               default regular-season Schedule link shows. -->
+          <button
+            v-if="isFreeAgencyActive"
+            class="action-box"
+            @click="navigateToFreeAgency"
+          >
+            <div class="action-icon">
+              <Briefcase :size="24" />
+            </div>
+            <span class="action-label">Free Agency</span>
+          </button>
+          <button
+            v-else-if="playoffStore.isInPlayoffs && !playoffStore.champion"
+            class="action-box"
+            @click="router.push(`/campaign/${campaignId}/playoffs`)"
+          >
+            <div class="action-icon">
+              <Trophy :size="24" />
+            </div>
+            <span class="action-label">Playoffs</span>
+          </button>
+          <button v-else class="action-box" @click="router.push(`/campaign/${campaignId}/team#schedule`)">
+            <div class="action-icon">
+              <Calendar :size="24" />
+            </div>
+            <span class="action-label">Schedule</span>
+          </button>
+        </div>
+      </section>
+
       <!-- Upcoming Free Agents — roster players whose contracts expire
            this offseason. At-a-glance teaser that deep-links to the full
            FinancesTab → Expiring sub-tab for actual re-sign work. Hidden
@@ -4386,37 +4950,6 @@ function handleCloseSimulateModal() {
               <span class="fa-meter-pct" :style="{ color: resignColor(resignLikelihood(p)) }">{{ resignLikelihood(p) }}%</span>
             </span>
           </button>
-        </div>
-      </section>
-
-      <!-- News Feed Card -->
-      <section class="news-card" data-tour="home-news">
-        <h3 class="section-header">LATEST NEWS</h3>
-        <div v-if="news.length" class="news-list">
-          <div
-            v-for="item in news.slice(0, 5)"
-            :key="item.id"
-            class="news-item"
-            :class="{
-              'news-highlight': item.event_type === 'award' && item.headline?.includes('All-Star'),
-              'news-breaking': item.is_breaking
-            }"
-            @click="item.event_type === 'award' && item.headline?.includes('All-Star') ? openAllStarModal() : null"
-          >
-            <div class="news-icon" :class="{ 'news-icon-star': item.event_type === 'award', 'news-icon-breaking': item.is_breaking }">
-              <Zap v-if="item.is_breaking" :size="18" />
-              <Star v-else-if="item.event_type === 'award'" :size="18" />
-              <Newspaper v-else :size="18" />
-            </div>
-            <div class="news-content">
-              <span v-if="item.is_breaking" class="news-breaking-tag">BREAKING</span>
-              <p class="news-headline">{{ item.headline }}</p>
-              <span class="news-date">{{ formatNewsDate(item.date) }}</span>
-            </div>
-          </div>
-        </div>
-        <div v-else class="news-empty">
-          <p>No news yet. Simulate some games to generate headlines!</p>
         </div>
       </section>
     </template>
@@ -4532,7 +5065,7 @@ function handleCloseSimulateModal() {
     <ChampionshipModal
       :show="playoffStore.showChampionshipModal"
       :series-result="playoffStore.seriesResult"
-      :year="campaign?.current_season?.year"
+      :year="campaign?.currentSeasonYear ?? campaign?.current_season_year ?? campaign?.current_season?.year"
       :user-team-id="team?.id"
       @close="handleChampionshipClose"
     />
@@ -4631,6 +5164,40 @@ function handleCloseSimulateModal() {
       :check-in="ownerCheckInData"
       :season-year="ownerCheckInData?.seasonYear"
       @close="handleCloseOwnerCheckIn"
+    />
+
+    <!-- Owner championship congrats — impromptu text after the user wins the
+         title, chained after the finals recap; rewards apply on close. -->
+    <OwnerCongratsModal
+      :show="showOwnerCongratsModal"
+      :owner="ownerCongratsData?.owner"
+      :season-year="ownerCongratsData?.seasonYear"
+      :team-name="team?.name ?? ''"
+      @close="handleCloseOwnerCongrats"
+    />
+
+    <!-- Rookie-class setup (custom_roster owners) — chained directly after the
+         season-start owner check-in. -->
+    <RookieClassSetupModal
+      :show="showRookieClassModal"
+      :campaign-id="campaignId"
+      :season-year="campaign?.currentSeasonYear ?? campaign?.current_season_year ?? null"
+      :draft-year="(campaign?.currentSeasonYear ?? campaign?.current_season_year ?? 0) + 1"
+      :busy="rookieClassBusy"
+      @continue="handleRookieClassContinue"
+      @edit="handleRookieClassEdit"
+      @apply-imported="handleRookieClassImport"
+      @open-community="handleRookieClassCommunity"
+    />
+
+    <!-- Banner Night — one-time ceremony the season after a championship,
+         chained after the check-in + rookie-class setup. -->
+    <BannerCeremonyModal
+      :show="showBannerCeremonyModal"
+      :team-name="teamStore.team?.name ?? team?.name ?? ''"
+      :championship-year="(campaign?.currentSeasonYear ?? campaign?.current_season_year ?? 0) - 1"
+      :title-count="championshipBannerYears.length"
+      @close="handleCloseBannerCeremony"
     />
 
     <!-- One-time review nag: chained after the season-start owner check-in
@@ -4798,24 +5365,26 @@ function handleCloseSimulateModal() {
     <!-- Recent Games Ticker (shows on idle) -->
     <Teleport to="body">
       <Transition name="ticker-slide">
-        <div v-if="showTicker && recentLeagueGames.length > 0" class="games-ticker">
+        <div v-if="showTicker && tickerItems.length > 0" class="games-ticker">
           <div class="games-ticker-track">
-            <div class="games-ticker-content">
-              <template v-for="item in recentLeagueGames" :key="'a-' + item.key">
+            <div v-for="copy in ['a', 'b']" :key="copy" class="games-ticker-content" :aria-hidden="copy === 'b' || undefined">
+              <template v-for="item in tickerItems" :key="copy + '-' + item.key">
                 <span v-if="item.type === 'date'" class="gt-date">{{ item.label }}</span>
-                <span v-else class="games-ticker-item">
-                  <span class="gt-abbr" :class="{ 'gt-user-win': item.userResult === 'win' && item.game.away_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.away_team_id === campaign?.teamId }">{{ item.game.away_team_abbreviation }}</span>
-                  <span class="gt-score" :class="{ 'gt-win': !item.homeWon && !item.game.is_user_game, 'gt-user-win': item.userResult === 'win' && item.game.away_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.away_team_id === campaign?.teamId }">{{ item.game.away_score }}</span>
-                  <span class="gt-at">@</span>
-                  <span class="gt-abbr" :class="{ 'gt-user-win': item.userResult === 'win' && item.game.home_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.home_team_id === campaign?.teamId }">{{ item.game.home_team_abbreviation }}</span>
-                  <span class="gt-score" :class="{ 'gt-win': item.homeWon && !item.game.is_user_game, 'gt-user-win': item.userResult === 'win' && item.game.home_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.home_team_id === campaign?.teamId }">{{ item.game.home_score }}</span>
+                <span v-else-if="item.type === 'fa'" class="games-ticker-item">
+                  <span class="gt-rank">#{{ item.rank }}</span>
+                  <span class="gt-player">{{ item.name }}</span>
+                  <span class="gt-ovr">{{ item.overall }}</span>
+                  <span class="gt-pos">{{ item.position }}</span>
                   <span class="gt-divider"></span>
                 </span>
-              </template>
-            </div>
-            <div class="games-ticker-content" aria-hidden="true">
-              <template v-for="item in recentLeagueGames" :key="'b-' + item.key">
-                <span v-if="item.type === 'date'" class="gt-date">{{ item.label }}</span>
+                <span v-else-if="item.type === 'pick'" class="games-ticker-item">
+                  <span class="gt-rank">#{{ item.pick }}</span>
+                  <TeamLogo :abbreviation="item.teamAbbr" :color="item.teamColor" :size="16" class="gt-team-logo" />
+                  <span class="gt-abbr gt-pick-team">{{ item.teamAbbr }}</span>
+                  <span v-if="item.viaAbbr" class="gt-via">via {{ item.viaAbbr }}</span>
+                  <span v-if="item.playerName" class="gt-player">{{ item.playerName }}</span>
+                  <span class="gt-divider"></span>
+                </span>
                 <span v-else class="games-ticker-item">
                   <span class="gt-abbr" :class="{ 'gt-user-win': item.userResult === 'win' && item.game.away_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.away_team_id === campaign?.teamId }">{{ item.game.away_team_abbreviation }}</span>
                   <span class="gt-score" :class="{ 'gt-win': !item.homeWon && !item.game.is_user_game, 'gt-user-win': item.userResult === 'win' && item.game.away_team_id === campaign?.teamId, 'gt-user-loss': item.userResult === 'loss' && item.game.away_team_id === campaign?.teamId }">{{ item.game.away_score }}</span>
@@ -4959,6 +5528,70 @@ function handleCloseSimulateModal() {
   padding: 20px 24px;
   margin-bottom: 16px;
   position: relative;
+}
+
+/* With banners hanging from the top edge, nudge the content down INSIDE the
+   same card height (top padding added, bottom removed — net height 0). */
+.record-card.has-banners {
+  padding-top: 26px;
+  padding-bottom: 14px;
+}
+
+/* Championship banners — tiny dark pennants with a gold header stripe (real
+   rafter-banner fabric look, and dark pops on the cosmic gradient). Row is
+   absolutely positioned at the card's top edge so card height is unchanged;
+   card-cosmic's overflow:hidden makes the hang animation emerge from the
+   edge like the banner is being lowered from the rafters. */
+.champ-banner-row {
+  position: absolute;
+  top: 0;
+  left: 16px;
+  display: flex;
+  gap: 5px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.champ-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
+  width: 22px;
+  height: 27px;
+  padding-top: 4px;
+  background: linear-gradient(180deg, #ffd700 0, #ffd700 2.5px, #241d2e 2.5px, #14101c 100%);
+  clip-path: polygon(0 0, 100% 0, 100% 78%, 50% 100%, 0 78%);
+  transform-origin: top center;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+}
+
+.champ-banner-icon {
+  color: #ffd700;
+  flex-shrink: 0;
+}
+
+.champ-banner-year {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.5rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #ffd700;
+  letter-spacing: -0.02em;
+}
+
+/* Banner Night fly-in: drop from above the card edge, swing, settle. */
+.champ-banner.just-hung {
+  animation: banner-hang 1.15s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+@keyframes banner-hang {
+  0% { transform: translateY(-120%) rotate(0); opacity: 0; }
+  50% { transform: translateY(0) rotate(6deg); opacity: 1; }
+  72% { transform: translateY(0) rotate(-4deg); }
+  90% { transform: translateY(0) rotate(2deg); }
+  100% { transform: translateY(0) rotate(0); }
 }
 
 .record-content {
@@ -5436,120 +6069,7 @@ function handleCloseSimulateModal() {
   }
 }
 
-/* News Card */
-.news-card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-2xl);
-  padding: 16px;
-  margin-bottom: 16px;
-}
-
-.news-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.news-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px;
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-lg);
-  transition: background 0.2s ease;
-}
-
-.news-item:hover {
-  background: var(--color-bg-elevated);
-}
-
-.news-icon {
-  width: 32px;
-  height: 32px;
-  background: var(--color-primary);
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.news-icon :deep(svg) {
-  width: 18px;
-  height: 18px;
-  color: white;
-}
-
-.news-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.news-headline {
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  margin: 0 0 4px 0;
-  line-height: 1.4;
-}
-
-.news-date {
-  font-size: 0.75rem;
-  color: var(--color-text-tertiary);
-}
-
-.news-empty {
-  padding: 24px 16px;
-  text-align: center;
-}
-
-.news-empty p {
-  font-size: 0.875rem;
-  color: var(--color-text-tertiary);
-  margin: 0;
-}
-
-.news-highlight {
-  border-left: 3px solid #f59e0b;
-  background: linear-gradient(90deg, rgba(245, 158, 11, 0.08), transparent) !important;
-  cursor: pointer;
-}
-
-.news-highlight:hover {
-  background: linear-gradient(90deg, rgba(245, 158, 11, 0.15), transparent) !important;
-}
-
-.news-icon-star {
-  background: linear-gradient(135deg, #f59e0b, #d97706) !important;
-}
-
-.news-breaking {
-  border-left: 3px solid #eab308;
-  background: linear-gradient(90deg, rgba(234, 179, 8, 0.1), rgba(234, 179, 8, 0.02), transparent) !important;
-}
-
-.news-breaking:hover {
-  background: linear-gradient(90deg, rgba(234, 179, 8, 0.18), rgba(234, 179, 8, 0.05), transparent) !important;
-}
-
-.news-icon-breaking {
-  background: linear-gradient(135deg, #eab308, #ca8a04) !important;
-}
-
-.news-breaking-tag {
-  display: inline-block;
-  font-size: 0.6rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #eab308;
-  background: rgba(234, 179, 8, 0.15);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  margin-bottom: 2px;
-}
+/* News card styles moved into NewsDeskCard.vue (the live news reader). */
 
 /* Glass Card with Nebula Effect */
 .glass-card-nebula {
@@ -7466,6 +7986,58 @@ function handleCloseSimulateModal() {
   background: var(--color-text-tertiary);
   margin: 0 20px;
   flex-shrink: 0;
+}
+
+/* Offseason ticker modes: free-agent board + draft order/results */
+.gt-rank {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  flex-shrink: 0;
+}
+
+.gt-player {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.gt-pick-team {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.gt-team-logo {
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.gt-ovr {
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  color: #ffc72c;
+  background: rgba(245, 199, 44, 0.14);
+  border-radius: 4px;
+  padding: 0 5px;
+  flex-shrink: 0;
+}
+
+.gt-pos {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.gt-via {
+  font-size: 0.62rem;
+  font-style: italic;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
 
 @keyframes games-marquee {

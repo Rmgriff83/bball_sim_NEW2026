@@ -10,6 +10,9 @@ import { backfillCampaignAchievements } from '@/engine/campaign/CampaignManager'
 
 const router = useRouter()
 const authStore = useAuthStore()
+// One-shot fresh-account flag (stamped at registration/social first sign-in):
+// consumed synchronously before first render so the greeting never flips.
+const isFirstVisit = authStore.consumeFreshAccountFlag()
 const { hasCommunity, openCommunity } = useCommunityLink()
 const campaignStore = useCampaignStore()
 const user = computed(() => authStore.user)
@@ -135,8 +138,8 @@ onMounted(async () => {
       <div class="dashboard-container">
         <!-- Welcome Section -->
         <div class="welcome-section">
-          <h1 class="welcome-title">Welcome back, {{ user?.username }}!</h1>
-          <p class="welcome-subtitle">Ready to build your dynasty?</p>
+          <h1 class="welcome-title">{{ isFirstVisit ? 'Welcome' : 'Welcome back' }}, {{ user?.username }}!</h1>
+          <p class="welcome-subtitle">{{ isFirstVisit ? "Let's build your first dynasty." : 'Ready to build your dynasty?' }}</p>
         </div>
 
         <!-- Quick Actions -->

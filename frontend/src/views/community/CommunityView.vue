@@ -18,6 +18,12 @@ const toastStore = useToastStore()
 
 const isOwner = computed(() => authStore.hasFeature('custom_roster'))
 
+// Content type: full league rosters vs rookie draft classes. Same board/
+// publish/imports machinery, same endpoints — the ?type= param discriminates
+// server-side. Deep links land directly on a type via ?type=draft_class.
+const contentType = ref(route.query.type === 'draft_class' ? 'draft_class' : 'roster')
+const isDraftClass = computed(() => contentType.value === 'draft_class')
+
 const tab = ref('board') // 'board' | 'publish' | 'downloads'
 const loading = ref(false)
 const builds = ref([])
@@ -25,6 +31,16 @@ const myDownloads = ref([])
 const sort = ref('created_at')
 const page = ref(1)
 const lastPage = ref(1)
+
+function switchContentType(type) {
+  if (contentType.value === type) return
+  contentType.value = type
+  page.value = 1
+  publishCampaignId.value = ''
+  fetchBoard()
+  fetchMyDownloads()
+  fetchPublishedCampaigns()
+}
 
 // Publish panel state
 const publishCampaignId = ref('')
@@ -43,9 +59,19 @@ const fromNativeApp = (() => {
   try { return sessionStorage.getItem('bball_from_native_app') === '1' } catch { return false }
 })()
 const returnCampaign = computed(() => String(route.query.campaign ?? ''))
-const backPath = computed(() => (returnCampaign.value
-  ? `/campaign/${returnCampaign.value}/roster-setup`
-  : '/campaigns'))
+// ?back= names the in-app spot the visit came from: 'rookie-class' (the
+// season-start rookie-class modal — reopened via ?rookieClass=1), 'builder'
+// (the standalone Builder), else the original roster-setup round trip.
+const backIntent = computed(() => String(route.query.back ?? ''))
+const backPath = computed(() => {
+  if (backIntent.value === 'builder') return '/builder'
+  if (backIntent.value === 'rookie-class' && returnCampaign.value) {
+    return `/campaign/${returnCampaign.value}?rookieClass=1`
+  }
+  return returnCampaign.value
+    ? `/campaign/${returnCampaign.value}/roster-setup`
+    : '/campaigns'
+})
 const backToAppUrl = computed(() => `bballsim://open?path=${encodeURIComponent(backPath.value)}`)
 
 // Campaigns whose custom roster already has a LIVE build on the board — each
@@ -53,7 +79,10 @@ const backToAppUrl = computed(() => `bballsim://open?path=${encodeURIComponent(b
 const publishedCampaignIds = ref(new Set())
 async function fetchPublishedCampaigns() {
   try {
-    const res = await api.get('/api/roster-builds/mine', { skipErrorToast: true })
+    const res = await api.get('/api/roster-builds/mine', {
+      params: { type: contentType.value },
+      skipErrorToast: true,
+    })
     publishedCampaignIds.value = new Set(
       (res.data?.builds ?? [])
         .filter((b) => b.status === 'active' && b.campaign_client_id)
@@ -62,19 +91,41 @@ async function fetchPublishedCampaigns() {
   } catch { /* picker just won't pre-filter; the server still enforces */ }
 }
 
-// Only FINISHED custom builds are publishable — an un-finalized campaign is
-// still in the roster editor and its cloud snapshot is a half-built league.
-// Campaigns already published stay out of the picker.
-const customCampaigns = computed(() =>
-  (campaignStore.campaigns ?? []).filter((c) =>
-    (c.customRoster ?? c.custom_roster)
-    && (c.rosterSetupCompleted ?? c.roster_setup_completed)
-    && !publishedCampaignIds.value.has(c.id)))
+// Builder workshop projects (roster or draft-class WIPs) — exposed by the
+// campaign store split; `?? []` keeps this page working against store
+// snapshots hydrated before that field existed.
+const workshopProjects = computed(() => campaignStore.workshopCampaigns ?? [])
+
+// Per-type publish picker (already-published campaigns of the SAME type stay
+// out; a campaign can have one roster AND one draft-class build live).
+// Rosters: finished custom campaigns + Builder roster projects that passed
+// "Validate for publishing". Draft classes: ANY campaign (every campaign
+// carries a generated class) + Builder draft-class projects.
+const publishableCampaigns = computed(() => {
+  let workshops
+  let regular
+  if (isDraftClass.value) {
+    workshops = workshopProjects.value.filter((c) => c.settings?.workshopMode === 'draft_class')
+    regular = campaignStore.campaigns ?? []
+  } else {
+    workshops = workshopProjects.value.filter((c) =>
+      c.settings?.workshopMode === 'roster' && c.settings?.workshopPublishable)
+    regular = (campaignStore.campaigns ?? []).filter((c) =>
+      (c.customRoster ?? c.custom_roster)
+      && (c.rosterSetupCompleted ?? c.roster_setup_completed))
+  }
+  return [
+    ...workshops.map((c) => ({ ...c, _workshop: true })),
+    ...regular,
+  ].filter((c) => !publishedCampaignIds.value.has(c.id))
+})
 
 async function fetchBoard() {
   loading.value = true
   try {
-    const res = await api.get('/api/roster-builds', { params: { sort: sort.value, page: page.value } })
+    const res = await api.get('/api/roster-builds', {
+      params: { sort: sort.value, page: page.value, type: contentType.value },
+    })
     builds.value = res.data?.builds ?? []
     lastPage.value = res.data?.last_page ?? 1
   } catch {
@@ -86,7 +137,10 @@ async function fetchBoard() {
 
 async function fetchMyDownloads() {
   try {
-    const res = await api.get('/api/roster-builds/downloads', { skipErrorToast: true })
+    const res = await api.get('/api/roster-builds/downloads', {
+      params: { type: contentType.value },
+      skipErrorToast: true,
+    })
     myDownloads.value = res.data?.builds ?? []
   } catch {
     myDownloads.value = []
@@ -100,9 +154,11 @@ async function downloadBuild(build) {
     await api.post(`/api/roster-builds/${build.id}/download`)
     // Rich callout + affirmation chime (played inside showAchievement).
     toastStore.showAchievement({
-      header: 'Roster Imported',
+      header: isDraftClass.value ? 'Draft Class Imported' : 'Roster Imported',
       label: build.title,
-      subtitle: 'Imported to your account — available when starting any new custom campaign.',
+      subtitle: isDraftClass.value
+        ? 'Imported to your account — offer it as the rookie class when a new season starts.'
+        : 'Imported to your account — available when starting any new custom campaign.',
       type: 'roster_import',
     })
     fetchMyDownloads()
@@ -130,8 +186,11 @@ async function publish() {
       campaign_client_id: publishCampaignId.value,
       title: publishTitle.value.trim(),
       description: publishDescription.value.trim() || null,
+      type: contentType.value,
     })
-    toastStore.showSuccess('Published! Your roster is live on the board.')
+    toastStore.showSuccess(isDraftClass.value
+      ? 'Published! Your draft class is live on the board.'
+      : 'Published! Your roster is live on the board.')
     publishTitle.value = ''
     publishDescription.value = ''
     publishAck.value = false
@@ -153,9 +212,17 @@ async function publish() {
     } else if (data?.error === 'not_a_custom_campaign') {
       toastStore.showError('Only custom-roster campaigns can be published.')
     } else if (data?.error === 'campaign_not_finalized') {
-      toastStore.showError('Finish building this roster in the app (start the campaign) before publishing it.')
+      toastStore.showError('Finish building this roster in the app (start the campaign) before publishing it. Builder projects need "Validate for publishing" first.')
+    } else if (data?.error === 'no_draft_class') {
+      toastStore.showError('This campaign has no rookie class synced yet — open it in the app so it syncs, then retry.')
+    } else if (data?.error === 'class_too_small') {
+      toastStore.showError(`This class has ${data.count} prospects — the draft needs at least ${data.min ?? 60}. Add more in the class editor first.`)
+    } else if (data?.error === 'class_too_large') {
+      toastStore.showError(`This class has ${data.count} prospects — the max is ${data.max ?? 120}. Trim it in the class editor first.`)
     } else if (data?.error === 'already_published') {
-      toastStore.showError('This campaign\'s roster is already on the board — each campaign can only be published once.')
+      toastStore.showError(isDraftClass.value
+        ? 'This campaign\'s draft class is already on the board — remove that build to re-publish.'
+        : 'This campaign\'s roster is already on the board — each campaign can only be published once.')
       fetchPublishedCampaigns()
     } else if (data?.error === 'storage_unavailable') {
       toastStore.showError('Upload storage is temporarily unavailable — please try again shortly.')
@@ -179,7 +246,7 @@ onMounted(async () => {
   fetchMyDownloads()
   fetchPublishedCampaigns()
   await campaignStore.fetchCampaigns().catch(() => {})
-  if (returnCampaign.value && customCampaigns.value.some((c) => c.id === returnCampaign.value)) {
+  if (returnCampaign.value && publishableCampaigns.value.some((c) => c.id === returnCampaign.value)) {
     publishCampaignId.value = returnCampaign.value
   }
 })
@@ -188,7 +255,7 @@ onMounted(async () => {
 <template>
   <div class="community">
     <header class="cm-header">
-      <h1 class="cm-title"><Globe :size="22" /> Community Rosters</h1>
+      <h1 class="cm-title"><Globe :size="22" /> {{ isDraftClass ? 'Community Draft Classes' : 'Community Rosters' }}</h1>
       <a v-if="fromNativeApp" class="cm-back-app" :href="backToAppUrl">
         <ArrowLeft :size="15" /> Back to app
       </a>
@@ -207,6 +274,21 @@ onMounted(async () => {
     </div>
 
     <template v-else>
+      <!-- Content-type toggle: full league rosters vs rookie draft classes.
+           Board / Publish / My Imports all follow the selected type. -->
+      <nav class="cm-type-toggle">
+        <button
+          class="cm-type"
+          :class="{ active: !isDraftClass }"
+          @click="switchContentType('roster')"
+        >Rosters</button>
+        <button
+          class="cm-type"
+          :class="{ active: isDraftClass }"
+          @click="switchContentType('draft_class')"
+        >Draft Classes</button>
+      </nav>
+
       <nav class="cm-tabs">
         <button class="cm-tab" :class="{ active: tab === 'board' }" @click="tab = 'board'; fetchBoard()">Board</button>
         <button class="cm-tab" :class="{ active: tab === 'publish' }" @click="tab = 'publish'">
@@ -226,13 +308,15 @@ onMounted(async () => {
           </select>
         </div>
         <div v-if="loading" class="cm-loading"><Loader2 :size="26" class="spin" /></div>
-        <p v-else-if="!builds.length" class="cm-empty">No rosters published yet — be the first!</p>
+        <p v-else-if="!builds.length" class="cm-empty">
+          {{ isDraftClass ? 'No draft classes published yet — be the first!' : 'No rosters published yet — be the first!' }}
+        </p>
         <div v-else class="cm-list">
           <div v-for="b in builds" :key="b.id" class="cm-card">
             <div class="cm-card-info">
               <span class="cm-card-title">{{ b.title }}</span>
               <span class="cm-card-meta">
-                by {{ b.author ?? 'Unknown' }} · {{ b.player_count }} players ·
+                by {{ b.author ?? 'Unknown' }} · {{ b.player_count }} {{ isDraftClass ? 'prospects' : 'players' }} ·
                 {{ fmtSize(b.size_bytes) }} · {{ b.downloads }} imports
               </span>
               <p v-if="b.description" class="cm-card-desc">{{ b.description }}</p>
@@ -247,7 +331,7 @@ onMounted(async () => {
                 <Download v-else :size="14" />
                 {{ downloadedIds.has(b.id) ? 'Imported' : 'Import' }}
               </button>
-              <button class="cm-ghost" title="Report this roster" @click="reportBuild(b)">
+              <button class="cm-ghost" :title="isDraftClass ? 'Report this draft class' : 'Report this roster'" @click="reportBuild(b)">
                 <Flag :size="13" />
               </button>
             </div>
@@ -262,21 +346,27 @@ onMounted(async () => {
 
       <!-- Publish -->
       <section v-else-if="tab === 'publish'" class="cm-publish">
-        <p v-if="!customCampaigns.length" class="cm-empty">
-          No custom-roster campaigns on this account yet — create one in the app
-          with the Custom league-roster option, then publish it here.
+        <p v-if="!publishableCampaigns.length" class="cm-empty">
+          {{ isDraftClass
+            ? 'No campaigns available to publish a draft class from — open a campaign (or create a Builder draft-class project) in the app so it syncs, then publish it here.'
+            : 'No custom-roster campaigns on this account yet — create one in the app with the Custom league-roster option, then publish it here.' }}
         </p>
         <template v-else>
           <label class="cm-field">
-            <span>Campaign</span>
+            <span>{{ isDraftClass ? 'Source campaign / project' : 'Campaign' }}</span>
             <select v-model="publishCampaignId" class="cm-select">
-              <option value="" disabled>Choose a custom campaign…</option>
-              <option v-for="c in customCampaigns" :key="c.id" :value="c.id">{{ c.name }}</option>
+              <option value="" disabled>{{ isDraftClass ? 'Choose a campaign or Builder project…' : 'Choose a custom campaign…' }}</option>
+              <option v-for="c in publishableCampaigns" :key="c.id" :value="c.id">
+                {{ c.name }}{{ c._workshop ? ' — Workshop' : '' }}
+              </option>
             </select>
+            <em v-if="isDraftClass" class="cm-field-hint">
+              Publishes the campaign's CURRENT season rookie class as last synced from the app.
+            </em>
           </label>
           <label class="cm-field">
             <span>Title</span>
-            <input v-model="publishTitle" maxlength="100" class="cm-input" placeholder="e.g. 2010s Golden Era Remix" />
+            <input v-model="publishTitle" maxlength="100" class="cm-input" :placeholder="isDraftClass ? 'e.g. Loaded 2028 Class' : 'e.g. 2010s Golden Era Remix'" />
           </label>
           <label class="cm-field">
             <span>Description (optional)</span>
@@ -305,14 +395,15 @@ onMounted(async () => {
       <!-- My Downloads -->
       <section v-else>
         <p v-if="!myDownloads.length" class="cm-empty">
-          Nothing imported yet — import a roster from the board and it will appear
-          under "Imports" when starting a custom campaign in the app.
+          {{ isDraftClass
+            ? 'Nothing imported yet — import a draft class from the board and it will be offered as the rookie class when a new season starts in the app.'
+            : 'Nothing imported yet — import a roster from the board and it will appear under "Imports" when starting a custom campaign in the app.' }}
         </p>
         <div v-else class="cm-list">
           <div v-for="b in myDownloads" :key="b.id" class="cm-card">
             <div class="cm-card-info">
               <span class="cm-card-title">{{ b.title }}</span>
-              <span class="cm-card-meta">by {{ b.author ?? 'Unknown' }} · {{ b.player_count }} players</span>
+              <span class="cm-card-meta">by {{ b.author ?? 'Unknown' }} · {{ b.player_count }} {{ isDraftClass ? 'prospects' : 'players' }}</span>
             </div>
             <span class="cm-saved-tag"><Check :size="13" /> Available in app</span>
           </div>
@@ -372,6 +463,37 @@ onMounted(async () => {
   padding: 48px 20px;
   text-align: center;
   color: var(--color-text-secondary);
+}
+
+.cm-type-toggle {
+  display: inline-flex;
+  margin-bottom: 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg, 12px);
+  overflow: hidden;
+}
+
+.cm-type {
+  padding: 9px 18px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.cm-type.active {
+  background: var(--gradient-cosmic);
+  color: #1a1520;
+}
+
+.cm-field-hint {
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-transform: none;
+  color: var(--color-text-tertiary);
 }
 
 .cm-tabs { display: flex; gap: 8px; margin-bottom: 16px; }

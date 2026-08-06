@@ -29,6 +29,9 @@ const TIER_CONFIG = [
   { name: 'undrafted',   min: 30, max: 35, ovrMin: 55, ovrMax: 65, potMin: 58, potMax: 70, ageMin: 20, ageMax: 22, workEthicMin: 50, workEthicMax: 85 },
 ]
 
+// Tier names for editor UIs (class editor tier select). Ordered best → worst.
+export const ROOKIE_TIER_NAMES = ['generational', 'franchise', 'lottery', 'firstRound', 'secondRound', 'undrafted']
+
 // A once-every-few-years can't-miss prospect. Replaces one franchise slot
 // in a class when present. Higher floor, max potential, top work ethic.
 const GENERATIONAL_TIER = {
@@ -396,6 +399,119 @@ export function generateRookieClass(campaignId, gameYear, existingNames = new Se
   }
 
   return rookies
+}
+
+/**
+ * Stamp the rookie-prospect identity onto a player record (both key casings).
+ * This is THE definition of what makes a row a draft prospect — the class
+ * editor's add-player flow and the community draft-class importer both run
+ * it so their stamping can't drift from the generator's.
+ */
+export function stampProspectFlags(player, draftYear) {
+  player.isDraftProspect = true
+  player.is_draft_prospect = true
+  player.draftYear = draftYear
+  player.draft_year = draftYear
+  player.isFreeAgent = 1
+  player.is_free_agent = 1
+  player.teamId = null
+  player.team_id = null
+  player.teamAbbreviation = 'FA'
+  player.team_abbreviation = 'FA'
+  // No contract until drafted (RookieContractService assigns it).
+  player.contractSalary = 0
+  player.contract_salary = 0
+  player.contractYearsRemaining = 0
+  player.contract_years_remaining = 0
+  player.contractDetails = null
+  player.contract_details = null
+  player.careerSeasons = 0
+  player.career_seasons = 0
+  // Prospects have no draft history yet — a stale draftInfo from a source
+  // campaign would double-draft them in career displays.
+  delete player.draftInfo
+  delete player.draft_info
+  return player
+}
+
+/**
+ * Generate ONE prospect for the class editor's "add prospect" flow — the
+ * same per-player pipeline generateRookieClass runs, parameterized by tier.
+ *
+ * @param {Object} options
+ * @param {string} options.campaignId
+ * @param {number} options.draftYear - Season year the prospect will first play.
+ * @param {string} [options.tier] - TIER_CONFIG name or 'generational'.
+ * @param {string} [options.position] - Fixed position; random when omitted.
+ * @param {Set<string>} [options.existingNames] - Names to dedupe against.
+ * @returns {Object} A prospect row ready for PlayerRepository.
+ */
+export function createProspect({ campaignId, draftYear, tier = 'secondRound', position = null, existingNames = new Set() } = {}) {
+  const tierCfg = tier === 'generational'
+    ? GENERATIONAL_TIER
+    : (TIER_CONFIG.find(t => t.name === tier) ?? TIER_CONFIG[3])
+  const usedNames = new Set(existingNames)
+
+  const pos = position || pickRandom(POSITION_WEIGHTS.map(p => p.position))
+  const overall = randInt(tierCfg.ovrMin, tierCfg.ovrMax)
+  const finalPotential = randInt(Math.max(tierCfg.potMin, overall), tierCfg.potMax)
+  const age = randInt(tierCfg.ageMin, tierCfg.ageMax)
+
+  const player = generatePlayer({
+    campaignId,
+    teamId: null,
+    teamAbbreviation: 'FA',
+    position: pos,
+    overall,
+    jerseyNumber: randInt(0, 99),
+  })
+
+  player.potentialRating = finalPotential
+  player.potential_rating = finalPotential
+  player.age = age
+  // Birth year anchored to the draft year (see generateRookieClass) so
+  // catchUpPlayerAging doesn't re-age the prospect on next load.
+  const birthYear = draftYear - age
+  player.birthDate = `${birthYear}-${String(randInt(1, 12)).padStart(2, '0')}-${String(randInt(1, 28)).padStart(2, '0')}`
+  player.birth_date = player.birthDate
+  player._lastBirthdayYear = draftYear
+
+  player.attributes.mental.workEthic = randInt(tierCfg.workEthicMin ?? 50, tierCfg.workEthicMax ?? 90)
+  // Re-aim the per-attribute ceilings at the tier potential (generatePlayer
+  // aimed them at its own target).
+  player.attributeCaps = generateAttributeCaps(player.attributes, player.position, finalPotential)
+
+  // ~20% international, matching the generated-class mix.
+  if (Math.random() < 0.2) {
+    const origin = pickRandom(INTERNATIONAL_ORIGINS)
+    player.country = origin.country
+    player.college = pickRandom(origin.clubs)
+    player.hometown = null
+  } else {
+    player.country = 'United States'
+    player.college = pickRandom(US_COLLEGES)
+  }
+  const { firstName, lastName } = pickNameForCountry({
+    country: player.country,
+    usedNames,
+    domesticFirst: getCombinedFirstNames(),
+    domesticLast: getCombinedLastNames(),
+  })
+  player.firstName = firstName
+  player.first_name = firstName
+  player.lastName = lastName
+  player.last_name = lastName
+  player.name = `${firstName} ${lastName}`
+
+  if (AVAILABLE_HEADSHOTS.length > 0) {
+    player.headshot = pickRandom(AVAILABLE_HEADSHOTS)
+  }
+
+  player.rookieTier = tierCfg.name
+  if (tierCfg.name === 'generational') player.isGenerational = true
+
+  stampProspectFlags(player, draftYear)
+  return player
 }
 
 // Combined name pools — mashes rookie-specific names with the AI-generation

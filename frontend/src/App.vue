@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { useGameStore } from '@/stores/game'
 import { useTeamStore } from '@/stores/team'
+import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { useAppUpdateStore } from '@/stores/appUpdate'
@@ -19,6 +20,7 @@ const authStore = useAuthStore()
 const breakingNewsStore = useBreakingNewsStore()
 const gameStore = useGameStore()
 const teamStore = useTeamStore()
+const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
 const walkthroughStore = useWalkthroughStore()
 const appUpdateStore = useAppUpdateStore()
@@ -75,6 +77,20 @@ onMounted(() => {
     // Cold start = the user came back — clear the ladder.
     import('@/services/notifications').then(n => n.cancelRetentionReminders()).catch(() => {})
 
+    // Notification taps: route straight to the campaign the notification was
+    // scheduled for (extra.campaignId — see services/notifications.js).
+    // Registered here in startup so Capacitor's buffered cold-start tap event
+    // is delivered to it; without a campaignId the tap just opens the app.
+    import('@capacitor/local-notifications').then(({ LocalNotifications }) => {
+      LocalNotifications.addListener('localNotificationActionPerformed', (event) => {
+        const campaignId = event?.notification?.extra?.campaignId
+        if (!campaignId) return
+        router.isReady()
+          .then(() => router.push(`/campaign/${campaignId}`))
+          .catch(() => {})
+      })
+    }).catch(() => {})
+
     import('@capacitor/app').then(({ App }) => {
       // Deep-link return from the web community flow. The web sends
       // bballsim://open?path=<app-relative-route> — route straight there.
@@ -113,8 +129,9 @@ onMounted(() => {
               (p?.defense_upgrade_points ?? p?.defenseUpgradePoints ?? 0)
           }
         } catch { pendingPoints = 0 }
+        const campaignId = campaignStore.currentCampaign?.id ?? null
         import('@/services/notifications')
-          .then(n => n.scheduleRetentionReminders({ pendingPoints }))
+          .then(n => n.scheduleRetentionReminders({ pendingPoints, campaignId }))
           .catch(() => {})
       })
     }).catch(() => {})

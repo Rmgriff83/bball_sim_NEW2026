@@ -10,6 +10,7 @@ import { PLAYER_BADGE_LEVELS, compareBadgeLevels, getDerivedMaxBadgeLevel } from
 import { BADGES } from '@/engine/data/badges'
 import { MAX_PLAYER_BADGES } from '@/stores/rosterEditor'
 import { PERSONALITY_TRAITS, pickBadgesByFit, getBadgeLevel, _badgeCountForOvr } from '@/engine/campaign/CampaignManager'
+import { ROOKIE_TIER_NAMES } from '@/engine/draft/RookieGenerationService'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 
@@ -26,6 +27,10 @@ const props = defineProps({
   // Latest allowed contract-signed / draft year — the campaign's current
   // season (2026 for new campaigns; legacy custom campaigns pass 2025).
   maxSignedYear: { type: Number, default: 2026 },
+  // Rookie-class editor mode: the player is a draft PROSPECT. Contract and
+  // draft-history authoring are hidden (a prospect has neither — the draft
+  // stamps both), draftYear is locked, and vitals gain tier/origin fields.
+  prospect: { type: Boolean, default: false },
 })
 const emit = defineEmits(['save', 'close', 'edit-headshot'])
 
@@ -43,6 +48,10 @@ const TABS = [
   { key: 'contract', label: 'Contract' },
   { key: 'personality', label: 'Personality' },
 ]
+// Prospects: no contract (assigned at the draft) and no past draft history to
+// author (sanitizeHistory would null the class-defining draftYear).
+const visibleTabs = computed(() =>
+  props.prospect ? TABS.filter((t) => t.key !== 'contract' && t.key !== 'history') : TABS)
 
 const activeTab = ref('vitals')
 
@@ -465,6 +474,38 @@ function sanitizeHistory() {
   }
 }
 
+// ---- Prospect meta (rookie-class editor mode) -------------------------------
+// Tier + origin + hidden-gem live on the vitals tab in prospect mode; draft
+// year is locked (it IS the class membership key).
+const PROSPECT_TIER_LABELS = {
+  generational: 'Generational', franchise: 'Franchise', lottery: 'Lottery',
+  firstRound: '1st Round', secondRound: '2nd Round', undrafted: 'Undrafted-grade',
+}
+const prospectMeta = reactive({
+  college: draft.college ?? '',
+  country: draft.country ?? '',
+  rookieTier: ROOKIE_TIER_NAMES.includes(draft.rookieTier) ? draft.rookieTier : 'secondRound',
+  isHiddenGem: !!(draft.isHiddenGem ?? draft.is_hidden_gem),
+})
+
+function sanitizeProspect() {
+  const college = String(prospectMeta.college ?? '').trim()
+  const country = String(prospectMeta.country ?? '').trim()
+  if (college) draft.college = college
+  if (country) draft.country = country
+  draft.rookieTier = ROOKIE_TIER_NAMES.includes(prospectMeta.rookieTier)
+    ? prospectMeta.rookieTier
+    : 'secondRound'
+  draft.isGenerational = draft.rookieTier === 'generational' ? true : undefined
+  if (!draft.isGenerational) delete draft.isGenerational
+  draft.isHiddenGem = !!prospectMeta.isHiddenGem
+  draft.is_hidden_gem = draft.isHiddenGem
+  if (!draft.isHiddenGem) {
+    delete draft.isHiddenGem
+    delete draft.is_hidden_gem
+  }
+}
+
 // ---- Personality -----------------------------------------------------------
 function toggleTrait(trait) {
   const traits = draft.personality.traits
@@ -494,8 +535,15 @@ function stampDraft() {
   syncName()
   sanitizePositions()
   sanitizeVitals()
-  sanitizeHistory()
-  sanitizeContract()
+  if (props.prospect) {
+    // No history/contract authoring for prospects — sanitizeHistory would
+    // null the class-defining draftYear and sanitizeContract would stamp a
+    // contract the draft is supposed to assign.
+    sanitizeProspect()
+  } else {
+    sanitizeHistory()
+    sanitizeContract()
+  }
   sanitizePersonality()
   draft.overallRating = liveOverall.value
   draft.overall_rating = liveOverall.value
@@ -567,7 +615,7 @@ const POSITION_COLORS = {
           <!-- Subtabs -->
           <div class="pdem-tabs" data-tour="pdem-edit-tabs">
             <button
-              v-for="tab in TABS"
+              v-for="tab in visibleTabs"
               :key="tab.key"
               class="pdem-tab"
               :class="{ active: activeTab === tab.key }"
@@ -628,6 +676,39 @@ const POSITION_COLORS = {
                 <input v-model.number="draft.weightLbs" type="number" min="150" max="330" class="pdem-input" @input="draft.weight_lbs = draft.weightLbs; draft.weight = draft.weightLbs" />
               </label>
             </div>
+
+            <!-- Prospect meta (rookie-class editor) — tier/origin here since the
+                 history & contract tabs are hidden. Draft year locked: it IS
+                 the class membership key. -->
+            <template v-if="prospect">
+              <div class="pdem-grid two">
+                <label class="pdem-field">
+                  <span>College / Club</span>
+                  <input v-model="prospectMeta.college" class="pdem-input" placeholder="e.g. Duke" />
+                </label>
+                <label class="pdem-field">
+                  <span>Country</span>
+                  <input v-model="prospectMeta.country" class="pdem-input" placeholder="e.g. United States" />
+                </label>
+              </div>
+              <div class="pdem-grid two">
+                <label class="pdem-field">
+                  <span>Prospect Tier</span>
+                  <select v-model="prospectMeta.rookieTier" class="pdem-input">
+                    <option v-for="t in ROOKIE_TIER_NAMES" :key="t" :value="t">{{ PROSPECT_TIER_LABELS[t] }}</option>
+                  </select>
+                  <em class="pdem-hint">Scouting board grouping — draft position still follows ratings.</em>
+                </label>
+                <label class="pdem-field">
+                  <span>Draft Year</span>
+                  <input :value="draft.draftYear ?? draft.draft_year" class="pdem-input" disabled />
+                  <label class="pdem-hint pdem-gem-check">
+                    <input v-model="prospectMeta.isHiddenGem" type="checkbox" />
+                    Hidden gem (AI undervalues; scouting reveals the ceiling)
+                  </label>
+                </label>
+              </div>
+            </template>
           </div>
 
           <!-- History (bio & origin) -->
@@ -1190,6 +1271,14 @@ const POSITION_COLORS = {
   font-style: normal;
   font-size: 0.62rem;
   color: var(--color-text-tertiary);
+}
+
+.pdem-gem-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  cursor: pointer;
 }
 
 .pdem-input {

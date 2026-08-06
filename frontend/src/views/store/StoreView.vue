@@ -85,7 +85,7 @@ const unlockBundles = [
     feature: 'custom_roster',
     price: '$8.99',
     label: 'Roster Editor',
-    description: 'Build your own league. When you start a new campaign, choose the Custom roster option to edit every team — players, attributes, growth potential, badges, names, and head coaches — before the season begins. Start from a generated league and tweak it, or build every team from scratch. One-time purchase, applies to all future campaigns.'
+    description: 'Build your own league. When you start a new campaign, choose the Custom roster option to edit every team — players, attributes, growth potential, badges, names, and head coaches — before the season begins. Start from a generated league and tweak it, or build every team from scratch. NEW: author full rookie draft classes for any season (or import them from the Community board), and craft rosters & classes anytime in the standalone Builder. One-time purchase, applies to all future campaigns.'
   }
 ]
 

@@ -1,17 +1,16 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
-import { Check, Palette } from 'lucide-vue-next'
+import { Check, ClipboardList, Users, Sparkles } from 'lucide-vue-next'
 import { BaseModal } from '@/components/ui'
 import { useAuthStore } from '@/stores/auth'
 import * as iap from '@/services/iap'
-import face1 from '@/assets/headshots-premade/premade_005.svg'
-import face2 from '@/assets/headshots-premade/premade_007.svg'
-import face3 from '@/assets/headshots-premade/premade_009.svg'
 
-// Upsell popup for the headshot_editor_unlock IAP. Dumb by design: the parent
-// owns the weekly gating and navigation; this component only renders and
-// reports clicks ('unlock' → parent deep-links to the Store's confirm modal).
+// Upsell popup for the custom_roster_unlock IAP (Roster Editor + rookie draft
+// classes + standalone Builder). Dumb by design, mirroring
+// HeadshotEditorPromoModal: the parent owns the weekly gating and navigation;
+// this component only renders and reports clicks ('unlock' → parent
+// deep-links to the Store's confirm modal).
 const props = defineProps({
   show: {
     type: Boolean,
@@ -23,21 +22,19 @@ const emit = defineEmits(['close', 'unlock'])
 
 const authStore = useAuthStore()
 
-const faces = [face1, face2, face3]
+const icons = [Users, ClipboardList, Sparkles]
 
 const perks = [
-  'Custom headshots for every player, coach & staff member',
-  'Rename your team when starting a campaign',
-  'New styles, faces & assets added regularly — owners get them all, free',
+  'Edit all 30 teams before the season — players, attributes, badges & coaches',
+  'NEW: author full rookie draft classes for any season, or import them from the Community',
+  'Standalone Builder — craft rosters & draft classes outside your campaigns and share them',
   'One-time purchase — yours in every campaign, forever'
 ]
 
 // Live price is a nice-to-have: render immediately with the fallback and swap
 // in the RevenueCat price if/when it responds (native only — the web Stripe
-// checkout page shows the authoritative price itself). initIAP is needed here
-// because unlike StoreView this modal can be the first RC touchpoint of the
-// session; it's idempotent.
-const FALLBACK_PRICE = '$3.99'
+// checkout page shows the authoritative price itself).
+const FALLBACK_PRICE = '$8.99'
 const price = ref(FALLBACK_PRICE)
 
 watch(() => props.show, async (open) => {
@@ -45,7 +42,7 @@ watch(() => props.show, async (open) => {
   try {
     if (authStore.user?.id) await iap.initIAP(authStore.user.id)
     const prices = await iap.getProductPrices()
-    if (prices?.headshot_editor_unlock) price.value = prices.headshot_editor_unlock
+    if (prices?.custom_roster_unlock) price.value = prices.custom_roster_unlock
   } catch {
     /* keep fallback */
   }
@@ -55,23 +52,20 @@ watch(() => props.show, async (open) => {
 <template>
   <BaseModal :show="show" size="sm" :show-header="false" @close="emit('close')">
     <div class="promo-content">
-      <div class="promo-faces">
+      <div class="promo-icons">
         <div
-          v-for="(face, i) in faces"
+          v-for="(icon, i) in icons"
           :key="i"
-          class="promo-face"
-          :style="{ zIndex: faces.length - i }"
+          class="promo-icon"
+          :style="{ zIndex: icons.length - i }"
         >
-          <img :src="face" alt="" />
-        </div>
-        <div class="promo-face promo-face-icon">
-          <Palette :size="22" />
+          <component :is="icon" :size="22" />
         </div>
       </div>
 
-      <h2 class="promo-headline">Make the League Yours</h2>
+      <h2 class="promo-headline">Build Your Own League</h2>
       <p class="promo-subhead">
-        Give every face in your franchise a look of its own with the Headshot Editor.
+        Author every roster — and now every rookie draft class — with the Roster Editor.
       </p>
 
       <ul class="promo-perks">
@@ -100,42 +94,28 @@ watch(() => props.show, async (open) => {
   padding: 0.75rem 0.25rem 0.25rem;
 }
 
-/* Overlapping row of sample faces + the editor icon */
-.promo-faces {
+/* Overlapping icon trio, mirroring the headshot promo's face row */
+.promo-icons {
   display: flex;
   align-items: center;
   margin-bottom: 1rem;
 }
 
-.promo-face {
+.promo-icon {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  overflow: hidden;
-  border: 2px solid var(--glass-border);
-  background: var(--color-bg-tertiary);
-  flex-shrink: 0;
-}
-
-.promo-face + .promo-face {
-  margin-left: -14px;
-}
-
-.promo-face img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.promo-face-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(124, 58, 237, 0.15));
-  color: #a855f7;
-  border-color: rgba(168, 85, 247, 0.35);
-  z-index: 4;
+  border: 2px solid rgba(232, 90, 79, 0.35);
+  background: linear-gradient(135deg, rgba(232, 90, 79, 0.2), rgba(244, 162, 89, 0.12));
+  color: var(--color-primary, #e85a4f);
+  flex-shrink: 0;
+}
+
+.promo-icon + .promo-icon {
+  margin-left: -14px;
 }
 
 .promo-headline {
@@ -180,7 +160,7 @@ watch(() => props.show, async (open) => {
 }
 
 .perk-check {
-  color: #a855f7;
+  color: var(--color-primary, #e85a4f);
   flex-shrink: 0;
   margin-top: 1px;
 }

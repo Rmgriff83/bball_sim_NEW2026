@@ -48,10 +48,29 @@ function maxRecordedGmLevel(campaign) {
 export const useCampaignStore = defineStore('campaign', () => {
   // State
   const campaigns = ref([])
+  // Builder workshop projects (roster / draft-class WIPs). Real campaign
+  // records flagged settings.workshopMode — split out of `campaigns` so the
+  // dashboard grid, the 4-campaign cap, and recent-activity never see them.
+  const workshopCampaigns = ref([])
   const currentCampaign = ref(null)
   const availableTeams = ref([])
   const loading = ref(false)
   const error = ref(null)
+
+  // A workshop is identified by its settings flag locally, or by the server
+  // stub's `workshop` field when the pull hasn't landed yet.
+  function _isWorkshop(c) {
+    return !!(c?.settings?.workshopMode || c?.workshop)
+  }
+
+  function _splitWorkshops(list) {
+    const regular = []
+    const workshops = []
+    for (const c of list) {
+      (_isWorkshop(c) ? workshops : regular).push(c)
+    }
+    return { regular, workshops }
+  }
 
   // Getters
   const hasCampaigns = computed(() => campaigns.value.length > 0)
@@ -72,7 +91,9 @@ export const useCampaignStore = defineStore('campaign', () => {
       // (fetchServerCampaigns returns null on failure, [] on a successful
       // empty list, so we can distinguish offline from "no campaigns".)
       if (serverCampaigns === null) {
-        campaigns.value = localCampaigns
+        const offline = _splitWorkshops(localCampaigns)
+        campaigns.value = offline.regular
+        workshopCampaigns.value = offline.workshops
         return campaigns.value
       }
 
@@ -150,8 +171,12 @@ export const useCampaignStore = defineStore('campaign', () => {
           name: sc.name || 'Cloud Campaign',
           cloudOnly: true,
           updatedAt: sc.updatedAt ?? null,
+          // Server-stamped flag routes workshop stubs to the Builder list.
+          workshop: !!sc.workshop,
         }))
-      campaigns.value = [...finalLocal, ...cloudStubs]
+      const split = _splitWorkshops([...finalLocal, ...cloudStubs])
+      campaigns.value = split.regular
+      workshopCampaigns.value = split.workshops
       return campaigns.value
     } catch (err) {
       error.value = err.message || 'Failed to fetch campaigns'
@@ -506,6 +531,7 @@ export const useCampaignStore = defineStore('campaign', () => {
     try {
       await engineDeleteCampaign(id)
       campaigns.value = campaigns.value.filter(c => c.id !== id)
+      workshopCampaigns.value = workshopCampaigns.value.filter(c => c.id !== id)
 
       if (currentCampaign.value?.id === id) {
         currentCampaign.value = null
@@ -548,6 +574,7 @@ export const useCampaignStore = defineStore('campaign', () => {
   return {
     // State
     campaigns,
+    workshopCampaigns,
     currentCampaign,
     availableTeams,
     loading,

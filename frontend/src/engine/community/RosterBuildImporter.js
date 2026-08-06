@@ -34,7 +34,9 @@ import { normalizePlayerAttributes } from '../data/attributeSchema'
 import { generateUUID } from '../campaign/CampaignManager'
 
 // Fields that must be re-stamped for the new campaign rather than imported.
-function _rebindPlayer(raw, { campaignId, teamId, teamAbbreviation }) {
+// Exported: DraftClassImporter runs the same rebind on imported prospects
+// before layering its rookie-specific stamps on top.
+export function rebindBuildPlayer(raw, { campaignId, teamId, teamAbbreviation }) {
   // Blob players come from the sync snapshot, which strips camelCase
   // duplicates — rebuild them so camelCase-reading UI (trade modals etc.)
   // sees names/contracts.
@@ -159,7 +161,7 @@ export async function importRosterBuild(campaignId, build) {
       // them; this campaign's own class was preserved above.
       if (raw.isDraftProspect || raw.is_draft_prospect) continue
       const originalId = raw.id
-      const player = _rebindPlayer(raw, {
+      const player = rebindBuildPlayer(raw, {
         campaignId,
         teamId: team?.id ?? null,
         teamAbbreviation: team?.abbreviation ?? 'FA',

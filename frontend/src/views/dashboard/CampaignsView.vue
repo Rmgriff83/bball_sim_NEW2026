@@ -8,8 +8,9 @@ import { useWalkthroughStore } from '@/stores/walkthrough'
 import { GlassCard, BaseButton, LoadingSpinner } from '@/components/ui'
 import HasPlayedBeforeModal from '@/components/walkthrough/HasPlayedBeforeModal.vue'
 import HeadshotEditorPromoModal from '@/components/store/HeadshotEditorPromoModal.vue'
+import RosterEditorPromoModal from '@/components/store/RosterEditorPromoModal.vue'
 import { shouldShowPromo, markPromoShown } from '@/services/promoGate'
-import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2, Trophy, Star, Medal, Globe } from 'lucide-vue-next'
+import { Plus, X, LayoutDashboard, User, LogOut, Calendar, ChevronRight, AlertCircle, Trash2, Trophy, Star, Medal, Globe, Hammer } from 'lucide-vue-next'
 import { useCommunityLink } from '@/composables/useCommunityLink'
 import { gmLevelLabel, gmLevelColor } from '@/engine/data/gmLevels'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
@@ -153,8 +154,10 @@ onMounted(async () => {
   if (route.query.new === '1') {
     openCreateModal()
     router.replace({ path: route.path, query: { ...route.query, new: undefined } })
-  } else {
-    maybeShowHeadshotPromo()
+  } else if (!maybeShowHeadshotPromo()) {
+    // At most one upsell per visit — each has its own 7-day stamp, so the two
+    // promos naturally alternate across visits when both are eligible.
+    maybeShowRosterEditorPromo()
   }
 })
 
@@ -165,18 +168,40 @@ onMounted(async () => {
 const showHeadshotPromo = ref(false)
 
 function maybeShowHeadshotPromo() {
-  if (authStore.hasFeature('headshot_editor')) return
-  if (!campaignStore.campaigns.length) return
-  if (showCreateModal.value || showPlayedBeforeModal.value) return
+  if (authStore.hasFeature('headshot_editor')) return false
+  if (!campaignStore.campaigns.length) return false
+  if (showCreateModal.value || showPlayedBeforeModal.value) return false
   const uid = authStore.user?.id
-  if (!shouldShowPromo(uid, 'headshotEditor')) return
+  if (!shouldShowPromo(uid, 'headshotEditor')) return false
   markPromoShown(uid, 'headshotEditor')
   showHeadshotPromo.value = true
+  return true
 }
 
 function goToStorePurchase() {
   showHeadshotPromo.value = false
   router.push({ name: 'store', query: { buy: 'headshot_editor_unlock' } })
+}
+
+// Weekly Roster Editor upsell — same non-invasive contract as the headshot
+// promo (never owners, never brand-new users, never over other modals, 7-day
+// stamp at show time), with its own promo key so the two alternate.
+const showRosterPromo = ref(false)
+
+function maybeShowRosterEditorPromo() {
+  if (authStore.hasFeature('custom_roster')) return false
+  if (!campaignStore.campaigns.length) return false
+  if (showCreateModal.value || showPlayedBeforeModal.value || showHeadshotPromo.value) return false
+  const uid = authStore.user?.id
+  if (!shouldShowPromo(uid, 'rosterEditor')) return false
+  markPromoShown(uid, 'rosterEditor')
+  showRosterPromo.value = true
+  return true
+}
+
+function goToStoreRosterPurchase() {
+  showRosterPromo.value = false
+  router.push({ name: 'store', query: { buy: 'custom_roster_unlock' } })
 }
 
 async function handleLogout() {
@@ -347,6 +372,10 @@ function getDifficultyLabel(value) {
             <Globe :size="18" />
             <span>Community</span>
           </button>
+          <router-link v-if="canCustomRoster" to="/builder" class="nav-link">
+            <Hammer :size="18" />
+            <span>Builder</span>
+          </router-link>
           <router-link to="/profile" class="nav-link">
             <User :size="18" />
             <span>Profile</span>
@@ -735,6 +764,13 @@ function getDifficultyLabel(value) {
       :show="showHeadshotPromo"
       @close="showHeadshotPromo = false"
       @unlock="goToStorePurchase"
+    />
+
+    <!-- Weekly Roster Editor upsell (non-owners only) -->
+    <RosterEditorPromoModal
+      :show="showRosterPromo"
+      @close="showRosterPromo = false"
+      @unlock="goToStoreRosterPurchase"
     />
   </div>
 </template>

@@ -256,6 +256,11 @@ const NEUTRAL_SATISFACTION = 50;
  * @param {number} [params.contractProgress] - 0-1 through the contract (default 1 = full weight)
  * @param {number} [params.capBreachPenalty] - 0 or negative, from capBreachPenalty() — the
  *   owner's wrath for payroll above their mandated line, applied to the blended value
+ * @param {number} [params.bonus] - 0 or positive: persisted goodwill
+ *   (campaign.settings.ownerSatisfactionBonus, e.g. +15 per championship).
+ *   The championship season itself is already floored to 100, so this mainly
+ *   carries goodwill into following seasons and the contract evaluation.
+ *   Cumulative across titles; the blend stays clamped 0-100.
  * @returns {{ value, label, color, winsSatisfaction, subtaskScore, effectiveSubtaskScore, subtaskTimeWeight, contractProgress, expectedWins, capBreachPenalty }}
  */
 export function combinedSatisfaction({
@@ -269,6 +274,7 @@ export function combinedSatisfaction({
   currentPlayoff = null,
   injuryRelief = 0,
   capBreachPenalty: breachPenalty = 0,
+  bonus = 0,
 } = {}) {
   const wins = computeOwnerSatisfaction({ owner, currentWins, currentLosses, lastSeason, expectedWins, currentPlayoff, injuryRelief });
   const subScore = _clamp(Math.round(subtaskScore || 0), 0, 100);
@@ -281,8 +287,9 @@ export function combinedSatisfaction({
 
   const effectiveSubtask = NEUTRAL_SATISFACTION + (subScore - NEUTRAL_SATISFACTION) * subtaskTimeWeight;
   const wrath = Math.min(0, Math.round(breachPenalty || 0));
+  const goodwill = Math.max(0, Math.round(bonus || 0));
   const value = _clamp(
-    Math.round(wins.value * WINS_WEIGHT + effectiveSubtask * SUBTASK_WEIGHT) + wrath,
+    Math.round(wins.value * WINS_WEIGHT + effectiveSubtask * SUBTASK_WEIGHT) + wrath + goodwill,
     0,
     100
   );

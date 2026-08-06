@@ -19,12 +19,14 @@ class Campaign extends Model
         'client_id',
         'current_date',
         'difficulty',
+        'workshop',
         'settings',
         'last_played_at',
     ];
 
     protected $casts = [
         'current_date' => 'date',
+        'workshop' => 'boolean',
         'settings' => 'array',
         'last_played_at' => 'datetime',
     ];

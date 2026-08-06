@@ -838,6 +838,13 @@ export const useSyncStore = defineStore('sync', () => {
         partsSet.delete(p)
         return false
       }
+      // Skip an empty seasons payload — the server 422s `seasons: []`, and
+      // draft-class Builder workshops (teams-less pseudo-campaigns) have no
+      // season rows at all. Playable campaigns always have at least one.
+      if (p === 'seasons' && (!snapshot.seasons || snapshot.seasons.length === 0)) {
+        partsSet.delete(p)
+        return false
+      }
       return true
     })
 
@@ -1192,7 +1199,12 @@ export const useSyncStore = defineStore('sync', () => {
    */
   async function fetchServerCampaigns() {
     try {
-      const response = await api.get('/api/sync/campaigns')
+      // include_workshop: Builder workshop projects sync like campaigns but
+      // are server-side excluded by default (old app versions must never see
+      // them). New clients request them explicitly; the campaign store splits
+      // them out of the playable-campaign list via settings.workshopMode /
+      // the stub's `workshop` field.
+      const response = await api.get('/api/sync/campaigns', { params: { include_workshop: 1 } })
       return response.data?.campaigns ?? []
     } catch {
       return null

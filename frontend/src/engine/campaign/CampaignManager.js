@@ -2700,6 +2700,9 @@ export async function enterOffseason(campaignId) {
             capNumbers: campCapNumbers,
             moneyConsciousness: owner.moneyConsciousness,
           }),
+          // Championship goodwill (+15 per title, persisted by the owner
+          // congrats) counts toward the contract-end verdict.
+          bonus: campaign.settings?.ownerSatisfactionBonus ?? 0,
         })
 
         // Patience tilts the bar: a ruthless owner (1) demands more, a patient
@@ -3295,6 +3298,14 @@ export async function startNewSeason(campaignId) {
           teamId: userTeamIdForCoach,
         }
         team.coach = null
+        // News: the user coach's expiry is a real coaching-market event — a
+        // later re-sign/replacement logs its own follow-up headline.
+        coachNews.push(BreakingNewsService.coachFired({
+          coachName: coach.name,
+          teamName: team.name,
+          reason: 'contract_expired',
+          date: coachNewsDate,
+        }))
       } else {
         coach.contractYearsRemaining = yearsLeft
         coach.contract_years_remaining = yearsLeft

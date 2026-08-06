@@ -5,6 +5,7 @@ import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { useAuthStore } from '@/stores/auth'
+import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import api from '@/composables/useApi'
 
@@ -308,13 +309,39 @@ export const usePlayoffStore = defineStore('playoff', () => {
 
       // Award the user any postseason tokens they unlocked by winning this
       // series. Tier increments: 250 for R1/R2/R3 wins, 3,500 for the title.
+      // series.winner is the TEAM OBJECT (PlayoffManager stamps team1/team2),
+      // so compare its teamId — comparing the object itself never matches.
       const campaign = await CampaignRepository.get(campaignId)
       const userTeamId = campaign?.team_id ?? campaign?.teamId
-      const winnerId = seriesUpdate.series?.winner ?? null
+      const winnerId = seriesUpdate.series?.winner?.teamId ?? seriesUpdate.series?.winner ?? null
       if (winnerId && userTeamId && winnerId === userTeamId) {
         const tierKey = ROUND_TO_KEY[seriesUpdate.round]
         if (tierKey) {
           await _awardPlayoffTokens(seasonData, tierKey)
+        }
+        if (seriesUpdate.round === 4) {
+          // User just won the title: stamp the owner-congrats marker.
+          // CampaignHomeView consumes it (impromptu owner text + bonus
+          // rewards) after the championship recap closes, before offseason.
+          try {
+            const marker = {
+              year: campaign?.currentSeasonYear ?? campaign?.current_season_year ?? null,
+            }
+            await CampaignRepository.updateSettings(campaignId, {
+              pendingOwnerTitleCongrats: marker,
+            })
+            // Mirror into the reactive campaign so the congrats chain fires
+            // immediately after the recap closes (no refetch needed).
+            const campaignStore = useCampaignStore()
+            if (campaignStore.currentCampaign?.id === campaignId) {
+              campaignStore.currentCampaign.settings = {
+                ...campaignStore.currentCampaign.settings,
+                pendingOwnerTitleCongrats: marker,
+              }
+            }
+          } catch (err) {
+            console.warn('[Playoffs] failed to stamp owner congrats marker:', err)
+          }
         }
       }
 
@@ -333,6 +360,24 @@ export const usePlayoffStore = defineStore('playoff', () => {
     bracket.value = seasonData.playoffBracket
 
     return seriesUpdate
+  }
+
+  // Show the championship recap modal straight from a bracket object. Used by
+  // the bulk-sim path (user eliminated, AI champion crowned) and the
+  // enter-offseason gate — neither goes through handlePlayoffUpdate.
+  function showChampionshipRecap(bracketObj) {
+    const finalsSeries = bracketObj?.finals
+    if (!finalsSeries?.winner) return false
+    seriesResult.value = {
+      seriesId: finalsSeries.seriesId,
+      series: finalsSeries,
+      seriesComplete: true,
+      round: 4,
+      isFinals: true,
+      isChampion: true,
+    }
+    showChampionshipModal.value = true
+    return true
   }
 
   // Handle playoff update from game simulation (updates UI state / modals)
@@ -467,6 +512,7 @@ export const usePlayoffStore = defineStore('playoff', () => {
     fetchNextUserSeries,
     processPlayoffGameResult,
     handlePlayoffUpdate,
+    showChampionshipRecap,
     updateSeriesInBracket,
     closeSeasonEndModal,
     closeSeriesResultModal,

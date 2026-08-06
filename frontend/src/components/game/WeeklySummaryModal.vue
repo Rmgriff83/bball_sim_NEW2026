@@ -11,6 +11,10 @@ const emit = defineEmits(['close'])
 
 const scoutingPointsEarned = computed(() => props.summaryData?.scoutingPointsEarned ?? 0)
 
+// League (AI-to-AI) trades executed on this week boundary — summaries shaped
+// by game.js _processWeeklyAiTrades: { id, teamA, teamB, receivedA, receivedB }.
+const leagueTrades = computed(() => props.summaryData?.aiTrades ?? [])
+
 const evolutionChanges = computed(() => {
   const evo = props.summaryData?.evolution
   if (!evo) return []
@@ -142,8 +146,22 @@ function getBadgeLevelColor(level) {
               </div>
             </section>
 
+            <!-- League Trades Section -->
+            <section v-if="leagueTrades.length > 0" class="summary-section">
+              <h3 class="section-title">League Trades</h3>
+              <div class="changes-list">
+                <div v-for="trade in leagueTrades" :key="trade.id" class="change-item">
+                  <span class="player-name">{{ trade.teamA?.abbr }} ⇄ {{ trade.teamB?.abbr }}</span>
+                  <span class="change-detail">
+                    {{ trade.teamA?.abbr }} receive {{ (trade.receivedA || []).join(', ') || '—' }};
+                    {{ trade.teamB?.abbr }} receive {{ (trade.receivedB || []).join(', ') || '—' }}
+                  </span>
+                </div>
+              </div>
+            </section>
+
             <!-- Empty State -->
-            <div v-if="!scoutingPointsEarned && evolutionChanges.length === 0 && badgeChanges.length === 0" class="empty-state">
+            <div v-if="!scoutingPointsEarned && evolutionChanges.length === 0 && badgeChanges.length === 0 && leagueTrades.length === 0" class="empty-state">
               <p>No notable events this week.</p>
             </div>
           </main>

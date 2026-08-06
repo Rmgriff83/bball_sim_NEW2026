@@ -788,7 +788,15 @@ export class SeasonManager {
     for (const bucketKey of ['playerStats', 'playoffPlayerStats']) {
       const bucket = seasonData[bucketKey]
       if (bucket?.[key]) {
-        bucket[key].teamId = newTeamId
+        const row = bucket[key]
+        // Preserve the OLD team in the chronological history before the
+        // repoint — legacy rows without `teams` would otherwise lose where
+        // the player was traded from. The NEW team is deliberately NOT
+        // appended here; his first game for it does that.
+        if (!Array.isArray(row.teams)) {
+          row.teams = row.teamId != null ? [row.teamId] : []
+        }
+        row.teamId = newTeamId
         updated = true
       }
     }
@@ -894,6 +902,16 @@ export class SeasonManager {
           }
 
           const s = bucket[pid]
+          // Same chronological team-history maintenance as
+          // updatePlayerGameStats — bulk-simmed players (all AI games) would
+          // otherwise never record a mid-season team change, breaking the
+          // multi-team "POR/DET" season label for AI-traded players.
+          if (!Array.isArray(s.teams)) {
+            s.teams = s.teamId != null ? [s.teamId] : []
+          }
+          if (teamId != null && s.teams[s.teams.length - 1] !== teamId) {
+            s.teams.push(teamId)
+          }
           const mins = playerStats.minutes ?? 0
           if (mins > 0) {
             s.gamesPlayed++

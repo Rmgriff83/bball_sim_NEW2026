@@ -69,8 +69,8 @@ function later() {
   height: 60px;
   margin: 0 auto 12px;
   border-radius: 50%;
-  color: #60a5fa;
-  background: rgba(96, 165, 250, 0.14);
+  color: #000;
+  background: var(--gradient-cosmic);
 }
 .update-nag-title {
   margin: 0 0 6px;
@@ -101,11 +101,12 @@ function later() {
   border: 1px solid transparent;
 }
 .update-nag-btn.primary {
-  background: #3b82f6;
-  color: #fff;
+  background: var(--gradient-cosmic);
+  color: #000;
 }
 .update-nag-btn.primary:hover {
-  background: #2f6fe0;
+  background: var(--gradient-cosmic);
+  filter: brightness(1.08);
 }
 .update-nag-btn.ghost {
   background: transparent;

@@ -1330,7 +1330,7 @@ async function handleUpgradeAttribute({ playerId, category, attribute, pool }) {
     // Refresh selected player with updated data
     selectedPlayer.value = roster.value.find(p => p.id === playerId)
   } catch (err) {
-    toastStore.showError(err.response?.data?.message || 'Upgrade failed')
+    toastStore.showError(err.response?.data?.message || err.message || 'Upgrade failed')
   }
 }
 

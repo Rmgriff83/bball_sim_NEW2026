@@ -22,10 +22,18 @@ export function useCommunityLink() {
   const hasCommunity = computed(() => authStore.hasFeature('custom_roster'))
   const opening = ref(false)
 
-  async function openCommunity(campaignId = null) {
-    const returnTo = campaignId
-      ? `/community?campaign=${encodeURIComponent(campaignId)}`
-      : '/community'
+  // options.type: 'draft_class' lands the community page on the Draft Classes
+  // content toggle. options.back: names the in-app spot the web page's
+  // "Back to app" link should deep-link to ('rookie-class' → campaign home
+  // with the rookie-class modal reopened; 'builder' → /builder). Defaults
+  // preserve the original roster-setup round trip.
+  async function openCommunity(campaignId = null, { type = null, back = null } = {}) {
+    const params = new URLSearchParams()
+    if (campaignId) params.set('campaign', campaignId)
+    if (type) params.set('type', type)
+    if (back) params.set('back', back)
+    const qs = params.toString()
+    const returnTo = qs ? `/community?${qs}` : '/community'
     if (!Capacitor.isNativePlatform()) {
       router.push(returnTo)
       return

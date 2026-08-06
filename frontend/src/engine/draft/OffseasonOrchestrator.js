@@ -9,6 +9,7 @@ import { CampaignRepository } from '../db/CampaignRepository'
 import { TeamRepository } from '../db/TeamRepository'
 import { PlayerRepository } from '../db/PlayerRepository'
 import { SeasonRepository } from '../db/SeasonRepository'
+import { BreakingNewsService } from '../season/BreakingNewsService'
 import { generateAndSaveRookieClass, shouldGenerateGenerational } from './RookieGenerationService'
 import { buildRookieDraftOrder } from './DraftOrderService'
 import { runDraftLottery } from './DraftLotteryService'
@@ -269,7 +270,36 @@ export async function simFullOffseason(campaignId) {
   // leave the user short-handed after expiry/retirements). Mirrors the manual
   // "Let AI finish setup" path. Best-effort: never block the season on it.
   try {
-    await aiFinishUserTeamSetup(campaignId)
+    const finishResult = await aiFinishUserTeamSetup(campaignId)
+    // News: an auto-hired user coach is a real coaching move. Written straight
+    // to the season feed (engine context — no stores here); the season is
+    // still the OLD year at this point, matching where the other pre-rollover
+    // offseason news lands.
+    if (finishResult?.coachHired?.name) {
+      try {
+        const seasonYear = campaign.currentSeasonYear ?? campaign.current_season_year
+        const seasonData = await SeasonRepository.get(campaignId, seasonYear)
+        if (seasonData) {
+          const item = BreakingNewsService.coachHired({
+            coachName: finishResult.coachHired.name,
+            teamName: finishResult.coachHired.team ?? 'Your team',
+            date: campaign.currentDate ?? `${seasonYear + 1}-07-01`,
+          })
+          if (!seasonData.news) seasonData.news = []
+          seasonData.news.push({
+            id: `news_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            event_type: 'coaching',
+            headline: item.headline,
+            body: item.body,
+            date: item.date,
+          })
+          if (seasonData.news.length > 50) seasonData.news = seasonData.news.slice(-50)
+          await SeasonRepository.save(seasonData)
+        }
+      } catch (newsErr) {
+        console.warn('[Offseason] coach hire news failed:', newsErr)
+      }
+    }
   } catch (err) {
     console.warn('[Offseason] aiFinishUserTeamSetup failed:', err)
   }

@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Capacitor } from '@capacitor/core'
 import { ChevronRight, ChevronLeft } from 'lucide-vue-next'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 
@@ -39,6 +40,19 @@ let resolveToken = 0
 let pendingLeave = null
 
 const step = computed(() => store.currentStep)
+
+// The tooltip's "learn more" link targets an INTERNAL route. Web opens it in
+// a new tab (tour keeps running); the iOS/Android WKWebView swallows
+// target="_blank" clicks entirely, so on native we navigate in-place — the
+// tap is a deliberate departure from the tour, same as switching tabs on web.
+function handleLinkClick(e) {
+  if (!Capacitor.isNativePlatform()) return // web: default new-tab behavior
+  e.preventDefault()
+  const to = step.value?.link?.to
+  if (!to) return
+  store.skip()
+  router.push(to)
+}
 // Counter displays the user-visible step position, not the raw array index.
 // `skipIfMissing` tips that aren't currently rendered (e.g. the upgrade
 // banner on a non-user-team player's detail modal) are dropped from both
@@ -541,14 +555,16 @@ onUnmounted(() => {
         <div class="wt-tooltip-counter">{{ counter }}</div>
         <h3 class="wt-tooltip-title">{{ step.title }}</h3>
         <p class="wt-tooltip-body">{{ step.body }}</p>
-        <!-- Optional "learn more" link. Opens in a new tab so the tour isn't
-             interrupted (navigating in-place would unmount the current view). -->
+        <!-- Optional "learn more" link. Web: opens in a new tab so the tour
+             isn't interrupted. Native: WKWebView swallows target="_blank", so
+             handleLinkClick ends the tour and navigates in-place instead. -->
         <a
           v-if="step.link"
           class="wt-tooltip-link"
           :href="step.link.to"
           target="_blank"
           rel="noopener"
+          @click="handleLinkClick($event)"
         >
           {{ step.link.label }}
         </a>

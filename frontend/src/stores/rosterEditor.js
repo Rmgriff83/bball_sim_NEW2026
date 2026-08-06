@@ -784,6 +784,21 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     }
   }
 
+  // Builder roster workshops never finalize — "Validate for publishing"
+  // stamps this instead, which is what the server's roster-publish check
+  // accepts in place of rosterSetupCompleted. Pushed immediately so the web
+  // community page sees the stamp without waiting for event-driven sync.
+  async function markWorkshopPublishable() {
+    if (!campaign.value) return
+    campaign.value.settings = campaign.value.settings ?? {}
+    campaign.value.settings.workshopPublishable = true
+    await CampaignRepository.save(cloneForPersist(campaign.value))
+    _sync()
+    try {
+      await useSyncStore().pushChanges(campaignId.value, { isolated: true })
+    } catch { /* retried by the normal event-driven sync */ }
+  }
+
   function $reset() {
     campaignId.value = null
     campaign.value = null
@@ -809,6 +824,6 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
     load, chooseStart, openTeam, openPool, applyDownloadedBuild,
     addPlayer, addPoolPlayer, removePlayer, fillRoster, fillAllTeamRosters, countShortTeams,
     refreshDerived, savePlayer, saveTeamCoach, reassignDraftPicks,
-    validate, finalize, $reset,
+    validate, finalize, markWorkshopPublishable, $reset,
   }
 })

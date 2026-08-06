@@ -104,6 +104,7 @@ export const useAuthStore = defineStore('auth', () => {
       await setToken(token.value)
       // Same as login — /api/auth/register doesn't carry profile.
       await fetchUser()
+      _stampFreshAccount()
       return response.data
     } finally {
       loading.value = false
@@ -123,9 +124,32 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = response.data.user
       await setToken(token.value)
       await fetchUser()
+      // Social create-or-links silently; the server flags brand-new accounts
+      // (absent on old servers → no stamp → returning-user greeting).
+      if (response.data.user?.is_new === true) _stampFreshAccount()
       return response.data
     } finally {
       loading.value = false
+    }
+  }
+
+  // --- First-visit greeting flag ---------------------------------------------
+  // Stamped at account creation, consumed by the dashboard's first render so
+  // a brand-new user gets "Welcome" instead of "Welcome back". One-shot and
+  // best-effort: any storage failure just falls back to returning-user copy.
+  const FRESH_ACCOUNT_KEY = 'auth.freshAccount'
+
+  function _stampFreshAccount() {
+    try { localStorage.setItem(FRESH_ACCOUNT_KEY, '1') } catch { /* best-effort */ }
+  }
+
+  function consumeFreshAccountFlag() {
+    try {
+      const fresh = localStorage.getItem(FRESH_ACCOUNT_KEY) === '1'
+      if (fresh) localStorage.removeItem(FRESH_ACCOUNT_KEY)
+      return fresh
+    } catch {
+      return false
     }
   }
 
@@ -344,6 +368,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     isGlobalAdmin,
     linkedProviders,
+    consumeFreshAccountFlag,
     hasPassword,
     gmLevel,
     promoteGmLevel,

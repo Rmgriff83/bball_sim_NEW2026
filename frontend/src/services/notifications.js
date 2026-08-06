@@ -218,14 +218,22 @@ async function _cancel(ids) {
  * Schedule the "training ready" notification for a just-started session.
  * Requests permission if not yet granted (contextual moment). Best-effort.
  */
-export async function scheduleTrainingReady({ playerName = null, endsAt } = {}) {
+export async function scheduleTrainingReady({ playerName = null, endsAt, campaignId = null } = {}) {
   if (!isNative() || !endsAt) return
   try {
     if (!(await ensurePermission())) return
     const at = new Date(endsAt)
     if (Number.isNaN(at.getTime()) || at.getTime() <= Date.now()) return
     const { title, body } = COPY.training(playerName)
-    await _schedule([{ id: NOTIF_IDS.TRAINING, title, body, schedule: { at, allowWhileIdle: true } }])
+    await _schedule([{
+      id: NOTIF_IDS.TRAINING,
+      title,
+      body,
+      schedule: { at, allowWhileIdle: true },
+      // Tap target: App.vue's localNotificationActionPerformed listener
+      // routes to this campaign's home.
+      extra: campaignId ? { campaignId } : undefined,
+    }])
   } catch (err) {
     console.warn('[notif] scheduleTrainingReady failed', err)
   }
@@ -242,7 +250,7 @@ export async function cancelTrainingReady() {
  *   LAPSE_WEEKLY (+7d then repeating weekly).
  * Only schedules when permission is ALREADY granted — never prompts here.
  */
-export async function scheduleRetentionReminders({ pendingPoints = 0 } = {}) {
+export async function scheduleRetentionReminders({ pendingPoints = 0, campaignId = null } = {}) {
   if (!isNative()) return
   try {
     if (!(await _hasPermission())) return
@@ -251,6 +259,9 @@ export async function scheduleRetentionReminders({ pendingPoints = 0 } = {}) {
 
     const now = Date.now()
     const batch = []
+    // Tap target: the campaign loaded at backgrounding (null when the user
+    // backgrounded from the dashboard — tap then opens the app normally).
+    const extra = campaignId ? { campaignId } : undefined
 
     // Only whole points are spendable — a fractional remainder (e.g. 0.4)
     // shouldn't fire a "points waiting" reminder at all.
@@ -262,6 +273,7 @@ export async function scheduleRetentionReminders({ pendingPoints = 0 } = {}) {
         title,
         body,
         schedule: { at: new Date(now + POINTS_DELAY_MS), allowWhileIdle: true },
+        extra,
       })
     }
 
@@ -272,6 +284,7 @@ export async function scheduleRetentionReminders({ pendingPoints = 0 } = {}) {
         title,
         body,
         schedule: { at: new Date(now + LAPSE_2D_MS), allowWhileIdle: true },
+        extra,
       })
     }
 
@@ -283,6 +296,7 @@ export async function scheduleRetentionReminders({ pendingPoints = 0 } = {}) {
         body,
         // First fire at +7d, then every week while the app stays installed.
         schedule: { at: new Date(now + LAPSE_WEEK_MS), every: 'week', allowWhileIdle: true },
+        extra,
       })
     }
 

@@ -59,9 +59,13 @@ export function countUserTeamSynergies(animationData, teamKey) {
  * @param {object} params.animationData - Animation data containing possession info
  * @param {boolean} params.isHome - Whether the user's team was home
  * @param {boolean} params.didWin - Whether the user's team won
+ * @param {boolean} params.simReduction - Simmed (non-animated) game: synergy
+ *   tokens are reduced to 10% (win bonus stays full). Must happen here, BEFORE
+ *   the per-game cap — reducing an already-capped total flattens every payout
+ *   to the same few tokens.
  * @returns {{ synergies_activated: number, tokens_awarded: number, win_bonus_applied: boolean }}
  */
-export function processGameRewards({ animationData, isHome, didWin, synergiesActivated }) {
+export function processGameRewards({ animationData, isHome, didWin, synergiesActivated, simReduction = false }) {
   const teamKey = isHome ? 'home' : 'away';
   // Use animation data if available, otherwise fall back to the simulator's counters
   const synergyCount = synergiesActivated ?? countUserTeamSynergies(animationData, teamKey);
@@ -75,9 +79,13 @@ export function processGameRewards({ animationData, isHome, didWin, synergiesAct
     ? Math.ceil(baseTokens * WIN_MULTIPLIER)
     : baseTokens;
 
+  const awardedSynergy = simReduction && synergyTokens > 0
+    ? Math.max(1, Math.round(synergyTokens * 0.1))
+    : synergyTokens;
+
   return {
     synergies_activated: synergyCount,
-    tokens_awarded: Math.min(MAX_TOKENS_PER_GAME, synergyTokens + winBonus),
+    tokens_awarded: Math.min(MAX_TOKENS_PER_GAME, awardedSynergy + winBonus),
     win_bonus: winBonus,
     win_bonus_applied: didWin,
   };
