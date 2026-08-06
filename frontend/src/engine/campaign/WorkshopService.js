@@ -13,10 +13,12 @@
 // listCampaigns unless ?include_workshop=1 — so old app versions never see
 // them (a teams-less draft-class workshop would render as a broken campaign).
 
-import { createCampaign, generateUUID } from './CampaignManager'
+import { generateUUID, generateTeams, generateInitialDraftPicks } from './CampaignManager'
+import { assignCampaignModes, generateLeagueRosters, generateInitialFreeAgents } from '../draft/LeagueRosterGenerator'
 import { CampaignRepository } from '../db/CampaignRepository'
 import { PlayerRepository } from '../db/PlayerRepository'
 import { PlayerHeadshotRepository } from '../db/PlayerHeadshotRepository'
+import { TeamRepository } from '../db/TeamRepository'
 import { TEAMS } from '../data/teams'
 import { CAP_SET_2026 } from '../data/salaryScale'
 import { cloneForPersist } from '@/utils/cloneForPersist'
@@ -24,24 +26,86 @@ import { cloneForPersist } from '@/utils/cloneForPersist'
 export const MAX_WORKSHOP_PROJECTS = 6
 
 /**
- * Roster workshop: a full custom-roster campaign (30 teams, generated league,
- * roster editor) that never finalizes. The RosterSetupView's one-way door
- * stays shut forever — editing is the whole point.
+ * Roster workshop: a saved ROSTER TEMPLATE, not a campaign. Generates only
+ * what the roster editor and community publishing consume — a minimal
+ * campaign record + 30 teams (coaches, facilities, draft picks) + league
+ * players + a seeded FA pool. No season row, schedule, GM contract, owner
+ * expectation, lineups, or rookie class (createCampaign's other steps) —
+ * none of those are read by the editor, the sync push (empty seasons part is
+ * skipped), or the server publish endpoint. The one-way door stays open
+ * because rosterSetupCompleted is never set.
  */
 export async function createRosterWorkshop(name) {
-  const campaign = await createCampaign({
+  const campaignId = generateUUID()
+  const startYear = 2026
+  // The editor grid wants a "user" team anchor; arbitrary.
+  const userAbbr = TEAMS[0]?.abbreviation ?? 'ATL'
+
+  const teamModes = assignCampaignModes(
+    TEAMS.map(t => ({ abbreviation: t.abbreviation, facilities: t.facilities })),
+    userAbbr
+  )
+
+  const campaign = {
+    id: campaignId,
     name,
-    // The editor needs a "user" team for its grid ordering; arbitrary.
-    teamAbbreviation: TEAMS[0]?.abbreviation ?? 'ATL',
+    currentDate: `${startYear}-10-21`,
+    gameYear: 1,
+    currentSeasonYear: startYear,
+    current_season_year: startYear,
+    phase: 'workshop',
     difficulty: 'pro',
     draftMode: 'standard',
+    // The server publish endpoint requires customRoster on roster builds.
     customRoster: true,
+    custom_roster: true,
+    rosterSetupCompleted: false,
+    roster_setup_completed: false,
+    settings: {
+      workshopMode: 'roster',
+      // Authored data is authoritative — block first-load legacy migrations.
+      initialRookiesBackfilled: true,
+      salaryCapRebaseDone: true,
+      scoutedPlayers: {},
+      capNumbers: { ...CAP_SET_2026 },
+      teamModes,
+    },
+    lastPlayedAt: new Date().toISOString(),
+  }
+
+  // Teams: coaches + facilities via the shared generator, plus the standard
+  // 5-year draft-pick ledger (authorable via TeamDraftPicksModal).
+  const teams = generateTeams(campaignId, teamModes, CAP_SET_2026.salaryCap)
+  generateInitialDraftPicks(teams, campaignId, { gameYear: 1, currentSeasonYear: startYear })
+
+  // Players: full league (headshots + payroll normalization included) plus
+  // the seeded FA market the editor's pool view works against.
+  const { players } = generateLeagueRosters(campaignId, teams, {
+    startYear,
+    userTeamAbbreviation: userAbbr,
+    modes: teamModes,
   })
-  const fresh = await CampaignRepository.get(campaign.id)
-  fresh.settings = fresh.settings ?? {}
-  fresh.settings.workshopMode = 'roster'
-  await CampaignRepository.save(cloneForPersist(fresh))
-  return fresh
+  const allPlayers = [...players, ...generateInitialFreeAgents(campaignId, { startYear })]
+
+  // Payroll stamps mirror createCampaign step 4 (the editor's team grid and
+  // published-build finances read them).
+  for (const team of teams) {
+    const totalPayroll = allPlayers
+      .filter(p => p.teamId === team.id)
+      .reduce((sum, p) => sum + (p.contractSalary ?? 0), 0)
+    team.total_payroll = totalPayroll
+    team.totalPayroll = totalPayroll
+  }
+
+  const userTeam = teams.find(t => t.abbreviation === userAbbr) ?? teams[0]
+  campaign.teamId = userTeam?.id ?? null
+  campaign.teamAbbreviation = userTeam?.abbreviation ?? userAbbr
+
+  await CampaignRepository.create(campaign)
+  await TeamRepository.saveBulk(teams)
+  await PlayerRepository.saveBulk(allPlayers)
+
+  return campaign
 }
 
 /**

@@ -873,6 +873,40 @@ function generatePersonality() {
   }
 }
 
+/**
+ * Attach the initial 5-year × R1/R2 draft-pick ledger to every team (mutates
+ * `team.draftPicks`; callers persist). Shared by createCampaign and the
+ * Builder's roster-workshop creation — the calendar label base derives the
+ * same way in both: the year-N pick is exercised in the draft at the end of
+ * season (currentSeasonYear + N - gameYear) → calendar base + N.
+ */
+export function generateInitialDraftPicks(teams, campaignId, { gameYear = 1, currentSeasonYear = 2026 } = {}) {
+  const pickCalendarBase = currentSeasonYear - gameYear + 1
+  for (const team of teams) {
+    const picks = []
+    for (let yearOffset = 0; yearOffset < 5; yearOffset++) {
+      const draftYear = gameYear + yearOffset
+      for (const round of [1, 2]) {
+        picks.push({
+          id: generateUUID(),
+          campaignId,
+          originalTeamId: team.id,
+          currentOwnerId: team.id,
+          original_team_abbreviation: team.abbreviation,
+          year: draftYear,
+          round,
+          pick_number: null,
+          projected_position: null,
+          isTraded: false,
+          display_name: `${pickCalendarBase + draftYear} Round ${round} (${team.abbreviation})`,
+          trade_value: round === 1 ? 5 : 0.5,
+        })
+      }
+    }
+    team.draftPicks = picks
+  }
+}
+
 function calculateSalary(overall, age) {
   // Derives from the single rating→salary curve in data/salaryScale.js (real
   // 2025-26 scale) so generated/aging rosters share the SAME economy as free
@@ -1416,33 +1450,10 @@ export async function createCampaign(options) {
   // -------------------------------------------------------------------------
   // 8. Generate draft picks (5 years, rounds 1 & 2 for every team)
   // -------------------------------------------------------------------------
-  const currentGameYear = campaign.gameYear ?? 1
-  // Calendar label base: the year-N pick is exercised in the draft at the end
-  // of season (currentSeasonYear + N - gameYear) → calendar base + N.
-  const pickCalendarBase = (campaign.currentSeasonYear ?? startYear) - currentGameYear + 1
-  for (const team of teams) {
-    const picks = []
-    for (let yearOffset = 0; yearOffset < 5; yearOffset++) {
-      const draftYear = currentGameYear + yearOffset
-      for (const round of [1, 2]) {
-        picks.push({
-          id: generateUUID(),
-          campaignId,
-          originalTeamId: team.id,
-          currentOwnerId: team.id,
-          original_team_abbreviation: team.abbreviation,
-          year: draftYear,
-          round,
-          pick_number: null,
-          projected_position: null,
-          isTraded: false,
-          display_name: `${pickCalendarBase + draftYear} Round ${round} (${team.abbreviation})`,
-          trade_value: round === 1 ? 5 : 0.5,
-        })
-      }
-    }
-    team.draftPicks = picks
-  }
+  generateInitialDraftPicks(teams, campaignId, {
+    gameYear: campaign.gameYear ?? 1,
+    currentSeasonYear: campaign.currentSeasonYear ?? startYear,
+  })
   await TeamRepository.saveBulk(teams)
 
   // -------------------------------------------------------------------------

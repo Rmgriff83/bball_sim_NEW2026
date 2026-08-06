@@ -135,7 +135,13 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
   // full league exactly like a standard campaign (interchangeable), and the
   // draft pools everyone at draft time.
   const poolOnlyFantasy = computed(() => isFantasy.value && startMode.value === 'downloaded')
-  const userTeamId = computed(() => campaign.value?.teamId ?? campaign.value?.team_id ?? null)
+  // A Builder workshop is a roster TEMPLATE — its campaign.teamId is only an
+  // arbitrary anchor, not "the user's team". Null here so the editor doesn't
+  // pin/tag a random franchise as "Your team" (or exclude it from fill-all).
+  const userTeamId = computed(() => {
+    if (campaign.value?.settings?.workshopMode === 'roster') return null
+    return campaign.value?.teamId ?? campaign.value?.team_id ?? null
+  })
 
   const activeTeam = computed(() => teams.value.find(t => t.id === activeTeamId.value) ?? null)
 

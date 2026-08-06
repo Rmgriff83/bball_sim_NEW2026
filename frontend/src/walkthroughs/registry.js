@@ -1004,6 +1004,31 @@ export const WALKTHROUGHS = {
   // off cleanly from grid → team page → row flow → player editor modal.
   // ===========================================================================
 
+  // Fires the moment the editor opens on the start-choice screen (before any
+  // mode is picked) — the grid tour then takes over once a choice is made.
+  rosterEditorStart: [
+    {
+      placement: 'center',
+      route: 'roster-setup',
+      title: 'Welcome to the Roster Editor',
+      body: 'First, pick your starting point. Whichever you choose, every team, player, and coach stays fully editable afterward — this only decides what fills the league before you take over.',
+    },
+    {
+      target: 'rse-start-generated',
+      route: 'roster-setup',
+      placement: 'bottom',
+      title: 'Start From Generated',
+      body: 'A full, balanced league is already built — the fastest path. Tweak as much or as little as you like.',
+    },
+    {
+      target: 'rse-start-scratch',
+      route: 'roster-setup',
+      placement: 'bottom',
+      title: 'Start From Scratch',
+      body: 'Empties every roster so you author each team yourself. And if you\'ve downloaded community rosters, they appear here as a third option — pick one to start from it.',
+    },
+  ],
+
   rosterEditorGrid: [
     {
       placement: 'center',
@@ -1018,6 +1043,26 @@ export const WALKTHROUGHS = {
       interactive: true,
       title: 'Start With Your Team',
       body: "This one's yours. Tap your team card to open its roster and start editing.",
+    },
+  ],
+
+  // Builder (workshop) variant of the grid tour — a roster TEMPLATE has no
+  // "your team", so the interactive step anchors to the first team card (the
+  // view tags it rse-user-team when no user team exists) with neutral copy.
+  rosterEditorGridWorkshop: [
+    {
+      placement: 'center',
+      route: 'roster-setup',
+      title: 'Your League, Your Rules',
+      body: "This is the Roster Editor. Every team card opens that franchise's roster, coach, history, and draft picks for editing. The Free Agents card holds the league's starting signing market — you author that pool too. Shape everything to your liking, then Done saves it to your Builder projects.",
+    },
+    {
+      target: 'rse-user-team',
+      route: 'roster-setup',
+      placement: 'bottom',
+      interactive: true,
+      title: 'Open a Team',
+      body: 'Tap any team card to open its roster and start editing.',
     },
   ],
 

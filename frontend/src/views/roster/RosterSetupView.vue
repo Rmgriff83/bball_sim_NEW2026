@@ -493,13 +493,22 @@ function startEditorTour(key) {
   walkthroughStore.forceStart(key)
 }
 
+// Start-choice tour: fires IMMEDIATELY on the chooser screen (before any
+// mode is picked), once the ack modal is out of the way. Its done flag keeps
+// it one-shot; picking a mode flips hasStarted and hands off to the grid tour.
+watch([hasStarted, showAck, loading, importing], ([started, ack, load, busy]) => {
+  if (!started && !ack && !load && !busy) nextTick(() => startEditorTour('rosterEditorStart'))
+}, { immediate: true })
+
 // Grid tour: fires once the start mode is chosen and the team grid is up
 // (also covers resuming a mid-setup campaign). Waits out the ack modal AND
 // the import overlay — applyDownloadedBuild stamps the start mode mid-import,
 // which would otherwise pop the tour under the busy overlay before the
 // "Roster Applied" callout.
 watch([hasStarted, view, showAck, importing], ([started, v, ack, busy]) => {
-  if (started && v === 'teams' && !ack && !busy) nextTick(() => startEditorTour('rosterEditorGrid'))
+  if (started && v === 'teams' && !ack && !busy) {
+    nextTick(() => startEditorTour(isWorkshop.value ? 'rosterEditorGridWorkshop' : 'rosterEditorGrid'))
+  }
 }, { immediate: true })
 
 // Fork: continue with the row flow when the table has player rows, or prompt
@@ -551,7 +560,9 @@ watch(() => walkthroughStore.activeKey, (now, prev) => {
 // is moot and its tap would open the editor). Start screen and pool: none.
 const replayTourKey = computed(() => {
   if (!hasStarted.value) return null
-  if (view.value === 'teams') return 'rosterEditorGrid'
+  // Workshops have no user team — replay the neutral grid variant whose
+  // interactive step anchors to the first team card instead of "your team".
+  if (view.value === 'teams') return isWorkshop.value ? 'rosterEditorGridWorkshop' : 'rosterEditorGrid'
   if (view.value === 'roster') return selectedPlayer.value ? 'rosterEditorRows' : 'rosterEditorTeam'
   return null
 })
@@ -667,13 +678,15 @@ async function acceptFinalize() {
 }
 
 async function confirmFinalize() {
-  // Workshop: no finalize, no navigation — stamp the publishable flag and
-  // keep editing. The web community publish accepts this in place of a
-  // finalized campaign.
+  // Workshop "Done": mirror the draft-class editor — stamp the publishable
+  // flag (the community publish accepts it in place of a finalized campaign)
+  // and return to the Builder. The project stays editable forever.
   if (isWorkshop.value) {
     await store.markWorkshopPublishable()
     showFinalize.value = false
-    useToastStore().showSuccess('Validated — publish this build from the Community board anytime.')
+    useToastStore().showSuccess('Saved to your Builder projects — publish it from the Community board anytime.')
+    store.$reset()
+    router.replace('/builder')
     return
   }
   const id = campaignId.value
@@ -726,8 +739,9 @@ async function confirmFinalize() {
           @click="openFinalize"
         >
           <Loader2 v-if="validating" :size="16" class="spin" />
+          <Check v-else-if="isWorkshop" :size="16" />
           <ShieldCheck v-else :size="16" />
-          {{ isWorkshop ? 'Validate for Publishing' : 'Finish & Start Season' }}
+          {{ isWorkshop ? 'Done' : 'Finish & Start Season' }}
         </button>
       </div>
     </header>
@@ -740,12 +754,12 @@ async function confirmFinalize() {
       <h2>How do you want to build your league?</h2>
       <p class="rs-sub">You can tweak everything either way — this just sets your starting point.</p>
       <div class="rs-start-grid">
-        <button class="rs-start-card" @click="pickStart('generated')">
+        <button class="rs-start-card" data-tour="rse-start-generated" @click="pickStart('generated')">
           <Users :size="28" />
           <span class="rs-start-name">Start from Generated</span>
           <span class="rs-start-desc">A full, balanced league is already built. Adjust any player or coach you like.</span>
         </button>
-        <button class="rs-start-card" @click="pickStart('scratch')">
+        <button class="rs-start-card" data-tour="rse-start-scratch" @click="pickStart('scratch')">
           <ClipboardList :size="28" />
           <span class="rs-start-name">Start from Scratch</span>
           <span class="rs-start-desc">Every roster is emptied. Build each team yourself before the season can start.</span>
@@ -776,11 +790,11 @@ async function confirmFinalize() {
       <h2 class="rs-teams-title"><ClipboardList :size="22" /> Roster Editor</h2>
       <div class="rs-team-grid">
         <button
-          v-for="team in teams"
+          v-for="(team, ti) in teams"
           :key="team.id"
           class="rs-team-card"
           :class="{ 'is-user': team.id === userTeamId }"
-          :data-tour="team.id === userTeamId ? 'rse-user-team' : null"
+          :data-tour="team.id === userTeamId || (!userTeamId && ti === 0) ? 'rse-user-team' : null"
           @click="openTeam(team)"
         >
           <span class="rs-team-head">
@@ -1032,15 +1046,15 @@ async function confirmFinalize() {
           </div>
         </template>
         <template v-else-if="isWorkshop">
-          <h3><Check :size="18" /> Build validated</h3>
+          <h3><Check :size="18" /> Done editing?</h3>
           <p>
-            This build passes every league check. Mark it publishable and share
-            it from the Community board — you can keep editing it here anytime.
+            Your roster is saved to this Builder project — come back and keep
+            tweaking anytime, or publish it from the Community board.
           </p>
           <div class="rs-modal-actions">
-            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Not yet</button>
+            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Keep editing</button>
             <button class="rs-modal-primary" :disabled="saving" @click="acceptFinalize">
-              <Loader2 v-if="saving" :size="16" class="spin" /> Mark Publishable
+              <Loader2 v-if="saving" :size="16" class="spin" /> Done
             </button>
           </div>
         </template>
