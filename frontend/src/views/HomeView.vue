@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton } from '@/components/ui'
-import { Gamepad2, BarChart3, Trophy, ChevronRight } from 'lucide-vue-next'
+import { Gamepad2, BarChart3, Trophy, ChevronRight, Home } from 'lucide-vue-next'
 import { Capacitor } from '@capacitor/core'
 
 const router = useRouter()
@@ -18,10 +18,81 @@ const isAuthenticated = computed(() => authStore.isAuthenticated)
 // - Android: the build doesn't set that flag, so we also gate on the runtime
 //   Capacitor.isNativePlatform() check (getPlatform() is 'web' | 'ios' | 'android').
 const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativePlatform()
+
+// Socials nav (top-right corner) — shown on EVERY build (web + native):
+// unlike the store badges, in-app users are exactly who we want in the
+// community. Add future socials (Discord, X, …) to this list.
+const REDDIT_URL = 'https://www.reddit.com/r/Bball_Sim/'
+async function openSocial(e, url) {
+  if (!Capacitor.isNativePlatform()) return // web: the anchor opens a new tab
+  // WKWebView swallows target=_blank / drops window.open after an await —
+  // Browser.open is the reliable native path (same as services/appUpdate.js).
+  e.preventDefault()
+  const { Browser } = await import('@capacitor/browser')
+  await Browser.open({ url })
+}
 </script>
 
 <template>
   <div class="home-page">
+    <!-- Home marker — top-left twin of the socials nav, for cross-property
+         uniformity with the marketing site's header (where it links home).
+         Here it's purely decorative: this page IS home, so it's inert and
+         hidden from assistive tech. -->
+    <div class="home-nav" aria-hidden="true">
+      <span class="home-marker">
+        <Home :size="20" />
+      </span>
+    </div>
+
+    <!-- Socials nav — minimal icon row pinned to the top-right corner, on all
+         builds (body's global safe-area padding keeps it below the notch on
+         native). Grows as we add socials: one .social-link per network. Native
+         taps route through Browser.open (WKWebView swallows target=_blank). -->
+    <nav class="socials-nav" aria-label="Community links">
+      <a
+        class="social-link"
+        :href="REDDIT_URL"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Join the Bball Sim community on Reddit"
+        title="r/Bball_Sim"
+        @click="openSocial($event, REDDIT_URL)"
+      >
+        <svg
+          class="social-icon"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          role="img"
+          aria-hidden="true"
+        >
+          <!-- Reddit "Snoo" mark built from primitives, monochrome: black
+               disc, white ears/antenna/head, black eyes + smile. -->
+          <circle cx="12" cy="12" r="12" fill="#000" />
+          <circle cx="17.9" cy="5.7" r="1.5" fill="#fff" />
+          <path
+            d="M12.4 8.6 c.3-2.4 1.7-3.6 4.2-3.1"
+            stroke="#fff"
+            stroke-width="1"
+            fill="none"
+            stroke-linecap="round"
+          />
+          <circle cx="5.3" cy="10.9" r="1.8" fill="#fff" />
+          <circle cx="18.7" cy="10.9" r="1.8" fill="#fff" />
+          <ellipse cx="12" cy="13.7" rx="6.8" ry="4.7" fill="#fff" />
+          <circle cx="9.5" cy="12.9" r="1.15" fill="#000" />
+          <circle cx="14.5" cy="12.9" r="1.15" fill="#000" />
+          <path
+            d="M9.3 15.6 c1.7 1.5 3.7 1.5 5.4 0"
+            stroke="#000"
+            stroke-width="1"
+            fill="none"
+            stroke-linecap="round"
+          />
+        </svg>
+      </a>
+    </nav>
+
     <!-- Hero Section -->
     <main class="hero-section">
       <div class="hero-content">
@@ -229,6 +300,7 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  position: relative; /* anchors .socials-nav to the page's top-right */
 }
 
 /* Hero Section */
@@ -296,16 +368,12 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
 .hero-badge {
   display: inline-block;
   padding: 0.5rem 1rem;
-  background: #000;
-  border: 1px solid rgba(255, 193, 37, 0.5);
-  border-radius: var(--radius-full);
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.15em;
   color: #FFC125;
-  margin-bottom: 1.5rem;
+  margin-top: 1.5rem;
   text-transform: uppercase;
-  box-shadow: 0 0 20px rgba(255, 193, 37, 0.15);
 }
 
 .hero-title {
@@ -378,6 +446,78 @@ const showStoreBadges = !import.meta.env.VITE_NATIVE_BUILD && !Capacitor.isNativ
     width: 156px;
     height: 49px;
   }
+}
+
+/* Home marker — top-left mirror of the socials nav. Same glass-disc language
+   but greyscale and inert (no hover lift/pointer): it exists for visual
+   uniformity with the marketing site's header, not as a control. */
+.home-nav {
+  position: absolute;
+  top: 0.9rem;
+  left: 1rem;
+  display: flex;
+  align-items: center;
+  z-index: 10;
+}
+
+.home-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px; /* keeps vertical alignment with the 38px social discs */
+  height: 38px;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition: color 0.18s ease, transform 0.18s ease;
+}
+
+.home-marker:hover {
+  color: rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px);
+}
+
+/* Socials nav — minimal icon row in the top-right corner. Each link is a
+   small glass disc holding the network's mark; add more .social-link anchors
+   as socials grow and the row extends leftward. */
+.socials-nav {
+  position: absolute;
+  top: 0.9rem;
+  right: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  z-index: 10;
+}
+
+.social-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.social-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.social-link:focus-visible {
+  outline: 2px solid var(--color-primary, #ffc125);
+  outline-offset: 3px;
+}
+
+.social-icon {
+  display: block;
+  width: 32px;
+  height: 32px;
 }
 
 /* Features Section */
