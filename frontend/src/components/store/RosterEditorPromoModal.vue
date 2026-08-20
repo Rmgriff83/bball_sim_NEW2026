@@ -63,23 +63,23 @@ watch(() => props.show, async (open) => {
         </div>
       </div>
 
-      <h2 class="promo-headline">Build Your Own League</h2>
+      <h2 class="promo-headline">{{ $t('Build Your Own League') }}</h2>
       <p class="promo-subhead">
-        Author every roster — and now every rookie draft class — with the Roster Editor.
+        {{ $t('Author every roster — and now every rookie draft class — with the Roster Editor.') }}
       </p>
 
       <ul class="promo-perks">
         <li v-for="perk in perks" :key="perk">
           <Check :size="16" class="perk-check" />
-          <span>{{ perk }}</span>
+          <span>{{ $tDynamic(perk) }}</span>
         </li>
       </ul>
 
       <button class="promo-cta" @click="emit('unlock')">
-        Unlock for {{ price }}
+        {{ $t('Unlock for {price}', { price }) }}
       </button>
       <button class="promo-later" @click="emit('close')">
-        Maybe later
+        {{ $t('Maybe later') }}
       </button>
     </div>
   </BaseModal>

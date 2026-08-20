@@ -20,7 +20,7 @@ function select(value) {
       class="pos-btn"
       :class="{ active: modelValue === 'all' }"
       @click="select('all')"
-    >All</button>
+    >{{ $t('All') }}</button>
     <button
       v-for="pos in POSITIONS"
       :key="pos"

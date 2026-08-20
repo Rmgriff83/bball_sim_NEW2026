@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, onUnmounted, computed } from 'vue'
 import { X, Star, Users } from 'lucide-vue-next'
+import { t } from '@wl-i18n/i18n.js'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 
 // PlayerAvatar expects `player.id`; roster entries carry `playerId` plus the
@@ -31,7 +32,7 @@ const currentRosters = computed(() => {
   return activeTab.value === 'allStars' ? props.rosters.allStars : props.rosters.risingStars
 })
 
-const tabLabel = computed(() => activeTab.value === 'allStars' ? 'All-Star' : 'Rising Stars')
+const tabLabel = computed(() => activeTab.value === 'allStars' ? t('All-Star') : t('Rising Stars'))
 
 const positions = ['PG', 'SG', 'SF', 'PF', 'C']
 
@@ -93,7 +94,7 @@ onUnmounted(() => {
           <header class="modal-header">
             <div class="header-title">
               <Star :size="20" class="star-icon" />
-              <h2>{{ tabLabel }} Selections</h2>
+              <h2>{{ $t('{tab} Selections', { tab: tabLabel }) }}</h2>
             </div>
             <button class="close-btn" @click="close">
               <X :size="20" />
@@ -108,7 +109,7 @@ onUnmounted(() => {
               @click="activeTab = 'allStars'"
             >
               <Star :size="14" />
-              All-Stars
+              {{ $t('All-Stars') }}
             </button>
             <button
               class="tab-btn"
@@ -116,7 +117,7 @@ onUnmounted(() => {
               @click="activeTab = 'risingStars'"
             >
               <Users :size="14" />
-              Rising Stars
+              {{ $t('Rising Stars') }}
             </button>
           </div>
 
@@ -124,8 +125,7 @@ onUnmounted(() => {
           <div v-if="userSelections.length" class="user-selections-banner">
             <Star :size="15" class="banner-star" />
             <span class="banner-text">
-              <strong>{{ userSelections.length }}</strong>
-              of your players made the {{ tabLabel }} team:
+              {{ $t('{n} of your players made the {tab} team:', { n: userSelections.length, tab: tabLabel }) }}
               <span class="banner-names">{{ userSelections.map(p => p.playerName).join(', ') }}</span>
             </span>
           </div>
@@ -135,9 +135,9 @@ onUnmounted(() => {
             <div class="conferences-grid">
               <!-- East -->
               <div class="conference-column">
-                <h3 class="conference-title east-title">Eastern Conference</h3>
+                <h3 class="conference-title east-title">{{ $t('Eastern Conference') }}</h3>
 
-                <div class="section-label">Starters</div>
+                <div class="section-label">{{ $t('Starters') }}</div>
                 <div class="players-list">
                   <div
                     v-for="pos in positions"
@@ -159,10 +159,15 @@ onUnmounted(() => {
                         </div>
                       </div>
                       <div class="player-stats">
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.ppg }}</span><span class="stat-label">PPG</span></div>
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.rpg }}</span><span class="stat-label">RPG</span></div>
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.apg }}</span><span class="stat-label">APG</span></div>
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.spg }}</span><span class="stat-label">SPG</span></div>
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.bpg }}</span><span class="stat-label">BPG</span></div>
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.fgPct }}%</span><span class="stat-label">FG</span></div>
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.east.starters[pos].stats?.threePct }}%</span><span class="stat-label">3PT</span></div>
@@ -177,7 +182,7 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <div v-if="currentRosters.east?.reserves?.length" class="section-label">Reserves</div>
+                <div v-if="currentRosters.east?.reserves?.length" class="section-label">{{ $t('Reserves') }}</div>
                 <div class="players-list">
                   <div
                     v-for="(player, idx) in currentRosters.east?.reserves || []"
@@ -196,10 +201,15 @@ onUnmounted(() => {
                       </div>
                     </div>
                     <div class="player-stats">
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.ppg }}</span><span class="stat-label">PPG</span></div>
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.rpg }}</span><span class="stat-label">RPG</span></div>
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.apg }}</span><span class="stat-label">APG</span></div>
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.spg }}</span><span class="stat-label">SPG</span></div>
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.bpg }}</span><span class="stat-label">BPG</span></div>
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.fgPct }}%</span><span class="stat-label">FG</span></div>
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.threePct }}%</span><span class="stat-label">3PT</span></div>
@@ -210,9 +220,9 @@ onUnmounted(() => {
 
               <!-- West -->
               <div class="conference-column">
-                <h3 class="conference-title west-title">Western Conference</h3>
+                <h3 class="conference-title west-title">{{ $t('Western Conference') }}</h3>
 
-                <div class="section-label">Starters</div>
+                <div class="section-label">{{ $t('Starters') }}</div>
                 <div class="players-list">
                   <div
                     v-for="pos in positions"
@@ -234,10 +244,15 @@ onUnmounted(() => {
                         </div>
                       </div>
                       <div class="player-stats">
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.ppg }}</span><span class="stat-label">PPG</span></div>
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.rpg }}</span><span class="stat-label">RPG</span></div>
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.apg }}</span><span class="stat-label">APG</span></div>
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.spg }}</span><span class="stat-label">SPG</span></div>
+                        <!-- i18n-ignore -->
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.bpg }}</span><span class="stat-label">BPG</span></div>
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.fgPct }}%</span><span class="stat-label">FG</span></div>
                         <div class="stat-cell"><span class="stat-value">{{ currentRosters.west.starters[pos].stats?.threePct }}%</span><span class="stat-label">3PT</span></div>
@@ -252,7 +267,7 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <div v-if="currentRosters.west?.reserves?.length" class="section-label">Reserves</div>
+                <div v-if="currentRosters.west?.reserves?.length" class="section-label">{{ $t('Reserves') }}</div>
                 <div class="players-list">
                   <div
                     v-for="(player, idx) in currentRosters.west?.reserves || []"
@@ -271,10 +286,15 @@ onUnmounted(() => {
                       </div>
                     </div>
                     <div class="player-stats">
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.ppg }}</span><span class="stat-label">PPG</span></div>
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.rpg }}</span><span class="stat-label">RPG</span></div>
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.apg }}</span><span class="stat-label">APG</span></div>
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.spg }}</span><span class="stat-label">SPG</span></div>
+                      <!-- i18n-ignore -->
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.bpg }}</span><span class="stat-label">BPG</span></div>
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.fgPct }}%</span><span class="stat-label">FG</span></div>
                       <div class="stat-cell"><span class="stat-value">{{ player.stats?.threePct }}%</span><span class="stat-label">3PT</span></div>
@@ -286,13 +306,13 @@ onUnmounted(() => {
           </div>
 
           <div v-else class="empty-state">
-            <p>No selections available yet.</p>
+            <p>{{ $t('No selections available yet.') }}</p>
           </div>
 
           <!-- Footer -->
           <footer class="modal-footer">
             <button class="btn-close-footer" @click="close">
-              Close
+              {{ $t('Close') }}
             </button>
           </footer>
         </div>

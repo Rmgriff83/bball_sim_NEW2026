@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { X, ChevronDown, ChevronUp, Play, FastForward, Calendar } from 'lucide-vue-next'
+import { dateLocale } from '@wl-i18n/i18n.js'
 import { LoadingSpinner } from '@/components/ui'
 
 const props = defineProps({
@@ -64,14 +65,14 @@ function parseLocalDate(dateStr) {
 function formatDate(dateStr) {
   if (!dateStr) return ''
   const date = parseLocalDate(dateStr)
-  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+  return date.toLocaleDateString(dateLocale(), { weekday: 'long', month: 'long', day: 'numeric' })
 }
 
 // Short format for date headers in game list
 function formatShortDate(dateStr) {
   if (!dateStr) return ''
   const date = parseLocalDate(dateStr)
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  return date.toLocaleDateString(dateLocale(), { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 function toggleDateSection(date) {
@@ -151,7 +152,7 @@ const opponentTeamData = computed(() => {
         <div class="modal-container">
           <!-- Header -->
           <header class="modal-header">
-            <h2 class="modal-title">{{ simSeasonMode ? 'Sim Season' : 'Simulate' }}</h2>
+            <h2 class="modal-title">{{ simSeasonMode ? $t('Sim Season') : $t('Simulate') }}</h2>
             <button
               v-if="!simulating"
               class="btn-close"
@@ -168,20 +169,18 @@ const opponentTeamData = computed(() => {
             <div v-if="simulating" class="simulating-overlay">
               <LoadingSpinner size="lg" />
               <p class="simulating-text">
-                {{ simSeasonMode ? 'Simulating remaining season...' : (backgroundProgress ? 'Simulating league games...' : 'Simulating your game...') }}
+                {{ simSeasonMode ? $t('Simulating remaining season...') : (backgroundProgress ? $t('Simulating league games...') : $t('Simulating your game...')) }}
               </p>
-              <span v-if="!backgroundProgress" class="simulating-sub">AI games will process in the background</span>
+              <span v-if="!backgroundProgress" class="simulating-sub">{{ $t('AI games will process in the background') }}</span>
               <template v-if="backgroundProgress">
                 <span class="simulating-sub">
-                  {{ backgroundProgress.completed }}/{{ backgroundProgress.total }} games complete
+                  {{ $t('{a}/{b} games complete', { a: backgroundProgress.completed, b: backgroundProgress.total }) }}
                 </span>
                 <div class="simulating-progress-bar">
                   <div
                     class="simulating-progress-fill"
                     :style="{
-                      width: backgroundProgress.total > 0
-                        ? `${(backgroundProgress.completed / backgroundProgress.total) * 100}%`
-                        : '0%'
+                      width: backgroundProgress.total > 0 ? `${(backgroundProgress.completed / backgroundProgress.total) * 100}%` : '0%'
                     }"
                   ></div>
                 </div>
@@ -193,39 +192,39 @@ const opponentTeamData = computed(() => {
               <div class="sim-season-icon-wrap">
                 <FastForward :size="40" class="sim-season-icon" />
               </div>
-              <h3 class="sim-season-title">Sim Rest of Season</h3>
+              <h3 class="sim-season-title">{{ $t('Sim Rest of Season') }}</h3>
               <div class="summary-stats">
                 <div class="stat-item">
                   <span class="stat-value">{{ remainingSeasonGames?.totalGames || 0 }}</span>
-                  <span class="stat-label">Total Games</span>
+                  <span class="stat-label">{{ $t('Total Games') }}</span>
                 </div>
                 <div class="stat-divider"></div>
                 <div class="stat-item">
                   <span class="stat-value">{{ remainingSeasonGames?.userGames || 0 }}</span>
-                  <span class="stat-label">Your Games</span>
+                  <span class="stat-label">{{ $t('Your Games') }}</span>
                 </div>
                 <div class="stat-divider"></div>
                 <div class="stat-item">
                   <span class="stat-value">{{ remainingSeasonGames?.aiGames || 0 }}</span>
-                  <span class="stat-label">AI Games</span>
+                  <span class="stat-label">{{ $t('AI Games') }}</span>
                 </div>
               </div>
               <p class="sim-season-warning">
-                This will simulate all remaining regular season games including yours. This cannot be undone.
+                {{ $t('This will simulate all remaining regular season games including yours. This cannot be undone.') }}
               </p>
             </div>
 
             <!-- Loading State -->
             <div v-else-if="loading" class="loading-state">
               <LoadingSpinner size="md" />
-              <p>Loading preview...</p>
+              <p>{{ $t('Loading preview...') }}</p>
             </div>
 
             <!-- No Games State -->
             <div v-else-if="!hasNextGame" class="no-games-state">
               <Calendar :size="48" class="no-games-icon" />
-              <p>No upcoming games found</p>
-              <span class="no-games-sub">The season may be complete.</span>
+              <p>{{ $t('No upcoming games found') }}</p>
+              <span class="no-games-sub">{{ $t('The season may be complete.') }}</span>
             </div>
 
             <!-- Preview Content -->
@@ -245,7 +244,7 @@ const opponentTeamData = computed(() => {
                       {{ userTeamData?.abbreviation }}
                     </div>
                     <span class="team-name">{{ userTeamData?.name }}</span>
-                    <span class="team-label your-team">YOUR TEAM</span>
+                    <span class="team-label your-team">{{ $t('YOUR TEAM') }}</span>
                   </div>
 
                   <div class="vs-divider">
@@ -262,7 +261,7 @@ const opponentTeamData = computed(() => {
                       {{ opponentTeamData?.abbreviation }}
                     </div>
                     <span class="team-name">{{ opponentTeamData?.name }}</span>
-                    <span class="team-label">{{ nextGame.isHome ? 'AWAY' : 'HOME' }}</span>
+                    <span class="team-label">{{ nextGame.isHome ? $t('AWAY') : $t('HOME') }}</span>
                   </div>
                 </div>
               </div>
@@ -271,28 +270,28 @@ const opponentTeamData = computed(() => {
               <div class="summary-stats">
                 <div class="stat-item">
                   <span class="stat-value">{{ daysToSimulate }}</span>
-                  <span class="stat-label">{{ daysToSimulate === 1 ? 'Day' : 'Days' }}</span>
+                  <span class="stat-label">{{ daysToSimulate === 1 ? $t('Day') : $t('Days') }}</span>
                 </div>
                 <div class="stat-divider"></div>
                 <div class="stat-item">
                   <span class="stat-value">{{ totalGames }}</span>
-                  <span class="stat-label">AI {{ totalGames === 1 ? 'Game' : 'Games' }}</span>
+                  <span class="stat-label">{{ totalGames === 1 ? $t('AI Game') : $t('AI Games') }}</span>
                 </div>
               </div>
 
               <p v-if="isGameToday" class="summary-text today-text">
-                Your next game is today! No other games need to be simulated.
+                {{ $t('Your next game is today! No other games need to be simulated.') }}
               </p>
               <p v-else-if="totalGames > 0" class="summary-text">
-                will be simulated before your game
+                {{ $t('will be simulated before your game') }}
               </p>
               <p v-else class="summary-text">
-                No games to simulate - your next game is ready!
+                {{ $t('No games to simulate - your next game is ready!') }}
               </p>
 
               <!-- Games by Date List -->
               <div v-if="totalGames > 0" class="games-list-section">
-                <h4 class="games-list-header">GAMES TO SIMULATE</h4>
+                <h4 class="games-list-header">{{ $t('GAMES TO SIMULATE') }}</h4>
                 <div class="games-by-date">
                   <div
                     v-for="(games, date) in gamesByDate"
@@ -304,7 +303,7 @@ const opponentTeamData = computed(() => {
                       @click="toggleDateSection(date)"
                     >
                       <span class="date-text">{{ formatShortDate(date) }}</span>
-                      <span class="games-count">{{ games.length }} {{ games.length === 1 ? 'game' : 'games' }}</span>
+                      <span class="games-count">{{ games.length === 1 ? $t('{n} game', { n: games.length }) : $t('{n} games', { n: games.length }) }}</span>
                       <ChevronDown v-if="!expandedDates[date]" :size="18" class="chevron-icon" />
                       <ChevronUp v-else :size="18" class="chevron-icon" />
                     </button>
@@ -345,7 +344,7 @@ const opponentTeamData = computed(() => {
                 :disabled="simulating"
                 @click="close"
               >
-                Cancel
+                {{ $t('Cancel') }}
               </button>
               <button
                 class="btn-confirm"
@@ -354,7 +353,7 @@ const opponentTeamData = computed(() => {
               >
                 <span v-if="simulating" class="btn-loading"></span>
                 <FastForward v-else :size="16" class="btn-icon" />
-                {{ simulating ? 'Simulating...' : 'Sim Season' }}
+                {{ simulating ? $t('Simulating...') : $t('Sim Season') }}
               </button>
             </template>
             <template v-else-if="!hasNextGame">
@@ -362,7 +361,7 @@ const opponentTeamData = computed(() => {
                 class="btn-cancel"
                 @click="close"
               >
-                Close
+                {{ $t('Close') }}
               </button>
             </template>
             <template v-else>
@@ -371,7 +370,7 @@ const opponentTeamData = computed(() => {
                 :disabled="simulating"
                 @click="close"
               >
-                Cancel
+                {{ $t('Cancel') }}
               </button>
               <button
                 v-if="gameInProgress"
@@ -381,7 +380,7 @@ const opponentTeamData = computed(() => {
               >
                 <span v-if="simulating" class="btn-loading"></span>
                 <FastForward v-else :size="16" class="btn-icon" />
-                {{ simulating ? 'Simulating...' : 'Sim to End' }}
+                {{ simulating ? $t('Simulating...') : $t('Sim to End') }}
               </button>
               <button
                 class="btn-confirm"
@@ -390,7 +389,7 @@ const opponentTeamData = computed(() => {
               >
                 <span v-if="simulating" class="btn-loading"></span>
                 <Play v-else :size="16" class="btn-icon" />
-                {{ simulating ? 'Simulating...' : 'Simulate & Play' }}
+                {{ simulating ? $t('Simulating...') : $t('Simulate & Play') }}
               </button>
             </template>
           </footer>

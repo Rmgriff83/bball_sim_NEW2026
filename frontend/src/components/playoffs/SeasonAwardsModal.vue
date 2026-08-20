@@ -61,7 +61,7 @@ function close() {
             <div class="header-left">
               <Award :size="22" class="header-icon" />
               <div class="header-titles">
-                <h2 class="modal-title">Season Awards</h2>
+                <h2 class="modal-title">{{ $t('Season Awards') }}</h2>
                 <span class="modal-subtitle">{{ seasonLabel }}</span>
               </div>
             </div>
@@ -73,14 +73,14 @@ function close() {
           <!-- Content -->
           <main class="modal-content">
             <div v-if="!hasAnyAward" class="empty-state">
-              No award winners selected for this season.
+              {{ $t('No award winners selected for this season.') }}
             </div>
 
             <!-- MVP -->
             <section v-if="mvp" class="award-section featured">
               <div class="award-section-header">
                 <Trophy :size="16" class="award-icon mvp" />
-                <span class="award-section-label">League MVP</span>
+                <span class="award-section-label">{{ $t('League MVP') }}</span>
               </div>
               <div class="award-card mvp-card" :class="{ 'user-card': isUserPlayer(mvp) }">
                 <div class="award-card-row">
@@ -98,14 +98,17 @@ function close() {
                 <div v-if="mvp.stats" class="player-stats">
                   <div class="stat-pill">
                     <span class="stat-value">{{ mvp.stats.ppg }}</span>
+<!-- i18n-ignore -->
                     <span class="stat-label">PPG</span>
                   </div>
                   <div class="stat-pill">
                     <span class="stat-value">{{ mvp.stats.rpg }}</span>
+<!-- i18n-ignore -->
                     <span class="stat-label">RPG</span>
                   </div>
                   <div class="stat-pill">
                     <span class="stat-value">{{ mvp.stats.apg }}</span>
+<!-- i18n-ignore -->
                     <span class="stat-label">APG</span>
                   </div>
                 </div>
@@ -116,7 +119,7 @@ function close() {
             <section v-if="roty" class="award-section featured">
               <div class="award-section-header">
                 <Sparkles :size="16" class="award-icon roty" />
-                <span class="award-section-label">Rookie of the Year</span>
+                <span class="award-section-label">{{ $t('Rookie of the Year') }}</span>
               </div>
               <div class="award-card roty-card" :class="{ 'user-card': isUserPlayer(roty) }">
                 <div class="award-card-row">
@@ -134,14 +137,17 @@ function close() {
                 <div v-if="roty.stats" class="player-stats">
                   <div class="stat-pill">
                     <span class="stat-value">{{ roty.stats.ppg }}</span>
+<!-- i18n-ignore -->
                     <span class="stat-label">PPG</span>
                   </div>
                   <div class="stat-pill">
                     <span class="stat-value">{{ roty.stats.rpg }}</span>
+<!-- i18n-ignore -->
                     <span class="stat-label">RPG</span>
                   </div>
                   <div class="stat-pill">
                     <span class="stat-value">{{ roty.stats.apg }}</span>
+<!-- i18n-ignore -->
                     <span class="stat-label">APG</span>
                   </div>
                 </div>
@@ -152,7 +158,7 @@ function close() {
             <section v-if="dpoy" class="award-section featured">
               <div class="award-section-header">
                 <Shield :size="16" class="award-icon dpoy" />
-                <span class="award-section-label">Defensive Player of the Year</span>
+                <span class="award-section-label">{{ $t('Defensive Player of the Year') }}</span>
               </div>
               <div class="award-card dpoy-card" :class="{ 'user-card': isUserPlayer(dpoy) }">
                 <div class="award-card-row">
@@ -170,14 +176,17 @@ function close() {
                 <div v-if="dpoy.stats" class="player-stats">
                   <div class="stat-pill">
                     <span class="stat-value">{{ dpoy.stats.spg }}</span>
+<!-- i18n-ignore -->
                     <span class="stat-label">SPG</span>
                   </div>
                   <div class="stat-pill">
                     <span class="stat-value">{{ dpoy.stats.bpg }}</span>
+<!-- i18n-ignore -->
                     <span class="stat-label">BPG</span>
                   </div>
                   <div class="stat-pill">
                     <span class="stat-value">{{ dpoy.stats.rpg }}</span>
+<!-- i18n-ignore -->
                     <span class="stat-label">RPG</span>
                   </div>
                 </div>
@@ -188,7 +197,7 @@ function close() {
             <section v-if="allNba" class="award-section">
               <div class="award-section-header">
                 <Star :size="16" class="award-icon all-nba" />
-                <span class="award-section-label">All-League</span>
+                <span class="award-section-label">{{ $t('All-League') }}</span>
               </div>
               <div class="team-list">
                 <div
@@ -197,7 +206,7 @@ function close() {
                   :key="`all-nba-${tier}`"
                   class="award-team"
                 >
-                  <span class="team-tier-label">{{ tier === 'first' ? '1st' : tier === 'second' ? '2nd' : '3rd' }} Team</span>
+                  <span class="team-tier-label">{{ tier === 'first' ? $t('1st Team') : tier === 'second' ? $t('2nd Team') : $t('3rd Team') }}</span>
                   <div class="player-row">
                     <div
                       v-for="p in allNba[tier]"
@@ -226,7 +235,7 @@ function close() {
             <section v-if="allDefense?.first?.length || allDefense?.second?.length" class="award-section">
               <div class="award-section-header">
                 <Shield :size="16" class="award-icon all-defense" />
-                <span class="award-section-label">All-Defense</span>
+                <span class="award-section-label">{{ $t('All-Defense') }}</span>
               </div>
               <div class="team-list">
                 <div
@@ -235,7 +244,7 @@ function close() {
                   :key="`all-def-${tier}`"
                   class="award-team"
                 >
-                  <span class="team-tier-label">{{ tier === 'first' ? '1st' : '2nd' }} Team</span>
+                  <span class="team-tier-label">{{ tier === 'first' ? $t('1st Team') : $t('2nd Team') }}</span>
                   <div class="player-row">
                     <div
                       v-for="p in allDefense[tier]"
@@ -252,6 +261,7 @@ function close() {
                       <span class="chip-player-name">{{ p.playerName }}</span>
                       <span class="chip-position">{{ p.position }}</span>
                       <span v-if="p.stats" class="chip-stats">
+                        <!-- i18n-ignore -->
                         {{ p.stats.spg }} SPG &middot; {{ p.stats.bpg }} BPG
                       </span>
                     </div>
@@ -264,7 +274,7 @@ function close() {
             <section v-if="allRookie?.first?.length || allRookie?.second?.length" class="award-section">
               <div class="award-section-header">
                 <Sparkles :size="16" class="award-icon roty" />
-                <span class="award-section-label">All-Rookie</span>
+                <span class="award-section-label">{{ $t('All-Rookie') }}</span>
               </div>
               <div class="team-list">
                 <div
@@ -273,7 +283,7 @@ function close() {
                   :key="`all-rookie-${tier}`"
                   class="award-team"
                 >
-                  <span class="team-tier-label">{{ tier === 'first' ? '1st' : '2nd' }} Team</span>
+                  <span class="team-tier-label">{{ tier === 'first' ? $t('1st Team') : $t('2nd Team') }}</span>
                   <div class="player-row">
                     <div
                       v-for="p in allRookie[tier]"
@@ -302,7 +312,7 @@ function close() {
           <!-- Footer -->
           <footer class="modal-footer">
             <button class="btn-confirm" @click="close">
-              Continue
+              {{ $t('Continue') }}
             </button>
           </footer>
         </div>

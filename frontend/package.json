@@ -14,13 +14,17 @@
     "open:android": "cap open android",
     "preview": "vite preview",
     "audit:gameplay": "node scripts/audit-gameplay-coverage.js",
+    "audit:i18n": "node scripts/audit-i18n-coverage.js",
+    "translate": "node vendor/wl-i18n/bin/translate.js",
+    "translate:dry": "node vendor/wl-i18n/bin/translate.js --dry-run",
+    "translate:release": "node vendor/wl-i18n/bin/translate.js --soft-fail",
     "sync:headshots": "node scripts/sync-headshot-assets.mjs",
     "sync:headshots:upload": "node scripts/sync-headshot-assets.mjs upload",
     "regen:headshots": "node scripts/regenerate-headshot-pool.mjs",
-    "prebuild": "npm run sync:headshots && npm run regen:headshots && node scripts/audit-gameplay-coverage.js",
+    "prebuild": "npm run sync:headshots && npm run regen:headshots && node scripts/audit-gameplay-coverage.js && node scripts/audit-i18n-coverage.js",
     "bundle:android": "cd android && JAVA_HOME=\"${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}\" ./gradlew bundleRelease",
     "release:android": "npm run build:android && npm run bundle:android",
-    "release": "npm run build && firebase deploy --only hosting && npm run build:native && cap sync && npm run bundle:android"
+    "release": "npm run translate:release && npm run build && firebase deploy --only hosting && npm run build:native && cap sync && npm run bundle:android"
   },
   "dependencies": {
     "@capacitor-community/in-app-review": "^8.0.0",
@@ -50,6 +54,7 @@
     "@aws-sdk/client-s3": "^3.1063.0",
     "@capacitor/assets": "^3.0.5",
     "@vitejs/plugin-vue": "^6.0.1",
+    "glob": "^11.1.0",
     "patch-package": "^8.0.1",
     "postinstall-postinstall": "^2.1.0",
     "vite": "^7.2.4",

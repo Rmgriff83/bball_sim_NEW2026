@@ -10,6 +10,7 @@ import AllStarModal from '@/components/game/AllStarModal.vue'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
+import { t, dateLocale } from '@wl-i18n/i18n.js'
 import { getSeasonDeadlines } from '@/engine/season/SeasonDeadlines'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-vue-next'
@@ -62,9 +63,9 @@ const deadlineMarkers = computed(() => {
     if (!date) return
     ;(map[date] = map[date] ?? []).push(label)
   }
-  add(d.tradeDeadline, 'Trade Deadline')
-  add(d.resignDeadline, 'Extension Deadline')
-  add(d.allStarDate, 'All-Star Selections')
+  add(d.tradeDeadline, t('Trade Deadline'))
+  add(d.resignDeadline, t('Extension Deadline'))
+  add(d.allStarDate, t('All-Star Selections'))
   return map
 })
 
@@ -328,7 +329,7 @@ const isLastMonth = computed(() => {
 
 // Month display name
 const monthDisplayName = computed(() => {
-  return currentMonth.value.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  return currentMonth.value.toLocaleDateString(dateLocale(), { month: 'long', year: 'numeric' })
 })
 
 // Click on a calendar day - open first game or do nothing
@@ -564,7 +565,7 @@ watch(focusDate, () => {
         >
           {{ userTeam.abbreviation }}
         </div>
-        <h2 class="header-text">SCHEDULE</h2>
+        <h2 class="header-text">{{ $t('SCHEDULE') }}</h2>
       </div>
       <span class="team-record">{{ teamRecord.wins }}-{{ teamRecord.losses }}</span>
     </div>
@@ -572,7 +573,7 @@ watch(focusDate, () => {
     <!-- Loading State -->
     <div v-if="loading" class="loading-container">
       <LoadingSpinner size="lg" />
-      <span>Loading schedule...</span>
+      <span>{{ $t('Loading schedule...') }}</span>
     </div>
 
     <!-- Calendar -->
@@ -587,7 +588,7 @@ watch(focusDate, () => {
         <!-- Expand/Collapse Toggle -->
         <div v-if="isViewingFocusMonth" class="expand-toggle-row">
           <button class="expand-toggle-btn" @click="toggleExpand">
-            <span>{{ isExpanded ? 'Show Next Two Weeks' : 'See Full Month' }}</span>
+            <span>{{ isExpanded ? $t('Show Next Two Weeks') : $t('See Full Month') }}</span>
             <component :is="isExpanded ? ChevronUp : ChevronDown" :size="16" />
           </button>
         </div>
@@ -600,17 +601,7 @@ watch(focusDate, () => {
               :key="index"
               :data-date="dayData.dateKey"
               class="calendar-day"
-              :class="{
-                'has-game': dayData.games.length > 0,
-                'is-today': isToday(dayData.date),
-                'game-won': dayData.games[0] && getGameResult(dayData.games[0])?.won,
-                'game-lost': dayData.games[0] && getGameResult(dayData.games[0]) && !getGameResult(dayData.games[0])?.won,
-                'game-in-progress': dayData.games[0] && isGameInProgress(dayData.games[0]),
-                'game-upcoming': dayData.games[0] && !dayData.games[0].is_complete && !isGameInProgress(dayData.games[0]),
-                'game-next': dayData.games[0] && isNextGame(dayData.games[0]) && !isGameInProgress(dayData.games[0]),
-                'game-playoff': dayData.games[0]?.is_playoff,
-                'has-deadline': !!deadlineMarkers[dayData.dateKey]
-              }"
+              :class="{ 'has-game': dayData.games.length > 0, 'is-today': isToday(dayData.date), 'game-won': dayData.games[0] && getGameResult(dayData.games[0])?.won, 'game-lost': dayData.games[0] && getGameResult(dayData.games[0]) && !getGameResult(dayData.games[0])?.won, 'game-in-progress': dayData.games[0] && isGameInProgress(dayData.games[0]), 'game-upcoming': dayData.games[0] && !dayData.games[0].is_complete && !isGameInProgress(dayData.games[0]), 'game-next': dayData.games[0] && isNextGame(dayData.games[0]) && !isGameInProgress(dayData.games[0]), 'game-playoff': dayData.games[0]?.is_playoff, 'has-deadline': !!deadlineMarkers[dayData.dateKey] }"
               @click="handleDayClick(dayData)"
             >
               <!-- Day number in corner -->
@@ -627,7 +618,7 @@ watch(focusDate, () => {
               <span
                 v-if="dayData.games[0]?.is_playoff && !dayData.games[0]?.is_complete"
                 class="playoff-badge"
-              >PO</span>
+              >{{ $t('PO') }}</span>
 
               <!-- W/L badge in upper left for completed games -->
               <span
@@ -654,7 +645,7 @@ watch(focusDate, () => {
 
                 <template v-else-if="isGameInProgress(dayData.games[0])">
                   <!-- In Progress: Live indicator with score -->
-                  <span class="live-indicator">LIVE</span>
+                  <span class="live-indicator">{{ $t('LIVE') }}</span>
                   <div class="matchup-stack">
                     <div
                       class="team-logo-badge"
@@ -696,7 +687,7 @@ watch(focusDate, () => {
             @click="prevMonth"
           >
             <ChevronLeft :size="20" />
-            <span>Prev</span>
+            <span>{{ $t('Prev') }}</span>
           </button>
 
           <button
@@ -704,7 +695,7 @@ watch(focusDate, () => {
             :disabled="isLastMonth"
             @click="nextMonth"
           >
-            <span>Next</span>
+            <span>{{ $t('Next') }}</span>
             <ChevronRight :size="20" />
           </button>
         </div>
@@ -713,7 +704,7 @@ watch(focusDate, () => {
       <!-- Sim Progress -->
       <div v-if="gameStore.backgroundSimulating" class="sim-progress-section">
         <span class="sim-progress-text">
-          Simulating league games...
+          {{ $t('Simulating league games...') }}
           <template v-if="gameStore.simulationProgress">
             {{ gameStore.simulationProgress.completed }}/{{ gameStore.simulationProgress.total }}
           </template>

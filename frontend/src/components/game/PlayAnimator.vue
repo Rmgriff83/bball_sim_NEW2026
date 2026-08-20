@@ -137,7 +137,7 @@ function handleSeek(event) {
           class="control-btn"
           :disabled="currentPossessionIndex === 0"
           @click="emit('previous-possession')"
-          title="Previous Possession"
+          :title="$t('Previous Possession')"
         >
           <SkipBack :size="20" fill="currentColor" />
         </button>
@@ -146,7 +146,7 @@ function handleSeek(event) {
         <button
           class="control-btn control-btn-primary"
           @click="emit('toggle-play-pause')"
-          :title="isPlaying ? 'Pause' : 'Play'"
+          :title="isPlaying ? $t('Pause') : $t('Play')"
         >
           <Play v-if="!isPlaying" :size="24" fill="currentColor" />
           <Pause v-else :size="24" fill="currentColor" />
@@ -156,7 +156,7 @@ function handleSeek(event) {
         <button
           class="control-btn"
           @click="emit('stop')"
-          title="Stop"
+          :title="$t('Stop')"
         >
           <Square :size="20" fill="currentColor" />
         </button>
@@ -166,7 +166,7 @@ function handleSeek(event) {
           class="control-btn"
           :disabled="currentPossessionIndex >= totalPossessions - 1"
           @click="emit('next-possession')"
-          title="Next Possession"
+          :title="$t('Next Possession')"
         >
           <SkipForward :size="20" fill="currentColor" />
         </button>
@@ -174,7 +174,7 @@ function handleSeek(event) {
 
       <!-- Speed Control -->
       <div class="speed-control">
-        <span class="speed-label">Speed:</span>
+        <span class="speed-label">{{ $t('Speed:') }}</span>
         <div class="speed-buttons">
           <button
             v-for="speed in speedOptions"

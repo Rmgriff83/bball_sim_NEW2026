@@ -145,32 +145,32 @@ function save() {
   <Teleport to="body">
     <div v-if="show && team" class="the-overlay" @click.self="requestClose">
       <div class="the-modal">
-        <h3><ScrollText :size="17" /> {{ team.name }} — Team History</h3>
+        <h3><ScrollText :size="17" /> {{ $t('{team} — Team History', { team: team.name }) }}</h3>
 
         <section class="the-section">
-          <h4>Franchise Totals</h4>
+          <h4>{{ $t('Franchise Totals') }}</h4>
           <div class="the-grid">
-            <label>Championships
+            <label>{{ $t('Championships') }}
               <input v-model.number="totals.championships" type="number" min="0" max="9999" />
             </label>
-            <label>Conference Titles
+            <label>{{ $t('Conference Titles') }}
               <input v-model.number="totals.conference_titles" type="number" min="0" max="9999" />
             </label>
-            <label>Playoff Appearances
+            <label>{{ $t('Playoff Appearances') }}
               <input v-model.number="totals.playoff_appearances" type="number" min="0" max="9999" />
             </label>
           </div>
           <div class="the-grid">
-            <label>Reg. Season W
+            <label>{{ $t('Reg. Season W') }}
               <input v-model.number="totals.regWins" type="number" min="0" />
             </label>
-            <label>Reg. Season L
+            <label>{{ $t('Reg. Season L') }}
               <input v-model.number="totals.regLosses" type="number" min="0" />
             </label>
-            <label>Playoff W
+            <label>{{ $t('Playoff W') }}
               <input v-model.number="totals.poWins" type="number" min="0" />
             </label>
-            <label>Playoff L
+            <label>{{ $t('Playoff L') }}
               <input v-model.number="totals.poLosses" type="number" min="0" />
             </label>
           </div>
@@ -178,34 +178,32 @@ function save() {
 
         <section class="the-section">
           <div class="the-seasons-head">
-            <h4>Season History</h4>
-            <button class="the-add-btn" @click="addSeason"><Plus :size="13" /> Add season</button>
+            <h4>{{ $t('Season History') }}</h4>
+            <button class="the-add-btn" @click="addSeason"><Plus :size="13" /> {{ $t('Add season') }}</button>
           </div>
-          <p v-if="!seasonRows.length" class="the-empty">No seasons recorded.</p>
+          <p v-if="!seasonRows.length" class="the-empty">{{ $t('No seasons recorded.') }}</p>
           <div v-for="(s, i) in seasonRows" :key="i" class="the-season-row">
-            <input v-model.number="s.year" type="number" min="1947" max="2200" class="the-year" title="Year" />
-            <input v-model.number="s.wins" type="number" min="0" max="82" class="the-wl" title="Wins" />
+            <input v-model.number="s.year" type="number" min="1947" max="2200" class="the-year" :title="$t('Year')" />
+            <input v-model.number="s.wins" type="number" min="0" max="82" class="the-wl" :title="$t('Wins')" />
             <span class="the-dash">-</span>
-            <input v-model.number="s.losses" type="number" min="0" max="82" class="the-wl" title="Losses" />
+            <input v-model.number="s.losses" type="number" min="0" max="82" class="the-wl" :title="$t('Losses')" />
             <select v-model="s.result" class="the-result">
-              <option v-for="o in RESULT_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+              <option v-for="o in RESULT_OPTIONS" :key="o.value" :value="o.value">{{ $tDynamic(o.label) }}</option>
             </select>
-            <button class="the-remove" title="Remove season" @click="removeSeason(i)">
+            <button class="the-remove" :title="$t('Remove season')" @click="removeSeason(i)">
               <Trash2 :size="14" />
             </button>
           </div>
           <p class="the-hint">
-            Franchise totals and season rows are stored independently — totals
-            aren't auto-summed from the seasons, matching how the game records
-            them at each season's end.
+            {{ $t("Franchise totals and season rows are stored independently — totals aren't auto-summed from the seasons, matching how the game records them at each season's end.") }}
           </p>
         </section>
 
         <div class="the-actions">
           <!-- the-cancel: token class for the global dismiss SFX. -->
-          <button class="the-secondary the-cancel" @click="requestClose">Cancel</button>
+          <button class="the-secondary the-cancel" @click="requestClose">{{ $t('Cancel') }}</button>
           <button class="the-primary" :disabled="saving" @click="save">
-            <Loader2 v-if="saving" :size="15" class="spin" /> Save History
+            <Loader2 v-if="saving" :size="15" class="spin" /> {{ $t('Save History') }}
           </button>
         </div>
       </div>
@@ -213,11 +211,11 @@ function save() {
       <!-- Unsaved-changes discard confirm -->
       <div v-if="confirmDiscard" class="the-discard-overlay">
         <div class="the-discard-box">
-          <p>Discard unsaved changes to this team's history?</p>
+          <p>{{ $t("Discard unsaved changes to this team's history?") }}</p>
           <div class="the-discard-actions">
-            <button class="the-primary" @click="confirmDiscard = false">Keep editing</button>
+            <button class="the-primary" @click="confirmDiscard = false">{{ $t('Keep editing') }}</button>
             <button class="the-secondary the-cancel the-discard-confirm" @click="confirmDiscard = false; emit('close')">
-              Discard
+              {{ $t('Discard') }}
             </button>
           </div>
         </div>

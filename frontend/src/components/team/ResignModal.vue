@@ -5,6 +5,7 @@ import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { StatBadge, LoadingSpinner } from '@/components/ui'
 import { getMotivationLabel, getArchetypeLabel } from '@/engine/ai/MotivationService'
 import { resignAsk, evaluateResignOffer } from '@/engine/ai/ResignValuationService'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: {
@@ -102,9 +103,9 @@ const retentionColor = computed(() => {
 })
 
 const retentionLabel = computed(() => {
-  if (retentionPct.value >= 70) return 'Likely to Accept'
-  if (retentionPct.value >= 40) return 'Uncertain'
-  return 'Unlikely to Accept'
+  if (retentionPct.value >= 70) return t('Likely to Accept')
+  if (retentionPct.value >= 40) return t('Uncertain')
+  return t('Unlikely to Accept')
 })
 
 function getPositionColor(position) {
@@ -160,7 +161,7 @@ function handleTryAgain() {
       <div v-if="show" class="modal-overlay" @click.self="handleClose">
         <div class="modal-container">
           <header class="modal-header">
-            <h2 class="modal-title">Re-sign Player</h2>
+            <h2 class="modal-title">{{ $t('Re-sign Player') }}</h2>
             <button
               v-if="!loading"
               class="btn-close"
@@ -174,7 +175,7 @@ function handleTryAgain() {
           <main class="modal-content">
             <div v-if="loading" class="loading-state">
               <LoadingSpinner size="lg" />
-              <p>Processing contract extension...</p>
+              <p>{{ $t('Processing contract extension...') }}</p>
             </div>
 
             <div v-else-if="player" class="resign-content">
@@ -193,18 +194,18 @@ function handleTryAgain() {
                       {{ player.position }}
                     </span>
                     <StatBadge :value="player.overallRating" size="sm" />
-                    <span class="player-age">{{ player.age }} yrs</span>
-                    <span v-if="hasMotivations" class="archetype-tag">{{ getArchetypeLabel(player) }}</span>
+                    <span class="player-age">{{ $t('{n} yrs', { n: player.age }) }}</span>
+                    <span v-if="hasMotivations" class="archetype-tag">{{ $tDynamic(getArchetypeLabel(player)) }}</span>
                   </div>
                 </div>
               </div>
 
               <!-- Motivation Bars -->
               <div v-if="hasMotivations" class="motivation-section">
-                <h4 class="section-title">Key Motivations</h4>
+                <h4 class="section-title">{{ $t('Key Motivations') }}</h4>
                 <div class="motivation-bars">
                   <div v-for="m in topMotivations" :key="m.key" class="motivation-row">
-                    <span class="motivation-label">{{ getMotivationLabel(m.key) }}</span>
+                    <span class="motivation-label">{{ $tDynamic(getMotivationLabel(m.key)) }}</span>
                     <div class="motivation-bar-track">
                       <div
                         class="motivation-bar-fill"
@@ -219,18 +220,18 @@ function handleTryAgain() {
               <!-- Market reference -->
               <div v-if="!negotiationResult && hasMotivations" class="market-ref">
                 <div class="market-ref-item">
-                  <span class="market-ref-label">Market value</span>
-                  <span class="market-ref-value">{{ formatSalary(marketValue) }}/yr</span>
+                  <span class="market-ref-label">{{ $t('Market value') }}</span>
+                  <span class="market-ref-value">{{ $t('{a}/yr', { a: formatSalary(marketValue) }) }}</span>
                 </div>
                 <div class="market-ref-item">
-                  <span class="market-ref-label">Re-signs for</span>
+                  <span class="market-ref-label">{{ $t('Re-signs for') }}</span>
                   <span class="market-ref-value">{{ formatSalary(requiredSalary) }}+</span>
                 </div>
               </div>
 
               <!-- Salary Slider -->
               <div v-if="!negotiationResult" class="salary-slider-section">
-                <h4 class="section-title">Annual Salary Offer</h4>
+                <h4 class="section-title">{{ $t('Annual Salary Offer') }}</h4>
                 <input
                   v-model.number="offeredSalary"
                   type="range"
@@ -240,12 +241,12 @@ function handleTryAgain() {
                   :step="salaryStep"
                 />
                 <div class="salary-display">
-                  <span class="salary-amount">{{ formatSalary(offeredSalary) }} / year</span>
+                  <span class="salary-amount">{{ $t('{a} / year', { a: formatSalary(offeredSalary) }) }}</span>
                   <span v-if="belowFloor" class="salary-below-floor">
-                    below his ask
+                    {{ $t('below his ask') }}
                   </span>
                   <span v-else-if="overMarket > 0" class="salary-premium">
-                    +{{ formatSalary(overMarket) }} over market
+                    {{ $t('+{a} over market', { a: formatSalary(overMarket) }) }}
                   </span>
                 </div>
               </div>
@@ -253,7 +254,7 @@ function handleTryAgain() {
               <!-- Retention -->
               <div v-if="!negotiationResult" class="retention-section">
                 <div class="retention-header">
-                  <h4 class="section-title">Re-sign Likelihood</h4>
+                  <h4 class="section-title">{{ $t('Re-sign Likelihood') }}</h4>
                   <span class="retention-label" :style="{ color: retentionColor }">{{ retentionLabel }}</span>
                 </div>
                 <div class="retention-bar-container">
@@ -267,7 +268,7 @@ function handleTryAgain() {
 
               <!-- Year Selector -->
               <div v-if="!negotiationResult" class="extension-options">
-                <h4 class="section-title">Contract Length</h4>
+                <h4 class="section-title">{{ $t('Contract Length') }}</h4>
                 <div class="years-selector">
                   <button
                     v-for="year in yearOptions"
@@ -277,7 +278,7 @@ function handleTryAgain() {
                     type="button"
                     @click="selectedYears = year"
                   >
-                    {{ year }} {{ year === 1 ? 'Yr' : 'Yrs' }}
+                    {{ year === 1 ? $t('{n} Yr', { n: year }) : $t('{n} Yrs', { n: year }) }}
                   </button>
                 </div>
               </div>
@@ -285,15 +286,15 @@ function handleTryAgain() {
               <!-- Contract Summary -->
               <div v-if="!negotiationResult" class="contract-summary">
                 <div class="summary-row">
-                  <span class="summary-label">Annual Salary:</span>
+                  <span class="summary-label">{{ $t('Annual Salary:') }}</span>
                   <span class="summary-value">{{ formatSalary(offeredSalary) }}</span>
                 </div>
                 <div class="summary-row">
-                  <span class="summary-label">Contract Length:</span>
-                  <span class="summary-value">{{ selectedYears }} {{ selectedYears === 1 ? 'year' : 'years' }}</span>
+                  <span class="summary-label">{{ $t('Contract Length:') }}</span>
+                  <span class="summary-value">{{ selectedYears === 1 ? $t('{n} year', { n: selectedYears }) : $t('{n} years', { n: selectedYears }) }}</span>
                 </div>
                 <div class="summary-row total">
-                  <span class="summary-label">Total Value:</span>
+                  <span class="summary-label">{{ $t('Total Value:') }}</span>
                   <span class="summary-value">{{ formatSalary(totalContractValue) }}</span>
                 </div>
               </div>
@@ -302,21 +303,21 @@ function handleTryAgain() {
               <div v-if="negotiationResult === 'success'" class="result-banner success">
                 <Check :size="24" />
                 <div class="result-text">
-                  <strong>Deal Accepted!</strong>
-                  <p>{{ player.firstName }} {{ player.lastName }} has agreed to a {{ selectedYears }}-year, {{ formatSalary(totalContractValue) }} contract.</p>
+                  <strong>{{ $t('Deal Accepted!') }}</strong>
+                  <p>{{ $t('{name} has agreed to a {years}-year, {value} contract.', { name: player.firstName + ' ' + player.lastName, years: selectedYears, value: formatSalary(totalContractValue) }) }}</p>
                 </div>
               </div>
 
               <div v-if="negotiationResult === 'declined'" class="result-banner declined">
                 <button class="back-to-offer" @click="handleTryAgain">
                   <ArrowLeft :size="16" />
-                  <span>Back to offer</span>
+                  <span>{{ $t('Back to offer') }}</span>
                 </button>
                 <div class="declined-body">
                   <X :size="24" />
                   <div class="result-text">
-                    <strong>Offer Declined</strong>
-                    <p>{{ player.firstName }} {{ player.lastName }} has turned down the offer — head back to adjust the terms.</p>
+                    <strong>{{ $t('Offer Declined') }}</strong>
+                    <p>{{ $t('{name} has turned down the offer — head back to adjust the terms.', { name: player.firstName + ' ' + player.lastName }) }}</p>
                   </div>
                 </div>
               </div>
@@ -325,7 +326,7 @@ function handleTryAgain() {
 
           <footer class="modal-footer">
             <button class="btn-cancel" :disabled="loading" @click="handleClose">
-              {{ negotiationResult ? 'Close' : 'Cancel' }}
+              {{ negotiationResult ? $t('Close') : $t('Cancel') }}
             </button>
             <button
               v-if="!negotiationResult"
@@ -334,7 +335,7 @@ function handleTryAgain() {
               @click="handleResign"
             >
               <Check :size="16" class="btn-icon" />
-              Offer Contract
+              {{ $t('Offer Contract') }}
             </button>
           </footer>
         </div>

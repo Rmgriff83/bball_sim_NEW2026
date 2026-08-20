@@ -2,7 +2,7 @@
   <img
     v-if="resolvedSrc && !imageError"
     :src="resolvedSrc"
-    :alt="player?.name || 'Player'"
+    :alt="player?.name || $t('Player')"
     class="player-headshot"
     :style="{ width: size + 'px', height: size + 'px' }"
     loading="lazy"

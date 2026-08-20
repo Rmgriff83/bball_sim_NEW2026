@@ -83,7 +83,7 @@ function formatStat(value) {
       >
         <div class="modal-container">
           <header class="modal-header">
-            <h2 class="modal-title">Retirements{{ season ? ` — ${season} Season` : '' }}</h2>
+            <h2 class="modal-title">{{ season ? $t('Retirements — {season} Season', { season }) : $t('Retirements') }}</h2>
             <button class="btn-close" @click="close" aria-label="Close">
               <X :size="20" />
             </button>
@@ -92,13 +92,13 @@ function formatStat(value) {
           <main class="modal-content">
             <p class="intro-blurb">
               <template v-if="totalCount === 0">
-                No players announced their retirement this offseason.
+                {{ $t('No players announced their retirement this offseason.') }}
               </template>
               <template v-else-if="totalCount === 1">
-                1 player announced their retirement this offseason.
+                {{ $t('1 player announced their retirement this offseason.') }}
               </template>
               <template v-else>
-                {{ totalCount }} players announced their retirement this offseason.
+                {{ $t('{n} players announced their retirement this offseason.', { n: totalCount }) }}
               </template>
             </p>
 
@@ -120,12 +120,12 @@ function formatStat(value) {
                       <div class="retiree-line-1">
                         <span class="retiree-name">{{ r.name }}</span>
                         <span class="retiree-pos">{{ r.position }}</span>
-                        <span class="retiree-age">Age {{ r.age }}</span>
+                        <span class="retiree-age">{{ $t('Age {n}', { n: r.age }) }}</span>
                       </div>
                       <div class="retiree-line-2">
-                        <span class="retiree-meta">{{ r.careerSeasons || 0 }} season{{ r.careerSeasons === 1 ? '' : 's' }}</span>
+                        <span class="retiree-meta">{{ r.careerSeasons === 1 ? $t('{n} season', { n: 1 }) : $t('{n} seasons', { n: r.careerSeasons || 0 }) }}</span>
                         <span class="retiree-meta-divider">·</span>
-                        <span class="retiree-meta">Career-high {{ r.careerHighOvr ?? r.overallRating ?? '—' }} OVR</span>
+                        <span class="retiree-meta">{{ $t('Career-high {n} OVR', { n: r.careerHighOvr ?? r.overallRating ?? '—' }) }}</span>
                         <template v-if="r.lastSeasonStats && (r.lastSeasonStats.ppg || r.lastSeasonStats.rpg || r.lastSeasonStats.apg)">
                           <span class="retiree-meta-divider">·</span>
                           <span class="retiree-meta">
@@ -138,10 +138,10 @@ function formatStat(value) {
                     <button
                       v-if="!isUnretired(r)"
                       class="unretire-btn"
-                      title="Override this retirement — the player returns to their team if under contract, otherwise to the free-agent pool"
+                      :title="$t('Override this retirement — the player returns to their team if under contract, otherwise to the free-agent pool')"
                       @click="emit('unretire', r)"
-                    >Un-retire</button>
-                    <span v-else class="unretired-tag">Returning ✓</span>
+                    >{{ $t('Un-retire') }}</button>
+                    <span v-else class="unretired-tag">{{ $t('Returning ✓') }}</span>
                   </li>
                 </ul>
               </div>
@@ -150,11 +150,9 @@ function formatStat(value) {
 
           <footer class="modal-footer">
             <p class="unretire-hint">
-              Un-retired players return to their team if they have contract
-              years remaining (otherwise to the free-agent pool) and may
-              retire again next season.
+              {{ $t('Un-retired players return to their team if they have contract years remaining (otherwise to the free-agent pool) and may retire again next season.') }}
             </p>
-            <button class="btn-confirm" @click="close">Continue</button>
+            <button class="btn-confirm" @click="close">{{ $t('Continue') }}</button>
           </footer>
         </div>
       </div>

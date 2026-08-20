@@ -9,6 +9,7 @@ import { ScrollText, Pencil, Ticket } from 'lucide-vue-next'
 import TeamLogo from '@/components/common/TeamLogo.vue'
 import OwnerQuickInfo from '@/components/team/OwnerQuickInfo.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
+import { t, tDynamic } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   team: { type: Object, default: null },
@@ -25,6 +26,11 @@ const emit = defineEmits(['edit-history', 'edit-identity', 'edit-draft-picks'])
 
 const overall = computed(() => computeTeamOverall(props.roster))
 
+// Tooltip for the team-overall bubble (computed so it re-renders on locale change).
+const ovrTitle = computed(() => overall.value == null
+  ? t("Add rated players to compute this team's overall")
+  : t('Current team overall'))
+
 const payrollM = computed(() =>
   props.payroll == null ? null : (props.payroll / 1_000_000).toFixed(1))
 const capM = computed(() =>
@@ -36,11 +42,11 @@ const capTier = computed(() => {
   return 'over'
 })
 const capTitle = computed(() => ({
-  ok: 'Payroll is under the salary cap',
-  warn: 'Payroll is over the cap but under the luxury tax',
+  ok: t('Payroll is under the salary cap'),
+  warn: t('Payroll is over the cap but under the luxury tax'),
   over: props.luxuryTax != null
-    ? 'Payroll is over the luxury tax'
-    : 'Payroll is over the salary cap',
+    ? t('Payroll is over the luxury tax')
+    : t('Payroll is over the salary cap'),
 }[capTier.value]))
 
 const franchise = computed(() => props.team?.franchise_history ?? null)
@@ -86,10 +92,10 @@ const PLAYOFF_RESULT_LABELS = {
 
 function seasonResult(entry) {
   if (!entry) return '—'
-  if (entry.champion) return 'Champion'
-  if (entry.playoffResult) return PLAYOFF_RESULT_LABELS[entry.playoffResult] ?? entry.playoffResult
-  if (entry.playoffSeed) return `Playoffs · #${entry.playoffSeed} seed`
-  return 'Missed playoffs'
+  if (entry.champion) return t('Champion')
+  if (entry.playoffResult) return tDynamic(PLAYOFF_RESULT_LABELS[entry.playoffResult] ?? entry.playoffResult)
+  if (entry.playoffSeed) return t('Playoffs · #{seed} seed', { seed: entry.playoffSeed })
+  return t('Missed playoffs')
 }
 </script>
 
@@ -111,7 +117,7 @@ function seasonResult(entry) {
             <button
               class="rth-rename-btn"
               type="button"
-              title="Rename this team"
+              :title="$t('Rename this team')"
               @click="emit('edit-identity')"
             >
               <Pencil :size="13" />
@@ -123,7 +129,7 @@ function seasonResult(entry) {
       <div class="rth-right">
         <div
           class="rth-ovr"
-          :title="overall == null ? 'Add rated players to compute this team\'s overall' : 'Current team overall'"
+          :title="ovrTitle"
         >
           <span class="rth-ovr-num">{{ overall ?? '?' }}</span>
           <span class="rth-ovr-label">OVR</span>
@@ -146,36 +152,36 @@ function seasonResult(entry) {
       <OwnerQuickInfo :team-abbreviation="team.abbreviation" />
     </div>
 
-    <div class="rth-facilities" title="Facility levels (upgraded in-game with tokens)">
-      <span class="rth-fac-label">Facilities</span>
+    <div class="rth-facilities" :title="$t('Facility levels (upgraded in-game with tokens)')">
+      <span class="rth-fac-label">{{ $t('Facilities') }}</span>
       <span v-for="f in facilities" :key="f.key" class="rth-fac">
-        {{ f.label }} <strong>{{ f.level }}</strong>
+        {{ $tDynamic(f.label) }} <strong>{{ f.level }}</strong>
       </span>
     </div>
 
     <div class="rth-history">
       <div class="rth-history-head" data-tour="rse-history-picks">
-        <span class="rth-history-title"><ScrollText :size="13" /> Team History</span>
+        <span class="rth-history-title"><ScrollText :size="13" /> {{ $t('Team History') }}</span>
         <button class="rth-edit-btn" @click="emit('edit-draft-picks')">
-          <Ticket :size="12" /> Draft Picks
+          <Ticket :size="12" /> {{ $t('Draft Picks') }}
         </button>
         <button class="rth-edit-btn" @click="emit('edit-history')">
-          <Pencil :size="12" /> Edit History
+          <Pencil :size="12" /> {{ $t('Edit History') }}
         </button>
       </div>
 
-      <p v-if="!hasHistory" class="rth-empty">No completed seasons yet.</p>
+      <p v-if="!hasHistory" class="rth-empty">{{ $t('No completed seasons yet.') }}</p>
 
       <template v-else>
         <div v-if="franchise" class="rth-totals">
-          <span class="rth-stat rth-stat-champ">🏆 {{ franchise.championships ?? 0 }} Championships</span>
-          <span class="rth-stat">{{ franchise.conference_titles ?? 0 }} Conf. Titles</span>
+          <span class="rth-stat rth-stat-champ">{{ $t('🏆 {n} Championships', { n: franchise.championships ?? 0 }) }}</span>
+          <span class="rth-stat">{{ $t('{n} Conf. Titles', { n: franchise.conference_titles ?? 0 }) }}</span>
           <span class="rth-stat">
-            Reg. {{ franchise.regular_season?.wins ?? 0 }}-{{ franchise.regular_season?.losses ?? 0 }}
+            {{ $t('Reg. {w}-{l}', { w: franchise.regular_season?.wins ?? 0, l: franchise.regular_season?.losses ?? 0 }) }}
             <em v-if="pct(franchise.regular_season) != null">({{ pct(franchise.regular_season) }}%)</em>
           </span>
           <span class="rth-stat">
-            Playoffs {{ franchise.playoffs?.wins ?? 0 }}-{{ franchise.playoffs?.losses ?? 0 }}
+            {{ $t('Playoffs {w}-{l}', { w: franchise.playoffs?.wins ?? 0, l: franchise.playoffs?.losses ?? 0 }) }}
             <em v-if="pct(franchise.playoffs) != null">({{ pct(franchise.playoffs) }}%)</em>
           </span>
         </div>

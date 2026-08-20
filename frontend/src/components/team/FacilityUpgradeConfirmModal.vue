@@ -56,7 +56,7 @@ onUnmounted(() => {
       <div v-if="show" class="modal-overlay" @click.self="close">
         <div class="modal-container">
           <header class="modal-header">
-            <h2 class="modal-title">Upgrade {{ facilityName }}</h2>
+            <h2 class="modal-title">{{ $t('Upgrade {name}', { name: $tDynamic(facilityName) }) }}</h2>
             <button
               v-if="!loading"
               class="btn-close"
@@ -73,35 +73,34 @@ onUnmounted(() => {
             </div>
 
             <p class="facility-blurb">
-              Spend <strong>{{ cost.toLocaleString() }} tokens</strong> to upgrade
-              <strong>{{ facilityName }}</strong> to <strong>Level {{ nextLevel }}</strong>?
+              {{ $t('Spend {cost} tokens to upgrade {name} to Level {level}?', { cost: cost.toLocaleString(), name: $tDynamic(facilityName), level: nextLevel }) }}
             </p>
 
             <div class="facility-stats">
               <div class="facility-stat">
                 <span class="stat-label">
                   <Coins :size="13" />
-                  Cost
+                  {{ $t('Cost') }}
                 </span>
-                <span class="stat-value cost">{{ cost.toLocaleString() }} tokens</span>
+                <span class="stat-value cost">{{ $t('{n} tokens', { n: cost.toLocaleString() }) }}</span>
               </div>
               <div class="facility-stat">
                 <span class="stat-label">
                   <Coins :size="13" />
-                  Your Balance
+                  {{ $t('Your Balance') }}
                 </span>
                 <div class="balance-cell">
                   <span class="stat-value" :class="{ negative: cannotAfford }">
-                    {{ userTokens.toLocaleString() }} tokens
+                    {{ $t('{n} tokens', { n: userTokens.toLocaleString() }) }}
                   </span>
                   <button
                     type="button"
                     class="buy-tokens-btn"
-                    title="Buy more tokens in the Store"
+                    :title="$t('Buy more tokens in the Store')"
                     @click="goToStore"
                   >
                     <Plus :size="14" />
-                    <span>Buy</span>
+                    <span>{{ $t('Buy') }}</span>
                   </button>
                 </div>
               </div>
@@ -109,13 +108,13 @@ onUnmounted(() => {
 
             <div v-if="cannotAfford" class="facility-warn">
               <AlertTriangle :size="14" />
-              <span>Not enough tokens to upgrade this facility.</span>
+              <span>{{ $t('Not enough tokens to upgrade this facility.') }}</span>
             </div>
           </main>
 
           <footer class="modal-footer">
             <button class="btn-cancel" :disabled="loading" @click="close">
-              Cancel
+              {{ $t('Cancel') }}
             </button>
             <button
               class="btn-confirm"
@@ -124,7 +123,7 @@ onUnmounted(() => {
             >
               <span v-if="loading" class="btn-spinner"></span>
               <Coins v-else :size="14" />
-              <span>{{ loading ? 'Upgrading…' : 'Confirm Upgrade' }}</span>
+              <span>{{ loading ? $t('Upgrading…') : $t('Confirm Upgrade') }}</span>
             </button>
           </footer>
         </div>

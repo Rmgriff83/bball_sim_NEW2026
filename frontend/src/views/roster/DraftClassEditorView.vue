@@ -16,6 +16,7 @@ import {
   ClipboardList, Download,
 } from 'lucide-vue-next'
 import api from '@/composables/useApi'
+import { t } from '@wl-i18n/i18n.js'
 import { fetchBuildBlob } from '@/composables/useBuildBlob'
 import { useCommunityLink } from '@/composables/useCommunityLink'
 import { listDraftClassWorkshopSources, buildWorkshopClassBlob } from '@/engine/campaign/WorkshopService'
@@ -145,14 +146,14 @@ async function saveWithFeedback(op, successMsg) {
     return true
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Save failed — please try again')
+    toast.showError(err?.message || t('Save failed — please try again'))
     return false
   }
 }
 
 function saveDirtyWithFeedback() {
   const n = dirtyIds.value.size
-  return saveWithFeedback(() => store.saveDirty(), `Saved ${n} prospect${n === 1 ? '' : 's'}`)
+  return saveWithFeedback(() => store.saveDirty(), n === 1 ? t('Saved {n} prospect', { n }) : t('Saved {n} prospects', { n }))
 }
 
 // --- Dirty guards ------------------------------------------------------------
@@ -202,7 +203,7 @@ function onRowSelect(p) {
 }
 
 async function onPlayerSaved(p) {
-  const ok = await saveWithFeedback(() => store.savePlayer(p), 'Prospect saved')
+  const ok = await saveWithFeedback(() => store.savePlayer(p), t('Prospect saved'))
   if (ok) editingPlayer.value = null
 }
 
@@ -265,11 +266,11 @@ async function pickStart(mode) {
     await store.chooseStart(mode)
     audio.affirm()
     if (mode === 'generated') {
-      toast.showSuccess(`Generated a fresh ${targetDraftYear.value} class`)
+      toast.showSuccess(t('Generated a fresh {year} class', { year: targetDraftYear.value }))
     }
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Could not start the class — please try again')
+    toast.showError(err?.message || t('Could not start the class — please try again'))
   } finally {
     startBusy.value = false
   }
@@ -291,13 +292,13 @@ async function pickDownloaded() {
     await store.chooseStart('downloaded')
     // showAchievement plays the affirmation sound itself.
     toast.showAchievement({
-      header: 'Class Applied',
-      label: picked?.title ?? 'Imported Class',
-      subtitle: 'Tweak any prospect you like — it saves to this Builder project.',
+      header: t('Class Applied'),
+      label: picked?.title ?? t('Imported Class'),
+      subtitle: t('Tweak any prospect you like — it saves to this Builder project.'),
     })
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Failed to apply the imported class')
+    toast.showError(err?.message || t('Failed to apply the imported class'))
   } finally {
     startBusy.value = false
   }
@@ -328,10 +329,10 @@ async function confirmRegenerate() {
     await store.regenerate()
     showRegenerate.value = false
     audio.affirm()
-    toast.showSuccess('Rolled a fresh class')
+    toast.showSuccess(t('Rolled a fresh class'))
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Regeneration failed — please try again')
+    toast.showError(err?.message || t('Regeneration failed — please try again'))
   } finally {
     regenerating.value = false
   }
@@ -346,11 +347,11 @@ async function fillRemaining() {
   try {
     const n = await store.fillToMinimum()
     audio.affirm()
-    toast.showSuccess(`Generated ${n} prospect${n === 1 ? '' : 's'}`)
+    toast.showSuccess(n === 1 ? t('Generated {n} prospect', { n }) : t('Generated {n} prospects', { n }))
     finishProblems.value = store.validate()
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Generation failed — please try again')
+    toast.showError(err?.message || t('Generation failed — please try again'))
   } finally {
     filling.value = false
   }
@@ -394,60 +395,60 @@ async function acceptFinish() {
     <header class="dce-header">
       <div class="dce-header-left">
         <button class="dce-back" @click="goBack">
-          <ArrowLeft :size="18" /> {{ isWorkshop ? 'Builder' : 'Campaign' }}
+          <ArrowLeft :size="18" /> {{ isWorkshop ? $t('Builder') : $t('Campaign') }}
         </button>
-        <h1 class="dce-title">Rookie Class <span v-if="targetDraftYear">{{ targetDraftYear }}</span></h1>
+        <h1 class="dce-title">{{ $t('Rookie Class') }} <span v-if="targetDraftYear">{{ targetDraftYear }}</span></h1>
       </div>
       <div v-if="!showStartChooser" class="dce-header-actions">
         <button v-if="isDirty" class="dce-save-btn" :disabled="saving" @click="saveDirtyWithFeedback">
           <Loader2 v-if="saving" :size="15" class="spin" />
           <Save v-else :size="15" />
-          Save Changes ({{ dirtyIds.size }})
+          {{ $t('Save Changes ({n})', { n: dirtyIds.size }) }}
         </button>
         <button class="dce-finish-btn" :disabled="saving" @click="openFinish">
           <Check :size="16" />
-          {{ isWorkshop ? 'Done' : 'Use This Class' }}
+          {{ isWorkshop ? $t('Done') : $t('Use This Class') }}
         </button>
       </div>
     </header>
 
-    <div v-if="loading" class="dce-loading"><Loader2 :size="28" class="spin" /> Loading class…</div>
+    <div v-if="loading" class="dce-loading"><Loader2 :size="28" class="spin" /> {{ $t('Loading class…') }}</div>
     <div v-else-if="error" class="dce-error">{{ error }}</div>
 
     <!-- Start choice (workshop only, until the first-start mode is picked) -->
     <section v-else-if="showStartChooser" class="dce-start">
-      <h2>How do you want to build your class?</h2>
-      <p class="dce-start-sub">You can tweak every prospect either way — this just sets your starting point.</p>
+      <h2>{{ $t('How do you want to build your class?') }}</h2>
+      <p class="dce-start-sub">{{ $t('You can tweak every prospect either way — this just sets your starting point.') }}</p>
       <div class="dce-start-grid">
         <button class="dce-start-card" :disabled="startBusy" @click="pickStart('generated')">
           <Loader2 v-if="startBusy" :size="28" class="spin" />
           <Sparkles v-else :size="28" />
-          <span class="dce-start-name">Start from Generated</span>
-          <span class="dce-start-desc">A full {{ targetDraftYear }} class is rolled for you. Adjust any prospect you like.</span>
+          <span class="dce-start-name">{{ $t('Start from Generated') }}</span>
+          <span class="dce-start-desc">{{ $t('A full {year} class is rolled for you. Adjust any prospect you like.', { year: targetDraftYear }) }}</span>
         </button>
         <button class="dce-start-card" :disabled="startBusy" @click="pickStart('scratch')">
           <ClipboardList :size="28" />
-          <span class="dce-start-name">Start from Scratch</span>
-          <span class="dce-start-desc">An empty class. Add every prospect yourself — it needs {{ MIN_CLASS_SIZE }} to publish.</span>
+          <span class="dce-start-name">{{ $t('Start from Scratch') }}</span>
+          <span class="dce-start-desc">{{ $t('An empty class. Add every prospect yourself — it needs {n} to publish.', { n: MIN_CLASS_SIZE }) }}</span>
         </button>
         <div v-if="importSources.length" class="dce-start-card dce-start-downloaded">
           <Download :size="28" />
-          <span class="dce-start-name">Imports</span>
-          <span class="dce-start-desc">Start from another Builder project or a class imported from the Community board — tweak anything after.</span>
+          <span class="dce-start-name">{{ $t('Imports') }}</span>
+          <span class="dce-start-desc">{{ $t('Start from another Builder project or a class imported from the Community board — tweak anything after.') }}</span>
           <select v-model="selectedSourceId" class="dce-build-select" @click.stop>
             <option v-for="b in importSources" :key="b.id" :value="b.id">
-              {{ b.title }}{{ b._workshopId ? ` — Builder project (${b.prospectCount})` : (b.author ? ` — ${b.author}` : '') }}
+              {{ b.title }}{{ b._workshopId ? $t(' — Builder project ({n})', { n: b.prospectCount }) : (b.author ? ` — ${b.author}` : '') }}
             </option>
           </select>
           <button class="dce-modal-primary" :disabled="startBusy" @click.stop="pickDownloaded">
             <Loader2 v-if="startBusy" :size="15" class="spin" />
-            Use This Class
+            {{ $t('Use This Class') }}
           </button>
         </div>
       </div>
       <p class="dce-start-note">
-        Looking for community classes?
-        <button class="dce-link" @click="openCommunity">Browse the Community board →</button>
+        {{ $t('Looking for community classes?') }}
+        <button class="dce-link" @click="openCommunity">{{ $t('Browse the Community board →') }}</button>
       </p>
     </section>
 
@@ -464,24 +465,22 @@ async function acceptFinish() {
       />
       <div v-else class="dce-summary">
         <div class="dce-count" :class="{ short: prospects.length < MIN_CLASS_SIZE }">
-          {{ prospects.length }} prospects
-          <em>(draft needs {{ MIN_CLASS_SIZE }}, max {{ MAX_CLASS_SIZE }})</em>
+          {{ $t('{n} prospects', { n: prospects.length }) }}
+          <em>{{ $t('(draft needs {min}, max {max})', { min: MIN_CLASS_SIZE, max: MAX_CLASS_SIZE }) }}</em>
         </div>
         <button class="dce-regen-btn" :disabled="regenerating" @click="showRegenerate = true">
-          <RefreshCw :size="14" /> Reroll Class
+          <RefreshCw :size="14" /> {{ $t('Reroll Class') }}
         </button>
       </div>
 
       <div class="dce-toolbar">
         <div class="dce-mode-toggle">
-          <button class="dce-mode" :class="{ active: tableMode === 'current' }" @click="tableMode = 'current'">Overall</button>
-          <button class="dce-mode ceiling" :class="{ active: tableMode === 'ceiling' }" @click="tableMode = 'ceiling'">Potential</button>
+          <button class="dce-mode" :class="{ active: tableMode === 'current' }" @click="tableMode = 'current'">{{ $t('Overall') }}</button>
+          <button class="dce-mode ceiling" :class="{ active: tableMode === 'ceiling' }" @click="tableMode = 'ceiling'">{{ $t('Potential') }}</button>
         </div>
         <PositionFilterBar v-model="posSort" />
         <span class="dce-toolbar-hint">
-          {{ tableMode === 'ceiling'
-            ? 'Editing growth ceilings — the max each attribute can develop to.'
-            : 'Tap a row to select it, then use the chevrons to adjust attributes.' }}
+          {{ tableMode === 'ceiling' ? $t('Editing growth ceilings — the max each attribute can develop to.') : $t('Tap a row to select it, then use the chevrons to adjust attributes.') }}
         </span>
       </div>
 
@@ -497,7 +496,7 @@ async function acceptFinish() {
 
       <div class="dce-add-row">
         <button class="dce-add-btn" @click="showAddProspect = true">
-          <Plus :size="16" /> Add Prospect
+          <Plus :size="16" /> {{ $t('Add Prospect') }}
           <em class="dce-add-count">({{ prospects.length }}/{{ MAX_CLASS_SIZE }})</em>
         </button>
         <button
@@ -508,7 +507,7 @@ async function acceptFinish() {
         >
           <Loader2 v-if="filling" :size="16" class="spin" />
           <Sparkles v-else :size="16" />
-          Generate remaining ({{ MIN_CLASS_SIZE - prospects.length }})
+          {{ $t('Generate remaining ({n})', { n: MIN_CLASS_SIZE - prospects.length }) }}
         </button>
       </div>
     </section>
@@ -516,15 +515,13 @@ async function acceptFinish() {
     <!-- Remove confirm -->
     <div v-if="pendingRemovePlayer" class="dce-modal-overlay">
       <div class="dce-modal">
-        <h3><AlertTriangle :size="18" /> Remove prospect</h3>
+        <h3><AlertTriangle :size="18" /> {{ $t('Remove prospect') }}</h3>
         <p>
-          Remove
-          <strong>{{ pendingRemovePlayer.name ?? ((pendingRemovePlayer.firstName ?? '') + ' ' + (pendingRemovePlayer.lastName ?? '')) }}</strong>
-          from the class? This can't be undone.
+          {{ $t("Remove {name} from the class? This can't be undone.", { name: pendingRemovePlayer.name ?? ((pendingRemovePlayer.firstName ?? '') + ' ' + (pendingRemovePlayer.lastName ?? '')) }) }}
         </p>
         <div class="dce-modal-actions">
-          <button class="dce-modal-secondary" @click="pendingRemovePlayer = null">Cancel</button>
-          <button class="dce-modal-primary" @click="confirmRemovePlayer">Remove</button>
+          <button class="dce-modal-secondary" @click="pendingRemovePlayer = null">{{ $t('Cancel') }}</button>
+          <button class="dce-modal-primary" @click="confirmRemovePlayer">{{ $t('Remove') }}</button>
         </div>
       </div>
     </div>
@@ -532,15 +529,14 @@ async function acceptFinish() {
     <!-- Regenerate confirm -->
     <div v-if="showRegenerate" class="dce-modal-overlay">
       <div class="dce-modal">
-        <h3><AlertTriangle :size="18" /> Reroll the class?</h3>
+        <h3><AlertTriangle :size="18" /> {{ $t('Reroll the class?') }}</h3>
         <p>
-          This replaces every prospect (including your edits) with a freshly
-          generated {{ targetDraftYear }} class. This can't be undone.
+          {{ $t("This replaces every prospect (including your edits) with a freshly generated {year} class. This can't be undone.", { year: targetDraftYear }) }}
         </p>
         <div class="dce-modal-actions">
-          <button class="dce-modal-secondary" @click="showRegenerate = false">Cancel</button>
+          <button class="dce-modal-secondary" @click="showRegenerate = false">{{ $t('Cancel') }}</button>
           <button class="dce-modal-primary" :disabled="regenerating" @click="confirmRegenerate">
-            <Loader2 v-if="regenerating" :size="16" class="spin" /> Reroll
+            <Loader2 v-if="regenerating" :size="16" class="spin" /> {{ $t('Reroll') }}
           </button>
         </div>
       </div>
@@ -549,12 +545,12 @@ async function acceptFinish() {
     <!-- Unsaved-changes guard -->
     <div v-if="pendingGuardAction" class="dce-modal-overlay">
       <div class="dce-modal">
-        <h3><AlertTriangle :size="18" /> Unsaved changes</h3>
-        <p>You have {{ dirtyIds.size }} prospect{{ dirtyIds.size === 1 ? '' : 's' }} with unsaved edits.</p>
+        <h3><AlertTriangle :size="18" /> {{ $t('Unsaved changes') }}</h3>
+        <p>{{ dirtyIds.size === 1 ? $t('You have {n} prospect with unsaved edits.', { n: dirtyIds.size }) : $t('You have {n} prospects with unsaved edits.', { n: dirtyIds.size }) }}</p>
         <div class="dce-modal-actions">
-          <button class="dce-modal-secondary" @click="guardDiscard">Discard</button>
+          <button class="dce-modal-secondary" @click="guardDiscard">{{ $t('Discard') }}</button>
           <button class="dce-modal-primary" :disabled="saving" @click="guardSave">
-            <Loader2 v-if="saving" :size="16" class="spin" /> Save
+            <Loader2 v-if="saving" :size="16" class="spin" /> {{ $t('Save') }}
           </button>
         </div>
       </div>
@@ -563,21 +559,21 @@ async function acceptFinish() {
     <!-- Add prospect -->
     <div v-if="showAddProspect" class="dce-modal-overlay">
       <div class="dce-modal">
-        <h3><Plus :size="18" /> New Prospect</h3>
+        <h3><Plus :size="18" /> {{ $t('New Prospect') }}</h3>
         <label class="dce-add-field">
-          <span>Prospect tier</span>
+          <span>{{ $t('Prospect tier') }}</span>
           <select v-model="addTier" class="dce-add-select">
-            <option v-for="t in ADD_TIERS" :key="t.key" :value="t.key">{{ t.label }}</option>
+            <option v-for="t in ADD_TIERS" :key="t.key" :value="t.key">{{ $tDynamic(t.label) }}</option>
           </select>
         </label>
         <p class="dce-note">
-          Generates a prospect in the tier's rating band — then tweak everything.
+          {{ $t("Generates a prospect in the tier's rating band — then tweak everything.") }}
         </p>
         <div class="dce-modal-actions">
-          <button class="dce-modal-secondary" @click="showAddProspect = false">Cancel</button>
+          <button class="dce-modal-secondary" @click="showAddProspect = false">{{ $t('Cancel') }}</button>
           <button class="dce-modal-primary" :disabled="addingProspect" @click="confirmAddProspect">
             <Loader2 v-if="addingProspect" :size="16" class="spin" />
-            Create Prospect
+            {{ $t('Create Prospect') }}
           </button>
         </div>
       </div>
@@ -587,12 +583,12 @@ async function acceptFinish() {
     <div v-if="showFinish" class="dce-modal-overlay">
       <div class="dce-modal">
         <template v-if="finishProblems.length">
-          <h3><AlertTriangle :size="18" /> Not ready yet</h3>
+          <h3><AlertTriangle :size="18" /> {{ $t('Not ready yet') }}</h3>
           <ul class="dce-problems">
             <li v-for="(prob, i) in finishProblems" :key="i">{{ prob }}</li>
           </ul>
           <div class="dce-modal-actions">
-            <button class="dce-modal-secondary" @click="showFinish = false">Keep editing</button>
+            <button class="dce-modal-secondary" @click="showFinish = false">{{ $t('Keep editing') }}</button>
             <button
               v-if="prospects.length < MIN_CLASS_SIZE"
               class="dce-modal-primary"
@@ -601,25 +597,23 @@ async function acceptFinish() {
             >
               <Loader2 v-if="filling" :size="16" class="spin" />
               <Sparkles v-else :size="16" />
-              Generate the rest
+              {{ $t('Generate the rest') }}
             </button>
           </div>
         </template>
         <template v-else>
-          <h3><Check :size="18" /> {{ isWorkshop ? 'Done editing?' : 'Use this class?' }}</h3>
+          <h3><Check :size="18" /> {{ isWorkshop ? $t('Done editing?') : $t('Use this class?') }}</h3>
           <p v-if="isWorkshop">
-            Your class is saved to this Builder project — come back and keep
-            tweaking anytime, or publish it from the Community board.
+            {{ $t('Your class is saved to this Builder project — come back and keep tweaking anytime, or publish it from the Community board.') }}
           </p>
           <p v-else>
-            This locks in the {{ targetDraftYear }} class for this season's
-            scouting board and draft.
+            {{ $t("This locks in the {year} class for this season's scouting board and draft.", { year: targetDraftYear }) }}
           </p>
           <div class="dce-modal-actions">
-            <button class="dce-modal-secondary" @click="showFinish = false">Not yet</button>
+            <button class="dce-modal-secondary" @click="showFinish = false">{{ $t('Not yet') }}</button>
             <button class="dce-modal-primary" :disabled="saving" @click="acceptFinish">
               <Loader2 v-if="saving" :size="16" class="spin" />
-              {{ isWorkshop ? 'Done' : 'Lock It In' }}
+              {{ isWorkshop ? $t('Done') : $t('Lock It In') }}
             </button>
           </div>
         </template>

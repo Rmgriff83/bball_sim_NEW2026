@@ -7,6 +7,7 @@ import { useFreeAgentInterest } from '@/composables/useFreeAgentInterest'
 import { playerMarketValue } from '@/engine/ai/ResignValuationService'
 import { veteranMinSalary, maxSalary, capNumbersFor } from '@/engine/data/salaryScale'
 import { useCampaignStore } from '@/stores/campaign'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: {
@@ -160,8 +161,8 @@ function handleWithdraw() {
 }
 
 const totalContractValue = computed(() => proposedSalary.value * offerYears.value)
-const modalTitle = computed(() => props.mode === 'offer' ? (isUpdate.value ? 'Update Offer' : 'Make Offer') : 'Sign Free Agent')
-const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? 'Update Offer' : 'Submit Offer') : 'Sign Player')
+const modalTitle = computed(() => props.mode === 'offer' ? (isUpdate.value ? t('Update Offer') : t('Make Offer')) : t('Sign Free Agent'))
+const confirmLabel = computed(() => props.mode === 'offer' ? (isUpdate.value ? t('Update Offer') : t('Submit Offer')) : t('Sign Player'))
 
 // Live "how does the player feel about your offer right now" meter. Reactive
 // to the salary/year sliders so the user can see their offer cross thresholds
@@ -199,7 +200,7 @@ const interestLevel = computed(() =>
           <main class="modal-content">
     <div v-if="loading" class="loading-state">
       <LoadingSpinner size="lg" />
-      <p>{{ mode === 'offer' ? 'Submitting offer...' : 'Processing signing...' }}</p>
+      <p>{{ mode === 'offer' ? $t('Submitting offer...') : $t('Processing signing...') }}</p>
     </div>
 
     <div v-else-if="player" class="sign-content">
@@ -225,37 +226,37 @@ const interestLevel = computed(() =>
               {{ player.secondaryPosition }}
             </span>
             <StatBadge :value="player.overallRating" size="sm" />
-            <span class="player-age">{{ player.age }} yrs</span>
+            <span class="player-age">{{ $t('{n} yrs', { n: player.age }) }}</span>
           </div>
         </div>
       </div>
 
       <!-- Player Attributes -->
       <div class="attributes-section">
-        <h4>Player Attributes</h4>
+        <h4>{{ $t('Player Attributes') }}</h4>
         <div class="attributes-grid">
           <div class="attr-item">
-            <span class="attr-label">Shooting</span>
+            <span class="attr-label">{{ $t('Shooting') }}</span>
             <span class="attr-value">{{ player.shooting || '—' }}</span>
           </div>
           <div class="attr-item">
-            <span class="attr-label">Playmaking</span>
+            <span class="attr-label">{{ $t('Playmaking') }}</span>
             <span class="attr-value">{{ player.playmaking || '—' }}</span>
           </div>
           <div class="attr-item">
-            <span class="attr-label">Defense</span>
+            <span class="attr-label">{{ $t('Defense') }}</span>
             <span class="attr-value">{{ player.defense || '—' }}</span>
           </div>
           <div class="attr-item">
-            <span class="attr-label">Athleticism</span>
+            <span class="attr-label">{{ $t('Athleticism') }}</span>
             <span class="attr-value">{{ player.athleticism || '—' }}</span>
           </div>
           <div class="attr-item">
-            <span class="attr-label">Rebounding</span>
+            <span class="attr-label">{{ $t('Rebounding') }}</span>
             <span class="attr-value">{{ player.rebounding || '—' }}</span>
           </div>
           <div class="attr-item">
-            <span class="attr-label">IQ</span>
+            <span class="attr-label">{{ $t('IQ') }}</span>
             <span class="attr-value">{{ player.basketballIQ || '—' }}</span>
           </div>
         </div>
@@ -264,9 +265,9 @@ const interestLevel = computed(() =>
       <!-- Offer mode: market context -->
       <div v-if="mode === 'offer'" class="market-context">
         <Briefcase :size="16" />
-        <span v-if="competingOfferCount === 0">No other teams have made offers yet.</span>
-        <span v-else-if="competingOfferCount === 1">1 other team has made an offer.</span>
-        <span v-else>{{ competingOfferCount }} other teams have made offers.</span>
+        <span v-if="competingOfferCount === 0">{{ $t('No other teams have made offers yet.') }}</span>
+        <span v-else-if="competingOfferCount === 1">{{ $t('1 other team has made an offer.') }}</span>
+        <span v-else>{{ $t('{n} other teams have made offers.', { n: competingOfferCount }) }}</span>
       </div>
 
       <!-- How the player currently feels about THIS offer. Updates live as the
@@ -278,30 +279,30 @@ const interestLevel = computed(() =>
       >
         <div class="interest-header">
           <Heart :size="14" class="interest-icon" />
-          <span class="interest-eyebrow">Player Interest</span>
-          <span class="interest-label">{{ interestLevel.label }}</span>
+          <span class="interest-eyebrow">{{ $t('Player Interest') }}</span>
+          <span class="interest-label">{{ $tDynamic(interestLevel.label) }}</span>
           <span class="interest-score">{{ interestScore }}/100</span>
         </div>
         <div class="interest-bar">
           <div class="interest-bar-fill" :style="{ width: interestScore + '%' }"></div>
-          <div class="interest-bar-threshold" title="Minimum needed to sign"></div>
+          <div class="interest-bar-threshold" :title="$t('Minimum needed to sign')"></div>
         </div>
-        <p class="interest-hint">{{ interestLevel.hint }}</p>
+        <p class="interest-hint">{{ $tDynamic(interestLevel.hint) }}</p>
       </div>
 
       <!-- Salary + years controls (both modes) -->
       <div class="offer-controls">
         <div class="offer-controls-head">
-          <h4>Your Offer</h4>
-          <span v-if="isMinimumDeal" class="min-deal-badge" title="Minimum-salary contract — allowed even over the cap">
-            Minimum deal · cap-exempt
+          <h4>{{ $t('Your Offer') }}</h4>
+          <span v-if="isMinimumDeal" class="min-deal-badge" :title="$t('Minimum-salary contract — allowed even over the cap')">
+            {{ $t('Minimum deal · cap-exempt') }}
           </span>
         </div>
 
         <div class="control-row">
           <div class="control-label">
             <DollarSign :size="16" />
-            <span>Annual Salary</span>
+            <span>{{ $t('Annual Salary') }}</span>
           </div>
           <div class="control-value">{{ formatSalary(offerSalary) }}</div>
         </div>
@@ -315,14 +316,14 @@ const interestLevel = computed(() =>
         />
         <div class="slider-labels">
           <span>{{ formatSalary(salaryMin) }}</span>
-          <span class="expected">Market: {{ formatSalary(expectedSalary) }}</span>
+          <span class="expected">{{ $t('Market: {a}', { a: formatSalary(expectedSalary) }) }}</span>
           <span>{{ formatSalary(salaryMax) }}</span>
         </div>
 
         <div class="control-row years-row">
           <div class="control-label">
             <Calendar :size="16" />
-            <span>Contract Length</span>
+            <span>{{ $t('Contract Length') }}</span>
           </div>
           <div class="years-options">
             <button
@@ -339,7 +340,7 @@ const interestLevel = computed(() =>
         </div>
 
         <div class="offer-total">
-          <span class="total-label">Total Value:</span>
+          <span class="total-label">{{ $t('Total Value:') }}</span>
           <span class="total-value">{{ formatSalary(totalContractValue) }}</span>
         </div>
       </div>
@@ -348,15 +349,15 @@ const interestLevel = computed(() =>
       <div class="team-status">
         <div class="status-item" :class="{ warning: capBlocked }">
           <DollarSign :size="16" />
-          <span>Cap Space: {{ formatSalary(capSpace) }}</span>
-          <span v-if="capBlocked" class="status-badge error">Insufficient</span>
-          <span v-else-if="exceedsCap && isMinimumDeal" class="status-badge success">Min exempt</span>
+          <span>{{ $t('Cap Space: {a}', { a: formatSalary(capSpace) }) }}</span>
+          <span v-if="capBlocked" class="status-badge error">{{ $t('Insufficient') }}</span>
+          <span v-else-if="exceedsCap && isMinimumDeal" class="status-badge success">{{ $t('Min exempt') }}</span>
           <span v-else class="status-badge success">OK</span>
         </div>
         <div class="status-item" :class="{ warning: rosterFull }">
           <Users :size="16" />
-          <span>Roster: {{ rosterCount }}/15</span>
-          <span v-if="rosterFull" class="status-badge error">Full</span>
+          <span>{{ $t('Roster: {n}/15', { n: rosterCount }) }}</span>
+          <span v-if="rosterFull" class="status-badge error">{{ $t('Full') }}</span>
           <span v-else class="status-badge success">OK</span>
         </div>
       </div>
@@ -364,34 +365,34 @@ const interestLevel = computed(() =>
       <!-- Warnings -->
       <div v-if="rosterFull" class="warning-box">
         <AlertTriangle :size="18" />
-        <span>Your roster is full. Release a player to make room.</span>
+        <span>{{ $t('Your roster is full. Release a player to make room.') }}</span>
       </div>
       <div v-else-if="mode === 'instant' && capBlocked" class="warning-box">
         <AlertTriangle :size="18" />
-        <span>Over the second apron — you can only sign minimum-salary players. Lower the offer to the minimum ({{ formatSalary(minSalary) }}) or shed salary.</span>
+        <span>{{ $t('Over the second apron — you can only sign minimum-salary players. Lower the offer to the minimum ({min}) or shed salary.', { min: formatSalary(minSalary) }) }}</span>
       </div>
       <div v-else-if="mode === 'instant' && (interestScore ?? 0) < SIGN_THRESHOLD" class="warning-box warning-box-soft">
         <AlertTriangle :size="18" />
-        <span>This player won't sign for these terms. Raise the salary or contract length to win them over.</span>
+        <span>{{ $t("This player won't sign for these terms. Raise the salary or contract length to win them over.") }}</span>
       </div>
       <div v-else-if="mode === 'instant' && exceedsCap && isMinimumDeal" class="warning-box warning-box-soft">
         <AlertTriangle :size="18" />
-        <span>Minimum-salary deal — allowed even over the second apron.</span>
+        <span>{{ $t('Minimum-salary deal — allowed even over the second apron.') }}</span>
       </div>
       <div v-else-if="mode === 'offer' && exceedsCap" class="warning-box warning-box-soft">
         <AlertTriangle :size="18" />
-        <span>This offer would push you past the second apron. You can still submit it — if more bids than your room can fit ultimately accept, you'll pick which signings to keep at the end of free agency.</span>
+        <span>{{ $t("This offer would push you past the second apron. You can still submit it — if more bids than your room can fit ultimately accept, you'll pick which signings to keep at the end of free agency.") }}</span>
       </div>
     </div>
           </main>
 
           <footer class="modal-footer">
             <button class="btn-cancel" :disabled="loading" @click="handleClose">
-              Cancel
+              {{ $t('Cancel') }}
             </button>
             <button v-if="isUpdate" class="btn-withdraw" :disabled="loading" @click="handleWithdraw">
               <X :size="16" />
-              Withdraw
+              {{ $t('Withdraw') }}
             </button>
             <button class="btn-confirm" :disabled="loading || !canConfirm" @click="handleConfirm">
               {{ confirmLabel }}

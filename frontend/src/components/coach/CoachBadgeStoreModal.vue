@@ -10,6 +10,7 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { coachBadges, COACH_BADGE_LEVELS, nextCoachBadgeLevel } from '@/engine/data/coachBadges'
 import { StandardModal } from '@/components/ui'
 import api from '@/composables/useApi'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -108,7 +109,7 @@ function hasReached(badge, level) {
 
 async function purchase(badge) {
   if (!props.team || !props.team.coach) {
-    toastStore.showError('No coach found on team')
+    toastStore.showError(t('No coach found on team'))
     return
   }
   if (isMaxed(badge)) return
@@ -116,7 +117,7 @@ async function purchase(badge) {
   const cost = nextCost(badge)
   if (!next || cost == null) return
   if (tokens.value < cost) {
-    toastStore.showError(`Need ${cost} tokens — you have ${tokens.value}`)
+    toastStore.showError(t('Need {a} tokens — you have {b}', { a: cost, b: tokens.value }))
     return
   }
   if (purchasing.value) return
@@ -162,7 +163,7 @@ async function purchase(badge) {
     emit('purchased', { badgeId: badge.id, level: next, team })
   } catch (err) {
     console.error('Failed to purchase coach badge:', err)
-    toastStore.showError('Failed to purchase badge')
+    toastStore.showError(t('Failed to purchase badge'))
   } finally {
     purchasing.value = null
   }
@@ -181,7 +182,7 @@ function goToStore() {
 <template>
   <StandardModal
     :show="show"
-    title="Coach Badge Store"
+    :title="$t('Coach Badge Store')"
     size="lg"
     @close="close"
   >
@@ -190,18 +191,18 @@ function goToStore() {
         <div class="token-balance">
           <Coins :size="16" />
           <span class="token-amount">{{ tokens.toLocaleString() }}</span>
-          <span class="token-label">tokens</span>
+          <span class="token-label">{{ $t('tokens') }}</span>
         </div>
-        <button type="button" class="buy-tokens-btn" @click="goToStore" title="Get more tokens in the Store">
+        <button type="button" class="buy-tokens-btn" @click="goToStore" :title="$t('Get more tokens in the Store')">
           <Plus :size="14" />
-          <span>Get Tokens</span>
+          <span>{{ $t('Get Tokens') }}</span>
         </button>
       </div>
-      <p class="store-subtitle">Each badge upgrades through four tiers — bronze, silver, gold, HOF. Owned badges always apply.</p>
+      <p class="store-subtitle">{{ $t('Each badge upgrades through four tiers — bronze, silver, gold, HOF. Owned badges always apply.') }}</p>
     </div>
 
     <div v-for="(badges, category) in grouped" :key="category" class="category-group">
-      <h3 class="category-title">{{ CATEGORY_LABELS[category] || category }}</h3>
+      <h3 class="category-title">{{ $tDynamic(CATEGORY_LABELS[category] || category) }}</h3>
       <div class="badge-grid">
         <div
           v-for="badge in badges"
@@ -219,7 +220,7 @@ function goToStore() {
               :style="{ color: TIER_COLORS[ownedLevel(badge) || 'bronze'] }"
               :fill="ownedLevel(badge) ? TIER_COLORS[ownedLevel(badge)] : 'transparent'"
             />
-            <span class="badge-name">{{ badge.name }}</span>
+            <span class="badge-name">{{ $tDynamic(badge.name) }}</span>
             <span
               v-if="ownedLevel(badge)"
               class="badge-current-level"
@@ -228,7 +229,7 @@ function goToStore() {
               {{ levelLabel(ownedLevel(badge)) }}
             </span>
           </div>
-          <p class="badge-description">{{ badge.description }}</p>
+          <p class="badge-description">{{ $tDynamic(badge.description) }}</p>
 
           <!-- Tier progress dots -->
           <div class="tier-dots">
@@ -245,7 +246,7 @@ function goToStore() {
           <div class="badge-card-footer">
             <span v-if="isMaxed(badge)" class="badge-maxed">
               <Check :size="14" />
-              Maxed (HOF)
+              {{ $t('Maxed (HOF)') }}
             </span>
             <template v-else>
               <span class="badge-cost">
@@ -259,13 +260,7 @@ function goToStore() {
               >
                 <ChevronUp v-if="ownedLevel(badge) && canAfford(badge)" :size="14" />
                 <span>
-                  {{ purchasing === badge.id
-                      ? 'Working...'
-                      : !canAfford(badge)
-                        ? 'Get Tokens'
-                        : ownedLevel(badge)
-                          ? `Upgrade to ${levelLabel(nextLevel(badge))}`
-                          : 'Unlock Bronze' }}
+                  {{ purchasing === badge.id ? $t('Working...') : !canAfford(badge) ? $t('Get Tokens') : ownedLevel(badge) ? $t('Upgrade to {a}', { a: levelLabel(nextLevel(badge)) }) : $t('Unlock Bronze') }}
                 </span>
               </button>
             </template>
@@ -275,7 +270,7 @@ function goToStore() {
     </div>
 
     <template #footer>
-      <button class="btn-close-footer" @click="close">Close</button>
+      <button class="btn-close-footer" @click="close">{{ $t('Close') }}</button>
     </template>
   </StandardModal>
 </template>

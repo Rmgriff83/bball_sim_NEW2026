@@ -13,12 +13,29 @@
  */
 
 import PlayExecutionEngine from './PlayExecutionEngine'
+import { T } from './commentaryTemplate'
 import { selectPlay } from './PlayService'
 import { coachingEngine } from './CoachingEngine'
 import { evaluateSubstitutions, applyVariance, getDefaultTargetMinutes, computeAITargetMinutes, aiStarterCapFor } from './SubstitutionEngine'
 import * as Config from '../config/GameConfig'
 import { BADGES } from '../data/badges'
 import { SYNERGIES, CONDITION_TO_PHASE } from '../data/synergies'
+
+// Play-by-play feed templates for shot results, keyed made/missed ×
+// shotType. Templates only ({shooter} interpolated via T) — the `*_TPLS`
+// naming is load-bearing: wl-i18n.config.js regex-extracts these blocks.
+const SHOT_RESULT_TPLS = {
+  made: {
+    threePoint: '{shooter} makes the three-pointer!',
+    midRange: '{shooter} makes the mid-range jumper!',
+    paint: '{shooter} makes the shot at the rim!',
+  },
+  missed: {
+    threePoint: '{shooter} misses the three-pointer',
+    midRange: '{shooter} misses the mid-range jumper',
+    paint: '{shooter} misses the shot at the rim',
+  },
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -731,6 +748,10 @@ class GameSimulator {
       const mins = Math.floor(this.timeRemaining)
       const secs = Math.floor((this.timeRemaining - mins) * 60)
       const teamObj = userIsHome ? this.homeTeam : this.awayTeam
+      const desc = T('{team} calls a timeout ({remaining} remaining)', {
+        team: teamObj?.name || 'Coach',
+        remaining: this.userTimeoutsRemaining,
+      })
       this.playByPlay.push({
         possession: this.possessionCount,
         quarter: this.currentQuarter,
@@ -740,7 +761,9 @@ class GameSimulator {
         play_id: null,
         outcome: 'timeout',
         points: 0,
-        description: `${teamObj?.name || 'Coach'} calls a timeout (${this.userTimeoutsRemaining} remaining)`,
+        description: desc.text,
+        descTpl: desc.tpl,
+        descParams: desc.params,
         home_score: this.homeScore,
         away_score: this.awayScore,
       })
@@ -1590,10 +1613,11 @@ class GameSimulator {
     // The feed entry recordPlayByPlay just pushed carries the definitive
     // result line ("X makes the three-pointer!") — stamp it on the
     // animation possession so presentation (the stoppage bubble) can show
-    // the play's outcome. Additive field — readers guard with `?? ''`.
-    const resultText = this.playByPlay.length > 0
-      ? this.playByPlay[this.playByPlay.length - 1].description || ''
-      : ''
+    // the play's outcome. Additive fields — readers guard with `?? ''`.
+    const lastEntry = this.playByPlay.length > 0
+      ? this.playByPlay[this.playByPlay.length - 1]
+      : null
+    const resultText = lastEntry?.description || ''
 
     if (playResult.keyframes && playResult.keyframes.length > 0) {
       // Synergies fire on the shot, which resolves at the end of the play —
@@ -1635,6 +1659,8 @@ class GameSimulator {
         // line). play_id can't be used — it keeps the fouled play's id.
         is_free_throw: !!playResult.freeThrows,
         result_text: resultText,
+        result_tpl: lastEntry?.descTpl ?? null,
+        result_params: lastEntry?.descParams ?? null,
         duration: playResult.duration,
         keyframes: playResult.keyframes,
         home_score: this.homeScore,
@@ -2087,6 +2113,7 @@ class GameSimulator {
       const teamLabel = isHome ? 'home' : 'away'
       const mins = Math.floor(this.timeRemaining)
       const secs = Math.floor((this.timeRemaining - mins) * 60)
+      const desc = T('{name} grabs the offensive rebound', { name: rebName })
       this.playByPlay.push({
         possession: this.possessionCount,
         quarter: this.currentQuarter,
@@ -2096,7 +2123,9 @@ class GameSimulator {
         play_id: null,
         outcome: 'offensive_rebound',
         points: 0,
-        description: `${rebName} grabs the offensive rebound`,
+        description: desc.text,
+        descTpl: desc.tpl,
+        descParams: desc.params,
         home_score: this.homeScore,
         away_score: this.awayScore,
       })
@@ -2167,6 +2196,9 @@ class GameSimulator {
     if (this.generateAnimationData) {
       const mins = Math.floor(this.timeRemaining)
       const secs = Math.floor((this.timeRemaining - mins) * 60)
+      const desc = T('{name} fouls out (6 personal fouls)', {
+        name: `${(fouledOut.first_name || '')} ${(fouledOut.last_name || '')}`,
+      })
       this.playByPlay.push({
         possession: this.possessionCount,
         quarter: this.currentQuarter,
@@ -2176,7 +2208,9 @@ class GameSimulator {
         play_id: null,
         outcome: 'foul_out',
         points: 0,
-        description: `${(fouledOut.first_name || '')} ${(fouledOut.last_name || '')} fouls out (6 personal fouls)`,
+        description: desc.text,
+        descTpl: desc.tpl,
+        descParams: desc.params,
         home_score: this.homeScore,
         away_score: this.awayScore,
       })
@@ -2874,6 +2908,10 @@ class GameSimulator {
     }
 
     let description = lastKeyframe.description || ''
+    // Translation template + params for the line (stamped by
+    // PlayExecutionEngine on the keyframe, or rebuilt with it below).
+    let descTpl = lastKeyframe.descTpl ?? null
+    let descParams = lastKeyframe.descParams ?? null
 
     // Shot possessions: the release keyframe is deliberately neutral ("puts
     // up the three-pointer...") so the on-court ticker doesn't spoil the
@@ -2884,12 +2922,16 @@ class GameSimulator {
       sa && sa.shooterName && !sa.blocked && !sa.fouled &&
       ['made', 'missed', 'offensive_rebound'].includes(playResult.outcome)
     ) {
-      const shotLabel = sa.shotType === 'threePoint'
-        ? 'three-pointer'
-        : sa.shotType === 'midRange' ? 'mid-range jumper' : 'shot at the rim'
+      const resultTpls = SHOT_RESULT_TPLS[sa.made ? 'made' : 'missed']
+      const shotKey = sa.shotType === 'threePoint'
+        ? 'threePoint'
+        : sa.shotType === 'midRange' ? 'midRange' : 'paint'
       // Broadcast style: last name only (matches the keyframe descriptions).
       const shooterLast = sa.shooterName.trim().split(/\s+/).pop()
-      description = `${shooterLast} ${sa.made ? 'makes' : 'misses'} the ${shotLabel}${sa.made ? '!' : ''}`
+      const desc = T(resultTpls[shotKey], { shooter: shooterLast })
+      description = desc.text
+      descTpl = desc.tpl
+      descParams = desc.params
     }
 
     // Free-throw possessions: the result line lives on flight keyframes we
@@ -2900,9 +2942,14 @@ class GameSimulator {
       const box = team === 'home' ? this.homeBoxScore : this.awayBoxScore
       const fullName = (ft.shooterId && box[ft.shooterId]?.name) || 'Shooter'
       const shooterName = String(fullName).trim().split(/\s+/).pop() || 'Shooter'
-      description = ft.attemptNo
-        ? `${shooterName} ${ft.made > 0 ? 'makes' : 'misses'} free throw ${ft.attemptNo} of ${ft.totalAttempts}`
-        : `${shooterName} makes ${ft.made} of ${ft.attempted} free throws`
+      const desc = ft.attemptNo
+        ? (ft.made > 0
+            ? T('{shooter} makes free throw {attemptNo} of {totalAttempts}', { shooter: shooterName, attemptNo: ft.attemptNo, totalAttempts: ft.totalAttempts })
+            : T('{shooter} misses free throw {attemptNo} of {totalAttempts}', { shooter: shooterName, attemptNo: ft.attemptNo, totalAttempts: ft.totalAttempts }))
+        : T('{shooter} makes {made} of {attempted} free throws', { shooter: shooterName, made: ft.made, attempted: ft.attempted })
+      description = desc.text
+      descTpl = desc.tpl
+      descParams = desc.params
     }
 
     const mins = Math.floor(this.timeRemaining)
@@ -2918,6 +2965,8 @@ class GameSimulator {
       outcome: playResult.outcome,
       points: playResult.points || 0,
       description,
+      descTpl,
+      descParams,
       home_score: this.homeScore,
       away_score: this.awayScore,
     })

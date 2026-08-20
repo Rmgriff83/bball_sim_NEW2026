@@ -2,7 +2,7 @@
   <img
     v-if="resolvedSrc"
     :src="resolvedSrc"
-    :alt="abbreviation || 'Team'"
+    :alt="abbreviation || $t('Team')"
     class="team-logo-img"
     :style="{ width: size + 'px', height: size + 'px' }"
     @error="onImageError"

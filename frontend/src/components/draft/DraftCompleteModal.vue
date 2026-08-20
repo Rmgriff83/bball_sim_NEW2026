@@ -70,7 +70,7 @@ onUnmounted(() => {
         <div class="modal-container">
           <!-- Header -->
           <header class="modal-header">
-            <h2 class="modal-title">{{ isRookieMode ? 'Rookie Draft Complete' : 'Draft Complete' }}</h2>
+            <h2 class="modal-title">{{ isRookieMode ? $t('Rookie Draft Complete') : $t('Draft Complete') }}</h2>
             <button class="modal-close" @click="close" aria-label="Close">
               <X :size="20" />
             </button>
@@ -79,7 +79,7 @@ onUnmounted(() => {
           <!-- Content -->
           <main class="modal-content">
             <div class="team-avg">
-              <span class="avg-label">TEAM AVERAGE</span>
+              <span class="avg-label">{{ $t('TEAM AVERAGE') }}</span>
               <span class="avg-value">{{ averageOverall }}</span>
               <span class="avg-ovr">OVR</span>
             </div>
@@ -100,7 +100,7 @@ onUnmounted(() => {
                   <span class="player-ovr">{{ player.overallRating }}</span>
                 </div>
                 <div v-if="rosterByPosition[pos].length === 0" class="empty-slot">
-                  Empty
+                  {{ $t('Empty') }}
                 </div>
               </div>
             </div>
@@ -109,11 +109,11 @@ onUnmounted(() => {
           <!-- Footer -->
           <footer class="modal-footer">
             <button class="btn-cancel" @click="close" :disabled="finalizing">
-              Close
+              {{ $t('Close') }}
             </button>
             <button class="btn-continue" @click="emit('continue')" :disabled="finalizing">
               <LoadingSpinner v-if="finalizing" size="sm" />
-              <template v-else>{{ isRookieMode ? 'Return to Offseason' : 'Continue to Campaign' }}</template>
+              <template v-else>{{ isRookieMode ? $t('Return to Offseason') : $t('Continue to Campaign') }}</template>
             </button>
           </footer>
         </div>

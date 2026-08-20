@@ -89,7 +89,7 @@ function getBadgeLevelColor(level) {
         <div class="modal-container">
           <!-- Header -->
           <header>
-            <h2 class="modal-title">Weekly Report</h2>
+            <h2 class="modal-title">{{ $t('Weekly Report') }}</h2>
             <button class="close-btn" @click="emit('close')">
               <X :size="20" />
             </button>
@@ -99,17 +99,17 @@ function getBadgeLevelColor(level) {
           <main>
             <!-- Scouting Points Section -->
             <section v-if="scoutingPointsEarned > 0" class="summary-section">
-              <h3 class="section-title">Scouting Department</h3>
+              <h3 class="section-title">{{ $t('Scouting Department') }}</h3>
               <div class="scouting-earned">
-                <span class="earned-label">Your scouting department earned</span>
+                <span class="earned-label">{{ $t('Your scouting department earned') }}</span>
                 <span class="earned-value">{{ scoutingPointsEarned }}</span>
-                <span class="earned-label">scouting point{{ scoutingPointsEarned !== 1 ? 's' : '' }} this period</span>
+                <span class="earned-label">{{ scoutingPointsEarned !== 1 ? $t('scouting points this period') : $t('scouting point this period') }}</span>
               </div>
             </section>
 
             <!-- Player Development Section -->
             <section v-if="evolutionChanges.length > 0" class="summary-section">
-              <h3 class="section-title">Player Development</h3>
+              <h3 class="section-title">{{ $t('Player Development') }}</h3>
               <div class="changes-list">
                 <div
                   v-for="(change, i) in evolutionChanges"
@@ -118,7 +118,7 @@ function getBadgeLevelColor(level) {
                 >
                   <span class="player-name">{{ change.playerName }}</span>
                   <span class="change-detail">
-                    {{ formatAttribute(change.attribute) }}
+                    {{ $tDynamic(formatAttribute(change.attribute)) }}
                     <span class="change-value positive">+{{ change.change }}</span>
                     <span v-if="change.newValue" class="new-value">({{ change.newValue }})</span>
                   </span>
@@ -128,7 +128,7 @@ function getBadgeLevelColor(level) {
 
             <!-- Badge Changes Section -->
             <section v-if="badgeChanges.length > 0" class="summary-section">
-              <h3 class="section-title">Badge Upgrades</h3>
+              <h3 class="section-title">{{ $t('Badge Upgrades') }}</h3>
               <div class="changes-list">
                 <div
                   v-for="(change, i) in badgeChanges"
@@ -137,10 +137,11 @@ function getBadgeLevelColor(level) {
                 >
                   <span class="player-name">{{ change.playerName }}</span>
                   <span class="change-detail">
-                    {{ formatAttribute(change.badgeName) }}:
-                    <span class="badge-level" :style="{ color: getBadgeLevelColor(change.oldLevel) }">{{ change.oldLevel }}</span>
+                    {{ $tDynamic(formatAttribute(change.badgeName)) }}:
+                    <span class="badge-level" :style="{ color: getBadgeLevelColor(change.oldLevel) }">{{ $tDynamic(change.oldLevel) }}</span>
+                    <!-- i18n-ignore -->
                     &rarr;
-                    <span class="badge-level" :style="{ color: getBadgeLevelColor(change.newLevel) }">{{ change.newLevel }}</span>
+                    <span class="badge-level" :style="{ color: getBadgeLevelColor(change.newLevel) }">{{ $tDynamic(change.newLevel) }}</span>
                   </span>
                 </div>
               </div>
@@ -148,13 +149,12 @@ function getBadgeLevelColor(level) {
 
             <!-- League Trades Section -->
             <section v-if="leagueTrades.length > 0" class="summary-section">
-              <h3 class="section-title">League Trades</h3>
+              <h3 class="section-title">{{ $t('League Trades') }}</h3>
               <div class="changes-list">
                 <div v-for="trade in leagueTrades" :key="trade.id" class="change-item">
                   <span class="player-name">{{ trade.teamA?.abbr }} ⇄ {{ trade.teamB?.abbr }}</span>
                   <span class="change-detail">
-                    {{ trade.teamA?.abbr }} receive {{ (trade.receivedA || []).join(', ') || '—' }};
-                    {{ trade.teamB?.abbr }} receive {{ (trade.receivedB || []).join(', ') || '—' }}
+                    {{ $t('{a} receive {b}; {c} receive {d}', { a: trade.teamA?.abbr, b: (trade.receivedA || []).join(', ') || '—', c: trade.teamB?.abbr, d: (trade.receivedB || []).join(', ') || '—' }) }}
                   </span>
                 </div>
               </div>
@@ -162,13 +162,13 @@ function getBadgeLevelColor(level) {
 
             <!-- Empty State -->
             <div v-if="!scoutingPointsEarned && evolutionChanges.length === 0 && badgeChanges.length === 0 && leagueTrades.length === 0" class="empty-state">
-              <p>No notable events this week.</p>
+              <p>{{ $t('No notable events this week.') }}</p>
             </div>
           </main>
 
           <!-- Footer -->
           <footer>
-            <button class="footer-btn action-btn" @click="emit('close')">Continue</button>
+            <button class="footer-btn action-btn" @click="emit('close')">{{ $t('Continue') }}</button>
           </footer>
         </div>
       </div>

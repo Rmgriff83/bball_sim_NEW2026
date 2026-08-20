@@ -5,6 +5,7 @@ import { useFinanceStore } from '@/stores/finance'
 import { useToastStore } from '@/stores/toast'
 import { useFreeAgentInterest } from '@/composables/useFreeAgentInterest'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   campaignId: { type: [String, Number], required: true },
@@ -93,11 +94,11 @@ async function confirmWithdraw() {
   withdrawing.value[offer.playerId] = true
   try {
     await financeStore.withdrawFreeAgentOffer(props.campaignId, offer.playerId)
-    toastStore.showSuccess('Offer withdrawn')
+    toastStore.showSuccess(t('Offer withdrawn'))
     pendingWithdraw.value = null
   } catch (err) {
     console.error('Failed to withdraw FA offer:', err)
-    toastStore.showError(err.message || 'Failed to withdraw offer')
+    toastStore.showError(err.message || t('Failed to withdraw offer'))
   } finally {
     delete withdrawing.value[offer.playerId]
   }
@@ -129,9 +130,9 @@ function formatSalary(salary) {
 }
 
 function playerName(p) {
-  if (!p) return 'Unknown player'
+  if (!p) return t('Unknown player')
   if (p.name) return p.name
-  return `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim() || 'Unknown player'
+  return `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim() || t('Unknown player')
 }
 </script>
 
@@ -143,10 +144,10 @@ function playerName(p) {
   >
     <header class="fa-offers-header">
       <Briefcase :size="14" class="fa-offers-icon" />
-      <span class="fa-offers-title">Your Pending Offers</span>
+      <span class="fa-offers-title">{{ $t('Your Pending Offers') }}</span>
       <span class="fa-offers-count">{{ userOffers.length }}</span>
       <span class="fa-offers-spacer"></span>
-      <span class="fa-offers-total">{{ formatSalary(totalCommitted) }}/yr committed</span>
+      <span class="fa-offers-total">{{ $t('{salary}/yr committed', { salary: formatSalary(totalCommitted) }) }}</span>
     </header>
     <ul class="fa-offers-list">
       <li v-for="offer in userOffers" :key="offer.playerId" class="fa-offer-row">
@@ -166,29 +167,27 @@ function playerName(p) {
             <span
               class="fa-offer-competing"
               :class="{ contested: offer.competingOffers > 0 }"
-              :title="offer.competingOffers === 0
-                ? 'No other teams have offers in on this player'
-                : `${offer.competingOffers} other team${offer.competingOffers === 1 ? '' : 's'} ${offer.competingOffers === 1 ? 'has' : 'have'} also bid`"
+              :title="offer.competingOffers === 0 ? $t('No other teams have offers in on this player') : offer.competingOffers === 1 ? $t('1 other team has also bid') : $t('{n} other teams have also bid', { n: offer.competingOffers })"
             >
               <Users :size="10" />
-              {{ offer.totalOffers }} {{ offer.totalOffers === 1 ? 'OFFER' : 'OFFERS' }}
+              {{ offer.totalOffers === 1 ? $t('{n} OFFER', { n: offer.totalOffers }) : $t('{n} OFFERS', { n: offer.totalOffers }) }}
             </span>
           </div>
           <div class="fa-offer-terms">
-            <span class="fa-offer-salary">{{ formatSalary(offer.salary) }}/yr</span>
+            <span class="fa-offer-salary">{{ $t('{salary}/yr', { salary: formatSalary(offer.salary) }) }}</span>
             <span class="fa-offer-divider">·</span>
-            <span class="fa-offer-years">{{ offer.years }} {{ offer.years === 1 ? 'yr' : 'yrs' }}</span>
+            <span class="fa-offer-years">{{ offer.years === 1 ? $t('{n} yr', { n: offer.years }) : $t('{n} yrs', { n: offer.years }) }}</span>
             <span class="fa-offer-divider">·</span>
-            <span class="fa-offer-total">{{ formatSalary((offer.salary || 0) * (offer.years || 0)) }} total</span>
+            <span class="fa-offer-total">{{ $t('{amount} total', { amount: formatSalary((offer.salary || 0) * (offer.years || 0)) }) }}</span>
           </div>
           <div
             v-if="offer.interestLevel"
             class="fa-offer-interest"
             :style="{ '--interest-color': offer.interestLevel.color }"
-            :title="`${offer.interestLevel.label} (${offer.interestScore}/100) — ${offer.interestLevel.hint}`"
+            :title="$t('{label} ({n}/100) — {hint}', { label: $tDynamic(offer.interestLevel.label), n: offer.interestScore, hint: $tDynamic(offer.interestLevel.hint) })"
           >
             <Heart :size="10" class="fa-interest-icon" />
-            <span class="fa-interest-label">{{ offer.interestLevel.label }}</span>
+            <span class="fa-interest-label">{{ $tDynamic(offer.interestLevel.label) }}</span>
             <div class="fa-interest-bar">
               <div class="fa-interest-bar-fill" :style="{ width: offer.interestScore + '%' }"></div>
               <div class="fa-interest-bar-threshold"></div>
@@ -200,7 +199,7 @@ function playerName(p) {
           type="button"
           class="fa-offer-withdraw"
           :disabled="!!withdrawing[offer.playerId]"
-          title="Withdraw offer"
+          :title="$t('Withdraw offer')"
           @click="requestWithdraw(offer)"
         >
           <XIcon :size="14" />
@@ -219,7 +218,7 @@ function playerName(p) {
       >
         <div class="modal-container">
           <header class="modal-header">
-            <h2 class="modal-title">Withdraw Offer</h2>
+            <h2 class="modal-title">{{ $t('Withdraw Offer') }}</h2>
             <button
               v-if="!withdrawing[pendingWithdraw.playerId]"
               class="btn-close"
@@ -248,22 +247,22 @@ function playerName(p) {
                   <span
                     v-if="pendingWithdraw.player?.overallRating != null"
                     class="withdraw-ovr"
-                  >{{ pendingWithdraw.player.overallRating }} OVR</span>
+                  >{{ $t('{n} OVR', { n: pendingWithdraw.player.overallRating }) }}</span>
                 </div>
               </div>
             </div>
 
             <div class="withdraw-terms">
               <div class="withdraw-terms-row">
-                <span class="withdraw-terms-label">Annual</span>
+                <span class="withdraw-terms-label">{{ $t('Annual') }}</span>
                 <span class="withdraw-terms-value">{{ formatSalary(pendingWithdraw.salary) }}</span>
               </div>
               <div class="withdraw-terms-row">
-                <span class="withdraw-terms-label">Years</span>
+                <span class="withdraw-terms-label">{{ $t('Years') }}</span>
                 <span class="withdraw-terms-value">{{ pendingWithdraw.years }}</span>
               </div>
               <div class="withdraw-terms-row withdraw-terms-total">
-                <span class="withdraw-terms-label">Total Value</span>
+                <span class="withdraw-terms-label">{{ $t('Total Value') }}</span>
                 <span class="withdraw-terms-value">
                   {{ formatSalary((pendingWithdraw.salary || 0) * (pendingWithdraw.years || 0)) }}
                 </span>
@@ -271,7 +270,7 @@ function playerName(p) {
             </div>
 
             <p class="withdraw-blurb">
-              Are you sure you want to pull your offer? The player can still accept a competing bid from another team, and you can always submit a new offer later in the window.
+              {{ $t('Are you sure you want to pull your offer? The player can still accept a competing bid from another team, and you can always submit a new offer later in the window.') }}
             </p>
           </main>
 
@@ -281,7 +280,7 @@ function playerName(p) {
               :disabled="!!withdrawing[pendingWithdraw.playerId]"
               @click="cancelWithdraw"
             >
-              Cancel
+              {{ $t('Cancel') }}
             </button>
             <button
               class="btn-confirm-danger"
@@ -290,7 +289,7 @@ function playerName(p) {
             >
               <span v-if="withdrawing[pendingWithdraw.playerId]" class="btn-loading"></span>
               <XIcon v-else :size="16" />
-              {{ withdrawing[pendingWithdraw.playerId] ? 'Withdrawing…' : 'Withdraw Offer' }}
+              {{ withdrawing[pendingWithdraw.playerId] ? $t('Withdrawing…') : $t('Withdraw Offer') }}
             </button>
           </footer>
         </div>

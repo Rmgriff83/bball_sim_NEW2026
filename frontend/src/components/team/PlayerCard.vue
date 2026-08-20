@@ -3,6 +3,8 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { Dumbbell } from 'lucide-vue-next'
 import { StatBadge, Badge } from '@/components/ui'
 import { useTeamStore } from '@/stores/team'
+import { t } from '@wl-i18n/i18n.js'
+import { badgeDisplayName } from '@/engine/data/badges'
 
 const teamStore = useTeamStore()
 
@@ -79,7 +81,7 @@ const trainingReadyForPlayer = computed(() => !!trainingSessionForPlayer.value &
 
 // Pretty "Xh Ym" / "Xm Ys" / "Xs" countdown (mirrors the player-detail modal).
 function formatTrainingCountdown(ms) {
-  if (ms == null || ms <= 0) return 'Done'
+  if (ms == null || ms <= 0) return t('Done')
   const totalSeconds = Math.ceil(ms / 1000)
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
@@ -122,11 +124,7 @@ const topBadges = computed(() => {
 })
 
 function formatBadgeName(badgeId) {
-  if (!badgeId) return ''
-  return badgeId
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ')
+  return badgeDisplayName(badgeId)
 }
 
 function formatSalary(salary) {
@@ -162,10 +160,10 @@ function getBadgeLevelColor(level) {
           <span
             v-if="trainingInProgress"
             class="train-countdown"
-            :title="`Training · ${formatTrainingCountdown(trainingMsLeft)} remaining`"
+            :title="$t('Training · {time} remaining', { time: formatTrainingCountdown(trainingMsLeft) })"
           ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeft) }}</span></span>
-          <span v-else-if="trainingReadyForPlayer" class="train-ready-dot" :title="'Training ready to claim'"></span>
-          <span v-if="isInjured" class="injury-badge-sm" title="Injured">INJ</span>
+          <span v-else-if="trainingReadyForPlayer" class="train-ready-dot" :title="$t('Training ready to claim')"></span>
+          <span v-if="isInjured" class="injury-badge-sm" :title="$t('Injured')">{{ $t('INJ') }}</span>
         </div>
         <div class="flex-1 min-w-0">
           <p class="font-medium truncate" :class="{ 'text-injured': isInjured }">{{ player.name }}</p>
@@ -176,7 +174,7 @@ function getBadgeLevelColor(level) {
             >
               {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
             </span>
-            <span v-if="isInjured" class="injury-label">Injured</span>
+            <span v-if="isInjured" class="injury-label">{{ $t('Injured') }}</span>
             <span v-else-if="player.contract">{{ formatSalary(player.contract.salary) }}</span>
           </div>
         </div>
@@ -186,7 +184,7 @@ function getBadgeLevelColor(level) {
           :class="{ active: selected }"
           @click.stop="emit('select', player)"
         >
-          {{ selected ? 'Selected' : 'Select' }}
+          {{ selected ? $t('Selected') : $t('Select') }}
         </button>
       </div>
     </template>
@@ -199,10 +197,10 @@ function getBadgeLevelColor(level) {
           <span
             v-if="trainingInProgress"
             class="train-countdown"
-            :title="`Training · ${formatTrainingCountdown(trainingMsLeft)} remaining`"
+            :title="$t('Training · {time} remaining', { time: formatTrainingCountdown(trainingMsLeft) })"
           ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeft) }}</span></span>
-          <span v-else-if="trainingReadyForPlayer" class="train-ready-dot" :title="'Training ready to claim'"></span>
-          <span v-if="isInjured" class="injury-badge" title="Injured">INJ</span>
+          <span v-else-if="trainingReadyForPlayer" class="train-ready-dot" :title="$t('Training ready to claim')"></span>
+          <span v-if="isInjured" class="injury-badge" :title="$t('Injured')">{{ $t('INJ') }}</span>
         </div>
         <div class="player-info">
           <h3 class="player-name" :class="{ 'text-injured': isInjured }">{{ player.name }}</h3>
@@ -214,7 +212,7 @@ function getBadgeLevelColor(level) {
               {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
             </span>
             <span class="jersey-number">#{{ player.jersey_number || '00' }}</span>
-            <span v-if="isInjured" class="injury-tag">Injured</span>
+            <span v-if="isInjured" class="injury-tag">{{ $t('Injured') }}</span>
           </div>
         </div>
       </div>
@@ -224,22 +222,25 @@ function getBadgeLevelColor(level) {
         <div class="physical-info">
           <span>{{ player.height || "6'6\"" }}</span>
           <span class="divider">|</span>
-          <span>{{ player.weight || '210' }} lbs</span>
+          <span>{{ $t('{w} lbs', { w: player.weight || '210' }) }}</span>
           <span class="divider">|</span>
-          <span>Age {{ player.age || 25 }}</span>
+          <span>{{ $t('Age {n}', { n: player.age || 25 }) }}</span>
         </div>
 
         <!-- Season Stats -->
         <div v-if="player.season_stats" class="stats-grid">
           <div class="stat-item">
+            <!-- i18n-ignore -->
             <span class="stat-label">PPG</span>
             <span class="stat-value">{{ player.season_stats.ppg }}</span>
           </div>
           <div class="stat-item">
+            <!-- i18n-ignore -->
             <span class="stat-label">RPG</span>
             <span class="stat-value">{{ player.season_stats.rpg }}</span>
           </div>
           <div class="stat-item">
+            <!-- i18n-ignore -->
             <span class="stat-label">APG</span>
             <span class="stat-value">{{ player.season_stats.apg }}</span>
           </div>
@@ -250,7 +251,7 @@ function getBadgeLevelColor(level) {
         </div>
         <!-- No stats yet -->
         <div v-else class="no-stats">
-          <span class="text-secondary text-sm">No stats yet</span>
+          <span class="text-secondary text-sm">{{ $t('No stats yet') }}</span>
         </div>
 
         <!-- Badges -->
@@ -259,20 +260,20 @@ function getBadgeLevelColor(level) {
             v-for="badge in topBadges"
             :key="badge.id"
             class="badge-item"
-            :title="`${formatBadgeName(badge.id)} (${badge.level})`"
+            :title="$t('{name} ({level})', { name: $tDynamic(formatBadgeName(badge.id)), level: badge.level })"
           >
             <span
               class="badge-dot"
               :style="{ backgroundColor: getBadgeLevelColor(badge.level) }"
             />
-            <span class="badge-name">{{ formatBadgeName(badge.id) }}</span>
+            <span class="badge-name">{{ $tDynamic(formatBadgeName(badge.id)) }}</span>
           </div>
         </div>
 
         <!-- Contract -->
         <div v-if="player.contract" class="contract-info">
-          <span class="contract-salary">{{ formatSalary(player.contract.salary) }}/yr</span>
-          <span class="contract-years">{{ player.contract.years_remaining }} yr{{ player.contract.years_remaining !== 1 ? 's' : '' }}</span>
+          <span class="contract-salary">{{ $t('{salary}/yr', { salary: formatSalary(player.contract.salary) }) }}</span>
+          <span class="contract-years">{{ player.contract.years_remaining !== 1 ? $t('{n} yrs', { n: player.contract.years_remaining }) : $t('{n} yr', { n: player.contract.years_remaining }) }}</span>
         </div>
       </div>
 
@@ -281,14 +282,14 @@ function getBadgeLevelColor(level) {
           class="view-btn"
           @click.stop="emit('click', player)"
         >
-          View Details
+          {{ $t('View Details') }}
         </button>
         <button
           class="select-btn"
           :class="{ active: selected }"
           @click.stop="emit('select', player)"
         >
-          {{ selected ? 'Selected' : 'Select' }}
+          {{ selected ? $t('Selected') : $t('Select') }}
         </button>
       </div>
     </template>

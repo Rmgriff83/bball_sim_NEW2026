@@ -40,7 +40,7 @@ function handleLinkClick(toast) {
             :to="toast.link.to"
             class="toast-link"
             @click="handleLinkClick(toast)"
-          >{{ toast.link.label || 'View' }}</RouterLink>
+          >{{ toast.link.label || $t('View') }}</RouterLink>
         </div>
       </TransitionGroup>
     </div>

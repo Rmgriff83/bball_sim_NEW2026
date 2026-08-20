@@ -45,13 +45,13 @@ const hasAny = computed(() => rows.value.some((r) => r.value != null))
               <span v-if="row.opp && row.year" class="ch-dot">·</span>
               <span v-if="row.year">{{ row.year }}</span>
             </template>
-            <span v-else class="ch-empty">No record yet</span>
+            <span v-else class="ch-empty">{{ $t('No record yet') }}</span>
           </td>
         </tr>
       </tbody>
     </table>
     <p v-if="!hasAny" class="ch-hint">
-      Career highs are recorded as games are played — they'll start filling in from here.
+      {{ $t("Career highs are recorded as games are played — they'll start filling in from here.") }}
     </p>
   </div>
 </template>

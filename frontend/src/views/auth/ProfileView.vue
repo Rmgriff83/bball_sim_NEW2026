@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, helpers } from '@vuelidate/validators'
@@ -14,6 +14,8 @@ import { useAudioStore } from '@/stores/audio'
 import { useLocalCache } from '@/composables/useLocalCache'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import * as iap from '@/services/iap'
+import { t } from '@wl-i18n/i18n.js'
+import { LANGUAGE_FLAGS } from '@/assets/languageFlags.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,14 +47,14 @@ async function handleRestorePurchases() {
       const result = await iap.restorePurchases()
       if (result.cancelled) return
       if (!result.success) {
-        toastStore.showError('Could not restore purchases.')
+        toastStore.showError(t('Could not restore purchases.'))
         return
       }
     }
     try {
       await authStore.fetchUser()
     } catch {}
-    toastStore.showSuccess('Purchases restored.')
+    toastStore.showSuccess(t('Purchases restored.'))
   } finally {
     restoringPurchases.value = false
   }
@@ -98,6 +100,25 @@ function toggleTheme() {
   const theme = isDarkMode.value ? 'dark' : 'light'
   document.documentElement.setAttribute('data-theme', theme)
   localStorage.setItem('theme', theme)
+}
+
+// Language settings — endonym labels stay untranslated by design (a Spanish
+// speaker stuck in the wrong language must still find "Español"). Options
+// derive from the generated locale files, so new locales surface automatically.
+const i18n = inject('i18n')
+const LANGUAGE_NAMES = {
+  en: 'English', es: 'Español', pt: 'Português', fr: 'Français',
+  de: 'Deutsch', it: 'Italiano', ro: 'Română',
+}
+const currentLocale = computed(() => i18n.currentLocale.value)
+const languageOptions = computed(() =>
+  ['en', ...i18n.availableLocales()].map(code => ({
+    code,
+    name: LANGUAGE_NAMES[code] ?? code.toUpperCase(),
+  }))
+)
+function selectLanguage(code) {
+  i18n.setLocale(code)
 }
 
 // Sound settings
@@ -261,21 +282,23 @@ const passwordSuccess = ref('')
 
 const validUsername = helpers.regex(/^[a-zA-Z0-9_]+$/)
 
+// Rules live in computeds: t() reads the reactive locale ref, so these
+// messages re-evaluate (and vuelidate rebuilds) on locale change — no freeze.
 const profileRules = computed(() => ({
   username: {
-    required: helpers.withMessage('Username is required', required),
-    minLength: helpers.withMessage('Username must be at least 3 characters', minLength(3)),
-    validUsername: helpers.withMessage('Username can only contain letters, numbers, and underscores', validUsername)
+    required: helpers.withMessage(t('Username is required'), required),
+    minLength: helpers.withMessage(t('Username must be at least 3 characters'), minLength(3)),
+    validUsername: helpers.withMessage(t('Username can only contain letters, numbers, and underscores'), validUsername)
   }
 }))
 
 const passwordRules = computed(() => ({
-  current_password: { required: helpers.withMessage('Current password is required', required) },
+  current_password: { required: helpers.withMessage(t('Current password is required'), required) },
   password: {
-    required: helpers.withMessage('New password is required', required),
-    minLength: helpers.withMessage('Password must be at least 8 characters', minLength(8))
+    required: helpers.withMessage(t('New password is required'), required),
+    minLength: helpers.withMessage(t('Password must be at least 8 characters'), minLength(8))
   },
-  password_confirmation: { required: helpers.withMessage('Please confirm your password', required) }
+  password_confirmation: { required: helpers.withMessage(t('Please confirm your password'), required) }
 }))
 
 const v$Profile = useVuelidate(profileRules, profileForm)
@@ -287,9 +310,9 @@ async function handleProfileUpdate() {
   if (!(await v$Profile.value.$validate())) return
   try {
     await authStore.updateProfile({ username: profileForm.value.username })
-    profileSuccess.value = 'Profile updated successfully!'
+    profileSuccess.value = t('Profile updated successfully!')
   } catch (err) {
-    profileError.value = err.response?.data?.message || 'Failed to update profile.'
+    profileError.value = err.response?.data?.message || t('Failed to update profile.')
   }
 }
 
@@ -299,11 +322,11 @@ async function handlePasswordUpdate() {
   if (!(await v$Password.value.$validate())) return
   try {
     await authStore.updatePassword(passwordForm.value)
-    passwordSuccess.value = 'Password updated successfully!'
+    passwordSuccess.value = t('Password updated successfully!')
     passwordForm.value = { current_password: '', password: '', password_confirmation: '' }
     v$Password.value.$reset()
   } catch (err) {
-    passwordError.value = err.response?.data?.message || 'Failed to update password.'
+    passwordError.value = err.response?.data?.message || t('Failed to update password.')
   }
 }
 
@@ -371,7 +394,7 @@ async function handleDeleteAccount() {
     router.push('/login')
   } catch (err) {
     deleteAccountError.value =
-      err.response?.data?.message || 'Failed to delete account. Please check your password and try again.'
+      err.response?.data?.message || t('Failed to delete account. Please check your password and try again.')
   } finally {
     deletingAccount.value = false
   }
@@ -398,18 +421,18 @@ async function clearLocalCache() {
       <div class="profile-header">
         <router-link to="/dashboard" class="back-link">
           <ArrowLeft :size="18" />
-          <span>Back to Dashboard</span>
+          <span>{{ $t('Back to Dashboard') }}</span>
         </router-link>
-        <h1 class="profile-title">Profile</h1>
+        <h1 class="profile-title">{{ $t('Profile') }}</h1>
       </div>
 
       <!-- Tab Navigation -->
       <div class="tab-nav">
         <button class="tab-btn" :class="{ active: activeTab === 'settings' }" @click="activeTab = 'settings'">
-          Settings
+          {{ $t('Settings') }}
         </button>
         <button class="tab-btn" :class="{ active: activeTab === 'database' }" @click="activeTab = 'database'">
-          Database
+          {{ $t('Database') }}
         </button>
       </div>
 
@@ -431,11 +454,11 @@ async function clearLocalCache() {
 
       <!-- Theme Toggle Card -->
       <div class="profile-section">
-        <h3 class="section-title">Appearance</h3>
+        <h3 class="section-title">{{ $t('Appearance') }}</h3>
         <div class="theme-toggle-row">
           <div class="theme-label">
             <component :is="isDarkMode ? Moon : Sun" :size="20" />
-            <span>{{ isDarkMode ? 'Dark Mode' : 'Light Mode' }}</span>
+            <span>{{ isDarkMode ? $t('Dark Mode') : $t('Light Mode') }}</span>
           </div>
           <button class="theme-toggle-btn" @click="toggleTheme" :class="{ active: isDarkMode }">
             <span class="toggle-track">
@@ -447,11 +470,11 @@ async function clearLocalCache() {
 
       <!-- Sound Card -->
       <div class="profile-section">
-        <h3 class="section-title">Sound</h3>
+        <h3 class="section-title">{{ $t('Sound') }}</h3>
         <div class="theme-toggle-row">
           <div class="theme-label">
             <component :is="audio.enabled ? Volume2 : VolumeX" :size="20" />
-            <span>{{ audio.enabled ? 'Sound On' : 'Sound Off' }}</span>
+            <span>{{ audio.enabled ? $t('Sound On') : $t('Sound Off') }}</span>
           </div>
           <button class="theme-toggle-btn" @click="toggleSound" :class="{ active: audio.enabled }">
             <span class="toggle-track">
@@ -460,7 +483,7 @@ async function clearLocalCache() {
           </button>
         </div>
         <div v-if="audio.enabled" class="volume-row">
-          <span class="volume-label">Volume</span>
+          <span class="volume-label">{{ $t('Volume') }}</span>
           <input
             type="range"
             min="0"
@@ -474,44 +497,60 @@ async function clearLocalCache() {
         </div>
       </div>
 
+      <!-- Language Card -->
+      <div class="profile-section">
+        <h3 class="section-title">{{ $t('Language') }}</h3>
+        <div class="language-list">
+          <button
+            v-for="lang in languageOptions"
+            :key="lang.code"
+            class="language-option"
+            :class="{ active: currentLocale === lang.code }"
+            @click="selectLanguage(lang.code)"
+          >
+            <!-- Static self-authored SVGs from src/assets/languageFlags.js — safe for v-html -->
+            <span v-if="LANGUAGE_FLAGS[lang.code]" class="language-flag" v-html="LANGUAGE_FLAGS[lang.code]"></span>
+            {{ lang.name }}
+          </button>
+        </div>
+      </div>
+
       <!-- Notifications Card (native only — reminders are device-local).
            Always rendered on native, even when the plugin is unavailable:
            a silently-broken state must be VISIBLE, not vanish. -->
       <div v-if="isNative" class="profile-section">
-        <h3 class="section-title">Notifications</h3>
+        <h3 class="section-title">{{ $t('Notifications') }}</h3>
         <div class="theme-toggle-row">
           <div class="theme-label">
             <Bell :size="20" />
-            <span>Reminders</span>
+            <span>{{ $t('Reminders') }}</span>
           </div>
           <span v-if="notifStatus === 'granted'" class="notif-on-tag">
-            <Check :size="14" /> On
+            <Check :size="14" /> {{ $t('On') }}
           </span>
           <span v-else-if="notifStatus === 'unsupported'" class="notif-unavailable-tag">
-            Unavailable
+            {{ $t('Unavailable') }}
           </span>
           <button v-else class="notif-enable-btn" @click="handleEnableReminders">
-            {{ notifStatus === 'denied' ? 'Open Settings' : 'Turn On' }}
+            {{ notifStatus === 'denied' ? $t('Open Settings') : $t('Turn On') }}
           </button>
         </div>
         <p class="notif-hint">
           <template v-if="notifStatus === 'denied'">
-            Notifications are turned off for this app in your device settings. Open Settings to
-            allow them and get training and game-day reminders.
+            {{ $t('Notifications are turned off for this app in your device settings. Open Settings to allow them and get training and game-day reminders.') }}
           </template>
           <template v-else-if="notifStatus === 'unsupported'">
-            Notifications aren't available on this build.
+            {{ $t("Notifications aren't available on this build.") }}
           </template>
           <template v-else>
-            Get an alert when a training session finishes, plus reminders when upgrade points or
-            your next game are waiting.
+            {{ $t('Get an alert when a training session finishes, plus reminders when upgrade points or your next game are waiting.') }}
           </template>
         </p>
       </div>
 
       <!-- Rewards Card -->
       <div class="profile-section">
-        <h3 class="section-title">Rewards</h3>
+        <h3 class="section-title">{{ $t('Rewards') }}</h3>
         <div class="rewards-grid">
           <div class="reward-item">
             <div class="reward-icon tokens">
@@ -519,7 +558,7 @@ async function clearLocalCache() {
             </div>
             <div class="reward-info">
               <p class="reward-value">{{ profile?.tokens ?? 0 }}</p>
-              <p class="reward-label">Tokens</p>
+              <p class="reward-label">{{ $t('Tokens') }}</p>
             </div>
           </div>
           <div class="reward-item">
@@ -528,16 +567,16 @@ async function clearLocalCache() {
             </div>
             <div class="reward-info">
               <p class="reward-value">{{ profile?.lifetime_synergies ?? 0 }}</p>
-              <p class="reward-label">Synergies</p>
+              <p class="reward-label">{{ $t('Synergies') }}</p>
             </div>
           </div>
         </div>
-        <p class="reward-hint">Earn tokens when your team's badge synergies activate during games.</p>
+        <p class="reward-hint">{{ $t("Earn tokens when your team's badge synergies activate during games.") }}</p>
       </div>
 
       <!-- Purchases Card -->
       <div class="profile-section">
-        <h3 class="section-title">Purchases</h3>
+        <h3 class="section-title">{{ $t('Purchases') }}</h3>
         <div v-if="ownedFeatures.length > 0" class="owned-features-list">
           <div
             v-for="feature in ownedFeatures"
@@ -545,15 +584,15 @@ async function clearLocalCache() {
             class="owned-feature-row"
           >
             <Check :size="16" class="owned-feature-check" />
-            <span class="owned-feature-label">{{ feature.label }}</span>
-            <span class="owned-feature-tag">Owned</span>
+            <span class="owned-feature-label">{{ $tDynamic(feature.label) }}</span>
+            <span class="owned-feature-tag">{{ $t('Owned') }}</span>
           </div>
         </div>
         <p v-else class="purchases-empty">
-          No one-time unlocks yet — browse the store to add features.
+          {{ $t('No one-time unlocks yet — browse the store to add features.') }}
         </p>
         <p class="purchases-hint">
-          If you previously purchased a feature on this Apple ID and don't see it here, tap Restore Purchases.
+          {{ $t("If you previously purchased a feature on this Apple ID and don't see it here, tap Restore Purchases.") }}
         </p>
         <BaseButton
           variant="secondary"
@@ -562,19 +601,19 @@ async function clearLocalCache() {
           class="restore-button"
         >
           <RotateCcw :size="16" />
-          Restore Purchases
+          {{ $t('Restore Purchases') }}
         </BaseButton>
       </div>
 
       <!-- Data & Sync Card -->
       <div class="profile-section">
-        <h3 class="section-title">Data & Sync</h3>
+        <h3 class="section-title">{{ $t('Data & Sync') }}</h3>
         <div class="sync-status-row">
           <div class="sync-info">
             <Cloud :size="20" />
             <span>{{ syncStore.lastSyncText }}</span>
           </div>
-          <span v-if="syncStore.hasPendingChanges" class="pending-badge">Unsaved</span>
+          <span v-if="syncStore.hasPendingChanges" class="pending-badge">{{ $t('Unsaved') }}</span>
         </div>
         <div class="sync-buttons">
           <BaseButton
@@ -584,7 +623,7 @@ async function clearLocalCache() {
             class="sync-button"
           >
             <CloudUpload :size="16" />
-            Save to Cloud
+            {{ $t('Save to Cloud') }}
           </BaseButton>
           <BaseButton
             variant="secondary"
@@ -594,7 +633,7 @@ async function clearLocalCache() {
             class="sync-button"
           >
             <CloudDownload :size="16" />
-            Pull from Cloud
+            {{ $t('Pull from Cloud') }}
           </BaseButton>
           <BaseButton
             variant="ghost"
@@ -602,64 +641,64 @@ async function clearLocalCache() {
             class="clear-cache-button"
           >
             <Trash2 :size="16" />
-            Clear Local Cache
+            {{ $t('Clear Local Cache') }}
           </BaseButton>
         </div>
       </div>
 
       <!-- Pull from Cloud Confirmation Modal -->
-      <BaseModal :show="showPullFromCloudModal" @close="showPullFromCloudModal = false" title="Pull from Cloud?">
+      <BaseModal :show="showPullFromCloudModal" @close="showPullFromCloudModal = false" :title="$t('Pull from Cloud?')">
         <div class="clear-cache-modal">
           <div class="warning-icon">
             <AlertTriangle :size="32" />
           </div>
           <p class="warning-text">
-            This will replace all local campaign data with the version stored in the cloud.
+            {{ $t('This will replace all local campaign data with the version stored in the cloud.') }}
           </p>
           <ul class="warning-list">
-            <li>Any unsaved local changes will be lost permanently</li>
-            <li>Use this to recover after switching devices or if local state is out of sync</li>
-            <li>The page will reload once the pull completes</li>
+            <li>{{ $t('Any unsaved local changes will be lost permanently') }}</li>
+            <li>{{ $t('Use this to recover after switching devices or if local state is out of sync') }}</li>
+            <li>{{ $t('The page will reload once the pull completes') }}</li>
           </ul>
           <p class="warning-hint">
-            If you've made changes you want to keep, click "Save to Cloud" first and use this only on the device you want to sync TO.
+            {{ $t("If you've made changes you want to keep, click “Save to Cloud” first and use this only on the device you want to sync TO.") }}
           </p>
           <div class="modal-actions">
             <BaseButton variant="ghost" @click="showPullFromCloudModal = false">
-              Cancel
+              {{ $t('Cancel') }}
             </BaseButton>
             <BaseButton variant="danger" @click="pullFromCloud" :loading="pullingFromCloud">
               <CloudDownload :size="16" />
-              Overwrite Local Data
+              {{ $t('Overwrite Local Data') }}
             </BaseButton>
           </div>
         </div>
       </BaseModal>
 
       <!-- Clear Cache Confirmation Modal -->
-      <BaseModal :show="showClearCacheModal" @close="showClearCacheModal = false" title="Clear Local Cache?">
+      <BaseModal :show="showClearCacheModal" @close="showClearCacheModal = false" :title="$t('Clear Local Cache?')">
         <div class="clear-cache-modal">
           <div class="warning-icon">
             <AlertTriangle :size="32" />
           </div>
           <p class="warning-text">
-            This will delete all locally stored game data from this browser.
+            {{ $t('This will delete all locally stored game data from this browser.') }}
           </p>
           <ul class="warning-list">
-            <li>Any unsaved changes will be lost permanently</li>
-            <li>Your data will be restored from the cloud on next load</li>
-            <li>Use this if you're experiencing sync issues or corrupted data</li>
+            <li>{{ $t('Any unsaved changes will be lost permanently') }}</li>
+            <li>{{ $t('Your data will be restored from the cloud on next load') }}</li>
+            <li>{{ $t("Use this if you're experiencing sync issues or corrupted data") }}</li>
           </ul>
           <p class="warning-hint">
-            Make sure to "Save to Cloud" first if you have unsaved changes you want to keep.
+            {{ $t('Make sure to "Save to Cloud" first if you have unsaved changes you want to keep.') }}
           </p>
           <div class="modal-actions">
             <BaseButton variant="ghost" @click="showClearCacheModal = false">
-              Cancel
+              {{ $t('Cancel') }}
             </BaseButton>
             <BaseButton variant="danger" @click="clearLocalCache" :loading="clearingCache">
               <Trash2 :size="16" />
-              Clear Cache
+              {{ $t('Clear Cache') }}
             </BaseButton>
           </div>
         </div>
@@ -670,32 +709,32 @@ async function clearLocalCache() {
 
       <!-- Update Profile Card -->
       <div class="profile-section">
-        <h3 class="section-title">Update Profile</h3>
+        <h3 class="section-title">{{ $t('Update Profile') }}</h3>
         <div v-if="profileSuccess" class="form-message success">{{ profileSuccess }}</div>
         <div v-if="profileError" class="form-message error">{{ profileError }}</div>
         <form @submit.prevent="handleProfileUpdate" class="profile-form">
-          <FormInput v-model="profileForm.username" label="Username" :error="v$Profile.username.$errors[0]?.$message"
+          <FormInput v-model="profileForm.username" :label="$t('Username')" :error="v$Profile.username.$errors[0]?.$message"
             :touched="v$Profile.username.$dirty" required @blur="v$Profile.username.$touch()" />
-          <BaseButton type="submit" variant="primary" :loading="authStore.loading">Save Changes</BaseButton>
+          <BaseButton type="submit" variant="primary" :loading="authStore.loading">{{ $t('Save Changes') }}</BaseButton>
         </form>
       </div>
 
       <!-- Change Password Card -->
       <div class="profile-section">
-        <h3 class="section-title">Change Password</h3>
+        <h3 class="section-title">{{ $t('Change Password') }}</h3>
         <div v-if="passwordSuccess" class="form-message success">{{ passwordSuccess }}</div>
         <div v-if="passwordError" class="form-message error">{{ passwordError }}</div>
         <form @submit.prevent="handlePasswordUpdate" class="profile-form">
-          <FormInput v-model="passwordForm.current_password" label="Current Password" type="password"
+          <FormInput v-model="passwordForm.current_password" :label="$t('Current Password')" type="password"
             :error="v$Password.current_password.$errors[0]?.$message" :touched="v$Password.current_password.$dirty" required
             @blur="v$Password.current_password.$touch()" />
-          <FormInput v-model="passwordForm.password" label="New Password" type="password"
+          <FormInput v-model="passwordForm.password" :label="$t('New Password')" type="password"
             :error="v$Password.password.$errors[0]?.$message" :touched="v$Password.password.$dirty" required
             @blur="v$Password.password.$touch()" />
-          <FormInput v-model="passwordForm.password_confirmation" label="Confirm New Password" type="password"
+          <FormInput v-model="passwordForm.password_confirmation" :label="$t('Confirm New Password')" type="password"
             :error="v$Password.password_confirmation.$errors[0]?.$message" :touched="v$Password.password_confirmation.$dirty" required
             @blur="v$Password.password_confirmation.$touch()" />
-          <BaseButton type="submit" variant="primary" :loading="authStore.loading">Update Password</BaseButton>
+          <BaseButton type="submit" variant="primary" :loading="authStore.loading">{{ $t('Update Password') }}</BaseButton>
         </form>
       </div>
 
@@ -704,65 +743,65 @@ async function clearLocalCache() {
            page renders in any environment but the file-mutation actions
            require FRONTEND_ASSETS_PATH to be set locally. -->
       <div v-if="authStore.isGlobalAdmin" class="profile-section">
-        <h3 class="section-title">Admin Tools</h3>
+        <h3 class="section-title">{{ $t('Admin Tools') }}</h3>
         <BaseButton variant="secondary" @click="router.push('/admin/headshots')">
-          Open Headshot Forge
+          {{ $t('Open Headshot Forge') }}
         </BaseButton>
       </div>
 
       <!-- Session Card -->
       <div class="profile-section">
-        <h3 class="section-title">Session</h3>
-        <BaseButton variant="danger" @click="handleLogout">Sign Out</BaseButton>
+        <h3 class="section-title">{{ $t('Session') }}</h3>
+        <BaseButton variant="danger" @click="handleLogout">{{ $t('Sign Out') }}</BaseButton>
       </div>
 
       <!-- Danger Zone Card -->
       <div class="profile-section danger-zone">
-        <h3 class="section-title">Delete Account</h3>
+        <h3 class="section-title">{{ $t('Delete Account') }}</h3>
         <p class="danger-zone-desc">
-          Permanently delete your account and all of its data. This cannot be undone.
+          {{ $t('Permanently delete your account and all of its data. This cannot be undone.') }}
         </p>
         <BaseButton variant="danger" @click="showDeleteAccountModal = true" class="delete-account-button">
           <Trash2 :size="16" />
-          Delete Account
+          {{ $t('Delete Account') }}
         </BaseButton>
       </div>
 
       <!-- Delete Account Confirmation Modal -->
-      <BaseModal :show="showDeleteAccountModal" @close="closeDeleteAccountModal" title="Delete Account?">
+      <BaseModal :show="showDeleteAccountModal" @close="closeDeleteAccountModal" :title="$t('Delete Account?')">
         <div class="clear-cache-modal">
           <div class="warning-icon">
             <AlertTriangle :size="32" />
           </div>
           <p class="warning-text">
-            This will permanently delete your account. This action <strong>cannot be undone.</strong>
+            {{ $t('This will permanently delete your account.') }} <strong>{{ $t('This action cannot be undone.') }}</strong>
           </p>
           <ul class="warning-list">
-            <li>Your profile, username, and login will be erased</li>
-            <li>All of your campaigns and saved game data will be deleted</li>
-            <li>Your tokens, rewards, and synergy progress will be lost forever</li>
-            <li>This data cannot be recovered — there is no going back</li>
+            <li>{{ $t('Your profile, username, and login will be erased') }}</li>
+            <li>{{ $t('All of your campaigns and saved game data will be deleted') }}</li>
+            <li>{{ $t('Your tokens, rewards, and synergy progress will be lost forever') }}</li>
+            <li>{{ $t('This data cannot be recovered — there is no going back') }}</li>
           </ul>
           <p class="warning-hint">
-            If you're sure, enter your password and type DELETE to confirm.
+            {{ $t("If you're sure, enter your password and type DELETE to confirm.") }}
           </p>
           <div v-if="deleteAccountError" class="form-message error">{{ deleteAccountError }}</div>
           <div class="delete-confirm-fields">
             <FormInput
               v-model="deleteAccountPassword"
-              label="Password"
+              :label="$t('Password')"
               type="password"
-              placeholder="Enter your password"
+              :placeholder="$t('Enter your password')"
             />
             <FormInput
               v-model="deleteAccountConfirmText"
-              label="Type DELETE to confirm"
-              placeholder="DELETE"
+              :label="$t('Type DELETE to confirm')"
+              :placeholder="'DELETE'"
             />
           </div>
           <div class="modal-actions">
             <BaseButton variant="ghost" @click="closeDeleteAccountModal">
-              Cancel
+              {{ $t('Cancel') }}
             </BaseButton>
             <BaseButton
               variant="danger"
@@ -771,7 +810,7 @@ async function clearLocalCache() {
               :disabled="!canDeleteAccount"
             >
               <Trash2 :size="16" />
-              Delete My Account
+              {{ $t('Delete My Account') }}
             </BaseButton>
           </div>
         </div>
@@ -779,6 +818,7 @@ async function clearLocalCache() {
 
       <!-- Build identifier — which binary + bundle this device is actually
            running. Native only (appVersion stays empty on web). -->
+      <!-- i18n-ignore -->
       <p v-if="appVersion" class="app-version-label">BBALL SIM {{ appVersion }}</p>
 
       </div><!-- end Settings Tab -->
@@ -786,26 +826,26 @@ async function clearLocalCache() {
       <!-- Database Tab -->
       <div v-show="activeTab === 'database'">
         <div class="profile-section">
-          <h3 class="section-title">Badge Synergies</h3>
-          <p class="db-description">When two players in your lineup each have matching synergy badges, a synergy activates and provides bonus effects during games. The boost scales with badge level — higher levels mean stronger synergies.</p>
+          <h3 class="section-title">{{ $t('Badge Synergies') }}</h3>
+          <p class="db-description">{{ $t('When two players in your lineup each have matching synergy badges, a synergy activates and provides bonus effects during games. The boost scales with badge level — higher levels mean stronger synergies.') }}</p>
         </div>
 
         <div v-for="group in groupedSynergies" :key="group.category" class="synergy-category-section">
-          <h4 class="synergy-category-title">{{ group.label }}</h4>
+          <h4 class="synergy-category-title">{{ $tDynamic(group.label) }}</h4>
           <div class="synergy-database-grid">
             <div v-for="syn in group.synergies" :key="syn.id" class="synergy-card">
               <div class="synergy-card-header">
                 <Zap :size="16" class="synergy-zap-icon" />
-                <span class="synergy-card-name">{{ syn.synergy_name }}</span>
+                <span class="synergy-card-name">{{ $tDynamic(syn.synergy_name) }}</span>
               </div>
-              <p class="synergy-card-desc">{{ syn.description }}</p>
+              <p class="synergy-card-desc">{{ $tDynamic(syn.description) }}</p>
               <div class="synergy-badges-row">
                 <div class="synergy-badge-req">
-                  <span class="synergy-badge-name">{{ formatBadgeName(syn.badge1_id) }}</span>
+                  <span class="synergy-badge-name">{{ $tDynamic(formatBadgeName(syn.badge1_id)) }}</span>
                 </div>
                 <span class="synergy-plus">+</span>
                 <div class="synergy-badge-req">
-                  <span class="synergy-badge-name">{{ formatBadgeName(syn.badge2_id) }}</span>
+                  <span class="synergy-badge-name">{{ $tDynamic(formatBadgeName(syn.badge2_id)) }}</span>
                 </div>
               </div>
               <div class="synergy-effects">
@@ -820,13 +860,13 @@ async function clearLocalCache() {
         <div class="profile-section" style="margin-top: 1.5rem;">
           <h3 class="section-title">
             <Users :size="18" style="color: #FFD700;" />
-            Dynamic Duo
+            {{ $t('Dynamic Duo') }}
           </h3>
-          <p class="db-description">When two players in your lineup share 2 or more synergies and both players have the involved badges at Gold level or higher, they form a <strong style="color: #FFD700;">Dynamic Duo</strong>. Each player in the duo receives a +2% boost to all attributes.</p>
+          <p class="db-description">{{ $t('When two players in your lineup share 2 or more synergies and both players have the involved badges at Gold level or higher, they form a Dynamic Duo. Each player in the duo receives a +2% boost to all attributes.') }}</p>
           <div class="dynamic-duo-info-card">
             <div class="duo-requirements">
-              <span class="duo-req-item">2+ matching synergies at Gold or higher</span>
-              <span class="duo-req-item">+2% boost to all attributes for both players</span>
+              <span class="duo-req-item">{{ $t('2+ matching synergies at Gold or higher') }}</span>
+              <span class="duo-req-item">{{ $t('+2% boost to all attributes for both players') }}</span>
             </div>
           </div>
         </div>
@@ -921,6 +961,53 @@ async function clearLocalCache() {
 .user-email {
   font-size: 0.875rem;
   color: var(--color-text-secondary);
+}
+
+/* Language picker */
+.language-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.language-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.language-flag {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* :deep() required — v-html content doesn't carry the scoped-style attribute,
+   and the flag SVGs have no intrinsic size (viewBox only). */
+.language-flag :deep(svg) {
+  width: 18px;
+  height: 13.5px; /* flag-icons are 640x480 (4:3) */
+  border-radius: 2px;
+  display: block;
+}
+
+.language-option:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
+
+.language-option.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  font-weight: 600;
 }
 
 /* Theme Toggle */

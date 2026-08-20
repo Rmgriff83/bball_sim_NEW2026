@@ -1,4 +1,5 @@
 import { SeasonManager } from './SeasonManager'
+import { T } from '../simulation/commentaryTemplate'
 
 // ---------------------------------------------------------------------------
 // AllStarService
@@ -18,6 +19,22 @@ const ALL_STAR_MIN_GAMES_PCT = 0.60
 // 5 reserves. 0.25 keeps a sanity floor (rookies still need to have played
 // ~12 games by the break) while letting rotation guys qualify.
 const RISING_STARS_MIN_GAMES_PCT = 0.25
+
+// Full headline/body template per selection combination — one complete
+// sentence each (the selection label is part of the sentence, never a
+// concatenated fragment). The `*_TPLS` naming is load-bearing:
+// wl-i18n.config.js regex-extracts the quoted strings of these const blocks
+// (plus direct quoted first args of T calls).
+const ALL_STAR_SELECTION_HEADLINE_TPLS = {
+  both: '{player} selected to All-Star & Rising Stars team',
+  allStar: '{player} selected to All-Star team',
+  rising: '{player} selected to Rising Stars team',
+}
+const ALL_STAR_SELECTION_BODY_TPLS = {
+  both: 'Your player {player} has been named to the All-Star & Rising Stars team this season.',
+  allStar: 'Your player {player} has been named to the All-Star team this season.',
+  rising: 'Your player {player} has been named to the Rising Stars team this season.',
+}
 
 export class AllStarService {
 
@@ -546,25 +563,40 @@ export class AllStarService {
   static _generateNewsEvents(allStars, risingStars, playerLookup, userTeamId, currentDate) {
     const events = []
 
-    // Build body with starter names
-    const bodyParts = []
-    const confNames = { east: 'Eastern', west: 'Western' }
-
-    for (const [conf, confName] of Object.entries(confNames)) {
+    // Build the announcement body from starter names. Each conference list is
+    // a separate complete template branch (never concatenated fragments); the
+    // starter names themselves are params.
+    const starterNames = {}
+    for (const conf of ['east', 'west']) {
       const starters = allStars[conf]?.starters ?? {}
       const names = Object.values(starters).map(p => p.playerName)
-      if (names.length > 0) {
-        bodyParts.push(`${confName} Conference starters: ${names.join(', ')}`)
-      }
+      starterNames[conf] = names.length > 0 ? names.join(', ') : ''
     }
 
-    const body = bodyParts.join('. ') + '.'
+    const headline = T('All-Star & Rising Stars teams announced')
+    let body
+    if (starterNames.east && starterNames.west) {
+      body = T('Eastern Conference starters: {east}. Western Conference starters: {west}.', {
+        east: starterNames.east, west: starterNames.west,
+      })
+    } else if (starterNames.east) {
+      body = T('Eastern Conference starters: {east}.', { east: starterNames.east })
+    } else if (starterNames.west) {
+      body = T('Western Conference starters: {west}.', { west: starterNames.west })
+    } else {
+      // No starters at all — matches the legacy join('. ') + '.' output.
+      body = { text: '.', tpl: null, params: null }
+    }
 
     // Main announcement
     events.push({
       eventType: 'award',
-      headline: 'All-Star & Rising Stars teams announced',
-      body,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       gameDate: currentDate,
     })
 
@@ -580,19 +612,25 @@ export class AllStarService {
       const inAllStar = allStarIds.includes(playerId)
       const inRising = risingStarIds.includes(playerId)
 
-      let label
+      let selectionKey
       if (inAllStar && inRising) {
-        label = 'All-Star & Rising Stars'
+        selectionKey = 'both'
       } else if (inAllStar) {
-        label = 'All-Star'
+        selectionKey = 'allStar'
       } else {
-        label = 'Rising Stars'
+        selectionKey = 'rising'
       }
 
+      const selHeadline = T(ALL_STAR_SELECTION_HEADLINE_TPLS[selectionKey], { player: playerInfo.playerName })
+      const selBody = T(ALL_STAR_SELECTION_BODY_TPLS[selectionKey], { player: playerInfo.playerName })
       events.push({
         eventType: 'award',
-        headline: `${playerInfo.playerName} selected to ${label} team`,
-        body: `Your player ${playerInfo.playerName} has been named to the ${label} team this season.`,
+        headline: selHeadline.text,
+        body: selBody.text,
+        headline_tpl: selHeadline.tpl,
+        headline_params: selHeadline.params,
+        body_tpl: selBody.tpl,
+        body_params: selBody.params,
         playerId,
         teamId: userTeamId,
         gameDate: currentDate,

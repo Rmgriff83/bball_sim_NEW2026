@@ -16,6 +16,7 @@ import DraftNewsTicker from '@/components/draft/DraftNewsTicker.vue'
 import DraftAnnouncer from '@/components/draft/DraftAnnouncer.vue'
 import DraftCapReadout from '@/components/draft/DraftCapReadout.vue'
 import { onClockLine } from '@/engine/draft/draftCommentary'
+import { t, tDynamic } from '@wl-i18n/i18n.js'
 import { DRAFT_ATTRIBUTES, getAttrValue, attrLevelColor } from '@/utils/draftAttributes'
 import { readableAccent, idealTextOn } from '@/utils/colorContrast'
 import { useIsLightTheme } from '@/composables/useTheme'
@@ -55,7 +56,10 @@ watch(() => draftStore.isDraftActive, (active, prev) => {
 // the sound and pulse the on-the-clock panel. Gated so skip/sim don't spam it.
 const clockPulse = ref(false)
 let clockPulseTimer = null
-const commishLine = computed(() => onClockLine(draftStore.currentPick))
+const commishLine = computed(() => {
+  const line = onClockLine(draftStore.currentPick)
+  return line.tpl ? tDynamic(line.tpl, line.params) : (line.text ?? line)
+})
 watch(() => draftStore.currentPick?.teamId, (teamId, prev) => {
   if (teamId == null || teamId === prev) return
   if (draftStore.isSimming || draftStore.isDraftComplete) return
@@ -214,14 +218,14 @@ async function scoutSelectedPlayer(player) {
     if (hitFullScout || badgesJustRevealed) {
       const nm = `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim() || 'Prospect'
       const msg = hitFullScout && badgesJustRevealed
-        ? `${nm} fully scouted — badges revealed!`
-        : hitFullScout ? `${nm} fully scouted!` : `Badges revealed for ${nm}!`
+        ? t('{name} fully scouted — badges revealed!', { name: nm })
+        : hitFullScout ? t('{name} fully scouted!', { name: nm }) : t('Badges revealed for {name}!', { name: nm })
       audio.affirm()
       toastStore.showSuccess(msg)
     }
   } catch (err) {
     console.error('[DraftRoom] scout failed:', err)
-    toastStore.showError('Failed to scout player')
+    toastStore.showError(t('Failed to scout player'))
   } finally {
     scoutingInProgress.value = false
   }
@@ -240,7 +244,7 @@ function handleDraftPick(playerId) {
   if (!playerId) return
   const player = draftStore.allPlayers.find(p => p.id === playerId)
   if (player && ineligible(player)) {
-    toastStore.showError('Over the second apron — only contracts under $5M can be drafted.')
+    toastStore.showError(t('Over the second apron — only contracts under $5M can be drafted.'))
     return
   }
   audio.affirm()
@@ -432,18 +436,18 @@ const skipConfirm = ref({ show: false, title: '', message: '', confirmLabel: 'Sk
 function askSkip(type) {
   if (type === 'current') {
     skipConfirm.value = {
-      show: true, title: 'Skip Pick', danger: false, confirmLabel: 'Skip Pick',
-      message: 'Skip ahead through the current pick?', action: handleSkipCurrent,
+      show: true, title: t('Skip Pick'), danger: false, confirmLabel: t('Skip Pick'),
+      message: t('Skip ahead through the current pick?'), action: handleSkipCurrent,
     }
   } else if (type === 'mine') {
     skipConfirm.value = {
-      show: true, title: 'Skip to My Pick', danger: false, confirmLabel: 'Skip to My Pick',
-      message: 'Simulate every pick until your next selection?', action: handleSkipToMyPick,
+      show: true, title: t('Skip to My Pick'), danger: false, confirmLabel: t('Skip to My Pick'),
+      message: t('Simulate every pick until your next selection?'), action: handleSkipToMyPick,
     }
   } else {
     skipConfirm.value = {
-      show: true, title: 'Skip Entire Draft', danger: true, confirmLabel: 'Skip Entire Draft',
-      message: 'Auto-draft the rest of the draft? Every remaining pick — including yours — will be filled automatically.',
+      show: true, title: t('Skip Entire Draft'), danger: true, confirmLabel: t('Skip Entire Draft'),
+      message: t('Auto-draft the rest of the draft? Every remaining pick — including yours — will be filled automatically.'),
       action: handleSkipEntire,
     }
   }
@@ -481,7 +485,7 @@ async function handleFinalize() {
     console.error('Finalize error:', e)
     toastStore.addToast({
       type: 'error',
-      message: `Failed to finalize draft: ${e.message || 'Unknown error'}`,
+      message: t('Failed to finalize draft: {error}', { error: e.message || 'Unknown error' }),
     })
   }
 }
@@ -640,7 +644,7 @@ onMounted(async () => {
       }
     }
   } catch (e) {
-    error.value = e.message || 'Failed to load draft'
+    error.value = e.message || t('Failed to load draft')
     console.error('Draft load error:', e)
   } finally {
     loading.value = false
@@ -675,13 +679,13 @@ onUnmounted(() => {
     <!-- Loading State -->
     <div v-if="loading" class="draft-loading">
       <LoadingSpinner size="lg" />
-      <p>Setting up the draft room...</p>
+      <p>{{ $t('Setting up the draft room...') }}</p>
     </div>
 
     <!-- Error State -->
     <div v-else-if="error" class="draft-error">
       <p>{{ error }}</p>
-      <button @click="router.push('/campaigns')" class="btn-back">Back to Campaigns</button>
+      <button @click="router.push('/campaigns')" class="btn-back">{{ $t('Back to Campaigns') }}</button>
     </div>
 
     <!-- Draft Room -->
@@ -690,22 +694,22 @@ onUnmounted(() => {
       <header class="draft-header">
         <div class="header-left">
           <h1 class="draft-title">
-            {{ isRookieMode ? 'ROOKIE DRAFT' : 'FANTASY DRAFT' }}
+            {{ isRookieMode ? $t('ROOKIE DRAFT') : $t('FANTASY DRAFT') }}
             <span
               v-if="!isRookieMode"
               class="snake-chip"
-              title="Snake draft — the pick order reverses every round, so an early pick means a long wait in even rounds"
-            >SNAKE</span>
+              :title="$t('Snake draft — the pick order reverses every round, so an early pick means a long wait in even rounds')"
+            >{{ $t('SNAKE') }}</span>
           </h1>
           <span class="campaign-label">{{ campaignStore.currentCampaign?.name }}</span>
         </div>
         <div class="header-right">
-          <div v-if="userUpcomingPicks.length" class="your-picks" title="Your upcoming pick numbers (snake order)">
-            <span class="round-label">YOUR NEXT {{ userUpcomingPicks.length > 1 ? 'PICKS' : 'PICK' }}</span>
+          <div v-if="userUpcomingPicks.length" class="your-picks" :title="$t('Your upcoming pick numbers (snake order)')">
+            <span class="round-label">{{ userUpcomingPicks.length > 1 ? $t('YOUR NEXT PICKS') : $t('YOUR NEXT PICK') }}</span>
             <span class="your-picks-nums">{{ userUpcomingPicks.map(p => `#${p}`).join(' · ') }}</span>
           </div>
           <div class="round-indicator">
-            <span class="round-label">ROUND</span>
+            <span class="round-label">{{ $t('ROUND') }}</span>
             <span class="round-number">{{ draftStore.currentRound }}</span>
           </div>
         </div>
@@ -727,7 +731,7 @@ onUnmounted(() => {
             <span
               v-if="slot.teamId === draftStore.userTeamId && !slot.isCompleted"
               class="ticker-you"
-            >YOU</span>
+            >{{ $t('YOU') }}</span>
             <ApronPickBadge v-if="slot.apronFrozen" compact class="ticker-apron" />
             <span class="ticker-badge" :class="{ picked: slot.isCompleted && slot.result }">
               {{ slot.isCompleted && slot.result ? slot.result.playerName?.split(' ').pop() : `#${slot.pick}` }}
@@ -778,8 +782,8 @@ onUnmounted(() => {
         <!-- Left Sidebar: User Roster -->
         <aside class="draft-sidebar roster-panel" data-tour="draft-roster">
           <div class="roster-head-row">
-            <h3 class="sidebar-title">YOUR ROSTER</h3>
-            <div class="roster-count">{{ isRookieMode ? `${draftStore.userRoster.length} picks made` : `${draftStore.userRoster.length} / 15` }}</div>
+            <h3 class="sidebar-title">{{ $t('YOUR ROSTER') }}</h3>
+            <div class="roster-count">{{ isRookieMode ? $t('{n} picks made', { n: draftStore.userRoster.length }) : `${draftStore.userRoster.length} / 15` }}</div>
           </div>
 
           <!-- Salary cap (fantasy drafts only) -->
@@ -787,7 +791,7 @@ onUnmounted(() => {
 
           <!-- Scout points (rookie drafts only) — ticks down as you scout. -->
           <div v-if="isRookieMode" class="scout-readout">
-            <span class="scout-readout-label">Scout Points</span>
+            <span class="scout-readout-label">{{ $t('Scout Points') }}</span>
             <span class="scout-readout-value">{{ scoutingPoints }}</span>
           </div>
 
@@ -851,10 +855,10 @@ onUnmounted(() => {
               <div class="clock-info">
                 <div class="clock-team-name">{{ draftStore.currentPick?.teamName }}</div>
                 <div class="clock-status">
-                  <template v-if="draftStore.isSimming">SKIPPING...</template>
-                  <template v-else-if="draftStore.isAutoPlaying && !draftStore.isUserPick">DECIDING...</template>
-                  <template v-else-if="draftStore.isUserPick">ON THE CLOCK</template>
-                  <template v-else>SELECTING...</template>
+                  <template v-if="draftStore.isSimming">{{ $t('SKIPPING...') }}</template>
+                  <template v-else-if="draftStore.isAutoPlaying && !draftStore.isUserPick">{{ $t('DECIDING...') }}</template>
+                  <template v-else-if="draftStore.isUserPick">{{ $t('ON THE CLOCK') }}</template>
+                  <template v-else>{{ $t('SELECTING...') }}</template>
                 </div>
                 <div v-if="!draftStore.isSimming" class="clock-commish">
                   <Timer :size="12" />
@@ -867,13 +871,13 @@ onUnmounted(() => {
                   v-if="!draftStore.isUserPick && userUpcomingPicks.length"
                   class="clock-your-next"
                 >
-                  Your next pick: <strong>#{{ userUpcomingPicks[0] }}</strong>
-                  <span class="cyn-snake">(snake order)</span>
+                  {{ $t('Your next pick:') }} <strong>#{{ userUpcomingPicks[0] }}</strong>
+                  <span class="cyn-snake">{{ $t('(snake order)') }}</span>
                 </div>
               </div>
             </div>
             <div v-else class="clock-content draft-complete">
-              <div class="clock-status">DRAFT COMPLETE</div>
+              <div class="clock-status">{{ $t('DRAFT COMPLETE') }}</div>
               <!-- Inline continue path. Mirrors the DraftCompleteModal's
                    @continue handler so the user can advance without going
                    through the modal — useful on mobile where the modal can
@@ -883,7 +887,7 @@ onUnmounted(() => {
                 :disabled="draftStore.isFinalizing"
                 @click="onContinueClick"
               >
-                {{ draftStore.isFinalizing ? 'Continuing…' : 'Continue to Season' }}
+                {{ draftStore.isFinalizing ? $t('Continuing…') : $t('Continue to Season') }}
               </button>
             </div>
           </div>
@@ -918,7 +922,7 @@ onUnmounted(() => {
                 <input
                   v-model="draftStore.searchQuery"
                   type="text"
-                  placeholder="Search players..."
+                  :placeholder="$t('Search players...')"
                   class="search-input"
                 />
               </div>
@@ -930,7 +934,7 @@ onUnmounted(() => {
               <div class="pool-head">
                 <div class="ph-identity">
                   <button class="ph-sort" @click="draftStore.toggleSort('lastName')">
-                    Name
+                    {{ $t('Name') }}
                     <ChevronUp v-if="getSortIcon('lastName') === 'asc'" :size="11" />
                     <ChevronDown v-if="getSortIcon('lastName') === 'desc'" :size="11" />
                   </button>
@@ -940,13 +944,14 @@ onUnmounted(() => {
                     <ChevronDown v-if="getSortIcon('overallRating') === 'desc'" :size="11" />
                   </button>
                   <button class="ph-sort ph-num" @click="draftStore.toggleSort('potentialRating')">
+                    <!-- i18n-ignore -->
                     POT
                     <ChevronUp v-if="getSortIcon('potentialRating') === 'asc'" :size="11" />
                     <ChevronDown v-if="getSortIcon('potentialRating') === 'desc'" :size="11" />
                   </button>
                 </div>
-                <div class="ph-attrs">Attributes →</div>
-                <div class="pool-count">{{ draftStore.availablePlayers.length }} players</div>
+                <div class="ph-attrs">{{ $t('Attributes →') }}</div>
+                <div class="pool-count">{{ $t('{n} players', { n: draftStore.availablePlayers.length }) }}</div>
               </div>
 
               <div class="pool-list">
@@ -967,11 +972,12 @@ onUnmounted(() => {
                       </div>
                       <div class="ri-stats">
                         <span class="ri-stat" :class="{ unrevealed: !isAttributeRevealed(player.id, 'overallRating') }">OVR {{ getScoutedDisplay(player, 'overallRating') }}</span>
+                        <!-- i18n-ignore -->
                         <span class="ri-stat" :class="{ unrevealed: !isAttributeRevealed(player.id, 'potentialRating') }">POT {{ getScoutedDisplay(player, 'potentialRating') }}</span>
                       </div>
                       <div v-if="!isRookieMode" class="ri-contract">
                         {{ formatContract(player) }}
-                        <span v-if="ineligible(player)" class="overcap-chip">APRON LOCK</span>
+                        <span v-if="ineligible(player)" class="overcap-chip">{{ $t('APRON LOCK') }}</span>
                       </div>
                     </div>
 
@@ -996,22 +1002,22 @@ onUnmounted(() => {
                         class="btn-draft"
                         @click.stop="handleDraftPick(player.id)"
                       >
-                        Draft
+                        {{ $t('Draft') }}
                       </button>
                       <button
                         v-else-if="draftStore.isUserPick && !draftStore.isSimming && !draftStore.isDraftComplete"
                         class="btn-overcap"
                         disabled
-                        title="Over the salary cap — only contracts under $5M can be drafted."
+                        :title="$t('Over the salary cap — only contracts under $5M can be drafted.')"
                         @click.stop
                       >
-                        Over Cap
+                        {{ $t('Over Cap') }}
                       </button>
                       <button
                         v-else
                         class="btn-details"
                         aria-label="View details"
-                        title="View details"
+                        :title="$t('View details')"
                         @click.stop="openPlayerModal(player)"
                       >
                         <Search :size="14" />
@@ -1037,7 +1043,7 @@ onUnmounted(() => {
         <aside v-if="showMobileRoster" class="mobile-roster-drawer">
           <button class="drawer-handle" aria-label="Close roster" @click="showMobileRoster = false"></button>
           <div class="mobile-roster-header">
-            <h3 class="sidebar-title">YOUR ROSTER</h3>
+            <h3 class="sidebar-title">{{ $t('YOUR ROSTER') }}</h3>
             <button class="mobile-roster-close" @click="showMobileRoster = false">
               <X :size="18" />
             </button>
@@ -1047,11 +1053,11 @@ onUnmounted(() => {
 
           <!-- Scout points (rookie drafts only) — ticks down as you scout. -->
           <div v-if="isRookieMode" class="scout-readout">
-            <span class="scout-readout-label">Scout Points</span>
+            <span class="scout-readout-label">{{ $t('Scout Points') }}</span>
             <span class="scout-readout-value">{{ scoutingPoints }}</span>
           </div>
 
-          <div class="roster-count">{{ isRookieMode ? `${draftStore.userRoster.length} picks made` : `${draftStore.userRoster.length} / 15` }}</div>
+          <div class="roster-count">{{ isRookieMode ? $t('{n} picks made', { n: draftStore.userRoster.length }) : `${draftStore.userRoster.length} / 15` }}</div>
 
 
           <div class="roster-positions">
@@ -1087,7 +1093,7 @@ onUnmounted(() => {
             @click="showMobileRoster = !showMobileRoster"
           >
             <Users :size="16" />
-            <span class="roster-toggle-label">Roster</span>
+            <span class="roster-toggle-label">{{ $t('Roster') }}</span>
             <span class="roster-toggle-count">{{ draftStore.userRoster.length }}</span>
             <ChevronUp :size="14" class="roster-toggle-chev" />
           </button>
@@ -1097,7 +1103,7 @@ onUnmounted(() => {
             @click="askSkip('current')"
           >
             <SkipBack :size="16" />
-            <span class="sim-label">Skip Pick</span>
+            <span class="sim-label">{{ $t('Skip Pick') }}</span>
           </button>
           <button
             v-if="draftStore.hasUpcomingUserPick"
@@ -1106,7 +1112,7 @@ onUnmounted(() => {
             @click="askSkip('mine')"
           >
             <FastForward :size="16" />
-            <span class="sim-label">Skip to My Pick</span>
+            <span class="sim-label">{{ $t('Skip to My Pick') }}</span>
           </button>
           <button
             class="sim-btn sim-all"
@@ -1114,11 +1120,11 @@ onUnmounted(() => {
             @click="askSkip('all')"
           >
             <SkipForward :size="16" />
-            <span class="sim-label">Skip Entire Draft</span>
+            <span class="sim-label">{{ $t('Skip Entire Draft') }}</span>
           </button>
         </div>
         <div class="pick-counter">
-          Pick {{ pickProgress }}
+          {{ $t('Pick {n}', { n: pickProgress }) }}
         </div>
       </footer>
     </template>
@@ -1172,7 +1178,7 @@ onUnmounted(() => {
         v-if="attrTip.show"
         class="attr-tip"
         :style="{ left: attrTip.x + 'px', top: attrTip.y + 'px' }"
-      >{{ attrTip.text }}</div>
+      >{{ $tDynamic(attrTip.text) }}</div>
     </Teleport>
 
     <!-- Skip confirmation -->
@@ -1188,7 +1194,7 @@ onUnmounted(() => {
             </header>
             <p class="skip-message">{{ skipConfirm.message }}</p>
             <div class="skip-actions">
-              <button class="skip-cancel" @click="cancelSkip">Cancel</button>
+              <button class="skip-cancel" @click="cancelSkip">{{ $t('Cancel') }}</button>
               <button class="skip-confirm" :class="{ danger: skipConfirm.danger }" @click="confirmSkip">
                 {{ skipConfirm.confirmLabel }}
               </button>

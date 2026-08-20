@@ -286,13 +286,23 @@ export async function simFullOffseason(campaignId) {
             date: campaign.currentDate ?? `${seasonYear + 1}-07-01`,
           })
           if (!seasonData.news) seasonData.news = []
-          seasonData.news.push({
+          const record = {
             id: `news_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             event_type: 'coaching',
             headline: item.headline,
             body: item.body,
             date: item.date,
-          })
+          }
+          // Carry the additive translation-template fields through when present.
+          if (item.headline_tpl) {
+            record.headline_tpl = item.headline_tpl
+            record.headline_params = item.headline_params ?? null
+          }
+          if (item.body_tpl) {
+            record.body_tpl = item.body_tpl
+            record.body_params = item.body_params ?? null
+          }
+          seasonData.news.push(record)
           if (seasonData.news.length > 50) seasonData.news = seasonData.news.slice(-50)
           await SeasonRepository.save(seasonData)
         }

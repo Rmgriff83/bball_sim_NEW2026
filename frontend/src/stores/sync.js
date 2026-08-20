@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { t } from '@wl-i18n/i18n.js'
 import api from '@/composables/useApi'
 import { useToastStore } from '@/stores/toast'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
@@ -703,18 +704,18 @@ export const useSyncStore = defineStore('sync', () => {
       isDirty.value = false
       _dirtyParts.value = new Set()
 
-      toastStore.showSuccess('Saved to cloud', 2000)
+      toastStore.showSuccess(t('Saved to cloud'), 2000)
     } catch (err) {
       syncError.value = err.message || 'Sync failed'
       if (err.tooLargeParts && err.tooLargeParts.length > 0) {
         // Size-specific: retrying the identical payload can't succeed, so
         // don't pretend it will. Local data is untouched either way.
-        toastStore.showError(`Cloud save failed: "${err.tooLargeParts.join(', ')}" is too large for the server — your data is safe on this device`, 5000)
+        toastStore.showError(t('Cloud save failed: "{parts}" is too large for the server — your data is safe on this device', { parts: err.tooLargeParts.join(', ') }), 5000)
       } else if (err.failedParts && err.failedParts.length > 0) {
         const total = PUSH_PARTS.length
-        toastStore.showError(`Sync partial: ${err.failedParts.length} of ${total} files failed - will retry`, 3500)
+        toastStore.showError(t('Sync partial: {n} of {total} files failed - will retry', { n: err.failedParts.length, total }), 3500)
       } else {
-        toastStore.showError('Sync failed - will retry', 3000)
+        toastStore.showError(t('Sync failed - will retry'), 3000)
       }
     } finally {
       isSyncing.value = false
@@ -1270,10 +1271,10 @@ export const useSyncStore = defineStore('sync', () => {
       isDirty.value = false
       _dirtyParts.value = new Set()
 
-      toastStore.showSuccess('Pulled from cloud', 2000)
+      toastStore.showSuccess(t('Pulled from cloud'), 2000)
       return data
     } catch (err) {
-      const msg = err.message || 'Pull from cloud failed'
+      const msg = err.message || t('Pull from cloud failed')
       syncError.value = msg
       toastStore.showError(msg, 3500)
       throw err

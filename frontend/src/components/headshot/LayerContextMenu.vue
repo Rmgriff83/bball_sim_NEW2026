@@ -380,7 +380,7 @@ function clearPieceColor(piece) {
             :class="{ active: l.id === layerId }"
             @click="selectLayer(l.id)"
           >
-            {{ l.label }}
+            {{ $tDynamic(l.label) }}
           </button>
           <!-- Synthetic Palette pill — switches the body to the swatch-grid
                view that bulk-edits the skin/hair/eye/lip config fields.
@@ -390,11 +390,11 @@ function clearPieceColor(piece) {
             type="button"
             class="ctx-pill ctx-pill-palette"
             :class="{ active: isPaletteMode }"
-            title="Swap the whole palette"
+            :title="$t('Swap the whole palette')"
             @click="selectLayer('palette')"
           >
             <Palette :size="12" />
-            <span>Palette</span>
+            <span>{{ $t('Palette') }}</span>
           </button>
         </nav>
       </div>
@@ -402,7 +402,7 @@ function clearPieceColor(piece) {
 
     <!-- Style variants grid -->
     <section v-if="!isPaletteMode && styleVariants" class="ctx-section">
-      <h4>Style</h4>
+      <h4>{{ $t('Style') }}</h4>
       <div class="style-grid">
         <button
           v-for="variant in styleVariants"
@@ -410,11 +410,11 @@ function clearPieceColor(piece) {
           type="button"
           class="style-cell"
           :class="{ active: currentStyleValue === variant }"
-          :title="labelForVariant(variant)"
+          :title="$tDynamic(labelForVariant(variant))"
           @click="setStyle(variant)"
         >
           <div class="style-thumb" v-html="thumbnailFor(variant)" />
-          <span class="style-label">{{ labelForVariant(variant) }}</span>
+          <span class="style-label">{{ $tDynamic(labelForVariant(variant)) }}</span>
         </button>
       </div>
     </section>
@@ -432,7 +432,7 @@ function clearPieceColor(piece) {
         :aria-expanded="piecesOpen"
         @click="togglePieces"
       >
-        <span>Piece Colors</span>
+        <span>{{ $t('Piece Colors') }}</span>
         <span class="ctx-pieces-toggle-meta">
           <span class="ctx-pieces-count">{{ layerPieces.length }}</span>
           <ChevronDown :size="14" class="ctx-pieces-chev" />
@@ -454,17 +454,17 @@ function clearPieceColor(piece) {
             <button
               type="button"
               class="piece-swatch-btn"
-              :title="`Set color for ${piece.label}`"
+              :title="$t('Set color for {piece}', { piece: $tDynamic(piece.label) })"
               @click="openPieceColorPicker(piece)"
             >
               <span class="piece-swatch" :style="{ background: pieceColorFor(piece) }" />
-              <span class="piece-label">{{ piece.label }}</span>
+              <span class="piece-label">{{ $tDynamic(piece.label) }}</span>
             </button>
             <button
               v-if="hasOverride(piece)"
               type="button"
               class="piece-reset"
-              title="Reset to default color"
+              :title="$t('Reset to default color')"
               @click="clearPieceColor(piece)"
             >
               <RotateCcw :size="12" />
@@ -481,7 +481,7 @@ function clearPieceColor(piece) {
       v-if="!isPaletteMode && !styleVariants && layerPieces.length === 0"
       class="derived-note"
     >
-      This layer follows the Face skin tone. Change it from the Face layer.
+      {{ $t('This layer follows the Face skin tone. Change it from the Face layer.') }}
     </p>
 
     <!-- Palette swap grid. Each row is a config field (skin/hair/eye/lip);
@@ -492,12 +492,10 @@ function clearPieceColor(piece) {
          the moment a swatch here is clicked. -->
     <section v-if="isPaletteMode" class="ctx-section">
       <p class="palette-hint">
-        Pick a palette slot to recolor everything bound to it — the headshot,
-        every layer's pieces, and any color picker you have open all update
-        together.
+        {{ $t("Pick a palette slot to recolor everything bound to it — the headshot, every layer's pieces, and any color picker you have open all update together.") }}
       </p>
       <div v-for="row in PALETTE_ROWS" :key="row.configKey" class="palette-row">
-        <div class="palette-row-label">{{ row.label }}</div>
+        <div class="palette-row-label">{{ $tDynamic(row.label) }}</div>
         <div class="palette-swatch-row">
           <button
             v-for="opt in row.options"
@@ -506,7 +504,7 @@ function clearPieceColor(piece) {
             class="palette-swatch"
             :class="{ active: config?.[row.configKey] === opt.key }"
             :style="{ background: opt.swatchHex }"
-            :title="opt.label"
+            :title="$tDynamic(opt.label)"
             :aria-label="`${row.label} ${opt.label}`"
             @click="setPaletteValue(row.configKey, opt.key)"
           />

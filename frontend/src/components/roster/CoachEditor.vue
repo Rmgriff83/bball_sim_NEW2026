@@ -126,7 +126,7 @@ function save() {
     <div class="cee-overlay" @click.self="requestClose">
       <div class="cee-container">
         <header class="cee-chrome">
-          <h2 class="cee-title">Edit Coach</h2>
+          <h2 class="cee-title">{{ $t('Edit Coach') }}</h2>
           <button class="cee-close" aria-label="Close" @click="requestClose"><X :size="18" /></button>
         </header>
 
@@ -138,7 +138,7 @@ function save() {
               <button
                 v-if="canEditHeadshot"
                 class="cee-edit-headshot"
-                title="Edit headshot"
+                :title="$t('Edit headshot')"
                 aria-label="Edit headshot"
                 @click.stop="editHeadshot"
               >
@@ -148,13 +148,14 @@ function save() {
             <div class="cee-hero-info">
               <h3 class="cee-hero-name">{{ liveName }}</h3>
               <div class="cee-hero-meta">
+                <!-- i18n-ignore -->
                 <span class="cee-role">HC</span>
-                <span class="cee-scheme">{{ offSchemeName }}</span>
+                <span class="cee-scheme">{{ $tDynamic(offSchemeName) }}</span>
               </div>
             </div>
             <div class="cee-hero-ratings">
               <div class="cee-rating"><span>OVR</span><strong>{{ liveOverall }}</strong></div>
-              <div class="cee-rating tier"><span>TIER</span><strong>{{ liveTier }}</strong></div>
+              <div class="cee-rating tier"><span>{{ $t('TIER') }}</span><strong>{{ $tDynamic(liveTier) }}</strong></div>
             </div>
           </div>
 
@@ -167,7 +168,7 @@ function save() {
               :class="{ active: activeTab === tab.key }"
               @click="activeTab = tab.key"
             >
-              {{ tab.label }}
+              {{ $tDynamic(tab.label) }}
             </button>
           </div>
 
@@ -175,12 +176,12 @@ function save() {
           <div v-if="activeTab === 'info'" class="cee-panel">
             <div class="cee-grid two">
               <label class="cee-field">
-                <span>First Name</span>
-                <input v-model="coach.firstName" class="cee-input" placeholder="First" />
+                <span>{{ $t('First Name') }}</span>
+                <input v-model="coach.firstName" class="cee-input" :placeholder="$t('First')" />
               </label>
               <label class="cee-field">
-                <span>Last Name</span>
-                <input v-model="coach.lastName" class="cee-input" placeholder="Last" />
+                <span>{{ $t('Last Name') }}</span>
+                <input v-model="coach.lastName" class="cee-input" :placeholder="$t('Last')" />
               </label>
             </div>
           </div>
@@ -189,15 +190,15 @@ function save() {
           <div v-else-if="activeTab === 'schemes'" class="cee-panel">
             <div class="cee-grid two">
               <label class="cee-field">
-                <span>Offensive Scheme</span>
+                <span>{{ $t('Offensive Scheme') }}</span>
                 <select v-model="coach.offensiveScheme" class="cee-input">
-                  <option v-for="o in offensiveSchemeOptions" :key="o.id" :value="o.id">{{ o.name }}</option>
+                  <option v-for="o in offensiveSchemeOptions" :key="o.id" :value="o.id">{{ $tDynamic(o.name) }}</option>
                 </select>
               </label>
               <label class="cee-field">
-                <span>Defensive Scheme</span>
+                <span>{{ $t('Defensive Scheme') }}</span>
                 <select v-model="coach.defensiveScheme" class="cee-input">
-                  <option v-for="d in defensiveSchemeOptions" :key="d.id" :value="d.id">{{ d.name }}</option>
+                  <option v-for="d in defensiveSchemeOptions" :key="d.id" :value="d.id">{{ $tDynamic(d.name) }}</option>
                 </select>
               </label>
             </div>
@@ -206,7 +207,7 @@ function save() {
           <!-- Attributes -->
           <div v-else-if="activeTab === 'attributes'" class="cee-panel">
             <div v-for="a in COACH_ATTRIBUTES" :key="a" class="cee-row">
-              <span class="cee-row-name">{{ ATTR_LABELS[a] ?? a }}</span>
+              <span class="cee-row-name">{{ $tDynamic(ATTR_LABELS[a] ?? a) }}</span>
               <input
                 type="number"
                 min="25"
@@ -221,14 +222,14 @@ function save() {
           <!-- Perks -->
           <div v-else-if="activeTab === 'perks'" class="cee-panel">
             <div v-for="b in coachBadges" :key="b.id" class="cee-row">
-              <span class="cee-row-name">{{ b.name }}</span>
+              <span class="cee-row-name">{{ $tDynamic(b.name) }}</span>
               <select
                 class="cee-input sm"
                 :value="coachBadgeLevel(b.id) ?? ''"
                 @change="setCoachBadge(b.id, $event.target.value || null)"
               >
                 <option v-for="lvl in BADGE_STEPS" :key="lvl ?? 'none'" :value="lvl ?? ''">
-                  {{ lvl ? lvl.toUpperCase() : 'None' }}
+                  {{ lvl ? lvl.toUpperCase() : $t('None') }}
                 </option>
               </select>
             </div>
@@ -236,18 +237,18 @@ function save() {
         </main>
 
         <footer class="cee-foot">
-          <button class="cee-cancel" @click="requestClose">Cancel</button>
-          <button class="cee-save" @click="save">Save Coach</button>
+          <button class="cee-cancel" @click="requestClose">{{ $t('Cancel') }}</button>
+          <button class="cee-save" @click="save">{{ $t('Save Coach') }}</button>
         </footer>
 
         <!-- Unsaved-changes discard confirm -->
         <div v-if="confirmDiscard" class="cee-discard-overlay">
           <div class="cee-discard-box">
-            <p>Discard unsaved changes to this coach?</p>
+            <p>{{ $t('Discard unsaved changes to this coach?') }}</p>
             <div class="cee-discard-actions">
-              <button class="cee-save" @click="confirmDiscard = false">Keep editing</button>
+              <button class="cee-save" @click="confirmDiscard = false">{{ $t('Keep editing') }}</button>
               <button class="cee-cancel cee-discard-confirm" @click="confirmDiscard = false; emit('close')">
-                Discard
+                {{ $t('Discard') }}
               </button>
             </div>
           </div>

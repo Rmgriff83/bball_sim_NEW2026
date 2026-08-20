@@ -24,6 +24,7 @@ import { isPastResignDeadline, isInFreeAgencyPeriod, FREE_AGENCY_DURATION_DAYS }
 import { capNumbersFor, capStatusFor, capLineForExpectation } from '@/engine/data/salaryScale'
 import { findOwnerForTeam } from '@/engine/data/owners'
 import { getEffectiveExpectation } from '@/engine/season/OwnerExpectationService'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   campaignId: {
@@ -110,10 +111,10 @@ const secondApron = computed(() => summary.value?.second_apron ?? null)
 const capThresholds = computed(() => {
   if (!luxuryTax.value) return []
   return [
-    { key: 'cap', label: 'Salary Cap', value: salaryCap.value },
-    { key: 'tax', label: 'Luxury Tax', value: luxuryTax.value },
-    { key: 'apron1', label: 'First Apron', value: firstApron.value },
-    { key: 'apron2', label: 'Second Apron', value: secondApron.value },
+    { key: 'cap', label: t('Salary Cap'), value: salaryCap.value },
+    { key: 'tax', label: t('Luxury Tax'), value: luxuryTax.value },
+    { key: 'apron1', label: t('First Apron'), value: firstApron.value },
+    { key: 'apron2', label: t('Second Apron'), value: secondApron.value },
   ].filter(t => t.value > 0)
 })
 
@@ -144,11 +145,11 @@ const ownerCapLineKey = computed(() => {
   }).key
 })
 
-function thresholdDelta(t) {
-  const diff = totalPayroll.value - t.value
+function thresholdDelta(th) {
+  const diff = totalPayroll.value - th.value
   return diff > 0
-    ? `${formatLargeSalary(diff)} over`
-    : `${formatLargeSalary(-diff)} below`
+    ? t('{amount} over', { amount: formatLargeSalary(diff) })
+    : t('{amount} below', { amount: formatLargeSalary(-diff) })
 }
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C']
@@ -367,14 +368,14 @@ async function handleHoldCoachMeeting({ playerId, purchasedAction }) {
       props.campaignId, playerId, { purchasedAction }
     )
     const summary = purchasedAction
-      ? `Bought a coach meeting · morale +30 (now ${res.morale})`
-      : `Coach meeting held · morale +30 (now ${res.morale}) · ${res.actionsRemaining} actions left`
+      ? t('Bought a coach meeting · morale +30 (now {n})', { n: res.morale })
+      : t('Coach meeting held · morale +30 (now {n}) · {m} actions left', { n: res.morale, m: res.actionsRemaining })
     toastStore.showSuccess(summary)
     // Refresh the modal's player object so morale + action counter update.
     const updated = teamStore.roster?.find(p => p.id === playerId)
     if (updated) detailPlayer.value = { ...detailPlayer.value, ...updated }
   } catch (err) {
-    toastStore.showError(err.response?.data?.message || err.message || 'Failed to hold meeting')
+    toastStore.showError(err.response?.data?.message || err.message || t('Failed to hold meeting'))
   }
 }
 
@@ -384,13 +385,13 @@ async function handleResignConfirm(data) {
     await financeStore.resignPlayer(props.campaignId, data.playerId, data.years, data.salary)
     // Refresh roster data
     await financeStore.fetchRosterContracts(props.campaignId, { force: true })
-    toastStore.showSuccess('Player re-signed')
+    toastStore.showSuccess(t('Player re-signed'))
   } catch (err) {
     console.error('Failed to re-sign player:', err)
     // Close the modal so its "Deal Accepted!" banner can't sit on screen
     // contradicting the error toast.
     financeStore.closeResignModal()
-    toastStore.showError(err?.message || 'Failed to re-sign player')
+    toastStore.showError(err?.message || t('Failed to re-sign player'))
   } finally {
     resignLoading.value = false
   }
@@ -406,7 +407,7 @@ async function handleSignConfirm(data) {
         salary: data.salary,
       })
       audio.affirm()
-      toastStore.showSuccess('Offer submitted')
+      toastStore.showSuccess(t('Offer submitted'))
       return
     }
     audio.suppressClickSound() // affirmation chime on success instead of the generic tap
@@ -424,7 +425,7 @@ async function handleSignConfirm(data) {
       playerName: result?.transaction?.playerName
         || result?.player?.name
         || `${result?.player?.firstName ?? ''} ${result?.player?.lastName ?? ''}`.trim()
-        || 'Player',
+        || t('Player'),
       position: result?.player?.position,
       overallRating: result?.player?.overallRating ?? result?.player?.overall_rating,
       salary: result?.transaction?.salary ?? data.salary,
@@ -432,7 +433,7 @@ async function handleSignConfirm(data) {
     })
   } catch (err) {
     console.error('Failed to sign free agent:', err)
-    toastStore.showError(err.message || 'Failed to sign player')
+    toastStore.showError(err.message || t('Failed to sign player'))
   } finally {
     signLoading.value = false
   }
@@ -443,10 +444,10 @@ async function handleSignWithdraw(data) {
   try {
     await financeStore.withdrawFreeAgentOffer(props.campaignId, data.playerId)
     financeStore.closeSignModal()
-    toastStore.showSuccess('Offer withdrawn')
+    toastStore.showSuccess(t('Offer withdrawn'))
   } catch (err) {
     console.error('Failed to withdraw offer:', err)
-    toastStore.showError(err.message || 'Failed to withdraw offer')
+    toastStore.showError(err.message || t('Failed to withdraw offer'))
   } finally {
     signLoading.value = false
   }
@@ -458,10 +459,10 @@ async function handleDropConfirm(data) {
     await financeStore.dropPlayer(props.campaignId, data.playerId)
     // Refresh roster data
     await financeStore.fetchRosterContracts(props.campaignId, { force: true })
-    toastStore.showSuccess('Player released')
+    toastStore.showSuccess(t('Player released'))
   } catch (err) {
     console.error('Failed to drop player:', err)
-    toastStore.showError('Failed to release player')
+    toastStore.showError(t('Failed to release player'))
   } finally {
     dropLoading.value = false
   }
@@ -472,7 +473,7 @@ async function handleSimFreeAgencyDay() {
   audio.navigate() // generic tap; suppress the global one so it doesn't double
   audio.suppressClickSound()
   simmingFAday.value = true
-  const loadingToastId = toastStore.showLoading('Simulating free-agency day...')
+  const loadingToastId = toastStore.showLoading(t('Simulating free-agency day...'))
   try {
     const result = await financeStore.simFreeAgencyDay(props.campaignId)
     await Promise.all([
@@ -487,13 +488,13 @@ async function handleSimFreeAgencyDay() {
         endOfFreeAgencyResults.value = fas
         showEndOfFreeAgencyModal.value = true
       }
-      toastStore.showSuccess('Free agency complete!')
+      toastStore.showSuccess(t('Free agency complete!'))
     } else {
-      toastStore.showSuccess(`Day ${result.day}/${FREE_AGENCY_DURATION_DAYS} simulated`)
+      toastStore.showSuccess(t('Day {a}/{b} simulated', { a: result.day, b: FREE_AGENCY_DURATION_DAYS }))
     }
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(err.message || 'Failed to simulate day')
+    toastStore.showError(err.message || t('Failed to simulate day'))
     console.error('Failed to sim FA day:', err)
   } finally {
     simmingFAday.value = false
@@ -505,7 +506,7 @@ async function handleSimRestOfFreeAgency() {
   audio.navigate() // generic tap; suppress the global one so it doesn't double
   audio.suppressClickSound()
   simmingFAday.value = true
-  const loadingToastId = toastStore.showLoading('Simulating remainder of free agency...')
+  const loadingToastId = toastStore.showLoading(t('Simulating remainder of free agency...'))
   try {
     await financeStore.simRestOfFreeAgency(props.campaignId)
     await Promise.all([
@@ -519,10 +520,10 @@ async function handleSimRestOfFreeAgency() {
       endOfFreeAgencyResults.value = fas
       showEndOfFreeAgencyModal.value = true
     }
-    toastStore.showSuccess('Free agency complete!')
+    toastStore.showSuccess(t('Free agency complete!'))
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(err.message || 'Failed to simulate free agency')
+    toastStore.showError(err.message || t('Failed to simulate free agency'))
     console.error('Failed to sim rest of FA:', err)
   } finally {
     simmingFAday.value = false
@@ -556,12 +557,12 @@ async function handleConfirmChoices(selectedIds) {
     }
     toastStore.showSuccess(
       newAccepted.length === 1
-        ? `${newAccepted[0].playerName} signed!`
-        : `Signed ${newAccepted.length} free agent${newAccepted.length === 1 ? '' : 's'}`
+        ? t('{name} signed!', { name: newAccepted[0].playerName })
+        : t('Signed {n} free agents', { n: newAccepted.length })
     )
   } catch (err) {
     console.error('Failed to finalize FA choices:', err)
-    toastStore.showError(err.message || 'Failed to finalize signings')
+    toastStore.showError(err.message || t('Failed to finalize signings'))
   } finally {
     finalizingChoices.value = false
   }
@@ -603,7 +604,7 @@ onMounted(() => {
     <!-- Loading State -->
     <div v-if="loading" class="loading-container">
       <LoadingSpinner size="lg" />
-      <p class="text-secondary mt-4">Loading team finances...</p>
+      <p class="text-secondary mt-4">{{ $t('Loading team finances...') }}</p>
     </div>
 
     <template v-else>
@@ -619,7 +620,7 @@ onMounted(() => {
               <DollarSign :size="24" />
             </div>
             <div class="overview-content">
-              <span class="overview-label">Salary Cap</span>
+              <span class="overview-label">{{ $t('Salary Cap') }}</span>
               <span class="overview-value">{{ formatLargeSalary(salaryCap) }}</span>
             </div>
           </div>
@@ -629,7 +630,7 @@ onMounted(() => {
               <Users :size="24" />
             </div>
             <div class="overview-content">
-              <span class="overview-label">Total Payroll</span>
+              <span class="overview-label">{{ $t('Total Payroll') }}</span>
               <span class="overview-value">{{ formatLargeSalary(totalPayroll) }}</span>
             </div>
           </div>
@@ -639,7 +640,7 @@ onMounted(() => {
               <TrendingUp :size="24" />
             </div>
             <div class="overview-content">
-              <span class="overview-label">Cap Space</span>
+              <span class="overview-label">{{ $t('Cap Space') }}</span>
               <span class="overview-value" :class="{ negative: capSpace < 0 }">
                 {{ capSpace >= 0 ? '' : '-' }}{{ formatLargeSalary(Math.abs(capSpace)) }}
               </span>
@@ -651,7 +652,7 @@ onMounted(() => {
               <Users :size="24" />
             </div>
             <div class="overview-content">
-              <span class="overview-label">Roster</span>
+              <span class="overview-label">{{ $t('Roster') }}</span>
               <span class="overview-value">{{ rosterCount }}/15</span>
             </div>
           </div>
@@ -676,8 +677,8 @@ onMounted(() => {
         <!-- Cap threshold ladder — payroll position vs cap/tax/aprons -->
         <div v-if="capThresholds.length" class="cap-ladder" data-tour="gm-cap-ladder">
           <div class="cap-ladder-header">
-            <span class="cap-ladder-title">League Thresholds</span>
-            <span v-if="capStatus" class="cap-status-chip" :class="capStatus.cls">{{ capStatus.label }}</span>
+            <span class="cap-ladder-title">{{ $t('League Thresholds') }}</span>
+            <span v-if="capStatus" class="cap-status-chip" :class="capStatus.cls">{{ $tDynamic(capStatus.label) }}</span>
           </div>
           <div class="cap-ladder-rows">
             <div
@@ -687,8 +688,8 @@ onMounted(() => {
               :class="{ crossed: totalPayroll > t.value }"
             >
               <span class="cap-ladder-label">
-                {{ t.label }}
-                <span v-if="t.key === ownerCapLineKey" class="owner-limit-tag" title="Your owner expects payroll kept at or under this line">Owner limit</span>
+                {{ $tDynamic(t.label) }}
+                <span v-if="t.key === ownerCapLineKey" class="owner-limit-tag" :title="$t('Your owner expects payroll kept at or under this line')">{{ $t('Owner limit') }}</span>
               </span>
               <span class="cap-ladder-value">{{ formatLargeSalary(t.value) }}</span>
               <span class="cap-ladder-delta" :class="totalPayroll > t.value ? 'is-over' : 'is-below'">
@@ -701,7 +702,7 @@ onMounted(() => {
         <!-- Expiring Contracts Alert -->
         <div v-if="expiringContracts.length > 0" class="expiring-alert">
           <Calendar :size="18" />
-          <span>{{ expiringContracts.length }} expiring contract{{ expiringContracts.length !== 1 ? 's' : '' }} this season</span>
+          <span>{{ expiringContracts.length === 1 ? $t('{n} expiring contract this season', { n: expiringContracts.length }) : $t('{n} expiring contracts this season', { n: expiringContracts.length }) }}</span>
         </div>
       </GlassCard>
 
@@ -712,7 +713,7 @@ onMounted(() => {
           :class="{ active: activeSubTab === 'team' }"
           @click="activeSubTab = 'team'"
         >
-          Contracts
+          {{ $t('Contracts') }}
         </button>
         <button
           v-if="!isOffseason"
@@ -720,7 +721,7 @@ onMounted(() => {
           :class="{ active: activeSubTab === 'expiring' }"
           @click="activeSubTab = 'expiring'"
         >
-          Expiring
+          {{ $t('Expiring') }}
           <span v-if="expiringContracts.length > 0" class="sub-tab-badge">{{ expiringContracts.length }}</span>
         </button>
         <button
@@ -728,14 +729,14 @@ onMounted(() => {
           :class="{ active: activeSubTab === 'free-agents' }"
           @click="activeSubTab = 'free-agents'"
         >
-          Free Agents
+          {{ $t('Free Agents') }}
         </button>
         <button
           class="sub-tab-btn"
           :class="{ active: activeSubTab === 'picks' }"
           @click="activeSubTab = 'picks'"
         >
-          Picks
+          {{ $t('Picks') }}
           <span v-if="userDraftPicks.length > 0" class="sub-tab-badge">{{ userDraftPicks.length }}</span>
         </button>
       </div>
@@ -743,8 +744,8 @@ onMounted(() => {
       <!-- Free Agency control strip — only while the FA window is open. -->
       <div v-if="isFreeAgencyActive" class="fa-control-strip">
         <div class="fa-control-meta">
-          <span class="fa-control-label">FREE AGENCY</span>
-          <span class="fa-control-day">Day {{ freeAgencyDay }} / {{ FREE_AGENCY_DURATION_DAYS }}</span>
+          <span class="fa-control-label">{{ $t('FREE AGENCY') }}</span>
+          <span class="fa-control-day">{{ $t('Day {a} / {b}', { a: freeAgencyDay, b: FREE_AGENCY_DURATION_DAYS }) }}</span>
           <div class="fa-control-progress">
             <div
               class="fa-control-progress-bar"
@@ -760,7 +761,7 @@ onMounted(() => {
             @click="handleSimFreeAgencyDay"
           >
             <FastForward :size="14" />
-            <span>{{ simmingFAday ? 'Simulating…' : 'Sim FA Day' }}</span>
+            <span>{{ simmingFAday ? $t('Simulating…') : $t('Sim FA Day') }}</span>
           </button>
           <button
             type="button"
@@ -769,7 +770,7 @@ onMounted(() => {
             @click="handleSimRestOfFreeAgency"
           >
             <FastForward :size="14" />
-            <span>Sim Rest of FA</span>
+            <span>{{ $t('Sim Rest of FA') }}</span>
           </button>
         </div>
       </div>
@@ -784,7 +785,7 @@ onMounted(() => {
       <div v-if="activeSubTab === 'team'" class="contracts-section">
         <!-- Player Cards Grid -->
         <div class="player-cards-section">
-          <h4 class="section-title">Team Roster</h4>
+          <h4 class="section-title">{{ $t('Team Roster') }}</h4>
           <div class="player-cards-grid">
             <ContractCard
               v-for="(player, idx) in sortedRoster"
@@ -806,19 +807,19 @@ onMounted(() => {
         <!-- Re-sign deadline banner — shown after the in-season deadline passes (Feb 5) -->
         <div v-if="resignDeadlinePassed" class="resign-closed-banner">
           <Calendar :size="16" />
-          <span>Re-signing is closed for this season — the deadline has passed. Expiring players will hit free agency at season end.</span>
+          <span>{{ $t('Re-signing is closed for this season — the deadline has passed. Expiring players will hit free agency at season end.') }}</span>
         </div>
 
         <div v-if="expiringContracts.length === 0" class="empty-state">
           <Calendar :size="48" />
-          <h4>No Expiring Contracts</h4>
-          <p>None of your players have contracts ending this season.</p>
+          <h4>{{ $t('No Expiring Contracts') }}</h4>
+          <p>{{ $t('None of your players have contracts ending this season.') }}</p>
         </div>
 
         <div v-else class="player-cards-section">
           <h4 class="section-title">
             <Calendar :size="16" />
-            Expiring Contracts
+            {{ $t('Expiring Contracts') }}
           </h4>
           <div class="player-cards-grid">
             <ContractCard
@@ -840,14 +841,14 @@ onMounted(() => {
       <div v-else-if="activeSubTab === 'free-agents'" class="free-agents-section">
         <div v-if="freeAgents.length === 0" class="empty-state">
           <Users :size="48" />
-          <h4>No Free Agents Available</h4>
-          <p>Check back after the season for available free agents.</p>
+          <h4>{{ $t('No Free Agents Available') }}</h4>
+          <p>{{ $t('Check back after the season for available free agents.') }}</p>
         </div>
 
         <div v-else class="player-cards-section">
           <div class="fa-filters">
             <div class="fa-filter-group">
-              <span class="fa-filter-label">Position</span>
+              <span class="fa-filter-label">{{ $t('Position') }}</span>
               <div class="fa-filter-chips">
                 <button
                   v-for="pos in FA_POSITION_OPTIONS"
@@ -862,28 +863,28 @@ onMounted(() => {
               </div>
             </div>
             <div class="fa-filter-group">
-              <span class="fa-filter-label">Overall</span>
+              <span class="fa-filter-label">{{ $t('Overall') }}</span>
               <button
                 class="fa-chip fa-sort-chip active"
                 type="button"
-                :title="faOvrSortDir === 'desc' ? 'Highest first — click to reverse' : 'Lowest first — click to reverse'"
+                :title="faOvrSortDir === 'desc' ? $t('Highest first — click to reverse') : $t('Lowest first — click to reverse')"
                 @click="toggleFaOvrSort"
               >
                 <component :is="faOvrSortDir === 'desc' ? ArrowDown : ArrowUp" :size="13" />
-                <span>OVR {{ faOvrSortDir === 'desc' ? 'High → Low' : 'Low → High' }}</span>
+                <span>OVR {{ faOvrSortDir === 'desc' ? $t('High → Low') : $t('Low → High') }}</span>
               </button>
             </div>
           </div>
 
           <h4 class="section-title">
-            Available Free Agents
+            {{ $t('Available Free Agents') }}
             <span v-if="filteredFreeAgents.length !== freeAgents.length" class="fa-filter-count">
-              {{ filteredFreeAgents.length }} of {{ freeAgents.length }}
+              {{ $t('{a} of {b}', { a: filteredFreeAgents.length, b: freeAgents.length }) }}
             </span>
           </h4>
 
           <div v-if="filteredFreeAgents.length === 0" class="empty-state empty-state-inline">
-            <p>No free agents match these filters.</p>
+            <p>{{ $t('No free agents match these filters.') }}</p>
           </div>
           <template v-else>
             <div class="player-cards-grid">
@@ -899,7 +900,7 @@ onMounted(() => {
             </div>
             <div v-if="hasMoreFreeAgents" class="load-more-container">
               <button class="load-more-btn" type="button" @click="faPage++">
-                Show More ({{ paginatedFreeAgents.length }} of {{ filteredFreeAgents.length }})
+                {{ $t('Show More ({a} of {b})', { a: paginatedFreeAgents.length, b: filteredFreeAgents.length }) }}
               </button>
             </div>
           </template>
@@ -910,14 +911,14 @@ onMounted(() => {
       <div v-else-if="activeSubTab === 'picks'" class="picks-section">
         <div v-if="userDraftPicks.length === 0" class="empty-state">
           <FileText :size="48" />
-          <h4>No Draft Picks</h4>
-          <p>Your team doesn't currently own any future draft picks.</p>
+          <h4>{{ $t('No Draft Picks') }}</h4>
+          <p>{{ $t("Your team doesn't currently own any future draft picks.") }}</p>
         </div>
 
         <div v-else class="player-cards-section">
           <h4 class="section-title">
             <FileText :size="16" />
-            Owned Draft Picks
+            {{ $t('Owned Draft Picks') }}
             <span class="fa-filter-count">{{ userDraftPicks.length }}</span>
           </h4>
 
@@ -930,11 +931,11 @@ onMounted(() => {
               <div class="pick-asset-content">
                 <div class="pick-asset-year">{{ formatPickYear(pick.year) }}</div>
                 <div class="pick-asset-info">
-                  <span class="pick-asset-name">Round {{ pick.round }}</span>
+                  <span class="pick-asset-name">{{ $t('Round {n}', { n: pick.round }) }}</span>
                   <span v-if="pick.original_team_abbreviation" class="pick-asset-team">({{ pick.original_team_abbreviation }})</span>
                   <ApronPickBadge v-if="pick.apronFrozen ?? pick.apron_frozen" />
                   <div v-if="pick.projected_position" class="pick-asset-projection">
-                    Projected #{{ pick.projected_position }}
+                    {{ $t('Projected #{n}', { n: pick.projected_position }) }}
                   </div>
                 </div>
               </div>

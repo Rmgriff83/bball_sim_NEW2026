@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, shallowRef } from 'vue'
+import { t } from '@wl-i18n/i18n.js'
 import { useEngineStore } from '@/stores/engine'
 import { useToastStore } from '@/stores/toast'
 import { useCampaignStore } from '@/stores/campaign'
@@ -53,7 +54,9 @@ export const useGameStore = defineStore('game', () => {
   // (play/deadBall) we skip the per-segment IDB write on live-ball pauses to
   // avoid a write per possession; this holds the newest state so
   // flushPendingGameState() can persist it on route-leave/visibility-hide.
-  const _pendingGameState = ref(null)
+  // shallowRef: a deep ref would wrap the engine state in a reactive Proxy,
+  // which IndexedDB's structured clone rejects (DataCloneError on flush).
+  const _pendingGameState = shallowRef(null)
 
   // Simulate to next game state
   const simulatePreview = ref(null)
@@ -409,31 +412,39 @@ export const useGameStore = defineStore('game', () => {
     return 0
   }
 
+  // Baseline medical-facility benefits, no physician required (mirrors how
+  // the scouting facility grants points per level on its own). Recovery speed
+  // is deliberately modest and CAPS at Lv3 (+6%) so severe injuries keep
+  // realistic timelines even stacked with the physician's fast_recovery
+  // (worst case +21%, not +35%); Lv4/Lv5 shift to injury PREVENTION instead,
+  // stacking with the physician's injury_prevention perk (up to −20% risk).
+  const MEDICAL_RECOVERY_BONUS_PER_LEVEL = 0.03
+  const MEDICAL_INJURY_RISK_REDUCTION_BY_LEVEL = { 4: 0.05, 5: 0.10 }
+
   /**
-   * Compute active trainer perks for the user's team.
-   * Returns { injuryRiskReduction, recoverySpeedBonus } based on hired trainer and medical facility level.
+   * Compute the user team's medical benefits: the per-level facility bonuses
+   * (staff-independent) plus any hired-physician perks.
+   * Returns { injuryRiskReduction, recoverySpeedBonus } ({} when all zero).
    */
   async function _getTrainerPerks(campaign) {
-    const trainer = campaign.settings?.trainer
-    if (!trainer) return {}
-
     const userTeamId = campaign.teamId
     if (!userTeamId) return {}
 
     const userTeam = await TeamRepository.get(campaign.id, userTeamId)
-    const medicalLevel = userTeam?.facilities?.medical ?? 1
+    const medicalLevel = Math.min(5, userTeam?.facilities?.medical ?? 1)
 
-    let injuryRiskReduction = 0
-    let recoverySpeedBonus = 0
+    let injuryRiskReduction = MEDICAL_INJURY_RISK_REDUCTION_BY_LEVEL[medicalLevel] ?? 0
+    let recoverySpeedBonus = MEDICAL_RECOVERY_BONUS_PER_LEVEL * Math.max(0, Math.min(3, medicalLevel) - 1)
 
-    for (const perk of (trainer.perks || [])) {
+    const trainer = campaign.settings?.trainer
+    for (const perk of (trainer?.perks || [])) {
       if (medicalLevel < perk.requiredLevel) continue
 
       if (perk.key === 'fast_recovery') {
-        recoverySpeedBonus = trainer.tier === 4 ? 0.15 : 0.10
+        recoverySpeedBonus += trainer.tier === 4 ? 0.15 : 0.10
       }
       if (perk.key === 'injury_prevention') {
-        injuryRiskReduction = 0.10
+        injuryRiskReduction += 0.10
       }
     }
 
@@ -444,8 +455,8 @@ export const useGameStore = defineStore('game', () => {
   /**
    * Compute active staff trainer perks for the user's team.
    * Returns { growthBoost, fatigueReduction } based on hired staff_trainer
-   * and training facility level. The 4-star `accelerated_training` perk is
-   * read by the team store's training session helpers (not here) — it
+   * and training facility level. Coach training-session speed scales with
+   * the TRAINING facility level directly in the team store (not here) — it
    * doesn't affect per-game state. `fatigue_reduction` (4-star "Conditioning
    * Program") multiplies post-game fatigue gain in PlayerEvolution.updateFatigue.
    */
@@ -486,7 +497,7 @@ export const useGameStore = defineStore('game', () => {
    * days, off days, and across the entire offseason. Bulk-saves the
    * resulting player updates in one IndexedDB write.
    */
-  async function _tickInjuryRecovery(campaignId, daysElapsed) {
+  async function _tickInjuryRecovery(campaignId, daysElapsed, { userTeamId = null, recoverySpeedBonus = 0 } = {}) {
     if (!Number.isFinite(daysElapsed) || daysElapsed <= 0) return []
     const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
     if (!allPlayers || allPlayers.length === 0) return []
@@ -495,7 +506,14 @@ export const useGameStore = defineStore('game', () => {
     const recovered = []
     for (const player of allPlayers) {
       if (!isPlayerInjured(player)) continue
-      const next = processInjuryRecovery(player, daysElapsed)
+      // Medical facility + physician recovery bonus applies to USER players
+      // only; AI/free-agent players tick at the plain 1 day per day rate.
+      const isUserPlayer = userTeamId != null && String(player.teamId) === String(userTeamId)
+      const next = processInjuryRecovery(
+        player,
+        daysElapsed,
+        isUserPlayer && recoverySpeedBonus > 0 ? { recoverySpeedBonus } : undefined
+      )
       // processRecovery returns the same reference when no change occurred,
       // so a strict ref check is enough to know we need to persist.
       if (next !== player) {
@@ -867,6 +885,15 @@ export const useGameStore = defineStore('game', () => {
           body: evt.body,
           date: evt.date,
         }
+        // Carry the additive translation-template fields through when present.
+        if (evt.headline_tpl) {
+          item.headline_tpl = evt.headline_tpl
+          item.headline_params = evt.headline_params ?? null
+        }
+        if (evt.body_tpl) {
+          item.body_tpl = evt.body_tpl
+          item.body_params = evt.body_params ?? null
+        }
         seasonData.news.push(item)
         newsToMirror.push(item)
       }
@@ -1009,7 +1036,7 @@ export const useGameStore = defineStore('game', () => {
             // Add news events
             if (!seasonData.news) seasonData.news = []
             for (const evt of result.newsEvents) {
-              seasonData.news.push({
+              const item = {
                 id: `news_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 event_type: evt.eventType ?? evt.event_type ?? 'award',
                 headline: evt.headline ?? '',
@@ -1017,7 +1044,17 @@ export const useGameStore = defineStore('game', () => {
                 date: evt.gameDate ?? allStarDate,
                 player_id: evt.playerId ?? null,
                 team_id: evt.teamId ?? null,
-              })
+              }
+              // Carry the additive translation-template fields through when present.
+              if (evt.headline_tpl) {
+                item.headline_tpl = evt.headline_tpl
+                item.headline_params = evt.headline_params ?? null
+              }
+              if (evt.body_tpl) {
+                item.body_tpl = evt.body_tpl
+                item.body_params = evt.body_params ?? null
+              }
+              seasonData.news.push(item)
             }
             dirty = true
 
@@ -1184,7 +1221,14 @@ export const useGameStore = defineStore('game', () => {
       // the same game count through the offseason and into the next year.
       const daysElapsed = Math.max(1, Math.round((newMs - prevMs) / (24 * 60 * 60 * 1000)))
       try {
-        const recovered = await _tickInjuryRecovery(campaignId, daysElapsed)
+        // Medical facility level (+ physician fast_recovery) speeds up the
+        // USER team's recovery tick. This is also where fast_recovery gets
+        // wired for real — it was previously computed but never passed here.
+        const { recoverySpeedBonus = 0 } = await _getTrainerPerks(campaign)
+        const recovered = await _tickInjuryRecovery(campaignId, daysElapsed, {
+          userTeamId: campaign.teamId,
+          recoverySpeedBonus,
+        })
         // Queue the user's own returning players for the Recovery Report modal.
         const userRecovered = recovered.filter(r => r.teamId === campaign.teamId)
         if (userRecovered.length > 0) {
@@ -1542,7 +1586,7 @@ export const useGameStore = defineStore('game', () => {
     // Normalize and append
     for (const evt of newEvents) {
       if (!evt) continue
-      seasonData.news.push({
+      const item = {
         id: `news_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         event_type: evt.eventType ?? evt.event_type ?? 'general',
         headline: evt.headline ?? '',
@@ -1550,7 +1594,17 @@ export const useGameStore = defineStore('game', () => {
         date: evt.gameDate ?? evt.game_date ?? evt.date ?? game.gameDate,
         player_id: evt.playerId ?? evt.player_id ?? null,
         team_id: evt.teamId ?? evt.team_id ?? null,
-      })
+      }
+      // Carry the additive translation-template fields through when present.
+      if (evt.headline_tpl) {
+        item.headline_tpl = evt.headline_tpl
+        item.headline_params = evt.headline_params ?? null
+      }
+      if (evt.body_tpl) {
+        item.body_tpl = evt.body_tpl
+        item.body_params = evt.body_params ?? null
+      }
+      seasonData.news.push(item)
     }
 
     // Keep only the most recent 50 news items
@@ -2691,7 +2745,7 @@ export const useGameStore = defineStore('game', () => {
       if (aiGames.length > 0) {
         backgroundSimulating.value = true
         simulationProgress.value = { completed: 0, total: aiGames.length }
-        const progressToastId = toastStore.showProgress('League games', 0, aiGames.length)
+        const progressToastId = toastStore.showProgress(t('League games'), 0, aiGames.length)
 
         try {
           await _simulateAiGamesBulk(campaignId, year, seasonData, aiGames, worker, (progress) => {
@@ -2783,7 +2837,7 @@ export const useGameStore = defineStore('game', () => {
 
       backgroundSimulating.value = true
       simulationProgress.value = { completed: 0, total: totalRemaining }
-      progressToastId = toastStore.showProgress('Simulating season', 0, totalRemaining)
+      progressToastId = toastStore.showProgress(t('Simulating season'), 0, totalRemaining)
 
       while (cursorDate <= lastGameDate) {
         // 1. PRE-DAY pause: trade/re-sign deadline warning (one week before Feb 5)
@@ -3089,7 +3143,7 @@ export const useGameStore = defineStore('game', () => {
 
       backgroundSimulating.value = true
       simulationProgress.value = { completed: 0, total: totalRemaining }
-      progressToastId = toastStore.showProgress('Simulating', 0, totalRemaining)
+      progressToastId = toastStore.showProgress(t('Simulating'), 0, totalRemaining)
 
       while (cursorDate <= target.gameDate) {
         // 1. PRE-DAY pause: trade/re-sign deadline warning (one week before Feb 5)
@@ -3349,7 +3403,7 @@ export const useGameStore = defineStore('game', () => {
 
         backgroundSimulating.value = true
         simulationProgress.value = { completed: totalCompleted, total: totalCompleted + aiGames.length }
-        const progressToastId = toastStore.showProgress('Playoff games', totalCompleted, totalCompleted + aiGames.length)
+        const progressToastId = toastStore.showProgress(t('Playoff games'), totalCompleted, totalCompleted + aiGames.length)
 
         try {
           await _simulateAiGamesBulk(campaignId, year, seasonData, aiGames, worker, (progress) => {
@@ -3374,7 +3428,7 @@ export const useGameStore = defineStore('game', () => {
         ).length
         if (stillIncomplete >= aiGames.length) {
           console.error('[Playoffs] no progress after simming a pass — aborting to avoid a stuck loop')
-          toastStore.showError("Couldn't advance the playoffs. Please reload the app and try again.")
+          toastStore.showError(t("Couldn't advance the playoffs. Please reload the app and try again."))
           break
         }
 
@@ -3636,7 +3690,7 @@ export const useGameStore = defineStore('game', () => {
 
       backgroundSimulating.value = true
       simulationProgress.value = { completed: 0, total: aiGames.length }
-      const progressToastId = toastStore.showProgress('Catching up league games', 0, aiGames.length)
+      const progressToastId = toastStore.showProgress(t('Catching up league games'), 0, aiGames.length)
 
       try {
         await _simulateAiGamesBulk(campaignId, year, seasonData, aiGames, worker, (progress) => {
@@ -3693,7 +3747,7 @@ export const useGameStore = defineStore('game', () => {
 
       backgroundSimulating.value = true
       simulationProgress.value = { completed: 0, total: orphans.length }
-      const progressToastId = toastStore.showProgress('Completing missed games', 0, orphans.length)
+      const progressToastId = toastStore.showProgress(t('Completing missed games'), 0, orphans.length)
 
       try {
         await _simulateAiGamesBulk(campaignId, year, seasonData, orphans, worker, (progress) => {
@@ -3736,7 +3790,7 @@ export const useGameStore = defineStore('game', () => {
 
       backgroundSimulating.value = true
       simulationProgress.value = { completed: 0, total: aiGames.length }
-      const progressToastId = toastStore.showProgress('League games', 0, aiGames.length)
+      const progressToastId = toastStore.showProgress(t('League games'), 0, aiGames.length)
 
       try {
         await _simulateAiGamesBulk(campaignId, year, seasonData, aiGames, worker, (progress) => {

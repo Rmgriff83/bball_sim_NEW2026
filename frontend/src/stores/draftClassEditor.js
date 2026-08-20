@@ -13,6 +13,7 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { t } from '@wl-i18n/i18n.js'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { PlayerHeadshotRepository } from '@/engine/db/PlayerHeadshotRepository'
@@ -325,13 +326,13 @@ export const useDraftClassEditorStore = defineStore('draftClassEditor', () => {
     const problems = []
     const n = prospects.value.length
     if (n < MIN_CLASS_SIZE) {
-      problems.push(`Class has ${n} prospects; the draft needs at least ${MIN_CLASS_SIZE} (30 teams × 2 rounds).`)
+      problems.push(t('Class has {n} prospects; the draft needs at least {min} (30 teams × 2 rounds).', { n, min: MIN_CLASS_SIZE }))
     }
     if (n > MAX_CLASS_SIZE) {
-      problems.push(`Class has ${n} prospects — over the ${MAX_CLASS_SIZE} limit.`)
+      problems.push(t('Class has {n} prospects — over the {max} limit.', { n, max: MAX_CLASS_SIZE }))
     }
     for (const p of prospects.value) {
-      if (!(p.name || p.firstName)) { problems.push('A prospect has no name.'); break }
+      if (!(p.name || p.firstName)) { problems.push(t('A prospect has no name.')); break }
     }
     for (const p of prospects.value) {
       const badgeCount = new Set([
@@ -339,8 +340,8 @@ export const useDraftClassEditorStore = defineStore('draftClassEditor', () => {
         ...Object.keys(p.badgeCaps ?? {}),
       ]).size
       if (badgeCount > MAX_PLAYER_BADGES) {
-        const pName = p.name ?? 'A prospect'
-        problems.push(`${pName} has ${badgeCount} badges — max ${MAX_PLAYER_BADGES}.`)
+        const pName = p.name ?? t('A prospect')
+        problems.push(t('{name} has {n} badges — max {max}.', { name: pName, n: badgeCount, max: MAX_PLAYER_BADGES }))
         break
       }
     }

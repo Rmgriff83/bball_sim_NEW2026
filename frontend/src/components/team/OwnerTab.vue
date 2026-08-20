@@ -204,7 +204,7 @@ const ownerName = computed(() => owner.value ? `${owner.value.firstName} ${owner
 
 <template>
   <div class="owner-tab">
-    <div v-if="!owner" class="owner-empty">Owner information unavailable for this team.</div>
+    <div v-if="!owner" class="owner-empty">{{ $t('Owner information unavailable for this team.') }}</div>
 
     <template v-else>
       <!-- Owner identity + satisfaction -->
@@ -213,18 +213,18 @@ const ownerName = computed(() => owner.value ? `${owner.value.firstName} ${owner
           <div class="owner-avatar"><Crown :size="26" /></div>
           <div class="owner-id">
             <span class="owner-name">{{ ownerName }}</span>
-            <span class="owner-role">Owner · {{ team?.name }}</span>
+            <span class="owner-role">{{ $t('Owner · {team}', { team: team?.name }) }}</span>
             <span v-if="owner.wealthSource" class="owner-wealth">
-              <Banknote :size="11" /> {{ owner.wealthSource }}
+              <Banknote :size="11" /> {{ $tDynamic(owner.wealthSource) }}
             </span>
           </div>
         </div>
 
         <div v-if="satisfaction" class="sat-block" data-tour="owner-satisfaction">
           <div class="sat-top">
-            <span class="sat-title"><Gauge :size="14" /> Owner Satisfaction</span>
+            <span class="sat-title"><Gauge :size="14" /> {{ $t('Owner Satisfaction') }}</span>
             <span class="sat-label" :style="{ color: satisfaction.color }">
-              {{ satisfaction.label }} · {{ satisfaction.value }}%
+              {{ $tDynamic(satisfaction.label) }} · {{ satisfaction.value }}%
             </span>
           </div>
           <div class="sat-meter-bar">
@@ -234,36 +234,34 @@ const ownerName = computed(() => owner.value ? `${owner.value.firstName} ${owner
             />
           </div>
           <div class="sat-breakdown">
-            <span class="sat-chip">Wins {{ satisfaction.winsSatisfaction }}% <em>×60%</em></span>
+            <span class="sat-chip">{{ $t('Wins {n}%', { n: satisfaction.winsSatisfaction }) }} <em>×60%</em></span>
             <span class="sat-chip">
-              Sub-tasks {{ satisfaction.subtaskScore }}%
+              {{ $t('Sub-tasks {n}%', { n: satisfaction.subtaskScore }) }}
               <em v-if="satisfaction.subtaskTimeWeight >= 0.999">×40%</em>
-              <em v-else>phasing in</em>
+              <em v-else>{{ $t('phasing in') }}</em>
             </span>
           </div>
           <p class="sat-hint">
-            Blends your record vs the owner's expectations (60%) with the sub-tasks below (40%).
-            Early in your contract the owner gives the sub-tasks time — they weigh in more as the
-            contract progresses, and count in full when your contract is up for review.
+            {{ $t("Blends your record vs the owner's expectations (60%) with the sub-tasks below (40%). Early in your contract the owner gives the sub-tasks time — they weigh in more as the contract progresses, and count in full when your contract is up for review.") }}
           </p>
         </div>
       </div>
 
       <!-- Expectations -->
       <div class="owner-card" data-tour="owner-expectations">
-        <h4 class="section-title"><Target :size="14" /> Expectations</h4>
-        <p class="owner-blurb">"{{ expectationBlurb }}"</p>
+        <h4 class="section-title"><Target :size="14" /> {{ $t('Expectations') }}</h4>
+        <p class="owner-blurb">"{{ $tDynamic(expectationBlurb) }}"</p>
         <div class="exp-grid">
           <div class="exp-item">
-            <span class="exp-label">Mandate</span>
-            <span class="exp-value">{{ expectationLabel }}</span>
+            <span class="exp-label">{{ $t('Mandate') }}</span>
+            <span class="exp-value">{{ $tDynamic(expectationLabel) }}</span>
           </div>
           <div class="exp-item">
-            <span class="exp-label">Expected Wins</span>
+            <span class="exp-label">{{ $t('Expected Wins') }}</span>
             <span class="exp-value">~{{ expectedWins }}</span>
           </div>
           <div class="exp-item">
-            <span class="exp-label">Patience</span>
+            <span class="exp-label">{{ $t('Patience') }}</span>
             <span class="exp-value">
               <span class="patience-dots">
                 <span
@@ -273,11 +271,11 @@ const ownerName = computed(() => owner.value ? `${owner.value.firstName} ${owner
                   :class="{ filled: i <= owner.patience }"
                 />
               </span>
-              {{ patienceLabel }}
+              {{ $tDynamic(patienceLabel) }}
             </span>
           </div>
           <div class="exp-item">
-            <span class="exp-label"><Wallet :size="11" /> Money Consciousness</span>
+            <span class="exp-label"><Wallet :size="11" /> {{ $t('Money Consciousness') }}</span>
             <span class="exp-value">
               <span class="patience-dots">
                 <span
@@ -287,7 +285,7 @@ const ownerName = computed(() => owner.value ? `${owner.value.firstName} ${owner
                   :class="{ filled: i <= (owner.moneyConsciousness || 0) }"
                 />
               </span>
-              {{ moneyConsciousnessLabel }}
+              {{ $tDynamic(moneyConsciousnessLabel) }}
             </span>
           </div>
         </div>
@@ -296,12 +294,11 @@ const ownerName = computed(() => owner.value ? `${owner.value.firstName} ${owner
       <!-- Owner sub-tasks -->
       <div class="owner-card" data-tour="owner-subtasks">
         <h4 class="section-title">
-          <ListChecks :size="14" /> Owner Sub-Tasks
+          <ListChecks :size="14" /> {{ $t('Owner Sub-Tasks') }}
           <span class="subtask-count">{{ subtaskResult.metCount }}/{{ subtaskResult.total }}</span>
         </h4>
         <p class="subtask-intro">
-          Concrete goals your owner tracks across the whole contract. These make up 40% of the
-          owner's evaluation.
+          {{ $t("Concrete goals your owner tracks across the whole contract. These make up 40% of the owner's evaluation.") }}
         </p>
         <ul class="subtask-list">
           <li
@@ -316,15 +313,15 @@ const ownerName = computed(() => owner.value ? `${owner.value.firstName} ${owner
             </span>
             <span class="subtask-text">
               <span class="subtask-label">
-                {{ t.label }}
+                {{ $tDynamic(t.label) }}
                 <span
                   v-if="t.progress"
                   class="subtask-progress"
                   :class="{ met: t.met }"
                 >{{ t.progress.current }}/{{ t.progress.target }}</span>
-                <span v-if="t.global" class="subtask-tag">Global</span>
+                <span v-if="t.global" class="subtask-tag">{{ $t('Global') }}</span>
               </span>
-              <span class="subtask-desc">{{ t.description }}</span>
+              <span class="subtask-desc">{{ $tDynamic(t.description) }}</span>
             </span>
           </li>
         </ul>
@@ -333,38 +330,38 @@ const ownerName = computed(() => owner.value ? `${owner.value.firstName} ${owner
       <!-- GM contract -->
       <div class="owner-card" data-tour="owner-contract">
         <h4 class="section-title">
-          <FileSignature :size="14" /> Your GM Contract
+          <FileSignature :size="14" /> {{ $t('Your GM Contract') }}
           <div
             class="gm-badge"
             data-tour="owner-gm-level"
             :style="{ backgroundColor: gmColor, color: gmTextColor }"
-            :title="`Your GM career level: ${gmLabel}`"
+            :title="$t('Your GM career level: {level}', { level: $tDynamic(gmLabel) })"
           >
             <Medal :size="13" />
             <span class="gm-badge-text">
-              <span class="gm-badge-cap">GM Level</span>
-              <span class="gm-badge-level">{{ gmLabel }}</span>
+              <span class="gm-badge-cap">{{ $t('GM Level') }}</span>
+              <span class="gm-badge-level">{{ $tDynamic(gmLabel) }}</span>
             </span>
           </div>
         </h4>
         <div class="exp-grid">
           <div class="exp-item">
-            <span class="exp-label">Signed</span>
+            <span class="exp-label">{{ $t('Signed') }}</span>
             <span class="exp-value">{{ contract.signedYear }}</span>
           </div>
           <div class="exp-item">
-            <span class="exp-label">Length</span>
-            <span class="exp-value">{{ contract.length }} years</span>
+            <span class="exp-label">{{ $t('Length') }}</span>
+            <span class="exp-value">{{ $t('{n} years', { n: contract.length }) }}</span>
           </div>
           <div class="exp-item">
-            <span class="exp-label">Years Remaining</span>
+            <span class="exp-label">{{ $t('Years Remaining') }}</span>
             <span class="exp-value" :class="{ 'final-year': contract.isFinalYear }">
               {{ contract.yearsRemaining }}
             </span>
           </div>
         </div>
         <p v-if="contract.isFinalYear" class="contract-note">
-          You're in the final stretch of your contract — keep the owner happy.
+          {{ $t("You're in the final stretch of your contract — keep the owner happy.") }}
         </p>
       </div>
     </template>

@@ -127,7 +127,7 @@ onUnmounted(() => {
                 <Star v-else-if="reason === 'all_star'" :size="18" />
                 <Calendar v-else :size="18" />
               </div>
-              <h2 class="modal-title">{{ title }}</h2>
+              <h2 class="modal-title">{{ $tDynamic(title) }}</h2>
             </div>
             <button class="btn-close" @click="close" aria-label="Close">
               <X :size="20" />
@@ -139,22 +139,19 @@ onUnmounted(() => {
             <!-- Trade Deadline variant -->
             <template v-if="reason === 'trade_deadline'">
               <p class="body-text">
-                The <strong>trade deadline</strong> closes in one week. After it passes,
-                no more trades can be proposed for the rest of the season.
+                {{ $t('The trade deadline closes in one week. After it passes, no more trades can be proposed for the rest of the season.') }}
               </p>
               <p class="body-text">
-                The <strong>contract extension deadline</strong> also closes in one week —
-                any player on the final year of their contract must be re-signed before then,
-                or they'll hit free agency at season end.
+                {{ $t("The contract extension deadline also closes in one week — any player on the final year of their contract must be re-signed before then, or they'll hit free agency at season end.") }}
               </p>
-              <p class="body-hint">Pause now to plan trades or re-sign players, or continue simming.</p>
+              <p class="body-hint">{{ $t('Pause now to plan trades or re-sign players, or continue simming.') }}</p>
             </template>
 
             <!-- All-Star variant -->
             <template v-else-if="reason === 'all_star'">
               <p class="body-text">
-                <template v-if="allStarTab === 'risingStars'">Rising Stars rosters have been announced.</template>
-                <template v-else>All-Star rosters have been announced.</template>
+                <template v-if="allStarTab === 'risingStars'">{{ $t('Rising Stars rosters have been announced.') }}</template>
+                <template v-else>{{ $t('All-Star rosters have been announced.') }}</template>
               </p>
 
               <!-- Tab switcher: All-Stars / Rising Stars. Lives inside the
@@ -168,7 +165,7 @@ onUnmounted(() => {
                   @click="allStarTab = 'allStars'"
                 >
                   <Star :size="14" />
-                  All-Stars
+                  {{ $t('All-Stars') }}
                 </button>
                 <button
                   type="button"
@@ -178,19 +175,19 @@ onUnmounted(() => {
                   @click="allStarTab = 'risingStars'"
                 >
                   <Users :size="14" />
-                  Rising Stars
+                  {{ $t('Rising Stars') }}
                 </button>
               </div>
 
               <div v-if="activeRosterTree" class="all-star-rosters">
                 <div v-for="conf in ['east', 'west']" :key="conf" class="conf-section">
                   <div class="conf-header">
-                    <span class="conf-name">{{ conf === 'east' ? 'Eastern Conference' : 'Western Conference' }}</span>
-                    <span class="conf-count">{{ conferenceCount(conf) }} selections</span>
+                    <span class="conf-name">{{ conf === 'east' ? $t('Eastern Conference') : $t('Western Conference') }}</span>
+                    <span class="conf-count">{{ $t('{n} selections', { n: conferenceCount(conf) }) }}</span>
                   </div>
 
                   <div v-if="startersList(conf).length > 0" class="player-group">
-                    <div class="group-label">Starters</div>
+                    <div class="group-label">{{ $t('Starters') }}</div>
                     <div
                       v-for="player in startersList(conf)"
                       :key="`${allStarTab}-${conf}-s-${player.playerId ?? player.playerName}`"
@@ -215,7 +212,7 @@ onUnmounted(() => {
                   </div>
 
                   <div v-if="reservesList(conf).length > 0" class="player-group">
-                    <div class="group-label">Reserves</div>
+                    <div class="group-label">{{ $t('Reserves') }}</div>
                     <div
                       v-for="player in reservesList(conf)"
                       :key="`${allStarTab}-${conf}-r-${player.playerId ?? player.playerName}`"
@@ -245,8 +242,8 @@ onUnmounted(() => {
             <!-- User Injury variant -->
             <template v-else-if="reason === 'user_injury'">
               <p class="body-text">
-                <template v-if="injuries.length === 1">A player on your team was injured during the last game.</template>
-                <template v-else>{{ injuries.length }} players on your team were injured during the last game.</template>
+                <template v-if="injuries.length === 1">{{ $t('A player on your team was injured during the last game.') }}</template>
+                <template v-else>{{ $t('{n} players on your team were injured during the last game.', { n: injuries.length }) }}</template>
               </p>
               <div class="inj-list">
                 <div
@@ -259,16 +256,16 @@ onUnmounted(() => {
                   <div class="inj-card-body">
                     <div class="inj-player-row">
                       <span class="inj-player-name">{{ injury.name }}</span>
-                      <span class="inj-severity-tag">{{ injury.severity }}</span>
+                      <span class="inj-severity-tag">{{ $tDynamic(injury.severity) }}</span>
                     </div>
                     <div class="inj-detail-row">
-                      <span class="inj-type">{{ injury.injury_type }}</span>
-                      <span class="inj-duration">{{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
+                      <span class="inj-type">{{ $tDynamic(injury.injury_type) }}</span>
+                      <span class="inj-duration">{{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('{n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('{n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
                     </div>
                   </div>
                 </div>
               </div>
-              <p class="body-hint">Choose how to handle your lineup before the simulation continues.</p>
+              <p class="body-hint">{{ $t('Choose how to handle your lineup before the simulation continues.') }}</p>
             </template>
           </main>
 
@@ -281,11 +278,11 @@ onUnmounted(() => {
             <template v-if="reason === 'trade_deadline'">
               <button class="btn-cancel" @click="pauseSim">
                 <Pause :size="14" />
-                Pause Sim
+                {{ $t('Pause Sim') }}
               </button>
               <button class="btn-confirm" @click="continueSim">
                 <Play :size="14" fill="currentColor" />
-                Continue Sim
+                {{ $t('Continue Sim') }}
               </button>
             </template>
 
@@ -293,7 +290,7 @@ onUnmounted(() => {
             <template v-else-if="reason === 'all_star'">
               <button class="btn-confirm" @click="continueSim">
                 <Play :size="14" fill="currentColor" />
-                Continue Sim
+                {{ $t('Continue Sim') }}
               </button>
             </template>
 
@@ -301,15 +298,15 @@ onUnmounted(() => {
             <template v-else-if="reason === 'user_injury'">
               <button class="btn-cancel injury-pause" @click="pauseSim">
                 <Pause :size="14" />
-                Pause Sim
+                {{ $t('Pause Sim') }}
               </button>
               <button class="btn-cpu" @click="cpuSetLineup">
                 <Zap :size="14" />
-                CPU Lineup
+                {{ $t('CPU Lineup') }}
               </button>
               <button class="btn-confirm" @click="goToLineup">
                 <Users :size="14" />
-                Adjust Lineup
+                {{ $t('Adjust Lineup') }}
               </button>
             </template>
           </footer>

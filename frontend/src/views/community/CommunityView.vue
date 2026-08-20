@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import api from '@/composables/useApi'
+import { t } from '@wl-i18n/i18n.js'
 
 // Community roster board (Roster Editor IAP Part B) — WEB-ONLY. All sharing,
 // browsing, downloading, and reporting happens here; the app only links in
@@ -154,27 +155,27 @@ async function downloadBuild(build) {
     await api.post(`/api/roster-builds/${build.id}/download`)
     // Rich callout + affirmation chime (played inside showAchievement).
     toastStore.showAchievement({
-      header: isDraftClass.value ? 'Draft Class Imported' : 'Roster Imported',
+      header: isDraftClass.value ? t('Draft Class Imported') : t('Roster Imported'),
       label: build.title,
       subtitle: isDraftClass.value
-        ? 'Imported to your account — offer it as the rookie class when a new season starts.'
-        : 'Imported to your account — available when starting any new custom campaign.',
+        ? t('Imported to your account — offer it as the rookie class when a new season starts.')
+        : t('Imported to your account — available when starting any new custom campaign.'),
       type: 'roster_import',
     })
     fetchMyDownloads()
   } catch (err) {
-    toastStore.showError(err?.response?.data?.message || 'Import failed')
+    toastStore.showError(err?.response?.data?.message || t('Import failed'))
   }
 }
 
 async function reportBuild(build) {
-  const reason = window.prompt('What is wrong with this roster? (optional)')
+  const reason = window.prompt(t('What is wrong with this roster? (optional)'))
   if (reason === null) return
   try {
     await api.post(`/api/roster-builds/${build.id}/report`, { reason: reason || null })
-    toastStore.showSuccess('Reported. Thank you — we review every report.')
+    toastStore.showSuccess(t('Reported. Thank you — we review every report.'))
   } catch (err) {
-    toastStore.showError(err?.response?.data?.message || 'Report failed')
+    toastStore.showError(err?.response?.data?.message || t('Report failed'))
   }
 }
 
@@ -189,8 +190,8 @@ async function publish() {
       type: contentType.value,
     })
     toastStore.showSuccess(isDraftClass.value
-      ? 'Published! Your draft class is live on the board.'
-      : 'Published! Your roster is live on the board.')
+      ? t('Published! Your draft class is live on the board.')
+      : t('Published! Your roster is live on the board.'))
     publishTitle.value = ''
     publishDescription.value = ''
     publishAck.value = false
@@ -203,31 +204,31 @@ async function publish() {
     if (data?.error === 'content_rejected') {
       toastStore.showError(
         data.source
-          ? `Publish blocked: disallowed language in ${data.source}. Rename it in the app, sync, and retry.`
-          : 'Publish blocked: a name or description contains disallowed language.',
+          ? t('Publish blocked: disallowed language in {source}. Rename it in the app, sync, and retry.', { source: data.source })
+          : t('Publish blocked: a name or description contains disallowed language.'),
         6000
       )
     } else if (data?.error === 'campaign_not_synced') {
-      toastStore.showError('This campaign has not finished syncing yet — open it in the app first, then retry.')
+      toastStore.showError(t('This campaign has not finished syncing yet — open it in the app first, then retry.'))
     } else if (data?.error === 'not_a_custom_campaign') {
-      toastStore.showError('Only custom-roster campaigns can be published.')
+      toastStore.showError(t('Only custom-roster campaigns can be published.'))
     } else if (data?.error === 'campaign_not_finalized') {
-      toastStore.showError('Finish building this roster in the app (start the campaign) before publishing it. Builder projects need "Validate for publishing" first.')
+      toastStore.showError(t('Finish building this roster in the app (start the campaign) before publishing it. Builder projects need "Validate for publishing" first.'))
     } else if (data?.error === 'no_draft_class') {
-      toastStore.showError('This campaign has no rookie class synced yet — open it in the app so it syncs, then retry.')
+      toastStore.showError(t('This campaign has no rookie class synced yet — open it in the app so it syncs, then retry.'))
     } else if (data?.error === 'class_too_small') {
-      toastStore.showError(`This class has ${data.count} prospects — the draft needs at least ${data.min ?? 60}. Add more in the class editor first.`)
+      toastStore.showError(t('This class has {count} prospects — the draft needs at least {min}. Add more in the class editor first.', { count: data.count, min: data.min ?? 60 }))
     } else if (data?.error === 'class_too_large') {
-      toastStore.showError(`This class has ${data.count} prospects — the max is ${data.max ?? 120}. Trim it in the class editor first.`)
+      toastStore.showError(t('This class has {count} prospects — the max is {max}. Trim it in the class editor first.', { count: data.count, max: data.max ?? 120 }))
     } else if (data?.error === 'already_published') {
       toastStore.showError(isDraftClass.value
-        ? 'This campaign\'s draft class is already on the board — remove that build to re-publish.'
-        : 'This campaign\'s roster is already on the board — each campaign can only be published once.')
+        ? t("This campaign's draft class is already on the board — remove that build to re-publish.")
+        : t("This campaign's roster is already on the board — each campaign can only be published once."))
       fetchPublishedCampaigns()
     } else if (data?.error === 'storage_unavailable') {
-      toastStore.showError('Upload storage is temporarily unavailable — please try again shortly.')
+      toastStore.showError(t('Upload storage is temporarily unavailable — please try again shortly.'))
     } else {
-      toastStore.showError(data?.message || 'Publish failed')
+      toastStore.showError(data?.message || t('Publish failed'))
     }
   } finally {
     publishing.value = false
@@ -255,12 +256,12 @@ onMounted(async () => {
 <template>
   <div class="community">
     <header class="cm-header">
-      <h1 class="cm-title"><Globe :size="22" /> {{ isDraftClass ? 'Community Draft Classes' : 'Community Rosters' }}</h1>
+      <h1 class="cm-title"><Globe :size="22" /> {{ isDraftClass ? $t('Community Draft Classes') : $t('Community Rosters') }}</h1>
       <a v-if="fromNativeApp" class="cm-back-app" :href="backToAppUrl">
-        <ArrowLeft :size="15" /> Back to app
+        <ArrowLeft :size="15" /> {{ $t('Back to app') }}
       </a>
       <router-link v-else class="cm-back-app" :to="backPath">
-        <ArrowLeft :size="15" /> Back to app
+        <ArrowLeft :size="15" /> {{ $t('Back to app') }}
       </router-link>
     </header>
 
@@ -268,8 +269,7 @@ onMounted(async () => {
     <div v-if="!isOwner" class="cm-upsell">
       <ShieldAlert :size="28" />
       <p>
-        The community roster board is part of the <strong>Roster Editor</strong> —
-        a one-time purchase available in the in-app store.
+        {{ $t('The community roster board is part of the Roster Editor — a one-time purchase available in the in-app store.') }}
       </p>
     </div>
 
@@ -281,21 +281,21 @@ onMounted(async () => {
           class="cm-type"
           :class="{ active: !isDraftClass }"
           @click="switchContentType('roster')"
-        >Rosters</button>
+        >{{ $t('Rosters') }}</button>
         <button
           class="cm-type"
           :class="{ active: isDraftClass }"
           @click="switchContentType('draft_class')"
-        >Draft Classes</button>
+        >{{ $t('Draft Classes') }}</button>
       </nav>
 
       <nav class="cm-tabs">
-        <button class="cm-tab" :class="{ active: tab === 'board' }" @click="tab = 'board'; fetchBoard()">Board</button>
+        <button class="cm-tab" :class="{ active: tab === 'board' }" @click="tab = 'board'; fetchBoard()">{{ $t('Board') }}</button>
         <button class="cm-tab" :class="{ active: tab === 'publish' }" @click="tab = 'publish'">
-          <Upload :size="13" /> Publish
+          <Upload :size="13" /> {{ $t('Publish') }}
         </button>
         <button class="cm-tab" :class="{ active: tab === 'downloads' }" @click="tab = 'downloads'; fetchMyDownloads()">
-          My Imports
+          {{ $t('My Imports') }}
         </button>
       </nav>
 
@@ -303,22 +303,19 @@ onMounted(async () => {
       <section v-if="tab === 'board'">
         <div class="cm-toolbar">
           <select v-model="sort" class="cm-select" @change="page = 1; fetchBoard()">
-            <option value="created_at">Newest</option>
-            <option value="downloads">Most imported</option>
+            <option value="created_at">{{ $t('Newest') }}</option>
+            <option value="downloads">{{ $t('Most imported') }}</option>
           </select>
         </div>
         <div v-if="loading" class="cm-loading"><Loader2 :size="26" class="spin" /></div>
         <p v-else-if="!builds.length" class="cm-empty">
-          {{ isDraftClass ? 'No draft classes published yet — be the first!' : 'No rosters published yet — be the first!' }}
+          {{ isDraftClass ? $t('No draft classes published yet — be the first!') : $t('No rosters published yet — be the first!') }}
         </p>
         <div v-else class="cm-list">
           <div v-for="b in builds" :key="b.id" class="cm-card">
             <div class="cm-card-info">
               <span class="cm-card-title">{{ b.title }}</span>
-              <span class="cm-card-meta">
-                by {{ b.author ?? 'Unknown' }} · {{ b.player_count }} {{ isDraftClass ? 'prospects' : 'players' }} ·
-                {{ fmtSize(b.size_bytes) }} · {{ b.downloads }} imports
-              </span>
+              <span class="cm-card-meta">{{ isDraftClass ? $t('by {author} · {count} prospects · {size} · {downloads} imports', { author: b.author ?? $t('Unknown'), count: b.player_count, size: fmtSize(b.size_bytes), downloads: b.downloads }) : $t('by {author} · {count} players · {size} · {downloads} imports', { author: b.author ?? $t('Unknown'), count: b.player_count, size: fmtSize(b.size_bytes), downloads: b.downloads }) }}</span>
               <p v-if="b.description" class="cm-card-desc">{{ b.description }}</p>
             </div>
             <div class="cm-card-actions">
@@ -329,55 +326,51 @@ onMounted(async () => {
               >
                 <Check v-if="downloadedIds.has(b.id)" :size="14" />
                 <Download v-else :size="14" />
-                {{ downloadedIds.has(b.id) ? 'Imported' : 'Import' }}
+                {{ downloadedIds.has(b.id) ? $t('Imported') : $t('Import') }}
               </button>
-              <button class="cm-ghost" :title="isDraftClass ? 'Report this draft class' : 'Report this roster'" @click="reportBuild(b)">
+              <button class="cm-ghost" :title="isDraftClass ? $t('Report this draft class') : $t('Report this roster')" @click="reportBuild(b)">
                 <Flag :size="13" />
               </button>
             </div>
           </div>
         </div>
         <div v-if="lastPage > 1" class="cm-pager">
-          <button class="cm-ghost" :disabled="page <= 1" @click="page--; fetchBoard()">‹ Prev</button>
+          <button class="cm-ghost" :disabled="page <= 1" @click="page--; fetchBoard()">{{ $t('‹ Prev') }}</button>
           <span>{{ page }} / {{ lastPage }}</span>
-          <button class="cm-ghost" :disabled="page >= lastPage" @click="page++; fetchBoard()">Next ›</button>
+          <button class="cm-ghost" :disabled="page >= lastPage" @click="page++; fetchBoard()">{{ $t('Next ›') }}</button>
         </div>
       </section>
 
       <!-- Publish -->
       <section v-else-if="tab === 'publish'" class="cm-publish">
         <p v-if="!publishableCampaigns.length" class="cm-empty">
-          {{ isDraftClass
-            ? 'No campaigns available to publish a draft class from — open a campaign (or create a Builder draft-class project) in the app so it syncs, then publish it here.'
-            : 'No custom-roster campaigns on this account yet — create one in the app with the Custom league-roster option, then publish it here.' }}
+          {{ isDraftClass ? $t('No campaigns available to publish a draft class from — open a campaign (or create a Builder draft-class project) in the app so it syncs, then publish it here.') : $t('No custom-roster campaigns on this account yet — create one in the app with the Custom league-roster option, then publish it here.') }}
         </p>
         <template v-else>
           <label class="cm-field">
-            <span>{{ isDraftClass ? 'Source campaign / project' : 'Campaign' }}</span>
+            <span>{{ isDraftClass ? $t('Source campaign / project') : $t('Campaign') }}</span>
             <select v-model="publishCampaignId" class="cm-select">
-              <option value="" disabled>{{ isDraftClass ? 'Choose a campaign or Builder project…' : 'Choose a custom campaign…' }}</option>
+              <option value="" disabled>{{ isDraftClass ? $t('Choose a campaign or Builder project…') : $t('Choose a custom campaign…') }}</option>
               <option v-for="c in publishableCampaigns" :key="c.id" :value="c.id">
-                {{ c.name }}{{ c._workshop ? ' — Workshop' : '' }}
+                {{ c._workshop ? $t('{name} — Workshop', { name: c.name }) : c.name }}
               </option>
             </select>
             <em v-if="isDraftClass" class="cm-field-hint">
-              Publishes the campaign's CURRENT season rookie class as last synced from the app.
+              {{ $t("Publishes the campaign's CURRENT season rookie class as last synced from the app.") }}
             </em>
           </label>
           <label class="cm-field">
-            <span>Title</span>
-            <input v-model="publishTitle" maxlength="100" class="cm-input" :placeholder="isDraftClass ? 'e.g. Loaded 2028 Class' : 'e.g. 2010s Golden Era Remix'" />
+            <span>{{ $t('Title') }}</span>
+            <input v-model="publishTitle" maxlength="100" class="cm-input" :placeholder="isDraftClass ? $t('e.g. Loaded 2028 Class') : $t('e.g. 2010s Golden Era Remix')" />
           </label>
           <label class="cm-field">
-            <span>Description (optional)</span>
+            <span>{{ $t('Description (optional)') }}</span>
             <textarea v-model="publishDescription" maxlength="1000" rows="3" class="cm-input"></textarea>
           </label>
           <label class="cm-ack">
             <input v-model="publishAck" type="checkbox" />
             <span>
-              I'm responsible for the content I publish and have the right to share
-              it. Content may be removed in response to reports or rights-holder
-              requests.
+              {{ $t("I'm responsible for the content I publish and have the right to share it. Content may be removed in response to reports or rights-holder requests.") }}
             </span>
           </label>
           <button
@@ -387,7 +380,7 @@ onMounted(async () => {
           >
             <Loader2 v-if="publishing" :size="15" class="spin" />
             <Upload v-else :size="15" />
-            Publish to the Board
+            {{ $t('Publish to the Board') }}
           </button>
         </template>
       </section>
@@ -395,17 +388,15 @@ onMounted(async () => {
       <!-- My Downloads -->
       <section v-else>
         <p v-if="!myDownloads.length" class="cm-empty">
-          {{ isDraftClass
-            ? 'Nothing imported yet — import a draft class from the board and it will be offered as the rookie class when a new season starts in the app.'
-            : 'Nothing imported yet — import a roster from the board and it will appear under "Imports" when starting a custom campaign in the app.' }}
+          {{ isDraftClass ? $t('Nothing imported yet — import a draft class from the board and it will be offered as the rookie class when a new season starts in the app.') : $t('Nothing imported yet — import a roster from the board and it will appear under "Imports" when starting a custom campaign in the app.') }}
         </p>
         <div v-else class="cm-list">
           <div v-for="b in myDownloads" :key="b.id" class="cm-card">
             <div class="cm-card-info">
               <span class="cm-card-title">{{ b.title }}</span>
-              <span class="cm-card-meta">by {{ b.author ?? 'Unknown' }} · {{ b.player_count }} {{ isDraftClass ? 'prospects' : 'players' }}</span>
+              <span class="cm-card-meta">{{ isDraftClass ? $t('by {author} · {count} prospects', { author: b.author ?? $t('Unknown'), count: b.player_count }) : $t('by {author} · {count} players', { author: b.author ?? $t('Unknown'), count: b.player_count }) }}</span>
             </div>
-            <span class="cm-saved-tag"><Check :size="13" /> Available in app</span>
+            <span class="cm-saved-tag"><Check :size="13" /> {{ $t('Available in app') }}</span>
           </div>
         </div>
       </section>

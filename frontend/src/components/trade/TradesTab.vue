@@ -99,7 +99,7 @@ onMounted(async () => {
     <!-- Loading State -->
     <div v-if="loading" class="loading-container">
       <LoadingSpinner size="lg" />
-      <p class="text-secondary mt-4">Loading trades...</p>
+      <p class="text-secondary mt-4">{{ $t('Loading trades...') }}</p>
     </div>
 
     <template v-else>
@@ -111,7 +111,7 @@ onMounted(async () => {
               <DollarSign :size="24" />
             </div>
             <div class="overview-content">
-              <span class="overview-label">Salary Cap</span>
+              <span class="overview-label">{{ $t('Salary Cap') }}</span>
               <span class="overview-value">{{ formatLargeSalary(salaryCap) }}</span>
             </div>
           </div>
@@ -121,7 +121,7 @@ onMounted(async () => {
               <Users :size="24" />
             </div>
             <div class="overview-content">
-              <span class="overview-label">Total Payroll</span>
+              <span class="overview-label">{{ $t('Total Payroll') }}</span>
               <span class="overview-value">{{ formatLargeSalary(totalPayroll) }}</span>
             </div>
           </div>
@@ -131,7 +131,7 @@ onMounted(async () => {
               <TrendingUp :size="24" />
             </div>
             <div class="overview-content">
-              <span class="overview-label">Cap Space</span>
+              <span class="overview-label">{{ $t('Cap Space') }}</span>
               <span class="overview-value" :class="{ negative: capSpace < 0 }">
                 {{ capSpace >= 0 ? '' : '-' }}{{ formatLargeSalary(Math.abs(capSpace)) }}
               </span>
@@ -143,7 +143,7 @@ onMounted(async () => {
               <Users :size="24" />
             </div>
             <div class="overview-content">
-              <span class="overview-label">Roster</span>
+              <span class="overview-label">{{ $t('Roster') }}</span>
               <span class="overview-value">{{ rosterCount }}/15</span>
             </div>
           </div>
@@ -157,14 +157,14 @@ onMounted(async () => {
           :class="{ active: activeSubTab === 'center' }"
           @click="activeSubTab = 'center'"
         >
-          TRADE CENTER
+          {{ $t('TRADE CENTER') }}
         </button>
         <button
           class="sub-tab-btn"
           :class="{ active: activeSubTab === 'offers' }"
           @click="activeSubTab = 'offers'"
         >
-          OFFERS
+          {{ $t('OFFERS') }}
           <span v-if="pendingCount > 0" class="badge">{{ pendingCount }}</span>
         </button>
         <button
@@ -172,7 +172,7 @@ onMounted(async () => {
           :class="{ active: activeSubTab === 'block' }"
           @click="activeSubTab = 'block'"
         >
-          BLOCK
+          {{ $t('BLOCK') }}
         </button>
       </div>
 

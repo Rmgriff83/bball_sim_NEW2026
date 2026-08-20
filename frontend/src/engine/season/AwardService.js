@@ -1,4 +1,5 @@
 import { SeasonManager } from './SeasonManager'
+import { T } from '../simulation/commentaryTemplate'
 
 // ---------------------------------------------------------------------------
 // AwardService
@@ -12,6 +13,17 @@ const ROTY_MIN_GAMES_PCT = 0.50
 // Matches MVP_MIN_GAMES_PCT so a player can't qualify for an All-Defensive
 // team while being filtered out of the All-NBA pool on games played alone.
 const DEFENSE_MIN_GAMES_PCT = 0.75
+
+// Full body template per All-League/All-Defense/All-Rookie tier — one
+// complete sentence each (the tier word is part of the sentence, never a
+// concatenated fragment). The `*_TPLS` naming is load-bearing:
+// wl-i18n.config.js regex-extracts the quoted strings of these const blocks
+// (plus direct quoted first args of T calls).
+const TEAM_AWARD_BODY_TPLS = {
+  first: 'Your player {player} has been selected to the {label} First Team.',
+  second: 'Your player {player} has been selected to the {label} Second Team.',
+  third: 'Your player {player} has been selected to the {label} Third Team.',
+}
 
 // Module-level exports so the live in-season MVP Race tab (League page)
 // can score candidates with the exact same formula + min-games gate
@@ -619,36 +631,66 @@ export class AwardService {
   // -----------------------------------------------------------------------
   // News Generation
   // -----------------------------------------------------------------------
+  // Headlines/bodies are built via T() (commentaryTemplate.js): each event
+  // carries `headline_tpl`/`headline_params` and `body_tpl`/`body_params`
+  // alongside the unchanged English `headline`/`body` so the UI can translate
+  // via $tDynamic(tpl, params) with fallback to the stored English string.
 
   static _generateNewsEvents(awards, playerLookup, userTeamId, date) {
     const events = []
 
+    // Spread a T() result pair into the additive template fields.
+    const tplFields = (headline, body) => ({
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
+    })
+
     // MVP announcement
     if (awards.mvp) {
+      const headline = T('{player} wins League MVP', { player: awards.mvp.playerName })
+      const body = T('{player} ({team}) has been named the League MVP, averaging {ppg} PPG, {rpg} RPG, and {apg} APG.', {
+        player: awards.mvp.playerName, team: awards.mvp.teamAbbr,
+        ppg: awards.mvp.stats.ppg, rpg: awards.mvp.stats.rpg, apg: awards.mvp.stats.apg,
+      })
       events.push({
         eventType: 'award',
-        headline: `${awards.mvp.playerName} wins League MVP`,
-        body: `${awards.mvp.playerName} (${awards.mvp.teamAbbr}) has been named the League MVP, averaging ${awards.mvp.stats.ppg} PPG, ${awards.mvp.stats.rpg} RPG, and ${awards.mvp.stats.apg} APG.`,
+        headline: headline.text,
+        body: body.text,
+        ...tplFields(headline, body),
         gameDate: date,
       })
     }
 
     // DPOY announcement
     if (awards.dpoy) {
+      const headline = T('{player} wins Defensive Player of the Year', { player: awards.dpoy.playerName })
+      const body = T('{player} ({team}) has been named Defensive Player of the Year, averaging {spg} SPG, {bpg} BPG, and {rpg} RPG.', {
+        player: awards.dpoy.playerName, team: awards.dpoy.teamAbbr,
+        spg: awards.dpoy.stats.spg, bpg: awards.dpoy.stats.bpg, rpg: awards.dpoy.stats.rpg,
+      })
       events.push({
         eventType: 'award',
-        headline: `${awards.dpoy.playerName} wins Defensive Player of the Year`,
-        body: `${awards.dpoy.playerName} (${awards.dpoy.teamAbbr}) has been named Defensive Player of the Year, averaging ${awards.dpoy.stats.spg} SPG, ${awards.dpoy.stats.bpg} BPG, and ${awards.dpoy.stats.rpg} RPG.`,
+        headline: headline.text,
+        body: body.text,
+        ...tplFields(headline, body),
         gameDate: date,
       })
     }
 
     // ROTY announcement
     if (awards.rookieOfTheYear) {
+      const headline = T('{player} named Rookie of the Year', { player: awards.rookieOfTheYear.playerName })
+      const body = T('{player} ({team}) has been named Rookie of the Year, averaging {ppg} PPG, {rpg} RPG, and {apg} APG.', {
+        player: awards.rookieOfTheYear.playerName, team: awards.rookieOfTheYear.teamAbbr,
+        ppg: awards.rookieOfTheYear.stats.ppg, rpg: awards.rookieOfTheYear.stats.rpg, apg: awards.rookieOfTheYear.stats.apg,
+      })
       events.push({
         eventType: 'award',
-        headline: `${awards.rookieOfTheYear.playerName} named Rookie of the Year`,
-        body: `${awards.rookieOfTheYear.playerName} (${awards.rookieOfTheYear.teamAbbr}) has been named Rookie of the Year, averaging ${awards.rookieOfTheYear.stats.ppg} PPG, ${awards.rookieOfTheYear.stats.rpg} RPG, and ${awards.rookieOfTheYear.stats.apg} APG.`,
+        headline: headline.text,
+        body: body.text,
+        ...tplFields(headline, body),
         gameDate: date,
       })
     }
@@ -656,10 +698,13 @@ export class AwardService {
     // All-NBA 1st Team
     if (awards.allNba?.first?.length > 0) {
       const names = awards.allNba.first.map(p => p.playerName).join(', ')
+      const headline = T('All-League teams announced')
+      const body = T('All-League First Team: {names}.', { names })
       events.push({
         eventType: 'award',
-        headline: 'All-League teams announced',
-        body: `All-League First Team: ${names}.`,
+        headline: headline.text,
+        body: body.text,
+        ...tplFields(headline, body),
         gameDate: date,
       })
     }
@@ -673,10 +718,13 @@ export class AwardService {
       const info = playerLookup[awards.mvp.playerId]
       if (info && String(info.teamId) === userTeamIdStr) {
         notified.add(awards.mvp.playerId)
+        const headline = T('{player} wins League MVP!', { player: awards.mvp.playerName })
+        const body = T('Your player {player} has been named the League MVP.', { player: awards.mvp.playerName })
         events.push({
           eventType: 'award',
-          headline: `${awards.mvp.playerName} wins League MVP!`,
-          body: `Your player ${awards.mvp.playerName} has been named the League MVP.`,
+          headline: headline.text,
+          body: body.text,
+          ...tplFields(headline, body),
           playerId: awards.mvp.playerId,
           teamId: userTeamId,
           gameDate: date,
@@ -689,10 +737,13 @@ export class AwardService {
       const info = playerLookup[awards.dpoy.playerId]
       if (info && String(info.teamId) === userTeamIdStr) {
         notified.add(awards.dpoy.playerId)
+        const headline = T('{player} wins Defensive Player of the Year!', { player: awards.dpoy.playerName })
+        const body = T('Your player {player} has been named Defensive Player of the Year.', { player: awards.dpoy.playerName })
         events.push({
           eventType: 'award',
-          headline: `${awards.dpoy.playerName} wins Defensive Player of the Year!`,
-          body: `Your player ${awards.dpoy.playerName} has been named Defensive Player of the Year.`,
+          headline: headline.text,
+          body: body.text,
+          ...tplFields(headline, body),
           playerId: awards.dpoy.playerId,
           teamId: userTeamId,
           gameDate: date,
@@ -705,10 +756,13 @@ export class AwardService {
       const info = playerLookup[awards.rookieOfTheYear.playerId]
       if (info && String(info.teamId) === userTeamIdStr) {
         notified.add(awards.rookieOfTheYear.playerId)
+        const headline = T('{player} wins Rookie of the Year!', { player: awards.rookieOfTheYear.playerName })
+        const body = T('Your player {player} has been named Rookie of the Year.', { player: awards.rookieOfTheYear.playerName })
         events.push({
           eventType: 'award',
-          headline: `${awards.rookieOfTheYear.playerName} wins Rookie of the Year!`,
-          body: `Your player ${awards.rookieOfTheYear.playerName} has been named Rookie of the Year.`,
+          headline: headline.text,
+          body: body.text,
+          ...tplFields(headline, body),
           playerId: awards.rookieOfTheYear.playerId,
           teamId: userTeamId,
           gameDate: date,
@@ -732,10 +786,13 @@ export class AwardService {
           const info = playerLookup[entry.playerId]
           if (info && String(info.teamId) === userTeamIdStr) {
             notified.add(entry.playerId)
+            const headline = T('{player} named to {label} Team', { player: entry.playerName, label })
+            const body = T(TEAM_AWARD_BODY_TPLS[tier], { player: entry.playerName, label })
             events.push({
               eventType: 'award',
-              headline: `${entry.playerName} named to ${label} Team`,
-              body: `Your player ${entry.playerName} has been selected to the ${label} ${tier.charAt(0).toUpperCase() + tier.slice(1)} Team.`,
+              headline: headline.text,
+              body: body.text,
+              ...tplFields(headline, body),
               playerId: entry.playerId,
               teamId: userTeamId,
               gameDate: date,

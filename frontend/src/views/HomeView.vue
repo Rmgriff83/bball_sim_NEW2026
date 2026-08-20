@@ -56,7 +56,7 @@ async function openSocial(e, url) {
         target="_blank"
         rel="noopener noreferrer"
         aria-label="Join the Bball Sim community on Reddit"
-        title="r/Bball_Sim"
+        :title="$t('r/Bball_Sim')"
         @click="openSocial($event, REDDIT_URL)"
       >
         <svg
@@ -97,27 +97,28 @@ async function openSocial(e, url) {
     <main class="hero-section">
       <div class="hero-content">
         <!-- Logo/Title -->
-        <div class="hero-badge">DYNASTY BASKETBALL</div>
+        <div class="hero-badge">{{ $t('DYNASTY BASKETBALL') }}</div>
+        <!-- i18n-ignore -->
         <h1 class="hero-title">BBALL SIM</h1>
         <p class="hero-subtitle">
-          Manage your team. Chase Championships. Build your dynasty.
+          {{ $t('Manage your team. Chase Championships. Build your dynasty.') }}
         </p>
 
         <!-- CTA Buttons -->
         <div class="hero-actions">
           <template v-if="isAuthenticated">
             <button class="cosmic-btn" @click="router.push('/dashboard')">
-              Go to Dashboard
+              {{ $t('Go to Dashboard') }}
               <ChevronRight :size="20" />
             </button>
           </template>
           <template v-else>
             <button class="cosmic-btn" @click="router.push('/register')">
-              Start Playing
+              {{ $t('Start Playing') }}
               <ChevronRight :size="20" />
             </button>
             <button class="signin-btn" @click="router.push('/login')">
-              Sign In
+              {{ $t('Sign In') }}
             </button>
           </template>
         </div>
@@ -167,7 +168,7 @@ async function openSocial(e, url) {
               font-size="8"
               font-weight="400"
               letter-spacing="0.4"
-            >Download on the</text>
+            >Download on the</text><!-- i18n-ignore -->
             <!-- Wordmark -->
             <text
               x="42"
@@ -177,7 +178,7 @@ async function openSocial(e, url) {
               font-size="18"
               font-weight="600"
               letter-spacing="-0.3"
-            >App Store</text>
+            >App Store</text><!-- i18n-ignore -->
           </svg>
         </a>
 
@@ -229,7 +230,7 @@ async function openSocial(e, url) {
               font-size="8"
               font-weight="400"
               letter-spacing="0.8"
-            >GET IT ON</text>
+            >GET IT ON</text><!-- i18n-ignore -->
             <!-- Wordmark -->
             <text
               x="42"
@@ -239,7 +240,7 @@ async function openSocial(e, url) {
               font-size="17"
               font-weight="500"
               letter-spacing="-0.2"
-            >Google Play</text>
+            >Google Play</text><!-- i18n-ignore -->
           </svg>
         </a>
         </div>
@@ -252,16 +253,16 @@ async function openSocial(e, url) {
     <!-- Features Section -->
     <section class="features-section">
       <div class="features-container">
-        <h2 class="features-title">The Ultimate Basketball Experience</h2>
+        <h2 class="features-title">{{ $t('The Ultimate Basketball Experience') }}</h2>
 
         <div class="features-grid">
           <div class="feature-card">
             <div class="feature-icon">
               <Gamepad2 :size="28" />
             </div>
-            <h3 class="feature-heading">Deep Simulation</h3>
+            <h3 class="feature-heading">{{ $t('Deep Simulation') }}</h3>
             <p class="feature-description">
-              Possession-by-possession gameplay with realistic player ratings, badge synergies, and dynamic play calling
+              {{ $t('Possession-by-possession gameplay with realistic player ratings, badge synergies, and dynamic play calling') }}
             </p>
           </div>
 
@@ -269,9 +270,9 @@ async function openSocial(e, url) {
             <div class="feature-icon">
               <BarChart3 :size="28" />
             </div>
-            <h3 class="feature-heading">Franchise Mode</h3>
+            <h3 class="feature-heading">{{ $t('Franchise Mode') }}</h3>
             <p class="feature-description">
-              Manage rosters, handle finances, make trades, and guide your team through multiple seasons
+              {{ $t('Manage rosters, handle finances, make trades, and guide your team through multiple seasons') }}
             </p>
           </div>
 
@@ -279,9 +280,9 @@ async function openSocial(e, url) {
             <div class="feature-icon">
               <Trophy :size="28" />
             </div>
-            <h3 class="feature-heading">Build a Dynasty</h3>
+            <h3 class="feature-heading">{{ $t('Build a Dynasty') }}</h3>
             <p class="feature-description">
-              Draft promising prospects, develop young talent, and compete for championships year after year
+              {{ $t('Draft promising prospects, develop young talent, and compete for championships year after year') }}
             </p>
           </div>
         </div>
@@ -290,7 +291,8 @@ async function openSocial(e, url) {
 
     <!-- Footer -->
     <footer class="home-footer">
-      <p>Bball Sim - Dynasty Basketball &copy; 2026</p>
+      <!-- i18n-ignore -->
+      <p>{{ $t('Bball Sim - Dynasty Basketball') }} &copy; 2026</p>
     </footer>
   </div>
 </template>

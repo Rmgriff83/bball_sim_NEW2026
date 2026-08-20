@@ -22,6 +22,17 @@ export const useBreakingNewsStore = defineStore('breakingNews', () => {
       date: item.date,
       is_breaking: isBreaking,
     }
+    // Carry the additive translation-template fields through when present —
+    // render sites translate via $tDynamic(tpl, params) and fall back to the
+    // stored English string for records (old saves) without them.
+    if (item.headline_tpl) {
+      newsRecord.headline_tpl = item.headline_tpl
+      newsRecord.headline_params = item.headline_params ?? null
+    }
+    if (item.body_tpl) {
+      newsRecord.body_tpl = item.body_tpl
+      newsRecord.body_params = item.body_params ?? null
+    }
     try {
       const campaign = await CampaignRepository.get(campaignId)
       const year = campaign?.currentSeasonYear ?? campaign?.gameYear ?? campaign?.settings?.currentYear ?? new Date().getFullYear()

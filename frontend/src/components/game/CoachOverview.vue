@@ -25,7 +25,7 @@
           class="co-action-btn co-clipboard-btn"
           data-tour="game-live-clipboard"
           :disabled="!allowSubs"
-          title="Subs & adjustments"
+          :title="$t('Subs & adjustments')"
           aria-label="Subs & adjustments"
         >
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
@@ -37,8 +37,8 @@
             <path d="m17.5 12-4 4" />
           </svg>
         </button>
-        <span class="co-chip co-chip-offense">{{ offenseChipLabel }}</span>
-        <span class="co-chip co-chip-defense">{{ defenseChipLabel }}</span>
+        <span class="co-chip co-chip-offense">{{ $tDynamic(offenseChipLabel) }}</span>
+        <span class="co-chip co-chip-defense">{{ $tDynamic(defenseChipLabel) }}</span>
       </div>
 
       <span class="co-spacer"></span>
@@ -61,13 +61,14 @@
             ></span>
           </span>
           <Check v-if="timeoutArmed" :size="11" />
+          <!-- i18n-ignore -->
           <span class="co-to-label">TO</span>
           <span class="co-to-count">{{ timeoutsRemaining }}</span>
         </button>
         <button
           class="co-action-btn co-action-continue"
           :disabled="!isStoppage || simulating"
-          title="Continue"
+          :title="$t('Continue')"
           aria-label="Continue"
           @click="emit('continue')"
         >
@@ -83,6 +84,7 @@
 import { computed } from 'vue'
 import { Check, Play } from 'lucide-vue-next'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
+import { t } from '@wl-i18n/i18n.js'
 
 // The live-game "Coach Overview" strip: sits INSIDE the court container,
 // spanning only the canvas width — the exact slot the old animation-controls
@@ -149,10 +151,10 @@ const coachOverall = computed(() => {
 const timeoutReady = computed(() => props.allowTimeout)
 
 const timeoutTitle = computed(() => {
-  if (props.timeoutArmed) return 'Timeout armed — will be called at the next dead ball. Tap to cancel.'
-  if (timeoutReady.value && !props.isStoppage) return 'Call a timeout at the next dead ball'
-  if (timeoutReady.value) return 'Call a timeout'
-  return 'No timeout available right now'
+  if (props.timeoutArmed) return t('Timeout armed — will be called at the next dead ball. Tap to cancel.')
+  if (timeoutReady.value && !props.isStoppage) return t('Call a timeout at the next dead ball')
+  if (timeoutReady.value) return t('Call a timeout')
+  return t('No timeout available right now')
 })
 </script>
 

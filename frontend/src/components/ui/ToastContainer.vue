@@ -79,7 +79,7 @@ function isWin(toast) {
           <!-- Game Result Toast -->
           <template v-if="toast.type === 'game-result'">
             <div class="toast-content">
-              <div class="game-result-header">FINAL SCORE</div>
+              <div class="game-result-header">{{ $t('FINAL SCORE') }}</div>
               <div class="game-result-score">
                 <div class="team-score">
                   <span class="team-name">{{ toast.homeTeam }}</span>
@@ -97,7 +97,7 @@ function isWin(toast) {
               </div>
               <div class="toast-footer">
                 <button class="box-score-link" @click="goToBoxScore(toast)">
-                  <span>View Box Score</span>
+                  <span>{{ $t('View Box Score') }}</span>
                   <ExternalLink :size="14" />
                 </button>
                 <!-- W/L Indicator -->
@@ -119,11 +119,11 @@ function isWin(toast) {
               <Binoculars :size="20" />
             </div>
             <div class="toast-content">
-              <div class="game-result-header">{{ toast.aiTrades?.length ? 'WEEKLY REPORT' : 'SCOUTING REPORT' }}</div>
+              <div class="game-result-header">{{ toast.aiTrades?.length ? $t('WEEKLY REPORT') : $t('SCOUTING REPORT') }}</div>
               <div v-if="toast.scoutingPointsEarned > 0" class="weekly-summary-body">
                 <span class="weekly-summary-value">+{{ toast.scoutingPointsEarned }}</span>
                 <span class="weekly-summary-label">
-                  scouting point{{ toast.scoutingPointsEarned !== 1 ? 's' : '' }} earned
+                  {{ toast.scoutingPointsEarned === 1 ? $t('scouting point earned') : $t('scouting points earned') }}
                 </span>
               </div>
               <template v-if="toast.aiTrades?.length">
@@ -136,16 +136,16 @@ function isWin(toast) {
                   {{ (trade.receivedA?.[0] ?? '') }} ↔ {{ (trade.receivedB?.[0] ?? '') }}
                 </div>
                 <div v-if="toast.aiTrades.length > 2" class="weekly-trade-line weekly-trade-more">
-                  +{{ toast.aiTrades.length - 2 }} more league trade{{ toast.aiTrades.length - 2 === 1 ? '' : 's' }}
+                  {{ toast.aiTrades.length - 2 === 1 ? $t('+{n} more league trade', { n: toast.aiTrades.length - 2 }) : $t('+{n} more league trades', { n: toast.aiTrades.length - 2 }) }}
                 </div>
               </template>
               <div v-if="toast.campaignId" class="toast-footer weekly-footer">
                 <button v-if="toast.aiTrades?.length" class="box-score-link" @click="goToLeagueTrades(toast)">
-                  <span>View Trades</span>
+                  <span>{{ $t('View Trades') }}</span>
                   <ExternalLink :size="14" />
                 </button>
                 <button v-if="toast.scoutingPointsEarned > 0" class="box-score-link" @click="goToScouting(toast)">
-                  <span>Go to Scouting</span>
+                  <span>{{ $t('Go to Scouting') }}</span>
                   <ExternalLink :size="14" />
                 </button>
               </div>
@@ -164,7 +164,7 @@ function isWin(toast) {
               {{ toast.teamAbbr }}
             </div>
             <div class="toast-content">
-              <div class="game-result-header">PICK #{{ toast.pickNumber }}</div>
+              <div class="game-result-header">{{ $t('PICK #{n}', { n: toast.pickNumber }) }}</div>
               <div class="draft-pick-player">{{ toast.playerName }}</div>
               <div class="draft-pick-meta">
                 <span class="draft-pick-pos">{{ toast.position }}</span>
@@ -181,8 +181,8 @@ function isWin(toast) {
               <Coins :size="22" />
             </div>
             <div class="toast-content">
-              <div class="game-result-header token-header">{{ toast.label }}</div>
-              <div class="token-amount">+{{ Number(toast.amount || 0).toLocaleString() }} tokens</div>
+              <div class="game-result-header token-header">{{ $tDynamic(toast.label) }}</div>
+              <div class="token-amount">{{ $t('+{n} tokens', { n: Number(toast.amount || 0).toLocaleString() }) }}</div>
             </div>
             <button class="toast-close" @click="toastStore.removeToast(toast.id)">
               <X :size="16" />
@@ -194,12 +194,12 @@ function isWin(toast) {
               <BadgeCheck :size="24" />
             </div>
             <div class="toast-content">
-              <div class="game-result-header signed-header">Player Signed</div>
+              <div class="game-result-header signed-header">{{ $t('Player Signed') }}</div>
               <div class="draft-pick-player">{{ toast.playerName }}</div>
               <div class="draft-pick-meta">
                 <span v-if="toast.position" class="draft-pick-pos">{{ toast.position }}</span>
                 <span v-if="toast.overallRating != null" class="draft-pick-ovr">{{ toast.overallRating }} OVR</span>
-                <span v-if="toast.salary" class="signed-terms">{{ formatSignedSalary(toast.salary) }} · {{ toast.years }}yr</span>
+                <span v-if="toast.salary" class="signed-terms">{{ $t('{salary} · {years}yr', { salary: formatSignedSalary(toast.salary), years: toast.years }) }}</span>
               </div>
             </div>
             <button class="toast-close" @click="toastStore.removeToast(toast.id)">
@@ -212,9 +212,9 @@ function isWin(toast) {
               <component :is="achievementIcon(toast.achievementType)" :size="22" />
             </div>
             <div class="toast-content">
-              <div class="game-result-header achievement-header">{{ toast.header || 'Achievement Unlocked' }}</div>
-              <div class="achievement-label">{{ toast.label }}</div>
-              <div v-if="toast.subtitle" class="achievement-subtitle">{{ toast.subtitle }}</div>
+              <div class="game-result-header achievement-header">{{ toast.header || $t('Achievement Unlocked') }}</div>
+              <div class="achievement-label">{{ $tDynamic(toast.label) }}</div>
+              <div v-if="toast.subtitle" class="achievement-subtitle">{{ toast.subtitleTpl ? $tDynamic(toast.subtitleTpl, toast.subtitleParams) : $tDynamic(toast.subtitle) }}</div>
             </div>
             <button class="toast-close" @click="toastStore.removeToast(toast.id)">
               <X :size="16" />
@@ -226,12 +226,12 @@ function isWin(toast) {
               <TrendingUp :size="22" />
             </div>
             <div class="toast-content owner-expectation-click" @click="goToOwnerTab(toast)">
-              <div class="game-result-header achievement-header">Owner Expectations Raised</div>
+              <div class="game-result-header achievement-header">{{ $t('Owner Expectations Raised') }}</div>
               <div class="achievement-label">
-                <template v-if="toast.fromLabel">{{ toast.fromLabel }} → {{ toast.label }}</template>
-                <template v-else>New target: {{ toast.label }}</template>
+                <template v-if="toast.fromLabel">{{ $tDynamic(toast.fromLabel) }} → {{ $tDynamic(toast.label) }}</template>
+                <template v-else>{{ $t('New target: {label}', { label: $tDynamic(toast.label) }) }}</template>
               </div>
-              <div class="achievement-subtitle">Fresh coach goals added — the ones you're chasing stay. Tap to view the Owner.</div>
+              <div class="achievement-subtitle">{{ $t("Fresh coach goals added — the ones you're chasing stay. Tap to view the Owner.") }}</div>
             </div>
             <button class="toast-close" @click.stop="toastStore.removeToast(toast.id)">
               <X :size="16" />

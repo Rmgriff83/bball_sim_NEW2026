@@ -1,6 +1,7 @@
 <script setup>
 import { computed, watch, onUnmounted } from 'vue'
 import { X, Trophy, ShieldX, FastForward } from 'lucide-vue-next'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: {
@@ -34,11 +35,11 @@ const userWon = computed(() => {
 
 const roundLabel = computed(() => {
   switch (round.value) {
-    case 1: return 'First Round'
-    case 2: return 'Semifinals'
-    case 3: return 'Conference Finals'
-    case 4: return 'Finals'
-    default: return 'Playoffs'
+    case 1: return t('First Round')
+    case 2: return t('Semifinals')
+    case 3: return t('Conference Finals')
+    case 4: return t('Finals')
+    default: return t('Playoffs')
   }
 })
 
@@ -131,8 +132,8 @@ onUnmounted(() => {
             </div>
 
             <!-- Result Title -->
-            <h3 class="result-title">{{ userWon ? 'Series Won!' : 'Eliminated' }}</h3>
-            <p class="result-subtitle">{{ roundLabel }} · Best of 7</p>
+            <h3 class="result-title">{{ userWon ? $t('Series Won!') : $t('Eliminated') }}</h3>
+            <p class="result-subtitle">{{ $t('{round} · Best of 7', { round: roundLabel }) }}</p>
 
             <!-- Series Score -->
             <div class="series-final-score">
@@ -163,19 +164,20 @@ onUnmounted(() => {
 
             <!-- Series MVP -->
             <div v-if="mvp" class="series-mvp">
-              <span class="mvp-label">Series MVP</span>
+              <span class="mvp-label">{{ $t('Series MVP') }}</span>
               <span class="mvp-name">{{ mvp.name || `${mvp.first_name} ${mvp.last_name}` }}</span>
               <span v-if="mvp.ppg" class="mvp-stats">
+                <!-- i18n-ignore -->
                 {{ mvp.ppg }} PTS · {{ mvp.rpg }} REB · {{ mvp.apg }} AST
               </span>
             </div>
 
             <!-- Message -->
             <p v-if="userWon" class="result-message">
-              Congratulations! You advance to the next round.
+              {{ $t('Congratulations! You advance to the next round.') }}
             </p>
             <p v-else class="result-message">
-              Your playoff run is over. Sim the remaining playoffs and prepare for next season.
+              {{ $t('Your playoff run is over. Sim the remaining playoffs and prepare for next season.') }}
             </p>
           </main>
 
@@ -186,7 +188,7 @@ onUnmounted(() => {
               :disabled="simulating"
               @click="close"
             >
-              Close
+              {{ $t('Close') }}
             </button>
             <button
               v-if="userWon"
@@ -195,7 +197,7 @@ onUnmounted(() => {
               @click="emit('simNextSeries')"
             >
               <FastForward :size="16" class="btn-icon" />
-              Sim to Next Series
+              {{ $t('Sim to Next Series') }}
             </button>
             <button
               v-else
@@ -204,7 +206,7 @@ onUnmounted(() => {
               @click="emit('simRemainingPlayoffs')"
             >
               <FastForward :size="16" class="btn-icon" />
-              Sim Playoffs
+              {{ $t('Sim Playoffs') }}
             </button>
           </footer>
         </div>

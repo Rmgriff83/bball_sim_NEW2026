@@ -7,6 +7,7 @@ import { GlassCard, BaseButton } from '@/components/ui'
 import { Gamepad2, Plus, User, LogOut, LayoutDashboard, Trophy, ShoppingBag, Crown, CalendarCheck, Globe } from 'lucide-vue-next'
 import { useCommunityLink } from '@/composables/useCommunityLink'
 import { backfillCampaignAchievements } from '@/engine/campaign/CampaignManager'
+import { t } from '@wl-i18n/i18n.js'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -60,12 +61,12 @@ function formatRelative(dateStr) {
   if (!Number.isFinite(ts)) return dateStr
   const elapsedMs = Date.now() - ts
   const day = 86400000
-  if (elapsedMs < day) return 'Today'
-  if (elapsedMs < 2 * day) return 'Yesterday'
-  if (elapsedMs < 7 * day) return `${Math.floor(elapsedMs / day)} days ago`
-  if (elapsedMs < 30 * day) return `${Math.floor(elapsedMs / (7 * day))} weeks ago`
-  if (elapsedMs < 365 * day) return `${Math.floor(elapsedMs / (30 * day))} months ago`
-  return `${Math.floor(elapsedMs / (365 * day))} years ago`
+  if (elapsedMs < day) return t('Today')
+  if (elapsedMs < 2 * day) return t('Yesterday')
+  if (elapsedMs < 7 * day) return t('{n} days ago', { n: Math.floor(elapsedMs / day) })
+  if (elapsedMs < 30 * day) return t('{n} weeks ago', { n: Math.floor(elapsedMs / (7 * day)) })
+  if (elapsedMs < 365 * day) return t('{n} months ago', { n: Math.floor(elapsedMs / (30 * day)) })
+  return t('{n} years ago', { n: Math.floor(elapsedMs / (365 * day)) })
 }
 
 function openCampaign(campaignId) {
@@ -106,28 +107,29 @@ onMounted(async () => {
     <!-- Header -->
     <header class="dashboard-header">
       <div class="header-container">
+        <!-- i18n-ignore -->
         <router-link to="/" class="app-logo">BBALL SIM</router-link>
 
         <nav class="header-nav">
           <router-link to="/campaigns" class="nav-link">
             <LayoutDashboard :size="18" />
-            <span>Campaigns</span>
+            <span>{{ $t('Campaigns') }}</span>
           </router-link>
           <router-link to="/store" class="nav-link">
             <ShoppingBag :size="18" />
-            <span>Store</span>
+            <span>{{ $t('Store') }}</span>
           </router-link>
           <button v-if="hasCommunity" class="nav-link" @click="openCommunity()">
             <Globe :size="18" />
-            <span>Community</span>
+            <span>{{ $t('Community') }}</span>
           </button>
           <router-link to="/profile" class="nav-link">
             <User :size="18" />
-            <span>Profile</span>
+            <span>{{ $t('Profile') }}</span>
           </router-link>
           <button @click="handleLogout" class="nav-link logout-btn">
             <LogOut :size="18" />
-            <span>Sign Out</span>
+            <span>{{ $t('Sign Out') }}</span>
           </button>
         </nav>
       </div>
@@ -138,21 +140,21 @@ onMounted(async () => {
       <div class="dashboard-container">
         <!-- Welcome Section -->
         <div class="welcome-section">
-          <h1 class="welcome-title">{{ isFirstVisit ? 'Welcome' : 'Welcome back' }}, {{ user?.username }}!</h1>
-          <p class="welcome-subtitle">{{ isFirstVisit ? "Let's build your first dynasty." : 'Ready to build your dynasty?' }}</p>
+          <h1 class="welcome-title">{{ isFirstVisit ? $t('Welcome, {name}!', { name: user?.username }) : $t('Welcome back, {name}!', { name: user?.username }) }}</h1>
+          <p class="welcome-subtitle">{{ isFirstVisit ? $t("Let's build your first dynasty.") : $t('Ready to build your dynasty?') }}</p>
         </div>
 
         <!-- Quick Actions -->
         <section class="actions-section">
-          <h2 class="section-title">Quick Actions</h2>
+          <h2 class="section-title">{{ $t('Quick Actions') }}</h2>
           <div class="actions-grid">
             <GlassCard padding="lg" class="action-card" role="button" @click="router.push('/campaigns')">
               <div class="action-icon continue">
                 <Gamepad2 :size="24" />
               </div>
               <div class="action-content">
-                <h3 class="action-title">Continue Playing</h3>
-                <p class="action-description">Pick up where you left off</p>
+                <h3 class="action-title">{{ $t('Continue Playing') }}</h3>
+                <p class="action-description">{{ $t('Pick up where you left off') }}</p>
               </div>
             </GlassCard>
 
@@ -161,8 +163,8 @@ onMounted(async () => {
                 <Plus :size="24" />
               </div>
               <div class="action-content">
-                <h3 class="action-title">New Campaign</h3>
-                <p class="action-description">Start a new franchise</p>
+                <h3 class="action-title">{{ $t('New Campaign') }}</h3>
+                <p class="action-description">{{ $t('Start a new franchise') }}</p>
               </div>
             </GlassCard>
 
@@ -171,8 +173,8 @@ onMounted(async () => {
                 <Trophy :size="24" />
               </div>
               <div class="action-content">
-                <h3 class="action-title">Profile</h3>
-                <p class="action-description">Edit settings & view badge synergies</p>
+                <h3 class="action-title">{{ $t('Profile') }}</h3>
+                <p class="action-description">{{ $t('Edit settings & view badge synergies') }}</p>
               </div>
             </GlassCard>
           </div>
@@ -180,14 +182,14 @@ onMounted(async () => {
 
         <!-- Recent Activity -->
         <section class="activity-section">
-          <h2 class="section-title">Recent Activity</h2>
+          <h2 class="section-title">{{ $t('Recent Activity') }}</h2>
           <GlassCard padding="lg" :hoverable="false" class="activity-card">
             <div v-if="recentActivity.length === 0" class="empty-activity">
               <Gamepad2 :size="40" class="empty-icon" />
-              <p class="empty-text">No recent activity yet</p>
-              <p class="empty-subtext">Start a campaign to begin your journey!</p>
+              <p class="empty-text">{{ $t('No recent activity yet') }}</p>
+              <p class="empty-subtext">{{ $t('Start a campaign to begin your journey!') }}</p>
               <BaseButton variant="primary" size="sm" @click="router.push('/campaigns')">
-                Get Started
+                {{ $t('Get Started') }}
               </BaseButton>
             </div>
             <ul v-else class="activity-feed">
@@ -202,8 +204,8 @@ onMounted(async () => {
                   <component :is="iconFor(ach.type)" :size="18" />
                 </span>
                 <span class="activity-body">
-                  <span class="activity-label">{{ ach.label }}</span>
-                  <span class="activity-meta">{{ ach.campaignName }} · {{ ach.subtitle }}</span>
+                  <span class="activity-label">{{ $tDynamic(ach.label) }}</span>
+                  <span class="activity-meta">{{ ach.campaignName }} · {{ ach.subtitle_tpl ? $tDynamic(ach.subtitle_tpl, ach.subtitle_params) : $tDynamic(ach.subtitle) }}</span>
                 </span>
                 <span class="activity-time">{{ formatRelative(ach.createdAt || ach.date) }}</span>
               </li>

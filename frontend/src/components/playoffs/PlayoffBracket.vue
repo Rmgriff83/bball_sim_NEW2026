@@ -125,12 +125,12 @@ function handleSeriesClick(series) {
   <div v-if="bracket" class="playoff-bracket">
     <!-- Eastern Conference -->
     <div class="conference east">
-      <h3 class="conference-title">Eastern Conference</h3>
+      <h3 class="conference-title">{{ $t('Eastern Conference') }}</h3>
 
       <div class="bracket-grid">
         <!-- Round 1 -->
         <div class="round round-1">
-          <div class="round-label">First Round</div>
+          <div class="round-label">{{ $t('First Round') }}</div>
           <div class="matchups">
             <div
               v-for="(series, idx) in eastRound1"
@@ -173,7 +173,7 @@ function handleSeriesClick(series) {
 
         <!-- Round 2 -->
         <div class="round round-2">
-          <div class="round-label">Semifinals</div>
+          <div class="round-label">{{ $t('Semifinals') }}</div>
           <div class="matchups">
             <!-- Slot 1: first semifinal (fed by R1 matchups 1 & 2) -->
             <div
@@ -219,7 +219,7 @@ function handleSeriesClick(series) {
                     <span class="seed">[{{ eastR2Slot1Preview.team1.seed }}]</span>
                     <span class="abbr">{{ eastR2Slot1Preview.team1.abbreviation }}</span>
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
                 <div class="team" :class="{ 'preview-team': eastR2Slot1Preview?.team2, 'user-team': eastR2Slot1Preview?.team2 && isUserTeam(eastR2Slot1Preview.team2.teamId) }">
                   <template v-if="eastR2Slot1Preview?.team2">
@@ -227,7 +227,7 @@ function handleSeriesClick(series) {
                     <span class="seed">[{{ eastR2Slot1Preview.team2.seed }}]</span>
                     <span class="abbr">{{ eastR2Slot1Preview.team2.abbreviation }}</span>
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
               </div>
             </div>
@@ -277,7 +277,7 @@ function handleSeriesClick(series) {
                     <span class="seed">[{{ eastR2Slot2Preview.team1.seed }}]</span>
                     <span class="abbr">{{ eastR2Slot2Preview.team1.abbreviation }}</span>
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
                 <div class="team" :class="{ 'preview-team': eastR2Slot2Preview?.team2, 'user-team': eastR2Slot2Preview?.team2 && isUserTeam(eastR2Slot2Preview.team2.teamId) }">
                   <template v-if="eastR2Slot2Preview?.team2">
@@ -285,7 +285,7 @@ function handleSeriesClick(series) {
                     <span class="seed">[{{ eastR2Slot2Preview.team2.seed }}]</span>
                     <span class="abbr">{{ eastR2Slot2Preview.team2.abbreviation }}</span>
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
               </div>
             </div>
@@ -294,7 +294,7 @@ function handleSeriesClick(series) {
 
         <!-- Conference Finals -->
         <div class="round round-cf">
-          <div class="round-label">Conf. Finals</div>
+          <div class="round-label">{{ $t('Conf. Finals') }}</div>
           <div class="matchups">
             <div class="matchup-wrapper">
 
@@ -333,14 +333,14 @@ function handleSeriesClick(series) {
                     <span class="team-color-dot" :style="{ background: eastCFPreview.team1.primaryColor }" />
                     <span class="abbr">{{ eastCFPreview.team1.abbreviation }}</span>
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
                 <div class="team" :class="{ 'preview-team': eastCFPreview?.team2, 'user-team': eastCFPreview?.team2 && isUserTeam(eastCFPreview.team2.teamId) }">
                   <template v-if="eastCFPreview?.team2">
                     <span class="team-color-dot" :style="{ background: eastCFPreview.team2.primaryColor }" />
                     <span class="abbr">{{ eastCFPreview.team2.abbreviation }}</span>
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
               </div>
 
@@ -354,7 +354,7 @@ function handleSeriesClick(series) {
     <div class="finals-section">
       <div class="finals-header">
         <Trophy :size="24" />
-        <span>Finals</span>
+        <span>{{ $t('Finals') }}</span>
       </div>
       <div class="finals-matchup-wrapper">
         <div
@@ -370,7 +370,7 @@ function handleSeriesClick(series) {
               'user-team': isUserTeam(finals?.team1?.teamId)
             }"
           >
-            <span class="conf-label">EAST</span>
+            <span class="conf-label">{{ $t('EAST') }}</span>
             <span class="team-color-dot finals-dot" :style="{ background: finals?.team1?.primaryColor }" />
             <span class="abbr">{{ finals?.team1?.abbreviation }}</span>
             <span class="wins">{{ finals?.team1Wins }}</span>
@@ -383,7 +383,7 @@ function handleSeriesClick(series) {
               'user-team': isUserTeam(finals?.team2?.teamId)
             }"
           >
-            <span class="conf-label">WEST</span>
+            <span class="conf-label">{{ $t('WEST') }}</span>
             <span class="team-color-dot finals-dot" :style="{ background: finals?.team2?.primaryColor }" />
             <span class="abbr">{{ finals?.team2?.abbreviation }}</span>
             <span class="wins">{{ finals?.team2Wins }}</span>
@@ -391,21 +391,21 @@ function handleSeriesClick(series) {
         </div>
         <div v-else class="matchup finals-matchup pending">
           <div class="team" :class="{ 'preview-team': finalsPreview?.team1, 'user-team': finalsPreview?.team1 && isUserTeam(finalsPreview.team1.teamId) }">
-            <span class="conf-label">EAST</span>
+            <span class="conf-label">{{ $t('EAST') }}</span>
             <template v-if="finalsPreview?.team1">
               <span class="team-color-dot finals-dot" :style="{ background: finalsPreview.team1.primaryColor }" />
               <span class="abbr">{{ finalsPreview.team1.abbreviation }}</span>
             </template>
-            <template v-else>TBD</template>
+            <template v-else>{{ $t('TBD') }}</template>
           </div>
           <div class="vs">VS</div>
           <div class="team" :class="{ 'preview-team': finalsPreview?.team2, 'user-team': finalsPreview?.team2 && isUserTeam(finalsPreview.team2.teamId) }">
-            <span class="conf-label">WEST</span>
+            <span class="conf-label">{{ $t('WEST') }}</span>
             <template v-if="finalsPreview?.team2">
               <span class="team-color-dot finals-dot" :style="{ background: finalsPreview.team2.primaryColor }" />
               <span class="abbr">{{ finalsPreview.team2.abbreviation }}</span>
             </template>
-            <template v-else>TBD</template>
+            <template v-else>{{ $t('TBD') }}</template>
           </div>
         </div>
       </div>
@@ -414,7 +414,7 @@ function handleSeriesClick(series) {
       <div v-if="champion" class="champion-display">
         <Trophy :size="32" class="champion-trophy" />
         <div class="champion-info">
-          <span class="champion-label">Champions</span>
+          <span class="champion-label">{{ $t('Champions') }}</span>
           <span class="champion-name">{{ champion.name }}</span>
         </div>
       </div>
@@ -422,12 +422,12 @@ function handleSeriesClick(series) {
 
     <!-- Western Conference -->
     <div class="conference west">
-      <h3 class="conference-title">Western Conference</h3>
+      <h3 class="conference-title">{{ $t('Western Conference') }}</h3>
 
       <div class="bracket-grid reverse">
         <!-- Round 1 -->
         <div class="round round-1">
-          <div class="round-label">First Round</div>
+          <div class="round-label">{{ $t('First Round') }}</div>
           <div class="matchups">
             <div
               v-for="(series, idx) in westRound1"
@@ -471,7 +471,7 @@ function handleSeriesClick(series) {
 
         <!-- Round 2 -->
         <div class="round round-2">
-          <div class="round-label">Semifinals</div>
+          <div class="round-label">{{ $t('Semifinals') }}</div>
           <div class="matchups">
             <!-- Slot 1: first semifinal (fed by R1 matchups 1 & 2) -->
             <div
@@ -519,7 +519,7 @@ function handleSeriesClick(series) {
                     <span class="seed">[{{ westR2Slot1Preview.team1.seed }}]</span>
                     <span class="team-color-dot" :style="{ background: westR2Slot1Preview.team1.primaryColor }" />
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
                 <div class="team" :class="{ 'preview-team': westR2Slot1Preview?.team2, 'user-team': westR2Slot1Preview?.team2 && isUserTeam(westR2Slot1Preview.team2.teamId) }">
                   <template v-if="westR2Slot1Preview?.team2">
@@ -527,7 +527,7 @@ function handleSeriesClick(series) {
                     <span class="seed">[{{ westR2Slot1Preview.team2.seed }}]</span>
                     <span class="team-color-dot" :style="{ background: westR2Slot1Preview.team2.primaryColor }" />
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
               </div>
             </div>
@@ -578,7 +578,7 @@ function handleSeriesClick(series) {
                     <span class="seed">[{{ westR2Slot2Preview.team1.seed }}]</span>
                     <span class="team-color-dot" :style="{ background: westR2Slot2Preview.team1.primaryColor }" />
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
                 <div class="team" :class="{ 'preview-team': westR2Slot2Preview?.team2, 'user-team': westR2Slot2Preview?.team2 && isUserTeam(westR2Slot2Preview.team2.teamId) }">
                   <template v-if="westR2Slot2Preview?.team2">
@@ -586,7 +586,7 @@ function handleSeriesClick(series) {
                     <span class="seed">[{{ westR2Slot2Preview.team2.seed }}]</span>
                     <span class="team-color-dot" :style="{ background: westR2Slot2Preview.team2.primaryColor }" />
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
               </div>
             </div>
@@ -595,7 +595,7 @@ function handleSeriesClick(series) {
 
         <!-- Conference Finals -->
         <div class="round round-cf">
-          <div class="round-label">Conf. Finals</div>
+          <div class="round-label">{{ $t('Conf. Finals') }}</div>
           <div class="matchups">
             <div class="matchup-wrapper">
 
@@ -634,14 +634,14 @@ function handleSeriesClick(series) {
                     <span class="abbr">{{ westCFPreview.team1.abbreviation }}</span>
                     <span class="team-color-dot" :style="{ background: westCFPreview.team1.primaryColor }" />
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
                 <div class="team" :class="{ 'preview-team': westCFPreview?.team2, 'user-team': westCFPreview?.team2 && isUserTeam(westCFPreview.team2.teamId) }">
                   <template v-if="westCFPreview?.team2">
                     <span class="abbr">{{ westCFPreview.team2.abbreviation }}</span>
                     <span class="team-color-dot" :style="{ background: westCFPreview.team2.primaryColor }" />
                   </template>
-                  <template v-else>TBD</template>
+                  <template v-else>{{ $t('TBD') }}</template>
                 </div>
               </div>
 
@@ -655,7 +655,7 @@ function handleSeriesClick(series) {
   <!-- Empty State -->
   <div v-else class="empty-bracket">
     <Trophy :size="48" class="empty-icon" />
-    <p>Playoff bracket not yet generated</p>
+    <p>{{ $t('Playoff bracket not yet generated') }}</p>
   </div>
 </template>
 

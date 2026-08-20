@@ -17,6 +17,7 @@ import { User, ArrowRight, ArrowLeft, X, Check, AlertCircle, ChevronLeft, Chevro
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import ApronPickBadge from '@/components/common/ApronPickBadge.vue'
 import TradePartnerStep from './TradePartnerStep.vue'
+import { t, tDynamic } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   campaignId: {
@@ -87,14 +88,14 @@ const canSubmitTrade = computed(() => {
 
 const wizardTitle = computed(() => {
   if (wizardStep.value <= 2) {
-    return wizardSteps[wizardStep.value - 1]?.title || 'Trade Wizard'
+    return tDynamic(wizardSteps[wizardStep.value - 1]?.title || t('Trade Wizard'))
   }
-  if (confirmModalState.value === 'loading') return 'Processing Trade...'
+  if (confirmModalState.value === 'loading') return t('Processing Trade...')
   if (confirmModalState.value === 'result') {
-    if (lastProposalResult.value?.decision === 'accept') return 'Trade Accepted!'
-    return 'Trade Response'
+    if (lastProposalResult.value?.decision === 'accept') return t('Trade Accepted!')
+    return t('Trade Response')
   }
-  return 'Confirm Trade'
+  return t('Confirm Trade')
 })
 
 // Apron ops lock (first apron): a team currently over it can't take back more
@@ -120,15 +121,15 @@ const tradeValidation = computed(() => {
 
   // Check if we have assets on both sides
   if (userOffering.value.length === 0) {
-    issues.push('You must select at least one asset to trade away')
+    issues.push(t('You must select at least one asset to trade away'))
   }
   if (userRequesting.value.length === 0) {
-    issues.push('You must select at least one asset to receive')
+    issues.push(t('You must select at least one asset to receive'))
   }
 
   // Trade deadline — block building a deal that the executor would reject.
   if (tradeStore.tradeDeadlinePassed) {
-    issues.push('The trade deadline has passed — no more trades can be made this season.')
+    issues.push(t('The trade deadline has passed — no more trades can be made this season.'))
   }
 
   // Salary matching rules. Run the SAME engine validator the executor hard-blocks
@@ -157,19 +158,19 @@ const tradeValidation = computed(() => {
     if (!cap.valid) {
       if (cap.max_incoming != null) {
         const overBy = (cap.incoming_salary ?? incomingSalary) - (cap.max_incoming ?? 0)
-        issues.push(`Incoming salary exceeds limit by ${formatSalary(Math.max(0, overBy))}. Add more outgoing salary or reduce incoming.`)
+        issues.push(t('Incoming salary exceeds limit by {amount}. Add more outgoing salary or reduce incoming.', { amount: formatSalary(Math.max(0, overBy)) }))
       } else {
         // Second-apron rule (no 125% ceiling in play) — show the engine's reason.
-        issues.push(cap.reason || 'Trade violates salary-cap rules.')
+        issues.push(cap.reason || t('Trade violates salary-cap rules.'))
       }
     }
 
     // Warn about significant salary imbalance
     if (Math.abs(salaryDiff) > 5000000) {
       if (salaryDiff > 0) {
-        warnings.push(`You're taking on ${formatSalary(salaryDiff)} more in salary`)
+        warnings.push(t("You're taking on {amount} more in salary", { amount: formatSalary(salaryDiff) }))
       } else {
-        warnings.push(`You're shedding ${formatSalary(Math.abs(salaryDiff))} in salary`)
+        warnings.push(t("You're shedding {amount} in salary", { amount: formatSalary(Math.abs(salaryDiff)) }))
       }
     }
   }
@@ -180,9 +181,9 @@ const tradeValidation = computed(() => {
   const rosterChange = playersIn - playersOut
 
   if (rosterChange > 0) {
-    warnings.push(`This trade adds ${rosterChange} player${rosterChange > 1 ? 's' : ''} to your roster`)
+    warnings.push(rosterChange > 1 ? t('This trade adds {n} players to your roster', { n: rosterChange }) : t('This trade adds {n} player to your roster', { n: rosterChange }))
   } else if (rosterChange < 0) {
-    warnings.push(`This trade removes ${Math.abs(rosterChange)} player${Math.abs(rosterChange) > 1 ? 's' : ''} from your roster`)
+    warnings.push(Math.abs(rosterChange) > 1 ? t('This trade removes {n} players from your roster', { n: Math.abs(rosterChange) }) : t('This trade removes {n} player from your roster', { n: Math.abs(rosterChange) }))
   }
 
   return {
@@ -455,7 +456,7 @@ function togglePlayerSelection(player) {
 
 function togglePickSelection(pick) {
   if (isPickApronFrozen(pick)) {
-    toastStore.showError("This pick is frozen by the apron penalty and can't be traded.")
+    toastStore.showError(t("This pick is frozen by the apron penalty and can't be traded."))
     return
   }
   if (wizardStep.value === 1) {
@@ -521,7 +522,7 @@ async function executeTrade() {
         .filter(a => a.type === 'pick' && !stillAvailable.has(a.id))
         .map(a => a.id)
       if (missing.length > 0) {
-        toastStore.showError('One or more requested picks are no longer available. Please rebuild your offer.')
+        toastStore.showError(t('One or more requested picks are no longer available. Please rebuild your offer.'))
         tradeStore.clearTrade()
         confirmModalState.value = 'confirm'
         return
@@ -611,9 +612,9 @@ function getAssetStars(asset) {
 }
 
 function formatContractYears(years) {
-  if (!years || years <= 0) return 'Expiring'
-  if (years === 1) return '1 yr'
-  return `${years} yrs`
+  if (!years || years <= 0) return t('Expiring')
+  if (years === 1) return t('1 yr')
+  return t('{n} yrs', { n: years })
 }
 
 function formatAge(age) {
@@ -627,7 +628,7 @@ function formatAge(age) {
     <!-- Loading State -->
     <div v-if="loading" class="loading-container">
       <LoadingSpinner size="lg" />
-      <p class="text-secondary mt-4">Loading trade center...</p>
+      <p class="text-secondary mt-4">{{ $t('Loading trade center...') }}</p>
     </div>
 
     <!-- Intro Page (shown when wizard is closed) -->
@@ -638,12 +639,12 @@ function formatAge(age) {
             <Repeat :size="64" />
           </div>
           <p class="intro-description">
-            Build your roster by trading players and draft picks with other teams.
+            {{ $t('Build your roster by trading players and draft picks with other teams.') }}
           </p>
 
           <button class="start-trade-btn" @click="startTradeWizard">
             <Repeat :size="20" />
-            Start Trading
+            {{ $t('Start Trading') }}
           </button>
         </div>
       </GlassCard>
@@ -678,11 +679,11 @@ function formatAge(age) {
              is obvious before the validation panel rejects it. -->
         <div v-if="wizardStep < 3 && userApronRestricted" class="apron-restriction-banner">
           <AlertTriangle :size="15" />
-          <span>Apron restriction — you're over the first apron: you must send out more salary than you take back.</span>
+          <span>{{ $t("Apron restriction — you're over the first apron: you must send out more salary than you take back.") }}</span>
         </div>
         <div v-if="wizardStep === 2 && partnerApronRestricted" class="apron-restriction-banner partner">
           <AlertTriangle :size="15" />
-          <span>{{ selectedTeam?.abbreviation }} is over the first apron — they won't take back more salary than they send out.</span>
+          <span>{{ $t("{team} is over the first apron — they won't take back more salary than they send out.", { team: selectedTeam?.abbreviation }) }}</span>
         </div>
         <!-- Trade Slots Summary + Validation -->
         <div v-if="wizardStep < 3 && (userOffering.length > 0 || userRequesting.length > 0)" class="wizard-trade-summary">
@@ -691,7 +692,7 @@ function formatAge(age) {
               <!-- YOUR SIDE -->
               <div class="wizard-slot-section sending" :class="{ active: wizardStep === 1 }">
                 <div class="wizard-slot-header">
-                  <span class="wizard-slot-label">You Send</span>
+                  <span class="wizard-slot-label">{{ $t('You Send') }}</span>
                 </div>
                 <div v-if="userOffering.length > 0" class="wizard-slot-assets">
                   <div v-for="asset in userOffering" :key="`ws-${asset.type}-${asset.id}`" class="wizard-slot-item">
@@ -711,7 +712,7 @@ function formatAge(age) {
                   </div>
                 </div>
                 <div v-else class="wizard-slot-empty">
-                  <span>Select assets</span>
+                  <span>{{ $t('Select assets') }}</span>
                 </div>
               </div>
 
@@ -724,7 +725,7 @@ function formatAge(age) {
               <div class="wizard-slot-section receiving" :class="{ active: wizardStep === 2 }">
                 <div class="wizard-slot-header">
                   <span v-if="selectedTeam" class="wizard-slot-badge">{{ selectedTeam.abbreviation }}</span>
-                  <span class="wizard-slot-label">{{ selectedTeam ? selectedTeam.name + ' Send' : 'They Send' }}</span>
+                  <span class="wizard-slot-label">{{ selectedTeam ? $t('{team} Send', { team: selectedTeam.name }) : $t('They Send') }}</span>
                 </div>
                 <div v-if="userRequesting.length > 0" class="wizard-slot-assets">
                   <div v-for="asset in userRequesting" :key="`wr-${asset.type}-${asset.id}`" class="wizard-slot-item">
@@ -744,7 +745,7 @@ function formatAge(age) {
                   </div>
                 </div>
                 <div v-else class="wizard-slot-empty">
-                  <span>{{ wizardStep < 2 ? 'Pick a team first' : 'Select assets' }}</span>
+                  <span>{{ wizardStep < 2 ? $t('Pick a team first') : $t('Select assets') }}</span>
                 </div>
               </div>
             </div>
@@ -755,7 +756,7 @@ function formatAge(age) {
                 <CheckCircle v-if="tradeValidation.isValid" :size="18" class="validation-icon valid" />
                 <AlertTriangle v-else :size="18" class="validation-icon invalid" />
                 <span class="validation-title">
-                  {{ tradeValidation.isValid ? 'Trade is Valid' : 'Trade Invalid' }}
+                  {{ tradeValidation.isValid ? $t('Trade is Valid') : $t('Trade Invalid') }}
                 </span>
               </div>
               <div v-if="tradeValidation.issues.length > 0" class="validation-issues">
@@ -776,7 +777,7 @@ function formatAge(age) {
 
         <!-- Step 1: Your Assets -->
         <div v-if="wizardStep === 1" class="wizard-step-content">
-          <p class="wizard-step-description">Select the players and draft picks you want to trade away.</p>
+          <p class="wizard-step-description">{{ $t('Select the players and draft picks you want to trade away.') }}</p>
 
           <!-- Asset Tabs -->
           <div class="wizard-asset-tabs">
@@ -786,7 +787,7 @@ function formatAge(age) {
               @click="assetTab = 'players'"
             >
               <User :size="16" />
-              Players ({{ wizardRoster.length }})
+              {{ $t('Players ({n})', { n: wizardRoster.length }) }}
             </button>
             <button
               class="wizard-asset-tab"
@@ -794,13 +795,13 @@ function formatAge(age) {
               @click="assetTab = 'picks'"
             >
               <Calendar :size="16" />
-              Draft Picks ({{ wizardPicks.length }})
+              {{ $t('Draft Picks ({n})', { n: wizardPicks.length }) }}
             </button>
           </div>
 
           <!-- Selected Summary -->
           <div v-if="userOffering.length > 0" class="wizard-selected-summary">
-            <span class="selected-label">Selected to trade:</span>
+            <span class="selected-label">{{ $t('Selected to trade:') }}</span>
             <div class="selected-chips">
               <div v-for="asset in userOffering" :key="`chip-${asset.type}-${asset.id}`" class="selected-chip">
                 <span v-if="asset.type === 'player'">{{ asset.firstName }} {{ asset.lastName }}</span>
@@ -828,7 +829,7 @@ function formatAge(age) {
                 <div class="wizard-asset-info">
                   <span class="wizard-asset-name">{{ player.firstName }} {{ player.lastName }}</span>
                   <div class="wizard-asset-meta">
-                    <span class="wizard-asset-vitals">{{ player.height || "6'6\"" }} · {{ formatAge(player.age) }} yrs</span>
+                    <span class="wizard-asset-vitals">{{ $t('{height} · {age} yrs', { height: player.height || "6'6\"", age: formatAge(player.age) }) }}</span>
                     <span class="wizard-asset-position-badge" :style="{ backgroundColor: getPositionColor(player.position) }">
                       {{ player.position }}
                     </span>
@@ -856,7 +857,7 @@ function formatAge(age) {
               </div>
             </div>
             <div v-if="wizardRoster.length === 0" class="wizard-asset-empty">
-              No players available
+              {{ $t('No players available') }}
             </div>
           </div>
 
@@ -872,11 +873,11 @@ function formatAge(age) {
               <div class="wizard-asset-card-content">
                 <div class="wizard-asset-pick-year">{{ formatPickYear(pick.year) }}</div>
                 <div class="wizard-asset-info">
-                  <span class="wizard-asset-name">Round {{ pick.round }}</span>
+                  <span class="wizard-asset-name">{{ $t('Round {n}', { n: pick.round }) }}</span>
                   <span v-if="pick.original_team_abbreviation" class="wizard-asset-pick-team">({{ pick.original_team_abbreviation }})</span>
                   <ApronPickBadge v-if="pick.apronFrozen ?? pick.apron_frozen" />
                   <div v-if="pick.projected_position" class="wizard-asset-projection">
-                    Projected #{{ pick.projected_position }}
+                    {{ $t('Projected #{n}', { n: pick.projected_position }) }}
                   </div>
                 </div>
                 <div class="wizard-asset-check">
@@ -885,7 +886,7 @@ function formatAge(age) {
               </div>
             </div>
             <div v-if="wizardPicks.length === 0" class="wizard-asset-empty">
-              No draft picks available
+              {{ $t('No draft picks available') }}
             </div>
           </div>
         </div>
@@ -900,18 +901,18 @@ function formatAge(age) {
           <!-- Loading State -->
           <div v-if="confirmModalState === 'loading'" class="modal-loading">
             <LoadingSpinner size="lg" />
-            <p>{{ lastProposalResult?.decision === 'accept' ? 'Completing trade...' : 'Evaluating trade proposal...' }}</p>
+            <p>{{ lastProposalResult?.decision === 'accept' ? $t('Completing trade...') : $t('Evaluating trade proposal...') }}</p>
           </div>
 
           <!-- Confirm State -->
           <template v-else-if="confirmModalState === 'confirm'">
-            <p class="wizard-step-description">Review the trade details before proposing to {{ selectedTeam?.name }}.</p>
+            <p class="wizard-step-description">{{ $t('Review the trade details before proposing to {team}.', { team: selectedTeam?.name }) }}</p>
 
             <div class="modal-trade-slots">
               <!-- YOUR TEAM SIDE -->
               <div class="modal-team-section sending">
                 <div class="modal-team-header">
-                  <span class="modal-team-label">Your Team Sends</span>
+                  <span class="modal-team-label">{{ $t('Your Team Sends') }}</span>
                 </div>
                 <div class="modal-assets-grid">
                   <div
@@ -928,7 +929,7 @@ function formatAge(age) {
                         <div class="modal-player-info">
                           <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>
                           <div class="modal-player-meta">
-                            <span class="modal-player-vitals">{{ asset.height || "6'6\"" }} · {{ formatAge(asset.age) }} yrs</span>
+                            <span class="modal-player-vitals">{{ $t('{height} · {age} yrs', { height: asset.height || "6'6\"", age: formatAge(asset.age) }) }}</span>
                             <span class="modal-position-badge" :style="{ backgroundColor: getPositionColor(asset.position) }">
                               {{ asset.position }}
                             </span>
@@ -958,7 +959,7 @@ function formatAge(age) {
                       <div class="modal-pick-card">
                         <div class="modal-pick-year">{{ formatPickYear(asset.year) }}</div>
                         <div class="modal-pick-info">
-                          <span class="modal-pick-round">Round {{ asset.round }}</span>
+                          <span class="modal-pick-round">{{ $t('Round {n}', { n: asset.round }) }}</span>
                           <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
                           <ApronPickBadge v-if="asset.apronFrozen" />
                           <div class="modal-star-rating">
@@ -983,7 +984,7 @@ function formatAge(age) {
               <div class="modal-team-section receiving">
                 <div class="modal-team-header">
                   <span class="modal-team-badge">{{ selectedTeam?.abbreviation }}</span>
-                  <span class="modal-team-label">{{ selectedTeam?.name }} Send</span>
+                  <span class="modal-team-label">{{ $t('{team} Send', { team: selectedTeam?.name }) }}</span>
                 </div>
                 <div class="modal-assets-grid">
                   <div
@@ -1000,7 +1001,7 @@ function formatAge(age) {
                         <div class="modal-player-info">
                           <span class="modal-player-name">{{ asset.firstName }} {{ asset.lastName }}</span>
                           <div class="modal-player-meta">
-                            <span class="modal-player-vitals">{{ asset.height || "6'6\"" }} · {{ formatAge(asset.age) }} yrs</span>
+                            <span class="modal-player-vitals">{{ $t('{height} · {age} yrs', { height: asset.height || "6'6\"", age: formatAge(asset.age) }) }}</span>
                             <span class="modal-position-badge" :style="{ backgroundColor: getPositionColor(asset.position) }">
                               {{ asset.position }}
                             </span>
@@ -1030,7 +1031,7 @@ function formatAge(age) {
                       <div class="modal-pick-card">
                         <div class="modal-pick-year">{{ formatPickYear(asset.year) }}</div>
                         <div class="modal-pick-info">
-                          <span class="modal-pick-round">Round {{ asset.round }}</span>
+                          <span class="modal-pick-round">{{ $t('Round {n}', { n: asset.round }) }}</span>
                           <span v-if="asset.originalTeamAbbreviation" class="modal-pick-team">({{ asset.originalTeamAbbreviation }})</span>
                           <ApronPickBadge v-if="asset.apronFrozen" />
                           <div class="modal-star-rating">
@@ -1048,15 +1049,15 @@ function formatAge(age) {
             <!-- Salary Summary -->
             <div v-if="tradeValidation.salaryOut > 0 || tradeValidation.salaryIn > 0" class="modal-salary-summary">
               <div class="modal-salary-row">
-                <span class="modal-salary-label">Outgoing Salary:</span>
+                <span class="modal-salary-label">{{ $t('Outgoing Salary:') }}</span>
                 <span class="modal-salary-value out">{{ formatSalary(tradeValidation.salaryOut) }}</span>
               </div>
               <div class="modal-salary-row">
-                <span class="modal-salary-label">Incoming Salary:</span>
+                <span class="modal-salary-label">{{ $t('Incoming Salary:') }}</span>
                 <span class="modal-salary-value in">{{ formatSalary(tradeValidation.salaryIn) }}</span>
               </div>
               <div class="modal-salary-row net">
-                <span class="modal-salary-label">Net Change:</span>
+                <span class="modal-salary-label">{{ $t('Net Change:') }}</span>
                 <span class="modal-salary-value" :class="{ positive: tradeValidation.salaryDiff > 0, negative: tradeValidation.salaryDiff < 0 }">
                   {{ tradeValidation.salaryDiff >= 0 ? '+' : '' }}{{ formatSalary(tradeValidation.salaryDiff) }}
                 </span>
@@ -1070,7 +1071,7 @@ function formatAge(age) {
             <div class="modal-trade-slots compact">
               <div class="modal-team-section sending compact">
                 <div class="modal-team-header">
-                  <span class="modal-team-label">You Sent</span>
+                  <span class="modal-team-label">{{ $t('You Sent') }}</span>
                 </div>
                 <div class="modal-assets-list">
                   <div v-for="asset in userOffering" :key="`result-send-${asset.type}-${asset.id}`" class="modal-asset-item">
@@ -1080,7 +1081,7 @@ function formatAge(age) {
                     </template>
                     <template v-else>
                       <span class="pick-badge">{{ formatPickYear(asset.year) }}</span>
-                      <span>Round {{ asset.round }} Pick</span>
+                      <span>{{ $t('Round {n} Pick', { n: asset.round }) }}</span>
                     </template>
                   </div>
                 </div>
@@ -1093,7 +1094,7 @@ function formatAge(age) {
               <div class="modal-team-section receiving compact">
                 <div class="modal-team-header">
                   <span class="modal-team-badge sm">{{ selectedTeam?.abbreviation }}</span>
-                  <span class="modal-team-label">Sent</span>
+                  <span class="modal-team-label">{{ $t('Sent') }}</span>
                 </div>
                 <div class="modal-assets-list">
                   <div v-for="asset in userRequesting" :key="`result-recv-${asset.type}-${asset.id}`" class="modal-asset-item">
@@ -1103,7 +1104,7 @@ function formatAge(age) {
                     </template>
                     <template v-else>
                       <span class="pick-badge">{{ formatPickYear(asset.year) }}</span>
-                      <span>Round {{ asset.round }} Pick</span>
+                      <span>{{ $t('Round {n} Pick', { n: asset.round }) }}</span>
                     </template>
                   </div>
                 </div>
@@ -1113,17 +1114,17 @@ function formatAge(age) {
             <!-- Accept Result -->
             <div v-if="lastProposalResult?.decision === 'accept'" class="result-success">
               <CheckCircle :size="56" class="success-icon" />
-              <h3>The {{ selectedTeam?.name }} have accepted your trade!</h3>
-              <p class="text-secondary">Would you like to complete this trade?</p>
+              <h3>{{ $t('The {team} have accepted your trade!', { team: selectedTeam?.name }) }}</h3>
+              <p class="text-secondary">{{ $t('Would you like to complete this trade?') }}</p>
             </div>
 
             <!-- Reject Result -->
             <div v-else-if="lastProposalResult?.decision === 'reject'" class="result-reject">
               <AlertCircle :size="56" class="reject-icon" />
-              <h3>Trade Rejected</h3>
+              <h3>{{ $t('Trade Rejected') }}</h3>
               <p class="reject-reason">"{{ lastProposalResult.reason }}"</p>
               <p class="team-info text-secondary">
-                The {{ selectedTeam?.name }} are currently
+                {{ $t('The {team} are currently', { team: selectedTeam?.name }) }}
                 <strong :style="{ color: tradeStore.getDirectionColor(lastProposalResult.team_direction) }">
                   {{ tradeStore.getDirectionLabel(lastProposalResult.team_direction) }}
                 </strong>
@@ -1133,7 +1134,7 @@ function formatAge(age) {
             <!-- Invalid Result -->
             <div v-else-if="lastProposalResult?.decision === 'invalid'" class="result-invalid">
               <AlertTriangle :size="56" class="invalid-icon" />
-              <h3>Invalid Trade</h3>
+              <h3>{{ $t('Invalid Trade') }}</h3>
               <p class="invalid-reason">{{ lastProposalResult.reason }}</p>
             </div>
           </template>
@@ -1152,7 +1153,7 @@ function formatAge(age) {
                   @click="wizardBack"
                 >
                   <ChevronLeft :size="18" />
-                  Back
+                  {{ $t('Back') }}
                 </button>
                 <div v-else></div>
 
@@ -1163,7 +1164,7 @@ function formatAge(age) {
                     @click="wizardNext"
                     :disabled="!canWizardNext"
                   >
-                    Next
+                    {{ $t('Next') }}
                     <ChevronRight :size="18" />
                   </button>
                   <button
@@ -1172,7 +1173,7 @@ function formatAge(age) {
                     @click="wizardNext"
                     :disabled="!canSubmitTrade"
                   >
-                    Review Trade
+                    {{ $t('Review Trade') }}
                     <ArrowRight :size="18" />
                   </button>
                 </div>
@@ -1182,12 +1183,12 @@ function formatAge(age) {
               <template v-else-if="confirmModalState === 'confirm'">
                 <button class="wizard-btn-back" @click="wizardBack">
                   <ChevronLeft :size="18" />
-                  Back
+                  {{ $t('Back') }}
                 </button>
                 <div class="wizard-nav-right">
                   <button class="wizard-btn-next" @click="confirmAndProposeTrade">
                     <Check :size="18" />
-                    Propose Trade
+                    {{ $t('Propose Trade') }}
                   </button>
                 </div>
               </template>
@@ -1201,12 +1202,12 @@ function formatAge(age) {
               <!-- Step 4: Result - Accepted -->
               <template v-else-if="confirmModalState === 'result' && lastProposalResult?.decision === 'accept'">
                 <button class="wizard-btn-back" @click="closeTradeWizard">
-                  Cancel
+                  {{ $t('Cancel') }}
                 </button>
                 <div class="wizard-nav-right">
                   <button class="wizard-btn-next" @click="executeTrade">
                     <Check :size="18" />
-                    Complete Trade
+                    {{ $t('Complete Trade') }}
                   </button>
                 </div>
               </template>
@@ -1216,7 +1217,7 @@ function formatAge(age) {
                 <div></div>
                 <div class="wizard-nav-right">
                   <button class="wizard-btn-next" @click="wizardBack">
-                    Try Another Trade
+                    {{ $t('Try Another Trade') }}
                   </button>
                 </div>
               </template>
@@ -1226,7 +1227,7 @@ function formatAge(age) {
                 <div></div>
                 <div class="wizard-nav-right">
                   <button class="wizard-btn-next" @click="closeTradeWizard">
-                    Start Over
+                    {{ $t('Start Over') }}
                   </button>
                 </div>
               </template>

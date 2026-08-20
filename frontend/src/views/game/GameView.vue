@@ -19,6 +19,7 @@ import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { computeTeamOverall } from '@/utils/teamOverall'
 import { coachingEngine } from '@/engine/simulation/CoachingEngine'
 import { QUARTER_LENGTH_MINUTES } from '@/engine/config/GameConfig'
+import { t, tDynamic, dateLocale } from '@wl-i18n/i18n.js'
 import BasketballCourt from '@/components/game/BasketballCourt.vue'
 import BoxScore from '@/components/game/BoxScore.vue'
 import PlayAnalyticsPanel from '@/components/analytics/PlayAnalyticsPanel.vue'
@@ -356,8 +357,8 @@ const playoffSeriesInfo = computed(() => {
   if (!series) return null
   const gameNum = game.value.playoff_game_number
   const label = gameNum
-    ? `Game ${gameNum} — Series ${series.team1Wins}-${series.team2Wins}`
-    : `Series ${series.team1Wins}-${series.team2Wins}`
+    ? t('Game {n} — Series {a}-{b}', { n: gameNum, a: series.team1Wins, b: series.team2Wins })
+    : t('Series {a}-{b}', { a: series.team1Wins, b: series.team2Wins })
   return { ...series, label }
 })
 
@@ -440,17 +441,19 @@ const postgameAnalyticsUnlocked = computed(
 const opponentAnalyticsUnlocked = computed(
   () => analystTier.value >= 4 && analystPerkUnlocked('opponent_analytics')
 )
-// Locked-message for the postgame panel: name the missing piece.
+// Locked-message for the postgame panel: name the missing piece. t() at
+// computed-time keeps these extractor-tracked; the panel's $tDynamic passes
+// the already-translated text through unchanged.
 const postgameLockedMessage = computed(() =>
   analystTier.value < 3
-    ? "Hire a Level 3 Analyst (Team → Staff) to unlock your team's per-play analytics."
-    : "Upgrade your Analytics Facility (Team → GM → Facilities) to unlock your team's per-play analytics."
+    ? t("Hire a 3-Star Analyst (Team → GM → Facilities → Analytics) to unlock your team's per-play analytics.")
+    : t("Upgrade your Analytics Facility (Team → GM → Facilities) to unlock your team's per-play analytics.")
 )
-// Locked-message for the pregame opponent-tendencies panel (Level 4 gate).
+// Locked-message for the pregame opponent-tendencies panel (4-star gate).
 const opponentLockedMessage = computed(() =>
   analystTier.value < 4
-    ? 'Hire a Level 4 Analyst (Team → Staff) to scout opponent tendencies.'
-    : 'Upgrade your Analytics Facility (Team → GM → Facilities) to scout opponent tendencies.'
+    ? t('Hire a 4-Star Analyst (Team → GM → Facilities → Analytics) to scout opponent tendencies.')
+    : t('Upgrade your Analytics Facility (Team → GM → Facilities) to scout opponent tendencies.')
 )
 // Postgame: THIS game's per-play analytics for the user's team (persisted per
 // game as { home, away } raw maps; wrap as { plays } for the panel).
@@ -856,7 +859,11 @@ function formatAttribute(attr) {
     'defense.interiorDefense': 'INT DEF',
     'defense.perimeterDefense': 'PER DEF',
   }
-  return attrMap[attr] || attr.split('.').pop().toUpperCase()
+  // Unmapped attributes: derive the display name ("ballHandling" → "Ball
+  // Handling") — matches the enumerated translatable attribute names; the
+  // badge CSS uppercases visually. Mapped abbreviations stay literal.
+  const key = attr.split('.').pop()
+  return attrMap[attr] || key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim()
 }
 
 // Check if a stat is currently animating
@@ -1841,7 +1848,11 @@ const stoppageResultText = computed(() => {
       ? `${base} — ${fouledOutNames.value.join(', ')} fouled out`
       : base
   }
-  return currentPossession.value?.result_text || 'End of play'
+  // Prefer the translation template stamped by the engine (result_tpl +
+  // result_params) over the pre-interpolated English result_text.
+  const p = currentPossession.value
+  if (p?.result_tpl) return tDynamic(p.result_tpl, p.result_params)
+  return p?.result_text || 'End of play'
 })
 
 // ---------------------------------------------------------------------------
@@ -1986,7 +1997,7 @@ function formatDate(dateString) {
   if (!dateString) return ''
   const [y, m, d] = dateString.split('T')[0].split(' ')[0].split('-').map(Number)
   const date = new Date(y, m - 1, d)
-  return date.toLocaleDateString('en-US', {
+  return date.toLocaleDateString(dateLocale(), {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
@@ -2858,7 +2869,8 @@ onUnmounted(() => {
     <template v-else-if="game">
       <!-- Back Button -->
       <button class="back-btn mb-6" @click="goBack">
-        &larr; Back
+        <!-- i18n-ignore -->
+        &larr; {{ $t('Back') }}
       </button>
 
       <!-- Game Header (hidden during animation mode) -->
@@ -2874,11 +2886,11 @@ onUnmounted(() => {
           <p v-if="game.is_playoff" class="game-type-label playoff">
             {{ playoffStore.getPlayoffRoundLabel(game.playoff_round) }}
           </p>
-          <p v-else class="game-type-label">Regular Season</p>
+          <p v-else class="game-type-label">{{ $t('Regular Season') }}</p>
           <p v-if="game.is_playoff && playoffSeriesInfo" class="series-record-badge">
             {{ playoffSeriesInfo.label }}
           </p>
-          <p v-if="isComplete" class="game-status-badge final">FINAL</p>
+          <p v-if="isComplete" class="game-status-badge final">{{ $t('FINAL') }}</p>
           <p v-else-if="isInProgress" class="game-status-badge in-progress">{{ game?.saved_mid_quarter ? `IN Q${savedQuarter}` : `Q${savedQuarter} COMPLETE` }}</p>
         </div>
 
@@ -2886,7 +2898,7 @@ onUnmounted(() => {
           <!-- Away Team -->
           <div class="team-side away" :class="{ winner: winner === 'away' }">
             <div class="team-side-column">
-              <span class="team-location-label">AWAY</span>
+              <span class="team-location-label">{{ $t('AWAY') }}</span>
               <div class="team-badge-wrapper">
                 <div
                   class="team-badge-game away-team"
@@ -2927,7 +2939,7 @@ onUnmounted(() => {
               {{ displayHomeScore || 0 }}
             </div>
             <div class="team-side-column">
-              <span class="team-location-label">HOME</span>
+              <span class="team-location-label">{{ $t('HOME') }}</span>
               <div class="team-badge-wrapper">
                 <div
                   class="team-badge-game"
@@ -2950,7 +2962,7 @@ onUnmounted(() => {
 
         <!-- Result Banner (for user games) -->
         <div v-if="isUserGame && isComplete" class="result-banner" :class="{ win: userWon, loss: !userWon }">
-          {{ userWon ? 'Victory!' : 'Defeat' }}
+          {{ userWon ? $t('Victory!') : $t('Defeat') }}
         </div>
       </GlassCard>
 
@@ -2972,9 +2984,7 @@ onUnmounted(() => {
                     {{ awayTeam?.abbreviation }}
                   </div>
                   <span class="broadcast-record">
-                    {{ game.is_playoff
-                      ? (frozenAwaySeriesRecord ?? awaySeriesRecord)
-                      : (frozenAwayTeamRecord ?? awayTeamRecord) }}
+                    {{ game.is_playoff ? (frozenAwaySeriesRecord ?? awaySeriesRecord) : (frozenAwayTeamRecord ?? awayTeamRecord) }}
                   </span>
                 </div>
                 <div class="broadcast-score-container">
@@ -2992,7 +3002,7 @@ onUnmounted(() => {
                      still live, the ball just isn't in play. -->
                 <div v-if="simulating || isPlaying || isSegmentPause" class="broadcast-live">
                   <span class="live-dot"></span>
-                  LIVE
+                  {{ $t('LIVE') }}
                 </div>
               </div>
 
@@ -3011,9 +3021,7 @@ onUnmounted(() => {
                     {{ homeTeam?.abbreviation }}
                   </div>
                   <span class="broadcast-record">
-                    {{ game.is_playoff
-                      ? (frozenHomeSeriesRecord ?? homeSeriesRecord)
-                      : (frozenHomeTeamRecord ?? homeTeamRecord) }}
+                    {{ game.is_playoff ? (frozenHomeSeriesRecord ?? homeSeriesRecord) : (frozenHomeTeamRecord ?? homeTeamRecord) }}
                   </span>
                 </div>
               </div>
@@ -3025,9 +3033,11 @@ onUnmounted(() => {
                     <Trophy :size="11" class="broadcast-playoff-icon" />
                     <span class="broadcast-playoff-label">{{ playoffRoundLabel }}</span>
                     <span v-if="game.playoff_game_number" class="broadcast-playoff-game">
-                      &middot; Game {{ game.playoff_game_number }}
+                      <!-- i18n-ignore -->
+                      &middot; {{ $t('Game {n}', { n: game.playoff_game_number }) }}
                     </span>
                   </span>
+                  <!-- i18n-ignore -->
                   <span class="broadcast-date-sep">&middot;</span>
                 </template>
                 <span>{{ formatDate(game.game_date) }}</span>
@@ -3124,9 +3134,9 @@ onUnmounted(() => {
                 <div v-if="showCoachesOverlay" class="coaches-overlay" data-tour="game-live-coaches-panel">
                   <header class="coaches-overlay-header">
                     <div class="coaches-tabs">
-                      <button class="coaches-tab" :class="{ active: coachesTab === 'settings' }" @click="coachesTab = 'settings'">Settings</button>
-                      <button class="coaches-tab" :class="{ active: coachesTab === 'matchups' }" @click="coachesTab = 'matchups'">Matchups</button>
-                      <button class="coaches-tab" :class="{ active: coachesTab === 'subs' }" @click="coachesTab = 'subs'; expandedSwapPlayer = null">Subs</button>
+                      <button class="coaches-tab" :class="{ active: coachesTab === 'settings' }" @click="coachesTab = 'settings'">{{ $t('Settings') }}</button>
+                      <button class="coaches-tab" :class="{ active: coachesTab === 'matchups' }" @click="coachesTab = 'matchups'">{{ $t('Matchups') }}</button>
+                      <button class="coaches-tab" :class="{ active: coachesTab === 'subs' }" @click="coachesTab = 'subs'; expandedSwapPlayer = null">{{ $t('Subs') }}</button>
                     </div>
                     <button class="coaches-overlay-close" aria-label="Close" @click="closeCoachesOverlay">
                       <X :size="14" />
@@ -3136,8 +3146,8 @@ onUnmounted(() => {
                   <!-- Foul-out prompt: engine already auto-subbed a fallback;
                        user confirms/overrides. -->
                   <div v-if="fouledOutNames.length" class="qb-foulout-banner coaches-foulout">
-                    <strong>{{ fouledOutNames.join(', ') }}</strong> fouled out —
-                    a replacement was auto-selected. Review your lineup before continuing.
+                    <strong>{{ fouledOutNames.join(', ') }}</strong>
+                    {{ $t('fouled out — a replacement was auto-selected. Review your lineup before continuing.') }}
                   </div>
 
                   <div class="coaches-overlay-body">
@@ -3145,7 +3155,7 @@ onUnmounted(() => {
                     <template v-if="coachesTab === 'settings'">
                       <div class="strategy-row">
                         <div class="strategy-group">
-                          <span class="strategy-label">Offense</span>
+                          <span class="strategy-label">{{ $t('Offense') }}</span>
                           <div class="strategy-pills">
                             <button
                               v-for="style in offensiveStyles"
@@ -3154,13 +3164,13 @@ onUnmounted(() => {
                               :class="{ active: selectedOffense === style.value }"
                               @click="selectedOffense = style.value"
                             >
-                              <span class="strategy-pill-label">{{ style.label }}</span>
+                              <span class="strategy-pill-label">{{ $tDynamic(style.label) }}</span>
                               <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
                             </button>
                           </div>
                         </div>
                         <div class="strategy-group">
-                          <span class="strategy-label">Defense</span>
+                          <span class="strategy-label">{{ $t('Defense') }}</span>
                           <div class="strategy-pills">
                             <button
                               v-for="style in defensiveStyles"
@@ -3169,7 +3179,7 @@ onUnmounted(() => {
                               :class="{ active: selectedDefense === style.value }"
                               @click="selectedDefense = style.value"
                             >
-                              <span class="strategy-pill-label">{{ style.label }}</span>
+                              <span class="strategy-pill-label">{{ $tDynamic(style.label) }}</span>
                               <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
                             </button>
                           </div>
@@ -3192,12 +3202,12 @@ onUnmounted(() => {
                       <div class="lineup-cards-section">
                         <div class="lineup-cards-header">
                           <span class="lineup-cards-title">
-                            Current Lineup
+                            {{ $t('Current Lineup') }}
                             <span v-if="totalLineupSynergyCount > 0" class="synergy-count-badge">
                               <Zap :size="11" />{{ totalLineupSynergyCount }}
                             </span>
                           </span>
-                          <span class="lineup-cards-hint">Tap swap icon to make changes</span>
+                          <span class="lineup-cards-hint">{{ $t('Tap swap icon to make changes') }}</span>
                         </div>
                         <div class="lineup-cards-grid">
                           <div
@@ -3215,7 +3225,7 @@ onUnmounted(() => {
                             <template v-if="!slot.player">
                               <div class="lineup-card-empty">
                                 <span class="slot-position-badge">{{ slot.slotPosition }}</span>
-                                <span class="empty-text">Empty</span>
+                                <span class="empty-text">{{ $t('Empty') }}</span>
                                 <!-- Visual affordance only — the whole card is the click target. -->
                                 <button class="swap-btn" tabindex="-1">
                                   <ArrowUpDown :size="14" />
@@ -3246,9 +3256,9 @@ onUnmounted(() => {
                                   <span
                                     v-if="isLockedFtShooterSlot(slot.slotIndex)"
                                     class="ft-shooter-lock"
-                                    title="At the line — cannot be substituted until the free throws are complete"
+                                    :title="$t('At the line — cannot be substituted until the free throws are complete')"
                                   >
-                                    🏀 At the line
+                                    🏀 {{ $t('At the line') }}
                                   </span>
                                   <!-- Visual affordance only — the whole card is the click target. -->
                                   <button
@@ -3270,7 +3280,7 @@ onUnmounted(() => {
                                    bubble to the card and re-toggle it. -->
                               <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown" @click.stop>
                                 <div class="swap-dropdown-header">
-                                  {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
+                                  {{ slot.player ? $t('Replace {name}', { name: slot.player.name }) : $t('Select {pos}', { pos: slot.slotPosition }) }}
                                 </div>
                                 <div class="swap-dropdown-list">
                                   <!-- Available bench players -->
@@ -3278,10 +3288,7 @@ onUnmounted(() => {
                                     v-for="candidate in getSwapCandidates(slot.slotPosition, slot.slotIndex)"
                                     :key="candidate.player_id"
                                     class="swap-option"
-                                    :class="{
-                                      injured: candidate.is_injured || candidate.isInjured,
-                                      'has-synergy': getCandidateSynergyCount(candidate, slot.slotIndex) > 0
-                                    }"
+                                    :class="{ injured: candidate.is_injured || candidate.isInjured, 'has-synergy': getCandidateSynergyCount(candidate, slot.slotIndex) > 0 }"
                                     @click="swapPlayerIn(slot.slotIndex, candidate.player_id)"
                                   >
                                     <ArrowUpDown :size="12" class="swap-option-icon" />
@@ -3304,7 +3311,7 @@ onUnmounted(() => {
                                     <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
                                   </button>
                                   <div v-if="getSwapCandidates(slot.slotPosition, slot.slotIndex).length === 0" class="swap-empty">
-                                    No eligible players
+                                    {{ $t('No eligible players') }}
                                   </div>
                                 </div>
                               </div>
@@ -3317,13 +3324,13 @@ onUnmounted(() => {
 
                   <footer class="coaches-overlay-actions">
                     <span v-if="timeoutActive" class="coaches-timeout-status">
-                      Timeout · 0:{{ String(Math.max(0, timeoutSecondsLeft)).padStart(2, '0') }}
+                      {{ $t('Timeout · 0:{s}', { s: String(Math.max(0, timeoutSecondsLeft)).padStart(2, '0') }) }}
                     </span>
                     <span
                       v-if="liveEditsPending && !(isSegmentPause || isQuarterBreak)"
                       class="coaches-overlay-note"
                     >
-                      Changes take effect after the current play
+                      {{ $t('Changes take effect after the current play') }}
                     </span>
                     <!-- Quarter break: closing returns to the break recap modal
                          (it re-shows itself when the overlay drops). -->
@@ -3332,7 +3339,7 @@ onUnmounted(() => {
                       class="coaches-overlay-done"
                       @click="closeCoachesOverlay"
                     >
-                      ◂ Back to Break
+                      ◂ {{ $t('Back to Break') }}
                     </button>
                     <button
                       v-if="isSegmentPause || isQuarterBreak"
@@ -3341,14 +3348,14 @@ onUnmounted(() => {
                       @click="handleCoachesOverlayContinue"
                     >
                       <span v-if="simulating" class="qb-btn-loading"></span>
-                      <span v-else>Continue ▸</span>
+                      <span v-else>{{ $t('Continue') }} ▸</span>
                     </button>
                     <button
                       v-if="!isSegmentPause && !isQuarterBreak"
                       class="coaches-overlay-done"
                       @click="closeCoachesOverlay"
                     >
-                      Done
+                      {{ $t('Done') }}
                     </button>
                   </footer>
                 </div>
@@ -3360,7 +3367,7 @@ onUnmounted(() => {
                 <button
                   class="cpc-btn cpc-circle"
                   @click="togglePlayPause"
-                  :title="isPlaying ? 'Pause' : 'Play'"
+                  :title="isPlaying ? $t('Pause') : $t('Play')"
                 >
                   <Play v-if="!isPlaying" :size="15" fill="currentColor" />
                   <Pause v-else :size="15" fill="currentColor" />
@@ -3368,7 +3375,7 @@ onUnmounted(() => {
                 <button
                   class="cpc-btn cpc-speed"
                   @click="cycleSpeed"
-                  :title="`Playback speed — tap to change (${playbackSpeed}x)`"
+                  :title="$t('Playback speed — tap to change ({speed}x)', { speed: playbackSpeed })"
                 >
                   <span class="cpc-chevrons">{{ speedChevrons }}</span>{{ playbackSpeed }}x
                 </button>
@@ -3376,7 +3383,7 @@ onUnmounted(() => {
                   class="cpc-btn cpc-circle cpc-mute"
                   :class="{ 'is-muted': audioStore.gameMuted }"
                   @click="toggleGameMute"
-                  :title="audioStore.gameMuted ? 'Unmute game sounds' : 'Mute game sounds'"
+                  :title="audioStore.gameMuted ? $t('Unmute game sounds') : $t('Mute game sounds')"
                 >
                   <VolumeX v-if="audioStore.gameMuted" :size="15" />
                   <Volume2 v-else :size="15" />
@@ -3392,14 +3399,14 @@ onUnmounted(() => {
                     <header class="qb-modal-header" :class="{ 'game-complete-header': gameJustCompleted || completedQuarter >= 4, 'qb-header-with-action': !(gameJustCompleted || completedQuarter >= 4) }">
                       <!-- Game Complete Header (use completedQuarter >= 4 as fallback) -->
                       <template v-if="gameJustCompleted || completedQuarter >= 4">
-                        <h2 class="qb-modal-title game-complete">Final</h2>
+                        <h2 class="qb-modal-title game-complete">{{ $t('Final') }}</h2>
                         <button class="qb-header-btn" @click="viewBoxScore">
-                          View Box Score
+                          {{ $t('View Box Score') }}
                         </button>
                       </template>
                       <!-- Quarter Break Header -->
                       <template v-else>
-                        <h2 class="qb-modal-title">{{ 'End of Q' + completedQuarter }}</h2>
+                        <h2 class="qb-modal-title">{{ $t('End of Q{n}', { n: completedQuarter }) }}</h2>
                         <button
                           v-if="isLiveMode"
                           class="qb-header-continue-btn"
@@ -3408,7 +3415,7 @@ onUnmounted(() => {
                         >
                           <span v-if="simulating" class="qb-btn-loading"></span>
                           <template v-else>
-                            <span>Continue</span>
+                            <span>{{ $t('Continue') }}</span>
                             <ChevronRight :size="18" />
                           </template>
                         </button>
@@ -3466,7 +3473,7 @@ onUnmounted(() => {
                         v-if="!gameJustCompleted && completedQuarter < 4 && (topAwayPlayer || topHomePlayer)"
                         class="qb-top-players-card"
                       >
-                        <div class="qb-top-players-label">Top Performers</div>
+                        <div class="qb-top-players-label">{{ $t('Top Performers') }}</div>
                         <div class="qb-top-players-grid">
                           <!-- Away top -->
                           <div class="qb-top-player-block away" :style="{ '--team-color': awayTeam?.primary_color || '#666' }">
@@ -3516,7 +3523,7 @@ onUnmounted(() => {
                           @click="openCoachesAdjust"
                         >
                           <Users :size="18" />
-                          <span>Subs & Adjustments</span>
+                          <span>{{ $t('Subs & Adjustments') }}</span>
                         </button>
 
                         <button
@@ -3527,19 +3534,19 @@ onUnmounted(() => {
                           <span v-if="simulating" class="qb-btn-loading"></span>
                           <template v-else>
                             <FastForward :size="20" />
-                            <span>Sim to End</span>
+                            <span>{{ $t('Sim to End') }}</span>
                           </template>
                         </button>
                       </div>
 
                       <!-- Replay mode: show continue button (only for Q1-Q3) -->
                       <div v-if="!isLiveMode && !gameJustCompleted && completedQuarter < 4" class="qb-replay-mode">
-                        <p class="qb-replay-hint">Replay mode - no adjustments available</p>
+                        <p class="qb-replay-hint">{{ $t('Replay mode - no adjustments available') }}</p>
                         <button
                           class="qb-replay-btn"
                           @click="handleQuarterBreakContinue"
                         >
-                          Continue
+                          {{ $t('Continue') }}
                         </button>
                       </div>
 
@@ -3593,14 +3600,17 @@ onUnmounted(() => {
                         <div class="live-stat-line">
                           <span class="stat-item">
                             <strong class="stat-value" :class="{ 'stat-pop': isStatAnimating(player.player_id, 'points') }">{{ player.points || 0 }}</strong>
+                            <!-- i18n-ignore -->
                             pts
                           </span>
                           <span class="stat-item">
                             <span class="stat-value" :class="{ 'stat-pop': isStatAnimating(player.player_id, 'assists') }">{{ player.assists || 0 }}</span>
+                            <!-- i18n-ignore -->
                             ast
                           </span>
                           <span class="stat-item">
                             <span class="stat-value" :class="{ 'stat-pop': isStatAnimating(player.player_id, 'rebounds') }">{{ player.rebounds || 0 }}</span>
+                            <!-- i18n-ignore -->
                             reb
                           </span>
                         </div>
@@ -3634,14 +3644,17 @@ onUnmounted(() => {
                         <div class="live-stat-line">
                           <span class="stat-item">
                             <strong class="stat-value" :class="{ 'stat-pop': isStatAnimating(player.player_id, 'points') }">{{ player.points || 0 }}</strong>
+                            <!-- i18n-ignore -->
                             pts
                           </span>
                           <span class="stat-item">
                             <strong class="stat-value" :class="{ 'stat-pop': isStatAnimating(player.player_id, 'assists') }">{{ player.assists || 0 }}</strong>
+                            <!-- i18n-ignore -->
                             ast
                           </span>
                           <span class="stat-item">
                             <strong class="stat-value" :class="{ 'stat-pop': isStatAnimating(player.player_id, 'rebounds') }">{{ player.rebounds || 0 }}</strong>
+                            <!-- i18n-ignore -->
                             reb
                           </span>
                         </div>
@@ -3655,7 +3668,7 @@ onUnmounted(() => {
 
             <!-- Collapsible Live Box Score (hidden during quarter break) -->
             <div v-show="!isQuarterBreak" class="live-box-score-toggle" @click="showLiveBoxScore = !showLiveBoxScore">
-              <span class="toggle-label">Full Box Score</span>
+              <span class="toggle-label">{{ $t('Full Box Score') }}</span>
               <span class="toggle-icon" :class="{ open: showLiveBoxScore }">▼</span>
             </div>
 
@@ -3692,7 +3705,7 @@ onUnmounted(() => {
                           :class="[col.class, 'sortable', { active: liveBoxSortColumn === col.key }]"
                           @click="sortLiveBoxBy(col.key)"
                         >
-                          {{ col.label }}{{ getLiveBoxSortIcon(col.key) }}
+                          {{ $tDynamic(col.label) }}{{ getLiveBoxSortIcon(col.key) }}
                         </th>
                         <th class="stat-col shooting">FG</th>
                         <th class="stat-col shooting">3PT</th>
@@ -3710,7 +3723,7 @@ onUnmounted(() => {
                             <span class="player-name">{{ player.name }}</span>
                             <span class="player-pos">
                               {{ player.position }}<template v-if="player.secondary_position">/{{ player.secondary_position }}</template>
-                              <span v-if="onCourtPlayerIds.map(id => String(id)).includes(String(player.player_id))" class="on-court-badge">ON</span>
+                              <span v-if="onCourtPlayerIds.map(id => String(id)).includes(String(player.player_id))" class="on-court-badge">{{ $t('ON') }}</span>
                             </span>
                           </div>
                         </td>
@@ -3766,14 +3779,14 @@ onUnmounted(() => {
                             @click="showAllLiveBoxPlayers = true"
                           >
                             <ChevronDown :size="16" />
-                            Show {{ hiddenLiveBoxPlayerCount }} more players
+                            {{ $t('Show {n} more players', { n: hiddenLiveBoxPlayerCount }) }}
                           </button>
                         </td>
                       </tr>
                     </tbody>
                     <tfoot>
                       <tr class="totals-row">
-                        <td class="player-col">TOTALS</td>
+                        <td class="player-col">{{ $t('TOTALS') }}</td>
                         <td class="stat-col">-</td>
                         <td class="stat-col points">{{ activeLiveBoxTotals.points }}</td>
                         <td class="stat-col">{{ activeLiveBoxTotals.rebounds }}</td>
@@ -3804,7 +3817,7 @@ onUnmounted(() => {
             <!-- Loading indicator while waiting for animation data -->
             <div v-else-if="!hasAnimationData" class="game-loading-placeholder">
               <LoadingSpinner size="lg" />
-              <span class="text-secondary">Preparing game simulation...</span>
+              <span class="text-secondary">{{ $t('Preparing game simulation...') }}</span>
             </div>
           </GlassCard>
         </template>
@@ -3814,7 +3827,7 @@ onUnmounted(() => {
           <div class="pregame-layout">
             <!-- Court Preview with Starters Overlay -->
             <GlassCard padding="lg" :hoverable="false" class="pregame-court-card">
-              <h3 class="h4 mb-4">Starting Lineups</h3>
+              <h3 class="h4 mb-4">{{ $t('Starting Lineups') }}</h3>
               <div class="court-container court-container-with-overlay" data-tour="game-court">
                 <BasketballCourt
                   :width="500"
@@ -3877,7 +3890,7 @@ onUnmounted(() => {
                 @click="showSubsDropdown = !showSubsDropdown"
               >
                 <Users :size="18" />
-                <span>Substitutions</span>
+                <span>{{ $t('Substitutions') }}</span>
                 <ChevronDown
                   :size="16"
                   class="court-card-subs-chevron"
@@ -3893,8 +3906,8 @@ onUnmounted(() => {
                 <div v-if="isUserGame && showSubsDropdown" class="court-card-subs-dropdown" data-tour="game-subs-dropdown">
                   <div class="lineup-cards-section">
                     <div class="lineup-cards-header">
-                      <span class="lineup-cards-title">Starting Lineup</span>
-                      <span class="lineup-cards-hint">Tap swap icon to make changes</span>
+                      <span class="lineup-cards-title">{{ $t('Starting Lineup') }}</span>
+                      <span class="lineup-cards-hint">{{ $t('Tap swap icon to make changes') }}</span>
                     </div>
                     <div class="lineup-cards-grid">
                       <div
@@ -3909,7 +3922,7 @@ onUnmounted(() => {
                         <template v-if="!slot.player">
                           <div class="lineup-card-empty">
                             <span class="slot-position-badge">{{ slot.slotPosition }}</span>
-                            <span class="empty-text">Empty</span>
+                            <span class="empty-text">{{ $t('Empty') }}</span>
                             <button class="swap-btn" @click="toggleSwapDropdown(slot.slotIndex)">
                               <ArrowUpDown :size="14" />
                             </button>
@@ -3942,7 +3955,7 @@ onUnmounted(() => {
                         <Transition name="dropdown-slide">
                           <div v-if="expandedSwapPlayer === slot.slotIndex" class="swap-dropdown">
                             <div class="swap-dropdown-header">
-                              {{ slot.player ? `Replace ${slot.player.name}` : `Select ${slot.slotPosition}` }}
+                              {{ slot.player ? $t('Replace {name}', { name: slot.player.name }) : $t('Select {pos}', { pos: slot.slotPosition }) }}
                             </div>
                             <div class="swap-dropdown-list">
                               <button
@@ -3966,7 +3979,7 @@ onUnmounted(() => {
                                 <span class="swap-option-ovr">{{ candidate.overall_rating }}</span>
                               </button>
                               <div v-if="getPreGameSwapCandidates(slot.slotPosition, slot.slotIndex).length === 0" class="swap-empty">
-                                No eligible players
+                                {{ $t('No eligible players') }}
                               </div>
                             </div>
                           </div>
@@ -3979,7 +3992,7 @@ onUnmounted(() => {
               <!-- Coaches row: pulled OUT of the canvas overlay into its own
                    strip beneath the court so each coach card sits aligned
                    under its team's starters column. -->
-              <h4 class="coaches-row-label">Head Coaches</h4>
+              <h4 class="coaches-row-label">{{ $t('Head Coaches') }}</h4>
               <div class="coaches-row" data-tour="game-coaches">
                 <div v-if="awayTeamCoach" class="team-coach-card">
                   <div class="team-coach-top">
@@ -4001,7 +4014,7 @@ onUnmounted(() => {
                           class="team-coach-badge-chip"
                           :class="'level-' + badge.level"
                         >
-                          {{ badge.id.replace(/_/g, ' ') }}
+                          {{ $tDynamic(badge.id.replace(/_/g, ' ')) }}
                         </span>
                       </div>
                     </div>
@@ -4010,12 +4023,12 @@ onUnmounted(() => {
                        overlay so each team's settings sit with its coach. -->
                   <div class="team-coach-schemes">
                     <div class="coach-scheme-row">
-                      <span class="coach-scheme-label">Off</span>
-                      <span class="coach-scheme-value">{{ getOffenseLabel(!userIsHome && isUserGame ? selectedOffense : awayTeam?.coaching_scheme?.offensive) }}</span>
+                      <span class="coach-scheme-label">{{ $t('Off') }}</span>
+                      <span class="coach-scheme-value">{{ $tDynamic(getOffenseLabel(!userIsHome && isUserGame ? selectedOffense : awayTeam?.coaching_scheme?.offensive)) }}</span>
                     </div>
                     <div class="coach-scheme-row">
-                      <span class="coach-scheme-label">Def</span>
-                      <span class="coach-scheme-value">{{ getDefenseLabel(!userIsHome && isUserGame ? selectedDefense : awayTeam?.coaching_scheme?.defensive) }}</span>
+                      <span class="coach-scheme-label">{{ $t('Def') }}</span>
+                      <span class="coach-scheme-value">{{ $tDynamic(getDefenseLabel(!userIsHome && isUserGame ? selectedDefense : awayTeam?.coaching_scheme?.defensive)) }}</span>
                     </div>
                   </div>
                 </div>
@@ -4040,19 +4053,19 @@ onUnmounted(() => {
                           class="team-coach-badge-chip"
                           :class="'level-' + badge.level"
                         >
-                          {{ badge.id.replace(/_/g, ' ') }}
+                          {{ $tDynamic(badge.id.replace(/_/g, ' ')) }}
                         </span>
                       </div>
                     </div>
                   </div>
                   <div class="team-coach-schemes">
                     <div class="coach-scheme-row">
-                      <span class="coach-scheme-label">Off</span>
-                      <span class="coach-scheme-value">{{ getOffenseLabel(userIsHome && isUserGame ? selectedOffense : homeTeam?.coaching_scheme?.offensive) }}</span>
+                      <span class="coach-scheme-label">{{ $t('Off') }}</span>
+                      <span class="coach-scheme-value">{{ $tDynamic(getOffenseLabel(userIsHome && isUserGame ? selectedOffense : homeTeam?.coaching_scheme?.offensive)) }}</span>
                     </div>
                     <div class="coach-scheme-row">
-                      <span class="coach-scheme-label">Def</span>
-                      <span class="coach-scheme-value">{{ getDefenseLabel(userIsHome && isUserGame ? selectedDefense : homeTeam?.coaching_scheme?.defensive) }}</span>
+                      <span class="coach-scheme-label">{{ $t('Def') }}</span>
+                      <span class="coach-scheme-value">{{ $tDynamic(getDefenseLabel(userIsHome && isUserGame ? selectedDefense : homeTeam?.coaching_scheme?.defensive)) }}</span>
                     </div>
                   </div>
                 </div>
@@ -4063,12 +4076,12 @@ onUnmounted(() => {
             <!-- Game Settings Card - Styled like Quarter Break Modal -->
             <GlassCard padding="lg" :hoverable="false" class="pregame-settings-card">
               <div class="pregame-coaching-section">
-                <h4 v-if="isUserGame" class="strategy-section-label">Game Plan</h4>
+                <h4 v-if="isUserGame" class="strategy-section-label">{{ $t('Game Plan') }}</h4>
                 <!-- Strategy Settings - Full Width (only for user's game) -->
                 <div v-if="isUserGame" class="qb-strategy-card" data-tour="game-plan">
                   <div class="strategy-row">
                     <div class="strategy-group">
-                      <span class="strategy-label">Offense</span>
+                      <span class="strategy-label">{{ $t('Offense') }}</span>
                       <div class="strategy-pills">
                         <button
                           v-for="style in offensiveStyles"
@@ -4077,13 +4090,13 @@ onUnmounted(() => {
                           :class="{ active: selectedOffense === style.value }"
                           @click="selectedOffense = style.value"
                         >
-                          <span class="strategy-pill-label">{{ style.label }}</span>
+                          <span class="strategy-pill-label">{{ $tDynamic(style.label) }}</span>
                           <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
                         </button>
                       </div>
                     </div>
                     <div class="strategy-group">
-                      <span class="strategy-label">Defense</span>
+                      <span class="strategy-label">{{ $t('Defense') }}</span>
                       <div class="strategy-pills">
                         <button
                           v-for="style in defensiveStyles"
@@ -4092,7 +4105,7 @@ onUnmounted(() => {
                           :class="{ active: selectedDefense === style.value }"
                           @click="selectedDefense = style.value"
                         >
-                          <span class="strategy-pill-label">{{ style.label }}</span>
+                          <span class="strategy-pill-label">{{ $tDynamic(style.label) }}</span>
                           <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
                         </button>
                       </div>
@@ -4102,7 +4115,7 @@ onUnmounted(() => {
                          Changeable any time from this screen — for a game in
                          progress the new mode takes effect on resume. -->
                     <div class="strategy-group" data-tour="game-pacing">
-                      <span class="strategy-label">Pacing</span>
+                      <span class="strategy-label">{{ $t('Pacing') }}</span>
                       <div class="strategy-pills">
                         <button
                           v-for="mode in pacingModes"
@@ -4111,13 +4124,11 @@ onUnmounted(() => {
                           :class="{ active: selectedPacing === mode.value }"
                           @click="selectedPacing = mode.value"
                         >
-                          <span class="strategy-pill-label">{{ mode.label }}</span>
+                          <span class="strategy-pill-label">{{ $tDynamic(mode.label) }}</span>
                         </button>
                       </div>
                       <span class="pacing-hint">
-                        {{ selectedPacing === 'quarter' ? 'Watch a full quarter, adjust at breaks' :
-                           selectedPacing === 'play' ? 'Pause after every possession' :
-                           'Pause at fouls, out-of-bounds & other stoppages' }}{{ isInProgress ? ' — applies when you resume' : '' }}
+                        {{ selectedPacing === 'quarter' ? $t('Watch a full quarter, adjust at breaks') : selectedPacing === 'play' ? $t('Pause after every possession') : $t('Pause at fouls, out-of-bounds & other stoppages') }}{{ isInProgress ? ' — ' + $t('applies when you resume') : '' }}
                       </span>
                     </div>
 
@@ -4135,7 +4146,7 @@ onUnmounted(() => {
                   <span v-if="simulating" class="qb-btn-loading"></span>
                   <template v-else>
                     <Play :size="20" class="pregame-play-icon" />
-                    <span class="pregame-play-label">{{ isInProgress ? `Resume Game (Q${game?.saved_mid_quarter ? savedQuarter : savedQuarter + 1})` : 'START' }}</span>
+                    <span class="pregame-play-label">{{ isInProgress ? $t('Resume Game (Q{n})', { n: game?.saved_mid_quarter ? savedQuarter : savedQuarter + 1 }) : $t('START') }}</span>
                   </template>
                 </button>
 
@@ -4149,7 +4160,7 @@ onUnmounted(() => {
                   <span v-if="simulating" class="qb-btn-loading"></span>
                   <template v-else>
                     <FastForward :size="20" />
-                    <span>Sim to End</span>
+                    <span>{{ $t('Sim to End') }}</span>
                   </template>
                 </button>
 
@@ -4163,7 +4174,7 @@ onUnmounted(() => {
                   <span v-if="simulating" class="qb-btn-loading"></span>
                   <template v-else>
                     <Play :size="20" class="pregame-play-icon" />
-                    <span class="pregame-play-label">{{ isInProgress ? 'Resume Simulation' : 'Simulate Game' }}</span>
+                    <span class="pregame-play-label">{{ isInProgress ? $t('Resume Simulation') : $t('Simulate Game') }}</span>
                   </template>
                 </button>
               </div>
@@ -4177,7 +4188,7 @@ onUnmounted(() => {
               class="pregame-matchups-card"
               data-tour="game-matchups"
             >
-              <h4 class="strategy-section-label">Defensive Matchups</h4>
+              <h4 class="strategy-section-label">{{ $t('Defensive Matchups') }}</h4>
               <DefensiveMatchupEditor
                 v-model="defensiveMatchups"
                 :opponent-starters="opponentOffense"
@@ -4192,7 +4203,7 @@ onUnmounted(() => {
                  fixed "pop-in" START button below it. -->
             <div v-if="isUserGame" class="pregame-analytics">
               <PlayAnalyticsPanel
-                title="Opponent Tendencies — This Season"
+                :title="$t('Opponent Tendencies — This Season')"
                 :analytics="opponentAnalytics"
                 :locked="!opponentAnalyticsUnlocked"
                 :default-to-top-category="true"
@@ -4216,8 +4227,8 @@ onUnmounted(() => {
                   <th>Q2</th>
                   <th>Q3</th>
                   <th>Q4</th>
-                  <th v-if="quarterScores.home?.length > 4">OT</th>
-                  <th class="total-col">Total</th>
+                  <th v-if="quarterScores.home?.length > 4">{{ $t('OT') }}</th>
+                  <th class="total-col">{{ $t('Total') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -4294,12 +4305,12 @@ onUnmounted(() => {
                 <div class="quarter-break-content">
                   <!-- Game Complete (Q4 finished in replay) -->
                   <template v-if="completedQuarter >= 4">
-                    <h2 class="quarter-break-title game-complete-title">Final</h2>
-                    <p class="game-complete-subtitle">Game Complete</p>
+                    <h2 class="quarter-break-title game-complete-title">{{ $t('Final') }}</h2>
+                    <p class="game-complete-subtitle">{{ $t('Game Complete') }}</p>
                   </template>
                   <!-- Quarter Break -->
                   <template v-else>
-                    <h2 class="quarter-break-title">End of Quarter {{ completedQuarter }}</h2>
+                    <h2 class="quarter-break-title">{{ $t('End of Quarter {n}', { n: completedQuarter }) }}</h2>
                   </template>
                   <div class="quarter-break-score">
                     <div class="break-team">
@@ -4318,16 +4329,16 @@ onUnmounted(() => {
                   </div>
                   <!-- Game Complete: View Box Score -->
                   <template v-if="completedQuarter >= 4">
-                    <p class="break-hint">View the full box score and game statistics</p>
+                    <p class="break-hint">{{ $t('View the full box score and game statistics') }}</p>
                     <BaseButton variant="primary" size="lg" @click="viewBoxScore">
-                      View Box Score
+                      {{ $t('View Box Score') }}
                     </BaseButton>
                   </template>
                   <!-- Quarter Break: Continue -->
                   <template v-else>
-                    <p class="break-hint">Replay mode - click to continue</p>
+                    <p class="break-hint">{{ $t('Replay mode - click to continue') }}</p>
                     <BaseButton variant="primary" size="lg" @click="handleQuarterBreakContinue">
-                      Continue to Quarter {{ completedQuarter + 1 }}
+                      {{ $t('Continue to Quarter {n}', { n: completedQuarter + 1 }) }}
                     </BaseButton>
                   </template>
                 </div>
@@ -4339,7 +4350,7 @@ onUnmounted(() => {
         <!-- Top Performers -->
         <div class="grid md:grid-cols-2 gap-6 mb-6">
           <GlassCard padding="md" :hoverable="false">
-            <h3 class="performers-header">{{ awayTeam?.abbreviation }} Top Performers</h3>
+            <h3 class="performers-header">{{ $t('{team} Top Performers', { team: awayTeam?.abbreviation }) }}</h3>
             <div class="performers-list">
               <div
                 v-for="player in awayTopPerformers"
@@ -4377,13 +4388,14 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </div>
+                <!-- i18n-ignore -->
                 <div class="performer-chevron">&rsaquo;</div>
               </div>
             </div>
           </GlassCard>
 
           <GlassCard padding="md" :hoverable="false">
-            <h3 class="performers-header">{{ homeTeam?.abbreviation }} Top Performers</h3>
+            <h3 class="performers-header">{{ $t('{team} Top Performers', { team: homeTeam?.abbreviation }) }}</h3>
             <div class="performers-list">
               <div
                 v-for="player in homeTopPerformers"
@@ -4421,6 +4433,7 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </div>
+                <!-- i18n-ignore -->
                 <div class="performer-chevron">&rsaquo;</div>
               </div>
             </div>
@@ -4441,7 +4454,7 @@ onUnmounted(() => {
         <div v-if="isComplete && isUserGame" class="post-game-summary mb-6">
           <h3 class="summary-header">
             <Activity :size="20" />
-            Post-Game Summary
+            {{ $t('Post-Game Summary') }}
           </h3>
 
           <div class="summary-grid">
@@ -4449,20 +4462,20 @@ onUnmounted(() => {
             <GlassCard v-if="rewardsData" padding="md" :hoverable="false" class="summary-card rewards-card" data-tour="postgame-rewards">
               <h4 class="card-title">
                 <Coins :size="16" />
-                Rewards Earned
+                {{ $t('Rewards Earned') }}
               </h4>
               <div class="rewards-content">
                 <div class="reward-item">
-                  <span class="reward-label">Synergies Activated</span>
+                  <span class="reward-label">{{ $t('Synergies Activated') }}</span>
                   <span class="reward-value">{{ rewardsData.synergies_activated || 0 }}</span>
                 </div>
                 <div class="reward-item highlight">
-                  <span class="reward-label">Tokens Earned</span>
+                  <span class="reward-label">{{ $t('Tokens Earned') }}</span>
                   <span class="reward-value tokens">+{{ rewardsData.tokens_awarded || 0 }}</span>
                 </div>
                 <div v-if="rewardsData.win_bonus_applied" class="reward-bonus">
                   <Trophy :size="14" />
-                  Win bonus applied (2x tokens)
+                  {{ $t('Win bonus applied (2x tokens)') }}
                 </div>
               </div>
             </GlassCard>
@@ -4471,7 +4484,7 @@ onUnmounted(() => {
             <GlassCard padding="md" :hoverable="false" class="summary-card result-card">
               <h4 class="card-title">
                 <Trophy :size="16" />
-                Game Result
+                {{ $t('Game Result') }}
               </h4>
               <div class="result-content">
                 <div class="result-teams">
@@ -4486,7 +4499,7 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div v-if="userWon !== null" class="user-result" :class="userWon ? 'win' : 'loss'">
-                  {{ userWon ? 'Victory!' : 'Defeat' }}
+                  {{ userWon ? $t('Victory!') : $t('Defeat') }}
                 </div>
               </div>
             </GlassCard>
@@ -4502,20 +4515,20 @@ onUnmounted(() => {
           >
             <h4 class="card-title">
               <Zap :size="16" />
-              {{ homeTeam?.name }} Updates
+              {{ $t('{team} Updates', { team: homeTeam?.name }) }}
             </h4>
             <div class="evolution-content">
               <!-- Injuries -->
               <div v-if="evolutionData.home.injuries?.length" class="evolution-section">
                 <h5 class="section-label injury-label">
                   <AlertTriangle :size="14" />
-                  Injuries
+                  {{ $t('Injuries') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="injury in evolutionData.home.injuries" :key="injury.player_id" class="evolution-item injury">
                     <span class="player-name">{{ injury.name }}</span>
-                    <span class="injury-details">{{ injury.injury_type }} - Out {{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
-                    <span class="severity-badge" :class="injury.severity">{{ injury.severity }}</span>
+                    <span class="injury-details">{{ $tDynamic(injury.injury_type) }} - {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('Out {n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('Out {n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
+                    <span class="severity-badge" :class="injury.severity">{{ $tDynamic(injury.severity) }}</span>
                   </div>
                 </div>
               </div>
@@ -4524,13 +4537,13 @@ onUnmounted(() => {
               <div v-if="evolutionData.home.development?.length" class="evolution-section">
                 <h5 class="section-label positive-label">
                   <TrendingUp :size="14" />
-                  Development
+                  {{ $t('Development') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="dev in evolutionData.home.development" :key="dev.player_id" class="evolution-item positive">
                     <span class="player-name">{{ dev.name }}</span>
                     <div class="attr-badges">
-                      <span v-for="attr in dev.attributes_improved" :key="attr" class="attr-badge positive">+{{ formatAttribute(attr) }}</span>
+                      <span v-for="attr in dev.attributes_improved" :key="attr" class="attr-badge positive">+{{ $tDynamic(formatAttribute(attr)) }}</span>
                     </div>
                   </div>
                 </div>
@@ -4540,13 +4553,13 @@ onUnmounted(() => {
               <div v-if="evolutionData.home.regression?.length" class="evolution-section">
                 <h5 class="section-label negative-label">
                   <TrendingDown :size="14" />
-                  Regression
+                  {{ $t('Regression') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="reg in evolutionData.home.regression" :key="reg.player_id" class="evolution-item negative">
                     <span class="player-name">{{ reg.name }}</span>
                     <div class="attr-badges">
-                      <span v-for="attr in reg.attributes_declined" :key="attr" class="attr-badge negative">-{{ formatAttribute(attr) }}</span>
+                      <span v-for="attr in reg.attributes_declined" :key="attr" class="attr-badge negative">-{{ $tDynamic(formatAttribute(attr)) }}</span>
                     </div>
                   </div>
                 </div>
@@ -4556,12 +4569,12 @@ onUnmounted(() => {
               <div v-if="evolutionData.home.hot_streaks?.length" class="evolution-section">
                 <h5 class="section-label hot-label">
                   <Flame :size="14" />
-                  Hot Streaks
+                  {{ $t('Hot Streaks') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="streak in evolutionData.home.hot_streaks" :key="streak.player_id" class="evolution-item hot">
                     <span class="player-name">{{ streak.name }}</span>
-                    <span class="streak-info">{{ streak.games }} game streak</span>
+                    <span class="streak-info">{{ $t('{n} game streak', { n: streak.games }) }}</span>
                   </div>
                 </div>
               </div>
@@ -4570,12 +4583,12 @@ onUnmounted(() => {
               <div v-if="evolutionData.home.cold_streaks?.length" class="evolution-section">
                 <h5 class="section-label cold-label">
                   <Snowflake :size="14" />
-                  Cold Streaks
+                  {{ $t('Cold Streaks') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="streak in evolutionData.home.cold_streaks" :key="streak.player_id" class="evolution-item cold">
                     <span class="player-name">{{ streak.name }}</span>
-                    <span class="streak-info">{{ streak.games }} game slump</span>
+                    <span class="streak-info">{{ $t('{n} game slump', { n: streak.games }) }}</span>
                   </div>
                 </div>
               </div>
@@ -4584,7 +4597,7 @@ onUnmounted(() => {
               <div v-if="evolutionData.home.fatigue_warnings?.length" class="evolution-section">
                 <h5 class="section-label warning-label">
                   <Activity :size="14" />
-                  Fatigue Warnings
+                  {{ $t('Fatigue Warnings') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="warn in evolutionData.home.fatigue_warnings" :key="warn.player_id" class="evolution-item warning">
@@ -4601,7 +4614,7 @@ onUnmounted(() => {
               <div v-if="evolutionData.home.morale_changes?.length" class="evolution-section">
                 <h5 class="section-label">
                   <Heart :size="14" />
-                  Morale Changes
+                  {{ $t('Morale Changes') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="morale in evolutionData.home.morale_changes" :key="morale.player_id" class="evolution-item" :class="morale.change > 0 ? 'positive' : 'negative'">
@@ -4623,20 +4636,20 @@ onUnmounted(() => {
           >
             <h4 class="card-title">
               <Zap :size="16" />
-              {{ awayTeam?.name }} Updates
+              {{ $t('{team} Updates', { team: awayTeam?.name }) }}
             </h4>
             <div class="evolution-content">
               <!-- Injuries -->
               <div v-if="evolutionData.away.injuries?.length" class="evolution-section">
                 <h5 class="section-label injury-label">
                   <AlertTriangle :size="14" />
-                  Injuries
+                  {{ $t('Injuries') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="injury in evolutionData.away.injuries" :key="injury.player_id" class="evolution-item injury">
                     <span class="player-name">{{ injury.name }}</span>
-                    <span class="injury-details">{{ injury.injury_type }} - Out {{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
-                    <span class="severity-badge" :class="injury.severity">{{ injury.severity }}</span>
+                    <span class="injury-details">{{ $tDynamic(injury.injury_type) }} - {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('Out {n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('Out {n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
+                    <span class="severity-badge" :class="injury.severity">{{ $tDynamic(injury.severity) }}</span>
                   </div>
                 </div>
               </div>
@@ -4645,13 +4658,13 @@ onUnmounted(() => {
               <div v-if="evolutionData.away.development?.length" class="evolution-section">
                 <h5 class="section-label positive-label">
                   <TrendingUp :size="14" />
-                  Development
+                  {{ $t('Development') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="dev in evolutionData.away.development" :key="dev.player_id" class="evolution-item positive">
                     <span class="player-name">{{ dev.name }}</span>
                     <div class="attr-badges">
-                      <span v-for="attr in dev.attributes_improved" :key="attr" class="attr-badge positive">+{{ formatAttribute(attr) }}</span>
+                      <span v-for="attr in dev.attributes_improved" :key="attr" class="attr-badge positive">+{{ $tDynamic(formatAttribute(attr)) }}</span>
                     </div>
                   </div>
                 </div>
@@ -4661,13 +4674,13 @@ onUnmounted(() => {
               <div v-if="evolutionData.away.regression?.length" class="evolution-section">
                 <h5 class="section-label negative-label">
                   <TrendingDown :size="14" />
-                  Regression
+                  {{ $t('Regression') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="reg in evolutionData.away.regression" :key="reg.player_id" class="evolution-item negative">
                     <span class="player-name">{{ reg.name }}</span>
                     <div class="attr-badges">
-                      <span v-for="attr in reg.attributes_declined" :key="attr" class="attr-badge negative">-{{ formatAttribute(attr) }}</span>
+                      <span v-for="attr in reg.attributes_declined" :key="attr" class="attr-badge negative">-{{ $tDynamic(formatAttribute(attr)) }}</span>
                     </div>
                   </div>
                 </div>
@@ -4677,12 +4690,12 @@ onUnmounted(() => {
               <div v-if="evolutionData.away.hot_streaks?.length" class="evolution-section">
                 <h5 class="section-label hot-label">
                   <Flame :size="14" />
-                  Hot Streaks
+                  {{ $t('Hot Streaks') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="streak in evolutionData.away.hot_streaks" :key="streak.player_id" class="evolution-item hot">
                     <span class="player-name">{{ streak.name }}</span>
-                    <span class="streak-info">{{ streak.games }} game streak</span>
+                    <span class="streak-info">{{ $t('{n} game streak', { n: streak.games }) }}</span>
                   </div>
                 </div>
               </div>
@@ -4691,12 +4704,12 @@ onUnmounted(() => {
               <div v-if="evolutionData.away.cold_streaks?.length" class="evolution-section">
                 <h5 class="section-label cold-label">
                   <Snowflake :size="14" />
-                  Cold Streaks
+                  {{ $t('Cold Streaks') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="streak in evolutionData.away.cold_streaks" :key="streak.player_id" class="evolution-item cold">
                     <span class="player-name">{{ streak.name }}</span>
-                    <span class="streak-info">{{ streak.games }} game slump</span>
+                    <span class="streak-info">{{ $t('{n} game slump', { n: streak.games }) }}</span>
                   </div>
                 </div>
               </div>
@@ -4705,7 +4718,7 @@ onUnmounted(() => {
               <div v-if="evolutionData.away.fatigue_warnings?.length" class="evolution-section">
                 <h5 class="section-label warning-label">
                   <Activity :size="14" />
-                  Fatigue Warnings
+                  {{ $t('Fatigue Warnings') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="warn in evolutionData.away.fatigue_warnings" :key="warn.player_id" class="evolution-item warning">
@@ -4722,7 +4735,7 @@ onUnmounted(() => {
               <div v-if="evolutionData.away.morale_changes?.length" class="evolution-section">
                 <h5 class="section-label">
                   <Heart :size="14" />
-                  Morale Changes
+                  {{ $t('Morale Changes') }}
                 </h5>
                 <div class="evolution-items">
                   <div v-for="morale in evolutionData.away.morale_changes" :key="morale.player_id" class="evolution-item" :class="morale.change > 0 ? 'positive' : 'negative'">
@@ -4738,7 +4751,7 @@ onUnmounted(() => {
           <GlassCard v-if="gameNews.length > 0" padding="md" :hoverable="false" class="summary-card news-card">
             <h4 class="card-title">
               <Newspaper :size="16" />
-              Game Headlines
+              {{ $t('Game Headlines') }}
             </h4>
             <div class="news-content">
               <div v-for="news in gameNews" :key="news.id" class="news-item" :class="news.event_type">
@@ -4753,8 +4766,8 @@ onUnmounted(() => {
                   <Newspaper v-else :size="16" />
                 </div>
                 <div class="news-text">
-                  <div class="news-headline">{{ news.headline }}</div>
-                  <div class="news-body">{{ news.body }}</div>
+                  <div class="news-headline">{{ news.headline_tpl ? $tDynamic(news.headline_tpl, news.headline_params) : news.headline }}</div>
+                  <div class="news-body">{{ news.body_tpl ? $tDynamic(news.body_tpl, news.body_params) : news.body }}</div>
                 </div>
               </div>
             </div>
@@ -4767,13 +4780,13 @@ onUnmounted(() => {
             variant="secondary"
             @click="showPlayByPlay = !showPlayByPlay"
           >
-            {{ showPlayByPlay ? 'Hide' : 'Show' }} Play-by-Play
+            {{ showPlayByPlay ? $t('Hide Play-by-Play') : $t('Show Play-by-Play') }}
           </BaseButton>
         </div>
 
         <!-- Play by Play -->
         <GlassCard v-if="showPlayByPlay && playByPlay.length > 0" padding="lg" :hoverable="false">
-          <h3 class="h4 mb-4">Play-by-Play</h3>
+          <h3 class="h4 mb-4">{{ $t('Play-by-Play') }}</h3>
           <div class="play-by-play">
             <div
               v-for="(play, index) in playByPlay"
@@ -4783,7 +4796,7 @@ onUnmounted(() => {
             >
               <span class="play-time">{{ play.time }}</span>
               <span class="play-team">{{ play.team }}</span>
-              <span class="play-action">{{ play.description }}</span>
+              <span class="play-action">{{ play.descTpl ? $tDynamic(play.descTpl, play.descParams) : play.description }}</span>
               <span v-if="play.points" class="play-score">
                 {{ play.away_score }} - {{ play.home_score }}
               </span>
@@ -4796,7 +4809,7 @@ onUnmounted(() => {
              Kept as the LAST element on the postgame page. -->
         <PlayAnalyticsPanel
           v-if="isUserGame"
-          title="Play Analytics — This Game"
+          :title="$t('Play Analytics — This Game')"
           :analytics="userGameAnalytics"
           :locked="!postgameAnalyticsUnlocked"
           :default-to-top-category="true"
@@ -4811,7 +4824,7 @@ onUnmounted(() => {
         <div v-if="showPlayerModal" class="modal-overlay perf-modal-overlay" @click.self="closePlayerModal">
           <div class="modal-container perf-modal-container">
             <header class="modal-header">
-              <h2 class="modal-title">{{ selectedPlayer?.name || 'Player' }}</h2>
+              <h2 class="modal-title">{{ selectedPlayer?.name || $t('Player') }}</h2>
               <button class="btn-close" aria-label="Close" @click="closePlayerModal">
                 <X :size="20" />
               </button>
@@ -4839,7 +4852,7 @@ onUnmounted(() => {
 
                 <!-- Game Stats -->
                 <div class="game-stats-section">
-                  <h4 class="stats-section-title">Game Stats</h4>
+                  <h4 class="stats-section-title">{{ $t('Game Stats') }}</h4>
                   <div class="game-stats-grid">
                     <div class="game-stat-cell">
                       <span class="game-stat-value highlight">{{ selectedPlayer.points || 0 }}</span>
@@ -4863,6 +4876,7 @@ onUnmounted(() => {
                     </div>
                     <div class="game-stat-cell turnover">
                       <span class="game-stat-value">{{ selectedPlayer.turnovers || 0 }}</span>
+                      <!-- i18n-ignore -->
                       <span class="game-stat-label">TO</span>
                     </div>
                   </div>
@@ -4870,7 +4884,7 @@ onUnmounted(() => {
 
                 <!-- Shooting Stats -->
                 <div class="shooting-stats-section">
-                  <h4 class="stats-section-title">Shooting</h4>
+                  <h4 class="stats-section-title">{{ $t('Shooting') }}</h4>
                   <div class="shooting-stats-grid">
                     <div class="shooting-stat-cell">
                       <span class="shooting-stat-line">{{ selectedPlayer.fgm || 0 }}-{{ selectedPlayer.fga || 0 }}</span>
@@ -4889,14 +4903,14 @@ onUnmounted(() => {
 
                 <!-- Minutes -->
                 <div class="minutes-row">
-                  <span class="minutes-label">Minutes Played</span>
+                  <span class="minutes-label">{{ $t('Minutes Played') }}</span>
                   <span class="minutes-value">{{ selectedPlayer.minutes || 0 }}</span>
                 </div>
               </div>
             </main>
 
             <footer class="modal-footer">
-              <button class="btn-cancel" @click="closePlayerModal">Close</button>
+              <button class="btn-cancel" @click="closePlayerModal">{{ $t('Close') }}</button>
             </footer>
           </div>
         </div>
@@ -4930,7 +4944,7 @@ onUnmounted(() => {
                 <div class="inj-header-icon">
                   <AlertTriangle :size="18" />
                 </div>
-                <h2 class="inj-title">Injury Report</h2>
+                <h2 class="inj-title">{{ $t('Injury Report') }}</h2>
               </div>
               <button class="inj-close" @click="showInjuryModal = false" aria-label="Close">
                 <X :size="20" />
@@ -4952,14 +4966,14 @@ onUnmounted(() => {
                       <span class="inj-severity-tag">{{ injury.severity }}</span>
                     </div>
                     <div class="inj-detail-row">
-                      <span class="inj-type">{{ injury.injury_type }}</span>
-                      <span class="inj-duration">{{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
+                      <span class="inj-type">{{ $tDynamic(injury.injury_type) }}</span>
+                      <span class="inj-duration">{{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('{n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('{n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <p class="inj-hint">Injured starters will be automatically benched. Update your lineup to set replacements.</p>
+              <p class="inj-hint">{{ $t('Injured starters will be automatically benched. Update your lineup to set replacements.') }}</p>
             </main>
 
             <footer class="inj-footer">
@@ -4967,11 +4981,11 @@ onUnmounted(() => {
                    exit the modal. Action buttons stay. -->
               <button class="inj-btn-cpu" @click="handleCpuSetLineup">
                 <Zap :size="16" />
-                CPU Set Lineup
+                {{ $t('CPU Set Lineup') }}
               </button>
               <button class="inj-btn-lineup" @click="goToLineup">
                 <Users :size="16" />
-                Update Lineup
+                {{ $t('Update Lineup') }}
               </button>
             </footer>
           </div>
@@ -4993,7 +5007,7 @@ onUnmounted(() => {
                 <div class="rec-header-icon">
                   <Heart :size="18" />
                 </div>
-                <h2 class="inj-title">Recovery Report</h2>
+                <h2 class="inj-title">{{ $t('Recovery Report') }}</h2>
               </div>
               <button class="inj-close" @click="showRecoveryModal = false" aria-label="Close">
                 <X :size="20" />
@@ -5012,17 +5026,17 @@ onUnmounted(() => {
                   <div class="inj-card-body">
                     <div class="inj-player-row">
                       <span class="inj-player-name">{{ recovery.name }}</span>
-                      <span class="inj-severity-tag">Cleared</span>
+                      <span class="inj-severity-tag">{{ $t('Cleared') }}</span>
                     </div>
                     <div class="inj-detail-row">
-                      <span class="inj-type">{{ recovery.injury_type }}</span>
-                      <span class="rec-status">Ready to play</span>
+                      <span class="inj-type">{{ $tDynamic(recovery.injury_type) }}</span>
+                      <span class="rec-status">{{ $t('Ready to play') }}</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <p class="inj-hint">These players are healthy and available for your lineup.</p>
+              <p class="inj-hint">{{ $t('These players are healthy and available for your lineup.') }}</p>
             </main>
 
             <footer class="inj-footer">
@@ -5030,11 +5044,11 @@ onUnmounted(() => {
                    exit the modal. -->
               <button class="inj-btn-cpu" @click="handleCpuSetLineup">
                 <Zap :size="16" />
-                CPU Set Lineup
+                {{ $t('CPU Set Lineup') }}
               </button>
               <button class="inj-btn-lineup" @click="goToLineupFromRecovery">
                 <Users :size="16" />
-                Update Lineup
+                {{ $t('Update Lineup') }}
               </button>
             </footer>
           </div>
@@ -9651,6 +9665,7 @@ onUnmounted(() => {
   font-weight: 700;
   padding: 2px 6px;
   border-radius: var(--radius-sm);
+  text-transform: uppercase; /* derived names ("Ball Handling") keep the badge look */
 }
 
 .attr-badge.positive {

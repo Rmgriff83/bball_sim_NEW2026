@@ -62,7 +62,7 @@ watch(() => pick.value?.playerId, (id) => {
 
 <template>
   <div class="last-pick" :class="{ bump }" :style="{ '--team-color': pick?.teamColor || 'var(--glass-border)', '--team-accent': teamAccent }">
-    <div class="lp-label">Last Pick<span v-if="slotLabel" class="lp-slot">: {{ slotLabel }}</span></div>
+    <div class="lp-label">{{ $t('Last Pick') }}<span v-if="slotLabel" class="lp-slot">: {{ slotLabel }}</span></div>
 
     <div v-if="pick" class="lp-body">
       <div class="lp-avatar">
@@ -77,7 +77,7 @@ watch(() => pick.value?.playerId, (id) => {
       </div>
     </div>
 
-    <div v-else class="lp-empty">Waiting for the first pick…</div>
+    <div v-else class="lp-empty">{{ $t('Waiting for the first pick…') }}</div>
   </div>
 </template>
 

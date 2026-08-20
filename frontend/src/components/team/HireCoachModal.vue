@@ -9,6 +9,7 @@ import { useAudioStore } from '@/stores/audio'
 import { StatBadge } from '@/components/ui'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
+import { t, tDynamic } from '@wl-i18n/i18n.js'
 
 const COACH_BADGE_TIER_COLORS = {
   bronze: '#CD7F32',
@@ -47,9 +48,9 @@ watch(() => props.show, (open) => {
 })
 
 function tierLabelFor(cost) {
-  if (cost === 0) return 'Free Hire'
-  if (cost >= 2500) return 'Premier'
-  return 'Established'
+  if (cost === 0) return t('Free Hire')
+  if (cost >= 2500) return t('Premier')
+  return t('Established')
 }
 
 function badgeName(id) {
@@ -59,7 +60,7 @@ function badgeName(id) {
 function badgeDescription(badge) {
   const def = COACH_BADGE_DEFS.find(b => b.id === badge.id)
   if (!def) return badge.id
-  return `${def.description} (${badge.level.toUpperCase()})`
+  return `${tDynamic(def.description)} (${badge.level.toUpperCase()})`
 }
 
 function close() {
@@ -90,15 +91,17 @@ async function performHire(candidate) {
     // teamStore.hireCoach assigns the new coach to team.coach, which atomically
     // replaces the previous one (no separate fire call needed).
     await teamStore.hireCoach(props.campaignId, candidate.id)
-    const verb = currentCoach.value ? 'signed' : 'signed as head coach'
+    const toastMsg = currentCoach.value
+      ? t('{name} signed', { name: candidate.name })
+      : t('{name} signed as head coach', { name: candidate.name })
     audio.purchase()
-    toastStore.showSuccess(`${candidate.name} ${verb}`)
+    toastStore.showSuccess(toastMsg)
     pendingHire.value = null
     emit('hired')
     emit('close')
   } catch (err) {
     console.error('Failed to hire coach:', err)
-    toastStore.showError(err.message || 'Failed to hire coach')
+    toastStore.showError(err.message || t('Failed to hire coach'))
   } finally {
     hiringId.value = null
   }
@@ -115,7 +118,7 @@ function confirmReplace() {
       <div v-if="show" class="modal-overlay" @click.self="close">
         <div class="modal-container" :class="{ 'is-confirm': !!pendingHire }">
           <header class="modal-header">
-            <h2 class="modal-title">{{ pendingHire ? 'Confirm Coach Change' : 'Hire a Head Coach' }}</h2>
+            <h2 class="modal-title">{{ pendingHire ? $t('Confirm Coach Change') : $t('Hire a Head Coach') }}</h2>
             <button class="btn-close" @click="close" aria-label="Close" :disabled="hiringId !== null">
               <X :size="20" />
             </button>
@@ -125,12 +128,12 @@ function confirmReplace() {
           <main v-if="pendingHire" class="modal-content">
             <div class="confirm-warning">
               <AlertTriangle :size="18" />
-              <span>You're firing your current coach to sign this new one. This can't be undone.</span>
+              <span>{{ $t("You're firing your current coach to sign this new one. This can't be undone.") }}</span>
             </div>
 
             <div class="confirm-comparison">
               <div class="confirm-side leaving">
-                <span class="confirm-side-label">Releasing</span>
+                <span class="confirm-side-label">{{ $t('Releasing') }}</span>
                 <CoachAvatar :coach="currentCoach" :size="56" />
                 <p class="confirm-coach-name">{{ currentCoach?.name }}</p>
                 <StatBadge :value="currentCoach?.overall_rating || currentCoach?.overallRating" size="sm" />
@@ -139,7 +142,7 @@ function confirmReplace() {
               <ArrowRight :size="20" class="confirm-arrow" />
 
               <div class="confirm-side joining">
-                <span class="confirm-side-label">Signing</span>
+                <span class="confirm-side-label">{{ $t('Signing') }}</span>
                 <CoachAvatar :coach="pendingHire" :size="56" />
                 <p class="confirm-coach-name">{{ pendingHire.name }}</p>
                 <StatBadge :value="pendingHire.overall_rating || pendingHire.overallRating" size="sm" />
@@ -147,12 +150,12 @@ function confirmReplace() {
             </div>
 
             <div class="confirm-meta">
-              <span>2-Season Contract</span>
+              <span>{{ $t('2-Season Contract') }}</span>
               <span class="confirm-cost" :class="{ free: (pendingHire.hireCost ?? 0) === 0 }">
-                <template v-if="(pendingHire.hireCost ?? 0) === 0">FREE</template>
+                <template v-if="(pendingHire.hireCost ?? 0) === 0">{{ $t('FREE') }}</template>
                 <template v-else>
                   <Coins :size="12" />
-                  {{ pendingHire.hireCost.toLocaleString() }} tokens
+                  {{ $t('{n} tokens', { n: pendingHire.hireCost.toLocaleString() }) }}
                 </template>
               </span>
             </div>
@@ -163,11 +166,11 @@ function confirmReplace() {
             <div class="token-balance">
               <Coins :size="16" />
               <span class="token-amount">{{ tokens.toLocaleString() }}</span>
-              <span class="token-label">Award Tokens</span>
+              <span class="token-label">{{ $t('Award Tokens') }}</span>
             </div>
 
             <div v-if="candidates.length === 0" class="empty-state">
-              No coaches are available right now. Check back at the start of the next season.
+              {{ $t('No coaches are available right now. Check back at the start of the next season.') }}
             </div>
 
             <div v-else class="candidates-list">
@@ -175,11 +178,7 @@ function confirmReplace() {
                 v-for="candidate in candidates"
                 :key="candidate.id"
                 class="candidate-card"
-                :class="{
-                  'tier-premier': (candidate.hireCost ?? 0) >= 2500,
-                  'tier-established': (candidate.hireCost ?? 0) > 0 && (candidate.hireCost ?? 0) < 2500,
-                  'tier-free': (candidate.hireCost ?? 0) === 0,
-                }"
+                :class="{ 'tier-premier': (candidate.hireCost ?? 0) >= 2500, 'tier-established': (candidate.hireCost ?? 0) > 0 && (candidate.hireCost ?? 0) < 2500, 'tier-free': (candidate.hireCost ?? 0) === 0 }"
               >
                 <div class="candidate-header">
                   <div class="candidate-avatar">
@@ -191,10 +190,10 @@ function confirmReplace() {
                       <StatBadge :value="candidate.overall_rating || candidate.overallRating" size="sm" />
                       <span class="tier-label">{{ tierLabelFor(candidate.hireCost ?? 0) }}</span>
                     </div>
-                    <span class="contract-length">2-Season Contract</span>
+                    <span class="contract-length">{{ $t('2-Season Contract') }}</span>
                   </div>
                   <div class="cost-badge" :class="{ free: (candidate.hireCost ?? 0) === 0 }">
-                    <template v-if="(candidate.hireCost ?? 0) === 0">FREE</template>
+                    <template v-if="(candidate.hireCost ?? 0) === 0">{{ $t('FREE') }}</template>
                     <template v-else>
                       <Coins :size="12" />
                       {{ candidate.hireCost.toLocaleString() }}
@@ -214,7 +213,7 @@ function confirmReplace() {
                       :style="{ color: COACH_BADGE_TIER_COLORS[badge.level] || 'var(--color-text-secondary)' }"
                       :fill="COACH_BADGE_TIER_COLORS[badge.level] || 'transparent'"
                     />
-                    <span class="badge-chip-name">{{ badgeName(badge.id) }}</span>
+                    <span class="badge-chip-name">{{ $tDynamic(badgeName(badge.id)) }}</span>
                   </div>
                 </div>
 
@@ -223,11 +222,11 @@ function confirmReplace() {
                   :disabled="hiringId !== null || tokens < (candidate.hireCost ?? 0)"
                   @click="selectCandidate(candidate)"
                 >
-                  <template v-if="hiringId === candidate.id">Signing...</template>
-                  <template v-else-if="tokens < (candidate.hireCost ?? 0)">Insufficient Tokens</template>
-                  <template v-else-if="currentCoach">Sign (Replaces Current Coach)</template>
-                  <template v-else-if="(candidate.hireCost ?? 0) === 0">Hire (Free)</template>
-                  <template v-else>Hire ({{ candidate.hireCost.toLocaleString() }} tokens)</template>
+                  <template v-if="hiringId === candidate.id">{{ $t('Signing...') }}</template>
+                  <template v-else-if="tokens < (candidate.hireCost ?? 0)">{{ $t('Insufficient Tokens') }}</template>
+                  <template v-else-if="currentCoach">{{ $t('Sign (Replaces Current Coach)') }}</template>
+                  <template v-else-if="(candidate.hireCost ?? 0) === 0">{{ $t('Hire (Free)') }}</template>
+                  <template v-else>{{ $t('Hire ({n} tokens)', { n: candidate.hireCost.toLocaleString() }) }}</template>
                 </button>
               </div>
             </div>
@@ -236,18 +235,18 @@ function confirmReplace() {
           <footer class="modal-footer">
             <template v-if="pendingHire">
               <button class="btn-cancel" @click="backToCandidates" :disabled="hiringId !== null">
-                Back
+                {{ $t('Back') }}
               </button>
               <button
                 class="btn-confirm-replace"
                 :disabled="hiringId !== null || tokens < (pendingHire.hireCost ?? 0)"
                 @click="confirmReplace"
               >
-                <template v-if="hiringId">Signing...</template>
-                <template v-else>Confirm &amp; Sign</template>
+                <template v-if="hiringId">{{ $t('Signing...') }}</template>
+                <template v-else>{{ $t('Confirm & Sign') }}</template>
               </button>
             </template>
-            <button v-else class="btn-cancel" @click="close" :disabled="hiringId !== null">Close</button>
+            <button v-else class="btn-cancel" @click="close" :disabled="hiringId !== null">{{ $t('Close') }}</button>
           </footer>
         </div>
       </div>

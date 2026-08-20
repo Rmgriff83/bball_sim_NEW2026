@@ -19,15 +19,23 @@ const ownerName = computed(() =>
   props.owner ? `${props.owner.firstName ?? ''} ${props.owner.lastName ?? ''}`.trim() : 'Team Owner'
 )
 
+// Dialogue lines arrive as T objects ({ text, tpl, params }) from
+// OwnerCheckInService — text is the English fallback, tpl/params let the
+// template translate via $tDynamic. Tolerate plain strings for safety.
+function _say(line) {
+  if (typeof line === 'string') return { kind: 'say', text: line, tpl: null, params: null }
+  return { kind: 'say', text: line?.text ?? '', tpl: line?.tpl ?? null, params: line?.params ?? null }
+}
+
 // Flatten the dialogue into an ordered reveal queue.
 const queue = computed(() => {
   const c = props.checkIn
   if (!c) return []
   const items = []
-  for (const line of c.greetingLines || []) items.push({ kind: 'say', text: line })
-  if (c.subtaskIntro) items.push({ kind: 'say', text: c.subtaskIntro })
+  for (const line of c.greetingLines || []) items.push(_say(line))
+  if (c.subtaskIntro) items.push(_say(c.subtaskIntro))
   for (const t of c.subtasks || []) items.push({ kind: 'task', task: t })
-  for (const line of c.closingLines || []) items.push({ kind: 'say', text: line })
+  for (const line of c.closingLines || []) items.push(_say(line))
   return items
 })
 
@@ -73,9 +81,9 @@ watch(
           <header class="modal-header">
             <div class="hdr-avatar"><Crown :size="22" /></div>
             <div>
-              <h2 class="modal-title">Owner Check-In</h2>
+              <h2 class="modal-title">{{ $t('Owner Check-In') }}</h2>
               <p class="modal-sub">
-                {{ ownerName }}<span v-if="seasonYear"> · {{ seasonYear }} Season</span>
+                {{ ownerName }}<span v-if="seasonYear"> {{ $t('· {year} Season', { year: seasonYear }) }}</span>
               </p>
             </div>
           </header>
@@ -91,7 +99,7 @@ watch(
                 <!-- Owner line -->
                 <div v-if="item.kind === 'say'" class="chat-row">
                   <div class="chat-avatar"><Crown :size="14" /></div>
-                  <div class="chat-bubble">{{ item.text }}</div>
+                  <div class="chat-bubble">{{ item.tpl ? $tDynamic(item.tpl, item.params) : item.text }}</div>
                 </div>
 
                 <!-- Sub-goal note -->
@@ -102,26 +110,26 @@ watch(
                   </span>
                   <span class="task-text">
                     <span class="task-label">
-                      {{ item.task.label }}
-                      <span v-if="item.task.global" class="task-tag">Global</span>
+                      {{ $tDynamic(item.task.label) }}
+                      <span v-if="item.task.global" class="task-tag">{{ $t('Global') }}</span>
                       <span class="task-status" :class="{ done: item.task.met }">
                         <template v-if="item.task.progress">{{ item.task.progress.current }}/{{ item.task.progress.target }}</template>
-                        <template v-else>{{ item.task.met ? 'Done' : 'Not yet' }}</template>
+                        <template v-else>{{ item.task.met ? $t('Done') : $t('Not yet') }}</template>
                       </span>
                     </span>
-                    <span v-if="item.task.description" class="task-desc">{{ item.task.description }}</span>
+                    <span v-if="item.task.description" class="task-desc">{{ $tDynamic(item.task.description) }}</span>
                   </span>
                 </div>
               </template>
             </TransitionGroup>
 
-            <p v-if="!isComplete" class="tap-hint">Tap to continue…</p>
+            <p v-if="!isComplete" class="tap-hint">{{ $t('Tap to continue…') }}</p>
           </main>
 
           <footer class="modal-footer">
             <button class="btn-confirm" :class="{ done: isComplete }" @click="advance">
-              <template v-if="isComplete">Let's get to work <ArrowRight :size="16" /></template>
-              <template v-else>Continue <ChevronRight :size="16" /></template>
+              <template v-if="isComplete">{{ $t("Let's get to work") }} <ArrowRight :size="16" /></template>
+              <template v-else>{{ $t('Continue') }} <ChevronRight :size="16" /></template>
             </button>
           </footer>
         </div>

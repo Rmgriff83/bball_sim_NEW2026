@@ -16,26 +16,26 @@ const emit = defineEmits(['answered'])
 <template>
   <BaseModal :show="show" size="sm" :closable="false" :show-header="false">
     <div class="hpb">
-      <h2 class="hpb-title">Welcome to your dynasty</h2>
+      <h2 class="hpb-title">{{ $t('Welcome to your dynasty') }}</h2>
       <p class="hpb-subtitle">
-        Have you played a basketball management sim like this before?
+        {{ $t('Have you played a basketball management sim like this before?') }}
       </p>
 
       <div class="hpb-options">
         <button class="hpb-option" @click="emit('answered', false)">
           <span class="hpb-icon hpb-icon-new"><Sparkles :size="22" /></span>
-          <span class="hpb-option-label">No, I'm new</span>
-          <span class="hpb-option-desc">Show me guided tips as I explore each screen.</span>
+          <span class="hpb-option-label">{{ $t("No, I'm new") }}</span>
+          <span class="hpb-option-desc">{{ $t('Show me guided tips as I explore each screen.') }}</span>
         </button>
 
         <button class="hpb-option" @click="emit('answered', true)">
           <span class="hpb-icon hpb-icon-vet"><Trophy :size="22" /></span>
-          <span class="hpb-option-label">Yes, I've played before</span>
-          <span class="hpb-option-desc">Skip the tips — I'll dive straight in.</span>
+          <span class="hpb-option-label">{{ $t("Yes, I've played before") }}</span>
+          <span class="hpb-option-desc">{{ $t("Skip the tips — I'll dive straight in.") }}</span>
         </button>
       </div>
 
-      <p class="hpb-note">You can skip any tip at any time.</p>
+      <p class="hpb-note">{{ $t('You can skip any tip at any time.') }}</p>
     </div>
   </BaseModal>
 </template>

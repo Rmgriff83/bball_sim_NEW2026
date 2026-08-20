@@ -1064,11 +1064,16 @@ export const useTeamStore = defineStore('team', () => {
   // ---------------------------------------------------------------------------
   // Real-time training sessions that grant a random open badge or upgrade
   // when the timer expires. Tied to the coach's per-season train budget
-  // (`coach.trainActionsRemaining`) and accelerated by the 4-star Staff
-  // Trainer "Accelerated Training" perk.
+  // (`coach.trainActionsRemaining`). Session length is the TRAINING
+  // facility's baseline per-level benefit: higher level = shorter timer.
 
-  const TRAINING_BASE_MS = 1 * 60 * 60 * 1000          // 1 hour
-  const TRAINING_PERK_MS = 20 * 60 * 1000               // 20 minutes
+  const TRAINING_SESSION_MS_BY_LEVEL = {
+    1: 60 * 60 * 1000, // 60 min
+    2: 50 * 60 * 1000,
+    3: 40 * 60 * 1000,
+    4: 30 * 60 * 1000,
+    5: 20 * 60 * 1000,
+  }
   const TRAINING_REWARD_WEIGHTS = { bronze: 100, silver: 40, gold: 15, hof: 5 }
 
   /** Pick a single entry from `entries` with weight = TRAINING_REWARD_WEIGHTS[entry.nextLevel]. */
@@ -1084,17 +1089,6 @@ export const useTeamStore = defineStore('team', () => {
       if (r <= 0) return x.entry
     }
     return weighted[weighted.length - 1].entry
-  }
-
-  /** Returns true when the user's hired 4-star Staff Trainer has the
-   *  Accelerated Training perk unlocked at the team's current training
-   *  facility level. Mirrors the perk-gate check in `_getStaffTrainerPerks`
-   *  on the game store. */
-  function _hasAcceleratedTrainerPerk(campaign, teamFacilitiesLevel) {
-    const st = campaign?.settings?.staff_trainer
-    if (!st || !Array.isArray(st.perks)) return false
-    const facilityLevel = teamFacilitiesLevel ?? 1
-    return st.perks.some(p => p?.key === 'accelerated_training' && (p.requiredLevel ?? 0) <= facilityLevel)
   }
 
   /**
@@ -1125,16 +1119,25 @@ export const useTeamStore = defineStore('team', () => {
       const budget = teamData.coach.trainActionsRemaining ?? 0
       if (budget <= 0) throw new Error('No training actions left this season')
 
-      const useFastTimer = _hasAcceleratedTrainerPerk(campaign, teamData?.facilities?.training)
+      // Session length scales with the TRAINING facility level (60 → 20 min).
+      const trainingLevel = Math.min(5, Math.max(1, teamData?.facilities?.training ?? 1))
+      let durationMs = TRAINING_SESSION_MS_BY_LEVEL[trainingLevel] ?? TRAINING_SESSION_MS_BY_LEVEL[1]
+      // Legacy: 4-star staff trainers hired via the old fallback generator
+      // carry an `accelerated_training` perk (20-min sessions at facility
+      // Lv4+). Honor it as a floor so no existing save's timer gets longer.
+      const legacyStaffTrainer = campaign?.settings?.staff_trainer
+      if (Array.isArray(legacyStaffTrainer?.perks) &&
+          legacyStaffTrainer.perks.some(p => p?.key === 'accelerated_training' && (p.requiredLevel ?? 0) <= trainingLevel)) {
+        durationMs = Math.min(durationMs, TRAINING_SESSION_MS_BY_LEVEL[5])
+      }
       const startedAt = new Date().toISOString()
-      const endsAt = new Date(Date.now() + (useFastTimer ? TRAINING_PERK_MS : TRAINING_BASE_MS)).toISOString()
+      const endsAt = new Date(Date.now() + durationMs).toISOString()
 
       teamData.coach.trainActionsRemaining = budget - 1
       teamData.coach.activeTraining = {
         playerId,
         startedAt,
         endsAt,
-        trainerSpeedupApplied: useFastTimer,
       }
       await TeamRepository.save(teamData)
 

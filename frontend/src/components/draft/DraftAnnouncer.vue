@@ -3,6 +3,7 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { Mic } from 'lucide-vue-next'
 import { useDraftStore } from '@/stores/draft'
 import { pickAnalysis } from '@/engine/draft/draftCommentary'
+import { t, tDynamic } from '@wl-i18n/i18n.js'
 
 // Rookie-only "announcer" line: the pick commentary for the most recent pick,
 // revealed letter-by-letter like a news story breaking in. Hidden for fantasy
@@ -20,13 +21,13 @@ const commentary = computed(() => {
   if (draftStore.draftMode !== 'rookie') return ''
   // Draft over → sign-off line.
   if (draftStore.isDraftComplete) {
-    return `And that concludes the ${props.draftYear || ''} Draft. Thanks for joining us!`.replace(/\s+/g, ' ').trim()
+    return t('And that concludes the {year} Draft. Thanks for joining us!', { year: props.draftYear || '' }).replace(/\s+/g, ' ').trim()
   }
   // Draft hasn't started yet → welcome line.
   if (!pick.value) {
-    return `Welcome to the ${props.draftYear || ''} Draft! The future starts here — let's get the first pick in.`.replace(/\s+/g, ' ').trim()
+    return t("Welcome to the {year} Draft! The future starts here — let's get the first pick in.", { year: props.draftYear || '' }).replace(/\s+/g, ' ').trim()
   }
-  return pickAnalysis({
+  const line = pickAnalysis({
     teamName: pick.value.teamName,
     teamAbbr: pick.value.teamAbbr,
     direction: draftStore.teamDirections?.[pick.value.teamId],
@@ -34,6 +35,12 @@ const commentary = computed(() => {
     round: pick.value.round,
     pick: pick.value.pick,
   })
+  // Translate at render time; the optional owner-mandate tail is its own sentence.
+  if (line.tpl) {
+    const main = tDynamic(line.tpl, line.params)
+    return line.tail ? main + ' ' + tDynamic(line.tail.tpl, line.tail.params) : main
+  }
+  return line.text ?? line
 })
 
 // Typewriter reveal.

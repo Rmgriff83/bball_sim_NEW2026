@@ -11,6 +11,7 @@ import { calculateRetentionScore } from './MotivationService';
 import { LUXURY_TAX, FIRST_APRON, capLineForExpectation } from '../data/salaryScale';
 import { findOwnerForTeam } from '../data/owners';
 import { validateSalaryCap, isPickApronFrozen } from '../finance/TradeExecutor';
+import { T } from '../simulation/commentaryTemplate';
 
 // Salary total of a trade-asset list (picks carry no salary).
 function _assetSalary(assets, getPlayerFn) {
@@ -1502,10 +1503,16 @@ export function processTradeDeadlineEvents({ currentDate, seasonYear, settings =
   if (current >= warningDate && !(settings.trade_deadline_warned ?? false)) {
     const daysUntil = Math.ceil((deadlineDate - current) / (1000 * 60 * 60 * 24));
 
+    const headline = T('Trade deadline approaching');
+    const body = T('The February 5th trade deadline is {days} days away. Teams are expected to increase activity.', { days: daysUntil });
     newsEvents.push({
       event_type: 'trade',
-      headline: 'Trade deadline approaching',
-      body: `The February 5th trade deadline is ${daysUntil} days away. Teams are expected to increase activity.`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: currentDate,
     });
 
@@ -1515,10 +1522,16 @@ export function processTradeDeadlineEvents({ currentDate, seasonYear, settings =
 
   // Deadline passed
   if (current > deadlineDate && !(settings.trade_deadline_passed ?? false)) {
+    const headline = T('Trade deadline has passed');
+    const body = T('The trade deadline has officially passed. No more trades can be made this season.');
     newsEvents.push({
       event_type: 'trade',
-      headline: 'Trade deadline has passed',
-      body: 'The trade deadline has officially passed. No more trades can be made this season.',
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: currentDate,
     });
 
@@ -2111,10 +2124,20 @@ export function processAiToAiTrades({
       const sentList = formatAssetList(sentAssets);
       const receivedList = formatAssetList(receivedAssets);
 
+      const headline = T('{team} acquire {received} from {otherTeam}', {
+        team: headlineTeam.name, received: receivedName, otherTeam: otherTeam.name,
+      });
+      const body = T('The {team} have traded {sent} to the {otherTeam} in exchange for {received}.', {
+        team: headlineTeam.name, sent: sentList, otherTeam: otherTeam.name, received: receivedList,
+      });
       newsEvents.push({
         event_type: 'trade',
-        headline: `${headlineTeam.name} acquire ${receivedName} from ${otherTeam.name}`,
-        body: `The ${headlineTeam.name} have traded ${sentList} to the ${otherTeam.name} in exchange for ${receivedList}.`,
+        headline: headline.text,
+        body: body.text,
+        headline_tpl: headline.tpl,
+        headline_params: headline.params,
+        body_tpl: body.tpl,
+        body_params: body.params,
         date: currentDate,
       });
     }

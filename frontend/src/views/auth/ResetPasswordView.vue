@@ -5,6 +5,7 @@ import { useVuelidate } from '@vuelidate/core'
 import { required, minLength, sameAs, helpers } from '@vuelidate/validators'
 import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton, FormInput } from '@/components/ui'
+import { t } from '@wl-i18n/i18n.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -20,14 +21,16 @@ const form = ref({
 const error = ref('')
 const success = ref(false)
 
+// Rules live in a computed: t() reads the reactive locale ref, so these
+// messages re-evaluate (and vuelidate rebuilds) on locale change — no freeze.
 const rules = computed(() => ({
   password: {
-    required: helpers.withMessage('Password is required', required),
-    minLength: helpers.withMessage('Password must be at least 8 characters', minLength(8))
+    required: helpers.withMessage(t('Password is required'), required),
+    minLength: helpers.withMessage(t('Password must be at least 8 characters'), minLength(8))
   },
   password_confirmation: {
-    required: helpers.withMessage('Please confirm your password', required),
-    sameAs: helpers.withMessage('Passwords do not match', sameAs(computed(() => form.value.password)))
+    required: helpers.withMessage(t('Please confirm your password'), required),
+    sameAs: helpers.withMessage(t('Passwords do not match'), sameAs(computed(() => form.value.password)))
   }
 }))
 
@@ -41,7 +44,7 @@ async function handleSubmit() {
     await authStore.resetPassword(form.value)
     success.value = true
   } catch (err) {
-    error.value = err.response?.data?.message || 'Failed to reset password.'
+    error.value = err.response?.data?.message || t('Failed to reset password.')
   }
 }
 </script>
@@ -50,13 +53,13 @@ async function handleSubmit() {
   <div class="min-h-screen flex items-center justify-center p-4">
     <div class="w-full max-w-md">
       <GlassCard padding="lg" :hoverable="false">
-        <h1 class="h2 text-gradient text-center mb-6">Set New Password</h1>
+        <h1 class="h2 text-gradient text-center mb-6">{{ $t('Set New Password') }}</h1>
 
         <div v-if="success" class="text-center">
           <div class="mb-4 p-3 rounded bg-success/20 border border-success text-success text-sm">
-            Password reset successfully!
+            {{ $t('Password reset successfully!') }}
           </div>
-          <BaseButton variant="primary" @click="router.push('/login')">Go to Sign In</BaseButton>
+          <BaseButton variant="primary" @click="router.push('/login')">{{ $t('Go to Sign In') }}</BaseButton>
         </div>
 
         <template v-else>
@@ -65,22 +68,22 @@ async function handleSubmit() {
           </div>
 
           <div v-if="!form.token" class="mb-4 p-3 rounded bg-warning/20 border border-warning text-warning text-sm">
-            Invalid or missing reset token. Please request a new password reset link.
+            {{ $t('Invalid or missing reset token. Please request a new password reset link.') }}
           </div>
 
           <form v-if="form.token" @submit.prevent="handleSubmit">
-            <FormInput v-model="form.password" label="New Password" type="password" placeholder="••••••••"
+            <FormInput v-model="form.password" :label="$t('New Password')" type="password" placeholder="••••••••"
               :error="v$.password.$errors[0]?.$message" :touched="v$.password.$dirty" required @blur="v$.password.$touch()" />
 
-            <FormInput v-model="form.password_confirmation" label="Confirm New Password" type="password" placeholder="••••••••"
+            <FormInput v-model="form.password_confirmation" :label="$t('Confirm New Password')" type="password" placeholder="••••••••"
               :error="v$.password_confirmation.$errors[0]?.$message" :touched="v$.password_confirmation.$dirty" required
               @blur="v$.password_confirmation.$touch()" />
 
-            <BaseButton type="submit" variant="primary" block :loading="authStore.loading">Reset Password</BaseButton>
+            <BaseButton type="submit" variant="primary" block :loading="authStore.loading">{{ $t('Reset Password') }}</BaseButton>
           </form>
 
           <div v-else class="text-center">
-            <BaseButton variant="secondary" @click="router.push('/forgot-password')">Request New Link</BaseButton>
+            <BaseButton variant="secondary" @click="router.push('/forgot-password')">{{ $t('Request New Link') }}</BaseButton>
           </div>
         </template>
       </GlassCard>

@@ -10,6 +10,7 @@ import { capNumbersFor } from '@/engine/data/salaryScale'
 import { isPickApronFrozen } from '@/engine/finance/TradeExecutor'
 import { useToastStore } from '@/stores/toast'
 import { useCampaignStore } from '@/stores/campaign'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   team: { type: Object, required: true },
@@ -69,7 +70,7 @@ function togglePlayer(player) {
 }
 function togglePick(pick) {
   if (isPickApronFrozen(pick)) {
-    useToastStore().showError("This pick is frozen by the apron penalty and can't be traded.")
+    useToastStore().showError(t("This pick is frozen by the apron penalty and can't be traded."))
     return
   }
   emit('toggle-asset', { team: props.team, kind: 'pick', item: pick })
@@ -103,18 +104,18 @@ function flip() { isFlipped.value = !isFlipped.value }
             </span>
           </div>
           <div class="tp-cap">
-            Cap space: {{ tradeStore.formatSalary(team.cap_space ?? 0) }}
+            {{ $t('Cap space: {amount}', { amount: tradeStore.formatSalary(team.cap_space ?? 0) }) }}
             <span
               v-if="apronRestricted"
               class="tp-hardcap"
-              title="Over the first apron — this team won't take back more salary than they send out."
-            >HARD CAP</span>
+              :title="$t('Over the first apron — this team will not take back more salary than they send out.')"
+            >{{ $t('HARD CAP') }}</span>
           </div>
         </div>
 
         <div class="tp-topassets">
-          <div class="tp-topassets-label">Top assets</div>
-          <div v-if="topAssets.length === 0" class="tp-empty">No assets</div>
+          <div class="tp-topassets-label">{{ $t('Top assets') }}</div>
+          <div v-if="topAssets.length === 0" class="tp-empty">{{ $t('No assets') }}</div>
           <div
             v-for="a in topAssets"
             :key="`${a.kind}:${a.item.id}`"
@@ -136,7 +137,7 @@ function flip() { isFlipped.value = !isFlipped.value }
               <span class="tp-top-pick">{{ formatPickYear(a.item.year) }}</span>
               <span class="tp-top-name">
                 R{{ a.item.round }}
-                <span v-if="a.item.original_team_abbreviation" class="tp-pick-via">via {{ a.item.original_team_abbreviation }}</span>
+                <span v-if="a.item.original_team_abbreviation" class="tp-pick-via">{{ $t('via {team}', { team: a.item.original_team_abbreviation }) }}</span>
                 <ApronPickBadge v-if="a.item.apronFrozen ?? a.item.apron_frozen" compact />
               </span>
               <span class="tp-top-stars">
@@ -147,7 +148,7 @@ function flip() { isFlipped.value = !isFlipped.value }
         </div>
 
         <button type="button" class="tp-flip-btn" @click="flip">
-          Select Assets →
+          {{ $t('Select Assets →') }}
         </button>
       </div>
 
@@ -161,9 +162,9 @@ function flip() { isFlipped.value = !isFlipped.value }
         <template v-if="isFlipped">
         <div class="tp-back-header">
           <button type="button" class="tp-back-btn" @click="flip">
-            <RotateCcw :size="13" /> Back
+            <RotateCcw :size="13" /> {{ $t('Back') }}
           </button>
-          <span class="tp-back-title">{{ team.abbreviation }} assets</span>
+          <span class="tp-back-title">{{ $t('{team} assets', { team: team.abbreviation }) }}</span>
         </div>
 
         <div class="tp-back-tabs">
@@ -172,13 +173,13 @@ function flip() { isFlipped.value = !isFlipped.value }
             class="tp-back-tab"
             :class="{ active: backTab === 'players' }"
             @click="backTab = 'players'"
-          >Players ({{ roster.length }})</button>
+          >{{ $t('Players ({n})', { n: roster.length }) }}</button>
           <button
             type="button"
             class="tp-back-tab"
             :class="{ active: backTab === 'picks' }"
             @click="backTab = 'picks'"
-          >Picks ({{ picks.length }})</button>
+          >{{ $t('Picks ({n})', { n: picks.length }) }}</button>
         </div>
 
         <div class="tp-back-list">
@@ -223,13 +224,13 @@ function flip() { isFlipped.value = !isFlipped.value }
               </div>
               <div class="tp-asset-right">
                 <StatBadge :value="pRating(p)" size="sm" />
-                <button type="button" class="tp-info-btn" @click="viewPlayer(p, $event)" title="Player details">
+                <button type="button" class="tp-info-btn" @click="viewPlayer(p, $event)" :title="$t('Player details')">
                   <Info :size="15" />
                 </button>
                 <Check v-if="isPlayerSelected(p.id)" :size="16" class="tp-asset-check" />
               </div>
             </div>
-            <div v-if="roster.length === 0" class="tp-empty">No players</div>
+            <div v-if="roster.length === 0" class="tp-empty">{{ $t('No players') }}</div>
           </template>
 
           <!-- Picks -->
@@ -244,21 +245,21 @@ function flip() { isFlipped.value = !isFlipped.value }
               <div class="tp-pick-year">{{ formatPickYear(pick.year) }}</div>
               <div class="tp-asset-main">
                 <div class="tp-asset-line1">
-                  <span class="tp-asset-name">Round {{ pick.round }}</span>
+                  <span class="tp-asset-name">{{ $t('Round {n}', { n: pick.round }) }}</span>
                   <span v-if="pick.original_team_abbreviation" class="tp-pick-via">
-                    (via {{ pick.original_team_abbreviation }})
+                    {{ $t('(via {team})', { team: pick.original_team_abbreviation }) }}
                   </span>
                   <ApronPickBadge v-if="pick.apronFrozen ?? pick.apron_frozen" />
                 </div>
                 <div v-if="pick.projected_position" class="tp-asset-line2">
-                  Projected #{{ pick.projected_position }}
+                  {{ $t('Projected #{n}', { n: pick.projected_position }) }}
                 </div>
               </div>
               <div class="tp-asset-right">
                 <Check v-if="isPickSelected(pick.id)" :size="18" class="tp-asset-check" />
               </div>
             </div>
-            <div v-if="picks.length === 0" class="tp-empty">No draft picks</div>
+            <div v-if="picks.length === 0" class="tp-empty">{{ $t('No draft picks') }}</div>
           </template>
         </div>
         </template>

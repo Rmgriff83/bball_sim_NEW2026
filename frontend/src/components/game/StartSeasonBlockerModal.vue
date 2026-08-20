@@ -49,7 +49,7 @@ onUnmounted(() => {
       <div v-if="show" class="modal-overlay" @click.self="close">
         <div class="modal-container">
           <header class="modal-header">
-            <h2 class="modal-title">Not Ready to Start</h2>
+            <h2 class="modal-title">{{ $t('Not Ready to Start') }}</h2>
             <button
               v-if="!simming"
               class="btn-close"
@@ -66,7 +66,7 @@ onUnmounted(() => {
             </div>
 
             <p class="blocker-blurb">
-              You can't start the new season yet. The league needs a few things squared away first:
+              {{ $t("You can't start the new season yet. The league needs a few things squared away first:") }}
             </p>
 
             <ul class="blocker-list">
@@ -77,10 +77,10 @@ onUnmounted(() => {
                   class="blocker-row-icon"
                 />
                 <div class="blocker-row-text">
-                  <div class="blocker-row-title">Head Coach</div>
+                  <div class="blocker-row-title">{{ $t('Head Coach') }}</div>
                   <div class="blocker-row-detail">
-                    <template v-if="hasCoach">Signed.</template>
-                    <template v-else>No head coach signed. Hire one from the Personnel tab.</template>
+                    <template v-if="hasCoach">{{ $t('Signed.') }}</template>
+                    <template v-else>{{ $t('No head coach signed. Hire one from the Coach tab.') }}</template>
                   </div>
                 </div>
               </li>
@@ -91,14 +91,13 @@ onUnmounted(() => {
                   class="blocker-row-icon"
                 />
                 <div class="blocker-row-text">
-                  <div class="blocker-row-title">Roster</div>
+                  <div class="blocker-row-title">{{ $t('Roster') }}</div>
                   <div class="blocker-row-detail">
                     <template v-if="!rosterShort">
-                      {{ rosterCount }} players rostered.
+                      {{ $t('{n} players rostered.', { n: rosterCount }) }}
                     </template>
                     <template v-else>
-                      {{ rosterCount }} / {{ rosterMinimum }} players rostered — sign at least
-                      {{ playersNeeded }} more from the Free Agents tab.
+                      {{ $t('{a} / {b} players rostered — sign at least {c} more from the Free Agents tab.', { a: rosterCount, b: rosterMinimum, c: playersNeeded }) }}
                     </template>
                   </div>
                 </div>
@@ -106,7 +105,7 @@ onUnmounted(() => {
             </ul>
 
             <p class="blocker-sim-blurb">
-              Or let the front office handle it — the AI will hire the best available free coach and sign free agents to fill your roster.
+              {{ $t('Or let the front office handle it — the AI will hire the best available free coach and sign free agents to fill your roster.') }}
             </p>
           </main>
 
@@ -116,7 +115,7 @@ onUnmounted(() => {
               :disabled="simming"
               @click="close"
             >
-              Fix It Myself
+              {{ $t('Fix It Myself') }}
             </button>
             <button
               class="btn-confirm"
@@ -125,7 +124,7 @@ onUnmounted(() => {
             >
               <LoadingSpinner v-if="simming" size="sm" />
               <FastForward v-else :size="16" class="btn-icon" />
-              {{ simming ? 'Setting Up…' : 'Let AI Finish Setup' }}
+              {{ simming ? $t('Setting Up…') : $t('Let AI Finish Setup') }}
             </button>
           </footer>
         </div>

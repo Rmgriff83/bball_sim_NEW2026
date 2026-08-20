@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineAsyncComp
 import { useRoute, useRouter } from 'vue-router'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
+import { badgeDisplayName } from '@/engine/data/badges'
 import { useAuthStore } from '@/stores/auth'
 import { useTradeStore } from '@/stores/trade'
 import { useToastStore } from '@/stores/toast'
@@ -10,10 +11,9 @@ import { useAudioStore } from '@/stores/audio'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
-import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Binoculars, Heart, Check, Lock, Activity, Star, Zap, Smile, Meh, Frown, ChevronsUp, Coins, Dumbbell, MessagesSquare, BarChart3 } from 'lucide-vue-next'
+import { User, Users, ArrowUpDown, AlertTriangle, Calendar, Eye, Star, Zap, Smile, Meh, Frown, ChevronsUp, Coins, Dumbbell, MessagesSquare } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
-import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
 import { generateRoleAwareTargetMinutes } from '@/engine/simulation/SubstitutionEngine'
@@ -23,10 +23,6 @@ import FacilitiesTab from '@/components/team/FacilitiesTab.vue'
 import OwnerTab from '@/components/team/OwnerTab.vue'
 import ScheduleTab from '@/components/team/ScheduleTab.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
-import HireScoutModal from '@/components/team/HireScoutModal.vue'
-import HireTrainerModal from '@/components/team/HireTrainerModal.vue'
-import HireStaffTrainerModal from '@/components/team/HireStaffTrainerModal.vue'
-import HireAnalystModal from '@/components/team/HireAnalystModal.vue'
 import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import CoachBadgeStoreModal from '@/components/coach/CoachBadgeStoreModal.vue'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
@@ -44,6 +40,11 @@ import { getSchemePlaybook } from '@/engine/simulation/PlayService'
 // a scheme's "View plays" — it stays out of the Team Management view bundle.
 const PlayAnimationPreview = defineAsyncComponent(() =>
   import('@/components/coaching/PlayAnimationPreview.vue')
+)
+// Lazy for the same reason: only mounts on the Coach tab's offensive scheme
+// view (season play analytics — analytics facility Lv3+ payoff).
+const PlayAnalyticsPanel = defineAsyncComponent(() =>
+  import('@/components/analytics/PlayAnalyticsPanel.vue')
 )
 
 const route = useRoute()
@@ -210,16 +211,7 @@ const swappingLineup = ref(false)
 // Animation state for lineup changes - supports multiple players
 const animatingPlayers = ref({}) // { [playerId]: 'up' | 'down' }
 
-// Personnel sub-tab state
-const activePersonnelTab = ref('coach')
-const showHireScoutModal = ref(false)
-const firingScout = ref(false)
-const showHireTrainerModal = ref(false)
-const firingTrainer = ref(false)
-const showHireStaffTrainerModal = ref(false)
-const firingStaffTrainer = ref(false)
-const showHireAnalystModal = ref(false)
-const firingAnalyst = ref(false)
+// Coach tab modal state (staff hire/manage moved into FacilitiesTab)
 const showHireCoachModal = ref(false)
 const showCoachBadgeStore = ref(false)
 
@@ -231,25 +223,12 @@ const COACH_BADGE_TIER_COLORS = {
   hof: '#9333EA',
 }
 
-// Scout computed
-const scoutingFacilityLevel = computed(() => teamStore.team?.facilities?.scouting ?? 1)
+// Hired-staff presence — drives the Facilities tab's warning badge (the staff
+// hire/manage UI itself lives in FacilitiesTab, one card per facility).
 const hiredScout = computed(() => campaignStore.currentCampaign?.settings?.scout ?? null)
-
-// Trainer (Physician) computed
-const medicalFacilityLevel = computed(() => teamStore.team?.facilities?.medical ?? 1)
 const hiredTrainer = computed(() => campaignStore.currentCampaign?.settings?.trainer ?? null)
-
-// Staff Trainer computed
-const trainingFacilityLevel = computed(() => teamStore.team?.facilities?.training ?? 1)
 const hiredStaffTrainer = computed(() => campaignStore.currentCampaign?.settings?.staff_trainer ?? null)
-
-// Analyst computed
-const analyticsFacilityLevel = computed(() => teamStore.team?.facilities?.analytics ?? 1)
 const hiredAnalyst = computed(() => campaignStore.currentCampaign?.settings?.analyst ?? null)
-const ANALYST_PERK_LABELS = {
-  postgame_analytics: { label: 'Postgame Analytics', description: "See your team's efficiency by play set after games." },
-  opponent_analytics: { label: 'Opponent Scouting Report', description: "Scout the opponent's play-set tendencies before games." },
-}
 
 // Coach settings state
 const activeCoachTab = ref('offensive')
@@ -316,6 +295,82 @@ function selectedPlayObj(schemeId) {
   }
   return null
 }
+
+// --- Analytics facility — tiered coach insights ------------------------------
+// The ANALYTICS facility's baseline per-level payoff (no analyst needed):
+// Lv1 rough fit tiers · Lv2 exact Fit % · Lv3 season play analytics panel ·
+// Lv4 per-play season chips in the playbook · Lv5 "Season Proven" scheme tag.
+// The analyst's per-game postgame + pregame opponent reports (GameView) stay
+// analyst-gated and are unrelated to this ladder.
+
+const analyticsLevel = computed(() =>
+  Math.min(5, Math.max(1, teamStore.team?.facilities?.analytics ?? 1))
+)
+
+// Rough fit buckets shown below analytics Lv2 in place of the exact Fit %.
+const FIT_TIERS = [
+  { min: 80, label: 'Elite Fit' },
+  { min: 65, label: 'Good Fit' },
+  { min: 50, label: 'Fair Fit' },
+  { min: 0, label: 'Poor Fit' },
+]
+
+function fitTierLabel(value) {
+  return FIT_TIERS.find(t => (value ?? 0) >= t.min)?.label ?? 'Poor Fit'
+}
+
+// Lv4: season efficiency for the play currently selected in a scheme's
+// playbook viewer. Null (chips hidden) when the play has no season data yet.
+function seasonStatsForSelectedPlay(schemeId) {
+  const id = selectedPlayId.value[schemeId] || defaultPlayId(schemeId)
+  const entry = teamStore.team?.playAnalytics?.plays?.[id]
+  if (!entry || !(entry.poss > 0)) return null
+  return {
+    poss: entry.poss,
+    ppp: (entry.pts / entry.poss).toFixed(2),
+    two: entry.fg2a > 0 ? Math.round((entry.fg2m / entry.fg2a) * 100) : null,
+    three: entry.fg3a > 0 ? Math.round((entry.fg3m / entry.fg3a) * 100) : null,
+  }
+}
+
+// Lv5: the offensive scheme whose emphasized play categories have produced the
+// best points-per-possession this season (min sample so a hot first game
+// doesn't crown a scheme). Null until enough data exists.
+const PROVEN_MIN_POSS = 25
+
+const provenScheme = computed(() => {
+  if (analyticsLevel.value < 5) return null
+  const plays = teamStore.team?.playAnalytics?.plays
+  if (!plays) return null
+  // Aggregate season pts/poss per play category once.
+  const byCategory = {}
+  for (const entry of Object.values(plays)) {
+    if (!entry?.category || !(entry.poss > 0)) continue
+    const agg = byCategory[entry.category] ?? (byCategory[entry.category] = { pts: 0, poss: 0 })
+    agg.pts += entry.pts ?? 0
+    agg.poss += entry.poss
+  }
+  let best = null
+  let bestPpp = -Infinity
+  for (const schemeId of Object.keys(teamStore.coachingSchemes?.offensive ?? {})) {
+    let pts = 0
+    let poss = 0
+    for (const grp of playbookFor(schemeId)) {
+      const agg = byCategory[grp.category]
+      if (agg) {
+        pts += agg.pts
+        poss += agg.poss
+      }
+    }
+    if (poss < PROVEN_MIN_POSS) continue
+    const ppp = pts / poss
+    if (ppp > bestPpp) {
+      bestPpp = ppp
+      best = schemeId
+    }
+  }
+  return best
+})
 const selectedDefensiveScheme = ref(null)
 const selectedSubStrategy = ref('staggered')
 
@@ -577,7 +632,7 @@ onMounted(async () => {
     }
   }
 
-  // If the GM page opened directly on the Personnel tab, the activeTab watcher
+  // If the GM page opened directly on the Coach tab (id 'personnel'), the activeTab watcher
   // won't fire — load the coaching schemes here so the Offensive/Substitution
   // grids and Fit % populate. (roster is loaded by the fetch above.)
   if (activeTab.value === 'personnel') {
@@ -752,9 +807,10 @@ async function updateSubstitutionStrategy(strategy) {
 }
 
 // Watch for tab change to fetch coaching schemes and clear trade state
-// Load the coaching-scheme list + per-scheme Fit % for the Personnel tab. Used
-// by BOTH the activeTab watcher (on tab switch) AND onMounted (when the GM page
-// opens directly on Personnel — e.g. a reload or deep link — where the watcher
+// Load the coaching-scheme list + per-scheme Fit % for the Coach tab (id
+// 'personnel'). Used by BOTH the activeTab watcher (on tab switch) AND
+// onMounted (when the GM page opens directly on it — e.g. a reload or deep
+// link — where the watcher
 // never fires and the Offensive/Substitution grids would otherwise stay empty).
 async function loadCoachingSchemes() {
   if (schemesFetched.value) return
@@ -1138,22 +1194,7 @@ function hasUpgradePoints(player) {
 }
 
 function formatBadgeName(badge) {
-  // Handle both badge object and string id
-  if (!badge) return ''
-
-  // If passed a badge object with a name, use it directly
-  if (typeof badge === 'object' && badge.name) {
-    return badge.name
-  }
-
-  // Otherwise format the id (handle both object.id and raw string)
-  const badgeId = typeof badge === 'object' ? badge.id : badge
-  if (!badgeId) return ''
-
-  return badgeId
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ')
+  return badgeDisplayName(badge)
 }
 
 function formatAttrName(attrKey) {
@@ -1407,74 +1448,6 @@ function onCoachHired() {
   // updated pool on the next render.
 }
 
-// Scout functions
-async function fireScout() {
-  if (firingScout.value) return
-  firingScout.value = true
-  try {
-    const camp = await CampaignRepository.get(campaignId.value)
-    if (camp) {
-      camp.settings = camp.settings ?? {}
-      delete camp.settings.scout
-      await CampaignRepository.save(camp)
-    }
-    if (campaignStore.currentCampaign) {
-      const settings = { ...campaignStore.currentCampaign.settings }
-      delete settings.scout
-      campaignStore.currentCampaign.settings = settings
-    }
-    syncStore.markDirty()
-    toastStore.showSuccess('Scout released')
-  } catch (err) {
-    console.error('Failed to fire scout:', err)
-    toastStore.showError('Failed to release scout')
-  } finally {
-    firingScout.value = false
-  }
-}
-
-async function onScoutHired() {
-  try {
-    await campaignStore.fetchCampaign(campaignId.value)
-  } catch (err) {
-    console.error('Failed to refresh campaign after hiring scout:', err)
-  }
-}
-
-// Analyst functions
-async function fireAnalyst() {
-  if (firingAnalyst.value) return
-  firingAnalyst.value = true
-  try {
-    const camp = await CampaignRepository.get(campaignId.value)
-    if (camp) {
-      camp.settings = camp.settings ?? {}
-      delete camp.settings.analyst
-      await CampaignRepository.save(camp)
-    }
-    if (campaignStore.currentCampaign) {
-      const settings = { ...campaignStore.currentCampaign.settings }
-      delete settings.analyst
-      campaignStore.currentCampaign.settings = settings
-    }
-    syncStore.markDirty()
-    toastStore.showSuccess('Analyst released')
-  } catch (err) {
-    console.error('Failed to fire analyst:', err)
-    toastStore.showError('Failed to release analyst')
-  } finally {
-    firingAnalyst.value = false
-  }
-}
-
-async function onAnalystHired() {
-  try {
-    await campaignStore.fetchCampaign(campaignId.value)
-  } catch (err) {
-    console.error('Failed to refresh campaign after hiring analyst:', err)
-  }
-}
-
 // Refresh team store after a coach badge purchase so the coach card chip row
 // and the badge store's "Owned" state both reflect the new badge immediately.
 async function onCoachBadgePurchased() {
@@ -1485,107 +1458,6 @@ async function onCoachBadgePurchased() {
   }
 }
 
-function isPerkActiveForScout(perk) {
-  return (teamStore.team?.facilities?.scouting ?? 1) >= perk.requiredLevel
-}
-
-// Analyst perks gate on the ANALYTICS facility (stored requiredLevel — analysts
-// hired before facility gating carry 1 and stay grandfathered until re-hired).
-function isPerkActiveForAnalyst(perk) {
-  return (teamStore.team?.facilities?.analytics ?? 1) >= (perk.requiredLevel ?? 1)
-}
-
-const PERK_LABELS = {
-  extra_reveals: { label: 'Extra Reveals', description: 'Reveals 33% of attributes per scout action (3 actions to fully scout)' },
-  badge_reveal: { label: 'Badge Intel', description: '35% chance per scout action to reveal badges' },
-  morale_reveal: { label: 'Personality Intel', description: '35% chance per scout action to reveal morale/personality' },
-}
-
-// Trainer functions
-async function fireTrainer() {
-  if (firingTrainer.value) return
-  firingTrainer.value = true
-  try {
-    const camp = await CampaignRepository.get(campaignId.value)
-    if (camp) {
-      camp.settings = camp.settings ?? {}
-      delete camp.settings.trainer
-      await CampaignRepository.save(camp)
-    }
-    if (campaignStore.currentCampaign) {
-      const settings = { ...campaignStore.currentCampaign.settings }
-      delete settings.trainer
-      campaignStore.currentCampaign.settings = settings
-    }
-    syncStore.markDirty()
-    toastStore.showSuccess('Physician released')
-  } catch (err) {
-    console.error('Failed to fire trainer:', err)
-    toastStore.showError('Failed to release physician')
-  } finally {
-    firingTrainer.value = false
-  }
-}
-
-async function onTrainerHired() {
-  try {
-    await campaignStore.fetchCampaign(campaignId.value)
-  } catch (err) {
-    console.error('Failed to refresh campaign after hiring trainer:', err)
-  }
-}
-
-function isPerkActiveForTrainer(perk) {
-  return (teamStore.team?.facilities?.medical ?? 1) >= perk.requiredLevel
-}
-
-const TRAINER_PERK_LABELS = {
-  fast_recovery: { label: 'Fast Recovery', description: 'Players recover from injuries faster' },
-  injury_prevention: { label: 'Injury Prevention', description: 'Players have less risk of getting injured' },
-}
-
-// Staff Trainer functions
-async function fireStaffTrainer() {
-  if (firingStaffTrainer.value) return
-  firingStaffTrainer.value = true
-  try {
-    const camp = await CampaignRepository.get(campaignId.value)
-    if (camp) {
-      camp.settings = camp.settings ?? {}
-      delete camp.settings.staff_trainer
-      await CampaignRepository.save(camp)
-    }
-    if (campaignStore.currentCampaign) {
-      const settings = { ...campaignStore.currentCampaign.settings }
-      delete settings.staff_trainer
-      campaignStore.currentCampaign.settings = settings
-    }
-    syncStore.markDirty()
-    toastStore.showSuccess('Trainer released')
-  } catch (err) {
-    console.error('Failed to fire staff trainer:', err)
-    toastStore.showError('Failed to release trainer')
-  } finally {
-    firingStaffTrainer.value = false
-  }
-}
-
-async function onStaffTrainerHired() {
-  try {
-    await campaignStore.fetchCampaign(campaignId.value)
-  } catch (err) {
-    console.error('Failed to refresh campaign after hiring staff trainer:', err)
-  }
-}
-
-function isPerkActiveForStaffTrainer(perk) {
-  return (teamStore.team?.facilities?.training ?? 1) >= perk.requiredLevel
-}
-
-const STAFF_TRAINER_PERK_LABELS = {
-  growth_boost: { label: 'Enhanced Development', description: 'Players develop faster from game performance' },
-  fatigue_reduction: { label: 'Conditioning Program', description: 'Players generate less fatigue during games' },
-}
 </script>
 
 <template>
@@ -1609,7 +1481,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           data-tour="gm-tab-team"
           @click="activeTab = 'team'"
         >
-          Lineup
+          {{ $t('Lineup') }}
         </button>
         <button
           class="tab-btn"
@@ -1617,10 +1489,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           data-tour="gm-tab-personnel"
           @click="activeTab = 'personnel'"
         >
-          Personnel
-          <span v-if="!hiredScout || !hiredTrainer || !hiredStaffTrainer" class="tab-badge tab-badge-warning">
-            <AlertTriangle :size="10" />
-          </span>
+          {{ $t('Coach') }}
         </button>
         <button
           class="tab-btn"
@@ -1628,7 +1497,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           data-tour="gm-tab-finances"
           @click="activeTab = 'finances'"
         >
-          Roster
+          {{ $t('Roster') }}
           <span v-if="!isOffseason && expiringContractsCount > 0" class="tab-badge">{{ expiringContractsCount }}</span>
         </button>
         <button
@@ -1638,7 +1507,7 @@ const STAFF_TRAINER_PERK_LABELS = {
           data-tour="gm-tab-trades"
           @click="activeTab = 'trades'"
         >
-          Trades
+          {{ $t('Trades') }}
         </button>
         <button
           class="tab-btn"
@@ -1646,7 +1515,10 @@ const STAFF_TRAINER_PERK_LABELS = {
           data-tour="gm-tab-facilities"
           @click="activeTab = 'facilities'"
         >
-          Facilities
+          {{ $t('Facilities') }}
+          <span v-if="!hiredScout || !hiredTrainer || !hiredStaffTrainer || !hiredAnalyst" class="tab-badge tab-badge-warning">
+            <AlertTriangle :size="10" />
+          </span>
         </button>
         <button
           class="tab-btn"
@@ -1654,14 +1526,14 @@ const STAFF_TRAINER_PERK_LABELS = {
           data-tour="gm-tab-owner"
           @click="activeTab = 'owner'"
         >
-          Owner
+          {{ $t('Owner') }}
         </button>
         <button
           class="tab-btn tab-btn-icon"
           :class="{ active: activeTab === 'schedule' }"
           data-tour="gm-tab-schedule"
           @click="activeTab = 'schedule'"
-          title="Schedule"
+          :title="$t('Schedule')"
         >
           <Calendar :size="18" />
         </button>
@@ -1671,7 +1543,7 @@ const STAFF_TRAINER_PERK_LABELS = {
       <div v-if="activeTab === 'team'" class="roster-content" data-tour="gm-roster">
         <!-- Starters Section -->
         <div class="roster-list-header card-cosmic" data-tour="gm-starters">
-          <h3 class="list-header-text">STARTERS</h3>
+          <h3 class="list-header-text">{{ $t('STARTERS') }}</h3>
           <div class="header-metrics">
             <span class="chemistry-chip" :style="{ '--chemistry-color': chemistryColor }">
               <component
@@ -1684,17 +1556,18 @@ const STAFF_TRAINER_PERK_LABELS = {
               />
               <span class="team-chemistry-value" :style="{ color: chemistryColor }">{{ teamChemistry }}%</span>
             </span>
+            <!-- i18n-ignore -->
             <span class="header-metrics-divider">&middot;</span>
             <span class="total-minutes-value" data-tour="gm-minutes">{{ totalMinutes }} / 240</span>
             <button
               class="cpu-adjust-btn"
               data-tour="gm-cpu-auto"
               :disabled="cpuAdjusting || swappingLineup"
-              :title="'Let the CPU pick the best 5 + spread minutes'"
+              :title="$t('Let the CPU pick the best 5 + spread minutes')"
               @click="cpuAdjustLineup"
             >
               <Zap :size="12" />
-              <span>{{ cpuAdjusting ? 'Adjusting…' : 'Auto' }}</span>
+              <span>{{ cpuAdjusting ? $t('Adjusting…') : $t('Auto') }}</span>
             </button>
           </div>
         </div>
@@ -1707,16 +1580,16 @@ const STAFF_TRAINER_PERK_LABELS = {
                   <span class="empty-position">{{ slot.position }}</span>
                 </div>
                 <div class="player-main-info">
-                  <h4 class="player-name empty-name">Empty Slot</h4>
+                  <h4 class="player-name empty-name">{{ $t('Empty Slot') }}</h4>
                   <div class="player-meta">
                     <span class="position-badge" :style="{ backgroundColor: getPositionColor(slot.position) }">
                       {{ slot.position }}
                     </span>
-                    <span class="role-badge starter">STARTER</span>
+                    <span class="role-badge starter">{{ $t('STARTER') }}</span>
                   </div>
                 </div>
                 <div class="rating-container">
-                  <button class="move-btn" @click.stop="toggleMoveDropdown(`starter-empty-${index}`)" title="Add player">
+                  <button class="move-btn" @click.stop="toggleMoveDropdown(`starter-empty-${index}`)" :title="$t('Add player')">
                     <ArrowUpDown :size="14" />
                   </button>
                   <div class="empty-rating">--</div>
@@ -1725,7 +1598,7 @@ const STAFF_TRAINER_PERK_LABELS = {
               <!-- Empty slot dropdown - show bench players who can play this position -->
               <Transition name="dropdown-slide">
                 <div v-if="expandedMovePlayer === `starter-empty-${index}`" class="move-dropdown">
-                  <div class="dropdown-header">Select player for {{ slot.position }}</div>
+                  <div class="dropdown-header">{{ $t('Select player for {pos}', { pos: slot.position }) }}</div>
                   <div class="dropdown-list">
                     <button
                       v-for="candidate in getStarterSwapCandidates(slot.position)"
@@ -1742,11 +1615,11 @@ const STAFF_TRAINER_PERK_LABELS = {
                       <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
                         {{ candidate.position }}
                       </span>
-                      <span v-if="candidate.is_injured || candidate.isInjured" class="dropdown-injury">INJ</span>
+                      <span v-if="candidate.is_injured || candidate.isInjured" class="dropdown-injury">{{ $t('INJ') }}</span>
                       <StatBadge :value="candidate.overall_rating" size="sm" />
                     </button>
                     <div v-if="getStarterSwapCandidates(slot.position).length === 0" class="dropdown-empty">
-                      No available players
+                      {{ $t('No available players') }}
                     </div>
                   </div>
                 </div>
@@ -1774,9 +1647,9 @@ const STAFF_TRAINER_PERK_LABELS = {
                     <span
                       v-if="isTrainingInProgressFor(slot.player)"
                       class="train-countdown"
-                      :title="`Training · ${formatTrainingCountdown(trainingMsLeftFor(slot.player))} remaining`"
+                      :title="$t('Training · {t} remaining', { t: formatTrainingCountdown(trainingMsLeftFor(slot.player)) })"
                     ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeftFor(slot.player)) }}</span></span>
-                    <span v-else-if="isTrainingReadyFor(slot.player)" class="train-ready-dot" :title="'Training ready to claim'"></span>
+                    <span v-else-if="isTrainingReadyFor(slot.player)" class="train-ready-dot" :title="$t('Training ready to claim')"></span>
                     <span class="slot-position-label card-cosmic">{{ slot.position }}</span>
                   </div>
                 </div>
@@ -1785,7 +1658,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     {{ slot.player.name }}
                   </h4>
                   <div class="player-meta">
-                    <div class="vitals-row">{{ slot.player.height || "6'6\"" }} · {{ formatWeight(slot.player.weight) }} lbs · {{ slot.player.age || 25 }} yrs</div>
+                    <div class="vitals-row">{{ $t('{h} · {w} lbs · {age} yrs', { h: slot.player.height || "6'6\"", w: formatWeight(slot.player.weight), age: slot.player.age || 25 }) }}</div>
                     <div class="position-badges">
                       <span
                         class="position-badge"
@@ -1802,7 +1675,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                       </span>
                     </div>
                     <span v-if="slot.player.is_injured || slot.player.isInjured" class="injury-tag">
-                      Injured - {{ injuryDaysLabel(slot.player) }}
+                      {{ $t('Injured - {d}', { d: injuryDaysLabel(slot.player) }) }}
                     </span>
                   </div>
                   <!-- Minutes + Fatigue meters group (highlighted as a unit
@@ -1831,7 +1704,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     </div>
                     <!-- Fatigue Meter -->
                     <div class="fatigue-meter-row">
-                      <label class="meter-label fatigue-label">FATIGUE</label>
+                      <label class="meter-label fatigue-label">{{ $t('FATIGUE') }}</label>
                       <div class="fatigue-meter-bar">
                         <div
                           class="fatigue-meter-fill"
@@ -1853,10 +1726,10 @@ const STAFF_TRAINER_PERK_LABELS = {
                       v-if="hasUpgradePoints(slot.player)"
                       :size="14"
                       class="ovr-upgrade-indicator"
-                      title="Upgrade points available"
+                      :title="$t('Upgrade points available')"
                     />
                   </div>
-                  <button class="move-btn" :class="{ active: expandedMovePlayer === `starter-${slot.player.id}` }" :data-tour="index === 0 ? 'gm-move-btn' : null" @click.stop="toggleMoveDropdown(`starter-${slot.player.id}`)" title="Adjust lineup">
+                  <button class="move-btn" :class="{ active: expandedMovePlayer === `starter-${slot.player.id}` }" :data-tour="index === 0 ? 'gm-move-btn' : null" @click.stop="toggleMoveDropdown(`starter-${slot.player.id}`)" :title="$t('Adjust lineup')">
                     <ArrowUpDown :size="14" />
                   </button>
                 </div>
@@ -1865,7 +1738,7 @@ const STAFF_TRAINER_PERK_LABELS = {
               <!-- Move Dropdown for Starters -->
               <Transition name="dropdown-slide">
                 <div v-if="expandedMovePlayer === `starter-${slot.player.id}`" class="move-dropdown" :data-tour="index === 0 ? 'gm-move-dropdown' : null">
-                  <div class="dropdown-header">Replace {{ slot.player.name }}</div>
+                  <div class="dropdown-header">{{ $t('Replace {name}', { name: slot.player.name }) }}</div>
                   <div class="dropdown-list">
                     <!-- Move to Bench option (empty-looking) -->
                     <button class="dropdown-item empty-option" @click.stop="moveToBench(index)">
@@ -1873,8 +1746,8 @@ const STAFF_TRAINER_PERK_LABELS = {
                       <div class="dropdown-avatar empty">
                         <span class="empty-icon">−</span>
                       </div>
-                      <span class="dropdown-name">Move to Bench</span>
-                      <span class="dropdown-hint">No replacement</span>
+                      <span class="dropdown-name">{{ $t('Move to Bench') }}</span>
+                      <span class="dropdown-hint">{{ $t('No replacement') }}</span>
                     </button>
                     <!-- Bench players who can play this position -->
                     <button
@@ -1895,7 +1768,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                       <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
                         {{ candidate.position }}
                       </span>
-                      <span v-if="candidate.is_injured || candidate.isInjured" class="dropdown-injury">INJ</span>
+                      <span v-if="candidate.is_injured || candidate.isInjured" class="dropdown-injury">{{ $t('INJ') }}</span>
                       <StatBadge :value="candidate.overall_rating" size="sm" />
                     </button>
                   </div>
@@ -1906,10 +1779,15 @@ const STAFF_TRAINER_PERK_LABELS = {
               <div v-if="expandedMovePlayer !== `starter-${slot.player.id}`" class="card-body">
                 <!-- Season Stats (compact) -->
                 <div v-if="slot.player.season_stats" class="stats-inline">
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">PPG</span><span class="stat-val">{{ slot.player.season_stats.ppg }}</span></span>
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">RPG</span><span class="stat-val">{{ slot.player.season_stats.rpg }}</span></span>
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">APG</span><span class="stat-val">{{ slot.player.season_stats.apg }}</span></span>
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">SPG</span><span class="stat-val">{{ slot.player.season_stats.spg }}</span></span>
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">BPG</span><span class="stat-val">{{ slot.player.season_stats.bpg }}</span></span>
                   <span class="stat-inline"><span class="stat-label">FG%</span><span class="stat-val">{{ slot.player.season_stats.fg_pct }}</span></span>
                   <span class="stat-inline"><span class="stat-label">3P%</span><span class="stat-val">{{ slot.player.season_stats.three_pct }}</span></span>
@@ -1928,13 +1806,13 @@ const STAFF_TRAINER_PERK_LABELS = {
                       :class="{ 'synergy-active': isStarterBadgeActivated(slot.player, badge.id) }"
                       :style="{ backgroundColor: getBadgeLevelColor(badge.level) }"
                     />
-                    <span class="badge-name" :class="{ 'synergy-active-text': isStarterBadgeActivated(slot.player, badge.id) }">{{ formatBadgeName(badge) }}</span>
+                    <span class="badge-name" :class="{ 'synergy-active-text': isStarterBadgeActivated(slot.player, badge.id) }">{{ $tDynamic(formatBadgeName(badge)) }}</span>
                   </div>
                   <span v-if="slot.player.badges.length > 3" class="badge-more-count">+{{ slot.player.badges.length - 3 }}</span>
                 </div>
                 <div v-if="getPlayerDuoPartner(slot.player)" class="dynamic-duo-badge">
                   <Users :size="12" />
-                  <span>Dynamic Duo w/ {{ getPlayerDuoPartner(slot.player) }}</span>
+                  <span>{{ $t('Dynamic Duo w/ {name}', { name: getPlayerDuoPartner(slot.player) }) }}</span>
                 </div>
               </div>
             </div>
@@ -1943,7 +1821,7 @@ const STAFF_TRAINER_PERK_LABELS = {
 
         <!-- Bench Section -->
         <div class="roster-list-header card-cosmic" data-tour="gm-bench">
-          <h3 class="list-header-text">BENCH</h3>
+          <h3 class="list-header-text">{{ $t('BENCH') }}</h3>
         </div>
         <TransitionGroup name="bench-reorder" tag="div" class="players-grid">
           <!-- Bench Players -->
@@ -1967,10 +1845,10 @@ const STAFF_TRAINER_PERK_LABELS = {
                   <span
                     v-if="isTrainingInProgressFor(player)"
                     class="train-countdown"
-                    :title="`Training · ${formatTrainingCountdown(trainingMsLeftFor(player))} remaining`"
+                    :title="$t('Training · {t} remaining', { t: formatTrainingCountdown(trainingMsLeftFor(player)) })"
                   ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeftFor(player)) }}</span></span>
-                  <span v-else-if="isTrainingReadyFor(player)" class="train-ready-dot" :title="'Training ready to claim'"></span>
-                  <span class="slot-position-label bench-label">BENCH</span>
+                  <span v-else-if="isTrainingReadyFor(player)" class="train-ready-dot" :title="$t('Training ready to claim')"></span>
+                  <span class="slot-position-label bench-label">{{ $t('BENCH') }}</span>
                 </div>
               </div>
               <div class="player-main-info">
@@ -1978,7 +1856,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                   {{ player.name }}
                 </h4>
                 <div class="player-meta">
-                  <div class="vitals-row">{{ player.height || "6'6\"" }} · {{ formatWeight(player.weight) }} lbs · {{ player.age || 25 }} yrs</div>
+                  <div class="vitals-row">{{ $t('{h} · {w} lbs · {age} yrs', { h: player.height || "6'6\"", w: formatWeight(player.weight), age: player.age || 25 }) }}</div>
                   <div class="position-badges">
                     <span class="position-badge" :style="{ backgroundColor: getPositionColor(player.position) }">
                       {{ player.position }}
@@ -1988,7 +1866,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     </span>
                   </div>
                   <span v-if="player.is_injured || player.isInjured" class="injury-tag">
-                    Injured - {{ injuryDaysLabel(player) }}
+                    {{ $t('Injured - {d}', { d: injuryDaysLabel(player) }) }}
                   </span>
                 </div>
                 <!-- Minutes Meter -->
@@ -2013,7 +1891,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                 </div>
                 <!-- Fatigue Meter -->
                 <div class="fatigue-meter-row">
-                  <label class="meter-label fatigue-label">FATIGUE</label>
+                  <label class="meter-label fatigue-label">{{ $t('FATIGUE') }}</label>
                   <div class="fatigue-meter-bar">
                     <div
                       class="fatigue-meter-fill"
@@ -2034,14 +1912,14 @@ const STAFF_TRAINER_PERK_LABELS = {
                     v-if="hasUpgradePoints(player)"
                     :size="14"
                     class="ovr-upgrade-indicator"
-                    title="Upgrade points available"
+                    :title="$t('Upgrade points available')"
                   />
                 </div>
                 <button
                   class="move-btn"
                   :class="{ active: expandedMovePlayer === `bench-${player.id}` }"
                   :disabled="player.is_injured || player.isInjured"
-                  :title="(player.is_injured || player.isInjured) ? 'Injured players cannot be moved into the starting lineup' : 'Adjust lineup'"
+                  :title="(player.is_injured || player.isInjured) ? $t('Injured players cannot be moved into the starting lineup') : $t('Adjust lineup')"
                   @click.stop="toggleMoveDropdown(`bench-${player.id}`)"
                 >
                   <ArrowUpDown :size="14" />
@@ -2052,7 +1930,7 @@ const STAFF_TRAINER_PERK_LABELS = {
             <!-- Move Dropdown for Bench Players -->
             <Transition name="dropdown-slide">
               <div v-if="expandedMovePlayer === `bench-${player.id}`" class="move-dropdown">
-                <div class="dropdown-header">Move to starting lineup</div>
+                <div class="dropdown-header">{{ $t('Move to starting lineup') }}</div>
                 <div class="dropdown-list">
                   <!-- Empty starter slots this player can fill -->
                   <button
@@ -2065,7 +1943,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     <div class="dropdown-avatar empty">
                       <span class="empty-icon">+</span>
                     </div>
-                    <span class="dropdown-name">Fill Empty Slot</span>
+                    <span class="dropdown-name">{{ $t('Fill Empty Slot') }}</span>
                     <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(emptySlot.position) }">
                       {{ emptySlot.position }}
                     </span>
@@ -2089,11 +1967,11 @@ const STAFF_TRAINER_PERK_LABELS = {
                     <span class="dropdown-position-badge" :style="{ backgroundColor: getPositionColor(candidate.position) }">
                       {{ candidate.slotPosition }}
                     </span>
-                    <span v-if="candidate.is_injured || candidate.isInjured" class="dropdown-injury">INJ</span>
+                    <span v-if="candidate.is_injured || candidate.isInjured" class="dropdown-injury">{{ $t('INJ') }}</span>
                     <StatBadge :value="candidate.overall_rating" size="sm" />
                   </button>
                   <div v-if="getBenchSwapCandidates(player).length === 0 && getEmptySlotCandidates(player).length === 0" class="dropdown-empty">
-                    No compatible positions
+                    {{ $t('No compatible positions') }}
                   </div>
                 </div>
               </div>
@@ -2103,10 +1981,15 @@ const STAFF_TRAINER_PERK_LABELS = {
             <div v-if="expandedMovePlayer !== `bench-${player.id}`" class="card-body">
               <!-- Season Stats (compact) -->
               <div v-if="player.season_stats" class="stats-inline">
+                <!-- i18n-ignore -->
                 <span class="stat-inline"><span class="stat-label">PPG</span><span class="stat-val">{{ player.season_stats.ppg }}</span></span>
+                <!-- i18n-ignore -->
                 <span class="stat-inline"><span class="stat-label">RPG</span><span class="stat-val">{{ player.season_stats.rpg }}</span></span>
+                <!-- i18n-ignore -->
                 <span class="stat-inline"><span class="stat-label">APG</span><span class="stat-val">{{ player.season_stats.apg }}</span></span>
+                <!-- i18n-ignore -->
                 <span class="stat-inline"><span class="stat-label">SPG</span><span class="stat-val">{{ player.season_stats.spg }}</span></span>
+                <!-- i18n-ignore -->
                 <span class="stat-inline"><span class="stat-label">BPG</span><span class="stat-val">{{ player.season_stats.bpg }}</span></span>
                 <span class="stat-inline"><span class="stat-label">FG%</span><span class="stat-val">{{ player.season_stats.fg_pct }}</span></span>
                 <span class="stat-inline"><span class="stat-label">3P%</span><span class="stat-val">{{ player.season_stats.three_pct }}</span></span>
@@ -2124,7 +2007,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     class="badge-dot"
                     :style="{ backgroundColor: getBadgeLevelColor(badge.level) }"
                   />
-                  <span class="badge-name">{{ formatBadgeName(badge) }}</span>
+                  <span class="badge-name">{{ $tDynamic(formatBadgeName(badge)) }}</span>
                 </div>
                 <span v-if="player.badges.length > 3" class="badge-more-count">+{{ player.badges.length - 3 }}</span>
               </div>
@@ -2138,9 +2021,9 @@ const STAFF_TRAINER_PERK_LABELS = {
                 <span class="empty-icon">+</span>
               </div>
               <div class="player-main-info">
-                <h4 class="player-name empty-name">Empty Roster Slot</h4>
+                <h4 class="player-name empty-name">{{ $t('Empty Roster Slot') }}</h4>
                 <div class="player-meta">
-                  <span class="empty-hint">{{ 15 - roster.length - n + 1 }} of {{ availableRosterSlots }} available</span>
+                  <span class="empty-hint">{{ $t('{a} of {b} available', { a: 15 - roster.length - n + 1, b: availableRosterSlots }) }}</span>
                 </div>
               </div>
               <div class="rating-container">
@@ -2151,63 +2034,11 @@ const STAFF_TRAINER_PERK_LABELS = {
         </TransitionGroup>
       </div>
 
-      <!-- Personnel View -->
+      <!-- Coach View (tab id stays 'personnel' for deep links / tour keys;
+           the four facility staff moved into the Facilities tab) -->
       <div v-else-if="activeTab === 'personnel'" class="coach-content">
-        <!-- Personnel Sub-tabs -->
-        <div class="coach-tabs" data-tour="gm-personnel-coach">
-          <button
-            class="coach-tab-btn"
-            :class="{ active: activePersonnelTab === 'coach' }"
-            @click="activePersonnelTab = 'coach'"
-          >Coach</button>
-          <button
-            class="coach-tab-btn"
-            :class="{ active: activePersonnelTab === 'scout' }"
-            @click="activePersonnelTab = 'scout'"
-            style="position: relative;"
-          >
-            Scout
-            <span v-if="!hiredScout" class="tab-badge tab-badge-warning">
-              <AlertTriangle :size="10" />
-            </span>
-          </button>
-          <button
-            class="coach-tab-btn"
-            :class="{ active: activePersonnelTab === 'trainer' }"
-            @click="activePersonnelTab = 'trainer'"
-            style="position: relative;"
-          >
-            Team Physician
-            <span v-if="!hiredTrainer" class="tab-badge tab-badge-warning">
-              <AlertTriangle :size="10" />
-            </span>
-          </button>
-          <button
-            class="coach-tab-btn"
-            :class="{ active: activePersonnelTab === 'staff_trainer' }"
-            @click="activePersonnelTab = 'staff_trainer'"
-            style="position: relative;"
-          >
-            Trainer
-            <span v-if="!hiredStaffTrainer" class="tab-badge tab-badge-warning">
-              <AlertTriangle :size="10" />
-            </span>
-          </button>
-          <button
-            class="coach-tab-btn"
-            :class="{ active: activePersonnelTab === 'analyst' }"
-            @click="activePersonnelTab = 'analyst'"
-            style="position: relative;"
-          >
-            Analyst
-            <span v-if="!hiredAnalyst" class="tab-badge tab-badge-warning">
-              <AlertTriangle :size="10" />
-            </span>
-          </button>
-        </div>
-
-        <!-- Coach Sub-tab -->
-        <div v-if="activePersonnelTab === 'coach'">
+        <!-- Coach content -->
+        <div data-tour="gm-personnel-coach">
 
         <!-- No coach signed: empty state -->
         <GlassCard v-if="!coach" padding="lg" :hoverable="false">
@@ -2215,28 +2046,28 @@ const STAFF_TRAINER_PERK_LABELS = {
             <div class="coach-empty-icon">
               <User :size="40" />
             </div>
-            <h3 class="empty-title">No Head Coach Signed</h3>
+            <h3 class="empty-title">{{ $t('No Head Coach Signed') }}</h3>
             <p class="empty-desc">
-              Hire a head coach from the free-agent pool. Coaches affect scheme effectiveness, player development, and clutch-time decisions. A signed coach is required before you can start a new season.
+              {{ $t('Hire a head coach from the free-agent pool. Coaches affect scheme effectiveness, player development, and clutch-time decisions. A signed coach is required before you can start a new season.') }}
             </p>
             <button class="btn-browse-coaches" @click="showHireCoachModal = true">
-              Browse Coaches
+              {{ $t('Browse Coaches') }}
             </button>
           </div>
         </GlassCard>
 
         <!-- Coach Info Card -->
         <GlassCard v-else padding="lg" :hoverable="false">
-          <h3 class="h4 mb-4">Head Coach</h3>
+          <h3 class="h4 mb-4">{{ $t('Head Coach') }}</h3>
           <div class="coach-header">
             <div class="coach-avatar-wrap">
               <CoachAvatar :coach="coach" :size="84" :campaign-id="campaignId" :editable="true" />
             </div>
             <div class="coach-info">
               <p class="coach-name">{{ coach.name }}</p>
-              <span class="rating-label">Overall Rating</span>
+              <span class="rating-label">{{ $t('Overall Rating') }}</span>
               <div v-if="coach.contractYearsRemaining != null" class="coach-contract-line">
-                {{ coach.contractYearsRemaining }} Season{{ coach.contractYearsRemaining !== 1 ? 's' : '' }} Remaining<template v-if="coach.hiredSeason"> · Hired Season {{ coach.hiredSeason }}</template>
+                {{ coach.contractYearsRemaining !== 1 ? $t('{n} Seasons Remaining', { n: coach.contractYearsRemaining }) : $t('{n} Season Remaining', { n: coach.contractYearsRemaining }) }}<template v-if="coach.hiredSeason"> · {{ $t('Hired Season {s}', { s: coach.hiredSeason }) }}</template>
               </div>
             </div>
             <div class="coach-header-actions">
@@ -2252,16 +2083,16 @@ const STAFF_TRAINER_PERK_LABELS = {
               :disabled="resigningCoach"
               @click="showResignModal = true"
             >
-              Re-sign (2 yrs) · {{ resignCost }} <Coins :size="12" class="btn-coin-icon" />
+              {{ $t('Re-sign (2 yrs) · {cost}', { cost: resignCost }) }} <Coins :size="12" class="btn-coin-icon" />
             </button>
             <button class="btn-view-candidates" data-tour="gm-coach-candidates" @click="showHireCoachModal = true">
-              View Candidates
+              {{ $t('View Candidates') }}
             </button>
           </div>
 
           <!-- Coach Badges -->
           <div class="coach-badges-section mt-4" data-tour="gm-coach-badges">
-            <h4 class="section-title">Coach Badges</h4>
+            <h4 class="section-title">{{ $t('Coach Badges') }}</h4>
             <div v-if="ownedCoachBadges.length > 0" class="coach-badges-row">
               <div
                 v-for="badge in ownedCoachBadges"
@@ -2270,56 +2101,56 @@ const STAFF_TRAINER_PERK_LABELS = {
                 :title="`${badge.description} (${badge.level.toUpperCase()})`"
               >
                 <Star :size="12" :style="{ color: COACH_BADGE_TIER_COLORS[badge.level] || 'var(--color-text-secondary)' }" :fill="COACH_BADGE_TIER_COLORS[badge.level] || 'transparent'" />
-                <span class="coach-badge-chip-name">{{ badge.name }}</span>
+                <span class="coach-badge-chip-name">{{ $tDynamic(badge.name) }}</span>
               </div>
             </div>
             <button class="coach-badge-store-btn" data-tour="gm-coach-badge-store" @click="showCoachBadgeStore = true">
               <Star :size="14" />
-              Shop Badges
+              {{ $t('Shop Badges') }}
             </button>
           </div>
 
           <!-- Career Stats -->
           <div v-if="coachCareerStats" class="career-stats-section mt-4">
-            <h4 class="section-title">Career Record</h4>
+            <h4 class="section-title">{{ $t('Career Record') }}</h4>
             <div class="career-stats-grid">
               <div class="career-stat-box">
                 <span class="career-stat-value">{{ coachCareerStats.wins }}-{{ coachCareerStats.losses }}</span>
-                <span class="career-stat-label">Regular Season</span>
+                <span class="career-stat-label">{{ $t('Regular Season') }}</span>
                 <span class="career-stat-pct">{{ coachCareerStats.win_pct }}%</span>
               </div>
               <div class="career-stat-box">
                 <span class="career-stat-value">{{ coachCareerStats.playoff_wins }}-{{ coachCareerStats.playoff_losses }}</span>
-                <span class="career-stat-label">Playoffs</span>
+                <span class="career-stat-label">{{ $t('Playoffs') }}</span>
                 <span class="career-stat-pct">{{ coachCareerStats.playoff_win_pct }}%</span>
               </div>
               <div class="career-stat-box highlight">
                 <span class="career-stat-value">{{ coachCareerStats.championships }}</span>
-                <span class="career-stat-label">Championships</span>
+                <span class="career-stat-label">{{ $t('Championships') }}</span>
               </div>
               <div class="career-stat-box">
                 <span class="career-stat-value">{{ coachCareerStats.seasons_coached }}</span>
-                <span class="career-stat-label">Seasons</span>
+                <span class="career-stat-label">{{ $t('Seasons') }}</span>
               </div>
             </div>
 
             <!-- Awards row -->
             <div v-if="coachCareerStats.conference_titles > 0 || coachCareerStats.coach_of_year_awards > 0" class="awards-row mt-3">
               <span v-if="coachCareerStats.conference_titles > 0" class="award-badge">
-                {{ coachCareerStats.conference_titles }}x Conference Champion
+                {{ $t('{n}x Conference Champion', { n: coachCareerStats.conference_titles }) }}
               </span>
               <span v-if="coachCareerStats.coach_of_year_awards > 0" class="award-badge gold">
-                {{ coachCareerStats.coach_of_year_awards }}x Coach of the Year
+                {{ $t('{n}x Coach of the Year', { n: coachCareerStats.coach_of_year_awards }) }}
               </span>
             </div>
           </div>
 
           <!-- Coach Attributes -->
           <div v-if="coach.attributes" class="coach-attributes mt-4" data-tour="gm-coach-skills">
-            <h4 class="section-title">Coaching Skills</h4>
+            <h4 class="section-title">{{ $t('Coaching Skills') }}</h4>
             <div class="attr-grid">
               <div v-for="(value, key) in coach.attributes" :key="key" class="coach-attr-item">
-                <span class="attr-label">{{ formatAttrName(key) }}</span>
+                <span class="attr-label">{{ $tDynamic(formatAttrName(key)) }}</span>
                 <div class="attr-bar-mini">
                   <div class="attr-fill" :style="{ width: `${value}%`, backgroundColor: getAttrColor(value) }" />
                 </div>
@@ -2330,19 +2161,19 @@ const STAFF_TRAINER_PERK_LABELS = {
 
           <!-- Coach Actions — per-season pools + what each one does -->
           <div class="coach-actions-info mt-4" data-tour="gm-coach-actions">
-            <h4 class="section-title">Coach Actions</h4>
+            <h4 class="section-title">{{ $t('Coach Actions') }}</h4>
             <div class="coach-action-list">
               <div class="coach-action-item">
                 <div class="coach-action-icon"><MessagesSquare :size="16" /></div>
                 <div class="coach-action-body">
                   <div class="coach-action-head">
-                    <span class="coach-action-name">Coach Meetings</span>
+                    <span class="coach-action-name">{{ $t('Coach Meetings') }}</span>
                     <span class="coach-action-count" :class="{ depleted: coachMeetingsLeft === 0 }">
                       {{ coachMeetingsLeft }}<span class="coach-action-total">/{{ coachMeetingsTotal }}</span>
                     </span>
                   </div>
                   <p class="coach-action-desc">
-                    Hold a 1-on-1 to lift a player's morale. Extras cost {{ COACH_MEETING_EXTRA_COST }} tokens.
+                    {{ $t("Hold a 1-on-1 to lift a player's morale. Extras cost {n} tokens.", { n: COACH_MEETING_EXTRA_COST }) }}
                   </p>
                 </div>
               </div>
@@ -2350,13 +2181,13 @@ const STAFF_TRAINER_PERK_LABELS = {
                 <div class="coach-action-icon"><Dumbbell :size="16" /></div>
                 <div class="coach-action-body">
                   <div class="coach-action-head">
-                    <span class="coach-action-name">Player Trainings</span>
+                    <span class="coach-action-name">{{ $t('Player Trainings') }}</span>
                     <span class="coach-action-count" :class="{ depleted: coachTrainsLeft === 0 }">
                       {{ coachTrainsLeft }}<span class="coach-action-total">/{{ coachTrainsTotal }}</span>
                     </span>
                   </div>
                   <p class="coach-action-desc">
-                    Run a session to develop a player — earns a new badge or attribute upgrade.
+                    {{ $t('Run a session to develop a player — earns a new badge or attribute upgrade.') }}
                   </p>
                 </div>
               </div>
@@ -2371,30 +2202,30 @@ const STAFF_TRAINER_PERK_LABELS = {
               class="coach-tab-btn"
               :class="{ active: activeCoachTab === 'offensive' }"
               @click="activeCoachTab = 'offensive'"
-            >Offensive</button>
+            >{{ $t('Offensive') }}</button>
             <button
               class="coach-tab-btn"
               :class="{ active: activeCoachTab === 'defensive' }"
               @click="activeCoachTab = 'defensive'"
-            >Defensive</button>
+            >{{ $t('Defensive') }}</button>
             <button
               class="coach-tab-btn"
               :class="{ active: activeCoachTab === 'substitution' }"
               @click="activeCoachTab = 'substitution'"
-            >Substitution</button>
+            >{{ $t('Substitution') }}</button>
           </div>
 
           <!-- Offensive Scheme Tab -->
           <div v-if="activeCoachTab === 'offensive'">
             <div class="flex items-center justify-between mb-4">
-              <h3 class="h4">Offensive Scheme</h3>
+              <h3 class="h4">{{ $t('Offensive Scheme') }}</h3>
               <div v-if="teamStore.recommendedScheme" class="recommended-badge">
-                Recommended: {{ teamStore.coachingSchemes?.offensive?.[teamStore.recommendedScheme]?.name }}
+                {{ $t('Recommended: {name}', { name: $tDynamic(teamStore.coachingSchemes?.offensive?.[teamStore.recommendedScheme]?.name) }) }}
               </div>
             </div>
 
             <p class="text-secondary text-sm mb-6">
-              Choose an offensive scheme that fits your roster's strengths. This affects play selection and tempo during games.
+              {{ $t("Choose an offensive scheme that fits your roster's strengths. This affects play selection and tempo during games.") }}
             </p>
 
             <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
@@ -2413,36 +2244,41 @@ const STAFF_TRAINER_PERK_LABELS = {
                 @click="updateOffensiveScheme(schemeId)"
               >
                 <div class="scheme-header">
-                  <span class="scheme-name">{{ scheme.name }}</span>
-                  <span v-if="teamStore.recommendedScheme === schemeId" class="rec-tag">Best Fit</span>
+                  <span class="scheme-name">{{ $tDynamic(scheme.name) }}</span>
+                  <span v-if="provenScheme === schemeId" class="rec-tag proven-tag" :title="$t('Your best-performing play set this season')">{{ $t('Season Proven') }}</span>
+                  <span v-if="teamStore.recommendedScheme === schemeId" class="rec-tag">{{ $t('Best Fit') }}</span>
                 </div>
 
-                <p class="scheme-desc">{{ scheme.description }}</p>
+                <p class="scheme-desc">{{ $tDynamic(scheme.description) }}</p>
 
                 <div class="scheme-details">
                   <div class="scheme-pace">
-                    <span class="detail-label">Pace</span>
-                    <span class="detail-value" :class="scheme.pace">{{ scheme.pace?.replace('_', ' ') }}</span>
+                    <span class="detail-label">{{ $t('Pace') }}</span>
+                    <span class="detail-value" :class="scheme.pace">{{ $tDynamic(scheme.pace?.replace('_', ' ')) }}</span>
                   </div>
                   <div class="scheme-effectiveness">
-                    <span class="detail-label">Fit</span>
-                    <span class="detail-value" :class="getEffectivenessClass(scheme.effectiveness)">
+                    <span class="detail-label">{{ $t('Fit') }}</span>
+                    <!-- Exact Fit % unlocks at Analytics Lv2; below that only rough tiers -->
+                    <span v-if="analyticsLevel >= 2" class="detail-value" :class="getEffectivenessClass(scheme.effectiveness)">
                       {{ scheme.effectiveness ?? '—' }}%
+                    </span>
+                    <span v-else class="detail-value" :class="getEffectivenessClass(scheme.effectiveness)">
+                      {{ $tDynamic(fitTierLabel(scheme.effectiveness)) }}
                     </span>
                   </div>
                 </div>
 
                 <div class="scheme-traits">
                   <div class="trait-section">
-                    <span class="trait-label">Strengths</span>
+                    <span class="trait-label">{{ $t('Strengths') }}</span>
                     <div class="trait-tags">
-                      <span v-for="str in scheme.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                      <span v-for="str in scheme.strengths" :key="str" class="trait-tag positive">{{ $tDynamic(str) }}</span>
                     </div>
                   </div>
                   <div class="trait-section">
-                    <span class="trait-label">Weaknesses</span>
+                    <span class="trait-label">{{ $t('Weaknesses') }}</span>
                     <div class="trait-tags">
-                      <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
+                      <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ $tDynamic(weak) }}</span>
                     </div>
                   </div>
                 </div>
@@ -2454,7 +2290,7 @@ const STAFF_TRAINER_PERK_LABELS = {
                     class="playbook-toggle"
                     @click="togglePlaybook(schemeId)"
                   >
-                    {{ expandedPlaybookScheme === schemeId ? 'Hide plays' : 'View plays' }}
+                    {{ expandedPlaybookScheme === schemeId ? $t('Hide plays') : $t('View plays') }}
                   </button>
                   <div v-if="expandedPlaybookScheme === schemeId" class="playbook-body">
                     <select
@@ -2465,13 +2301,23 @@ const STAFF_TRAINER_PERK_LABELS = {
                       <optgroup
                         v-for="grp in playbookFor(schemeId)"
                         :key="grp.category"
-                        :label="categoryLabel(grp.category)"
+                        :label="$tDynamic(categoryLabel(grp.category))"
                       >
                         <option v-for="pl in grp.plays" :key="pl.id" :value="pl.id">
-                          {{ pl.name }}
+                          {{ $tDynamic(pl.name) }}
                         </option>
                       </optgroup>
                     </select>
+                    <!-- Analytics Lv4: this play's season efficiency (hidden until data exists) -->
+                    <div v-if="analyticsLevel >= 4 && seasonStatsForSelectedPlay(schemeId)" class="play-season-chips">
+                      <span class="play-chip">{{ $t('{n} poss', { n: seasonStatsForSelectedPlay(schemeId).poss }) }}</span>
+                      <!-- i18n-ignore -->
+                      <span class="play-chip">PPP {{ seasonStatsForSelectedPlay(schemeId).ppp }}</span>
+                      <!-- i18n-ignore -->
+                      <span v-if="seasonStatsForSelectedPlay(schemeId).two != null" class="play-chip">2PT {{ seasonStatsForSelectedPlay(schemeId).two }}%</span>
+                      <!-- i18n-ignore -->
+                      <span v-if="seasonStatsForSelectedPlay(schemeId).three != null" class="play-chip">3PT {{ seasonStatsForSelectedPlay(schemeId).three }}%</span>
+                    </div>
                     <!-- Async component: chunk loads on first expand; mounts only
                          while expanded; rAF pauses offscreen / stops on collapse -->
                     <PlayAnimationPreview :play="selectedPlayObj(schemeId)" />
@@ -2483,19 +2329,30 @@ const STAFF_TRAINER_PERK_LABELS = {
                 </div>
               </div>
             </div>
+
+            <!-- Analytics Lv3: own-team season play analytics (blur-locked below) -->
+            <div class="season-analytics-section">
+              <PlayAnalyticsPanel
+                :title="$t('Season Play Analytics — Your Team')"
+                :analytics="teamStore.team?.playAnalytics ?? null"
+                :locked="analyticsLevel < 3"
+                :locked-message="$t('Upgrade your Analytics Facility to Level 3 to unlock season play analytics.')"
+                :default-to-top-category="true"
+              />
+            </div>
           </div>
 
           <!-- Defensive Scheme Tab -->
           <div v-else-if="activeCoachTab === 'defensive'">
             <div class="flex items-center justify-between mb-4">
-              <h3 class="h4">Defensive Scheme</h3>
+              <h3 class="h4">{{ $t('Defensive Scheme') }}</h3>
               <div v-if="teamStore.recommendedDefensiveScheme" class="recommended-badge">
-                Recommended: {{ teamStore.coachingSchemes?.defensive?.[teamStore.recommendedDefensiveScheme]?.name }}
+                {{ $t('Recommended: {name}', { name: $tDynamic(teamStore.coachingSchemes?.defensive?.[teamStore.recommendedDefensiveScheme]?.name) }) }}
               </div>
             </div>
 
             <p class="text-secondary text-sm mb-6">
-              Select your team's defensive strategy. This determines how your players guard opponents and react to plays.
+              {{ $t("Select your team's defensive strategy. This determines how your players guard opponents and react to plays.") }}
             </p>
 
             <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
@@ -2514,33 +2371,37 @@ const STAFF_TRAINER_PERK_LABELS = {
                 @click="updateDefensiveScheme(schemeId)"
               >
                 <div class="scheme-header">
-                  <span class="scheme-name">{{ scheme.name }}</span>
-                  <span v-if="teamStore.recommendedDefensiveScheme === schemeId" class="rec-tag">Best Fit</span>
-                  <span v-else class="scheme-type-tag" :class="scheme.type">{{ scheme.type }}</span>
+                  <span class="scheme-name">{{ $tDynamic(scheme.name) }}</span>
+                  <span v-if="teamStore.recommendedDefensiveScheme === schemeId" class="rec-tag">{{ $t('Best Fit') }}</span>
+                  <span v-else class="scheme-type-tag" :class="scheme.type">{{ $tDynamic(scheme.type) }}</span>
                 </div>
 
-                <p class="scheme-desc">{{ scheme.description }}</p>
+                <p class="scheme-desc">{{ $tDynamic(scheme.description) }}</p>
 
                 <div class="scheme-details">
                   <div class="scheme-effectiveness">
-                    <span class="detail-label">Fit</span>
-                    <span class="detail-value" :class="getEffectivenessClass(teamStore.coachingSchemes?.defensive?.[schemeId]?.effectiveness)">
+                    <span class="detail-label">{{ $t('Fit') }}</span>
+                    <!-- Exact Fit % unlocks at Analytics Lv2; below that only rough tiers -->
+                    <span v-if="analyticsLevel >= 2" class="detail-value" :class="getEffectivenessClass(teamStore.coachingSchemes?.defensive?.[schemeId]?.effectiveness)">
                       {{ teamStore.coachingSchemes?.defensive?.[schemeId]?.effectiveness ?? '—' }}%
+                    </span>
+                    <span v-else class="detail-value" :class="getEffectivenessClass(teamStore.coachingSchemes?.defensive?.[schemeId]?.effectiveness)">
+                      {{ $tDynamic(fitTierLabel(teamStore.coachingSchemes?.defensive?.[schemeId]?.effectiveness)) }}
                     </span>
                   </div>
                 </div>
 
                 <div class="scheme-traits">
                   <div class="trait-section">
-                    <span class="trait-label">Strengths</span>
+                    <span class="trait-label">{{ $t('Strengths') }}</span>
                     <div class="trait-tags">
-                      <span v-for="str in scheme.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                      <span v-for="str in scheme.strengths" :key="str" class="trait-tag positive">{{ $tDynamic(str) }}</span>
                     </div>
                   </div>
                   <div class="trait-section">
-                    <span class="trait-label">Weaknesses</span>
+                    <span class="trait-label">{{ $t('Weaknesses') }}</span>
                     <div class="trait-tags">
-                      <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
+                      <span v-for="weak in scheme.weaknesses" :key="weak" class="trait-tag negative">{{ $tDynamic(weak) }}</span>
                     </div>
                   </div>
                 </div>
@@ -2555,11 +2416,11 @@ const STAFF_TRAINER_PERK_LABELS = {
           <!-- Substitution Strategy Tab -->
           <div v-else-if="activeCoachTab === 'substitution'">
             <div class="flex items-center justify-between mb-4">
-              <h3 class="h4">Substitution Strategy</h3>
+              <h3 class="h4">{{ $t('Substitution Strategy') }}</h3>
             </div>
 
             <p class="text-secondary text-sm mb-6">
-              Control how your team rotates players during simulated games. This affects how minutes are distributed and when substitutions happen.
+              {{ $t('Control how your team rotates players during simulated games. This affects how minutes are distributed and when substitutions happen.') }}
             </p>
 
             <div v-if="teamStore.loading && !schemesFetched" class="flex justify-center py-8">
@@ -2577,30 +2438,30 @@ const STAFF_TRAINER_PERK_LABELS = {
                 @click="updateSubstitutionStrategy(strategyId)"
               >
                 <div class="scheme-header">
-                  <span class="scheme-name">{{ strategy.name }}</span>
-                  <span class="scheme-type-tag" :class="strategy.type">{{ strategy.type }}</span>
+                  <span class="scheme-name">{{ $tDynamic(strategy.name) }}</span>
+                  <span class="scheme-type-tag" :class="strategy.type">{{ $tDynamic(strategy.type) }}</span>
                 </div>
 
-                <p class="scheme-desc">{{ strategy.description }}</p>
+                <p class="scheme-desc">{{ $tDynamic(strategy.description) }}</p>
 
                 <div class="scheme-details">
                   <div class="scheme-pace">
-                    <span class="detail-label">Depth</span>
-                    <span class="detail-value">{{ strategy.rotation_depth }}</span>
+                    <span class="detail-label">{{ $t('Depth') }}</span>
+                    <span class="detail-value">{{ $tDynamic(strategy.rotation_depth) }}</span>
                   </div>
                 </div>
 
                 <div class="scheme-traits">
                   <div class="trait-section">
-                    <span class="trait-label">Strengths</span>
+                    <span class="trait-label">{{ $t('Strengths') }}</span>
                     <div class="trait-tags">
-                      <span v-for="str in strategy.strengths" :key="str" class="trait-tag positive">{{ str }}</span>
+                      <span v-for="str in strategy.strengths" :key="str" class="trait-tag positive">{{ $tDynamic(str) }}</span>
                     </div>
                   </div>
                   <div class="trait-section">
-                    <span class="trait-label">Weaknesses</span>
+                    <span class="trait-label">{{ $t('Weaknesses') }}</span>
                     <div class="trait-tags">
-                      <span v-for="weak in strategy.weaknesses" :key="weak" class="trait-tag negative">{{ weak }}</span>
+                      <span v-for="weak in strategy.weaknesses" :key="weak" class="trait-tag negative">{{ $tDynamic(weak) }}</span>
                     </div>
                   </div>
                 </div>
@@ -2612,339 +2473,7 @@ const STAFF_TRAINER_PERK_LABELS = {
             </div>
           </div>
         </GlassCard>
-        </div><!-- /Coach Sub-tab -->
-
-        <!-- Scout Sub-tab -->
-        <div v-else-if="activePersonnelTab === 'scout'">
-          <!-- Hired Scout Card -->
-          <GlassCard v-if="hiredScout" padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">Your Scout</h3>
-            <div class="coach-header">
-              <div class="coach-avatar-wrap">
-                <PersonnelAvatar
-                  :personnel="hiredScout"
-                  kind="scout"
-                  :size="64"
-                  :campaign-id="campaignId"
-                  :editable="true"
-                />
-              </div>
-              <div class="coach-info">
-                <p class="coach-name">{{ hiredScout.name }}</p>
-                <div class="coach-rating">
-                  <StatBadge :value="hiredScout.tier === 4 ? 85 : 70" size="sm" />
-                  <span class="rating-label">{{ hiredScout.tier }}-Star Scout</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="scout-contract-info mt-3">
-              <span class="text-secondary text-sm">
-                {{ hiredScout.contractYears }} Season{{ hiredScout.contractYears !== 1 ? 's' : '' }} Remaining · Hired Season {{ hiredScout.hiredSeason }}
-              </span>
-            </div>
-
-            <!-- Scout Perks -->
-            <div class="scout-perks-section mt-4">
-              <h4 class="section-title">Perks</h4>
-              <div class="scout-perks-list">
-                <div
-                  v-for="perk in hiredScout.perks"
-                  :key="perk.key"
-                  class="scout-perk-row"
-                  :class="{ inactive: !isPerkActiveForScout(perk) }"
-                >
-                  <div class="scout-perk-icon">
-                    <Check v-if="isPerkActiveForScout(perk)" :size="14" />
-                    <Lock v-else :size="14" />
-                  </div>
-                  <div class="scout-perk-text">
-                    <span class="scout-perk-label">{{ PERK_LABELS[perk.key]?.label || perk.key }}</span>
-                    <span class="scout-perk-desc">{{ PERK_LABELS[perk.key]?.description || '' }}</span>
-                    <span v-if="!isPerkActiveForScout(perk)" class="scout-perk-req">
-                      Requires Scouting Facility Lv {{ perk.requiredLevel }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Fire Button -->
-            <button
-              class="btn-fire-scout mt-4"
-              :disabled="firingScout"
-              @click="fireScout"
-            >
-              {{ firingScout ? 'Releasing...' : 'Release Scout' }}
-            </button>
-          </GlassCard>
-
-          <!-- Empty State -->
-          <GlassCard v-else padding="lg" :hoverable="false">
-            <div class="scout-empty-state">
-              <Binoculars :size="48" class="empty-icon" />
-              <h3 class="empty-title">No Scout Hired</h3>
-              <p class="empty-desc">
-                Hire a scout to improve your draft scouting. Scouts can reveal more attributes per action and unlock badge and personality intel for draft prospects.
-              </p>
-              <button
-                class="btn-browse-scouts"
-                @click="showHireScoutModal = true"
-              >
-                Browse Scouts
-              </button>
-            </div>
-          </GlassCard>
-        </div><!-- /Scout Sub-tab -->
-
-        <!-- Trainer Sub-tab -->
-        <div v-else-if="activePersonnelTab === 'trainer'">
-          <!-- Hired Trainer Card -->
-          <GlassCard v-if="hiredTrainer" padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">Your Team Physician</h3>
-            <div class="coach-header">
-              <div class="coach-avatar-wrap">
-                <PersonnelAvatar
-                  :personnel="hiredTrainer"
-                  kind="physician"
-                  :size="64"
-                  :campaign-id="campaignId"
-                  :editable="true"
-                />
-              </div>
-              <div class="coach-info">
-                <p class="coach-name">{{ hiredTrainer.name }}</p>
-                <div class="coach-rating">
-                  <StatBadge :value="hiredTrainer.tier === 4 ? 85 : 70" size="sm" />
-                  <span class="rating-label">{{ hiredTrainer.tier }}-Star Physician</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="scout-contract-info mt-3">
-              <span class="text-secondary text-sm">
-                {{ hiredTrainer.contractYears }} Season{{ hiredTrainer.contractYears !== 1 ? 's' : '' }} Remaining · Hired Season {{ hiredTrainer.hiredSeason }}
-              </span>
-            </div>
-
-            <!-- Trainer Perks -->
-            <div class="scout-perks-section mt-4">
-              <h4 class="section-title">Perks</h4>
-              <div class="scout-perks-list">
-                <div
-                  v-for="perk in hiredTrainer.perks"
-                  :key="perk.key"
-                  class="scout-perk-row"
-                  :class="{ inactive: !isPerkActiveForTrainer(perk) }"
-                >
-                  <div class="scout-perk-icon">
-                    <Check v-if="isPerkActiveForTrainer(perk)" :size="14" />
-                    <Lock v-else :size="14" />
-                  </div>
-                  <div class="scout-perk-text">
-                    <span class="scout-perk-label">{{ TRAINER_PERK_LABELS[perk.key]?.label || perk.key }}</span>
-                    <span class="scout-perk-desc">{{ TRAINER_PERK_LABELS[perk.key]?.description || '' }}</span>
-                    <span v-if="!isPerkActiveForTrainer(perk)" class="scout-perk-req">
-                      Requires Medical Facility Lv {{ perk.requiredLevel }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Fire Button -->
-            <button
-              class="btn-fire-scout mt-4"
-              :disabled="firingTrainer"
-              @click="fireTrainer"
-            >
-              {{ firingTrainer ? 'Releasing...' : 'Release Physician' }}
-            </button>
-          </GlassCard>
-
-          <!-- Empty State -->
-          <GlassCard v-else padding="lg" :hoverable="false">
-            <div class="scout-empty-state">
-              <Heart :size="48" class="empty-icon" />
-              <h3 class="empty-title">No Team Physician</h3>
-              <p class="empty-desc">
-                Hire a team physician to improve your team's health. Physicians help players recover from injuries faster and can reduce the risk of injuries occurring.
-              </p>
-              <button
-                class="btn-browse-scouts"
-                @click="showHireTrainerModal = true"
-              >
-                Browse Physicians
-              </button>
-            </div>
-          </GlassCard>
-        </div><!-- /Trainer Sub-tab -->
-
-        <!-- Staff Trainer Sub-tab -->
-        <div v-else-if="activePersonnelTab === 'staff_trainer'">
-          <!-- Hired Staff Trainer Card -->
-          <GlassCard v-if="hiredStaffTrainer" padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">Your Trainer</h3>
-            <div class="coach-header">
-              <div class="coach-avatar-wrap">
-                <PersonnelAvatar
-                  :personnel="hiredStaffTrainer"
-                  kind="staff_trainer"
-                  :size="64"
-                  :campaign-id="campaignId"
-                  :editable="true"
-                />
-              </div>
-              <div class="coach-info">
-                <p class="coach-name">{{ hiredStaffTrainer.name }}</p>
-                <div class="coach-rating">
-                  <StatBadge :value="hiredStaffTrainer.tier === 4 ? 85 : 70" size="sm" />
-                  <span class="rating-label">{{ hiredStaffTrainer.tier }}-Star Trainer</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="scout-contract-info mt-3">
-              <span class="text-secondary text-sm">
-                {{ hiredStaffTrainer.contractYears }} Season{{ hiredStaffTrainer.contractYears !== 1 ? 's' : '' }} Remaining · Hired Season {{ hiredStaffTrainer.hiredSeason }}
-              </span>
-            </div>
-
-            <!-- Staff Trainer Perks -->
-            <div class="scout-perks-section mt-4">
-              <h4 class="section-title">Perks</h4>
-              <div class="scout-perks-list">
-                <div
-                  v-for="perk in hiredStaffTrainer.perks"
-                  :key="perk.key"
-                  class="scout-perk-row"
-                  :class="{ inactive: !isPerkActiveForStaffTrainer(perk) }"
-                >
-                  <div class="scout-perk-icon">
-                    <Check v-if="isPerkActiveForStaffTrainer(perk)" :size="14" />
-                    <Lock v-else :size="14" />
-                  </div>
-                  <div class="scout-perk-text">
-                    <span class="scout-perk-label">{{ STAFF_TRAINER_PERK_LABELS[perk.key]?.label || perk.key }}</span>
-                    <span class="scout-perk-desc">{{ STAFF_TRAINER_PERK_LABELS[perk.key]?.description || '' }}</span>
-                    <span v-if="!isPerkActiveForStaffTrainer(perk)" class="scout-perk-req">
-                      Requires Training Facility Lv {{ perk.requiredLevel }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Fire Button -->
-            <button
-              class="btn-fire-scout mt-4"
-              :disabled="firingStaffTrainer"
-              @click="fireStaffTrainer"
-            >
-              {{ firingStaffTrainer ? 'Releasing...' : 'Release Trainer' }}
-            </button>
-          </GlassCard>
-
-          <!-- Empty State -->
-          <GlassCard v-else padding="lg" :hoverable="false">
-            <div class="scout-empty-state">
-              <Activity :size="48" class="empty-icon" />
-              <h3 class="empty-title">No Trainer</h3>
-              <p class="empty-desc">
-                Hire a trainer to boost your players' development. Trainers help players grow faster from game performance and can reduce fatigue accumulation.
-              </p>
-              <button
-                class="btn-browse-scouts"
-                @click="showHireStaffTrainerModal = true"
-              >
-                Browse Trainers
-              </button>
-            </div>
-          </GlassCard>
-        </div><!-- /Staff Trainer Sub-tab -->
-
-        <!-- Analyst Sub-tab -->
-        <div v-else-if="activePersonnelTab === 'analyst'">
-          <!-- Hired Analyst Card -->
-          <GlassCard v-if="hiredAnalyst" padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">Your Analyst</h3>
-            <div class="coach-header">
-              <div class="coach-avatar-wrap">
-                <PersonnelAvatar
-                  :personnel="hiredAnalyst"
-                  kind="analyst"
-                  :size="64"
-                  :campaign-id="campaignId"
-                  :editable="true"
-                />
-              </div>
-              <div class="coach-info">
-                <p class="coach-name">{{ hiredAnalyst.name }}</p>
-                <div class="coach-rating">
-                  <StatBadge :value="hiredAnalyst.tier === 4 ? 85 : 70" size="sm" />
-                  <span class="rating-label">{{ hiredAnalyst.tier }}-Star Analyst</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="scout-contract-info mt-3">
-              <span class="text-secondary text-sm">
-                {{ hiredAnalyst.contractYears }} Season{{ hiredAnalyst.contractYears !== 1 ? 's' : '' }} Remaining · Hired Season {{ hiredAnalyst.hiredSeason }}
-              </span>
-            </div>
-
-            <!-- Analyst Perks -->
-            <div class="scout-perks-section mt-4">
-              <h4 class="section-title">Perks</h4>
-              <div class="scout-perks-list">
-                <div
-                  v-for="perk in hiredAnalyst.perks"
-                  :key="perk.key"
-                  class="scout-perk-row"
-                  :class="{ inactive: !isPerkActiveForAnalyst(perk) }"
-                >
-                  <div class="scout-perk-icon">
-                    <Check v-if="isPerkActiveForAnalyst(perk)" :size="14" />
-                    <Lock v-else :size="14" />
-                  </div>
-                  <div class="scout-perk-text">
-                    <span class="scout-perk-label">{{ ANALYST_PERK_LABELS[perk.key]?.label || perk.key }}</span>
-                    <span class="scout-perk-desc">{{ ANALYST_PERK_LABELS[perk.key]?.description || '' }}</span>
-                    <span v-if="!isPerkActiveForAnalyst(perk)" class="scout-perk-req">
-                      Requires Analytics Facility Lv {{ perk.requiredLevel }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Fire Button -->
-            <button
-              class="btn-fire-scout mt-4"
-              :disabled="firingAnalyst"
-              @click="fireAnalyst"
-            >
-              {{ firingAnalyst ? 'Releasing...' : 'Release Analyst' }}
-            </button>
-          </GlassCard>
-
-          <!-- Empty State -->
-          <GlassCard v-else padding="lg" :hoverable="false">
-            <div class="scout-empty-state">
-              <BarChart3 :size="48" class="empty-icon" />
-              <h3 class="empty-title">No Analyst Hired</h3>
-              <p class="empty-desc">
-                Hire an analyst to unlock play-by-play analytics. A 3-Star analyst reveals your team's efficiency per play set after games; a 4-Star analyst also scouts the opponent's tendencies before games.
-              </p>
-              <button
-                class="btn-browse-scouts"
-                @click="showHireAnalystModal = true"
-              >
-                Browse Analysts
-              </button>
-            </div>
-          </GlassCard>
-        </div><!-- /Analyst Sub-tab -->
+        </div><!-- /Coach content -->
 
         <!-- Hire Coach Modal -->
         <HireCoachModal
@@ -2952,42 +2481,6 @@ const STAFF_TRAINER_PERK_LABELS = {
           :campaign-id="campaignId"
           @close="showHireCoachModal = false"
           @hired="onCoachHired"
-        />
-
-        <!-- Hire Scout Modal -->
-        <HireScoutModal
-          :show="showHireScoutModal"
-          :campaign-id="campaignId"
-          :scouting-facility-level="scoutingFacilityLevel"
-          @close="showHireScoutModal = false"
-          @hired="onScoutHired"
-        />
-
-        <!-- Hire Trainer Modal -->
-        <HireTrainerModal
-          :show="showHireTrainerModal"
-          :campaign-id="campaignId"
-          :medical-facility-level="medicalFacilityLevel"
-          @close="showHireTrainerModal = false"
-          @hired="onTrainerHired"
-        />
-
-        <!-- Hire Staff Trainer Modal -->
-        <HireStaffTrainerModal
-          :show="showHireStaffTrainerModal"
-          :campaign-id="campaignId"
-          :training-facility-level="trainingFacilityLevel"
-          @close="showHireStaffTrainerModal = false"
-          @hired="onStaffTrainerHired"
-        />
-
-        <!-- Hire Analyst Modal -->
-        <HireAnalystModal
-          :show="showHireAnalystModal"
-          :campaign-id="campaignId"
-          :analytics-facility-level="analyticsFacilityLevel"
-          @close="showHireAnalystModal = false"
-          @hired="onAnalystHired"
         />
 
         <!-- Coach Badge Store Modal -->
@@ -3000,40 +2493,40 @@ const STAFF_TRAINER_PERK_LABELS = {
         />
 
         <!-- Re-sign Coach Confirmation Modal -->
-        <BaseModal :show="showResignModal" @close="showResignModal = false" title="Re-sign Head Coach?">
+        <BaseModal :show="showResignModal" @close="showResignModal = false" :title="$t('Re-sign Head Coach?')">
           <div class="resign-modal">
             <div class="resign-coach-summary">
               <CoachAvatar v-if="coach" :coach="coach" :size="56" :campaign-id="campaignId" />
               <div>
                 <p class="resign-coach-name">{{ coach?.name }}</p>
-                <p class="resign-coach-meta">Overall {{ coach?.overall_rating }}</p>
+                <p class="resign-coach-meta">{{ $t('Overall {n}', { n: coach?.overall_rating }) }}</p>
               </div>
             </div>
             <p class="resign-text">
-              Re-sign your head coach to a new <strong>2-season</strong> contract.
+              {{ $t('Re-sign your head coach to a new 2-season contract.') }}
             </p>
             <div class="resign-cost-row">
-              <span>Cost</span>
+              <span>{{ $t('Cost') }}</span>
               <span class="resign-cost-value" :class="{ insufficient: !canAffordResign }">
                 {{ resignCost }} <Coins :size="14" />
               </span>
             </div>
             <div class="resign-balance-row">
-              <span>Your balance</span>
+              <span>{{ $t('Your balance') }}</span>
               <span>{{ authStore.profile?.tokens ?? 0 }} <Coins :size="14" /></span>
             </div>
             <p v-if="!canAffordResign" class="resign-warning">
-              You don't have enough tokens to re-sign this coach.
+              {{ $t("You don't have enough tokens to re-sign this coach.") }}
             </p>
             <div class="resign-actions">
-              <BaseButton variant="ghost" @click="showResignModal = false">Cancel</BaseButton>
+              <BaseButton variant="ghost" @click="showResignModal = false">{{ $t('Cancel') }}</BaseButton>
               <BaseButton
                 variant="primary"
                 :loading="resigningCoach"
                 :disabled="!canAffordResign"
                 @click="resignCoach"
               >
-                Confirm · {{ resignCost }} tokens
+                {{ $t('Confirm · {n} tokens', { n: resignCost }) }}
               </BaseButton>
             </div>
           </div>
@@ -4495,7 +3988,7 @@ const STAFF_TRAINER_PERK_LABELS = {
   font-size: 0.875rem;
 }
 
-/* Warning badge for Personnel/Scout tabs */
+/* Warning badge for the Facilities tab (any facility with unhired staff) */
 .tab-badge-warning {
   position: absolute;
   top: -6px;
@@ -4517,171 +4010,6 @@ const STAFF_TRAINER_PERK_LABELS = {
 
 .coach-tab-btn {
   position: relative;
-}
-
-/* Scout avatar variant */
-.scout-avatar {
-  background: linear-gradient(135deg, #F59E0B, #D97706) !important;
-}
-
-/* Trainer (Physician) avatar variant */
-.trainer-avatar {
-  background: linear-gradient(135deg, #22c55e, #16a34a) !important;
-}
-
-/* Staff Trainer avatar variant */
-.staff-trainer-avatar {
-  background: linear-gradient(135deg, #F59E0B, #D97706) !important;
-}
-
-/* Scout contract info */
-.scout-contract-info {
-  padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-/* Scout perks */
-.scout-perks-section {
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.scout-perks-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.scout-perk-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.scout-perk-row.inactive {
-  opacity: 0.5;
-}
-
-.scout-perk-icon {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  margin-top: 1px;
-}
-
-.scout-perk-row:not(.inactive) .scout-perk-icon {
-  color: #22c55e;
-}
-
-.scout-perk-row.inactive .scout-perk-icon {
-  color: var(--color-text-secondary);
-}
-
-.scout-perk-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.scout-perk-label {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.scout-perk-row.inactive .scout-perk-label {
-  color: var(--color-text-secondary);
-}
-
-.scout-perk-desc {
-  font-size: 0.75rem;
-  color: var(--color-text-secondary);
-  line-height: 1.3;
-}
-
-.scout-perk-req {
-  font-size: 0.7rem;
-  color: #F59E0B;
-  font-weight: 500;
-}
-
-/* Fire scout button */
-.btn-fire-scout {
-  width: 100%;
-  padding: 10px 16px;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  border: 1px solid rgba(239, 68, 68, 0.4);
-  color: #ef4444;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-fire-scout:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: #ef4444;
-}
-
-.btn-fire-scout:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Scout empty state */
-.scout-empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding: 24px 16px;
-}
-
-.scout-empty-state .empty-icon {
-  color: var(--color-text-secondary);
-  opacity: 0.4;
-  margin-bottom: 16px;
-}
-
-.scout-empty-state .empty-title {
-  font-family: var(--font-display, 'Bebas Neue', sans-serif);
-  font-size: 1.5rem;
-  color: var(--color-text-primary);
-  margin: 0 0 8px 0;
-}
-
-.scout-empty-state .empty-desc {
-  font-size: 0.85rem;
-  color: var(--color-text-secondary);
-  margin: 0 0 20px 0;
-  line-height: 1.5;
-  max-width: 360px;
-}
-
-.btn-browse-scouts {
-  padding: 12px 24px;
-  border-radius: var(--radius-xl);
-  background: var(--color-primary);
-  border: none;
-  color: white;
-  font-size: 0.85rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-browse-scouts:hover {
-  background: var(--color-primary-dark);
-  transform: translateY(-1px);
 }
 
 /* Coach hire/fire UI */
@@ -4987,6 +4315,12 @@ const STAFF_TRAINER_PERK_LABELS = {
   color: white;
 }
 
+/* Analytics Lv5: scheme with the best season PPP over its emphasized plays */
+.proven-tag {
+  background: #F59E0B;
+  color: #1a1520;
+}
+
 .scheme-desc {
   font-size: 0.875rem;
   color: var(--color-text-secondary);
@@ -5116,6 +4450,33 @@ const STAFF_TRAINER_PERK_LABELS = {
 
 .playbook-body {
   margin-top: 0.75rem;
+}
+
+/* Analytics Lv4: selected play's season efficiency chips */
+.play-season-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 0.6rem;
+}
+
+.play-chip {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+[data-theme='light'] .play-chip {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* Analytics Lv3: own-team season play analytics under the offensive grid */
+.season-analytics-section {
+  margin-top: 20px;
 }
 
 .playbook-select {

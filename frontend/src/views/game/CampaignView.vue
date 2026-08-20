@@ -14,6 +14,7 @@ import SimPauseModal from '@/components/calendar/SimPauseModal.vue'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { ArrowLeft, Play, User, FolderOpen, LogOut, ShoppingBag, Globe } from 'lucide-vue-next'
 import { useCommunityLink } from '@/composables/useCommunityLink'
+import { t, dateLocale } from '@wl-i18n/i18n.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -96,8 +97,8 @@ const formattedCurrentDate = computed(() => {
   if (!dateStr) return null
   const date = parseLocalDate(dateStr)
   return {
-    weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
-    month: date.toLocaleDateString('en-US', { month: 'short' }),
+    weekday: date.toLocaleDateString(dateLocale(), { weekday: 'short' }),
+    month: date.toLocaleDateString(dateLocale(), { month: 'short' }),
     day: date.getDate(),
     year: date.getFullYear()
   }
@@ -221,7 +222,7 @@ async function handleSimPauseContinue() {
     await gameStore.resumeSimulation()
   } catch (err) {
     console.error('Failed to resume sim:', err)
-    toastStore.showError('Failed to resume simulation')
+    toastStore.showError(t('Failed to resume simulation'))
   }
 }
 
@@ -237,7 +238,7 @@ async function handleSimPauseCpuLineup() {
     ])
     const roster = teamStore.roster
     if (!roster || roster.length < 5) {
-      toastStore.showError('Roster too small to set lineup')
+      toastStore.showError(t('Roster too small to set lineup'))
       gameStore.cancelSimulation()
       return
     }
@@ -245,7 +246,7 @@ async function handleSimPauseCpuLineup() {
     // entries may be null if a position can't be filled.
     const newLineup = selectBestLineup(roster)
     if (!Array.isArray(newLineup) || newLineup.length !== 5) {
-      toastStore.showError('CPU could not pick a lineup')
+      toastStore.showError(t('CPU could not pick a lineup'))
       gameStore.cancelSimulation()
       return
     }
@@ -256,10 +257,10 @@ async function handleSimPauseCpuLineup() {
     const newStarterIds = newLineup.filter(id => id !== null)
     const newMinutes = generateRoleAwareTargetMinutes(roster, newStarterIds, strategy)
     await teamStore.updateTargetMinutes(campaignId.value, newMinutes)
-    toastStore.showSuccess('Lineup updated by CPU')
+    toastStore.showSuccess(t('Lineup updated by CPU'))
   } catch (err) {
     console.error('CPU lineup pick failed:', err)
-    toastStore.showError('Failed to set CPU lineup')
+    toastStore.showError(t('Failed to set CPU lineup'))
   }
   // Resume the sim regardless of CPU result — user already chose to keep going.
   try {
@@ -309,7 +310,7 @@ function closeMobileMenu() {
             class="nav-link"
             :class="{ active: route.name === 'campaign-home' }"
           >
-            Home
+            {{ $t('Home') }}
           </router-link>
           <router-link
             :to="`/campaign/${campaignId}/team`"
@@ -317,15 +318,15 @@ function closeMobileMenu() {
             :class="{ active: route.name === 'team-management' }"
             data-tour="nav-gm-view"
           >
-            GM View
-            <span v-if="trainingReadyForClaim" class="train-ready-dot" :title="'Player training ready to claim'"></span>
+            {{ $t('GM View') }}
+            <span v-if="trainingReadyForClaim" class="train-ready-dot" :title="$t('Player training ready to claim')"></span>
           </router-link>
           <router-link
             :to="`/campaign/${campaignId}/league`"
             class="nav-link"
             :class="{ active: route.name === 'league' }"
           >
-            League
+            {{ $t('League') }}
           </router-link>
           <router-link
             v-if="playoffStore.isInPlayoffs"
@@ -333,7 +334,7 @@ function closeMobileMenu() {
             class="nav-link"
             :class="{ active: route.name === 'playoffs' }"
           >
-            Playoffs
+            {{ $t('Playoffs') }}
           </router-link>
           <router-link
             v-if="!hideScout"
@@ -342,7 +343,7 @@ function closeMobileMenu() {
             :class="{ active: route.name === 'scouting' }"
             data-tour="nav-scout"
           >
-            Scout
+            {{ $t('Scout') }}
             <span v-if="scoutingPoints > 0" class="scout-pts-badge">{{ scoutingPoints }}</span>
           </router-link>
           <router-link
@@ -353,22 +354,22 @@ function closeMobileMenu() {
             data-tour="nav-play"
           >
             <Play :size="16" fill="currentColor" />
-            Play
+            {{ $t('Play') }}
           </router-link>
         </nav>
 
         <!-- Right: User Actions (Desktop) -->
         <div v-if="!isMobile" class="header-right">
-          <button v-if="hasCommunity" class="header-icon-btn" title="Community Rosters" @click="openCommunity()">
+          <button v-if="hasCommunity" class="header-icon-btn" :title="$t('Community Rosters')" @click="openCommunity()">
             <Globe :size="16" />
           </button>
-          <router-link to="/store" class="header-icon-btn" title="Store">
+          <router-link to="/store" class="header-icon-btn" :title="$t('Store')">
             <ShoppingBag :size="16" />
           </router-link>
-          <router-link to="/profile" class="header-icon-btn" title="Profile">
+          <router-link to="/profile" class="header-icon-btn" :title="$t('Profile')">
             <User :size="16" />
           </router-link>
-          <button class="header-icon-btn" @click="handleLogout" title="Sign Out">
+          <button class="header-icon-btn" @click="handleLogout" :title="$t('Sign Out')">
             <LogOut :size="16" />
           </button>
         </div>
@@ -403,7 +404,7 @@ function closeMobileMenu() {
           @click="closeMobileMenu(); openCommunity()"
         >
           <Globe :size="14" />
-          Community
+          {{ $t('Community') }}
         </button>
         <router-link
           to="/store"
@@ -411,7 +412,7 @@ function closeMobileMenu() {
           @click="closeMobileMenu"
         >
           <ShoppingBag :size="14" />
-          Store
+          {{ $t('Store') }}
         </router-link>
         <router-link
           to="/profile"
@@ -419,7 +420,7 @@ function closeMobileMenu() {
           @click="closeMobileMenu"
         >
           <User :size="14" />
-          Profile
+          {{ $t('Profile') }}
         </router-link>
         <router-link
           to="/campaigns"
@@ -427,11 +428,11 @@ function closeMobileMenu() {
           @click="closeMobileMenu"
         >
           <FolderOpen :size="14" />
-          Campaigns
+          {{ $t('Campaigns') }}
         </router-link>
         <button class="mobile-nav-link logout" @click="handleLogout">
           <LogOut :size="14" />
-          Sign Out
+          {{ $t('Sign Out') }}
         </button>
       </div>
     </header>

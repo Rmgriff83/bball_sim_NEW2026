@@ -97,7 +97,11 @@ function formatAttribute(attr) {
     'defense.steal': 'STL',
     'defense.block': 'BLK',
   }
-  return attrMap[attr] || attr.split('.').pop().toUpperCase()
+  // Unmapped attributes: derive the display name ("ballHandling" → "Ball
+  // Handling") — matches the enumerated translatable attribute names; the
+  // badge CSS uppercases visually. Mapped abbreviations stay literal.
+  const key = attr.split('.').pop()
+  return attrMap[attr] || key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim()
 }
 </script>
 
@@ -106,7 +110,7 @@ function formatAttribute(attr) {
   <div v-if="loading" class="evolution-summary evolution-loading">
     <div class="loading-content">
       <Loader2 :size="20" class="spinner" />
-      <span>Loading team updates...</span>
+      <span>{{ $t('Loading team updates...') }}</span>
     </div>
   </div>
 
@@ -114,7 +118,7 @@ function formatAttribute(attr) {
   <div v-else-if="hasAnyData" class="evolution-summary">
     <h4 class="evolution-title">
       <Activity :size="14" />
-      {{ teamName }} Updates
+      {{ $t('{team} Updates', { team: teamName }) }}
     </h4>
 
     <!-- Unified Items Display -->
@@ -145,30 +149,30 @@ function formatAttribute(attr) {
 
         <!-- Content based on type -->
         <span v-if="item.type === 'injury'" class="injury-info">
-          {{ item.injury_type }} ({{ item.days_out ?? item.games_out ?? 0 }} {{ (item.days_out ?? item.games_out ?? 0) === 1 ? 'day' : 'days' }})
+          {{ (item.days_out ?? item.games_out ?? 0) === 1 ? $t('{type} ({n} day)', { type: $tDynamic(item.injury_type), n: item.days_out ?? item.games_out ?? 0 }) : $t('{type} ({n} days)', { type: $tDynamic(item.injury_type), n: item.days_out ?? item.games_out ?? 0 }) }}
         </span>
         <span v-else-if="item.type === 'development'" class="stat-badges">
           <span v-for="attr in item.attributes_improved" :key="attr" class="attr-badge positive">
-            +{{ formatAttribute(attr) }}
+            +{{ $tDynamic(formatAttribute(attr)) }}
           </span>
         </span>
         <span v-else-if="item.type === 'regression'" class="stat-badges">
           <span v-for="attr in item.attributes_declined" :key="attr" class="attr-badge negative">
-            -{{ formatAttribute(attr) }}
+            -{{ $tDynamic(formatAttribute(attr)) }}
           </span>
         </span>
-        <span v-else-if="item.type === 'hot_streak'" class="streak-info">{{ item.games }} game hot streak!</span>
-        <span v-else-if="item.type === 'cold_streak'" class="streak-info">{{ item.games }} game cold streak</span>
-        <span v-else-if="item.type === 'fatigue'" class="fatigue-info">Fatigue: {{ Math.round(item.fatigue) }}%</span>
+        <span v-else-if="item.type === 'hot_streak'" class="streak-info">{{ $t('{n} game hot streak!', { n: item.games }) }}</span>
+        <span v-else-if="item.type === 'cold_streak'" class="streak-info">{{ $t('{n} game cold streak', { n: item.games }) }}</span>
+        <span v-else-if="item.type === 'fatigue'" class="fatigue-info">{{ $t('Fatigue: {n}%', { n: Math.round(item.fatigue) }) }}</span>
         <span v-else-if="item.type === 'morale'" class="morale-info">
-          Morale {{ item.change > 0 ? '+' : '' }}{{ item.change }}
+          {{ $t('Morale {n}', { n: (item.change > 0 ? '+' : '') + item.change }) }}
         </span>
       </div>
     </div>
 
     <!-- View More Button -->
     <button v-if="hasMore && !expanded" class="view-more-btn" @click="expanded = true">
-      <span>View {{ remainingCount }} more</span>
+      <span>{{ $t('View {n} more', { n: remainingCount }) }}</span>
       <ChevronDown :size="16" />
     </button>
   </div>
@@ -261,6 +265,7 @@ function formatAttribute(attr) {
 .attr-badge {
   font-size: 0.65rem;
   font-weight: 700;
+  text-transform: uppercase; /* derived names ("Ball Handling") keep the badge look */
   padding: 2px 6px;
   border-radius: var(--radius-sm);
 }

@@ -11,6 +11,7 @@ import { COACH_FIRST_NAMES, COACH_LAST_NAMES } from '@/engine/data/coaches'
 import { PERSONNEL_POOL_KEY } from '@/engine/data/personnelTiers'
 import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
 import api from '@/composables/useApi'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -168,12 +169,12 @@ async function hireScout(candidate) {
 
     syncStore.markDirty()
     audio.purchase()
-    toastStore.showSuccess('Scout hired successfully!')
+    toastStore.showSuccess(t('Scout hired successfully!'))
     emit('hired')
     emit('close')
   } catch (err) {
     console.error('Failed to hire scout:', err)
-    toastStore.showError('Failed to hire scout')
+    toastStore.showError(t('Failed to hire scout'))
   } finally {
     hiring.value = false
   }
@@ -187,7 +188,7 @@ async function hireScout(candidate) {
         <div class="modal-container">
           <!-- Header -->
           <header class="modal-header">
-            <h2 class="modal-title">Hire a Scout</h2>
+            <h2 class="modal-title">{{ $t('Hire a Scout') }}</h2>
             <button class="btn-close" @click="close" aria-label="Close">
               <X :size="20" />
             </button>
@@ -199,7 +200,7 @@ async function hireScout(candidate) {
             <div class="token-balance">
               <Coins :size="16" />
               <span class="token-amount">{{ tokens.toLocaleString() }}</span>
-              <span class="token-label">Award Tokens</span>
+              <span class="token-label">{{ $t('Award Tokens') }}</span>
             </div>
 
             <!-- Candidates -->
@@ -224,9 +225,9 @@ async function hireScout(candidate) {
                       <span class="star-display" :class="'tier-' + candidate.tier">
                         <Star v-for="s in candidate.tier" :key="s" :size="12" />
                       </span>
-                      <span class="tier-label">{{ candidate.label }}</span>
+                      <span class="tier-label">{{ $tDynamic(candidate.label) }}</span>
                     </div>
-                    <span class="contract-length">2-Season Contract</span>
+                    <span class="contract-length">{{ $t('2-Season Contract') }}</span>
                   </div>
                   <div class="cost-badge">
                     <Coins :size="12" />
@@ -246,9 +247,9 @@ async function hireScout(candidate) {
                       <Lock v-else :size="14" />
                     </div>
                     <div class="perk-text">
-                      <span class="perk-label">{{ perk.label }}</span>
-                      <span class="perk-desc">{{ perk.description }}</span>
-                      <span v-if="!isPerkActive(perk)" class="perk-req">Requires Scouting Facility Lv {{ perk.requiredLevel }}</span>
+                      <span class="perk-label">{{ $tDynamic(perk.label) }}</span>
+                      <span class="perk-desc">{{ $tDynamic(perk.description) }}</span>
+                      <span v-if="!isPerkActive(perk)" class="perk-req">{{ $t('Requires Scouting Facility Lv {n}', { n: perk.requiredLevel }) }}</span>
                     </div>
                   </div>
                 </div>
@@ -258,7 +259,7 @@ async function hireScout(candidate) {
                   :disabled="tokens < candidate.cost || hiring"
                   @click="hireScout(candidate)"
                 >
-                  {{ tokens < candidate.cost ? 'Insufficient Tokens' : 'Hire Scout' }}
+                  {{ tokens < candidate.cost ? $t('Insufficient Tokens') : $t('Hire Scout') }}
                 </button>
               </div>
             </div>
@@ -266,7 +267,7 @@ async function hireScout(candidate) {
 
           <!-- Footer -->
           <footer class="modal-footer">
-            <button class="btn-cancel" @click="close">Close</button>
+            <button class="btn-cancel" @click="close">{{ $t('Close') }}</button>
           </footer>
         </div>
       </div>

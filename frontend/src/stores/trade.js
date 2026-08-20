@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { t } from '@wl-i18n/i18n.js'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { capNumbersFor } from '@/engine/data/salaryScale'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
@@ -595,7 +596,7 @@ export const useTradeStore = defineStore('trade', () => {
       if (!userTradingAllowed(campaign, currentDate, year)) {
         const result = {
           decision: 'reject',
-          reason: 'The trade deadline has passed — no more trades can be made this season.',
+          reason: t('The trade deadline has passed — no more trades can be made this season.'),
           deadlinePassed: true,
         }
         lastProposalResult.value = result

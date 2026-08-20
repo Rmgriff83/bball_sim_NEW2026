@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { t } from '@wl-i18n/i18n.js'
 import { PlayoffManager } from '@/engine/season/PlayoffManager'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
@@ -79,13 +80,15 @@ export const usePlayoffStore = defineStore('playoff', () => {
   const finalsMVP = computed(() => bracket.value?.finalsMVP ?? null)
 
   // Get playoff round label
+  // Translated at call time — every consumer is a computed/template render,
+  // so locale switches re-evaluate reactively.
   function getPlayoffRoundLabel(round) {
     switch (round) {
-      case 1: return 'First Round'
-      case 2: return 'Semifinals'
-      case 3: return 'Conference Finals'
-      case 4: return 'Finals'
-      default: return 'Playoffs'
+      case 1: return t('First Round')
+      case 2: return t('Semifinals')
+      case 3: return t('Conference Finals')
+      case 4: return t('Finals')
+      default: return t('Playoffs')
     }
   }
 
