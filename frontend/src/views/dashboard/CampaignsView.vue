@@ -18,6 +18,7 @@ import TeamPicker from '@/components/team/TeamPicker.vue'
 import OwnerQuickInfo from '@/components/team/OwnerQuickInfo.vue'
 import { findCoachForTeam } from '@/engine/data/coaches'
 import { coachBadges } from '@/engine/data/coachBadges'
+import { t, dateLocale } from '@wl-i18n/i18n.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -96,7 +97,7 @@ async function restoreCampaign(campaign) {
   try {
     await campaignStore.restoreCloudCampaign(campaign.id)
   } catch (err) {
-    restoreError.value = err?.message || 'Restore failed. Check your connection and try again.'
+    restoreError.value = err?.message || t('Restore failed. Check your connection and try again.')
     restoringErrorId.value = campaign.id
   } finally {
     restoringId.value = null
@@ -211,7 +212,7 @@ async function handleLogout() {
 
 function openCreateModal() {
   if (campaignStore.campaigns.length >= MAX_CAMPAIGNS) {
-    createError.value = `Maximum of ${MAX_CAMPAIGNS} campaigns reached. Delete an existing campaign to create a new one.`
+    createError.value = t('Maximum of {max} campaigns reached. Delete an existing campaign to create a new one.', { max: MAX_CAMPAIGNS })
     return
   }
   createError.value = null
@@ -284,7 +285,7 @@ onUnmounted(() => {
 
 async function createCampaign() {
   if (!selectedTeam.value) {
-    createError.value = 'Please select a team'
+    createError.value = t('Please select a team')
     return
   }
 
@@ -336,16 +337,16 @@ async function createCampaign() {
         : `/campaign/${campaign.id}`
     showPlayedBeforeModal.value = true
   } catch (err) {
-    createError.value = err.message || 'Failed to create campaign'
+    createError.value = err.message || t('Failed to create campaign')
   } finally {
     creating.value = false
   }
 }
 
 function formatDate(dateString) {
-  if (!dateString) return 'Never'
+  if (!dateString) return t('Never')
   const date = new Date(dateString)
-  return date.toLocaleDateString('en-US', {
+  return date.toLocaleDateString(dateLocale(), {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -362,27 +363,28 @@ function getDifficultyLabel(value) {
     <!-- Header -->
     <header class="campaigns-header">
       <div class="header-container">
+        <!-- i18n-ignore -->
         <router-link to="/dashboard" class="app-logo">BBALL SIM</router-link>
         <nav class="header-nav">
           <router-link to="/dashboard" class="nav-link">
             <LayoutDashboard :size="18" />
-            <span>Dashboard</span>
+            <span>{{ $t('Dashboard') }}</span>
           </router-link>
           <button v-if="hasCommunity" class="nav-link" @click="openCommunity()">
             <Globe :size="18" />
-            <span>Community</span>
+            <span>{{ $t('Community') }}</span>
           </button>
           <router-link v-if="canCustomRoster" to="/builder" class="nav-link">
             <Hammer :size="18" />
-            <span>Builder</span>
+            <span>{{ $t('Builder') }}</span>
           </router-link>
           <router-link to="/profile" class="nav-link">
             <User :size="18" />
-            <span>Profile</span>
+            <span>{{ $t('Profile') }}</span>
           </router-link>
           <button @click="handleLogout" class="nav-link logout-btn">
             <LogOut :size="18" />
-            <span>Sign Out</span>
+            <span>{{ $t('Sign Out') }}</span>
           </button>
         </nav>
       </div>
@@ -394,12 +396,12 @@ function getDifficultyLabel(value) {
         <!-- Page Header -->
         <div class="page-header">
           <div>
-            <h1 class="page-title">Your Campaigns</h1>
-            <p class="page-subtitle">Manage your basketball franchises</p>
+            <h1 class="page-title">{{ $t('Your Campaigns') }}</h1>
+            <p class="page-subtitle">{{ $t('Manage your basketball franchises') }}</p>
           </div>
           <BaseButton variant="primary" class="btn-cosmic" @click="openCreateModal">
             <Plus :size="18" />
-            New Campaign
+            {{ $t('New Campaign') }}
           </BaseButton>
         </div>
 
@@ -415,10 +417,10 @@ function getDifficultyLabel(value) {
               <div class="empty-icon-wrapper">
                 <Plus :size="32" />
               </div>
-              <h3 class="empty-title">No Campaigns Yet</h3>
-              <p class="empty-description">Start your first franchise and build a dynasty!</p>
+              <h3 class="empty-title">{{ $t('No Campaigns Yet') }}</h3>
+              <p class="empty-description">{{ $t('Start your first franchise and build a dynasty!') }}</p>
               <BaseButton variant="primary" @click="openCreateModal">
-                Create Your First Campaign
+                {{ $t('Create Your First Campaign') }}
               </BaseButton>
             </div>
           </GlassCard>
@@ -447,12 +449,12 @@ function getDifficultyLabel(value) {
               <div class="campaign-header">
                 <div class="campaign-info">
                   <h3 class="campaign-name">{{ campaign.name }}</h3>
-                  <p class="campaign-team">Saved in the cloud — not on this device</p>
+                  <p class="campaign-team">{{ $t('Saved in the cloud — not on this device') }}</p>
                 </div>
               </div>
               <div class="campaign-footer">
                 <span class="last-played">
-                  {{ campaign.updatedAt ? `Last synced: ${formatDate(campaign.updatedAt)}` : 'Cloud backup available' }}
+                  {{ campaign.updatedAt ? $t('Last synced: {date}', { date: formatDate(campaign.updatedAt) }) : $t('Cloud backup available') }}
                 </span>
                 <BaseButton
                   variant="primary"
@@ -460,7 +462,7 @@ function getDifficultyLabel(value) {
                   :loading="restoringId === campaign.id"
                   @click.stop="restoreCampaign(campaign)"
                 >
-                  Restore
+                  {{ $t('Restore') }}
                 </BaseButton>
               </div>
               <p v-if="restoreError && restoringErrorId === campaign.id" class="restore-error">
@@ -473,11 +475,11 @@ function getDifficultyLabel(value) {
               <div class="campaign-info">
                 <h3 class="campaign-name">{{ campaign.team?.name || campaign.name }}</h3>
                 <div class="campaign-team-row">
-                  <p class="campaign-team">Overall Record</p>
+                  <p class="campaign-team">{{ $t('Overall Record') }}</p>
                   <span
                     v-if="campaign.team?.allTimeRecord"
                     class="campaign-team-record"
-                    :title="`Overall record: ${campaign.team.allTimeRecord.wins}-${campaign.team.allTimeRecord.losses}`"
+                    :title="$t('Overall record: {w}-{l}', { w: campaign.team.allTimeRecord.wins, l: campaign.team.allTimeRecord.losses })"
                   >
                     {{ campaign.team.allTimeRecord.wins }}-{{ campaign.team.allTimeRecord.losses }}
                   </span>
@@ -487,7 +489,7 @@ function getDifficultyLabel(value) {
                 <button
                   class="delete-btn"
                   @click="requestDelete(campaign.id, $event)"
-                  title="Delete campaign"
+                  :title="$t('Delete campaign')"
                 >
                   <Trash2 :size="16" />
                 </button>
@@ -502,11 +504,11 @@ function getDifficultyLabel(value) {
 
             <!-- Delete confirmation inline -->
             <div v-if="confirmDeleteId === campaign.id" class="delete-confirm" @click.stop>
-              <p class="delete-confirm-text">Delete this campaign? This cannot be undone.</p>
+              <p class="delete-confirm-text">{{ $t('Delete this campaign? This cannot be undone.') }}</p>
               <div class="delete-confirm-actions">
-                <button class="delete-confirm-cancel" @click="cancelDelete($event)">Cancel</button>
+                <button class="delete-confirm-cancel" @click="cancelDelete($event)">{{ $t('Cancel') }}</button>
                 <button class="delete-confirm-yes" :disabled="deleting" @click="confirmDelete($event)">
-                  {{ deleting ? 'Deleting...' : 'Delete' }}
+                  {{ deleting ? $t('Deleting...') : $t('Delete') }}
                 </button>
               </div>
             </div>
@@ -515,15 +517,15 @@ function getDifficultyLabel(value) {
               <div class="campaign-meta">
                 <span class="meta-item">
                   <Calendar :size="14" />
-                  Year {{ campaign.gameYear ?? campaign.game_year ?? 1 }}
+                  {{ $t('Year {n}', { n: campaign.gameYear ?? campaign.game_year ?? 1 }) }}
                 </span>
                 <span class="meta-divider">·</span>
-                <span class="meta-item difficulty">{{ getDifficultyLabel(campaign.difficulty) }}</span>
+                <span class="meta-item difficulty">{{ $tDynamic(getDifficultyLabel(campaign.difficulty)) }}</span>
                 <template v-if="(campaign.team?.franchise_history?.championships ?? 0) > 0">
                   <span class="meta-divider">·</span>
                   <span
                     class="meta-item meta-trophy"
-                    :title="`${campaign.team.franchise_history.championships} championship${campaign.team.franchise_history.championships === 1 ? '' : 's'}`"
+                    :title="campaign.team.franchise_history.championships === 1 ? $t('{n} championship', { n: campaign.team.franchise_history.championships }) : $t('{n} championships', { n: campaign.team.franchise_history.championships })"
                   >
                     <Trophy :size="14" />
                     {{ campaign.team.franchise_history.championships }}
@@ -533,10 +535,10 @@ function getDifficultyLabel(value) {
 
               <div class="campaign-footer">
                 <span class="last-played">
-                  Last played: {{ formatDate(campaign.last_played_at) }}
+                  {{ $t('Last played: {date}', { date: formatDate(campaign.last_played_at) }) }}
                 </span>
                 <div class="continue-btn">
-                  Continue
+                  {{ $t('Continue') }}
                   <ChevronRight :size="16" />
                 </div>
               </div>
@@ -558,7 +560,7 @@ function getDifficultyLabel(value) {
           <div class="modal-container">
             <!-- Header -->
             <header class="modal-header">
-              <h2 class="modal-title">Sign a 4-Year GM Contract</h2>
+              <h2 class="modal-title">{{ $t('Sign a 4-Year GM Contract') }}</h2>
               <button class="modal-close" @click="closeCreateModal" aria-label="Close">
                 <X :size="20" />
               </button>
@@ -580,20 +582,20 @@ function getDifficultyLabel(value) {
 
               <!-- GM Level (career, profile-global) -->
               <div class="form-group gm-level-group">
-                <span class="gm-level-label">Your GM Level</span>
+                <span class="gm-level-label">{{ $t('Your GM Level') }}</span>
                 <span
                   class="gm-level-badge"
                   :style="{ backgroundColor: gmLevelBadge.color, color: gmLevelBadge.text }"
-                  :title="`Your GM career level: ${gmLevelBadge.label}`"
+                  :title="$t('Your GM career level: {level}', { level: gmLevelBadge.label })"
                 >
                   <Medal :size="14" />
-                  {{ gmLevelBadge.label }}
+                  {{ $tDynamic(gmLevelBadge.label) }}
                 </span>
               </div>
 
               <!-- Draft Mode Selection -->
               <div class="form-group">
-                <label class="form-label">Draft Mode</label>
+                <label class="form-label">{{ $t('Draft Mode') }}</label>
                 <div class="difficulty-grid">
                   <button
                     v-for="mode in draftModes"
@@ -603,8 +605,8 @@ function getDifficultyLabel(value) {
                     :class="{ selected: selectedDraftMode === mode.value }"
                     @click="selectedDraftMode = mode.value"
                   >
-                    <span class="difficulty-name">{{ mode.label }}</span>
-                    <span class="difficulty-desc">{{ mode.description }}</span>
+                    <span class="difficulty-name">{{ $tDynamic(mode.label) }}</span>
+                    <span class="difficulty-desc">{{ $tDynamic(mode.description) }}</span>
                   </button>
                 </div>
               </div>
@@ -613,7 +615,7 @@ function getDifficultyLabel(value) {
                    Hidden entirely when the user doesn't own the unlock;
                    createCampaign defaults to 'generated' otherwise. -->
               <div v-if="canCustomRoster" class="form-group">
-                <label class="form-label">League Roster</label>
+                <label class="form-label">{{ $t('League Roster') }}</label>
                 <div class="difficulty-grid">
                   <button
                     v-for="opt in leagueRosterOptions"
@@ -623,15 +625,15 @@ function getDifficultyLabel(value) {
                     :class="{ selected: selectedLeagueRoster === opt.value }"
                     @click="selectedLeagueRoster = opt.value"
                   >
-                    <span class="difficulty-name">{{ opt.label }}</span>
-                    <span class="difficulty-desc">{{ opt.description }}</span>
+                    <span class="difficulty-name">{{ $tDynamic(opt.label) }}</span>
+                    <span class="difficulty-desc">{{ $tDynamic(opt.description) }}</span>
                   </button>
                 </div>
               </div>
 
               <!-- Team Selection -->
               <div class="form-group">
-                <label class="form-label">Choose the team to sign with (4-year contract)</label>
+                <label class="form-label">{{ $t('Choose the team to sign with (4-year contract)') }}</label>
                 <TeamPicker
                   v-model="selectedTeam"
                   :teams="campaignStore.availableTeams"
@@ -644,7 +646,7 @@ function getDifficultyLabel(value) {
                    createCampaign still strips any custom name from the
                    payload defensively. -->
               <div v-if="selectedTeam && canRenameTeam" class="form-group">
-                <label class="form-label">Rename your team (optional)</label>
+                <label class="form-label">{{ $t('Rename your team (optional)') }}</label>
                 <input
                   v-model="customTeamName"
                   type="text"
@@ -678,7 +680,7 @@ function getDifficultyLabel(value) {
                 </div>
                 <div class="preview-info">
                   <h4 class="preview-name">{{ customTeamName.trim() || selectedTeam.name }}</h4>
-                  <p class="preview-meta">{{ selectedTeam.division }} Division</p>
+                  <p class="preview-meta">{{ $t('{division} Division', { division: selectedTeam.division }) }}</p>
                   <OwnerQuickInfo :team-abbreviation="selectedTeam.abbreviation" />
                 </div>
 
@@ -721,7 +723,7 @@ function getDifficultyLabel(value) {
                           :style="{ color: COACH_BADGE_TIER_COLORS[badge.level] || 'var(--color-text-secondary)' }"
                           :fill="COACH_BADGE_TIER_COLORS[badge.level] || 'transparent'"
                         />
-                        {{ coachBadgeName(badge.id) }}
+                        {{ $tDynamic(coachBadgeName(badge.id)) }}
                       </span>
                     </span>
                     <span v-if="selectedCoach.attributes" class="pd-attrs">
@@ -737,7 +739,7 @@ function getDifficultyLabel(value) {
             <!-- Footer -->
             <footer class="modal-footer">
               <button class="btn-cancel" @click="closeCreateModal">
-                Cancel
+                {{ $t('Cancel') }}
               </button>
               <button
                 class="btn-create"
@@ -745,7 +747,7 @@ function getDifficultyLabel(value) {
                 @click="createCampaign"
               >
                 <LoadingSpinner v-if="creating" size="sm" />
-                <template v-else>Sign 4-Year Contract</template>
+                <template v-else>{{ $t('Sign 4-Year Contract') }}</template>
               </button>
             </footer>
           </div>

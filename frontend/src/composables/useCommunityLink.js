@@ -8,6 +8,7 @@
 // the awaited handoff mint, which silently no-op'd on iOS and led users to
 // re-tap into the mint endpoint's 6/min throttle.
 import { computed, ref } from 'vue'
+import { t } from '@wl-i18n/i18n.js'
 import { useRouter } from 'vue-router'
 import { Capacitor } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
@@ -46,9 +47,9 @@ export function useCommunityLink() {
       await Browser.open({ url: res.data.url })
     } catch (err) {
       if (err?.response?.status === 429) {
-        toast.showError('Easy — try again in a minute.')
+        toast.showError(t('Easy — try again in a minute.'))
       } else {
-        toast.showError("Couldn't open the community board — please try again.")
+        toast.showError(t("Couldn't open the community board — please try again."))
       }
     } finally {
       opening.value = false

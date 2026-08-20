@@ -217,15 +217,15 @@ onMounted(async () => {
 
       <!-- User Trading Block -->
       <div class="block-section">
-        <h3 class="section-title">Your Trading Block</h3>
+        <h3 class="section-title">{{ $t('Your Trading Block') }}</h3>
         <GlassCard v-if="userBlockPlayers.length === 0" padding="lg" :hoverable="false">
           <div class="empty-state">
             <Repeat :size="32" class="empty-icon" />
-            <p>No players on your trading block. Open a player's detail modal and tap the trade block toggle to add them.</p>
+            <p>{{ $t("No players on your trading block. Open a player's detail modal and tap the trade block toggle to add them.") }}</p>
           </div>
         </GlassCard>
         <div v-else-if="filteredUserBlock.length === 0" class="filter-empty">
-          No {{ positionFilter }} players on your trading block.
+          {{ $t('No {pos} players on your trading block.', { pos: positionFilter }) }}
         </div>
         <div v-else class="players-grid">
           <div
@@ -244,18 +244,21 @@ onMounted(async () => {
                 <h4 class="player-name">{{ getPlayerName(player) }}</h4>
                 <div class="player-meta">
                   <div class="vitals-row">
-                    {{ player.height || "6'6\"" }} · {{ player.age || 25 }} yrs
+                    {{ $t('{height} · {age} yrs', { height: player.height || "6'6\"", age: player.age || 25 }) }}
                   </div>
                   <div class="position-badges">
                     <span class="position-badge" :style="{ backgroundColor: getPositionColor(getPlayerPosition(player)) }">
                       {{ getPlayerPosition(player) }}
                     </span>
                   </div>
-                  <span class="team-tag">Your Team</span>
+                  <span class="team-tag">{{ $t('Your Team') }}</span>
                 </div>
                 <div v-if="getStatLine(player.id)" class="stats-inline">
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">PPG</span><span class="stat-val">{{ getStatLine(player.id).ppg }}</span></span>
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">RPG</span><span class="stat-val">{{ getStatLine(player.id).rpg }}</span></span>
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">APG</span><span class="stat-val">{{ getStatLine(player.id).apg }}</span></span>
                 </div>
               </div>
@@ -271,15 +274,15 @@ onMounted(async () => {
       <div class="block-section">
         <h3 class="section-title">
           <Users :size="16" />
-          League Trading Block
+          {{ $t('League Trading Block') }}
         </h3>
         <GlassCard v-if="leagueBlockPlayers.length === 0" padding="lg" :hoverable="false">
           <div class="empty-state">
-            <p>No AI teams have players on the trading block yet.</p>
+            <p>{{ $t('No AI teams have players on the trading block yet.') }}</p>
           </div>
         </GlassCard>
         <div v-else-if="filteredLeagueBlock.length === 0" class="filter-empty">
-          No {{ positionFilter }} players on the league trading block.
+          {{ $t('No {pos} players on the league trading block.', { pos: positionFilter }) }}
         </div>
         <div v-else class="players-grid">
           <div
@@ -298,7 +301,7 @@ onMounted(async () => {
                 <h4 class="player-name">{{ getPlayerName(player) }}</h4>
                 <div class="player-meta">
                   <div class="vitals-row">
-                    {{ player.height || "6'6\"" }} · {{ player.age || 25 }} yrs
+                    {{ $t('{height} · {age} yrs', { height: player.height || "6'6\"", age: player.age || 25 }) }}
                   </div>
                   <div class="position-badges">
                     <span class="position-badge" :style="{ backgroundColor: getPositionColor(getPlayerPosition(player)) }">
@@ -308,14 +311,17 @@ onMounted(async () => {
                   <span class="team-tag">{{ player._teamAbbr || getTeamAbbr(player) }}</span>
                 </div>
                 <div v-if="getStatLine(player.id)" class="stats-inline">
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">PPG</span><span class="stat-val">{{ getStatLine(player.id).ppg }}</span></span>
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">RPG</span><span class="stat-val">{{ getStatLine(player.id).rpg }}</span></span>
+                  <!-- i18n-ignore -->
                   <span class="stat-inline"><span class="stat-label">APG</span><span class="stat-val">{{ getStatLine(player.id).apg }}</span></span>
                 </div>
               </div>
               <div class="rating-container">
                 <StatBadge :value="getPlayerRating(player)" size="md" />
-                <button class="trade-btn" @click="startTrade(player, $event)" title="Start trade">
+                <button class="trade-btn" @click="startTrade(player, $event)" :title="$t('Start trade')">
                   <ArrowRightLeft :size="14" />
                 </button>
               </div>

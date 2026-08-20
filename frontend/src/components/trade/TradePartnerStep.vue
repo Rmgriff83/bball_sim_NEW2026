@@ -8,6 +8,7 @@ import TradePartnerCard from './TradePartnerCard.vue'
 import PositionFilterBar from './PositionFilterBar.vue'
 import { Check, X, Star, Info, AlertTriangle } from 'lucide-vue-next'
 import { getAssetStars, getPositionColor, formatContractYears } from './tradeAssetFormat'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   campaignId: { type: [String, Number], required: true },
@@ -141,11 +142,11 @@ function closePlayer() {
 
 // ---- Requesting summary helpers ----
 function assetLabel(a) {
-  if (a.type === 'player') return `${a.firstName ?? ''} ${a.lastName ?? ''}`.trim() || 'Player'
-  return a.displayName || `${a.year} R${a.round} Pick`
+  if (a.type === 'player') return `${a.firstName ?? ''} ${a.lastName ?? ''}`.trim() || t('Player')
+  return a.displayName || t('{year} R{round} Pick', { year: a.year, round: a.round })
 }
 function blockName(p) {
-  return `${p.firstName ?? p.first_name ?? ''} ${p.lastName ?? p.last_name ?? ''}`.trim() || 'Unknown'
+  return `${p.firstName ?? p.first_name ?? ''} ${p.lastName ?? p.last_name ?? ''}`.trim() || t('Unknown')
 }
 function blockRating(p) { return p.overallRating ?? p.overall_rating ?? 75 }
 function blockSalary(p) { return tradeStore.formatSalary(p.contractSalary ?? p.contract_salary ?? 0) }
@@ -156,12 +157,12 @@ function isBlockSelected(id) { return requestingIds.value.has(`player:${id}`) }
 <template>
   <div class="tp-step">
     <p class="tp-step-desc">
-      Browse each team's roster, picks and stars — tap an asset to add it to your offer.
+      {{ $t("Browse each team's roster, picks and stars — tap an asset to add it to your offer.") }}
     </p>
 
     <!-- Requesting summary -->
     <div v-if="userRequesting.length" class="tp-requesting">
-      <span class="tp-requesting-label">Requesting{{ selectedTeam ? ` from ${selectedTeam.abbreviation}` : '' }}:</span>
+      <span class="tp-requesting-label">{{ selectedTeam ? $t('Requesting from {team}:', { team: selectedTeam.abbreviation }) : $t('Requesting:') }}</span>
       <span
         v-for="a in userRequesting"
         :key="`${a.type}:${a.id}`"
@@ -175,10 +176,10 @@ function isBlockSelected(id) { return requestingIds.value.has(`player:${id}`) }
     <!-- Top tabs -->
     <div class="tp-tabs">
       <button type="button" class="tp-tab" :class="{ active: partnerTab === 'teams' }" @click="partnerTab = 'teams'">
-        Teams
+        {{ $t('Teams') }}
       </button>
       <button type="button" class="tp-tab" :class="{ active: partnerTab === 'block' }" @click="partnerTab = 'block'">
-        Trade Block ({{ leagueTradeBlock.length }})
+        {{ $t('Trade Block ({n})', { n: leagueTradeBlock.length }) }}
       </button>
     </div>
 
@@ -201,10 +202,10 @@ function isBlockSelected(id) { return requestingIds.value.has(`player:${id}`) }
     <div v-else class="tp-block-list">
       <PositionFilterBar v-model="blockPositionFilter" />
       <div v-if="leagueTradeBlock.length === 0" class="tp-block-empty">
-        No players are on the trade block right now.
+        {{ $t('No players are on the trade block right now.') }}
       </div>
       <div v-else-if="filteredBlock.length === 0" class="tp-block-empty">
-        No {{ blockPositionFilter }} players on the trade block.
+        {{ $t('No {pos} players on the trade block.', { pos: blockPositionFilter }) }}
       </div>
       <div
         v-for="p in filteredBlock"
@@ -236,7 +237,7 @@ function isBlockSelected(id) { return requestingIds.value.has(`player:${id}`) }
         </div>
         <div class="tp-block-right">
           <StatBadge :value="blockRating(p)" size="sm" />
-          <button type="button" class="tp-info-btn" @click.stop="openPlayer(p)" title="Player details"><Info :size="15" /></button>
+          <button type="button" class="tp-info-btn" @click.stop="openPlayer(p)" :title="$t('Player details')"><Info :size="15" /></button>
           <Check v-if="isBlockSelected(p.id)" :size="16" class="tp-asset-check" />
         </div>
       </div>
@@ -246,15 +247,14 @@ function isBlockSelected(id) { return requestingIds.value.has(`player:${id}`) }
     <div v-if="pendingSwitch" class="tp-confirm-overlay" @click.self="cancelSwitch">
       <div class="tp-confirm">
         <AlertTriangle :size="22" class="tp-confirm-icon" />
-        <div class="tp-confirm-title">Switch trade partner?</div>
+        <div class="tp-confirm-title">{{ $t('Switch trade partner?') }}</div>
         <p class="tp-confirm-body">
-          You're building a trade with <strong>{{ selectedTeam?.abbreviation }}</strong>.
-          Switching to <strong>{{ pendingSwitch.team.abbreviation }}</strong> will clear your
-          {{ userRequesting.length }} requested asset{{ userRequesting.length === 1 ? '' : 's' }}.
+          {{ $t("You're building a trade with {team}.", { team: selectedTeam?.abbreviation }) }}
+          {{ userRequesting.length === 1 ? $t('Switching to {team} will clear your {n} requested asset.', { team: pendingSwitch.team.abbreviation, n: userRequesting.length }) : $t('Switching to {team} will clear your {n} requested assets.', { team: pendingSwitch.team.abbreviation, n: userRequesting.length }) }}
         </p>
         <div class="tp-confirm-actions">
-          <button type="button" class="tp-btn ghost" @click="cancelSwitch">Cancel</button>
-          <button type="button" class="tp-btn danger" @click="confirmSwitch">Switch</button>
+          <button type="button" class="tp-btn ghost" @click="cancelSwitch">{{ $t('Cancel') }}</button>
+          <button type="button" class="tp-btn danger" @click="confirmSwitch">{{ $t('Switch') }}</button>
         </div>
       </div>
     </div>

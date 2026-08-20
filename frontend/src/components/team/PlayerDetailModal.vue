@@ -17,7 +17,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useTeamStore } from '@/stores/team'
 import { useAudioStore } from '@/stores/audio'
 import { getBadgeStoreEntries, PLAYER_BADGE_LEVELS } from '@/engine/data/playerBadgeStore'
-import { BADGES } from '@/engine/data/badges'
+import { BADGES, badgeDisplayName } from '@/engine/data/badges'
 import { getCoachTrainBudget } from '@/engine/data/coaches'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
 import { useWalkthroughStore } from '@/stores/walkthrough'
@@ -25,6 +25,7 @@ import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayB
 import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 import { getMotivationLabel, getArchetypeLabel, calculateRetentionScore } from '@/engine/ai/MotivationService'
+import { t, tDynamic, dateLocale } from '@wl-i18n/i18n.js'
 
 const { getActivatedBadges, isPlayerInDynamicDuo } = useBadgeSynergies()
 
@@ -342,11 +343,11 @@ async function toggleTradingBlock() {
   if (!props.campaignId || !props.player) return
   const pid = props.player.id ?? props.player.playerId
   const added = await tradeStore.togglePlayerOnTradingBlock(props.campaignId, pid)
-  const name = normalizedPlayer.value?.name || 'Player'
+  const name = normalizedPlayer.value?.name || t('Player')
   if (added) {
-    toastStore.showSuccess(`${name} added to trading block`)
+    toastStore.showSuccess(t('{name} added to trading block', { name }))
   } else {
-    toastStore.showSuccess(`${name} removed from trading block`)
+    toastStore.showSuccess(t('{name} removed from trading block', { name }))
   }
 }
 
@@ -456,7 +457,7 @@ function isBadgeActivated(badgeId) {
 function getBadgeSynergyTooltip(badge) {
   const details = activatedBadgeData.value.synergyDetails.get(badge.id)
   if (!details?.length) return ''
-  return details.map(d => `⚡ ${d.synergyName} (w/ ${d.partnerName})`).join('\n')
+  return details.map(d => t('⚡ {synergy} (w/ {partner})', { synergy: tDynamic(d.synergyName), partner: d.partnerName })).join('\n')
 }
 
 // Offense/Defense upgrade point pools
@@ -579,7 +580,7 @@ function handlePurchaseUpgradePoint(pool) {
   pendingUpgradePurchase.value = {
     pool,
     price: info.price,
-    label: pool === 'defense' ? 'Defense' : 'Offense',
+    label: pool === 'defense' ? t('Defense') : t('Offense'),
   }
 }
 
@@ -608,10 +609,10 @@ function confirmUpgradePurchase() {
 
 function purchaseTooltip(info) {
   if (!info) return ''
-  if (info.reachedSeasonCap) return 'Season cap reached (3/3 purchases)'
-  if (info.noHeadroom) return 'Overall is already at potential'
-  if (info.insufficientTokens) return `Need ${info.price.toLocaleString()} tokens`
-  return `Buy +1 for ${info.price.toLocaleString()} tokens`
+  if (info.reachedSeasonCap) return t('Season cap reached (3/3 purchases)')
+  if (info.noHeadroom) return t('Overall is already at potential')
+  if (info.insufficientTokens) return t('Need {n} tokens', { n: info.price.toLocaleString() })
+  return t('Buy +1 for {n} tokens', { n: info.price.toLocaleString() })
 }
 
 function formatTokens(n) {
@@ -674,7 +675,7 @@ function formatTradeLogDate(entry) {
   if (!d) return entry?.seasonYear ?? ''
   const [y, m, day] = d.split('-').map(Number)
   if (!y || !m || !day) return d
-  return new Date(y, m - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(y, m - 1, day).toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 // Fatigue helpers
@@ -780,9 +781,9 @@ async function saveHistoryEdit() {
     })
     Object.assign(props.player, patch)
     editingHistory.value = false
-    toastStore.showSuccess('Player history updated')
+    toastStore.showSuccess(t('Player history updated'))
   } catch (err) {
-    toastStore.showError(err?.message || 'Failed to update history')
+    toastStore.showError(err?.message || t('Failed to update history'))
   } finally {
     flavorSaving.value = false
   }
@@ -802,26 +803,26 @@ async function savePersonalityEdit() {
     })
     Object.assign(props.player, patch)
     editingPersonality.value = false
-    toastStore.showSuccess('Personality updated')
+    toastStore.showSuccess(t('Personality updated'))
   } catch (err) {
-    toastStore.showError(err?.message || 'Failed to update personality')
+    toastStore.showError(err?.message || t('Failed to update personality'))
   } finally {
     flavorSaving.value = false
   }
 }
 const coachMeetingDisabledReason = computed(() => {
-  if (!props.coach) return 'Sign a coach first'
-  if (moraleValue.value >= 100) return 'Morale already maxed'
-  if (meetingInProgress.value) return 'Working…'
+  if (!props.coach) return t('Sign a coach first')
+  if (moraleValue.value >= 100) return t('Morale already maxed')
+  if (meetingInProgress.value) return t('Working…')
   if (coachActionsLeft.value === 0 && (props.userTokens ?? 0) < COACH_MEETING_EXTRA_COST) {
-    return 'Out of actions and tokens'
+    return t('Out of actions and tokens')
   }
   return null
 })
 const coachMeetingLabel = computed(() => (
   coachActionsLeft.value > 0
-    ? `Coach Meeting · ${coachActionsLeft.value} left`
-    : `Coach Meeting · ${COACH_MEETING_EXTRA_COST} tokens`
+    ? t('Coach Meeting · {n} left', { n: coachActionsLeft.value })
+    : t('Coach Meeting · {n} tokens', { n: COACH_MEETING_EXTRA_COST })
 ))
 
 // -----------------------------------------------------------------------
@@ -860,7 +861,7 @@ const trainingInProgress = computed(() => trainingForThisPlayer.value && trainin
 // Pretty "Xh Ym" / "Xm Ys" countdown.
 function formatTrainingCountdown(ms) {
   if (ms == null) return ''
-  if (ms <= 0) return 'Ready!'
+  if (ms <= 0) return t('Ready!')
   const totalSeconds = Math.ceil(ms / 1000)
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
@@ -887,11 +888,11 @@ const canShowTrain = computed(() => (
 ))
 
 const trainDisabledReason = computed(() => {
-  if (!props.coach) return 'Sign a coach first'
-  if (trainingForOtherPlayer.value) return 'Another training is in progress'
+  if (!props.coach) return t('Sign a coach first')
+  if (trainingForOtherPlayer.value) return t('Another training is in progress')
   if (trainingForThisPlayer.value) return null  // handled by Claim/Countdown UI
-  if (trainBudgetLeft.value <= 0) return 'No training actions left this season'
-  if (trainingPool.value.length === 0) return 'No badges left to train into'
+  if (trainBudgetLeft.value <= 0) return t('No training actions left this season')
+  if (trainingPool.value.length === 0) return t('No badges left to train into')
   return null
 })
 
@@ -905,9 +906,9 @@ async function handleStartTraining() {
   try {
     await teamStore.startTrainingSession(props.campaignId, props.player.id)
     audio.affirm()
-    toastStore.showSuccess('Training session started')
+    toastStore.showSuccess(t('Training session started'))
   } catch (err) {
-    toastStore.showError(err?.message || 'Failed to start training')
+    toastStore.showError(err?.message || t('Failed to start training'))
   } finally {
     trainInProgress.value = false
   }
@@ -923,10 +924,10 @@ async function handleClaimTraining() {
     if (result?.badge && result.level) {
       audio.affirm()
       const badgeName = result.badge.name ?? result.badgeId
-      toastStore.showSuccess(`🏅 Trained: ${badgeName} → ${String(result.level).toUpperCase()}`, 4500)
+      toastStore.showSuccess(t('🏅 Trained: {badge} → {level}', { badge: tDynamic(badgeName), level: String(result.level).toUpperCase() }), 4500)
     } else {
       // No eligible pool remained — surface gracefully.
-      toastStore.showSuccess('Training complete (no eligible badges remained)')
+      toastStore.showSuccess(t('Training complete (no eligible badges remained)'))
     }
   } catch (err) {
     // Cross-device claim race: another device already claimed this reward
@@ -935,9 +936,9 @@ async function handleClaimTraining() {
     // disappear. Show an informational toast rather than a red "failed"
     // error since the user's data is fine, just out of date.
     if (err?.code === 'ALREADY_CLAIMED') {
-      toastStore.showSuccess('This reward was already claimed on another device')
+      toastStore.showSuccess(t('This reward was already claimed on another device'))
     } else {
-      toastStore.showError(err?.message || 'Failed to claim training reward')
+      toastStore.showError(err?.message || t('Failed to claim training reward'))
     }
   } finally {
     trainInProgress.value = false
@@ -1007,10 +1008,10 @@ function getRetentionColor(pct) {
 }
 
 function getMoraleLabel(morale) {
-  if (morale >= 80) return 'Excellent'
-  if (morale >= 50) return 'Good'
-  if (morale >= 25) return 'Low'
-  return 'Critical'
+  if (morale >= 80) return t('Excellent')
+  if (morale >= 50) return t('Good')
+  if (morale >= 25) return t('Low')
+  return t('Critical')
 }
 
 function getMoraleColor(morale) {
@@ -1035,18 +1036,18 @@ function formatTraitName(trait) {
 
 function getTraitDescription(trait) {
   const descriptions = {
-    hot_head: 'Morale swings are amplified — reacts strongly to wins and losses',
-    team_player: 'Morale stays more stable — a positive locker room presence',
-    quiet: 'Morale stays more stable — keeps to himself',
-    leader: 'Boosts team chemistry — positive influence on teammates',
-    ball_hog: 'Hurts team chemistry — wants the ball too much',
-    clutch: 'Performs better in high-pressure situations',
-    lazy: 'May not develop as quickly — inconsistent work ethic',
-    hard_worker: 'Develops faster — always in the gym',
-    emotional: 'Morale can swing unpredictably',
-    confident: 'Bounces back from bad games quickly',
+    hot_head: t('Morale swings are amplified — reacts strongly to wins and losses'),
+    team_player: t('Morale stays more stable — a positive locker room presence'),
+    quiet: t('Morale stays more stable — keeps to himself'),
+    leader: t('Boosts team chemistry — positive influence on teammates'),
+    ball_hog: t('Hurts team chemistry — wants the ball too much'),
+    clutch: t('Performs better in high-pressure situations'),
+    lazy: t('May not develop as quickly — inconsistent work ethic'),
+    hard_worker: t('Develops faster — always in the gym'),
+    emotional: t('Morale can swing unpredictably'),
+    confident: t('Bounces back from bad games quickly'),
   }
-  return descriptions[trait] || 'Affects how the player behaves and responds'
+  return descriptions[trait] || t('Affects how the player behaves and responds')
 }
 
 // Dynamic Duo detection
@@ -1107,7 +1108,7 @@ function getTieredAwardSummary(prefix, tiers) {
   for (const tier of tiers) {
     const years = awards[`${prefix}_${tier}`]
     if (Array.isArray(years) && years.length) {
-      lines.push(`${tier === 'first' ? '1st' : tier === 'second' ? '2nd' : '3rd'} Team: ${_formatYears(years)}`)
+      lines.push(t('{tier} Team: {years}', { tier: tier === 'first' ? '1st' : tier === 'second' ? '2nd' : '3rd', years: _formatYears(years) }))
     }
   }
   return lines
@@ -1144,17 +1145,11 @@ const reversedPerformances = computed(() => {
 function formatGameDate(dateStr) {
   if (!dateStr) return '—'
   const d = new Date(dateStr + 'T00:00:00')
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' })
 }
 
 function formatBadgeName(badge) {
-  if (!badge) return ''
-  if (typeof badge === 'object' && badge.name) {
-    return badge.name
-  }
-  const id = typeof badge === 'object' ? badge.id : badge
-  if (!id) return ''
-  return id.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+  return badgeDisplayName(badge)
 }
 
 function formatAttrName(attrKey) {
@@ -1264,9 +1259,10 @@ function formatChange(change) {
                 class="back-button"
                 @click="backButton.handler"
               >
-                &larr; {{ backButton.label }}
+                <!-- i18n-ignore (arrow entity; label supplied by parent) -->
+                &larr; {{ $tDynamic(backButton.label) }}
               </button>
-              <h2 class="modal-title">Player Details</h2>
+              <h2 class="modal-title">{{ $t('Player Details') }}</h2>
             </div>
             <button class="btn-close" @click="close" aria-label="Close">
               <X :size="20" />
@@ -1284,7 +1280,7 @@ function formatChange(change) {
                     v-if="canEditHeadshot"
                     type="button"
                     class="edit-headshot-overlay"
-                    title="Edit headshot"
+                    :title="$t('Edit headshot')"
                     @click.stop="openHeadshotEditor"
                   >
                     <Brush :size="13" />
@@ -1296,14 +1292,14 @@ function formatChange(change) {
                     <div class="unknown-rating-modal">?</div>
                   </template>
                   <StatBadge v-else :value="normalizedPlayer.overallRating" size="lg" />
-                  <span v-if="normalizedPlayer.isInjured" class="injury-badge-modal">INJ</span>
+                  <span v-if="normalizedPlayer.isInjured" class="injury-badge-modal">{{ $t('INJ') }}</span>
                   <button
                     v-if="isUserPlayer && campaignId && !playerIsFreeAgent"
                     class="trade-block-toggle"
                     :class="{ active: isOnTradingBlock }"
                     data-tour="pdm-trade-toggle"
                     @click.stop="toggleTradingBlock"
-                    :title="isOnTradingBlock ? 'Remove from trading block' : 'Add to trading block'"
+                    :title="isOnTradingBlock ? $t('Remove from trading block') : $t('Add to trading block')"
                   >
                     <Repeat :size="14" />
                   </button>
@@ -1326,7 +1322,7 @@ function formatChange(change) {
                     >
                       {{ normalizedPlayer.secondaryPosition }}
                     </span>
-                    <span v-if="normalizedPlayer.isInjured" class="injury-tag">Injured</span>
+                    <span v-if="normalizedPlayer.isInjured" class="injury-tag">{{ $t('Injured') }}</span>
                     <span v-else class="player-card-jersey">#{{ normalizedPlayer.jerseyNumber }}</span>
                     <!-- Scout Button (scouting page) -->
                     <button
@@ -1336,11 +1332,11 @@ function formatChange(change) {
                       @click.stop="emit('scout-player', player)"
                     >
                       <Binoculars :size="14" />
-                      Scout
+                      {{ $t('Scout') }}
                     </button>
                   </div>
                   <div class="player-card-bio">
-                    {{ normalizedPlayer.height }} · {{ normalizedPlayer.weight }} lbs · Age {{ normalizedPlayer.age || 25 }}
+                    {{ $t('{h} · {w} lbs · Age {a}', { h: normalizedPlayer.height, w: normalizedPlayer.weight, a: normalizedPlayer.age || 25 }) }}
                   </div>
                   <!-- Archetype + morale row. Archetype chip (populated by
                        `pickBadgesByFit` at generation time, sourced from
@@ -1356,15 +1352,15 @@ function formatChange(change) {
                     <span
                       v-if="normalizedPlayer.archetype"
                       class="archetype-chip"
-                      :title="`Player archetype: ${normalizedPlayer.archetype}`"
+                      :title="$t('Player archetype: {a}', { a: $tDynamic(normalizedPlayer.archetype) })"
                     >
-                      {{ normalizedPlayer.archetype }}
+                      {{ $tDynamic(normalizedPlayer.archetype) }}
                     </span>
                     <div
                       v-if="!scoutingMode || moraleRevealed"
                       class="morale-chip"
                       :style="{ '--morale-color': getMoraleColor(moraleValue) }"
-                      :title="`Morale: ${getMoraleLabel(moraleValue)} (${moraleValue}/100)`"
+                      :title="$t('Morale: {label} ({n}/100)', { label: getMoraleLabel(moraleValue), n: moraleValue })"
                     >
                       <component :is="getMoraleIcon(moraleValue)" :size="12" :stroke-width="2.25" />
                       <span class="morale-chip-label">{{ getMoraleLabel(moraleValue) }}</span>
@@ -1379,7 +1375,7 @@ function formatChange(change) {
                       @click.stop="emit('sign-player', player)"
                     >
                       <UserPlus :size="13" />
-                      Sign
+                      {{ $t('Sign') }}
                     </button>
                   </div>
                   <!-- Contract Action Buttons (finances page) -->
@@ -1390,7 +1386,7 @@ function formatChange(change) {
                       @click.stop="emit('resign-player', player)"
                     >
                       <RefreshCw :size="13" />
-                      Re-sign
+                      {{ $t('Re-sign') }}
                     </button>
                     <button
                       v-if="!(player?.isFreeAgent === 1 || player?.is_free_agent === 1)"
@@ -1398,14 +1394,14 @@ function formatChange(change) {
                       @click.stop="emit('drop-player', player)"
                     >
                       <UserMinus :size="13" />
-                      Drop
+                      {{ $t('Drop') }}
                     </button>
                   </div>
                   <!-- Draft button (draft room — shown only on the user's pick) -->
                   <div v-if="canDraft" class="header-draft-action">
                     <button class="header-action-btn draft" @click.stop="emit('draft-player', player)">
                       <Check :size="14" />
-                      Draft Player
+                      {{ $t('Draft Player') }}
                     </button>
                   </div>
                 </div>
@@ -1413,7 +1409,7 @@ function formatChange(change) {
               <!-- Fatigue Meter (hidden in scouting mode) -->
               <div v-if="!scoutingMode" class="fatigue-meter-container" data-tour="pdm-fatigue">
                 <div class="fatigue-meter-label">
-                  <span>Fatigue</span>
+                  <span>{{ $t('Fatigue') }}</span>
                   <span class="fatigue-value" :class="{ warning: fatiguePercent >= 50 && fatiguePercent < 70, high: fatiguePercent >= 70 }">{{ fatiguePercent }}%</span>
                 </div>
                 <div class="fatigue-meter-bar">
@@ -1425,7 +1421,7 @@ function formatChange(change) {
                     }"
                   ></div>
                 </div>
-                <div v-if="isOverFatigued" class="fatigue-warning" title="Attributes affected by fatigue">
+                <div v-if="isOverFatigued" class="fatigue-warning" :title="$t('Attributes affected by fatigue')">
                   <AlertTriangle :size="14" />
                 </div>
               </div>
@@ -1433,7 +1429,7 @@ function formatChange(change) {
 
             <div v-if="duoPartnerName" class="dynamic-duo-badge">
               <Users :size="14" />
-              <span>Dynamic Duo w/ {{ duoPartnerName }}</span>
+              <span>{{ $t('Dynamic Duo w/ {name}', { name: duoPartnerName }) }}</span>
             </div>
 
             <!-- Badges Preview -->
@@ -1449,7 +1445,7 @@ function formatChange(change) {
                     <span class="badge-name-preview">???</span>
                   </div>
                   <span v-if="normalizedPlayer.badges.length > 6" class="more-badges">
-                    +{{ normalizedPlayer.badges.length - 6 }} more
+                    {{ $t('+{n} more', { n: normalizedPlayer.badges.length - 6 }) }}
                   </span>
                 </template>
                 <template v-else>
@@ -1465,10 +1461,10 @@ function formatChange(change) {
                     <span class="badge-level-icon" :style="{ color: getBadgeLevelColor(badge.level) }">
                       {{ badge.level === 'hof' ? 'HOF' : badge.level.charAt(0).toUpperCase() }}
                     </span>
-                    <span class="badge-name-preview">{{ formatBadgeName(badge) }}</span>
+                    <span class="badge-name-preview">{{ $tDynamic(formatBadgeName(badge)) }}</span>
                   </div>
                   <span v-if="normalizedPlayer.badges.length > 6" class="more-badges">
-                    +{{ normalizedPlayer.badges.length - 6 }} more
+                    {{ $t('+{n} more', { n: normalizedPlayer.badges.length - 6 }) }}
                   </span>
                 </template>
               </div>
@@ -1482,7 +1478,7 @@ function formatChange(change) {
                 :class="{ active: activeTab === 'stats' }"
                 @click="activeTab = 'stats'"
               >
-                Stats
+                {{ $t('Stats') }}
               </button>
               <button
                 class="tab-btn"
@@ -1490,7 +1486,7 @@ function formatChange(change) {
                 :class="{ active: activeTab === 'attributes' }"
                 @click="activeTab = 'attributes'"
               >
-                Attributes
+                {{ $t('Attributes') }}
                 <span v-if="spendableUpgradePoints > 0" class="tab-badge">{{ spendableUpgradePoints }}</span>
               </button>
               <button
@@ -1498,13 +1494,13 @@ function formatChange(change) {
                 :class="{ active: activeTab === 'badges' }"
                 @click="activeTab = 'badges'"
               >
-                Badges
+                {{ $t('Badges') }}
                 <span
                   v-if="trainingInProgress"
                   class="train-countdown-tab"
-                  :title="`Training · ${formatTrainingCountdown(trainingMsLeft)} remaining`"
+                  :title="$t('Training · {a} remaining', { a: formatTrainingCountdown(trainingMsLeft) })"
                 ><Dumbbell :size="10" /><span>{{ formatTrainingCountdown(trainingMsLeft) }}</span></span>
-                <span v-else-if="trainingReady" class="train-ready-dot" :title="'Training ready to claim'"></span>
+                <span v-else-if="trainingReady" class="train-ready-dot" :title="$t('Training ready to claim')"></span>
               </button>
               <button
                 v-if="showGrowth && !scoutingMode"
@@ -1512,7 +1508,7 @@ function formatChange(change) {
                 :class="{ active: activeTab === 'growth' }"
                 @click="activeTab = 'growth'"
               >
-                Growth
+                {{ $t('Growth') }}
               </button>
               <button
                 v-if="showHistory"
@@ -1520,14 +1516,14 @@ function formatChange(change) {
                 :class="{ active: activeTab === 'history' }"
                 @click="activeTab = 'history'"
               >
-                History
+                {{ $t('History') }}
               </button>
               <button
                 class="tab-btn"
                 :class="{ active: activeTab === 'morale' }"
                 @click="activeTab = 'morale'"
               >
-                Morale
+                {{ $t('Morale') }}
               </button>
             </div>
 
@@ -1539,9 +1535,12 @@ function formatChange(change) {
                     <table class="game-log-table season-history-table">
                       <thead>
                         <tr>
-                          <th>Year</th><th>Team</th><th>GP</th>
+                          <th>{{ $t('Year') }}</th><th>{{ $t('Team') }}</th><th>GP</th>
+                          <!-- i18n-ignore (stat abbreviations) -->
                           <th>PPG</th><th>RPG</th><th>APG</th>
+                          <!-- i18n-ignore (stat abbreviations) -->
                           <th>SPG</th><th>BPG</th><th>FG%</th>
+                          <!-- i18n-ignore (stat abbreviations) -->
                           <th>3P%</th><th>FT%</th><th>MPG</th>
                         </tr>
                       </thead>
@@ -1564,7 +1563,7 @@ function formatChange(change) {
                             <td>{{ row.mpg }}</td>
                           </tr>
                           <tr v-if="row.playoffStats" class="playoff-subrow">
-                            <td class="playoff-label">↳ Playoffs</td>
+                            <td class="playoff-label">{{ $t('↳ Playoffs') }}</td>
                             <td>{{ row.playoffStats.team }}</td>
                             <td>{{ row.playoffStats.gp }}</td>
                             <td class="game-log-pts">{{ row.playoffStats.ppg }}</td>
@@ -1582,7 +1581,7 @@ function formatChange(change) {
                     </table>
                   </div>
                   <div v-else class="empty-state-inline">
-                    <p>No season stats yet</p>
+                    <p>{{ $t('No season stats yet') }}</p>
                   </div>
                   <!-- Recent Games / Career Highs (secondary tabbed box) -->
                   <div v-if="reversedPerformances.length > 0 || normalizedPlayer.careerHighs" class="recent-performances-section">
@@ -1591,12 +1590,12 @@ function formatChange(change) {
                         class="stat-subtab-btn"
                         :class="{ active: recentStatsTab === 'recent' }"
                         @click="recentStatsTab = 'recent'"
-                      >Recent Games</button>
+                      >{{ $t('Recent Games') }}</button>
                       <button
                         class="stat-subtab-btn"
                         :class="{ active: recentStatsTab === 'highs' }"
                         @click="recentStatsTab = 'highs'"
-                      >Career Highs</button>
+                      >{{ $t('Career Highs') }}</button>
                     </div>
 
                     <div v-if="recentStatsTab === 'recent'">
@@ -1604,8 +1603,10 @@ function formatChange(change) {
                         <table class="game-log-table">
                           <thead>
                             <tr>
-                              <th>Date</th><th>OPP</th><th>Result</th>
+                              <!-- i18n-ignore (OPP is a stat abbreviation) -->
+                              <th>{{ $t('Date') }}</th><th>OPP</th><th>{{ $t('Result') }}</th>
                               <th>MIN</th><th>PTS</th><th>REB</th><th>AST</th>
+                              <!-- i18n-ignore (stat abbreviations) -->
                               <th>STL</th><th>BLK</th><th>TO</th>
                               <th>FG</th><th>3P</th><th>FT</th>
                             </tr>
@@ -1631,7 +1632,7 @@ function formatChange(change) {
                           </tbody>
                         </table>
                       </div>
-                      <div v-else class="empty-state-inline"><p>No recent games yet</p></div>
+                      <div v-else class="empty-state-inline"><p>{{ $t('No recent games yet') }}</p></div>
                     </div>
 
                     <CareerHighsPanel v-else :career-highs="normalizedPlayer.careerHighs" />
@@ -1642,10 +1643,10 @@ function formatChange(change) {
               <div v-if="activeTab === 'attributes'" class="tab-panel">
                 <!-- Ratings row (scouting mode) -->
                 <div v-if="scoutingMode" class="attr-section">
-                  <h4 class="attr-section-title">Ratings</h4>
+                  <h4 class="attr-section-title">{{ $t('Ratings') }}</h4>
                   <div class="attributes-grid">
                     <div class="attr-row">
-                      <span class="attr-name">Overall</span>
+                      <span class="attr-name">{{ $t('Overall') }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
@@ -1662,7 +1663,7 @@ function formatChange(change) {
                       >{{ getScoutedAttrValue('overallRating', normalizedPlayer.overallRating) }}</span>
                     </div>
                     <div class="attr-row">
-                      <span class="attr-name">Potential</span>
+                      <span class="attr-name">{{ $t('Potential') }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
@@ -1686,7 +1687,7 @@ function formatChange(change) {
                   <div class="upgrade-pools">
                     <div class="pool-item offense-pool" :class="{ 'has-points': offenseUpgradePoints >= 1.0 }">
                       <span class="pool-value">{{ offenseUpgradePoints.toFixed(1) }}</span>
-                      <span class="pool-label">Offense</span>
+                      <span class="pool-label">{{ $t('Offense') }}</span>
                       <button
                         v-if="isUserPlayer"
                         class="pool-buy-btn"
@@ -1696,13 +1697,13 @@ function formatChange(change) {
                         @click="handlePurchaseUpgradePoint('offense')"
                       >
                         <Coins :size="12" />
-                        <span>{{ offensePurchaseInfo?.price != null ? formatTokens(offensePurchaseInfo.price) : 'Max' }}</span>
+                        <span>{{ offensePurchaseInfo?.price != null ? formatTokens(offensePurchaseInfo.price) : $t('Max') }}</span>
                       </button>
                     </div>
                     <div class="pool-divider"></div>
                     <div class="pool-item defense-pool" :class="{ 'has-points': defenseUpgradePoints >= 1.0 }">
                       <span class="pool-value">{{ defenseUpgradePoints.toFixed(1) }}</span>
-                      <span class="pool-label">Defense</span>
+                      <span class="pool-label">{{ $t('Defense') }}</span>
                       <button
                         v-if="isUserPlayer"
                         class="pool-buy-btn"
@@ -1712,21 +1713,21 @@ function formatChange(change) {
                         @click="handlePurchaseUpgradePoint('defense')"
                       >
                         <Coins :size="12" />
-                        <span>{{ defensePurchaseInfo?.price != null ? formatTokens(defensePurchaseInfo.price) : 'Max' }}</span>
+                        <span>{{ defensePurchaseInfo?.price != null ? formatTokens(defensePurchaseInfo.price) : $t('Max') }}</span>
                       </button>
                     </div>
                   </div>
                   <p class="upgrade-hint">
-                    {{ upgradePoints > 0 ? '1.0 pts = +1 attribute upgrade' : 'Earn points through game performance' }}
+                    {{ upgradePoints > 0 ? $t('1.0 pts = +1 attribute upgrade') : $t('Earn points through game performance') }}
                   </p>
                 </div>
 
                 <!-- Ratings (non-scouting mode) -->
                 <div v-if="!scoutingMode" class="attr-section">
-                  <h4 class="attr-section-title">Ratings</h4>
+                  <h4 class="attr-section-title">{{ $t('Ratings') }}</h4>
                   <div class="attributes-grid">
                     <div class="attr-row">
-                      <span class="attr-name">Overall</span>
+                      <span class="attr-name">{{ $t('Overall') }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
@@ -1741,7 +1742,7 @@ function formatChange(change) {
                       </span>
                     </div>
                     <div v-if="normalizedPlayer.potentialRating" class="attr-row">
-                      <span class="attr-name">Potential</span>
+                      <span class="attr-name">{{ $t('Potential') }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
@@ -1760,10 +1761,10 @@ function formatChange(change) {
 
                 <!-- Offensive Attributes -->
                 <div v-if="normalizedPlayer.attributes?.offense" class="attr-section" data-tour="pdm-attributes-list">
-                  <h4 class="attr-section-title">Offense</h4>
+                  <h4 class="attr-section-title">{{ $t('Offense') }}</h4>
                   <div class="attributes-grid">
                     <div v-for="(value, key) in normalizedPlayer.attributes.offense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasOffenseUpgradePoints && !scoutingMode }">
-                      <span class="attr-name">{{ formatAttrName(key) }}</span>
+                      <span class="attr-name">{{ $tDynamic(formatAttrName(key)) }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
@@ -1781,14 +1782,14 @@ function formatChange(change) {
                       <span
                         v-if="hasOffenseUpgradePoints && !scoutingMode && attrAtCap('offense', key, value)"
                         class="upgrade-max"
-                        title="At this attribute's ceiling"
+                        :title="$t('At this attribute’s ceiling')"
                       >
-                        MAX
+                        {{ $t('MAX') }}
                       </span>
                       <button
                         v-else-if="hasOffenseUpgradePoints && !scoutingMode"
                         class="upgrade-btn"
-                        title="Upgrade (+1)"
+                        :title="$t('Upgrade (+1)')"
                         @click.stop="handleUpgrade('offense', key)"
                       >
                         +
@@ -1799,10 +1800,10 @@ function formatChange(change) {
 
                 <!-- Defensive Attributes -->
                 <div v-if="normalizedPlayer.attributes?.defense" class="attr-section">
-                  <h4 class="attr-section-title">Defense</h4>
+                  <h4 class="attr-section-title">{{ $t('Defense') }}</h4>
                   <div class="attributes-grid">
                     <div v-for="(value, key) in normalizedPlayer.attributes.defense" :key="key" class="attr-row" :class="{ 'has-upgrade': hasDefenseUpgradePoints && !scoutingMode }">
-                      <span class="attr-name">{{ formatAttrName(key) }}</span>
+                      <span class="attr-name">{{ $tDynamic(formatAttrName(key)) }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
@@ -1820,14 +1821,14 @@ function formatChange(change) {
                       <span
                         v-if="hasDefenseUpgradePoints && !scoutingMode && attrAtCap('defense', key, value)"
                         class="upgrade-max"
-                        title="At this attribute's ceiling"
+                        :title="$t('At this attribute’s ceiling')"
                       >
-                        MAX
+                        {{ $t('MAX') }}
                       </span>
                       <button
                         v-else-if="hasDefenseUpgradePoints && !scoutingMode"
                         class="upgrade-btn"
-                        title="Upgrade (+1)"
+                        :title="$t('Upgrade (+1)')"
                         @click.stop="handleUpgrade('defense', key)"
                       >
                         +
@@ -1838,10 +1839,10 @@ function formatChange(change) {
 
                 <!-- Physical Attributes -->
                 <div v-if="normalizedPlayer.attributes?.physical" class="attr-section">
-                  <h4 class="attr-section-title">Physical</h4>
+                  <h4 class="attr-section-title">{{ $t('Physical') }}</h4>
                   <div class="attributes-grid">
                     <div v-for="(value, key) in normalizedPlayer.attributes.physical" :key="key" class="attr-row">
-                      <span class="attr-name">{{ formatAttrName(key) }}</span>
+                      <span class="attr-name">{{ $tDynamic(formatAttrName(key)) }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
@@ -1863,12 +1864,12 @@ function formatChange(change) {
                 <!-- Mental Attributes (Cannot be upgraded) -->
                 <div v-if="normalizedPlayer.attributes?.mental" class="attr-section">
                   <h4 class="attr-section-title">
-                    Mental
-                    <span v-if="canUpgrade && !scoutingMode" class="no-upgrade-hint">(Cannot be upgraded)</span>
+                    {{ $t('Mental') }}
+                    <span v-if="canUpgrade && !scoutingMode" class="no-upgrade-hint">{{ $t('(Cannot be upgraded)') }}</span>
                   </h4>
                   <div class="attributes-grid">
                     <div v-for="(value, key) in normalizedPlayer.attributes.mental" :key="key" class="attr-row">
-                      <span class="attr-name">{{ formatAttrName(key) }}</span>
+                      <span class="attr-name">{{ $tDynamic(formatAttrName(key)) }}</span>
                       <div class="attr-bar-container">
                         <div
                           class="attr-bar"
@@ -1888,7 +1889,7 @@ function formatChange(change) {
                 </div>
 
                 <div v-if="!normalizedPlayer.attributes" class="empty-state-modal">
-                  <p>No attributes available.</p>
+                  <p>{{ $t('No attributes available.') }}</p>
                 </div>
               </div>
 
@@ -1896,8 +1897,8 @@ function formatChange(change) {
               <div v-if="activeTab === 'badges'" class="tab-panel">
                 <div v-if="scoutingMode && !badgesRevealed" class="scouting-locked-section">
                   <Lock :size="24" />
-                  <p>Badge data is hidden for draft prospects</p>
-                  <span class="locked-hint">Hire a 4-Star Scout with Scouting Facility Lv 4 to unlock</span>
+                  <p>{{ $t('Badge data is hidden for draft prospects') }}</p>
+                  <span class="locked-hint">{{ $t('Hire a 4-Star Scout with Scouting Facility Lv 4 to unlock') }}</span>
                 </div>
                 <template v-else>
                   <div v-if="isUserPlayer && !scoutingMode && campaignId" class="badges-store-row">
@@ -1914,11 +1915,11 @@ function formatChange(change) {
                         class="badges-train-btn"
                         data-tour="pdm-train-btn"
                         :disabled="!!trainDisabledReason || trainInProgress"
-                        :title="trainDisabledReason || 'Start a real-time training session — earn a random badge or upgrade'"
+                        :title="trainDisabledReason || $t('Start a real-time training session — earn a random badge or upgrade')"
                         @click="handleStartTraining"
                       >
                         <Dumbbell :size="14" />
-                        <span>Train · {{ trainBudgetLeft }} left</span>
+                        <span>{{ $t('Train · {n} left', { n: trainBudgetLeft }) }}</span>
                       </button>
                       <template v-else-if="trainingForThisPlayer">
                         <button
@@ -1928,32 +1929,32 @@ function formatChange(change) {
                           @click="handleClaimTraining"
                         >
                           <Sparkles :size="14" />
-                          <span>Claim Reward</span>
+                          <span>{{ $t('Claim Reward') }}</span>
                         </button>
-                        <span v-else class="badges-train-countdown" :title="`Training in progress · ${formatTrainingCountdown(trainingMsLeft)} remaining`">
+                        <span v-else class="badges-train-countdown" :title="$t('Training in progress · {a} remaining', { a: formatTrainingCountdown(trainingMsLeft) })">
                           <Dumbbell :size="14" />
-                          <span>Training · {{ formatTrainingCountdown(trainingMsLeft) }}</span>
+                          <span>{{ $t('Training · {a}', { a: formatTrainingCountdown(trainingMsLeft) }) }}</span>
                         </span>
                       </template>
                       <span
                         v-else
                         class="badges-train-blocked"
-                        :title="'A training is already in progress for another player on the roster.'"
+                        :title="$t('A training is already in progress for another player on the roster.')"
                       >
                         <Dumbbell :size="14" />
-                        <span>Trainer busy</span>
+                        <span>{{ $t('Trainer busy') }}</span>
                       </span>
                     </template>
                     <button class="badges-store-btn" data-tour="pdm-badge-store-btn" @click="showPlayerBadgeStore = true">
                       <ShoppingBag :size="14" />
-                      <span>Badge Store</span>
+                      <span>{{ $t('Badge Store') }}</span>
                     </button>
                   </div>
 
                   <div v-if="normalizedPlayer.badges?.length > 0" class="badges-tab-content" data-tour="pdm-badges-list">
                   <!-- HOF Badges -->
                   <div v-if="normalizedPlayer.badges.filter(b => b.level === 'hof').length > 0" class="badge-level-section">
-                    <h4 class="badge-level-title hof">Hall of Fame</h4>
+                    <h4 class="badge-level-title hof">{{ $t('Hall of Fame') }}</h4>
                     <div class="badges-grid-modal">
                       <div
                         v-for="badge in normalizedPlayer.badges.filter(b => b.level === 'hof')"
@@ -1963,15 +1964,15 @@ function formatChange(change) {
                         :title="getBadgeSynergyTooltip(badge)"
                       >
                         <Zap v-if="isBadgeActivated(badge.id)" :size="12" class="synergy-icon" />
-                        <span class="badge-icon">HOF</span>
-                        <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
+                        <span class="badge-icon">{{ $t('HOF') }}</span>
+                        <span class="badge-name-modal">{{ $tDynamic(formatBadgeName(badge)) }}</span>
                       </div>
                     </div>
                   </div>
 
                   <!-- Gold Badges -->
                   <div v-if="normalizedPlayer.badges.filter(b => b.level === 'gold').length > 0" class="badge-level-section">
-                    <h4 class="badge-level-title gold">Gold</h4>
+                    <h4 class="badge-level-title gold">{{ $t('Gold') }}</h4>
                     <div class="badges-grid-modal">
                       <div
                         v-for="badge in normalizedPlayer.badges.filter(b => b.level === 'gold')"
@@ -1982,14 +1983,14 @@ function formatChange(change) {
                       >
                         <Zap v-if="isBadgeActivated(badge.id)" :size="12" class="synergy-icon" />
                         <span class="badge-icon">G</span>
-                        <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
+                        <span class="badge-name-modal">{{ $tDynamic(formatBadgeName(badge)) }}</span>
                       </div>
                     </div>
                   </div>
 
                   <!-- Silver Badges -->
                   <div v-if="normalizedPlayer.badges.filter(b => b.level === 'silver').length > 0" class="badge-level-section">
-                    <h4 class="badge-level-title silver">Silver</h4>
+                    <h4 class="badge-level-title silver">{{ $t('Silver') }}</h4>
                     <div class="badges-grid-modal">
                       <div
                         v-for="badge in normalizedPlayer.badges.filter(b => b.level === 'silver')"
@@ -2000,14 +2001,14 @@ function formatChange(change) {
                       >
                         <Zap v-if="isBadgeActivated(badge.id)" :size="12" class="synergy-icon" />
                         <span class="badge-icon">S</span>
-                        <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
+                        <span class="badge-name-modal">{{ $tDynamic(formatBadgeName(badge)) }}</span>
                       </div>
                     </div>
                   </div>
 
                   <!-- Bronze Badges -->
                   <div v-if="normalizedPlayer.badges.filter(b => b.level === 'bronze').length > 0" class="badge-level-section">
-                    <h4 class="badge-level-title bronze">Bronze</h4>
+                    <h4 class="badge-level-title bronze">{{ $t('Bronze') }}</h4>
                     <div class="badges-grid-modal">
                       <div
                         v-for="badge in normalizedPlayer.badges.filter(b => b.level === 'bronze')"
@@ -2018,16 +2019,16 @@ function formatChange(change) {
                       >
                         <Zap v-if="isBadgeActivated(badge.id)" :size="12" class="synergy-icon" />
                         <span class="badge-icon">B</span>
-                        <span class="badge-name-modal">{{ formatBadgeName(badge) }}</span>
+                        <span class="badge-name-modal">{{ $tDynamic(formatBadgeName(badge)) }}</span>
                       </div>
                     </div>
                   </div>
                 </div>
                   <div v-else class="empty-state-modal">
-                    <p>No badges earned yet.</p>
+                    <p>{{ $t('No badges earned yet.') }}</p>
                     <p class="text-sm text-secondary">
-                      <template v-if="isUserPlayer && !scoutingMode">Use the Badge Store above to purchase eligible badges.</template>
-                      <template v-else>Badges are earned through gameplay performance.</template>
+                      <template v-if="isUserPlayer && !scoutingMode">{{ $t('Use the Badge Store above to purchase eligible badges.') }}</template>
+                      <template v-else>{{ $t('Badges are earned through gameplay performance.') }}</template>
                     </p>
                   </div>
 
@@ -2036,24 +2037,22 @@ function formatChange(change) {
                        Store). Pinned at the bottom of the Badges tab. -->
                   <div v-if="badgeOptions.length" class="badge-options">
                     <button class="badge-options-toggle" @click="showBadgeOptions = !showBadgeOptions">
-                      <span>Badge options — owned &amp; available ({{ badgeOptions.length }})</span>
+                      <span>{{ $t('Badge options — owned & available ({n})', { n: badgeOptions.length }) }}</span>
                       <ChevronDown :size="16" class="badge-options-chevron" :class="{ open: showBadgeOptions }" />
                     </button>
                     <div v-if="showBadgeOptions" class="badge-options-panel">
                       <p class="badge-options-hint">
-                        Each badge's ceiling depends on this player's position fit, attribute fit, and
-                        potential. Filled dots are tiers they already hold, outlined dots are still
-                        reachable, and greyed dots are locked.
+                        {{ $t("Each badge's ceiling depends on this player's position fit, attribute fit, and potential. Filled dots are tiers they already hold, outlined dots are still reachable, and greyed dots are locked.") }}
                       </p>
                       <div v-for="grp in badgeOptionsByCategory" :key="grp.category" class="badge-options-cat">
-                        <h5 class="badge-options-cat-title">{{ BADGE_CATEGORY_LABELS[grp.category] || grp.category }}</h5>
+                        <h5 class="badge-options-cat-title">{{ $tDynamic(BADGE_CATEGORY_LABELS[grp.category] || grp.category) }}</h5>
                         <div
                           v-for="entry in grp.entries"
                           :key="entry.badge.id"
                           class="badge-option-row"
-                          :title="entry.badge.description || ''"
+                          :title="$tDynamic(entry.badge.description || '')"
                         >
-                          <span class="badge-option-name">{{ entry.badge.name }}</span>
+                          <span class="badge-option-name">{{ $tDynamic(entry.badge.name) }}</span>
                           <span class="badge-option-levels">
                             <span
                               v-for="lvl in PLAYER_BADGE_LEVELS"
@@ -2061,10 +2060,10 @@ function formatChange(change) {
                               class="badge-option-dot"
                               :class="badgeDotClass(entry, lvl)"
                               :style="badgeDotClass(entry, lvl).owned ? { backgroundColor: PLAYER_BADGE_TIER_COLORS[lvl], borderColor: PLAYER_BADGE_TIER_COLORS[lvl] } : {}"
-                              :title="badgeLevelLabel(lvl)"
+                              :title="$tDynamic(badgeLevelLabel(lvl))"
                             />
                             <span class="badge-option-max" :style="{ color: PLAYER_BADGE_TIER_COLORS[entry.maxLevel] }">
-                              max {{ badgeLevelLabel(entry.maxLevel) }}
+                              {{ $t('max {a}', { a: $tDynamic(badgeLevelLabel(entry.maxLevel)) }) }}
                             </span>
                           </span>
                         </div>
@@ -2079,15 +2078,15 @@ function formatChange(change) {
                 <div class="evolution-section" data-tour="pdm-growth">
                   <!-- Recent Evolution (Last 7 Days) -->
                   <div class="evolution-subsection" data-tour="pdm-growth-recent">
-                    <h5 class="evolution-subtitle">Recent (Last 7 Days)</h5>
+                    <h5 class="evolution-subtitle">{{ $t('Recent (Last 7 Days)') }}</h5>
                     <div v-if="recentEvolution.length > 0" class="evolution-list">
                       <div
                         v-for="(item, index) in (showAllRecentEvolution ? recentEvolution : recentEvolution.slice(0, 10))"
                         :key="`recent-${item.category}-${item.attribute}`"
                         class="evolution-item"
                       >
-                        <span class="evolution-category">{{ formatCategoryName(item.category) }}</span>
-                        <span class="evolution-attr">{{ formatAttrName(item.attribute) }}</span>
+                        <span class="evolution-category">{{ $tDynamic(formatCategoryName(item.category)) }}</span>
+                        <span class="evolution-attr">{{ $tDynamic(formatAttrName(item.attribute)) }}</span>
                         <span class="evolution-change" :style="{ color: getEvolutionColor(item.totalChange) }">
                           {{ formatChange(item.totalChange) }}
                         </span>
@@ -2097,11 +2096,11 @@ function formatChange(change) {
                         class="evolution-toggle"
                         @click="showAllRecentEvolution = !showAllRecentEvolution"
                       >
-                        {{ showAllRecentEvolution ? 'Show Less' : `Show All (${recentEvolution.length})` }}
+                        {{ showAllRecentEvolution ? $t('Show Less') : $t('Show All ({n})', { n: recentEvolution.length }) }}
                       </button>
                     </div>
                     <div v-else class="evolution-empty">
-                      No recent development activity
+                      {{ $t('No recent development activity') }}
                     </div>
                   </div>
 
@@ -2111,7 +2110,7 @@ function formatChange(change) {
                       class="evolution-alltime-header"
                       @click="showAllTimeExpanded = !showAllTimeExpanded"
                     >
-                      <h5 class="evolution-subtitle">All-Time Evolution</h5>
+                      <h5 class="evolution-subtitle">{{ $t('All-Time Evolution') }}</h5>
                       <span class="evolution-toggle-icon">{{ showAllTimeExpanded ? '▼' : '▶' }}</span>
                     </button>
                     <div v-if="showAllTimeExpanded" class="evolution-list">
@@ -2121,8 +2120,8 @@ function formatChange(change) {
                           :key="`alltime-${item.category}-${item.attribute}`"
                           class="evolution-item"
                         >
-                          <span class="evolution-category">{{ formatCategoryName(item.category) }}</span>
-                          <span class="evolution-attr">{{ formatAttrName(item.attribute) }}</span>
+                          <span class="evolution-category">{{ $tDynamic(formatCategoryName(item.category)) }}</span>
+                          <span class="evolution-attr">{{ $tDynamic(formatAttrName(item.attribute)) }}</span>
                           <span class="evolution-change" :style="{ color: getEvolutionColor(item.totalChange) }">
                             {{ formatChange(item.totalChange) }}
                           </span>
@@ -2133,11 +2132,11 @@ function formatChange(change) {
                           class="evolution-toggle"
                           @click="showAllTimeEvolution = !showAllTimeEvolution"
                         >
-                          {{ showAllTimeEvolution ? 'Show Less' : `Show All (${allTimeEvolution.length})` }}
+                          {{ showAllTimeEvolution ? $t('Show Less') : $t('Show All ({n})', { n: allTimeEvolution.length }) }}
                         </button>
                       </template>
                       <div v-else class="evolution-empty">
-                        No development history available
+                        {{ $t('No development history available') }}
                       </div>
                     </div>
                   </div>
@@ -2148,8 +2147,8 @@ function formatChange(change) {
               <div v-if="activeTab === 'morale' && scoutingMode && !moraleRevealed" class="tab-panel">
                 <div class="scouting-locked-section">
                   <Lock :size="24" />
-                  <p>Personality & motivation data is hidden for draft prospects</p>
-                  <span class="locked-hint">Hire a 4-Star Scout with Scouting Facility Lv 4 to unlock</span>
+                  <p>{{ $t('Personality & motivation data is hidden for draft prospects') }}</p>
+                  <span class="locked-hint">{{ $t('Hire a 4-Star Scout with Scouting Facility Lv 4 to unlock') }}</span>
                 </div>
               </div>
               <div v-else-if="activeTab === 'morale'" class="tab-panel">
@@ -2171,7 +2170,7 @@ function formatChange(change) {
                       <span class="morale-status-label" :style="{ color: getMoraleColor(moraleValue) }">
                         {{ getMoraleLabel(moraleValue) }}
                       </span>
-                      <span class="morale-subtitle">Current Morale</span>
+                      <span class="morale-subtitle">{{ $t('Current Morale') }}</span>
                     </div>
                     <!-- Right-aligned Coach Meeting trigger. Auto-hides for
                          opponent players / scouting mode; otherwise toggles
@@ -2183,7 +2182,7 @@ function formatChange(change) {
                       data-tour="pdm-coach-meeting"
                       :class="{ 'is-buy-mode': coachActionsLeft === 0 }"
                       :disabled="!!coachMeetingDisabledReason"
-                      :title="coachMeetingDisabledReason || 'Boost morale by +30'"
+                      :title="coachMeetingDisabledReason || $t('Boost morale by +30')"
                       @click="openCoachMeetingModal"
                     >
                       <MessagesSquare :size="14" />
@@ -2204,13 +2203,13 @@ function formatChange(change) {
                 <!-- Personality Traits -->
                 <div class="morale-traits-section" data-tour="pdm-traits">
                   <h4 class="morale-section-title">
-                    Personality Traits
+                    {{ $t('Personality Traits') }}
                     <button
                       v-if="canEditFlavor && !editingPersonality"
                       class="flavor-edit-btn inline"
                       @click="startPersonalityEdit"
                     >
-                      <Pencil :size="11" /> Edit
+                      <Pencil :size="11" /> {{ $t('Edit') }}
                     </button>
                   </h4>
 
@@ -2223,27 +2222,27 @@ function formatChange(change) {
                         :class="{ on: personalityForm.traits.includes(t) }"
                         @click="toggleFlavorTrait(t)"
                       >
-                        {{ formatTraitName(t) }}
+                        {{ $tDynamic(formatTraitName(t)) }}
                       </button>
                     </div>
                     <div class="flavor-grid">
                       <label class="flavor-field">
-                        <span>Chemistry</span>
+                        <span>{{ $t('Chemistry') }}</span>
                         <input v-model.number="personalityForm.chemistry" type="number" min="0" max="99" class="flavor-input" />
                       </label>
                       <label class="flavor-field">
-                        <span>Media Profile</span>
+                        <span>{{ $t('Media Profile') }}</span>
                         <select v-model="personalityForm.mediaProfile" class="flavor-input">
-                          <option value="low_key">Low-key</option>
-                          <option value="normal">Normal</option>
-                          <option value="high_profile">High-profile</option>
+                          <option value="low_key">{{ $t('Low-key') }}</option>
+                          <option value="normal">{{ $t('Normal') }}</option>
+                          <option value="high_profile">{{ $t('High-profile') }}</option>
                         </select>
                       </label>
                     </div>
                     <div class="flavor-actions">
-                      <button class="flavor-cancel" :disabled="flavorSaving" @click="editingPersonality = false">Cancel</button>
+                      <button class="flavor-cancel" :disabled="flavorSaving" @click="editingPersonality = false">{{ $t('Cancel') }}</button>
                       <button class="flavor-save" :disabled="flavorSaving" @click="savePersonalityEdit">
-                        <Check :size="13" /> Save
+                        <Check :size="13" /> {{ $t('Save') }}
                       </button>
                     </div>
                   </div>
@@ -2255,12 +2254,12 @@ function formatChange(change) {
                         :key="trait"
                         class="trait-item"
                       >
-                        <span class="trait-name">{{ formatTraitName(trait) }}</span>
+                        <span class="trait-name">{{ $tDynamic(formatTraitName(trait)) }}</span>
                         <span class="trait-description">{{ getTraitDescription(trait) }}</span>
                       </div>
                     </div>
                     <div v-else class="morale-empty">
-                      No notable personality traits
+                      {{ $t('No notable personality traits') }}
                     </div>
                   </template>
                 </div>
@@ -2268,8 +2267,8 @@ function formatChange(change) {
                 <!-- Motivations -->
                 <div v-if="playerMotivations" class="morale-motivations-section" data-tour="pdm-motivations">
                   <h4 class="morale-section-title">
-                    Motivations
-                    <span class="archetype-label">{{ motivationArchetype }}</span>
+                    {{ $t('Motivations') }}
+                    <span class="archetype-label">{{ $tDynamic(motivationArchetype) }}</span>
                   </h4>
                   <div class="motivation-bars">
                     <div
@@ -2277,7 +2276,7 @@ function formatChange(change) {
                       :key="key"
                       class="motivation-row"
                     >
-                      <span class="motivation-label">{{ getMotivationLabel(key) }}</span>
+                      <span class="motivation-label">{{ $tDynamic(getMotivationLabel(key)) }}</span>
                       <div class="motivation-bar-track">
                         <div
                           class="motivation-bar-fill"
@@ -2294,7 +2293,7 @@ function formatChange(change) {
 
                 <!-- Re-sign Likelihood (contract year only) -->
                 <div v-if="isContractYear && retentionPct !== null" class="retention-section">
-                  <h4 class="morale-section-title">Re-sign Likelihood</h4>
+                  <h4 class="morale-section-title">{{ $t('Re-sign Likelihood') }}</h4>
                   <div class="retention-bar-container">
                     <div
                       class="retention-bar-fill"
@@ -2311,16 +2310,16 @@ function formatChange(change) {
 
                 <!-- Context -->
                 <div class="morale-context-section">
-                  <h4 class="morale-section-title">Context</h4>
+                  <h4 class="morale-section-title">{{ $t('Context') }}</h4>
                   <div class="context-items">
                     <div v-if="normalizedPlayer.seasonStats" class="context-item">
-                      <span class="context-label">Avg Minutes</span>
-                      <span class="context-value">{{ formatStat(getStat('mpg'), 1) }} MPG</span>
+                      <span class="context-label">{{ $t('Avg Minutes') }}</span>
+                      <span class="context-value">{{ $t('{n} MPG', { n: formatStat(getStat('mpg'), 1) }) }}</span>
                     </div>
                     <div class="context-item">
-                      <span class="context-label">Contract</span>
+                      <span class="context-label">{{ $t('Contract') }}</span>
                       <span class="context-value" :class="{ 'contract-year': normalizedPlayer.contract?.years_remaining <= 1 }">
-                        {{ normalizedPlayer.contract?.years_remaining <= 1 ? 'Contract Year' : normalizedPlayer.contract?.years_remaining + ' yrs left' }}
+                        {{ normalizedPlayer.contract?.years_remaining <= 1 ? $t('Contract Year') : $t('{n} yrs left', { n: normalizedPlayer.contract?.years_remaining }) }}
                       </span>
                     </div>
                   </div>
@@ -2335,50 +2334,50 @@ function formatChange(change) {
                   class="flavor-edit-btn"
                   @click="startHistoryEdit"
                 >
-                  <Pencil :size="12" /> Edit History
+                  <Pencil :size="12" /> {{ $t('Edit History') }}
                 </button>
 
                 <div v-if="editingHistory" class="flavor-edit-panel">
                   <div class="flavor-grid">
                     <label class="flavor-field">
-                      <span>College / Club</span>
+                      <span>{{ $t('College / Club') }}</span>
                       <input v-model="historyForm.college" class="flavor-input" />
                     </label>
                     <label class="flavor-field">
-                      <span>Country</span>
+                      <span>{{ $t('Country') }}</span>
                       <input v-model="historyForm.country" class="flavor-input" />
                     </label>
                     <label class="flavor-field">
-                      <span>Draft Round</span>
+                      <span>{{ $t('Draft Round') }}</span>
                       <select
                         :value="historyForm.draftRound ?? ''"
                         class="flavor-input"
                         @change="historyForm.draftRound = $event.target.value ? Number($event.target.value) : null"
                       >
-                        <option value="">Undrafted</option>
+                        <option value="">{{ $t('Undrafted') }}</option>
                         <option :value="1">1</option>
                         <option :value="2">2</option>
                       </select>
                     </label>
                     <template v-if="historyForm.draftRound">
                       <label class="flavor-field">
-                        <span>Pick</span>
+                        <span>{{ $t('Pick') }}</span>
                         <input v-model.number="historyForm.draftPick" type="number" min="1" max="60" class="flavor-input" />
                       </label>
                       <label class="flavor-field">
-                        <span>Draft Year</span>
+                        <span>{{ $t('Draft Year') }}</span>
                         <input v-model.number="historyForm.draftYear" type="number" min="1990" :max="maxDraftYear" class="flavor-input" />
                       </label>
                     </template>
                     <label class="flavor-field">
-                      <span>Career Seasons</span>
+                      <span>{{ $t('Career Seasons') }}</span>
                       <input v-model.number="historyForm.careerSeasons" type="number" min="0" max="25" class="flavor-input" />
                     </label>
                   </div>
                   <div class="flavor-actions">
-                    <button class="flavor-cancel" :disabled="flavorSaving" @click="editingHistory = false">Cancel</button>
+                    <button class="flavor-cancel" :disabled="flavorSaving" @click="editingHistory = false">{{ $t('Cancel') }}</button>
                     <button class="flavor-save" :disabled="flavorSaving" @click="saveHistoryEdit">
-                      <Check :size="13" /> Save
+                      <Check :size="13" /> {{ $t('Save') }}
                     </button>
                   </div>
                 </div>
@@ -2390,10 +2389,11 @@ function formatChange(change) {
                       <span class="draft-info-pick">#{{ normalizedPlayer.draftInfo.pick }}</span>
                       <div class="draft-info-details">
                         <span class="draft-info-label">
-                          Round {{ normalizedPlayer.draftInfo.round }}, Pick {{ normalizedPlayer.draftInfo.pick }}
+                          {{ $t('Round {r}, Pick {p}', { r: normalizedPlayer.draftInfo.round, p: normalizedPlayer.draftInfo.pick }) }}
+                          <!-- i18n-ignore (middot separator entity; surrounding text is wrapped) -->
                           <template v-if="normalizedPlayer.draftInfo.year"> &middot; {{ normalizedPlayer.draftInfo.year }}</template>
                         </span>
-                        <span class="draft-info-team">Drafted by {{ normalizedPlayer.draftInfo.teamAbbreviation }}</span>
+                        <span class="draft-info-team">{{ $t('Drafted by {team}', { team: normalizedPlayer.draftInfo.teamAbbreviation }) }}</span>
                       </div>
                     </div>
                   </div>
@@ -2401,7 +2401,7 @@ function formatChange(change) {
                   <!-- Origin (school or international club + country) -->
                   <div v-if="playerOrigin" class="history-section origin-section">
                     <div class="origin-card">
-                      <span class="origin-label">From</span>
+                      <span class="origin-label">{{ $t('From') }}</span>
                       <span class="origin-value">{{ playerOrigin.school }}</span>
                       <span v-if="playerOrigin.country" class="origin-country">{{ playerOrigin.country }}</span>
                     </div>
@@ -2410,7 +2410,7 @@ function formatChange(change) {
 
                 <!-- Trade history (permanent career trade log) -->
                 <div v-if="!scoutingMode && tradeHistoryList.length" class="history-section">
-                  <h4 class="history-section-title">Trades</h4>
+                  <h4 class="history-section-title">{{ $t('Trades') }}</h4>
                   <div class="trade-log-list">
                     <div v-for="(t, i) in tradeHistoryList" :key="`tl-${i}`" class="trade-log-row">
                       <span class="trade-log-route">{{ t.fromAbbr || t.fromName || '—' }} → {{ t.toAbbr || t.toName || '—' }}</span>
@@ -2421,7 +2421,7 @@ function formatChange(change) {
 
                 <!-- All Star Selections — hidden for draft prospects (none yet) -->
                 <div v-if="!scoutingMode" class="history-section">
-                  <h4 class="history-section-title">All Star Selections</h4>
+                  <h4 class="history-section-title">{{ $t('All Star Selections') }}</h4>
                   <div v-if="allStarSelectionList.length > 0" class="allstar-list">
                     <div v-for="(sel, i) in allStarSelectionList" :key="`as-${i}`" class="allstar-row">
                       <span class="allstar-season">{{ sel.season }}</span>
@@ -2429,19 +2429,19 @@ function formatChange(change) {
                     </div>
                   </div>
                   <div v-else class="empty-state-inline">
-                    <p>No All-Star selections</p>
+                    <p>{{ $t('No All-Star selections') }}</p>
                   </div>
                 </div>
 
                 <!-- Awards Section — hidden for draft prospects (none yet) -->
                 <div v-if="!scoutingMode" class="history-section">
-                  <h4 class="history-section-title">Awards</h4>
+                  <h4 class="history-section-title">{{ $t('Awards') }}</h4>
                   <div v-if="hasAwards" class="awards-grid">
                     <!-- Championships -->
                     <div v-if="normalizedPlayer.championships > 0" class="award-card gold">
                       <Trophy :size="32" />
                       <span class="award-count">{{ normalizedPlayer.championships }}x</span>
-                      <span class="award-label">League Champion</span>
+                      <span class="award-label">{{ $t('League Champion') }}</span>
                       <span v-if="getAwardYears('championship')" class="award-years">{{ getAwardYears('championship') }}</span>
                     </div>
 
@@ -2449,7 +2449,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.finals_mvp_awards > 0" class="award-card gold">
                       <Award :size="32" />
                       <span class="award-count">{{ normalizedPlayer.finals_mvp_awards }}x</span>
-                      <span class="award-label">Finals MVP</span>
+                      <span class="award-label">{{ $t('Finals MVP') }}</span>
                       <span v-if="getAwardYears('finals_mvp')" class="award-years">{{ getAwardYears('finals_mvp') }}</span>
                     </div>
 
@@ -2457,7 +2457,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.conference_finals_mvp_awards > 0" class="award-card silver">
                       <Medal :size="32" />
                       <span class="award-count">{{ normalizedPlayer.conference_finals_mvp_awards }}x</span>
-                      <span class="award-label">Conf Finals MVP</span>
+                      <span class="award-label">{{ $t('Conf Finals MVP') }}</span>
                       <span v-if="getAwardYears('conference_finals_mvp')" class="award-years">{{ getAwardYears('conference_finals_mvp') }}</span>
                     </div>
 
@@ -2465,7 +2465,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.mvp_awards > 0" class="award-card gold">
                       <Star :size="32" />
                       <span class="award-count">{{ normalizedPlayer.mvp_awards }}x</span>
-                      <span class="award-label">League MVP</span>
+                      <span class="award-label">{{ $t('League MVP') }}</span>
                       <span v-if="getAwardYears('mvp')" class="award-years">{{ getAwardYears('mvp') }}</span>
                     </div>
 
@@ -2473,7 +2473,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.dpoy_awards > 0" class="award-card gold">
                       <Shield :size="32" />
                       <span class="award-count">{{ normalizedPlayer.dpoy_awards }}x</span>
-                      <span class="award-label">Defensive Player of the Year</span>
+                      <span class="award-label">{{ $t('Defensive Player of the Year') }}</span>
                       <span v-if="getAwardYears('dpoy')" class="award-years">{{ getAwardYears('dpoy') }}</span>
                     </div>
 
@@ -2481,7 +2481,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.all_star_selections > 0" class="award-card">
                       <Users :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_star_selections }}x</span>
-                      <span class="award-label">All-Star</span>
+                      <span class="award-label">{{ $t('All-Star') }}</span>
                       <span v-if="getAwardYears('all_star')" class="award-years">{{ getAwardYears('all_star') }}</span>
                     </div>
 
@@ -2489,7 +2489,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.rookie_of_the_year > 0" class="award-card gold">
                       <Award :size="32" />
                       <span class="award-count">{{ normalizedPlayer.rookie_of_the_year }}x</span>
-                      <span class="award-label">Rookie of the Year</span>
+                      <span class="award-label">{{ $t('Rookie of the Year') }}</span>
                       <span v-if="getAwardYears('rookie_of_the_year')" class="award-years">{{ getAwardYears('rookie_of_the_year') }}</span>
                     </div>
 
@@ -2497,7 +2497,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.all_nba_selections > 0" class="award-card silver">
                       <Star :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_nba_selections }}x</span>
-                      <span class="award-label">All-League</span>
+                      <span class="award-label">{{ $t('All-League') }}</span>
                       <div v-if="getTieredAwardSummary('all_nba', ['first','second','third']).length" class="award-tiers">
                         <span v-for="line in getTieredAwardSummary('all_nba', ['first','second','third'])" :key="line" class="award-tier-line">{{ line }}</span>
                       </div>
@@ -2507,7 +2507,7 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.all_defensive_team > 0" class="award-card silver">
                       <Shield :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_defensive_team }}x</span>
-                      <span class="award-label">All-Defense</span>
+                      <span class="award-label">{{ $t('All-Defense') }}</span>
                       <div v-if="getTieredAwardSummary('all_defense', ['first','second']).length" class="award-tiers">
                         <span v-for="line in getTieredAwardSummary('all_defense', ['first','second'])" :key="line" class="award-tier-line">{{ line }}</span>
                       </div>
@@ -2517,28 +2517,28 @@ function formatChange(change) {
                     <div v-if="normalizedPlayer.all_rookie_team > 0" class="award-card">
                       <Zap :size="32" />
                       <span class="award-count">{{ normalizedPlayer.all_rookie_team }}x</span>
-                      <span class="award-label">All-Rookie</span>
+                      <span class="award-label">{{ $t('All-Rookie') }}</span>
                       <div v-if="getTieredAwardSummary('all_rookie', ['first','second']).length" class="award-tiers">
                         <span v-for="line in getTieredAwardSummary('all_rookie', ['first','second'])" :key="line" class="award-tier-line">{{ line }}</span>
                       </div>
                     </div>
                   </div>
                   <div v-else class="empty-state-inline">
-                    <p>No awards yet</p>
+                    <p>{{ $t('No awards yet') }}</p>
                   </div>
                 </div>
 
                 <!-- News Section — hidden for draft prospects (none yet) -->
                 <div v-if="!scoutingMode" class="history-section">
-                  <h4 class="history-section-title">News</h4>
+                  <h4 class="history-section-title">{{ $t('News') }}</h4>
                   <div v-if="playerNews.length > 0" class="news-list">
                     <div v-for="news in playerNews" :key="news.id" class="news-item">
-                      <p class="news-headline">{{ news.headline }}</p>
+                      <p class="news-headline">{{ news.headline_tpl ? $tDynamic(news.headline_tpl, news.headline_params) : news.headline }}</p>
                       <p class="news-date">{{ news.date }}</p>
                     </div>
                   </div>
                   <div v-else class="empty-state-inline">
-                    <p>No news available</p>
+                    <p>{{ $t('No news available') }}</p>
                   </div>
                 </div>
               </div>
@@ -2549,16 +2549,16 @@ function formatChange(change) {
           <footer class="modal-footer">
             <div v-if="normalizedPlayer.contract" class="contract-info" data-tour="pdm-contract">
               <div class="contract-item">
-                <span class="contract-label">Salary</span>
-                <span class="contract-value text-success">{{ formatSalary(normalizedPlayer.contract.salary) }}/yr</span>
+                <span class="contract-label">{{ $t('Salary') }}</span>
+                <span class="contract-value text-success">{{ $t('{a}/yr', { a: formatSalary(normalizedPlayer.contract.salary) }) }}</span>
               </div>
               <div class="contract-item">
-                <span class="contract-label">Years Remaining</span>
+                <span class="contract-label">{{ $t('Years Remaining') }}</span>
                 <span class="contract-value">{{ normalizedPlayer.contract.years_remaining }}</span>
               </div>
             </div>
             <button class="btn-close-footer" @click="close">
-              Close
+              {{ $t('Close') }}
             </button>
           </footer>
 
@@ -2578,7 +2578,7 @@ function formatChange(change) {
   <CoachMeetingConfirmModal
     :show="showCoachMeetingModal"
     :mode="coachMeetingMode"
-    :player-name="normalizedPlayer?.name || 'Player'"
+    :player-name="normalizedPlayer?.name || $t('Player')"
     :actions-remaining="coachActionsLeft"
     :action-budget="coachActionBudget"
     :extra-action-cost="coachMeetingExtraCost"
@@ -2593,26 +2593,23 @@ function formatChange(change) {
        token spend before tokens leave their balance. -->
   <BaseModal
     :show="!!pendingUpgradePurchase"
-    :title="`Buy ${pendingUpgradePurchase?.label} Upgrade Point?`"
+    :title="$t('Buy {a} Upgrade Point?', { a: pendingUpgradePurchase?.label })"
     @close="cancelUpgradePurchase"
   >
     <div v-if="pendingUpgradePurchase" class="upgrade-confirm-body">
       <p class="upgrade-confirm-line">
-        Spend <strong>{{ pendingUpgradePurchase.price.toLocaleString() }} tokens</strong>
-        to buy one <strong>{{ pendingUpgradePurchase.label }}</strong> upgrade point for
-        <strong>{{ normalizedPlayer?.name }}</strong>?
+        {{ $t('Spend {price} tokens to buy one {label} upgrade point for {name}?', { price: pendingUpgradePurchase.price.toLocaleString(), label: pendingUpgradePurchase.label, name: normalizedPlayer?.name }) }}
       </p>
       <p class="upgrade-confirm-hint">
-        The point lands in the {{ pendingUpgradePurchase.label.toLowerCase() }} pool and can be
-        spent on any eligible attribute below. This action can't be undone.
+        {{ $t("The point lands in the {pool} pool and can be spent on any eligible attribute below. This action can't be undone.", { pool: pendingUpgradePurchase.label.toLowerCase() }) }}
       </p>
       <div class="upgrade-confirm-actions">
         <button class="btn-cancel" :disabled="upgradePurchaseInFlight" @click="cancelUpgradePurchase">
-          Cancel
+          {{ $t('Cancel') }}
         </button>
         <button class="btn-confirm" :disabled="upgradePurchaseInFlight" @click="confirmUpgradePurchase">
           <Coins :size="14" />
-          Confirm · {{ pendingUpgradePurchase.price.toLocaleString() }}
+          {{ $t('Confirm · {n}', { n: pendingUpgradePurchase.price.toLocaleString() }) }}
         </button>
       </div>
     </div>

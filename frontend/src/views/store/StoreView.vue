@@ -8,6 +8,7 @@ import { GlassCard, BaseModal } from '@/components/ui'
 import { ArrowLeft, Coins, Palette, RotateCcw, Check } from 'lucide-vue-next'
 import api from '@/composables/useApi'
 import * as iap from '@/services/iap'
+import { t } from '@wl-i18n/i18n.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -106,7 +107,7 @@ async function restorePurchases() {
       const result = await iap.restorePurchases()
       if (result.cancelled) return
       if (!result.success) {
-        toastStore.showError('Could not restore purchases.')
+        toastStore.showError(t('Could not restore purchases.'))
         return
       }
     }
@@ -115,7 +116,7 @@ async function restorePurchases() {
     try {
       await authStore.fetchUser()
     } catch {}
-    toastStore.showSuccess('Purchases restored.')
+    toastStore.showSuccess(t('Purchases restored.'))
   } finally {
     restoring.value = false
   }
@@ -135,8 +136,8 @@ async function confirmPurchase() {
 
   const isUnlock = bundle.kind === 'unlock'
   const successMessage = isUnlock
-    ? 'Purchase complete! Feature unlocked.'
-    : 'Purchase complete! Tokens added to your account.'
+    ? t('Purchase complete! Feature unlocked.')
+    : t('Purchase complete! Tokens added to your account.')
 
   if (isNative) {
     // Native iOS — StoreKit 2 via RevenueCat. Tokens / unlocks are credited
@@ -165,7 +166,7 @@ async function confirmPurchase() {
       const code = err?.code ?? err?.errorCode ?? null
       const detail = err?.underlyingErrorMessage || err?.message || ''
       toastStore.showError(
-        `Purchase failed${code != null ? ` [${code}]` : ''}${detail ? `: ${detail}` : '. Please try again.'}`
+        `${t('Purchase failed')}${code != null ? ` [${code}]` : ''}${detail ? `: ${detail}` : `. ${t('Please try again.')}`}`
       )
     } finally {
       purchasing.value = false
@@ -181,7 +182,7 @@ async function confirmPurchase() {
     window.location.href = response.data.url
   } catch (error) {
     purchasing.value = false
-    toastStore.showError('Could not start checkout. Please try again.')
+    toastStore.showError(t('Could not start checkout. Please try again.'))
   }
 }
 
@@ -215,10 +216,10 @@ onMounted(async () => {
     try {
       await authStore.fetchUser()
     } catch {}
-    toastStore.showSuccess('Purchase complete!')
+    toastStore.showSuccess(t('Purchase complete!'))
     router.replace({ query: {} })
   } else if (status === 'cancel') {
-    toastStore.showError('Purchase canceled.')
+    toastStore.showError(t('Purchase canceled.'))
     router.replace({ query: {} })
   }
 
@@ -244,7 +245,7 @@ onMounted(async () => {
         <button class="back-link" @click="router.push({ name: 'campaigns' })">
           <ArrowLeft :size="20" />
         </button>
-        <h1 class="page-title">Store</h1>
+        <h1 class="page-title">{{ $t('Store') }}</h1>
         <div class="header-spacer" />
       </div>
     </header>
@@ -260,7 +261,7 @@ onMounted(async () => {
               <Coins :size="24" />
             </div>
             <div class="balance-info">
-              <span class="balance-label">Your Balance</span>
+              <span class="balance-label">{{ $t('Your Balance') }}</span>
               <span class="balance-amount">{{ tokenBalance.toLocaleString() }}</span>
             </div>
           </div>
@@ -268,8 +269,8 @@ onMounted(async () => {
 
         <!-- Token Bundles -->
         <section class="bundles-section">
-          <h2 class="section-title">Award Tokens</h2>
-          <p class="section-subtitle">Use tokens to upgrade facilities, hire scouts, and more</p>
+          <h2 class="section-title">{{ $t('Award Tokens') }}</h2>
+          <p class="section-subtitle">{{ $t('Use tokens to upgrade facilities, hire scouts, and more') }}</p>
 
           <div class="bundles-grid">
             <GlassCard
@@ -279,18 +280,18 @@ onMounted(async () => {
               class="bundle-card"
               :class="{ 'best-value': bundle.bestValue }"
             >
-              <div v-if="bundle.bestValue" class="best-value-badge">Best Value</div>
+              <div v-if="bundle.bestValue" class="best-value-badge">{{ $t('Best Value') }}</div>
               <div class="bundle-icon">
                 <Coins :size="32" />
               </div>
               <div class="bundle-amount">{{ bundle.label }}</div>
-              <div class="bundle-label">Award Tokens</div>
+              <div class="bundle-label">{{ $t('Award Tokens') }}</div>
               <div class="bundle-price">{{ priceFor(bundle) }}</div>
               <button
                 class="purchase-btn"
                 @click="promptPurchase(bundle)"
               >
-                Purchase
+                {{ $t('Purchase') }}
               </button>
             </GlassCard>
           </div>
@@ -298,8 +299,8 @@ onMounted(async () => {
 
         <!-- One-Time Unlocks -->
         <section class="bundles-section">
-          <h2 class="section-title">Feature Unlocks</h2>
-          <p class="section-subtitle">One-time purchases — no subscription</p>
+          <h2 class="section-title">{{ $t('Feature Unlocks') }}</h2>
+          <p class="section-subtitle">{{ $t('One-time purchases — no subscription') }}</p>
 
           <div class="unlocks-grid">
             <GlassCard
@@ -310,20 +311,20 @@ onMounted(async () => {
               :class="{ owned: isUnlockOwned(bundle) }"
             >
               <div v-if="isUnlockOwned(bundle)" class="owned-badge">
-                <Check :size="12" /> Owned
+                <Check :size="12" /> {{ $t('Owned') }}
               </div>
               <div class="bundle-icon unlock-icon">
                 <Palette :size="32" />
               </div>
-              <div class="unlock-label">{{ bundle.label }}</div>
-              <p class="unlock-description">{{ bundle.description }}</p>
+              <div class="unlock-label">{{ $tDynamic(bundle.label) }}</div>
+              <p class="unlock-description">{{ $tDynamic(bundle.description) }}</p>
               <div class="bundle-price">{{ priceFor(bundle) }}</div>
               <button
                 class="purchase-btn"
                 :disabled="isUnlockOwned(bundle)"
                 @click="promptPurchase(bundle)"
               >
-                {{ isUnlockOwned(bundle) ? 'Owned' : 'Purchase' }}
+                {{ isUnlockOwned(bundle) ? $t('Owned') : $t('Purchase') }}
               </button>
             </GlassCard>
           </div>
@@ -333,7 +334,7 @@ onMounted(async () => {
         <section class="restore-section">
           <button class="restore-btn" :disabled="restoring" @click="restorePurchases">
             <RotateCcw :size="14" />
-            {{ restoring ? 'Restoring...' : 'Restore Purchases' }}
+            {{ restoring ? $t('Restoring...') : $t('Restore Purchases') }}
           </button>
         </section>
       </div>
@@ -342,7 +343,7 @@ onMounted(async () => {
     <!-- Purchase Confirmation Modal -->
     <BaseModal
       :show="!!confirmBundle"
-      title="Confirm Purchase"
+      :title="$t('Confirm Purchase')"
       size="sm"
       :closable="!purchasing"
       @close="cancelPurchase"
@@ -351,26 +352,26 @@ onMounted(async () => {
         <div class="confirm-icon" :class="{ unlock: confirmBundle.kind === 'unlock' }">
           <component :is="confirmBundle.kind === 'unlock' ? Palette : Coins" :size="36" />
         </div>
-        <div class="confirm-amount">{{ confirmBundle.label }}</div>
+        <div class="confirm-amount">{{ $tDynamic(confirmBundle.label) }}</div>
         <div class="confirm-label">
-          {{ confirmBundle.kind === 'unlock' ? 'One-Time Unlock' : 'Award Tokens' }}
+          {{ confirmBundle.kind === 'unlock' ? $t('One-Time Unlock') : $t('Award Tokens') }}
         </div>
         <div class="confirm-price">{{ priceFor(confirmBundle) }}</div>
         <div v-if="confirmBundle.kind === 'tokens'" class="confirm-balance">
-          Balance after purchase: <strong>{{ (tokenBalance + confirmBundle.amount).toLocaleString() }}</strong>
+          {{ $t('Balance after purchase:') }} <strong>{{ (tokenBalance + confirmBundle.amount).toLocaleString() }}</strong>
         </div>
         <div v-else class="confirm-balance">
-          {{ confirmBundle.description }}
+          {{ $tDynamic(confirmBundle.description) }}
         </div>
       </div>
 
       <template #footer>
         <div class="confirm-footer">
           <button class="btn-cancel" :disabled="purchasing" @click="cancelPurchase">
-            Cancel
+            {{ $t('Cancel') }}
           </button>
           <button class="btn-confirm" :disabled="purchasing" @click="confirmPurchase">
-            {{ purchasing ? 'Redirecting...' : 'Continue to Checkout' }}
+            {{ purchasing ? $t('Redirecting...') : $t('Continue to Checkout') }}
           </button>
         </div>
       </template>

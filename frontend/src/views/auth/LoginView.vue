@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton, FormInput } from '@/components/ui'
 import { ArrowLeft, AlertCircle } from 'lucide-vue-next'
 import SocialAuthButtons from '@/components/auth/SocialAuthButtons.vue'
+import { t } from '@wl-i18n/i18n.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -19,13 +20,15 @@ const form = ref({
 
 const error = ref('')
 
+// Rules live in a computed: t() reads the reactive locale ref, so these
+// messages re-evaluate (and vuelidate rebuilds) on locale change — no freeze.
 const rules = computed(() => ({
   email: {
-    required: helpers.withMessage('Email is required', required),
-    email: helpers.withMessage('Please enter a valid email', email)
+    required: helpers.withMessage(t('Email is required'), required),
+    email: helpers.withMessage(t('Please enter a valid email'), email)
   },
   password: {
-    required: helpers.withMessage('Password is required', required)
+    required: helpers.withMessage(t('Password is required'), required)
   }
 }))
 
@@ -46,7 +49,7 @@ async function handleSubmit() {
     const redirect = route.query.redirect || '/dashboard'
     router.push(redirect)
   } catch (err) {
-    error.value = err.response?.data?.message || 'Login failed. Please try again.'
+    error.value = err.response?.data?.message || t('Login failed. Please try again.')
   }
 }
 </script>
@@ -57,15 +60,15 @@ async function handleSubmit() {
       <!-- Back Link -->
       <router-link to="/" class="back-link">
         <ArrowLeft :size="18" />
-        <span>Back to Home</span>
+        <span>{{ $t('Back to Home') }}</span>
       </router-link>
 
       <!-- Auth Card -->
       <GlassCard padding="xl" :hoverable="false" class="auth-card">
         <!-- Header -->
         <div class="auth-header">
-          <h1 class="auth-title">Sign In</h1>
-          <p class="auth-subtitle">Welcome back to BBALL SIM</p>
+          <h1 class="auth-title">{{ $t('Sign In') }}</h1>
+          <p class="auth-subtitle">{{ $t('Welcome back to BBALL SIM') }}</p>
         </div>
 
         <!-- Error Message -->
@@ -78,9 +81,9 @@ async function handleSubmit() {
         <form @submit.prevent="handleSubmit" class="auth-form">
           <FormInput
             v-model="form.email"
-            label="Email"
+            :label="$t('Email')"
             type="email"
-            placeholder="you@example.com"
+            :placeholder="$t('you@example.com')"
             :error="v$.email.$errors[0]?.$message"
             :touched="v$.email.$dirty"
             required
@@ -89,9 +92,9 @@ async function handleSubmit() {
 
           <FormInput
             v-model="form.password"
-            label="Password"
+            :label="$t('Password')"
             type="password"
-            placeholder="Enter your password"
+            :placeholder="$t('Enter your password')"
             :error="v$.password.$errors[0]?.$message"
             :touched="v$.password.$dirty"
             required
@@ -100,18 +103,18 @@ async function handleSubmit() {
 
           <div class="form-extras">
             <router-link to="/forgot-password" class="forgot-link">
-              Forgot password?
+              {{ $t('Forgot password?') }}
             </router-link>
           </div>
 
           <button type="submit" class="cosmic-btn-block" :disabled="authStore.loading">
-            {{ authStore.loading ? 'Signing In...' : 'Sign In' }}
+            {{ authStore.loading ? $t('Signing In...') : $t('Sign In') }}
           </button>
         </form>
 
         <!-- Divider -->
         <div class="auth-divider">
-          <span>or</span>
+          <span>{{ $t('or') }}</span>
         </div>
 
         <!-- Social sign-in (Apple/Google, platform-gated) -->
@@ -119,8 +122,8 @@ async function handleSubmit() {
 
         <!-- Footer -->
         <p class="auth-footer">
-          Don't have an account?
-          <router-link to="/register" class="auth-link">Create one</router-link>
+          {{ $t("Don't have an account?") }}
+          <router-link to="/register" class="auth-link">{{ $t('Create one') }}</router-link>
         </p>
       </GlassCard>
     </div>

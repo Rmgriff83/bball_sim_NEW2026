@@ -151,7 +151,7 @@ function isActive(routeName) {
           :size="24"
           :fill="isActive(item.routeName) ? 'currentColor' : 'none'"
         />
-        <span v-if="trainingReadyForClaim" class="train-ready-dot" :title="'Player training ready to claim'"></span>
+        <span v-if="trainingReadyForClaim" class="train-ready-dot" :title="$t('Player training ready to claim')"></span>
       </template>
 
       <!-- Trophy Icon -->

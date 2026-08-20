@@ -10,6 +10,7 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { t } from '@wl-i18n/i18n.js'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
@@ -607,20 +608,20 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
       // field nobody and rosters come out thin, so require a full pool.
       const needed = teams.value.length * 15
       if (pool.length < needed) {
-        problems.push(`Draft pool has ${pool.length} players; the draft makes ${needed} picks (15 rounds × ${teams.value.length} teams).`)
+        problems.push(t('Draft pool has {n} players; the draft makes {needed} picks (15 rounds × {teams} teams).', { n: pool.length, needed, teams: teams.value.length }))
       }
-      _validatePlayers(pool, problems, 'Pool')
+      _validatePlayers(pool, problems, t('Pool'))
     } else {
       for (const team of teams.value) {
         const roster = await PlayerRepository.getByTeam(campaignId.value, team.id)
         if (roster.length < MIN_ROSTER_SIZE) {
-          problems.push(`${team.abbreviation ?? team.name}: only ${roster.length} players (min ${MIN_ROSTER_SIZE}).`)
+          problems.push(t('{team}: only {n} players (min {min}).', { team: team.abbreviation ?? team.name, n: roster.length, min: MIN_ROSTER_SIZE }))
         }
         // The 15-man cap the rest of the game assumes (signings, AI logic).
         // The Add Player UI already stops at 15; this catches oversized
         // rosters arriving via imported builds or any other edge path.
         if (roster.length > MAX_ROSTER_SIZE) {
-          problems.push(`${team.abbreviation ?? team.name}: ${roster.length} players — over the ${MAX_ROSTER_SIZE}-man limit.`)
+          problems.push(t('{team}: {n} players — over the {max}-man limit.', { team: team.abbreviation ?? team.name, n: roster.length, max: MAX_ROSTER_SIZE }))
         }
         _validatePlayers(roster, problems, team.abbreviation ?? team.name)
       }
@@ -629,17 +630,17 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
       const pool = (await PlayerRepository.getFreeAgents(campaignId.value))
         .filter((p) => !(p.isDraftProspect || p.is_draft_prospect))
       if (pool.length < MIN_FA_POOL) {
-        problems.push(`Free agents: only ${pool.length} in the pool (min ${MIN_FA_POOL}).`)
+        problems.push(t('Free agents: only {n} in the pool (min {min}).', { n: pool.length, min: MIN_FA_POOL }))
       }
       if (pool.length > MAX_FA_POOL) {
-        problems.push(`Free agents: ${pool.length} in the pool — over the ${MAX_FA_POOL} limit.`)
+        problems.push(t('Free agents: {n} in the pool — over the {max} limit.', { n: pool.length, max: MAX_FA_POOL }))
       }
-      _validatePlayers(pool, problems, 'Free agents')
+      _validatePlayers(pool, problems, t('Free agents'))
     }
     for (const team of teams.value) {
       const coach = team.coach
       if (!coach || !(coach.name || coach.firstName)) {
-        problems.push(`${team.abbreviation ?? team.name}: missing a head coach.`)
+        problems.push(t('{team}: missing a head coach.', { team: team.abbreviation ?? team.name }))
       }
     }
     return problems
@@ -647,7 +648,7 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
 
   function _validatePlayers(players, problems, label) {
     for (const p of players) {
-      if (!(p.name || p.firstName)) { problems.push(`${label}: a player has no name.`); break }
+      if (!(p.name || p.firstName)) { problems.push(t('{label}: a player has no name.', { label })); break }
     }
     // Badge stack cap — learned badges plus cap-only rows both count. First
     // offender per group (matches the ceiling check) so imports of stacked
@@ -658,8 +659,8 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
         ...Object.keys(p.badgeCaps ?? {}),
       ]).size
       if (badgeCount > MAX_PLAYER_BADGES) {
-        const pName = p.name ?? (`${p.firstName ?? ''} ${p.lastName ?? ''}`.trim() || 'A player')
-        problems.push(`${label}: ${pName} has ${badgeCount} badges — max ${MAX_PLAYER_BADGES}.`)
+        const pName = p.name ?? (`${p.firstName ?? ''} ${p.lastName ?? ''}`.trim() || t('A player'))
+        problems.push(t('{label}: {name} has {n} badges — max {max}.', { label, name: pName, n: badgeCount, max: MAX_PLAYER_BADGES }))
         break
       }
     }
@@ -671,7 +672,7 @@ export const useRosterEditorStore = defineStore('rosterEditor', () => {
         for (const [k, v] of Object.entries(p.attributes[cat] ?? {})) {
           const cap = caps?.[cat]?.[k]
           if (typeof cap === 'number' && cap < v) {
-            problems.push(`${label}: ${p.name ?? 'A player'} has a ceiling below current on ${k}.`)
+            problems.push(t('{label}: {name} has a ceiling below current on {attr}.', { label, name: p.name ?? t('A player'), attr: k }))
             return
           }
         }

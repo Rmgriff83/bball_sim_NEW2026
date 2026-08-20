@@ -1,12 +1,15 @@
 <script setup>
 import { computed } from 'vue'
-import { X, ArrowDown } from 'lucide-vue-next'
+import { X, ArrowDown, ShieldCheck } from 'lucide-vue-next'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
   seasonYear: { type: Number, default: 2025 },
   facilitiesBefore: { type: Object, default: () => ({}) },
   facilitiesAfter: { type: Object, default: () => ({}) },
+  // Facilities that would have degraded but were held by an active staff
+  // member: [{ key, level, staffName }]. Absent on old callers → default [].
+  preservedFacilities: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['close'])
@@ -31,6 +34,12 @@ const degradedFacilities = computed(() => {
     .filter(f => f.before > f.after)
 })
 
+const preservedRows = computed(() => {
+  return props.preservedFacilities
+    .filter(f => facilityLabels[f.key])
+    .map(f => ({ key: f.key, label: facilityLabels[f.key], level: f.level }))
+})
+
 const seasonDisplay = computed(() => {
   return `${props.seasonYear}-${String(props.seasonYear + 1).slice(2)}`
 })
@@ -43,7 +52,7 @@ const seasonDisplay = computed(() => {
         <div class="modal-container">
           <!-- Header -->
           <header>
-            <h2 class="modal-title">New Season</h2>
+            <h2 class="modal-title">{{ $t('New Season') }}</h2>
             <button class="close-btn" @click="emit('close')">
               <X :size="20" />
             </button>
@@ -54,24 +63,36 @@ const seasonDisplay = computed(() => {
             <!-- Season Announcement -->
             <div class="season-announce">
               <span class="season-year">{{ seasonDisplay }}</span>
-              <span class="season-label">Season has begun</span>
+              <span class="season-label">{{ $t('Season has begun') }}</span>
             </div>
 
             <!-- Facility Degradation -->
-            <section v-if="degradedFacilities.length > 0" class="summary-section">
-              <h3 class="section-title">Facility Degradation</h3>
-              <p class="section-desc">All team facilities degrade by 1 level at the start of each season.</p>
+            <section v-if="degradedFacilities.length > 0 || preservedRows.length > 0" class="summary-section">
+              <h3 class="section-title">{{ $t('Facility Degradation') }}</h3>
+              <p v-if="preservedRows.length > 0" class="section-desc">{{ $t('Facilities degrade by 1 level each season — unless a staff member is there to maintain them.') }}</p>
+              <p v-else class="section-desc">{{ $t('All team facilities degrade by 1 level at the start of each season.') }}</p>
               <div class="facilities-list">
                 <div
                   v-for="facility in degradedFacilities"
                   :key="facility.key"
                   class="facility-item"
                 >
-                  <span class="facility-name">{{ facility.label }}</span>
+                  <span class="facility-name">{{ $tDynamic(facility.label) }}</span>
                   <div class="facility-change">
-                    <span class="level-before">Lv {{ facility.before }}</span>
+                    <span class="level-before">{{ $t('Lv {n}', { n: facility.before }) }}</span>
                     <ArrowDown :size="14" class="arrow-icon" />
-                    <span class="level-after">Lv {{ facility.after }}</span>
+                    <span class="level-after">{{ $t('Lv {n}', { n: facility.after }) }}</span>
+                  </div>
+                </div>
+                <div
+                  v-for="facility in preservedRows"
+                  :key="facility.key"
+                  class="facility-item facility-item-held"
+                >
+                  <span class="facility-name">{{ $tDynamic(facility.label) }}</span>
+                  <div class="facility-change">
+                    <ShieldCheck :size="14" class="held-icon" />
+                    <span class="level-held">{{ $t('Lv {n} — held by staff', { n: facility.level }) }}</span>
                   </div>
                 </div>
               </div>
@@ -79,14 +100,14 @@ const seasonDisplay = computed(() => {
 
             <!-- No degradation (all already at level 1) -->
             <section v-else class="summary-section">
-              <h3 class="section-title">Facilities</h3>
-              <p class="section-desc">All facilities are at base level. Visit the Facilities tab to upgrade.</p>
+              <h3 class="section-title">{{ $t('Facilities') }}</h3>
+              <p class="section-desc">{{ $t('All facilities are at base level. Visit the Facilities tab to upgrade.') }}</p>
             </section>
           </main>
 
           <!-- Footer -->
           <footer>
-            <button class="footer-btn action-btn" @click="emit('close')">Let's Go</button>
+            <button class="footer-btn action-btn" @click="emit('close')">{{ $t("Let's Go") }}</button>
           </footer>
         </div>
       </div>
@@ -302,6 +323,24 @@ main {
   font-size: 0.8rem;
   font-weight: 700;
   color: var(--color-error, #ef4444);
+}
+
+.facility-item-held {
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.facility-item-held:nth-child(even) {
+  background: rgba(34, 197, 94, 0.09);
+}
+
+.held-icon {
+  color: var(--color-success, #22c55e);
+}
+
+.level-held {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-success, #22c55e);
 }
 
 /* Footer */

@@ -9,6 +9,7 @@ import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { GlassCard } from '@/components/ui'
 import { Inbox, ArrowLeftRight, AlertTriangle } from 'lucide-vue-next'
 import TradeProposalModal from '@/components/trade/TradeProposalModal.vue'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   campaignId: {
@@ -66,7 +67,7 @@ async function handleAccept(proposal) {
     // a silently-open modal made a failed accept look like a no-op.
     showProposalModal.value = false
     selectedProposal.value = null
-    useToastStore().showError(tradeStore.error || 'This trade can no longer be completed.')
+    useToastStore().showError(tradeStore.error || t('This trade can no longer be completed.'))
   }
 }
 
@@ -93,26 +94,26 @@ function getTeamColor(proposal) {
 }
 
 function summarizeAssets(assets) {
-  if (!assets || assets.length === 0) return 'No assets'
+  if (!assets || assets.length === 0) return t('No assets')
   const parts = []
   for (const a of assets) {
     if (a.type === 'player' && a.player) {
       const name = `${a.player.firstName || a.player.first_name || ''} ${a.player.lastName || a.player.last_name || ''}`.trim()
-      parts.push(name || 'Player')
+      parts.push(name || t('Player'))
     } else if (a.type === 'pick') {
-      parts.push(a.pick?.display_name || 'Draft Pick')
+      parts.push(a.pick?.display_name || t('Draft Pick'))
     }
   }
-  return parts.join(', ') || 'Assets'
+  return parts.join(', ') || t('Assets')
 }
 
 function formatExpiration(expiresAt) {
   if (!expiresAt) return ''
   const diff = new Date(expiresAt) - new Date()
   const hours = Math.max(0, Math.floor(diff / (1000 * 60 * 60)))
-  if (hours < 24) return `${hours}h left`
+  if (hours < 24) return t('{n}h left', { n: hours })
   const days = Math.floor(hours / 24)
-  return `${days}d left`
+  return t('{n}d left', { n: days })
 }
 </script>
 
@@ -121,15 +122,15 @@ function formatExpiration(expiresAt) {
     <!-- Deadline banner -->
     <div v-if="deadlinePassed" class="deadline-banner">
       <AlertTriangle :size="16" />
-      <span>The trade deadline has passed. Pending offers can be reviewed or rejected, but not accepted.</span>
+      <span>{{ $t('The trade deadline has passed. Pending offers can be reviewed or rejected, but not accepted.') }}</span>
     </div>
 
     <!-- Empty State -->
     <GlassCard v-if="proposals.length === 0" padding="xl" :hoverable="false">
       <div class="empty-state">
         <Inbox :size="48" class="empty-icon" />
-        <h3>No Trade Offers</h3>
-        <p>AI teams will send you proposals as the season progresses. Check back after simulating games.</p>
+        <h3>{{ $t('No Trade Offers') }}</h3>
+        <p>{{ $t('AI teams will send you proposals as the season progresses. Check back after simulating games.') }}</p>
       </div>
     </GlassCard>
 
@@ -152,11 +153,11 @@ function formatExpiration(expiresAt) {
               {{ proposal.proposing_team?.name }}
             </div>
             <div class="proposal-summary">
-              <span class="asset-label">Offering:</span>
+              <span class="asset-label">{{ $t('Offering:') }}</span>
               <span class="asset-text">{{ summarizeAssets(proposal.ai_gives) }}</span>
             </div>
             <div class="proposal-summary">
-              <span class="asset-label">Wants:</span>
+              <span class="asset-label">{{ $t('Wants:') }}</span>
               <span class="asset-text">{{ summarizeAssets(proposal.ai_receives) }}</span>
             </div>
           </div>

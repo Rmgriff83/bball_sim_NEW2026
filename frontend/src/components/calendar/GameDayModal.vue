@@ -10,6 +10,7 @@ import { useToastStore } from '@/stores/toast'
 import { LoadingSpinner, StandardModal } from '@/components/ui'
 import BoxScore from '@/components/game/BoxScore.vue'
 import { X, Play, FastForward, Eye, Lock, AlertTriangle, Trophy, Cpu, Users } from 'lucide-vue-next'
+import { t, dateLocale } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: {
@@ -58,8 +59,10 @@ function validateRoster() {
   const injuredStarters = starters.filter(p => p && (p.is_injured || p.isInjured))
   if (injuredStarters.length > 0) {
     const names = injuredStarters.map(p => p.name || `${p.first_name} ${p.last_name}`).join(', ')
-    warningMessage.value = `You have injured ${injuredStarters.length === 1 ? 'starter' : 'starters'} in your lineup: ${names}`
-    warningHint.value = 'Go to the Team tab to adjust your lineup before playing.'
+    warningMessage.value = injuredStarters.length === 1
+      ? t('You have injured starter in your lineup: {names}', { names })
+      : t('You have injured starters in your lineup: {names}', { names })
+    warningHint.value = t('Go to the Team tab to adjust your lineup before playing.')
     showWarning.value = true
     return false
   }
@@ -67,8 +70,8 @@ function validateRoster() {
   // Check minutes total
   const totalMins = teamStore.totalTargetMinutes
   if (totalMins !== 240) {
-    warningMessage.value = `Your rotation minutes total ${totalMins} — they must equal exactly 240.`
-    warningHint.value = 'Go to the Team tab to adjust your player minutes before playing.'
+    warningMessage.value = t('Your rotation minutes total {mins} — they must equal exactly 240.', { mins: totalMins })
+    warningHint.value = t('Go to the Team tab to adjust your player minutes before playing.')
     showWarning.value = true
     return false
   }
@@ -90,7 +93,7 @@ async function handleCpuSetLineup() {
     ])
     const roster = teamStore.roster
     if (!roster || roster.length < 5) {
-      toastStore.showError('Not enough players to set lineup')
+      toastStore.showError(t('Not enough players to set lineup'))
       return
     }
     const newLineup = selectBestLineup(roster)
@@ -104,9 +107,9 @@ async function handleCpuSetLineup() {
     await teamStore.updateTargetMinutes(props.campaignId, newMinutes)
 
     showWarning.value = false
-    toastStore.showSuccess('CPU adjusted your lineup')
+    toastStore.showSuccess(t('CPU adjusted your lineup'))
   } catch (err) {
-    toastStore.showError('Failed to auto-set lineup')
+    toastStore.showError(t('Failed to auto-set lineup'))
   }
 }
 
@@ -179,7 +182,7 @@ const userResult = computed(() => {
 const formattedDate = computed(() => {
   if (!props.game?.game_date) return ''
   const date = new Date(props.game.game_date + 'T12:00:00') // Add time to avoid timezone issues
-  return date.toLocaleDateString('en-US', {
+  return date.toLocaleDateString(dateLocale(), {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
@@ -196,22 +199,22 @@ const playoffSeriesInfo = computed(() => {
   return {
     ...series,
     roundLabel: playoffStore.getPlayoffRoundLabel(props.game.playoff_round),
-    gameLabel: gameNum ? `Game ${gameNum}` : ''
+    gameLabel: gameNum ? t('Game {n}', { n: gameNum }) : ''
   }
 })
 
 // Game status text and class
 const gameStatus = computed(() => {
   if (props.game?.is_complete) {
-    return { text: 'Final', class: 'complete' }
+    return { text: t('Final'), class: 'complete' }
   }
   if (isGameInProgress.value) {
-    return { text: 'In Progress', class: 'live' }
+    return { text: t('In Progress'), class: 'live' }
   }
   if (props.isNextGame) {
-    return { text: 'Next Game', class: 'next' }
+    return { text: t('Next Game'), class: 'next' }
   }
-  return { text: 'Upcoming', class: 'upcoming' }
+  return { text: t('Upcoming'), class: 'upcoming' }
 })
 
 // Fetch full game data for box score
@@ -269,7 +272,7 @@ async function simulateToThisGame() {
   // Close the modal immediately on selection so the user isn't stuck staring
   // at the calendar modal while the multi-game sim runs in the background.
   close()
-  const loadingToastId = toastStore.showLoading('Simulating to game...')
+  const loadingToastId = toastStore.showLoading(t('Simulating to game...'))
 
   try {
     const response = await gameStore.simulateToGame(props.campaignId, props.game.id)
@@ -316,7 +319,7 @@ async function simulateToThisGame() {
     emit('simulated')
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Simulation failed. Please try again.')
+    toastStore.showError(t('Simulation failed. Please try again.'))
     console.error('Failed to sim to this game:', err)
   } finally {
     simulating.value = false
@@ -331,7 +334,7 @@ async function simulateToGame() {
   simulating.value = true
   // Close on selection so the modal doesn't linger over the loading toast.
   close()
-  const loadingToastId = toastStore.showLoading('Simulating games...')
+  const loadingToastId = toastStore.showLoading(t('Simulating games...'))
 
   try {
     const response = await gameStore.simulateToNextGame(props.campaignId)
@@ -357,7 +360,9 @@ async function simulateToGame() {
       response.upgrade_points_awarded.forEach((award, i) => {
         setTimeout(() => {
           toastStore.showSuccess(
-            `${award.name} earned ${award.points_earned} upgrade point${award.points_earned > 1 ? 's' : ''}! (${award.total_points} total)`,
+            award.points_earned > 1
+              ? t('{name} earned {n} upgrade points! ({total} total)', { name: award.name, n: award.points_earned, total: award.total_points })
+              : t('{name} earned {n} upgrade point! ({total} total)', { name: award.name, n: award.points_earned, total: award.total_points }),
             5000
           )
         }, i * 600)
@@ -381,7 +386,7 @@ async function simulateToGame() {
     emit('simulated')
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Simulation failed. Please try again.')
+    toastStore.showError(t('Simulation failed. Please try again.'))
     console.error('Failed to simulate:', err)
   } finally {
     simulating.value = false
@@ -393,7 +398,7 @@ async function simToEndOfGame() {
   if (!validateRoster()) return
 
   simulating.value = true
-  const loadingToastId = toastStore.showLoading('Simming to end...')
+  const loadingToastId = toastStore.showLoading(t('Simming to end...'))
 
   try {
     const response = await gameStore.simToEnd(props.campaignId, props.game.id)
@@ -428,7 +433,7 @@ async function simToEndOfGame() {
     close()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Sim to end failed. Please try again.')
+    toastStore.showError(t('Sim to end failed. Please try again.'))
     console.error('Failed to sim to end:', err)
   } finally {
     simulating.value = false
@@ -505,10 +510,11 @@ onUnmounted(() => {
           <div v-if="game.is_playoff && playoffSeriesInfo" class="playoff-info-bar">
             <div class="playoff-info-left">
               <Trophy :size="14" class="playoff-bar-icon" />
-              <span class="playoff-bar-round">{{ playoffSeriesInfo.roundLabel }}</span>
+              <span class="playoff-bar-round">{{ $tDynamic(playoffSeriesInfo.roundLabel) }}</span>
             </div>
             <span class="playoff-bar-series">
-              {{ playoffSeriesInfo.gameLabel }}<template v-if="playoffSeriesInfo.gameLabel"> &middot; </template>Series {{ playoffSeriesInfo.team1Wins }}-{{ playoffSeriesInfo.team2Wins }}
+              <!-- i18n-ignore (middot separator entity; surrounding text is wrapped) -->
+              {{ playoffSeriesInfo.gameLabel }}<template v-if="playoffSeriesInfo.gameLabel"> &middot; </template>{{ $t('Series {a}-{b}', { a: playoffSeriesInfo.team1Wins, b: playoffSeriesInfo.team2Wins }) }}
             </span>
           </div>
 
@@ -523,8 +529,8 @@ onUnmounted(() => {
                 >
                   {{ awayTeam?.abbreviation || 'AWY' }}
                 </div>
-                <span class="team-name">{{ awayTeam?.city || 'Away' }}</span>
-                <span class="team-nickname">{{ awayTeam?.name || 'Team' }}</span>
+                <span class="team-name">{{ awayTeam?.city || $t('Away') }}</span>
+                <span class="team-nickname">{{ awayTeam?.name || $t('Team') }}</span>
                 <span v-if="awayTeamRecord" class="team-record">{{ awayTeamRecord }}</span>
                 <span v-if="game.is_complete || isGameInProgress" class="team-score">
                   {{ game.away_score ?? 0 }}
@@ -538,11 +544,11 @@ onUnmounted(() => {
                     class="result-badge"
                     :class="{ won: userResult?.won, lost: !userResult?.won }"
                   >
-                    {{ userResult?.won ? 'WIN' : 'LOSS' }}
+                    {{ userResult?.won ? $t('WIN') : $t('LOSS') }}
                   </span>
                 </template>
                 <template v-else-if="isGameInProgress">
-                  <span class="vs-text live">LIVE</span>
+                  <span class="vs-text live">{{ $t('LIVE') }}</span>
                 </template>
                 <template v-else>
                   <span class="vs-text">VS</span>
@@ -557,8 +563,8 @@ onUnmounted(() => {
                 >
                   {{ homeTeam?.abbreviation || 'HME' }}
                 </div>
-                <span class="team-name">{{ homeTeam?.city || 'Home' }}</span>
-                <span class="team-nickname">{{ homeTeam?.name || 'Team' }}</span>
+                <span class="team-name">{{ homeTeam?.city || $t('Home') }}</span>
+                <span class="team-nickname">{{ homeTeam?.name || $t('Team') }}</span>
                 <span v-if="homeTeamRecord" class="team-record">{{ homeTeamRecord }}</span>
                 <span v-if="game.is_complete || isGameInProgress" class="team-score">
                   {{ game.home_score ?? 0 }}
@@ -571,7 +577,7 @@ onUnmounted(() => {
           <div v-if="game.is_complete" class="box-score-section">
             <div v-if="loadingBoxScore" class="loading-box-score">
               <LoadingSpinner size="md" />
-              <span>Loading stats...</span>
+              <span>{{ $t('Loading stats...') }}</span>
             </div>
             <template v-else-if="fullGameData?.box_score">
               <BoxScore
@@ -588,11 +594,11 @@ onUnmounted(() => {
           <div v-else-if="!isGameInProgress" class="upcoming-section">
             <p v-if="!isNextGame && !canSimToThisGame" class="order-notice">
               <Lock :size="16" />
-              Games must be played in order. This is not your next scheduled game.
+              {{ $t('Games must be played in order. This is not your next scheduled game.') }}
             </p>
             <p v-else-if="!isNextGame" class="order-notice">
               <FastForward :size="16" />
-              Sim through this game
+              {{ $t('Sim through this game') }}
             </p>
           </div>
 
@@ -601,41 +607,41 @@ onUnmounted(() => {
             <template v-if="game.is_complete">
               <button class="btn btn-primary" @click="viewFullGame">
                 <Eye :size="18" />
-                View Full Game
+                {{ $t('View Full Game') }}
               </button>
             </template>
             <template v-else-if="isGameInProgress">
               <button class="btn btn-primary btn-continue" @click="playGame">
                 <Play :size="18" />
-                Continue Game
+                {{ $t('Continue Game') }}
               </button>
               <button class="btn btn-secondary" @click="simToEndOfGame" :disabled="simulating">
                 <LoadingSpinner v-if="simulating" size="sm" />
                 <FastForward v-else :size="18" />
-                {{ simulating ? 'Simming...' : 'Sim to End' }}
+                {{ simulating ? $t('Simming...') : $t('Sim to End') }}
               </button>
             </template>
             <template v-else>
               <button
                 class="btn btn-primary"
                 :disabled="!isNextGame"
-                :title="!isNextGame ? 'You must play games in order' : 'Play this game'"
+                :title="!isNextGame ? $t('You must play games in order') : $t('Play this game')"
                 @click="playGame"
               >
                 <Play :size="18" />
-                Play Game
+                {{ $t('Play Game') }}
               </button>
               <!-- Next user game: Simulate Game (uses simulateToNextGame) -->
               <button
                 v-if="isNextGame"
                 class="btn btn-secondary"
                 :disabled="simulating"
-                title="Simulate this game"
+                :title="$t('Simulate this game')"
                 @click="simulateToGame"
               >
                 <LoadingSpinner v-if="simulating" size="sm" />
                 <FastForward v-else :size="18" />
-                {{ simulating ? 'Simulating...' : 'Simulate Game' }}
+                {{ simulating ? $t('Simulating...') : $t('Simulate Game') }}
               </button>
               <!-- Future user game (not the next one): Sim to This Game.
                    Pauses on trade-deadline / All-Star / user injury along the way. -->
@@ -643,12 +649,12 @@ onUnmounted(() => {
                 v-else-if="canSimToThisGame"
                 class="btn btn-secondary"
                 :disabled="simulating"
-                title="Sim every game between now and this one"
+                :title="$t('Sim every game between now and this one')"
                 @click="simulateToThisGame"
               >
                 <LoadingSpinner v-if="simulating" size="sm" />
                 <FastForward v-else :size="18" />
-                {{ simulating ? 'Simulating...' : 'Sim Through This Game' }}
+                {{ simulating ? $t('Simulating...') : $t('Sim Through This Game') }}
               </button>
             </template>
           </footer>
@@ -660,7 +666,7 @@ onUnmounted(() => {
   <!-- Roster Warning Modal -->
   <StandardModal
     :show="showWarning"
-    title="Lineup Issue"
+    :title="$t('Lineup Issue')"
     size="sm"
     @close="showWarning = false"
   >
@@ -672,14 +678,14 @@ onUnmounted(() => {
       <p class="warning-hint">{{ warningHint }}</p>
     </div>
     <template #footer>
-      <button class="warning-btn-cancel" @click="showWarning = false">Cancel</button>
+      <button class="warning-btn-cancel" @click="showWarning = false">{{ $t('Cancel') }}</button>
       <button class="warning-btn-cpu" @click="handleCpuSetLineup">
         <Cpu :size="16" />
-        CPU Adjust
+        {{ $t('CPU Adjust') }}
       </button>
       <button class="warning-btn-confirm" @click="goToTeamTab">
         <Users :size="16" />
-        View Lineup
+        {{ $t('View Lineup') }}
       </button>
     </template>
   </StandardModal>

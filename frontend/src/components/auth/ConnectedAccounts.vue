@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { BaseButton } from '@/components/ui'
 import { availableProviders, signInWithApple, signInWithGoogleNative, renderGoogleButton, platform } from '@/services/socialAuth'
+import { t } from '@wl-i18n/i18n.js'
 
 const authStore = useAuthStore()
 const toastStore = useToastStore()
@@ -32,7 +33,7 @@ async function handleLinkCredential(payload) {
   busy.value = payload.provider
   try {
     await authStore.linkSocial(payload)
-    toastStore.showSuccess(`${cap(payload.provider)} account linked.`)
+    toastStore.showSuccess(t('{provider} account linked.', { provider: cap(payload.provider) }))
   } catch {
     // The useApi interceptor already surfaced the server message (e.g. the 409
     // "already linked to another user").
@@ -51,7 +52,7 @@ async function linkApple() {
     const code = err?.error || err?.code
     // Ignore user-cancelled popups/sheets; surface real failures.
     if (code === 'popup_closed_by_user' || code === 'user_cancelled_authorize' || code === '1001') return
-    toastStore.showError(err?.message || 'Apple sign-in failed.')
+    toastStore.showError(err?.message || t('Apple sign-in failed.'))
   }
 }
 
@@ -66,7 +67,7 @@ async function linkGoogle() {
     const code = String(err?.error || err?.code || '')
     // Ignore user-cancelled sheets; surface real failures.
     if (code.includes('cancel') || code === '16') return
-    toastStore.showError(err?.message || 'Google sign-in failed.')
+    toastStore.showError(err?.message || t('Google sign-in failed.'))
   }
 }
 
@@ -76,7 +77,7 @@ async function unlink(provider) {
   confirming.value = ''
   try {
     await authStore.unlinkSocial(provider)
-    toastStore.showSuccess(`${cap(provider)} account unlinked.`)
+    toastStore.showSuccess(t('{provider} account unlinked.', { provider: cap(provider) }))
   } catch {
     // interceptor toasts the reason (e.g. "set a password first").
   } finally {
@@ -106,26 +107,26 @@ watch(googleLinked, renderGoogleIfNeeded)
 
 <template>
   <div class="profile-section">
-    <h3 class="section-title">Connected Accounts</h3>
+    <h3 class="section-title">{{ $t('Connected Accounts') }}</h3>
     <p class="section-hint">
-      Link Apple or Google to sign in faster. Linking connects your account directly,
-      so it works even if you chose “Hide My Email”.
+      {{ $t('Link Apple or Google to sign in faster. Linking connects your account directly, so it works even if you chose “Hide My Email”.') }}
     </p>
 
     <div class="provider-list">
       <!-- Apple -->
       <div class="provider-row">
         <div class="provider-id">
+          <!-- i18n-ignore -->
           <span class="provider-name">Apple</span>
-          <span v-if="appleLinked" class="connected-badge">Connected</span>
+          <span v-if="appleLinked" class="connected-badge">{{ $t('Connected') }}</span>
         </div>
         <div class="provider-action">
           <template v-if="appleLinked">
             <div v-if="confirming === 'apple'" class="confirm-actions">
-              <BaseButton variant="danger" :loading="busy === 'apple'" @click="unlink('apple')">Confirm</BaseButton>
-              <BaseButton variant="ghost" @click="confirming = ''">Cancel</BaseButton>
+              <BaseButton variant="danger" :loading="busy === 'apple'" @click="unlink('apple')">{{ $t('Confirm') }}</BaseButton>
+              <BaseButton variant="ghost" @click="confirming = ''">{{ $t('Cancel') }}</BaseButton>
             </div>
-            <BaseButton v-else variant="ghost" :disabled="!!busy" @click="confirming = 'apple'">Unlink</BaseButton>
+            <BaseButton v-else variant="ghost" :disabled="!!busy" @click="confirming = 'apple'">{{ $t('Unlink') }}</BaseButton>
           </template>
           <button
             v-else-if="canLinkApple"
@@ -137,25 +138,26 @@ watch(googleLinked, renderGoogleIfNeeded)
             <svg class="apple-glyph" viewBox="0 0 384 512" aria-hidden="true">
               <path fill="currentColor" d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/>
             </svg>
-            Link Apple
+            {{ $t('Link Apple') }}
           </button>
-          <span v-else class="unavailable-note">Not available here</span>
+          <span v-else class="unavailable-note">{{ $t('Not available here') }}</span>
         </div>
       </div>
 
       <!-- Google -->
       <div class="provider-row">
         <div class="provider-id">
+          <!-- i18n-ignore -->
           <span class="provider-name">Google</span>
-          <span v-if="googleLinked" class="connected-badge">Connected</span>
+          <span v-if="googleLinked" class="connected-badge">{{ $t('Connected') }}</span>
         </div>
         <div class="provider-action">
           <template v-if="googleLinked">
             <div v-if="confirming === 'google'" class="confirm-actions">
-              <BaseButton variant="danger" :loading="busy === 'google'" @click="unlink('google')">Confirm</BaseButton>
-              <BaseButton variant="ghost" @click="confirming = ''">Cancel</BaseButton>
+              <BaseButton variant="danger" :loading="busy === 'google'" @click="unlink('google')">{{ $t('Confirm') }}</BaseButton>
+              <BaseButton variant="ghost" @click="confirming = ''">{{ $t('Cancel') }}</BaseButton>
             </div>
-            <BaseButton v-else variant="ghost" :disabled="!!busy" @click="confirming = 'google'">Unlink</BaseButton>
+            <BaseButton v-else variant="ghost" :disabled="!!busy" @click="confirming = 'google'">{{ $t('Unlink') }}</BaseButton>
           </template>
           <button
             v-else-if="canLinkGoogle && googleIsNative"
@@ -170,10 +172,10 @@ watch(googleLinked, renderGoogleIfNeeded)
               <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
               <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
             </svg>
-            Link Google
+            {{ $t('Link Google') }}
           </button>
           <div v-else-if="canLinkGoogle" ref="googleHost" class="google-host"></div>
-          <span v-else class="unavailable-note">Not available here</span>
+          <span v-else class="unavailable-note">{{ $t('Not available here') }}</span>
         </div>
       </div>
     </div>

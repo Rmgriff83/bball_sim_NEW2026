@@ -1632,6 +1632,10 @@ async function archiveSeasonData(campaignId, currentYear, teams, allPlayers, use
       teamName: team.name,
       label,
       subtitle: `${currentYear}-${String((currentYear + 1) % 100).padStart(2, '0')} Season`,
+      // Additive i18n template fields (render sites fall back to the English
+      // subtitle for records that pre-date them).
+      subtitle_tpl: '{years} Season',
+      subtitle_params: { years: `${currentYear}-${String((currentYear + 1) % 100).padStart(2, '0')}` },
     })
   }
 
@@ -2200,7 +2204,11 @@ export async function backfillCampaignAchievements(campaignId) {
     const year = entry.year
     if (!year) continue
     const date = `${year + 1}-04-15`
-    const subtitle = `${year}-${String((year + 1) % 100).padStart(2, '0')} Season`
+    const subtitleYears = `${year}-${String((year + 1) % 100).padStart(2, '0')}`
+    const subtitle = `${subtitleYears} Season`
+    // Additive i18n template fields, mirrored onto each backfilled record.
+    const subtitle_tpl = '{years} Season'
+    const subtitle_params = { years: subtitleYears }
 
     // Championship
     if (entry.champion && !seenKey.has(`${year}|championship`)) {
@@ -2214,6 +2222,8 @@ export async function backfillCampaignAchievements(campaignId) {
         teamName: userTeam.name,
         label: 'League Champions',
         subtitle,
+        subtitle_tpl,
+        subtitle_params,
       })
       seenKey.add(`${year}|championship`)
     }
@@ -2234,6 +2244,8 @@ export async function backfillCampaignAchievements(campaignId) {
           teamName: userTeam.name,
           label: 'Conference Champions',
           subtitle,
+          subtitle_tpl,
+          subtitle_params,
         })
         seenKey.add(`${year}|conference_championship`)
       }
@@ -2253,6 +2265,8 @@ export async function backfillCampaignAchievements(campaignId) {
           teamName: userTeam.name,
           label: 'Playoff Berth',
           subtitle,
+          subtitle_tpl,
+          subtitle_params,
         })
         seenKey.add(`${year}|playoff_berth`)
       }
@@ -3140,12 +3154,29 @@ export async function startNewSeason(campaignId) {
   // season. AI teams keep their facilities. After a team switch, campaign.teamId
   // already points at the NEW team, so the new team starts degrading and the
   // former user team (now an AI team) stops — automatically.
+  // A hired staff member "maintains" their matching facility: its presence at
+  // rollover blocks the downgrade for that facility. This runs BEFORE the
+  // contract decrement in 3d, so a staff member on an expiring contract still
+  // preserves one last time.
+  const STAFF_BY_FACILITY = {
+    training: 'staff_trainer',
+    medical: 'trainer', // physician — legacy settings key
+    scouting: 'scout',
+    analytics: 'analyst',
+  }
   const userTeam = teams.find(t => t.id === campaign.teamId)
   const userTeamFacilitiesBefore = userTeam?.facilities ? { ...userTeam.facilities } : {}
+  const preservedFacilities = []
   if (userTeam?.facilities) {
     for (const key of ['training', 'medical', 'scouting', 'analytics']) {
       if (userTeam.facilities[key] > 1) {
-        userTeam.facilities[key] = userTeam.facilities[key] - 1
+        const staff = campaign.settings?.[STAFF_BY_FACILITY[key]]
+        if (staff) {
+          // Would have downgraded, but staff held it — counts as preserved.
+          preservedFacilities.push({ key, level: userTeam.facilities[key], staffName: staff.name ?? null })
+        } else {
+          userTeam.facilities[key] = userTeam.facilities[key] - 1
+        }
       }
     }
   }
@@ -3171,20 +3202,27 @@ export async function startNewSeason(campaignId) {
   // shouldn't re-pop last year's modal.
   campaign.settings.pendingRetirements = []
 
-  // 3d. Decrement scout contract (2-season contracts)
-  if (campaign.settings.scout) {
-    campaign.settings.scout.contractYears -= 1
-    if (campaign.settings.scout.contractYears <= 0) {
-      delete campaign.settings.scout
+  // 3d. Decrement ALL staff contracts (2-season contracts). Physician
+  // (settings.trainer) and staff_trainer previously never expired; they now
+  // tick from their stored value like scout/analyst always have. `?? 2`
+  // heals old saves lacking the field with one fresh full term instead of a
+  // surprise same-rollover deletion.
+  for (const key of ['scout', 'analyst', 'trainer', 'staff_trainer']) {
+    const staff = campaign.settings[key]
+    if (!staff) continue
+    staff.contractYears = (staff.contractYears ?? 2) - 1
+    if (staff.contractYears <= 0) {
+      delete campaign.settings[key]
     }
   }
 
-  // 3d-bis. Decrement analyst contract (2-season contracts), same as scout.
-  if (campaign.settings.analyst) {
-    campaign.settings.analyst.contractYears -= 1
-    if (campaign.settings.analyst.contractYears <= 0) {
-      delete campaign.settings.analyst
-    }
+  // 3d-bis. Staff held ≥1 facility that would otherwise have degraded — flat
+  // +2 persisted goodwill (championship = +15 for scale). Written by the
+  // engine (not the convo modal) so it applies exactly once per rollover even
+  // if the app dies before the convo renders.
+  if (preservedFacilities.length > 0) {
+    campaign.settings.ownerSatisfactionBonus =
+      (campaign.settings.ownerSatisfactionBonus ?? 0) + 2
   }
 
   // 3e. HEAD-COACH LIFECYCLE — aging→retirement (applies to EVERYONE incl. the
@@ -3465,6 +3503,7 @@ export async function startNewSeason(campaignId) {
     releasedPlayers,
     facilitiesBefore: userTeamFacilitiesBefore,
     facilitiesAfter: userTeamFacilitiesAfter,
+    preservedFacilities,
     coachCarousel: coachNews,
   }
 }

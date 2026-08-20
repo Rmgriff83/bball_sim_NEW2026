@@ -1,6 +1,7 @@
 <script setup>
 import { computed, watch, onUnmounted } from 'vue'
 import { X, Trophy, Star, Award } from 'lucide-vue-next'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: {
@@ -42,7 +43,7 @@ const seedLabel = computed(() => {
 })
 
 const conferenceLabel = computed(() => {
-  return conference.value === 'east' ? 'Eastern' : 'Western'
+  return conference.value === 'east' ? t('Eastern') : t('Western')
 })
 
 // Season Standouts — pts, reb, ast leaders
@@ -107,7 +108,7 @@ onUnmounted(() => {
         <div class="modal-container">
           <!-- Header -->
           <header class="modal-header">
-            <h2 class="modal-title">{{ qualified ? 'Playoff Bound' : 'Season Complete' }}</h2>
+            <h2 class="modal-title">{{ qualified ? $t('Playoff Bound') : $t('Season Complete') }}</h2>
             <button
               class="btn-close"
               @click="close"
@@ -131,44 +132,47 @@ onUnmounted(() => {
                 <div class="record-info">
                   <span v-if="userTeam" class="team-name-label">{{ userTeam.name }}</span>
                   <span class="record-value">{{ record }}</span>
-                  <span v-if="qualified" class="seed-info">{{ seedLabel }} seed · {{ conferenceLabel }}</span>
-                  <span v-else class="seed-info">Did not qualify</span>
+                  <span v-if="qualified" class="seed-info">{{ $t('{seed} seed · {conf}', { seed: seedLabel, conf: conferenceLabel }) }}</span>
+                  <span v-else class="seed-info">{{ $t('Did not qualify') }}</span>
                 </div>
               </div>
 
               <!-- Special Messages -->
               <div v-if="isLegendary" class="special-badge legendary">
                 <Star :size="14" />
-                <span>LEGENDARY SEASON</span>
+                <span>{{ $t('LEGENDARY SEASON') }}</span>
                 <Star :size="14" />
               </div>
               <div v-else-if="isHistoric" class="special-badge historic">
                 <Award :size="14" />
-                <span>Historic Season</span>
+                <span>{{ $t('Historic Season') }}</span>
               </div>
             </div>
 
             <!-- Season Standouts -->
             <div v-if="hasStandouts" class="standouts-section">
-              <h4 class="section-header">SEASON STANDOUTS</h4>
+              <h4 class="section-header">{{ $t('SEASON STANDOUTS') }}</h4>
               <div class="standouts-grid">
                 <div v-if="ptsLeader" class="standout-card">
-                  <span class="standout-label">PTS Leader</span>
+                  <span class="standout-label">{{ $t('PTS Leader') }}</span>
                   <span class="standout-value">{{ ptsLeader.value }}</span>
+                  <!-- i18n-ignore -->
                   <span class="standout-stat-label">PPG</span>
                   <span class="standout-name">{{ ptsLeader.name }}</span>
                   <span class="standout-pos">{{ ptsLeader.position }}</span>
                 </div>
                 <div v-if="rebLeader" class="standout-card">
-                  <span class="standout-label">REB Leader</span>
+                  <span class="standout-label">{{ $t('REB Leader') }}</span>
                   <span class="standout-value">{{ rebLeader.value }}</span>
+                  <!-- i18n-ignore -->
                   <span class="standout-stat-label">RPG</span>
                   <span class="standout-name">{{ rebLeader.name }}</span>
                   <span class="standout-pos">{{ rebLeader.position }}</span>
                 </div>
                 <div v-if="astLeader" class="standout-card">
-                  <span class="standout-label">AST Leader</span>
+                  <span class="standout-label">{{ $t('AST Leader') }}</span>
                   <span class="standout-value">{{ astLeader.value }}</span>
+                  <!-- i18n-ignore -->
                   <span class="standout-stat-label">APG</span>
                   <span class="standout-name">{{ astLeader.name }}</span>
                   <span class="standout-pos">{{ astLeader.position }}</span>
@@ -178,7 +182,7 @@ onUnmounted(() => {
 
             <!-- First Round Opponent -->
             <div v-if="qualified && opponent" class="opponent-section">
-              <h4 class="section-header">FIRST ROUND OPPONENT</h4>
+              <h4 class="section-header">{{ $t('FIRST ROUND OPPONENT') }}</h4>
               <div class="opponent-card">
                 <div
                   class="opponent-badge"
@@ -188,23 +192,23 @@ onUnmounted(() => {
                 </div>
                 <div class="opponent-info">
                   <span class="opponent-name">{{ opponent.name }}</span>
-                  <span class="opponent-meta">#{{ opponent.seed }} seed · {{ opponent.wins }}-{{ opponent.losses }}</span>
+                  <span class="opponent-meta">{{ $t('#{seed} seed · {w}-{l}', { seed: opponent.seed, w: opponent.wins, l: opponent.losses }) }}</span>
                 </div>
               </div>
             </div>
 
             <!-- Non-qualified message -->
             <p v-if="!qualified" class="eliminated-text">
-              Your team finished outside the top 8 in the conference. Better luck next season!
+              {{ $t('Your team finished outside the top 8 in the conference. Better luck next season!') }}
             </p>
           </main>
 
           <!-- Footer -->
           <footer class="modal-footer">
-            <button class="btn-cancel" @click="close">Close</button>
+            <button class="btn-cancel" @click="close">{{ $t('Close') }}</button>
             <button class="btn-confirm" @click="handleContinue">
               <Trophy v-if="qualified" :size="16" class="btn-icon" />
-              {{ qualified ? 'Continue to Playoffs' : 'Continue' }}
+              {{ qualified ? $t('Continue to Playoffs') : $t('Continue') }}
             </button>
           </footer>
         </div>

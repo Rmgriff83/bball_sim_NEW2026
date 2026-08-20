@@ -44,8 +44,8 @@ watch(() => props.show, (open) => {
             <div class="header-title">
               <Star :size="20" class="title-star" />
               <div>
-                <h2>Draft Lottery Results</h2>
-                <p class="subtitle">{{ lotteryResult.year }} Rookie Draft</p>
+                <h2>{{ $t('Draft Lottery Results') }}</h2>
+                <p class="subtitle">{{ $t('{year} Rookie Draft', { year: lotteryResult.year }) }}</p>
               </div>
             </div>
             <button class="close-btn" @click="close"><X :size="20" /></button>
@@ -53,8 +53,7 @@ watch(() => props.show, (open) => {
 
           <p v-if="moversCount" class="movers-line">
             <Star :size="13" />
-            {{ moversCount }} {{ moversCount === 1 ? 'team' : 'teams' }} moved from their
-            projected slot in the lottery.
+            {{ moversCount === 1 ? $t('{n} team moved from their projected slot in the lottery.', { n: moversCount }) : $t('{n} teams moved from their projected slot in the lottery.', { n: moversCount }) }}
           </p>
 
           <div class="lottery-list">
@@ -66,7 +65,7 @@ watch(() => props.show, (open) => {
             >
               <div class="lottery-row__pick">
                 <span class="pick-number">{{ row.pick }}</span>
-                <span v-if="row.isLotteryTeam" class="pick-tag">Lottery</span>
+                <span v-if="row.isLotteryTeam" class="pick-tag">{{ $t('Lottery') }}</span>
                 <ApronPickBadge v-if="row.apronFrozen" />
               </div>
 
@@ -79,7 +78,7 @@ watch(() => props.show, (open) => {
                 <div class="team-meta">
                   <span class="team-name">{{ row.currentOwner?.name || row.currentOwner?.abbreviation || '—' }}</span>
                   <span v-if="row.isTraded && row.originalOwner" class="team-via">
-                    <ArrowRightLeft :size="11" /> via {{ row.originalOwner.abbreviation }}
+                    <ArrowRightLeft :size="11" /> {{ $t('via {team}', { team: row.originalOwner.abbreviation }) }}
                   </span>
                   <span v-else class="team-abbr">{{ row.currentOwner?.abbreviation }}</span>
                 </div>
@@ -101,7 +100,7 @@ watch(() => props.show, (open) => {
           </div>
 
           <footer class="modal-footer">
-            <button class="btn-confirm" @click="close">Continue</button>
+            <button class="btn-confirm" @click="close">{{ $t('Continue') }}</button>
           </footer>
         </div>
       </div>

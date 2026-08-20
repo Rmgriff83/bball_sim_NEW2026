@@ -44,7 +44,7 @@ export const WALKTHROUGHS = {
       target: 'home-facilities',
       placement: 'bottom',
       title: 'Facilities',
-      body: 'A quick read on your four franchise facilities — Training, Medical, Scouting, and Analytics — each rated 1 to 5 stars. They degrade a step every offseason if you don\'t maintain them. Higher facility levels unlock the perks your hired staff can apply, so upgrading here is what turns a 4-star trainer or scout into their full-strength version.',
+      body: 'A quick read on your four franchise facilities — Training, Medical, Scouting, and Analytics — each rated 1 to 5 stars. They degrade a step every offseason unless the matching staff member (trainer, physician, scout, analyst) is on payroll to maintain them. Higher facility levels unlock the perks your hired staff can apply, so upgrading here is what turns a 4-star trainer or scout into their full-strength version.',
       // Strip only renders once a team is loaded with facilities data —
       // skip cleanly if it's not on screen (e.g. cold-load mid-tour).
       skipIfMissing: true,
@@ -142,7 +142,7 @@ export const WALKTHROUGHS = {
       target: 'offseason-manage-roster',
       placement: 'top',
       title: 'Roster & Staff',
-      body: "Manage Roster drops you into the GM Desk — your roster page, plus the Personnel tab where you can fire your head coach, replace your scouts, or bring in new trainers, and the Facilities tab where you spend tokens to upgrade Training, Medical, Scouting, and Analytics. Smart investments here pay dividends all next season.",
+      body: "Manage Roster drops you into the GM Desk — your roster page, plus the Coach tab where you can hire or fire your head coach, and the Facilities tab where you spend tokens to upgrade Training, Medical, Scouting, and Analytics and hire the scout, physician, trainer, and analyst who run them. Smart investments here pay dividends all next season.",
     },
     {
       target: 'offseason-draft-lottery',
@@ -281,8 +281,8 @@ export const WALKTHROUGHS = {
       target: ['gm-personnel-coach', 'gm-coach-skills'],
       tab: { view: 'gm', tab: 'personnel' },
       placement: 'left',
-      title: 'Personnel',
-      body: 'Hire and manage your head coach, scout, team physician, and training staff. Better staff means sharper development, fewer injuries, and better scouting.',
+      title: 'Head Coach',
+      body: 'Your head coach lives here — hire and re-sign coaches, buy coach badges, and set your offensive and defensive schemes. Your scout, physician, trainer, and analyst are now managed on the Facilities tab, right beside the facility each one runs.',
     },
     {
       target: 'gm-coach-candidates',
@@ -430,14 +430,28 @@ export const WALKTHROUGHS = {
       tab: { view: 'gm', tab: 'facilities' },
       placement: 'bottom',
       title: 'Facilities',
-      body: 'Upgrade your training, medical, scouting, and analytics facilities. Your hired staff\'s perks only take effect once the matching facility reaches the level listed on each perk — a 4-star hire runs at partial strength until the facility catches up.',
+      body: 'Upgrade your training, medical, scouting, and analytics facilities — and hire the staff member who runs each one. Staff perks only take effect once the matching facility reaches the level listed on each perk — a 4-star hire runs at partial strength until the facility catches up.',
     },
     {
-      target: 'gm-facilities-content',
+      target: 'gm-facility-header',
       tab: { view: 'gm', tab: 'facilities' },
-      placement: 'top',
+      placement: 'bottom',
       title: 'Invest in Infrastructure',
-      body: 'Each level card spells out exactly what it activates — extra scouting points, your trainer\'s development boost, your physician\'s recovery perks, your analyst\'s reports. Locked staff perks show "Requires Facility Lv X" on the Staff tab and switch on the moment you hit that level.',
+      body: 'Every level pays off on its own — extra scouting points, faster coach training sessions, quicker injury recovery, deeper coaching analytics — plus the staff perks each level switches on. Locked staff perks show "Requires Facility Lv X" below and activate the moment you hit that level.',
+    },
+    {
+      target: 'gm-facility-staff',
+      tab: { view: 'gm', tab: 'facilities' },
+      placement: 'bottom',
+      title: 'Hire Your Staff',
+      body: "Every facility needs a specialist running it. Hire or release this facility's staff member right here — scouts sharpen your draft intel, physicians and trainers keep your roster healthy and developing, and analysts unlock game reports. A warning badge on a sub-tab means that role is still unfilled.",
+    },
+    {
+      target: 'gm-facility-tabs',
+      tab: { view: 'gm', tab: 'facilities' },
+      placement: 'bottom',
+      title: 'Four Departments',
+      body: 'Switch between Scouting, Training, Medical, and Analytics here — check out the available upgrades for each facility and the staff member who runs it.',
     },
   ],
 

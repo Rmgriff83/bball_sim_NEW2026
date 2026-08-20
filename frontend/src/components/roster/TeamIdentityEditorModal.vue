@@ -76,36 +76,35 @@ function save() {
   <Teleport to="body">
     <div v-if="show && team" class="tie-overlay" @click.self="requestClose">
       <div class="tie-modal">
-        <h3><Pencil :size="16" /> Rename Team</h3>
+        <h3><Pencil :size="16" /> {{ $t('Rename Team') }}</h3>
 
         <div class="tie-fields">
           <label class="tie-field">
-            <span>City</span>
-            <input v-model="city" type="text" maxlength="40" class="tie-input" placeholder="e.g. Boston" />
+            <span>{{ $t('City') }}</span>
+            <input v-model="city" type="text" maxlength="40" class="tie-input" :placeholder="$t('e.g. Boston')" />
           </label>
           <label class="tie-field">
-            <span>Team Name</span>
-            <input v-model="nickname" type="text" maxlength="40" class="tie-input" placeholder="e.g. Shamrocks" />
+            <span>{{ $t('Team Name') }}</span>
+            <input v-model="nickname" type="text" maxlength="40" class="tie-input" :placeholder="$t('e.g. Shamrocks')" />
           </label>
         </div>
 
         <div class="tie-preview">
-          <span class="tie-preview-label">Displays as</span>
+          <span class="tie-preview-label">{{ $t('Displays as') }}</span>
           <span class="tie-preview-name">{{ composedName || '—' }}</span>
-          <span class="tie-abbr" title="The abbreviation is fixed — it keys the logo, owner, and coach data.">
+          <span class="tie-abbr" :title="$t('The abbreviation is fixed — it keys the logo, owner, and coach data.')">
             {{ team.abbreviation }}
           </span>
         </div>
         <p class="tie-hint">
-          The 3-letter abbreviation stays fixed — it's what links this team to
-          its logo, owner, and coach.
+          {{ $t("The 3-letter abbreviation stays fixed — it's what links this team to its logo, owner, and coach.") }}
         </p>
 
         <div class="tie-actions">
           <!-- tie-cancel: token class for the global dismiss SFX. -->
-          <button class="tie-secondary tie-cancel" @click="requestClose">Cancel</button>
+          <button class="tie-secondary tie-cancel" @click="requestClose">{{ $t('Cancel') }}</button>
           <button class="tie-primary" :disabled="saving || !canSave" @click="save">
-            <Loader2 v-if="saving" :size="15" class="spin" /> Save Name
+            <Loader2 v-if="saving" :size="15" class="spin" /> {{ $t('Save Name') }}
           </button>
         </div>
       </div>
@@ -113,11 +112,11 @@ function save() {
       <!-- Unsaved-changes discard confirm -->
       <div v-if="confirmDiscard" class="tie-discard-overlay">
         <div class="tie-discard-box">
-          <p>Discard unsaved changes to this team's name?</p>
+          <p>{{ $t("Discard unsaved changes to this team's name?") }}</p>
           <div class="tie-discard-actions">
-            <button class="tie-primary" @click="confirmDiscard = false">Keep editing</button>
+            <button class="tie-primary" @click="confirmDiscard = false">{{ $t('Keep editing') }}</button>
             <button class="tie-secondary tie-cancel tie-discard-confirm" @click="confirmDiscard = false; emit('close')">
-              Discard
+              {{ $t('Discard') }}
             </button>
           </div>
         </div>

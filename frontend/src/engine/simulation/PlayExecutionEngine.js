@@ -7,6 +7,7 @@
  */
 
 import { getCoachPerks, getEffectiveCoachAttribute } from '@/engine/coaching/CoachPerks';
+import { T } from '@/engine/simulation/commentaryTemplate';
 import { BADGES } from '@/engine/data/badges';
 import { ACTION_EFFECT_KEYS, aggregateBadgeEffects, sumActionBoost } from '@/engine/data/badgeKeysByAction';
 import { DEFENSIVE_SCHEMES } from '@/engine/simulation/CoachingEngine';
@@ -109,6 +110,120 @@ const FT_SETUP_S = 0.9;  // walk into formation
 const FT_SET_S = 0.6;    // dribble/set before each attempt
 // Lane-spot priority: bigs closest to the basket.
 const FT_REBOUND_PRIORITY = { C: 0, PF: 1, SF: 2, SG: 3, PG: 4 };
+
+// --- Play-by-play commentary template pools ---------------------------------
+// Every entry is a translation TEMPLATE ({token} placeholders, no player names
+// baked in) interpolated via T() after a variant is picked. The `*_TPLS`
+// naming is load-bearing: wl-i18n.config.js regex-extracts the quoted strings
+// of these const blocks (plus direct quoted first args of T calls).
+
+// Shot narration keyed by shotType (threePoint / midRange / paint / default).
+const SHOT_RELEASE_TPLS = {
+  threePoint: '{name} puts up the three-pointer...',
+  midRange: '{name} puts up the mid-range jumper...',
+  paint: '{name} puts up the shot at the rim...',
+  default: '{name} puts up the shot...',
+};
+const SHOT_FOULED_TPLS = {
+  threePoint: '{name} is fouled on the three-pointer',
+  midRange: '{name} is fouled on the mid-range jumper',
+  paint: '{name} is fouled on the shot at the rim',
+  default: '{name} is fouled on the shot',
+};
+const SHOT_TAKE_TPLS = {
+  threePoint: '{name} takes a three-pointer',
+  midRange: '{name} takes a mid-range jumper',
+  paint: '{name} takes a shot at the rim',
+  default: '{name} takes a shot',
+};
+
+// Scheme-aware blocked-shot variants ({def} = blocker, {shooter} = victim).
+const BLOCK_TPLS = {
+  man: [
+    "{def} swats {shooter}'s shot away!",
+    '{def} rejects {shooter} at the rim!',
+  ],
+  zone_2_3: [
+    '{def} collapses out of the 2-3 zone for the block!',
+    '{def} walls off the paint and blocks {shooter}!',
+  ],
+  zone_3_2: [
+    '{def} rotates from the 3-2 zone for the block!',
+    "{shooter}'s shot is sent back by {def}!",
+  ],
+  zone_1_3_1: [
+    '{def} gets the block out of the 1-3-1!',
+    'Weak side help — {def} with the rejection!',
+  ],
+  press: [
+    "{shooter}'s rushed shot is blocked by {def}!",
+    '{def} rejects the contested attempt!',
+  ],
+  trap: [
+    '{def} blocks it out of the double team!',
+    '{shooter} gets trapped — {def} with the block!',
+  ],
+  default: [
+    "{def} blocks {shooter}'s shot!",
+    '{def} with the rejection!',
+  ],
+};
+
+// Scheme-aware live-ball steal variants ({def} = defender, {victim} = loser).
+const STEAL_TPLS = {
+  man: [
+    "{def} picks {victim}'s pocket!",
+    "{def}'s tight man pressure forces the steal!",
+    '{victim} coughs it up — {def} takes it away!',
+  ],
+  zone_2_3: [
+    '{def} reads the pass from the 2-3 zone and picks it off!',
+    '{def} jumps the lane out of the zone — steal!',
+  ],
+  zone_3_2: [
+    '{def} picks off the pass from the 3-2 zone!',
+    'Quick hands by {def} in the zone — turnover!',
+  ],
+  zone_1_3_1: [
+    '{def} springs the 1-3-1 trap and comes up with it!',
+    '{victim} is caught in the 1-3-1 — {def} steals it!',
+  ],
+  press: [
+    '{def} turns the press into a steal!',
+    "{victim} can't handle the pressure — {def} takes it!",
+  ],
+  trap: [
+    '{def} strips it out of the double team!',
+    '{victim} is suffocated by the trap — {def} with the steal!',
+  ],
+  default: [
+    '{def} strips {victim} — steal!',
+    '{def} takes it away from {victim}!',
+  ],
+};
+
+// Dead-ball violation variants keyed by the rolled violation kind.
+const VIOLATION_TPLS = {
+  travel: [
+    '{name} travels!',
+    '{name} shuffles his feet — traveling!',
+  ],
+  bad_pass_oob: [
+    "{name}'s pass sails out of bounds!",
+    '{name} throws it away — out of bounds!',
+  ],
+  lost_ball_oob: [
+    '{name} loses the handle and the ball rolls out of bounds!',
+    '{name} fumbles it out of bounds!',
+  ],
+  offensive_foul: [
+    '{name} charges into the defender — offensive foul!',
+    '{name} bowls over his man! Offensive foul.',
+  ],
+  double_dribble: [
+    '{name} picks up his dribble... and puts it down again! Double dribble.',
+  ],
+};
 
 // Always-on attribute contributors per action type. These layer on top of the
 // explicit `attributes.offense` / `attributes.defense` arrays in plays.js so
@@ -1046,19 +1161,21 @@ class PlayExecutionEngine {
 
     this._appendBallKeyframe(
       { ...FT_LINE_POS },
-      `${name} at the line (${attemptNo} of ${totalAttempts})`
+      T('{name} at the line ({attemptNo} of {totalAttempts})', { name, attemptNo, totalAttempts })
     );
     this.elapsedTime += FT_SET_S;
     this._appendBallKeyframe(
       { ...FT_LINE_POS },
-      `${name} shoots free throw ${attemptNo} of ${totalAttempts}...`
+      T('{name} shoots free throw {attemptNo} of {totalAttempts}...', { name, attemptNo, totalAttempts })
     );
 
     this._appendShotResultKeyframes(made ? 'made' : 'missed', {
       from: FT_LINE_POS,
       flightS: FT_FLIGHT_S,
       shortBounce: !isFinal,
-      label: `${name} ${made ? 'makes' : 'misses'} free throw ${attemptNo} of ${totalAttempts}`,
+      label: made
+        ? T('{name} makes free throw {attemptNo} of {totalAttempts}', { name, attemptNo, totalAttempts })
+        : T('{name} misses free throw {attemptNo} of {totalAttempts}', { name, attemptNo, totalAttempts }),
     });
 
     this.playResult.outcome = 'free_throws';
@@ -1087,6 +1204,9 @@ class PlayExecutionEngine {
   _recordDisruptionKeyframe(action, actor, defender, kind) {
     const defName = this._lastNameOf(defender, 'Defender');
     const actorName = this._lastNameOf(actor);
+    const desc = kind === 'deflection'
+      ? T('{def} tips the ball out of bounds!', { def: defName })
+      : T('{def} is called for a reach-in foul on {name}', { def: defName, name: actorName });
 
     const keyframe = {
       time: this.elapsedTime,
@@ -1097,9 +1217,9 @@ class PlayExecutionEngine {
       action: action.id,
       actionType: action.type,
       outcome: kind === 'deflection' ? 'deflected' : 'fouled',
-      description: kind === 'deflection'
-        ? `${defName} tips the ball out of bounds!`
-        : `${defName} is called for a reach-in foul on ${actorName}`,
+      description: desc.text,
+      descTpl: desc.tpl,
+      descParams: desc.params,
       defensive_scheme: this.defensiveScheme,
       matchups: { ...this.matchups },
       onBallDefenderId: this.lastOnBallDefenderId,
@@ -1336,12 +1456,15 @@ class PlayExecutionEngine {
     }
 
     // Record initial keyframe
+    const desc = T('Setting up play');
     this.keyframes.push({
       time: 0,
       positions: this.buildPositionsSnapshot(),
       ball: this.ballCarrierId ? this.playerPositions[this.ballCarrierId] : { x: 0.5, y: 0.5 },
       action: 'formation',
-      description: 'Setting up play',
+      description: desc.text,
+      descTpl: desc.tpl,
+      descParams: desc.params,
     });
   }
 
@@ -1554,7 +1677,9 @@ class PlayExecutionEngine {
    * Record a keyframe for animation.
    */
   recordKeyframe(action, actor, outcome) {
-    const description = this.generateDescription(action, actor, outcome);
+    // T-object: `.text` is the interpolated English line; `.tpl`/`.params`
+    // ride along so the UI can dictionary-translate at render time.
+    const desc = this.generateDescription(action, actor, outcome);
     const outcomeKey = outcome.key ?? '';
 
     // Clone the ball position — the raw playerPositions entries are LIVE
@@ -1580,7 +1705,9 @@ class PlayExecutionEngine {
       action: action.id,
       actionType: action.type,
       outcome: outcomeKey,
-      description: description,
+      description: desc.text,
+      descTpl: desc.tpl,
+      descParams: desc.params,
       // Always expose the defensive scheme + current matchups so we always know
       // who's guarding whom (and the scheme) at every moment of the possession.
       defensive_scheme: this.defensiveScheme,
@@ -1643,6 +1770,11 @@ class PlayExecutionEngine {
    * variant from that event's pool when the keyframe becomes current.
    */
   _appendBallKeyframe(ball, description, sfx = null) {
+    // `description` is either a commentaryTemplate T-object or '' (silent
+    // presentation frames keep an empty string, no template).
+    const desc = description && typeof description === 'object'
+      ? description
+      : { text: description || '', tpl: null, params: null };
     const keyframe = {
       time: this.elapsedTime,
       positions: this.buildPositionsSnapshot(),
@@ -1650,11 +1782,15 @@ class PlayExecutionEngine {
       action: 'ball_flight',
       actionType: 'ball_flight',
       outcome: '',
-      description,
+      description: desc.text,
       defensive_scheme: this.defensiveScheme,
       matchups: { ...this.matchups },
       onBallDefenderId: this.lastOnBallDefenderId,
     };
+    if (desc.tpl) {
+      keyframe.descTpl = desc.tpl;
+      keyframe.descParams = desc.params;
+    }
     if (sfx) keyframe.sfx = sfx;
     this.keyframes.push(keyframe);
   }
@@ -1687,7 +1823,7 @@ class PlayExecutionEngine {
     const height = Math.min(1, SHOT_HEIGHT_BASE + dist * SHOT_HEIGHT_PER_DIST);
 
     // Release: ball leaves the shooter's hands from where they stand.
-    this._appendBallKeyframe({ x: from.x, y: from.y }, 'The shot is up...');
+    this._appendBallKeyframe({ x: from.x, y: from.y }, T('The shot is up...'));
 
     // Flight to the rim. Spin + apex height ride the DESTINATION keyframe
     // (the composable reads flight data from the segment's end keyframe).
@@ -1698,7 +1834,7 @@ class PlayExecutionEngine {
     this.elapsedTime += flightS;
     this._appendBallKeyframe(
       { ...RIM_POS, inFlight: true, height, spin: 'shot' },
-      opts.label ?? (kind === 'made' ? 'It falls through!' : 'Off the rim!'),
+      opts.label ?? (kind === 'made' ? T('It falls through!') : T('Off the rim!')),
       kind === 'made' ? 'made_shot' : 'missed_shot'
     );
 
@@ -1757,7 +1893,9 @@ class PlayExecutionEngine {
   }
 
   /**
-   * Generate human-readable description.
+   * Generate human-readable description. Returns a commentaryTemplate
+   * T-object ({ text, tpl, params }) so keyframes carry both the English
+   * line and its translatable template.
    */
   generateDescription(action, actor, outcome) {
     const name = this._lastNameOf(actor);
@@ -1776,44 +1914,38 @@ class PlayExecutionEngine {
 
     switch (action.type) {
       case 'screen':
-        return `${name} sets a screen`;
+        return T('{name} sets a screen', { name });
       case 'pass':
-        return `${name} passes the ball`;
+        return T('{name} passes the ball', { name });
       case 'drive':
-        return `${name} drives to the basket`;
+        return T('{name} drives to the basket', { name });
       case 'shot':
         return this.getShotDescription(action, actor, outcome);
       case 'decision':
-        return `${name} reads the defense`;
+        return T('{name} reads the defense', { name });
       case 'cut':
-        return `${name} cuts to the basket`;
+        return T('{name} cuts to the basket', { name });
       case 'setup':
-        return `${name} sets up the play`;
+        return T('{name} sets up the play', { name });
       case 'post':
-        return `${name} works in the post`;
+        return T('{name} works in the post', { name });
       case 'handoff':
-        return `${name} executes a handoff`;
+        return T('{name} executes a handoff', { name });
       case 'reset':
-        return 'Resetting the offense';
+        return T('Resetting the offense');
       default:
-        return `${name} executes play action`;
+        return T('{name} executes play action', { name });
     }
   }
 
   /**
-   * Get shot description based on outcome.
+   * Get shot description based on outcome. Templates live in the
+   * shot-type-keyed `SHOT_*_TPLS` pools above.
    */
   getShotDescription(action, actor, outcome) {
     const name = this._lastNameOf(actor);
-    const shotType = action.shotType ?? 'shot';
-
-    let shotName;
-    switch (shotType) {
-      case 'threePoint': shotName = 'three-pointer'; break;
-      case 'midRange': shotName = 'mid-range jumper'; break;
-      case 'paint': shotName = 'shot at the rim'; break;
-      default: shotName = 'shot'; break;
-    }
+    const shotType = action.shotType ?? 'default';
+    const tplFor = (pool) => pool[shotType] ?? pool.default;
 
     // Made/missed shots get the SAME neutral release line — the result is
     // narrated by the flight keyframes when the ball actually reaches the
@@ -1823,14 +1955,14 @@ class PlayExecutionEngine {
     // play-by-play feed rebuilds its "makes/misses" line from the play
     // result (GameSimulator.recordPlayByPlay), not from this keyframe.
     if (outcome.key === 'made' || outcome.key === 'missed') {
-      return `${name} puts up the ${shotName}...`;
+      return T(tplFor(SHOT_RELEASE_TPLS), { name });
     } else if (outcome.key === 'blocked') {
       return this.getBlockedDescription(actor);
     } else if (outcome.key === 'fouled') {
-      return `${name} is fouled on the ${shotName}`;
+      return T(tplFor(SHOT_FOULED_TPLS), { name });
     }
 
-    return `${name} takes a ${shotName}`;
+    return T(tplFor(SHOT_TAKE_TPLS), { name });
   }
 
   /**
@@ -1848,40 +1980,9 @@ class PlayExecutionEngine {
       this.playResult.blockedById = blocker.id;
     }
 
-    const descriptionsMap = {
-      man: [
-        `${def} swats ${shooterName}'s shot away!`,
-        `${def} rejects ${shooterName} at the rim!`,
-      ],
-      zone_2_3: [
-        `${def} collapses out of the 2-3 zone for the block!`,
-        `${def} walls off the paint and blocks ${shooterName}!`,
-      ],
-      zone_3_2: [
-        `${def} rotates from the 3-2 zone for the block!`,
-        `${shooterName}'s shot is sent back by ${def}!`,
-      ],
-      zone_1_3_1: [
-        `${def} gets the block out of the 1-3-1!`,
-        `Weak side help — ${def} with the rejection!`,
-      ],
-      press: [
-        `${shooterName}'s rushed shot is blocked by ${def}!`,
-        `${def} rejects the contested attempt!`,
-      ],
-      trap: [
-        `${def} blocks it out of the double team!`,
-        `${shooterName} gets trapped — ${def} with the block!`,
-      ],
-    };
-
-    const defaultDescriptions = [
-      `${def} blocks ${shooterName}'s shot!`,
-      `${def} with the rejection!`,
-    ];
-
-    const descriptions = descriptionsMap[this.defensiveScheme] ?? defaultDescriptions;
-    return descriptions[Math.floor(Math.random() * descriptions.length)];
+    const templates = BLOCK_TPLS[this.defensiveScheme] ?? BLOCK_TPLS.default;
+    const pick = templates[Math.floor(Math.random() * templates.length)];
+    return T(pick, { def, shooter: shooterName });
   }
 
   /**
@@ -1933,29 +2034,9 @@ class PlayExecutionEngine {
       }
     }
 
-    const variantsByKind = {
-      travel: [
-        `${name} travels!`,
-        `${name} shuffles his feet — traveling!`,
-      ],
-      bad_pass_oob: [
-        `${name}'s pass sails out of bounds!`,
-        `${name} throws it away — out of bounds!`,
-      ],
-      lost_ball_oob: [
-        `${name} loses the handle and the ball rolls out of bounds!`,
-        `${name} fumbles it out of bounds!`,
-      ],
-      offensive_foul: [
-        `${name} charges into the defender — offensive foul!`,
-        `${name} bowls over his man! Offensive foul.`,
-      ],
-      double_dribble: [
-        `${name} picks up his dribble... and puts it down again! Double dribble.`,
-      ],
-    };
-    const variants = variantsByKind[this.playResult.turnoverViolation] || variantsByKind.travel;
-    return variants[Math.floor(Math.random() * variants.length)];
+    const variants = VIOLATION_TPLS[this.playResult.turnoverViolation] || VIOLATION_TPLS.travel;
+    const pick = variants[Math.floor(Math.random() * variants.length)];
+    return T(pick, { name });
   }
 
   /**
@@ -1968,41 +2049,9 @@ class PlayExecutionEngine {
     const defender = this._creditedDefender(actor);
     const def = this._lastNameOf(defender, 'The defender');
 
-    const descriptionsMap = {
-      man: [
-        `${def} picks ${victim}'s pocket!`,
-        `${def}'s tight man pressure forces the steal!`,
-        `${victim} coughs it up — ${def} takes it away!`,
-      ],
-      zone_2_3: [
-        `${def} reads the pass from the 2-3 zone and picks it off!`,
-        `${def} jumps the lane out of the zone — steal!`,
-      ],
-      zone_3_2: [
-        `${def} picks off the pass from the 3-2 zone!`,
-        `Quick hands by ${def} in the zone — turnover!`,
-      ],
-      zone_1_3_1: [
-        `${def} springs the 1-3-1 trap and comes up with it!`,
-        `${victim} is caught in the 1-3-1 — ${def} steals it!`,
-      ],
-      press: [
-        `${def} turns the press into a steal!`,
-        `${victim} can't handle the pressure — ${def} takes it!`,
-      ],
-      trap: [
-        `${def} strips it out of the double team!`,
-        `${victim} is suffocated by the trap — ${def} with the steal!`,
-      ],
-    };
-
-    const defaultDescriptions = [
-      `${def} strips ${victim} — steal!`,
-      `${def} takes it away from ${victim}!`,
-    ];
-
-    const descriptions = descriptionsMap[this.defensiveScheme] ?? defaultDescriptions;
-    return descriptions[Math.floor(Math.random() * descriptions.length)];
+    const templates = STEAL_TPLS[this.defensiveScheme] ?? STEAL_TPLS.default;
+    const pick = templates[Math.floor(Math.random() * templates.length)];
+    return T(pick, { def, victim });
   }
 
   /**
@@ -2163,7 +2212,7 @@ class PlayExecutionEngine {
         y: Math.max(0.05, from.y - (0.05 + Math.random() * 0.15)),
       };
       this.elapsedTime += BLOCK_DEFLECT_S;
-      this._appendBallKeyframe({ ...ballLanding }, 'Swatted away!');
+      this._appendBallKeyframe({ ...ballLanding }, T('Swatted away!'));
     } else {
       ballLanding = this._appendShotResultKeyframes('missed');
     }
@@ -2222,8 +2271,8 @@ class PlayExecutionEngine {
     this._appendBallKeyframe(
       { x: ballLanding.x, y: ballLanding.y },
       this.playResult.outcome === 'offensive_rebound'
-        ? 'Offensive rebound!'
-        : 'Defensive rebound'
+        ? T('Offensive rebound!')
+        : T('Defensive rebound')
     );
   }
 

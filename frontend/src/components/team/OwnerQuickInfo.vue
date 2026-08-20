@@ -21,10 +21,10 @@ const expectedWins = computed(() => (owner.value ? expectedWinsForExpectation(ow
     <span class="oqi-head">
       <Crown :size="12" />
       <span class="oqi-name">{{ ownerName }}</span>
-      <span class="oqi-mandate">{{ mandate }} · ~{{ expectedWins }} wins</span>
+      <span class="oqi-mandate">{{ $t('{mandate} · ~{wins} wins', { mandate: $tDynamic(mandate), wins: expectedWins }) }}</span>
     </span>
     <span v-if="owner.wealthSource" class="oqi-wealth">
-      <Banknote :size="11" /> {{ owner.wealthSource }}
+      <Banknote :size="11" /> {{ $tDynamic(owner.wealthSource) }}
     </span>
   </div>
 </template>

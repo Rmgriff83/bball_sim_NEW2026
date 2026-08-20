@@ -5,6 +5,7 @@ import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { deriveOverallFromAttributes, derivePotential } from '@/engine/evolution/PlayerEvolution'
 import { detectArchetype } from '@/engine/data/archetypes'
 import { BADGES } from '@/engine/data/badges'
+import { t } from '@wl-i18n/i18n.js'
 
 // Hero panel above the roster attribute table — styled after the in-game
 // PlayerDetailModal header (gradient-cosmic card + star field). Reads the
@@ -66,7 +67,7 @@ const vitals = computed(() => {
   const hi = p.heightInches ?? p.height_inches ?? 78
   const ht = `${Math.floor(hi / 12)}'${hi % 12}"`
   const wt = p.weightLbs ?? p.weight_lbs ?? '—'
-  return `${ht} · ${wt} lbs · ${p.age ?? '—'} yrs`
+  return t('{ht} · {wt} lbs · {age} yrs', { ht, wt, age: p.age ?? '—' })
 })
 
 const contractLine = computed(() => {
@@ -74,7 +75,8 @@ const contractLine = computed(() => {
   if (!p) return ''
   const sal = Number(p.contractSalary ?? p.contract_salary) || 0
   const yrs = Number(p.contractYearsRemaining ?? p.contract_years_remaining) || 0
-  return `$${(sal / 1_000_000).toFixed(1)}M × ${yrs} yr${yrs === 1 ? '' : 's'}`
+  const amt = `$${(sal / 1_000_000).toFixed(1)}M`
+  return yrs === 1 ? t('{amt} × {n} yr', { amt, n: yrs }) : t('{amt} × {n} yrs', { amt, n: yrs })
 })
 
 const badgePreview = computed(() => {
@@ -98,7 +100,7 @@ function posColor(pos) {
         <button
           v-if="canEditHeadshot"
           class="sph-edit-headshot"
-          title="Edit headshot"
+          :title="$t('Edit headshot')"
           aria-label="Edit headshot"
           @click.stop="emit('edit-headshot', player)"
         >
@@ -112,13 +114,13 @@ function posColor(pos) {
             ref="firstInput"
             v-model="editFirst"
             class="sph-name-input"
-            placeholder="First"
+            :placeholder="$t('First')"
             @keyup.enter="confirmNameEdit"
           />
           <input
             v-model="editLast"
             class="sph-name-input"
-            placeholder="Last"
+            :placeholder="$t('Last')"
             @keyup.enter="confirmNameEdit"
           />
           <button class="sph-name-confirm" aria-label="Confirm name" @click="confirmNameEdit">
@@ -127,7 +129,7 @@ function posColor(pos) {
         </div>
         <h3 v-else class="sph-name">
           {{ player.name ?? ((player.firstName ?? '') + ' ' + (player.lastName ?? '')) }}
-          <button class="sph-name-pencil" title="Edit name" aria-label="Edit name" @click.stop="startNameEdit">
+          <button class="sph-name-pencil" :title="$t('Edit name')" aria-label="Edit name" @click.stop="startNameEdit">
             <Pencil :size="12" />
           </button>
         </h3>
@@ -145,7 +147,7 @@ function posColor(pos) {
         </div>
         <div class="sph-bio">{{ vitals }}</div>
         <div class="sph-chips">
-          <span class="sph-chip">{{ archetype }}</span>
+          <span class="sph-chip">{{ $tDynamic(archetype) }}</span>
           <span class="sph-chip contract">{{ contractLine }}</span>
         </div>
         <div v-if="badgePreview.length" class="sph-badges">
@@ -154,8 +156,8 @@ function posColor(pos) {
             :key="b.id"
             class="sph-badge"
             :class="b.level"
-            :title="`${b.name} (${(b.level ?? 'bronze').toUpperCase()})`"
-          >{{ b.name }}</span>
+            :title="$tDynamic(b.name) + ' (' + (b.level ?? 'bronze').toUpperCase() + ')'"
+          >{{ $tDynamic(b.name) }}</span>
         </div>
       </div>
     </div>
@@ -164,7 +166,7 @@ function posColor(pos) {
          classes to play the dismiss SFX instead of the generic tap. -->
     <button
       class="sph-deselect sph-cancel"
-      title="Back to team overview"
+      :title="$t('Back to team overview')"
       aria-label="Deselect player"
       @click.stop="emit('deselect')"
     >
@@ -178,12 +180,13 @@ function posColor(pos) {
           <span class="sph-rating-value">{{ ovr }}</span>
         </div>
         <div class="sph-rating pot">
+          <!-- i18n-ignore -->
           <span class="sph-rating-label">POT</span>
           <span class="sph-rating-value">{{ pot }}</span>
         </div>
       </div>
       <button class="sph-edit-btn" @click="emit('edit', player)">
-        <SlidersHorizontal :size="15" /> Edit Details
+        <SlidersHorizontal :size="15" /> {{ $t('Edit Details') }}
       </button>
     </div>
   </div>

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { tDynamic } from '@wl-i18n/i18n.js'
 import { NBA_COURT, COURT_CANVAS } from '@/config/courtConfig'
 import { resolveHeadshotSrc } from '@/services/headshotResolver'
 import { useSyncStore } from '@/stores/sync'
@@ -660,7 +661,7 @@ function drawBadgeAnimations(c) {
     c.fillStyle = '#FFFFFF'
     c.strokeStyle = '#000'
     c.lineWidth = 2
-    const displayName = badgeId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+    const displayName = tDynamic(badgeId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))
     c.strokeText(displayName.substring(0, 12), 0, 28)
     c.fillText(displayName.substring(0, 12), 0, 28)
 
@@ -741,7 +742,7 @@ function drawSynergyAnimations(c) {
     c.fillText('✦', 0, 0)
 
     // Synergy name below (same offset as badge name)
-    const displayName = (synergy_name || 'Synergy').toUpperCase()
+    const displayName = tDynamic(synergy_name || 'Synergy').toUpperCase()
     c.font = 'bold 10px Arial'
     c.fillStyle = '#FFFFFF'
     c.strokeStyle = '#000'
@@ -1960,7 +1961,7 @@ defineExpose({
 
     <!-- Play Name Overlay (bottom left) -->
     <div v-if="playName" class="play-name-overlay">
-      <span class="play-name-text">{{ playName }}</span>
+      <span class="play-name-text">{{ $tDynamic(playName) }}</span>
     </div>
 
     <!-- Play Description Overlay (bottom right; yields to the stoppage
@@ -1981,7 +1982,7 @@ defineExpose({
     <!-- Stoppage Overlay (centered): the play description in the same
          bubble style, plus the dead-ball actions. -->
     <div v-if="stoppageMode" class="stoppage-overlay">
-      <div v-if="playDescription" class="stoppage-last-play-label">Last Play:</div>
+      <div v-if="playDescription" class="stoppage-last-play-label">{{ $t('Last Play:') }}</div>
       <div v-if="playDescription" class="play-description-entry">
         <span
           class="play-team-badge"
@@ -1993,13 +1994,13 @@ defineExpose({
         <span class="play-description-text">{{ playDescription }}</span>
       </div>
       <template v-if="stoppageResult && stoppageResult !== playDescription">
-        <div class="stoppage-last-play-label stoppage-result-label">Result:</div>
+        <div class="stoppage-last-play-label stoppage-result-label">{{ $t('Result:') }}</div>
         <div class="stoppage-result-text">{{ stoppageResult }}</div>
       </template>
       <div class="stoppage-actions stoppage-actions-stacked">
         <div v-if="allowSubs" class="stoppage-actions-row">
-          <button class="stoppage-btn" @click="emit('stoppage-subs')">Subs</button>
-          <button class="stoppage-btn" @click="emit('stoppage-adjust')">Adjust</button>
+          <button class="stoppage-btn" @click="emit('stoppage-subs')">{{ $t('Subs') }}</button>
+          <button class="stoppage-btn" @click="emit('stoppage-adjust')">{{ $t('Adjust') }}</button>
         </div>
         <button
           class="stoppage-btn stoppage-btn-continue"
@@ -2007,7 +2008,7 @@ defineExpose({
           @click="emit('stoppage-continue')"
         >
           <span v-if="simulating" class="stoppage-btn-loading"></span>
-          <span v-else>Continue ▸</span>
+          <span v-else>{{ $t('Continue') }} ▸</span>
         </button>
       </div>
     </div>
@@ -2016,17 +2017,17 @@ defineExpose({
          overlay — big countdown, skippable, with a shortcut into the
          coaches overlay (subs/settings while the clock runs). -->
     <div v-if="timeoutMode" class="stoppage-overlay timeout-overlay">
-      <div class="timeout-title">Timeout</div>
+      <div class="timeout-title">{{ $t('Timeout') }}</div>
       <div class="timeout-clock">0:{{ String(Math.max(0, timeoutSecondsLeft)).padStart(2, '0') }}</div>
       <div class="stoppage-actions">
-        <button class="stoppage-btn" @click="emit('stoppage-adjust')">Coaching</button>
+        <button class="stoppage-btn" @click="emit('stoppage-adjust')">{{ $t('Coaching') }}</button>
         <button
           class="stoppage-btn stoppage-btn-continue"
           :disabled="simulating"
           @click="emit('timeout-complete')"
         >
           <span v-if="simulating" class="stoppage-btn-loading"></span>
-          <span v-else>Skip ▸</span>
+          <span v-else>{{ $t('Skip') }} ▸</span>
         </button>
       </div>
     </div>

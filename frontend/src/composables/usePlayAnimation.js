@@ -1,4 +1,5 @@
 import { ref, computed, watch } from 'vue'
+import { tDynamic } from '@wl-i18n/i18n.js'
 
 /**
  * Composable for managing play-by-play animation state and controls.
@@ -419,11 +420,15 @@ export function usePlayAnimation() {
   })
 
   /**
-   * Current action description.
+   * Current action description. Keyframes stamped by PlayExecutionEngine
+   * carry `descTpl`/`descParams` (translation template + params) alongside
+   * the interpolated English `description` — prefer the template so the
+   * ticker renders in the active locale.
    */
   const currentDescription = computed(() => {
     if (!currentKeyframe.value) return ''
-    return currentKeyframe.value.description || ''
+    const kf = currentKeyframe.value
+    return kf.descTpl ? tDynamic(kf.descTpl, kf.descParams) : (kf.description || '')
   })
 
   /**

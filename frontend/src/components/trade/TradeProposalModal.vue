@@ -6,6 +6,7 @@ import { pickCalendarYear } from './tradeAssetFormat'
 import { useAudioStore } from '@/stores/audio'
 import { X, ArrowLeftRight, Check, XCircle, AlertTriangle, MessageSquare } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: Boolean,
@@ -50,7 +51,7 @@ function formatSalary(salary) {
 // Dual-cased reads: players that round-tripped through the cloud (community
 // roster imports) may carry only snake_case fields.
 function playerName(p) {
-  return `${p?.firstName ?? p?.first_name ?? ''} ${p?.lastName ?? p?.last_name ?? ''}`.trim() || 'Unknown'
+  return `${p?.firstName ?? p?.first_name ?? ''} ${p?.lastName ?? p?.last_name ?? ''}`.trim() || t('Unknown')
 }
 
 function playerOverall(p) {
@@ -60,7 +61,7 @@ function playerOverall(p) {
 function playerContract(p) {
   const salary = p?.contractSalary ?? p?.contract_salary ?? 0
   const years = p?.contractYearsRemaining ?? p?.contract_years_remaining ?? 1
-  return `${formatSalary(salary)} | ${years}yr`
+  return t('{salary} | {n}yr', { salary: formatSalary(salary), n: years })
 }
 
 function getPlayerAge(player) {
@@ -122,8 +123,8 @@ function handleKeydown(e) {
                 {{ proposal.proposing_team?.abbreviation }}
               </div>
               <div class="header-text">
-                <h2 class="modal-title">Trade Proposal</h2>
-                <p class="modal-subtitle">{{ teamName }} want to make a deal</p>
+                <h2 class="modal-title">{{ $t('Trade Proposal') }}</h2>
+                <p class="modal-subtitle">{{ $t('{team} want to make a deal', { team: teamName }) }}</p>
               </div>
             </div>
             <button class="close-btn" @click="handleClose">
@@ -137,7 +138,7 @@ function handleKeydown(e) {
             <div class="trade-columns">
               <!-- They Offer -->
               <div class="trade-column">
-                <h3 class="column-header offer">They Offer</h3>
+                <h3 class="column-header offer">{{ $t('They Offer') }}</h3>
                 <div class="assets-list">
                   <div
                     v-for="(asset, i) in proposal.ai_gives"
@@ -149,7 +150,7 @@ function handleKeydown(e) {
                         <PlayerAvatar :player="asset.player" :size="32" />
                         <div class="player-details">
                           <span class="player-name">{{ playerName(asset.player) }}</span>
-                          <span class="player-meta">{{ asset.player.position }} | Age {{ getPlayerAge(asset.player) }}</span>
+                          <span class="player-meta">{{ $t('{pos} | Age {age}', { pos: asset.player.position, age: getPlayerAge(asset.player) }) }}</span>
                         </div>
                         <div class="player-rating-badge">{{ playerOverall(asset.player) }}</div>
                       </div>
@@ -159,22 +160,27 @@ function handleKeydown(e) {
                       <div v-if="asset.seasonStats" class="player-season-stats">
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.ppg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">PPG</span>
                         </span>
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.rpg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">RPG</span>
                         </span>
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.apg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">APG</span>
                         </span>
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.spg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">SPG</span>
                         </span>
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.bpg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">BPG</span>
                         </span>
                         <span class="stat-block">
@@ -185,12 +191,12 @@ function handleKeydown(e) {
                         </span>
                         <span class="stat-gp">{{ asset.seasonStats.gp }} GP</span>
                       </div>
-                      <div v-else class="player-season-stats-empty">No games this season yet</div>
+                      <div v-else class="player-season-stats-empty">{{ $t('No games this season yet') }}</div>
                     </template>
                     <template v-else-if="asset.type === 'pick' && asset.pick">
                       <div class="pick-info">
-                        <span class="pick-label">Draft Pick</span>
-                        <span class="pick-detail">{{ formatPickYear(asset.pick.year) }} Rd {{ asset.pick.round }}</span>
+                        <span class="pick-label">{{ $t('Draft Pick') }}</span>
+                        <span class="pick-detail">{{ $t('{year} Rd {round}', { year: formatPickYear(asset.pick.year), round: asset.pick.round }) }}</span>
                       </div>
                     </template>
                   </div>
@@ -204,7 +210,7 @@ function handleKeydown(e) {
 
               <!-- They Want -->
               <div class="trade-column">
-                <h3 class="column-header want">They Want</h3>
+                <h3 class="column-header want">{{ $t('They Want') }}</h3>
                 <div class="assets-list">
                   <div
                     v-for="(asset, i) in proposal.ai_receives"
@@ -216,7 +222,7 @@ function handleKeydown(e) {
                         <PlayerAvatar :player="asset.player" :size="32" />
                         <div class="player-details">
                           <span class="player-name">{{ playerName(asset.player) }}</span>
-                          <span class="player-meta">{{ asset.player.position }} | Age {{ getPlayerAge(asset.player) }}</span>
+                          <span class="player-meta">{{ $t('{pos} | Age {age}', { pos: asset.player.position, age: getPlayerAge(asset.player) }) }}</span>
                         </div>
                         <div class="player-rating-badge">{{ playerOverall(asset.player) }}</div>
                       </div>
@@ -226,22 +232,27 @@ function handleKeydown(e) {
                       <div v-if="asset.seasonStats" class="player-season-stats">
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.ppg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">PPG</span>
                         </span>
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.rpg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">RPG</span>
                         </span>
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.apg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">APG</span>
                         </span>
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.spg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">SPG</span>
                         </span>
                         <span class="stat-block">
                           <span class="stat-value">{{ asset.seasonStats.bpg.toFixed(1) }}</span>
+                          <!-- i18n-ignore -->
                           <span class="stat-label">BPG</span>
                         </span>
                         <span class="stat-block">
@@ -252,12 +263,12 @@ function handleKeydown(e) {
                         </span>
                         <span class="stat-gp">{{ asset.seasonStats.gp }} GP</span>
                       </div>
-                      <div v-else class="player-season-stats-empty">No games this season yet</div>
+                      <div v-else class="player-season-stats-empty">{{ $t('No games this season yet') }}</div>
                     </template>
                     <template v-else-if="asset.type === 'pick' && asset.pick">
                       <div class="pick-info">
-                        <span class="pick-label">Draft Pick</span>
-                        <span class="pick-detail">{{ formatPickYear(asset.pick.year) }} Rd {{ asset.pick.round }}</span>
+                        <span class="pick-label">{{ $t('Draft Pick') }}</span>
+                        <span class="pick-detail">{{ $t('{year} Rd {round}', { year: formatPickYear(asset.pick.year), round: asset.pick.round }) }}</span>
                       </div>
                     </template>
                   </div>
@@ -272,7 +283,7 @@ function handleKeydown(e) {
 
             <!-- Expires -->
             <div class="proposal-expires">
-              Expires: {{ proposal.expires_at }}
+              {{ $t('Expires: {date}', { date: proposal.expires_at }) }}
             </div>
           </div>
 
@@ -281,36 +292,36 @@ function handleKeydown(e) {
             <template v-if="!confirmingAccept">
               <div v-if="deadlinePassed" class="deadline-note">
                 <AlertTriangle :size="16" />
-                <span>The trade deadline has passed — this offer can no longer be accepted.</span>
+                <span>{{ $t('The trade deadline has passed — this offer can no longer be accepted.') }}</span>
               </div>
               <div class="modal-footer-row">
                 <button class="btn-reject" :disabled="busy" @click="handleReject">
                   <XCircle :size="16" />
-                  Reject
+                  {{ $t('Reject') }}
                 </button>
                 <button class="btn-accept" :disabled="deadlinePassed || busy" @click="handleAccept">
                   <Check :size="16" />
-                  Accept Trade
+                  {{ $t('Accept Trade') }}
                 </button>
               </div>
               <button class="btn-negotiate" :disabled="deadlinePassed" @click="handleNegotiate">
                 <MessageSquare :size="16" />
-                Negotiate
+                {{ $t('Negotiate') }}
               </button>
             </template>
             <template v-else>
               <div class="confirm-row">
                 <div class="confirm-prompt">
                   <AlertTriangle :size="16" />
-                  <span>Accept this trade? This can't be undone.</span>
+                  <span>{{ $t("Accept this trade? This can't be undone.") }}</span>
                 </div>
                 <div class="confirm-actions">
                   <button class="btn-reject" @click="handleCancelAccept">
-                    Cancel
+                    {{ $t('Cancel') }}
                   </button>
                   <button class="btn-accept" :disabled="busy" @click="handleConfirmAccept">
                     <Check :size="16" />
-                    Yes, Accept
+                    {{ $t('Yes, Accept') }}
                   </button>
                 </div>
               </div>

@@ -94,6 +94,21 @@ export const BADGES = [
 // (CampaignManager.generateBadges) AND the player badge store to gate which
 // badges appear for which player. Lives here in the data file so consumers
 // don't have to import from CampaignManager.
+// Canonical display name for a badge (object or id). The canonical `name` is
+// the i18n lookup key — deriving from the id produces near-misses like
+// "Catch And Shoot" vs "Catch and Shoot" that silently skip translation.
+// Falls back to title-cased id for unknown badges.
+const BADGE_BY_ID = new Map(BADGES.map(b => [b.id, b]))
+export function badgeDisplayName(badgeOrId) {
+  if (!badgeOrId) return ''
+  if (typeof badgeOrId === 'object' && badgeOrId.name) return badgeOrId.name
+  const id = typeof badgeOrId === 'object' ? badgeOrId.id : badgeOrId
+  if (!id) return ''
+  const def = BADGE_BY_ID.get(id)
+  if (def) return def.name
+  return id.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+}
+
 export const BADGES_BY_POSITION = {
   PG: ['dimer', 'floor_general', 'pick_and_roll_maestro', 'ankle_breaker', 'quick_first_step', 'tight_handles', 'needle_threader', 'handles_for_days', 'space_creator', 'clamps'],
   SG: ['catch_and_shoot', 'deadeye', 'corner_specialist', 'clutch_shooter', 'difficult_shots', 'green_machine', 'clamps', 'interceptor', 'tireless_shooter', 'ankle_breaker'],

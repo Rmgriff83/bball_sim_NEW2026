@@ -50,8 +50,8 @@ const overCapSoft = computed(() =>
 <template>
   <div v-if="show" class="cap-readout" :style="{ '--cap-color': accentColor }">
     <div class="cap-row">
-      <span class="cap-label">Payroll</span>
-      <span class="cap-chip" :class="capStatus.cls">{{ capStatus.label }}</span>
+      <span class="cap-label">{{ $t('Payroll') }}</span>
+      <span class="cap-chip" :class="capStatus.cls">{{ $tDynamic(capStatus.label) }}</span>
       <span class="cap-value">{{ fmtMillions(payroll) }}</span>
     </div>
     <div class="cap-ladder-mini">
@@ -61,16 +61,15 @@ const overCapSoft = computed(() =>
         class="cap-mini-row"
         :class="{ crossed: payroll > t.value }"
       >
-        <span class="cap-mini-label">{{ t.label }}</span>
+        <span class="cap-mini-label">{{ $tDynamic(t.label) }}</span>
         <span class="cap-mini-value">{{ fmtMillions(t.value) }}</span>
       </div>
     </div>
     <div v-if="draftStore.userCapPenaltyActive" class="cap-warning">
-      Over the second apron — only contracts under
-      {{ fmtMillions(draftStore.overCapMaxSalary) }} can be drafted.
+      {{ $t('Over the second apron — only contracts under {amount} can be drafted.', { amount: fmtMillions(draftStore.overCapMaxSalary) }) }}
     </div>
     <div v-else-if="overCapSoft" class="cap-hint">
-      Over the cap — you can keep drafting, but owner penalties apply next season.
+      {{ $t('Over the cap — you can keep drafting, but owner penalties apply next season.') }}
     </div>
   </div>
 </template>

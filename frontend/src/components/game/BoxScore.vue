@@ -251,14 +251,14 @@ function formatShootingLine(made, attempted) {
             <td :colspan="columns.length + 3" class="show-more-cell">
               <button class="show-more-btn">
                 <ChevronDown :size="16" />
-                Show {{ hiddenPlayerCount }} more players
+                {{ $t('Show {n} more players', { n: hiddenPlayerCount }) }}
               </button>
             </td>
           </tr>
         </tbody>
         <tfoot>
           <tr class="totals-row">
-            <td class="player-col">TOTALS</td>
+            <td class="player-col">{{ $t('TOTALS') }}</td>
             <td class="stat-col">-</td>
             <td class="stat-col points">{{ activeTotals.points }}</td>
             <td class="stat-col">{{ activeTotals.rebounds }}</td>

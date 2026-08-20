@@ -16,6 +16,7 @@ import SeriesResultModal from '@/components/playoffs/SeriesResultModal.vue'
 import { Trophy, X, Play, FastForward, AlertTriangle, Cpu, Users } from 'lucide-vue-next'
 import TeamHeader from '@/components/common/TeamHeader.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
+import { t, dateLocale } from '@wl-i18n/i18n.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -74,15 +75,17 @@ function validateRoster() {
   const injuredStarters = starters.filter(p => p && (p.is_injured || p.isInjured))
   if (injuredStarters.length > 0) {
     const names = injuredStarters.map(p => p.name || `${p.first_name} ${p.last_name}`).join(', ')
-    warningMessage.value = `You have injured ${injuredStarters.length === 1 ? 'starter' : 'starters'}: ${names}`
-    warningHint.value = 'Go to the Team tab to adjust your lineup before playing.'
+    warningMessage.value = injuredStarters.length === 1
+      ? t('You have injured starter: {names}', { names })
+      : t('You have injured starters: {names}', { names })
+    warningHint.value = t('Go to the Team tab to adjust your lineup before playing.')
     showWarning.value = true
     return false
   }
   const totalMins = teamStore.totalTargetMinutes
   if (totalMins !== 240) {
-    warningMessage.value = `Your rotation minutes total ${totalMins} — they must equal exactly 240.`
-    warningHint.value = 'Go to the Team tab to adjust your player minutes.'
+    warningMessage.value = t('Your rotation minutes total {n} — they must equal exactly 240.', { n: totalMins })
+    warningHint.value = t('Go to the Team tab to adjust your player minutes.')
     showWarning.value = true
     return false
   }
@@ -103,7 +106,7 @@ async function handleCpuSetLineup() {
     ])
     const roster = teamStore.roster
     if (!roster || roster.length < 5) {
-      toastStore.showError('Not enough players to set lineup')
+      toastStore.showError(t('Not enough players to set lineup'))
       return
     }
     const newLineup = selectBestLineup(roster)
@@ -116,9 +119,9 @@ async function handleCpuSetLineup() {
     await teamStore.updateTargetMinutes(campaignId.value, newMinutes)
 
     showWarning.value = false
-    toastStore.showSuccess('CPU adjusted your lineup')
+    toastStore.showSuccess(t('CPU adjusted your lineup'))
   } catch (err) {
-    toastStore.showError('Failed to auto-set lineup')
+    toastStore.showError(t('Failed to auto-set lineup'))
   }
 }
 
@@ -142,11 +145,11 @@ const seriesGames = computed(() => {
 const roundLabel = computed(() => {
   if (!selectedSeries.value) return ''
   switch (selectedSeries.value.round) {
-    case 1: return 'First Round'
-    case 2: return 'Semifinals'
-    case 3: return 'Conference Finals'
-    case 4: return 'Finals'
-    default: return `Round ${selectedSeries.value.round}`
+    case 1: return t('First Round')
+    case 2: return t('Semifinals')
+    case 3: return t('Conference Finals')
+    case 4: return t('Finals')
+    default: return t('Round {n}', { n: selectedSeries.value.round })
   }
 })
 
@@ -154,7 +157,7 @@ const roundLabel = computed(() => {
 function formatGameDate(dateStr) {
   if (!dateStr) return ''
   const date = parseLocalDate(dateStr)
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return date.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' })
 }
 
 // Get game status display
@@ -172,12 +175,12 @@ function getGameStatus(game) {
     return { label: score, type: 'complete' }
   }
   if (game.is_in_progress) {
-    return { label: 'LIVE', type: 'live' }
+    return { label: t('LIVE'), type: 'live' }
   }
   // Check if this is the next game to play
   const nextGame = gameStore.nextUserGame
   if (nextGame && nextGame.id === game.id) {
-    return { label: 'NEXT', type: 'next' }
+    return { label: t('NEXT'), type: 'next' }
   }
   return { label: '—', type: 'upcoming' }
 }
@@ -240,7 +243,7 @@ async function simulateGame() {
   simulating.value = true
   showSeriesDetail.value = false
   selectedSeries.value = null
-  const loadingToastId = toastStore.showLoading('Simulating games...')
+  const loadingToastId = toastStore.showLoading(t('Simulating games...'))
 
   try {
     const response = await gameStore.simulateToNextGame(campaignId.value)
@@ -263,7 +266,9 @@ async function simulateGame() {
       response.upgrade_points_awarded.forEach((award, i) => {
         setTimeout(() => {
           toastStore.showSuccess(
-            `${award.name} earned ${award.points_earned} upgrade point${award.points_earned > 1 ? 's' : ''}! (${award.total_points} total)`,
+            award.points_earned > 1
+              ? t('{name} earned {points} upgrade points! ({total} total)', { name: award.name, points: award.points_earned, total: award.total_points })
+              : t('{name} earned {points} upgrade point! ({total} total)', { name: award.name, points: award.points_earned, total: award.total_points }),
             5000
           )
         }, i * 600)
@@ -283,7 +288,7 @@ async function simulateGame() {
     ])
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Simulation failed. Please try again.')
+    toastStore.showError(t('Simulation failed. Please try again.'))
     console.error('Failed to simulate:', err)
   } finally {
     simulating.value = false
@@ -350,7 +355,7 @@ function closeSeriesResult() {
 async function handleSimNextSeries() {
   seriesResultSimulating.value = true
   playoffStore.closeSeriesResultModal()
-  const loadingToastId = toastStore.showLoading('Simulating playoff games...')
+  const loadingToastId = toastStore.showLoading(t('Simulating playoff games...'))
 
   try {
     // Sim remaining AI games in the current round
@@ -366,7 +371,7 @@ async function handleSimNextSeries() {
     ])
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Simulation failed. Please try again.')
+    toastStore.showError(t('Simulation failed. Please try again.'))
     console.error('Failed to sim to next series:', err)
   } finally {
     seriesResultSimulating.value = false
@@ -376,14 +381,14 @@ async function handleSimNextSeries() {
 async function handleSimRemainingPlayoffs() {
   seriesResultSimulating.value = true
   playoffStore.closeSeriesResultModal()
-  const loadingToastId = toastStore.showLoading('Simulating remaining playoffs...')
+  const loadingToastId = toastStore.showLoading(t('Simulating remaining playoffs...'))
 
   // Step 1: run the sim. Only this step's failure means "the sim failed".
   try {
     await gameStore.simulateToNextPlayoffRound(campaignId.value, { simAll: true })
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Simulation failed. Please try again.')
+    toastStore.showError(t('Simulation failed. Please try again.'))
     console.error('Failed to sim remaining playoffs:', err)
     seriesResultSimulating.value = false
     return
@@ -403,7 +408,7 @@ async function handleSimRemainingPlayoffs() {
     for (const r of refreshFailures) {
       console.warn('[PlayoffSim] Post-sim refresh partial failure:', r.reason)
     }
-    toastStore.showError('Playoffs simulated, but the page failed to refresh — reload to see the latest bracket.')
+    toastStore.showError(t('Playoffs simulated, but the page failed to refresh — reload to see the latest bracket.'))
     seriesResultSimulating.value = false
     return
   }
@@ -450,13 +455,13 @@ function findSeriesById(seriesId) {
     <!-- Playoffs Banner -->
     <div class="playoffs-banner card-cosmic">
       <Trophy :size="18" class="banner-trophy" />
-      <span class="banner-title">Playoffs</span>
+      <span class="banner-title">{{ $t('Playoffs') }}</span>
     </div>
 
     <!-- Loading -->
     <div v-if="loading" class="loading-container">
       <LoadingSpinner size="lg" />
-      <span>Loading bracket...</span>
+      <span>{{ $t('Loading bracket...') }}</span>
     </div>
 
     <!-- Bracket -->
@@ -537,13 +542,14 @@ function findSeriesById(seriesId) {
                     }"
                     @click="handleGameClick(game)"
                   >
-                    <span class="game-number">Game {{ idx + 1 }}</span>
+                    <span class="game-number">{{ $t('Game {n}', { n: idx + 1 }) }}</span>
                     <span class="game-date">{{ formatGameDate(game.game_date) }}</span>
                     <span class="game-status" :class="[getGameStatus(game).type, getGameStatus(game).result === 'W' ? 'win' : getGameStatus(game).result === 'L' ? 'loss' : '']">
                       {{ getGameStatus(game).label }}
                     </span>
                     <span v-if="game.is_complete && didUserLose(game)" class="game-loss">&#10005;</span>
                     <span v-else-if="game.is_complete" class="game-check">&#10003;</span>
+                    <!-- i18n-ignore -->
                     <span v-else-if="getGameStatus(game).type === 'next'" class="game-arrow">&rarr;</span>
                   </button>
 
@@ -553,7 +559,7 @@ function findSeriesById(seriesId) {
                     :key="'placeholder-' + i"
                     class="series-game-row placeholder"
                   >
-                    <span class="game-number">Game {{ seriesGames.length + i + 1 }}</span>
+                    <span class="game-number">{{ $t('Game {n}', { n: seriesGames.length + i + 1 }) }}</span>
                     <span class="game-date">—</span>
                     <span class="game-status tbd">—</span>
                   </div>
@@ -568,7 +574,7 @@ function findSeriesById(seriesId) {
                   :disabled="simulating"
                   @click="closeSeriesDetail"
                 >
-                  Close
+                  {{ $t('Close') }}
                 </button>
                 <button
                   class="btn-sim"
@@ -577,7 +583,7 @@ function findSeriesById(seriesId) {
                 >
                   <span v-if="simulating" class="btn-loading"></span>
                   <FastForward v-else :size="16" class="btn-icon" />
-                  {{ simulating ? 'Simulating...' : 'Simulate' }}
+                  {{ simulating ? $t('Simulating...') : $t('Simulate') }}
                 </button>
                 <button
                   class="btn-confirm"
@@ -585,7 +591,7 @@ function findSeriesById(seriesId) {
                   @click="playGame"
                 >
                   <Play :size="16" class="btn-icon" />
-                  {{ isGameInProgress ? 'Continue' : 'Play' }}
+                  {{ isGameInProgress ? $t('Continue') : $t('Play') }}
                 </button>
               </template>
               <template v-else>
@@ -593,7 +599,7 @@ function findSeriesById(seriesId) {
                   class="btn-cancel full-width"
                   @click="closeSeriesDetail"
                 >
-                  Close
+                  {{ $t('Close') }}
                 </button>
               </template>
             </footer>
@@ -627,7 +633,7 @@ function findSeriesById(seriesId) {
     <!-- Roster Warning Modal -->
     <StandardModal
       :show="showWarning"
-      title="Lineup Issue"
+      :title="$t('Lineup Issue')"
       size="sm"
       @close="showWarning = false"
     >
@@ -639,14 +645,14 @@ function findSeriesById(seriesId) {
         <p class="warning-hint">{{ warningHint }}</p>
       </div>
       <template #footer>
-        <button class="warning-btn-cancel" @click="showWarning = false">Cancel</button>
+        <button class="warning-btn-cancel" @click="showWarning = false">{{ $t('Cancel') }}</button>
         <button class="warning-btn-cpu" @click="handleCpuSetLineup">
           <Cpu :size="16" />
-          CPU Adjust
+          {{ $t('CPU Adjust') }}
         </button>
         <button class="warning-btn-confirm" @click="goToTeamTab">
           <Users :size="16" />
-          View Lineup
+          {{ $t('View Lineup') }}
         </button>
       </template>
     </StandardModal>

@@ -10,7 +10,75 @@
  * news-event object that the caller can store as needed.
  *
  * All game logic and text templates are preserved exactly.
+ *
+ * Every headline/body is built via T() (commentaryTemplate.js) so news
+ * records carry `headline_tpl`/`headline_params` and `body_tpl`/`body_params`
+ * alongside the unchanged English `headline`/`body` — the UI translates via
+ * $tDynamic(tpl, params) with fallback to the stored English string.
  */
+
+import { T } from '../simulation/commentaryTemplate'
+
+// --- Headline template pools -------------------------------------------------
+// Every entry is a translation TEMPLATE ({token} placeholders, no player
+// names baked in) interpolated via T() after a variant is picked. The `*_TPLS`
+// naming is load-bearing: wl-i18n.config.js regex-extracts the quoted strings
+// of these const blocks (plus direct quoted first args of T calls).
+
+const INJURY_HEADLINE_TPLS = [
+  '{player} suffers {injury}, out {estimate}',
+  'Injury report: {player} sidelined with {injury}',
+  '{player} to miss time with {injury}',
+]
+
+const RECOVERY_HEADLINE_TPLS = [
+  '{player} cleared to return from {injury}',
+  '{player} back in action after recovering from {injury}',
+  'Good news: {player} healthy and ready to play',
+]
+
+const HOT_STREAK_HEADLINE_TPLS = [
+  '{player} is on fire!',
+  '{player} continues red-hot stretch',
+  'Unstoppable: {player} extends hot streak to {games} games',
+]
+
+const COLD_STREAK_HEADLINE_TPLS = [
+  '{player} struggling through slump',
+  '{player} mired in {games}-game cold stretch',
+  'Concerns mount as {player} continues to struggle',
+]
+
+const DEVELOPMENT_HEADLINE_TPLS = [
+  '{player} showing improvement in {attr}',
+  "Development report: {player}'s {attr} on the rise",
+  '{player} making strides with {attr}',
+]
+
+const BREAKOUT_HEADLINE_TPLS = [
+  'Breakout alert: {player} emerging as a star',
+  '{player} taking a major leap forward',
+  'Rising star: {player} making a name for themselves',
+]
+
+const DECLINE_HEADLINE_TPLS = [
+  'Father Time catching up with {player}',
+  '{player} showing signs of age',
+  'Veteran {player} slowing down',
+]
+
+const TRADE_REQUEST_HEADLINE_TPLS = [
+  '{player} requests trade',
+  'Unhappy {player} wants out',
+  'Trade demand: {player} asks to be moved',
+]
+
+const RETIREMENT_HEADLINE_TPLS = [
+  '{player} announces retirement after {seasons} seasons',
+  'End of an era: {player} calls it a career',
+  '{player} hangs up the sneakers after {seasons} years',
+]
+
 export class EvolutionNewsService {
 
   // ---------------------------------------------------------------------------
@@ -29,19 +97,23 @@ export class EvolutionNewsService {
     const injuryName = injury.name ?? 'injury'
     const estimate = this._getRecoveryEstimate(injury.days_remaining ?? injury.games_remaining ?? 0)
 
-    const headlines = [
-      `${playerName} suffers ${injuryName}, out ${estimate}`,
-      `Injury report: ${playerName} sidelined with ${injuryName}`,
-      `${playerName} to miss time with ${injuryName}`,
-    ]
+    const headlineTpl = INJURY_HEADLINE_TPLS[Math.floor(Math.random() * INJURY_HEADLINE_TPLS.length)]
+    const headline = T(headlineTpl, { player: playerName, injury: injuryName, estimate })
+    const body = T('{player} has been diagnosed with a {injury} and is expected to be out {estimate}.', {
+      player: playerName, injury: injuryName, estimate,
+    })
 
     return {
       campaign_id: campaign.id,
       player_id: this._getPlayerId(player),
       team_id: this._getTeamId(player),
       event_type: 'injury',
-      headline: headlines[Math.floor(Math.random() * headlines.length)],
-      body: `${playerName} has been diagnosed with a ${injuryName} and is expected to be out ${estimate}.`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: campaign.current_date,
     }
   }
@@ -57,19 +129,23 @@ export class EvolutionNewsService {
     const playerName = this._getPlayerName(player)
     const injuryName = injury.name ?? 'injury'
 
-    const headlines = [
-      `${playerName} cleared to return from ${injuryName}`,
-      `${playerName} back in action after recovering from ${injuryName}`,
-      `Good news: ${playerName} healthy and ready to play`,
-    ]
+    const headlineTpl = RECOVERY_HEADLINE_TPLS[Math.floor(Math.random() * RECOVERY_HEADLINE_TPLS.length)]
+    const headline = T(headlineTpl, { player: playerName, injury: injuryName })
+    const body = T('{player} has fully recovered and has been cleared to return to game action.', {
+      player: playerName,
+    })
 
     return {
       campaign_id: campaign.id,
       player_id: this._getPlayerId(player),
       team_id: this._getTeamId(player),
       event_type: 'recovery',
-      headline: headlines[Math.floor(Math.random() * headlines.length)],
-      body: `${playerName} has fully recovered and has been cleared to return to game action.`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: campaign.current_date,
     }
   }
@@ -88,21 +164,32 @@ export class EvolutionNewsService {
    */
   createHotStreakNews (campaign, player, games, attributeBoosts) {
     const playerName = this._getPlayerName(player)
-    const boostText = this._formatAttributeBoosts(attributeBoosts)
+    const boostList = this._formatBoostList(attributeBoosts)
 
-    const headlines = [
-      `${playerName} is on fire!`,
-      `${playerName} continues red-hot stretch`,
-      `Unstoppable: ${playerName} extends hot streak to ${games} games`,
-    ]
+    const headlineTpl = HOT_STREAK_HEADLINE_TPLS[Math.floor(Math.random() * HOT_STREAK_HEADLINE_TPLS.length)]
+    const headline = T(headlineTpl, { player: playerName, games })
+    // The boost sentence is a separate complete template branch — never a
+    // concatenated fragment. (The no-boost variant keeps the historical
+    // trailing space so English output stays byte-identical.)
+    const body = boostList
+      ? T('{player} has been playing at an elite level over the past {games} games. Their {boosts} ratings have improved.', {
+        player: playerName, games, boosts: boostList,
+      })
+      : T('{player} has been playing at an elite level over the past {games} games. ', {
+        player: playerName, games,
+      })
 
     return {
       campaign_id: campaign.id,
       player_id: this._getPlayerId(player),
       team_id: this._getTeamId(player),
       event_type: 'hot_streak',
-      headline: headlines[Math.floor(Math.random() * headlines.length)],
-      body: `${playerName} has been playing at an elite level over the past ${games} games. ${boostText}`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: campaign.current_date,
     }
   }
@@ -117,19 +204,23 @@ export class EvolutionNewsService {
   createColdStreakNews (campaign, player, games) {
     const playerName = this._getPlayerName(player)
 
-    const headlines = [
-      `${playerName} struggling through slump`,
-      `${playerName} mired in ${games}-game cold stretch`,
-      `Concerns mount as ${playerName} continues to struggle`,
-    ]
+    const headlineTpl = COLD_STREAK_HEADLINE_TPLS[Math.floor(Math.random() * COLD_STREAK_HEADLINE_TPLS.length)]
+    const headline = T(headlineTpl, { player: playerName, games })
+    const body = T('{player} has been struggling over the past {games} games and is looking to break out of the slump.', {
+      player: playerName, games,
+    })
 
     return {
       campaign_id: campaign.id,
       player_id: this._getPlayerId(player),
       team_id: this._getTeamId(player),
       event_type: 'cold_streak',
-      headline: headlines[Math.floor(Math.random() * headlines.length)],
-      body: `${playerName} has been struggling over the past ${games} games and is looking to break out of the slump.`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: campaign.current_date,
     }
   }
@@ -150,19 +241,23 @@ export class EvolutionNewsService {
     const playerName = this._getPlayerName(player)
     const attrName = this._formatAttributeName(attribute)
 
-    const headlines = [
-      `${playerName} showing improvement in ${attrName}`,
-      `Development report: ${playerName}'s ${attrName} on the rise`,
-      `${playerName} making strides with ${attrName}`,
-    ]
+    const headlineTpl = DEVELOPMENT_HEADLINE_TPLS[Math.floor(Math.random() * DEVELOPMENT_HEADLINE_TPLS.length)]
+    const headline = T(headlineTpl, { player: playerName, attr: attrName })
+    const body = T('{player} has been working hard and showing noticeable improvement in {attr}.', {
+      player: playerName, attr: attrName,
+    })
 
     return {
       campaign_id: campaign.id,
       player_id: this._getPlayerId(player),
       team_id: this._getTeamId(player),
       event_type: 'development',
-      headline: headlines[Math.floor(Math.random() * headlines.length)],
-      body: `${playerName} has been working hard and showing noticeable improvement in ${attrName}.`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: campaign.current_date,
     }
   }
@@ -178,19 +273,23 @@ export class EvolutionNewsService {
     const playerName = this._getPlayerName(player)
     const age = player.age ?? 22
 
-    const headlines = [
-      `Breakout alert: ${playerName} emerging as a star`,
-      `${playerName} taking a major leap forward`,
-      `Rising star: ${playerName} making a name for themselves`,
-    ]
+    const headlineTpl = BREAKOUT_HEADLINE_TPLS[Math.floor(Math.random() * BREAKOUT_HEADLINE_TPLS.length)]
+    const headline = T(headlineTpl, { player: playerName })
+    const body = T('At just {age} years old, {player} has shown tremendous growth this month, improving their overall rating by {gain} points.', {
+      age, player: playerName, gain: overallGain,
+    })
 
     return {
       campaign_id: campaign.id,
       player_id: this._getPlayerId(player),
       team_id: this._getTeamId(player),
       event_type: 'breakout',
-      headline: headlines[Math.floor(Math.random() * headlines.length)],
-      body: `At just ${age} years old, ${playerName} has shown tremendous growth this month, improving their overall rating by ${overallGain} points.`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: campaign.current_date,
     }
   }
@@ -206,19 +305,23 @@ export class EvolutionNewsService {
     const playerName = this._getPlayerName(player)
     const age = player.age ?? 35
 
-    const headlines = [
-      `Father Time catching up with ${playerName}`,
-      `${playerName} showing signs of age`,
-      `Veteran ${playerName} slowing down`,
-    ]
+    const headlineTpl = DECLINE_HEADLINE_TPLS[Math.floor(Math.random() * DECLINE_HEADLINE_TPLS.length)]
+    const headline = T(headlineTpl, { player: playerName })
+    const body = T("At {age} years old, {player} appears to be losing a step. The veteran's overall rating has dropped by {loss} points this month.", {
+      age, player: playerName, loss: overallLoss,
+    })
 
     return {
       campaign_id: campaign.id,
       player_id: this._getPlayerId(player),
       team_id: this._getTeamId(player),
       event_type: 'decline',
-      headline: headlines[Math.floor(Math.random() * headlines.length)],
-      body: `At ${age} years old, ${playerName} appears to be losing a step. The veteran's overall rating has dropped by ${overallLoss} points this month.`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: campaign.current_date,
     }
   }
@@ -236,19 +339,23 @@ export class EvolutionNewsService {
   createTradeRequestNews (campaign, player) {
     const playerName = this._getPlayerName(player)
 
-    const headlines = [
-      `${playerName} requests trade`,
-      `Unhappy ${playerName} wants out`,
-      `Trade demand: ${playerName} asks to be moved`,
-    ]
+    const headlineTpl = TRADE_REQUEST_HEADLINE_TPLS[Math.floor(Math.random() * TRADE_REQUEST_HEADLINE_TPLS.length)]
+    const headline = T(headlineTpl, { player: playerName })
+    const body = T('{player} has formally requested a trade, citing dissatisfaction with their current situation.', {
+      player: playerName,
+    })
 
     return {
       campaign_id: campaign.id,
       player_id: this._getPlayerId(player),
       team_id: this._getTeamId(player),
       event_type: 'trade_request',
-      headline: headlines[Math.floor(Math.random() * headlines.length)],
-      body: `${playerName} has formally requested a trade, citing dissatisfaction with their current situation.`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: campaign.current_date,
     }
   }
@@ -263,19 +370,23 @@ export class EvolutionNewsService {
   createRetirementNews (campaign, player, careerSeasons) {
     const playerName = this._getPlayerName(player)
 
-    const headlines = [
-      `${playerName} announces retirement after ${careerSeasons} seasons`,
-      `End of an era: ${playerName} calls it a career`,
-      `${playerName} hangs up the sneakers after ${careerSeasons} years`,
-    ]
+    const headlineTpl = RETIREMENT_HEADLINE_TPLS[Math.floor(Math.random() * RETIREMENT_HEADLINE_TPLS.length)]
+    const headline = T(headlineTpl, { player: playerName, seasons: careerSeasons })
+    const body = T('{player} has announced their retirement after a {seasons}-year career in the league.', {
+      player: playerName, seasons: careerSeasons,
+    })
 
     return {
       campaign_id: campaign.id,
       player_id: this._getPlayerId(player),
       team_id: this._getTeamId(player),
       event_type: 'retirement',
-      headline: headlines[Math.floor(Math.random() * headlines.length)],
-      body: `${playerName} has announced their retirement after a ${careerSeasons}-year career in the league.`,
+      headline: headline.text,
+      body: body.text,
+      headline_tpl: headline.tpl,
+      headline_params: headline.params,
+      body_tpl: body.tpl,
+      body_params: body.params,
       game_date: campaign.current_date,
     }
   }
@@ -335,12 +446,13 @@ export class EvolutionNewsService {
   }
 
   /**
-   * Format attribute boosts for news content.
+   * Format the attribute-boost list for the hot-streak body template
+   * (e.g. "+2 three point, +1 speed"). Returns '' when there are no boosts.
    * @param {Object} boosts - e.g. { 'threePoint': 2, 'speed': 1 }
    * @returns {string}
    * @private
    */
-  _formatAttributeBoosts (boosts) {
+  _formatBoostList (boosts) {
     if (!boosts || Object.keys(boosts).length === 0) {
       return ''
     }
@@ -351,7 +463,7 @@ export class EvolutionNewsService {
       parts.push(`+${value} ${name}`)
     }
 
-    return 'Their ' + parts.join(', ') + ' ratings have improved.'
+    return parts.join(', ')
   }
 
   /**

@@ -41,10 +41,10 @@ onMounted(async () => {
   <div class="autologin">
     <template v-if="!failed">
       <Loader2 :size="34" class="spin" />
-      <p>Signing you in…</p>
+      <p>{{ $t('Signing you in…') }}</p>
     </template>
     <template v-else>
-      <p>That sign-in link expired. Taking you to the login page…</p>
+      <p>{{ $t('That sign-in link expired. Taking you to the login page…') }}</p>
     </template>
   </div>
 </template>

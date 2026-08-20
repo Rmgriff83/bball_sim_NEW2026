@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
+import { badgeDisplayName } from '@/engine/data/badges'
 import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { useToastStore } from '@/stores/toast'
@@ -16,6 +17,7 @@ import { useSyncStore } from '@/stores/sync'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { LoadingSpinner, StatBadge } from '@/components/ui'
+import { t } from '@wl-i18n/i18n.js'
 import { Search, Binoculars, User, ArrowUp, ArrowDown } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
@@ -242,11 +244,11 @@ async function scoutPlayer(player) {
       const playerName = player.firstName + ' ' + player.lastName
       let message
       if (hitFullScout && badgesJustRevealed) {
-        message = `${playerName} fully scouted — badges revealed!`
+        message = t('{name} fully scouted — badges revealed!', { name: playerName })
       } else if (hitFullScout) {
-        message = `${playerName} fully scouted!`
+        message = t('{name} fully scouted!', { name: playerName })
       } else {
-        message = `Badges revealed for ${playerName}!`
+        message = t('Badges revealed for {name}!', { name: playerName })
       }
       audio.affirm()
       toastStore.showSuccess(message)
@@ -263,7 +265,7 @@ async function scoutPlayer(player) {
     }, 500)
   } catch (err) {
     console.error('Failed to scout player:', err)
-    toastStore.showError('Failed to scout player')
+    toastStore.showError(t('Failed to scout player'))
   } finally {
     scouting.value = false
   }
@@ -346,11 +348,7 @@ function badgeLevelColor(level) {
 }
 
 function formatBadgeName(badge) {
-  if (!badge) return ''
-  if (typeof badge === 'object' && badge.name) return badge.name
-  const id = typeof badge === 'object' ? badge.id : badge
-  if (!id) return ''
-  return id.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+  return badgeDisplayName(badge)
 }
 
 // Mock Draft tab — round grouping
@@ -456,15 +454,15 @@ onMounted(async () => {
     <!-- Header -->
     <div class="scouting-header">
       <div class="header-left">
-        <h1 class="page-title">SCOUTING</h1>
-        <span class="draft-year" v-if="campaign">Year {{ campaign.gameYear }} Draft Class</span>
+        <h1 class="page-title">{{ $t('SCOUTING') }}</h1>
+        <span class="draft-year" v-if="campaign">{{ $t('Year {year} Draft Class', { year: campaign.gameYear }) }}</span>
       </div>
     </div>
 
     <!-- Loading -->
     <div v-if="loading" class="loading-container">
       <LoadingSpinner size="lg" />
-      <p>Loading scouting data...</p>
+      <p>{{ $t('Loading scouting data...') }}</p>
     </div>
 
     <template v-else>
@@ -476,7 +474,7 @@ onMounted(async () => {
           data-tour="scout-tab-rookies"
           @click="activeTab = 'rookies'"
         >
-          Rookies
+          {{ $t('Rookies') }}
         </button>
         <button
           class="tab-btn"
@@ -484,12 +482,12 @@ onMounted(async () => {
           data-tour="scout-tab-mock"
           @click="activeTab = 'mock-draft'"
         >
-          Draft
+          {{ $t('Draft') }}
         </button>
         <div class="scout-points-display" data-tour="scout-points">
           <Binoculars :size="14" />
           <span class="sp-value">{{ scoutingPoints }}</span>
-          <span class="sp-label">Scout Points</span>
+          <span class="sp-label">{{ $t('Scout Points') }}</span>
         </div>
       </div>
 
@@ -513,11 +511,11 @@ onMounted(async () => {
             <input
               v-model="searchQuery"
               type="text"
-              placeholder="Search rookies..."
+              :placeholder="$t('Search rookies...')"
               class="search-input"
             />
           </div>
-          <div class="player-count">{{ filteredRookies.length }} prospects</div>
+          <div class="player-count">{{ $t('{n} prospects', { n: filteredRookies.length }) }}</div>
         </div>
 
         <!-- Player Cards Grid -->
@@ -539,7 +537,7 @@ onMounted(async () => {
                 <h4 class="player-name">{{ player.firstName }} {{ player.lastName }}</h4>
                 <div class="player-meta">
                   <div class="vitals-row">
-                    {{ formatHeight(player.heightInches) }} · {{ player.age }} yrs
+                    {{ $t('{height} · {age} yrs', { height: formatHeight(player.heightInches), age: player.age }) }}
                     <span v-if="player.college" class="college-label">· {{ player.college }}</span>
                   </div>
                   <div class="position-badges">
@@ -560,7 +558,7 @@ onMounted(async () => {
                 </div>
                 <!-- Scout Progress Bar -->
                 <div class="scout-progress-row">
-                  <label class="meter-label">SCOUTED</label>
+                  <label class="meter-label">{{ $t('SCOUTED') }}</label>
                   <div class="scout-meter-bar" :data-tour="idx === 0 ? 'scout-meter' : null">
                     <div class="scout-meter-fill" :style="{ width: getScoutPercent(player.id) + '%' }" />
                   </div>
@@ -573,6 +571,7 @@ onMounted(async () => {
                 <div v-else class="unknown-rating">?</div>
                 <!-- POT -->
                 <div class="pot-badge-row">
+                  <!-- i18n-ignore -->
                   <span class="pot-label">POT</span>
                   <span v-if="isFullyScouted(player.id)" class="pot-value" :style="{ color: getPotentialColor(player.potentialRating) }">{{ player.potentialRating }}</span>
                   <span v-else class="pot-value hidden-pot">?</span>
@@ -585,9 +584,9 @@ onMounted(async () => {
                   @click.stop="audio.navigate(); scoutPlayer(player)"
                 >
                   <Binoculars :size="13" />
-                  Scout
+                  {{ $t('Scout') }}
                 </button>
-                <span v-else class="fully-scouted-tag">Full</span>
+                <span v-else class="fully-scouted-tag">{{ $t('Full') }}</span>
               </div>
             </div>
             <!-- Badges footer -->
@@ -599,7 +598,7 @@ onMounted(async () => {
                   class="badge-item"
                 >
                   <span class="badge-dot" :style="{ backgroundColor: badgeLevelColor(badge.level) }" />
-                  <span class="badge-name revealed">{{ formatBadgeName(badge) }}</span>
+                  <span class="badge-name revealed">{{ $tDynamic(formatBadgeName(badge)) }}</span>
                 </div>
               </template>
               <template v-else>
@@ -620,7 +619,7 @@ onMounted(async () => {
         <!-- Load More -->
         <div v-if="hasMorePages" class="load-more-container">
           <button class="load-more-btn" @click="currentPage++">
-            Show More ({{ paginatedRookies.length }} of {{ filteredRookies.length }})
+            {{ $t('Show More ({a} of {b})', { a: paginatedRookies.length, b: filteredRookies.length }) }}
           </button>
         </div>
       </div>
@@ -628,12 +627,12 @@ onMounted(async () => {
       <!-- Mock Draft Tab -->
       <div v-if="activeTab === 'mock-draft'" class="tab-content">
         <div class="mock-draft-label">
-          {{ isOffseason ? 'Final Draft Order' : 'Projected Draft Order' }}
+          {{ isOffseason ? $t('Final Draft Order') : $t('Projected Draft Order') }}
         </div>
 
         <!-- Round 1 -->
         <div class="mock-round">
-          <h3 class="round-title">Round 1</h3>
+          <h3 class="round-title">{{ $t('Round 1') }}</h3>
           <div class="mock-picks">
             <div
               v-for="slot in mockRound1"
@@ -653,23 +652,23 @@ onMounted(async () => {
                   <span class="team-name">{{ slot.teamName }}</span>
                 </div>
                 <div v-if="slot.isTraded" class="pick-origin">
-                  <span class="traded-badge">TRADED</span>
+                  <span class="traded-badge">{{ $t('TRADED') }}</span>
                   <span class="origin-text">
-                    Originally
+                    {{ $t('Originally') }}
                     <span class="origin-team-abbr" :style="{ color: slot.originalTeamColor }">{{ slot.originalTeamAbbr }}</span>
-                    pick ({{ slot.originalTeamName }})
+                    {{ $t('pick ({team})', { team: slot.originalTeamName }) }}
                   </span>
                 </div>
                 <div v-if="slot.apronFrozen" class="pick-origin">
                   <ApronPickBadge />
-                  <span class="origin-text">Moved to the back of round 1 — {{ slot.originalTeamAbbr }} finished over the second apron</span>
+                  <span class="origin-text">{{ $t('Moved to the back of round 1 — {team} finished over the second apron', { team: slot.originalTeamAbbr }) }}</span>
                 </div>
               </div>
               <span
                 v-if="slot.lotteryDeltaDir"
                 class="delta-badge"
                 :class="slot.lotteryDeltaDir === 'up' ? 'delta-badge--up' : 'delta-badge--down'"
-                :title="`Moved ${slot.lotteryDeltaDir} ${Math.abs(slot.lotteryDelta)} from projected pick via the lottery`"
+                :title="$t('Moved {dir} {n} from projected pick via the lottery', { dir: slot.lotteryDeltaDir, n: Math.abs(slot.lotteryDelta) })"
               >
                 <ArrowUp v-if="slot.lotteryDeltaDir === 'up'" :size="14" />
                 <ArrowDown v-else :size="14" />
@@ -681,7 +680,7 @@ onMounted(async () => {
 
         <!-- Round 2 -->
         <div class="mock-round">
-          <h3 class="round-title">Round 2</h3>
+          <h3 class="round-title">{{ $t('Round 2') }}</h3>
           <div class="mock-picks">
             <div
               v-for="slot in mockRound2"
@@ -701,11 +700,11 @@ onMounted(async () => {
                   <span class="team-name">{{ slot.teamName }}</span>
                 </div>
                 <div v-if="slot.isTraded" class="pick-origin">
-                  <span class="traded-badge">TRADED</span>
+                  <span class="traded-badge">{{ $t('TRADED') }}</span>
                   <span class="origin-text">
-                    Originally
+                    {{ $t('Originally') }}
                     <span class="origin-team-abbr" :style="{ color: slot.originalTeamColor }">{{ slot.originalTeamAbbr }}</span>
-                    pick ({{ slot.originalTeamName }})
+                    {{ $t('pick ({team})', { team: slot.originalTeamName }) }}
                   </span>
                 </div>
               </div>

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { t } from "@wl-i18n/i18n.js";
 import { getToken, removeToken } from "./useTokenStorage";
 
 const api = axios.create({
@@ -53,7 +54,7 @@ api.interceptors.response.use(
       const message =
         error.response.data?.message ||
         error.response.data?.error ||
-        "An error occurred";
+        t("An error occurred");
 
       error.message = message;
 
@@ -65,7 +66,7 @@ api.interceptors.response.use(
       }
     } else if (error.request) {
       // Network error
-      error.message = "Network error. Please check your connection.";
+      error.message = t("Network error. Please check your connection.");
       const skipToast = error.config?.skipErrorToast === true;
       if (toastStore && !skipToast) {
         toastStore.showError(error.message);

@@ -14,10 +14,10 @@ defineProps({
   <span
     class="apron-badge"
     :class="{ compact }"
-    title="Apron penalty — this first-round pick drops to the end of round 1."
+    :title="$t('Apron penalty — this first-round pick drops to the end of round 1.')"
   >
     <Snowflake :size="compact ? 10 : 9" />
-    <template v-if="!compact">APRON</template>
+    <template v-if="!compact">{{ $t('APRON') }}</template>
   </span>
 </template>
 

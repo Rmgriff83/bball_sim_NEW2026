@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useLeagueStore } from '@/stores/league'
 import { useTeamStore } from '@/stores/team'
 import { useCampaignStore } from '@/stores/campaign'
+import { badgeDisplayName } from '@/engine/data/badges'
 import { useGameStore } from '@/stores/game'
 import { usePlayoffStore } from '@/stores/playoff'
 import { useTradeStore } from '@/stores/trade'
@@ -20,6 +21,7 @@ import { computeTeamOverall } from '@/utils/teamOverall'
 import { capNumbersFor, capStatusFor } from '@/engine/data/salaryScale'
 import { buildSeasonStatsTable } from '@/composables/useSeasonHistory'
 import { coachBadges as COACH_BADGE_DEFS } from '@/engine/data/coachBadges'
+import { t, tDynamic, dateLocale } from '@wl-i18n/i18n.js'
 
 const COACH_BADGE_TIER_COLORS = {
   bronze: '#CD7F32',
@@ -144,7 +146,7 @@ function formatTradeDate(dateStr) {
   if (!dateStr) return ''
   const [y, m, d] = String(dateStr).split('T')[0].split(' ')[0].split('-').map(Number)
   if (!y || !m || !d) return String(dateStr)
-  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(y, m - 1, d).toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 async function fetchLeagueTrades() {
@@ -164,11 +166,11 @@ async function fetchLeagueTrades() {
     }
     const assetLabel = (a) => {
       if (a.type === 'player') {
-        const base = a.playerName ?? nameById?.get(a.playerId) ?? 'Player'
+        const base = a.playerName ?? nameById?.get(a.playerId) ?? t('Player')
         const salary = parseFloat(a.salary ?? 0)
         return salary > 0 ? `${base} ($${salary.toFixed(1)}M)` : base
       }
-      return a.pickDisplay ?? 'Draft pick'
+      return a.pickDisplay ?? t('Draft pick')
     }
     leagueTrades.value = [...raw]
       .sort((a, b) => String(b.trade_date ?? '').localeCompare(String(a.trade_date ?? '')))
@@ -303,10 +305,10 @@ const selectedTeamCoachCareerStats = computed(() => {
 
 function formatCoachAttrName(key) {
   if (!key) return ''
-  return key
+  return tDynamic(key
     .replace(/([A-Z])/g, ' $1')
     .replace(/^./, str => str.toUpperCase())
-    .trim()
+    .trim())
 }
 
 function getCoachAttrColor(value) {
@@ -352,10 +354,10 @@ const PLAYOFF_RESULT_LABELS = {
 
 function formatSeasonResult(entry) {
   if (!entry) return '—'
-  if (entry.champion) return 'Champion'
-  if (entry.playoffResult) return PLAYOFF_RESULT_LABELS[entry.playoffResult] ?? entry.playoffResult
-  if (entry.playoffSeed) return `Playoffs · #${entry.playoffSeed} seed`
-  return 'Missed playoffs'
+  if (entry.champion) return t('Champion')
+  if (entry.playoffResult) return tDynamic(PLAYOFF_RESULT_LABELS[entry.playoffResult] ?? entry.playoffResult)
+  if (entry.playoffSeed) return t('Playoffs · #{seed} seed', { seed: entry.playoffSeed })
+  return t('Missed playoffs')
 }
 
 // Player modal state (nested within team modal)
@@ -382,7 +384,7 @@ function formatTradeLogDate(entry) {
   if (!d) return entry?.seasonYear ?? ''
   const [y, m, day] = d.split('-').map(Number)
   if (!y || !m || !day) return d
-  return new Date(y, m - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(y, m - 1, day).toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 const playerOrigin = computed(() => {
@@ -586,7 +588,7 @@ function isUserTeam(teamId) {
 function formatDate(dateString) {
   if (!dateString) return ''
   const date = new Date(dateString)
-  return date.toLocaleDateString('en-US', {
+  return date.toLocaleDateString(dateLocale(), {
     month: 'short',
     day: 'numeric'
   })
@@ -736,17 +738,17 @@ function getAttrColor(value) {
 function formatGameDate(dateStr) {
   if (!dateStr) return '—'
   const d = new Date(dateStr + 'T00:00:00')
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' })
 }
 
 function formatBadgeName(badgeId) {
   if (!badgeId) return ''
-  return badgeId.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+  return tDynamic(badgeDisplayName(badgeId))
 }
 
 function formatAttrName(attrKey) {
   if (!attrKey) return ''
-  return attrKey.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase()).trim()
+  return tDynamic(attrKey.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase()).trim())
 }
 
 function formatWeight(weight) {
@@ -823,7 +825,7 @@ const leagueStatsTab = ref('recent')
 
 // Format category name for display
 function formatCategoryName(category) {
-  return category.charAt(0).toUpperCase() + category.slice(1)
+  return tDynamic(category.charAt(0).toUpperCase() + category.slice(1))
 }
 
 // Get color for evolution change
@@ -858,8 +860,8 @@ function formatSalary(salary) {
     <template v-else>
       <!-- Page Title -->
       <div class="league-title-block">
-        <p class="league-subtitle">Across the</p>
-        <h1 class="league-title">League</h1>
+        <p class="league-subtitle">{{ $t('Across the') }}</p>
+        <h1 class="league-title">{{ $t('League') }}</h1>
       </div>
 
       <!-- Header Row: Tabs/Filters + Games Remaining -->
@@ -873,56 +875,56 @@ function formatSalary(salary) {
               :class="{ active: activeTab === 'standings' }"
               @click="activeTab = 'standings'"
             >
-              Standings
+              {{ $t('Standings') }}
             </button>
             <button
               class="tab-btn"
               :class="{ active: activeTab === 'playoffs' }"
               @click="activeTab = 'playoffs'"
             >
-              Playoff Picture
+              {{ $t('Playoff Picture') }}
             </button>
             <button
               class="tab-btn"
               :class="{ active: activeTab === 'games' }"
               @click="activeTab = 'games'"
             >
-              Games
+              {{ $t('Games') }}
             </button>
             <button
               class="tab-btn"
               :class="{ active: activeTab === 'leaders' }"
               @click="activeTab = 'leaders'"
             >
-              League Leaders
+              {{ $t('League Leaders') }}
             </button>
             <button
               class="tab-btn"
               :class="{ active: activeTab === 'mvp' }"
               @click="activeTab = 'mvp'"
             >
-              MVP Race
+              {{ $t('MVP Race') }}
             </button>
             <button
               class="tab-btn"
               :class="{ active: activeTab === 'rookies' }"
               @click="activeTab = 'rookies'"
             >
-              Rookie Rankings
+              {{ $t('Rookie Rankings') }}
             </button>
             <button
               class="tab-btn"
               :class="{ active: activeTab === 'trades' }"
               @click="activeTab = 'trades'"
             >
-              Trades
+              {{ $t('Trades') }}
             </button>
             <button
               class="tab-btn"
               :class="{ active: activeTab === 'alltime' }"
               @click="activeTab = 'alltime'"
             >
-              All Time
+              {{ $t('All Time') }}
             </button>
           </div>
 
@@ -933,21 +935,21 @@ function formatSalary(salary) {
               :class="{ active: activeConference === null }"
               @click="activeConference = null"
             >
-              Both
+              {{ $t('Both') }}
             </button>
             <button
               class="conf-btn"
               :class="{ active: activeConference === 'east' }"
               @click="activeConference = 'east'"
             >
-              Eastern
+              {{ $t('Eastern') }}
             </button>
             <button
               class="conf-btn"
               :class="{ active: activeConference === 'west' }"
               @click="activeConference = 'west'"
             >
-              Western
+              {{ $t('Western') }}
             </button>
           </div>
         </div>
@@ -955,7 +957,7 @@ function formatSalary(salary) {
         <!-- Right Column: Season Card -->
         <div class="season-card">
           <div class="season-card-header">
-            {{ playoffStore.isInPlayoffs ? 'Playoffs' : 'Regular Season' }}
+            {{ playoffStore.isInPlayoffs ? $t('Playoffs') : $t('Regular Season') }}
           </div>
           <div class="season-year">{{ formattedSeasonYear }}</div>
           <!-- Hide regular-season progress + games-played/left during the
@@ -967,8 +969,8 @@ function formatSalary(salary) {
               <div class="season-progress-bar" :style="{ width: `${seasonProgressPercent}%` }"></div>
             </div>
             <div class="season-stats">
-              <span>{{ userGamesPlayed }} played</span>
-              <span>{{ totalSeasonGames - userGamesPlayed }} left</span>
+              <span>{{ $t('{n} played', { n: userGamesPlayed }) }}</span>
+              <span>{{ $t('{n} left', { n: totalSeasonGames - userGamesPlayed }) }}</span>
             </div>
           </template>
         </div>
@@ -984,13 +986,16 @@ function formatSalary(salary) {
               <thead>
                 <tr>
                   <th class="rank-col">#</th>
-                  <th class="team-col">Team</th>
+                  <th class="team-col">{{ $t('Team') }}</th>
                   <th class="stat-col">W</th>
                   <th class="stat-col">L</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">PCT</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">GB</th>
-                  <th class="stat-col">HOME</th>
-                  <th class="stat-col">AWAY</th>
+                  <th class="stat-col">{{ $t('HOME') }}</th>
+                  <th class="stat-col">{{ $t('AWAY') }}</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">STRK</th>
                   <th class="stat-col">L10</th>
                 </tr>
@@ -1037,7 +1042,7 @@ function formatSalary(salary) {
       <template v-else-if="activeTab === 'playoffs'">
         <div class="grid gap-6" :class="activeConference ? '' : 'md:grid-cols-2'">
           <GlassCard v-if="activeConference !== 'west'" padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">Eastern Conference Playoff Picture</h3>
+            <h3 class="h4 mb-4">{{ $t('Eastern Conference Playoff Picture') }}</h3>
             <div class="playoff-bracket">
               <div
                 v-for="(standing, index) in eastStandings.slice(0, 8)"
@@ -1059,7 +1064,7 @@ function formatSalary(salary) {
           </GlassCard>
 
           <GlassCard v-if="activeConference !== 'east'" padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">Western Conference Playoff Picture</h3>
+            <h3 class="h4 mb-4">{{ $t('Western Conference Playoff Picture') }}</h3>
             <div class="playoff-bracket">
               <div
                 v-for="(standing, index) in westStandings.slice(0, 8)"
@@ -1091,7 +1096,7 @@ function formatSalary(salary) {
           <!-- Single-Game Records -->
           <div class="grid gap-6 md:grid-cols-2">
             <GlassCard padding="lg" :hoverable="false">
-              <h3 class="h4 mb-4">All-Time Single-Game Records</h3>
+              <h3 class="h4 mb-4">{{ $t('All-Time Single-Game Records') }}</h3>
               <table class="records-table">
                 <tbody>
                   <tr v-for="row in allTimeHighRows" :key="'all-' + row.label">
@@ -1103,9 +1108,9 @@ function formatSalary(salary) {
                           <TeamLogo v-if="row.teamAbbr" :abbreviation="row.teamAbbr" :color="teamColorByAbbr[row.teamAbbr]" :size="18" />
                           <span class="rec-name">{{ row.playerName || '—' }}</span>
                         </span>
-                        <span class="rec-context">vs {{ row.opp }} · {{ row.year }}</span>
+                        <span class="rec-context">{{ $t('vs {opp} · {year}', { opp: row.opp, year: row.year }) }}</span>
                       </template>
-                      <span v-else class="rec-empty">No record yet</span>
+                      <span v-else class="rec-empty">{{ $t('No record yet') }}</span>
                     </td>
                   </tr>
                 </tbody>
@@ -1113,7 +1118,7 @@ function formatSalary(salary) {
             </GlassCard>
 
             <GlassCard padding="lg" :hoverable="false">
-              <h3 class="h4 mb-4">This Season — Single-Game Highs</h3>
+              <h3 class="h4 mb-4">{{ $t('This Season — Single-Game Highs') }}</h3>
               <table class="records-table">
                 <tbody>
                   <tr v-for="row in seasonHighRows" :key="'ssn-' + row.label">
@@ -1125,9 +1130,9 @@ function formatSalary(salary) {
                           <TeamLogo v-if="row.teamAbbr" :abbreviation="row.teamAbbr" :color="teamColorByAbbr[row.teamAbbr]" :size="18" />
                           <span class="rec-name">{{ row.playerName || '—' }}</span>
                         </span>
-                        <span class="rec-context">vs {{ row.opp }} · {{ row.year }}</span>
+                        <span class="rec-context">{{ $t('vs {opp} · {year}', { opp: row.opp, year: row.year }) }}</span>
                       </template>
-                      <span v-else class="rec-empty">No record yet</span>
+                      <span v-else class="rec-empty">{{ $t('No record yet') }}</span>
                     </td>
                   </tr>
                 </tbody>
@@ -1137,11 +1142,11 @@ function formatSalary(salary) {
 
           <!-- Champions -->
           <GlassCard padding="lg" :hoverable="false" class="mt-6">
-            <h3 class="h4 mb-4">Champions</h3>
-            <div v-if="leagueStore.champions.length === 0" class="text-secondary">No champions yet — finish a season.</div>
+            <h3 class="h4 mb-4">{{ $t('Champions') }}</h3>
+            <div v-if="leagueStore.champions.length === 0" class="text-secondary">{{ $t('No champions yet — finish a season.') }}</div>
             <table v-else class="records-table history-table">
               <thead>
-                <tr><th class="rec-year-col">Year</th><th>Champion</th><th>Finals MVP</th></tr>
+                <tr><th class="rec-year-col">{{ $t('Year') }}</th><th>{{ $t('Champion') }}</th><th>{{ $t('Finals MVP') }}</th></tr>
               </thead>
               <tbody>
                 <tr v-for="c in leagueStore.champions" :key="'champ-' + c.year">
@@ -1174,10 +1179,10 @@ function formatSalary(salary) {
                 </button>
               </div>
             </div>
-            <div v-if="activeAwardHistory.length === 0" class="text-secondary">No winners yet — finish a season.</div>
+            <div v-if="activeAwardHistory.length === 0" class="text-secondary">{{ $t('No winners yet — finish a season.') }}</div>
             <table v-else class="records-table history-table">
               <thead>
-                <tr><th class="rec-year-col">Year</th><th>Player</th><th>Team</th></tr>
+                <tr><th class="rec-year-col">{{ $t('Year') }}</th><th>{{ $t('Player') }}</th><th>{{ $t('Team') }}</th></tr>
               </thead>
               <tbody>
                 <tr v-for="m in activeAwardHistory" :key="allTimeAwardTab + '-' + m.year">
@@ -1201,9 +1206,9 @@ function formatSalary(salary) {
         <div class="grid md:grid-cols-2 gap-6">
           <!-- Recent Games -->
           <GlassCard padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">Recent Results</h3>
+            <h3 class="h4 mb-4">{{ $t('Recent Results') }}</h3>
             <div v-if="recentGames.length === 0" class="text-secondary">
-              No games played yet.
+              {{ $t('No games played yet.') }}
             </div>
             <div v-else class="space-y-3">
               <div
@@ -1224,16 +1229,16 @@ function formatSalary(salary) {
                     <span class="team-score">{{ game.home_score }}</span>
                   </div>
                 </div>
-                <div class="game-status">Final</div>
+                <div class="game-status">{{ $t('Final') }}</div>
               </div>
             </div>
           </GlassCard>
 
           <!-- Upcoming Games -->
           <GlassCard padding="lg" :hoverable="false">
-            <h3 class="h4 mb-4">Upcoming Games</h3>
+            <h3 class="h4 mb-4">{{ $t('Upcoming Games') }}</h3>
             <div v-if="upcomingGames.length === 0" class="text-secondary">
-              No upcoming games scheduled.
+              {{ $t('No upcoming games scheduled.') }}
             </div>
             <div v-else class="space-y-3">
               <div
@@ -1253,7 +1258,7 @@ function formatSalary(salary) {
                     <span class="team-abbr">{{ game.home_team?.abbreviation }}</span>
                   </div>
                 </div>
-                <div v-if="game.is_user_game" class="game-badge">Your Game</div>
+                <div v-if="game.is_user_game" class="game-badge">{{ $t('Your Game') }}</div>
               </div>
             </div>
           </GlassCard>
@@ -1264,8 +1269,8 @@ function formatSalary(salary) {
       <template v-else-if="activeTab === 'leaders'">
         <GlassCard padding="none" :hoverable="false">
           <div class="leaders-header">
-            <h3 class="h4">{{ activeConference === null ? 'League' : (activeConference === 'east' ? 'Eastern Conference' : 'Western Conference') }} Leaders</h3>
-            <p class="text-secondary text-sm">Click column headers to sort</p>
+            <h3 class="h4">{{ $t('{conf} Leaders', { conf: activeConference === null ? $t('League') : (activeConference === 'east' ? $t('Eastern Conference') : $t('Western Conference')) }) }}</h3>
+            <p class="text-secondary text-sm">{{ $t('Click column headers to sort') }}</p>
           </div>
 
           <!-- Loading state -->
@@ -1285,7 +1290,7 @@ function formatSalary(salary) {
                     :class="[col.class, 'sortable', { active: leadersSortColumn === col.key }]"
                     @click="sortLeadersBy(col.key)"
                   >
-                    {{ col.label }}{{ getLeadersSortIcon(col.key) }}
+                    {{ $tDynamic(col.label) }}{{ getLeadersSortIcon(col.key) }}
                   </th>
                 </tr>
               </thead>
@@ -1329,8 +1334,8 @@ function formatSalary(salary) {
 
             <!-- Empty state -->
             <div v-if="sortedLeaders.length === 0 && !leagueStore.loadingLeaders" class="empty-state">
-              <p>No stats available yet.</p>
-              <p class="text-sm text-secondary">Play some games to see league leaders.</p>
+              <p>{{ $t('No stats available yet.') }}</p>
+              <p class="text-sm text-secondary">{{ $t('Play some games to see league leaders.') }}</p>
             </div>
           </div>
         </GlassCard>
@@ -1340,8 +1345,8 @@ function formatSalary(salary) {
       <template v-else-if="activeTab === 'mvp'">
         <GlassCard padding="none" :hoverable="false">
           <div class="leaders-header">
-            <h3 class="h4">MVP Race</h3>
-            <p class="text-secondary text-sm">Live in-season rankings using the same formula that selects the season MVP. Click a row for player details.</p>
+            <h3 class="h4">{{ $t('MVP Race') }}</h3>
+            <p class="text-secondary text-sm">{{ $t('Live in-season rankings using the same formula that selects the season MVP. Click a row for player details.') }}</p>
           </div>
 
           <!-- Loading state -->
@@ -1355,11 +1360,14 @@ function formatSalary(salary) {
               <thead>
                 <tr>
                   <th class="rank-col">#</th>
-                  <th class="player-col">Player</th>
-                  <th class="team-col-sm">Team</th>
-                  <th class="stat-col highlight">Score</th>
+                  <th class="player-col">{{ $t('Player') }}</th>
+                  <th class="team-col-sm">{{ $t('Team') }}</th>
+                  <th class="stat-col highlight">{{ $t('Score') }}</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">PPG</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">RPG</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">APG</th>
                   <th class="stat-col">FG%</th>
                   <th class="stat-col">W-L</th>
@@ -1401,8 +1409,8 @@ function formatSalary(salary) {
 
             <!-- Empty state -->
             <div v-if="leagueStore.mvpRace.length === 0 && !leagueStore.loadingMvpRace" class="empty-state">
-              <p>Not enough games played yet.</p>
-              <p class="text-sm text-secondary">The MVP race opens up once players have hit the 75% min-games threshold.</p>
+              <p>{{ $t('Not enough games played yet.') }}</p>
+              <p class="text-sm text-secondary">{{ $t('The MVP race opens up once players have hit the 75% min-games threshold.') }}</p>
             </div>
           </div>
         </GlassCard>
@@ -1412,8 +1420,8 @@ function formatSalary(salary) {
       <template v-else-if="activeTab === 'rookies'">
         <GlassCard padding="none" :hoverable="false">
           <div class="leaders-header">
-            <h3 class="h4">Top 10 Rookies</h3>
-            <p class="text-secondary text-sm">Ranked by overall performance score</p>
+            <h3 class="h4">{{ $t('Top 10 Rookies') }}</h3>
+            <p class="text-secondary text-sm">{{ $t('Ranked by overall performance score') }}</p>
           </div>
 
           <div v-if="leagueStore.loadingRookies" class="loading-state opacity-60">
@@ -1425,16 +1433,21 @@ function formatSalary(salary) {
               <thead>
                 <tr>
                   <th class="rank-col">#</th>
-                  <th class="player-col">Player</th>
-                  <th class="team-col-sm">Team</th>
+                  <th class="player-col">{{ $t('Player') }}</th>
+                  <th class="team-col-sm">{{ $t('Team') }}</th>
                   <th class="stat-col">GP</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">PPG</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">RPG</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">APG</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">SPG</th>
+                  <!-- i18n-ignore -->
                   <th class="stat-col">BPG</th>
                   <th class="stat-col">FG%</th>
-                  <th class="stat-col">SCORE</th>
+                  <th class="stat-col">{{ $t('SCORE') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1474,8 +1487,8 @@ function formatSalary(salary) {
             </table>
 
             <div v-if="leagueStore.rookieLeaders.length === 0 && !leagueStore.loadingRookies" class="empty-state">
-              <p>No rookie stats available yet.</p>
-              <p class="text-sm text-secondary">Rookies will appear here once they've played at least one game.</p>
+              <p>{{ $t('No rookie stats available yet.') }}</p>
+              <p class="text-sm text-secondary">{{ $t("Rookies will appear here once they've played at least one game.") }}</p>
             </div>
           </div>
         </GlassCard>
@@ -1485,8 +1498,8 @@ function formatSalary(salary) {
       <template v-else-if="activeTab === 'trades'">
         <GlassCard padding="none" :hoverable="false">
           <div class="leaders-header">
-            <h3 class="h4">Season Trades</h3>
-            <p class="text-secondary text-sm">Every trade across the league this season, newest first</p>
+            <h3 class="h4">{{ $t('Season Trades') }}</h3>
+            <p class="text-secondary text-sm">{{ $t('Every trade across the league this season, newest first') }}</p>
           </div>
 
           <div v-if="tradesLoading" class="loading-state opacity-60">
@@ -1494,8 +1507,8 @@ function formatSalary(salary) {
           </div>
 
           <div v-else-if="leagueTrades.length === 0" class="empty-state">
-            <p>No trades this season.</p>
-            <p class="text-sm text-secondary">League trades show up here as they happen — check back after the next week of games.</p>
+            <p>{{ $t('No trades this season.') }}</p>
+            <p class="text-sm text-secondary">{{ $t('League trades show up here as they happen — check back after the next week of games.') }}</p>
           </div>
 
           <div v-else class="trades-list">
@@ -1506,11 +1519,11 @@ function formatSalary(salary) {
                   <div class="trade-side-team">
                     <TeamLogo :abbreviation="side.abbr" :color="side.color" :size="22" />
                     <span class="trade-side-name">{{ side.name }}</span>
-                    <span class="trade-side-recv">receive</span>
+                    <span class="trade-side-recv">{{ $t('receive') }}</span>
                   </div>
                   <ul class="trade-side-assets">
                     <li v-for="(label, i) in side.received" :key="i">{{ label }}</li>
-                    <li v-if="!side.received.length" class="trade-side-none">Future considerations</li>
+                    <li v-if="!side.received.length" class="trade-side-none">{{ $t('Future considerations') }}</li>
                   </ul>
                 </div>
               </div>
@@ -1531,7 +1544,7 @@ function formatSalary(salary) {
           <div class="team-modal-container">
             <!-- Header -->
             <header class="team-modal-header-bar">
-              <h2 class="team-modal-title">Team Details</h2>
+              <h2 class="team-modal-title">{{ $t('Team Details') }}</h2>
               <button class="modal-btn-close" @click="closeTeamModal" aria-label="Close">
                 <X :size="20" />
               </button>
@@ -1554,7 +1567,7 @@ function formatSalary(salary) {
                   <div class="team-card-record">{{ selectedTeam.wins }}-{{ selectedTeam.losses }}</div>
                   <div v-if="selectedTeamCapStatus" class="team-card-cap">
                     <span class="team-cap-payroll">{{ formatPayrollM(selectedTeamPayroll) }}</span>
-                    <span class="team-cap-chip" :class="selectedTeamCapStatus.cls">{{ selectedTeamCapStatus.label }}</span>
+                    <span class="team-cap-chip" :class="selectedTeamCapStatus.cls">{{ $tDynamic(selectedTeamCapStatus.label) }}</span>
                   </div>
                 </div>
               </div>
@@ -1563,17 +1576,17 @@ function formatSalary(salary) {
               <div class="team-quick-stats">
                 <div class="quick-stat-item">
                   <span class="quick-stat-value">{{ selectedTeam.homeRecord || '0-0' }}</span>
-                  <span class="quick-stat-label">Home</span>
+                  <span class="quick-stat-label">{{ $t('Home') }}</span>
                 </div>
                 <div class="quick-stat-divider"></div>
                 <div class="quick-stat-item">
                   <span class="quick-stat-value">{{ selectedTeam.awayRecord || '0-0' }}</span>
-                  <span class="quick-stat-label">Away</span>
+                  <span class="quick-stat-label">{{ $t('Away') }}</span>
                 </div>
                 <div class="quick-stat-divider"></div>
                 <div class="quick-stat-item">
                   <span class="quick-stat-value" :class="getStreakClass(selectedTeam.streak)">{{ selectedTeam.streak || '-' }}</span>
-                  <span class="quick-stat-label">Streak</span>
+                  <span class="quick-stat-label">{{ $t('Streak') }}</span>
                 </div>
               </div>
 
@@ -1584,21 +1597,21 @@ function formatSalary(salary) {
                   :class="{ active: teamModalTab === 'roster' }"
                   @click="teamModalTab = 'roster'"
                 >
-                  Roster
+                  {{ $t('Roster') }}
                 </button>
                 <button
                   class="player-tab"
                   :class="{ active: teamModalTab === 'coach' }"
                   @click="teamModalTab = 'coach'"
                 >
-                  Coach
+                  {{ $t('Coach') }}
                 </button>
                 <button
                   class="player-tab"
                   :class="{ active: teamModalTab === 'history' }"
                   @click="teamModalTab = 'history'"
                 >
-                  History
+                  {{ $t('History') }}
                 </button>
               </div>
 
@@ -1609,7 +1622,7 @@ function formatSalary(salary) {
                   <div class="roster-section-new">
                     <div v-if="loadingTeamRoster" class="modal-loading-state">
                       <LoadingSpinner size="md" />
-                      <span>Loading roster...</span>
+                      <span>{{ $t('Loading roster...') }}</span>
                     </div>
 
                     <div v-else class="roster-list-new">
@@ -1624,6 +1637,7 @@ function formatSalary(salary) {
                           <PlayerAvatar :player="player" :size="42" />
                           <div class="roster-player-rating">
                             <StatBadge :value="player.overall_rating" size="sm" />
+                            <!-- i18n-ignore -->
                             <span v-if="player.is_injured || player.isInjured" class="roster-injury-badge">INJ</span>
                           </div>
                           <div class="roster-player-info">
@@ -1640,13 +1654,17 @@ function formatSalary(salary) {
                         </div>
                         <div class="roster-player-stats">
                           <template v-if="player.season_stats && !(player.is_injured || player.isInjured)">
+                            <!-- i18n-ignore -->
                             <span class="roster-stat">{{ player.season_stats.ppg }} <small>PPG</small></span>
+                            <!-- i18n-ignore -->
                             <span class="roster-stat">{{ player.season_stats.rpg }} <small>RPG</small></span>
+                            <!-- i18n-ignore -->
                             <span class="roster-stat">{{ player.season_stats.apg }} <small>APG</small></span>
                           </template>
-                          <span v-else-if="player.is_injured || player.isInjured" class="roster-injury-text">Injured</span>
+                          <span v-else-if="player.is_injured || player.isInjured" class="roster-injury-text">{{ $t('Injured') }}</span>
                           <span v-else class="roster-no-stats">-</span>
                         </div>
+                        <!-- i18n-ignore -->
                         <div class="roster-chevron">&rsaquo;</div>
                       </div>
                     </div>
@@ -1656,7 +1674,7 @@ function formatSalary(salary) {
                 <!-- Coach Tab -->
                 <div v-if="teamModalTab === 'coach'" class="player-tab-panel">
                   <div v-if="!selectedTeamCoach" class="empty-tab-state">
-                    No coach data available for this team.
+                    {{ $t('No coach data available for this team.') }}
                   </div>
                   <template v-else>
                     <!-- Coach Header -->
@@ -1668,52 +1686,52 @@ function formatSalary(salary) {
                         <p class="team-coach-name">{{ selectedTeamCoach.name }}</p>
                         <div class="team-coach-rating">
                           <StatBadge :value="selectedTeamCoach.overall_rating || selectedTeamCoach.overallRating" size="sm" />
-                          <span class="team-coach-rating-label">Overall Rating</span>
+                          <span class="team-coach-rating-label">{{ $t('Overall Rating') }}</span>
                         </div>
                       </div>
                     </div>
 
                     <!-- Coach Badges -->
                     <div v-if="ownedTeamCoachBadges.length > 0" class="team-coach-section">
-                      <h4 class="team-coach-section-title">Coach Badges</h4>
+                      <h4 class="team-coach-section-title">{{ $t('Coach Badges') }}</h4>
                       <div class="team-coach-badges-row">
                         <div
                           v-for="badge in ownedTeamCoachBadges"
                           :key="badge.id"
                           class="team-coach-badge-chip"
-                          :title="`${badge.description} (${badge.level.toUpperCase()})`"
+                          :title="`${$tDynamic(badge.description)} (${badge.level.toUpperCase()})`"
                         >
                           <Star
                             :size="12"
                             :style="{ color: COACH_BADGE_TIER_COLORS[badge.level] || 'var(--color-text-secondary)' }"
                             :fill="COACH_BADGE_TIER_COLORS[badge.level] || 'transparent'"
                           />
-                          <span class="team-coach-badge-chip-name">{{ badge.name }}</span>
+                          <span class="team-coach-badge-chip-name">{{ $tDynamic(badge.name) }}</span>
                         </div>
                       </div>
                     </div>
 
                     <!-- Career Record -->
                     <div v-if="selectedTeamCoachCareerStats" class="team-coach-section team-coach-section-divided">
-                      <h4 class="team-coach-section-title">Career Record</h4>
+                      <h4 class="team-coach-section-title">{{ $t('Career Record') }}</h4>
                       <div class="team-coach-career-grid">
                         <div class="team-coach-career-box">
                           <span class="team-coach-career-value">{{ selectedTeamCoachCareerStats.wins }}-{{ selectedTeamCoachCareerStats.losses }}</span>
-                          <span class="team-coach-career-label">Regular Season</span>
+                          <span class="team-coach-career-label">{{ $t('Regular Season') }}</span>
                           <span class="team-coach-career-pct">{{ Math.round(selectedTeamCoachCareerStats.win_pct * 1000) / 10 }}%</span>
                         </div>
                         <div class="team-coach-career-box">
                           <span class="team-coach-career-value">{{ selectedTeamCoachCareerStats.playoff_wins }}-{{ selectedTeamCoachCareerStats.playoff_losses }}</span>
-                          <span class="team-coach-career-label">Playoffs</span>
+                          <span class="team-coach-career-label">{{ $t('Playoffs') }}</span>
                           <span class="team-coach-career-pct">{{ Math.round(selectedTeamCoachCareerStats.playoff_win_pct * 1000) / 10 }}%</span>
                         </div>
                         <div class="team-coach-career-box highlight">
                           <span class="team-coach-career-value">{{ selectedTeamCoachCareerStats.championships }}</span>
-                          <span class="team-coach-career-label">Championships</span>
+                          <span class="team-coach-career-label">{{ $t('Championships') }}</span>
                         </div>
                         <div class="team-coach-career-box">
                           <span class="team-coach-career-value">{{ selectedTeamCoachCareerStats.seasons_coached }}</span>
-                          <span class="team-coach-career-label">Seasons</span>
+                          <span class="team-coach-career-label">{{ $t('Seasons') }}</span>
                         </div>
                       </div>
 
@@ -1722,17 +1740,17 @@ function formatSalary(salary) {
                         class="team-coach-awards-row"
                       >
                         <span v-if="selectedTeamCoachCareerStats.conference_titles > 0" class="team-coach-award-badge">
-                          {{ selectedTeamCoachCareerStats.conference_titles }}x Conference Champion
+                          {{ $t('{n}x Conference Champion', { n: selectedTeamCoachCareerStats.conference_titles }) }}
                         </span>
                         <span v-if="selectedTeamCoachCareerStats.coach_of_year_awards > 0" class="team-coach-award-badge gold">
-                          {{ selectedTeamCoachCareerStats.coach_of_year_awards }}x Coach of the Year
+                          {{ $t('{n}x Coach of the Year', { n: selectedTeamCoachCareerStats.coach_of_year_awards }) }}
                         </span>
                       </div>
                     </div>
 
                     <!-- Coach Attributes -->
                     <div v-if="selectedTeamCoach.attributes" class="team-coach-section team-coach-section-divided">
-                      <h4 class="team-coach-section-title">Coaching Skills</h4>
+                      <h4 class="team-coach-section-title">{{ $t('Coaching Skills') }}</h4>
                       <div class="team-coach-attr-grid">
                         <div
                           v-for="(value, key) in selectedTeamCoach.attributes"
@@ -1757,41 +1775,41 @@ function formatSalary(salary) {
                 <div v-if="teamModalTab === 'history'" class="player-tab-panel">
                   <!-- Franchise Totals -->
                   <div class="team-coach-section">
-                    <h4 class="team-coach-section-title">Franchise Totals</h4>
+                    <h4 class="team-coach-section-title">{{ $t('Franchise Totals') }}</h4>
                     <div v-if="selectedTeamFranchiseHistory" class="team-coach-career-grid">
                       <div class="team-coach-career-box highlight">
                         <span class="team-coach-career-value">{{ selectedTeamFranchiseHistory.championships ?? 0 }}</span>
-                        <span class="team-coach-career-label">Championships</span>
+                        <span class="team-coach-career-label">{{ $t('Championships') }}</span>
                       </div>
                       <div class="team-coach-career-box">
                         <span class="team-coach-career-value">{{ selectedTeamFranchiseHistory.conference_titles ?? 0 }}</span>
-                        <span class="team-coach-career-label">Conf Titles</span>
+                        <span class="team-coach-career-label">{{ $t('Conf Titles') }}</span>
                       </div>
                       <div class="team-coach-career-box">
                         <span class="team-coach-career-value">{{ selectedTeamFranchiseHistory.regular_season?.wins ?? 0 }}-{{ selectedTeamFranchiseHistory.regular_season?.losses ?? 0 }}</span>
-                        <span class="team-coach-career-label">Regular Season</span>
+                        <span class="team-coach-career-label">{{ $t('Regular Season') }}</span>
                         <span class="team-coach-career-pct">{{ franchiseRegularSeasonPct(selectedTeamFranchiseHistory) }}%</span>
                       </div>
                       <div class="team-coach-career-box">
                         <span class="team-coach-career-value">{{ selectedTeamFranchiseHistory.playoffs?.wins ?? 0 }}-{{ selectedTeamFranchiseHistory.playoffs?.losses ?? 0 }}</span>
-                        <span class="team-coach-career-label">Playoffs</span>
+                        <span class="team-coach-career-label">{{ $t('Playoffs') }}</span>
                         <span class="team-coach-career-pct">{{ franchisePlayoffPct(selectedTeamFranchiseHistory) }}%</span>
                       </div>
                     </div>
-                    <div v-else class="franchise-history-empty">No completed seasons yet.</div>
+                    <div v-else class="franchise-history-empty">{{ $t('No completed seasons yet.') }}</div>
                   </div>
 
                   <!-- Season-by-Season -->
                   <div class="team-coach-section">
-                    <h4 class="team-coach-section-title">Season History</h4>
+                    <h4 class="team-coach-section-title">{{ $t('Season History') }}</h4>
                     <div v-if="selectedTeamSeasonHistory.length === 0" class="franchise-history-empty">
-                      No seasons completed yet.
+                      {{ $t('No seasons completed yet.') }}
                     </div>
                     <div v-else class="franchise-season-list">
                       <div class="franchise-season-row franchise-season-row--head">
-                        <span class="franchise-season-year">Year</span>
-                        <span class="franchise-season-record">Record</span>
-                        <span class="franchise-season-result">Result</span>
+                        <span class="franchise-season-year">{{ $t('Year') }}</span>
+                        <span class="franchise-season-record">{{ $t('Record') }}</span>
+                        <span class="franchise-season-result">{{ $t('Result') }}</span>
                         <span class="franchise-season-trophy" aria-hidden="true"></span>
                       </div>
                       <div
@@ -1803,7 +1821,7 @@ function formatSalary(salary) {
                         <span class="franchise-season-year">{{ entry.year }}</span>
                         <span class="franchise-season-record">{{ entry.wins ?? 0 }}-{{ entry.losses ?? 0 }}</span>
                         <span class="franchise-season-result">{{ formatSeasonResult(entry) }}</span>
-                        <span class="franchise-season-trophy" :title="entry.champion ? 'Champion' : ''">
+                        <span class="franchise-season-trophy" :title="entry.champion ? $t('Champion') : ''">
                           <template v-if="entry.champion">🏆</template>
                         </span>
                       </div>
@@ -1815,7 +1833,7 @@ function formatSalary(salary) {
 
             <!-- Footer -->
             <footer class="team-modal-footer">
-              <button class="modal-btn-secondary" @click="closeTeamModal">Close</button>
+              <button class="modal-btn-secondary" @click="closeTeamModal">{{ $t('Close') }}</button>
             </footer>
           </div>
         </div>
@@ -1835,7 +1853,7 @@ function formatSalary(salary) {
             <header class="player-modal-header-bar">
               <button class="modal-back-btn" @click="backToTeamModal">
                 <ChevronLeft :size="20" />
-                <span>{{ playerModalOrigin === 'leaders' ? 'League Leaders' : selectedTeam?.team?.name }}</span>
+                <span>{{ playerModalOrigin === 'leaders' ? $t('League Leaders') : selectedTeam?.team?.name }}</span>
               </button>
               <button class="modal-btn-close" @click="closeAllModals" aria-label="Close">
                 <X :size="20" />
@@ -1857,6 +1875,7 @@ function formatSalary(salary) {
                 <div class="player-card-rating-corner">
                   <span class="ovr-label">OVR</span>
                   <StatBadge :value="selectedPlayer.overall_rating" size="lg" />
+                  <!-- i18n-ignore -->
                   <span v-if="selectedPlayer.is_injured || selectedPlayer.isInjured" class="player-card-injury">INJ</span>
                 </div>
                 <div class="player-card-info">
@@ -1873,7 +1892,7 @@ function formatSalary(salary) {
                     <span class="player-card-jersey">#{{ selectedPlayer.jersey_number || '00' }}</span>
                   </div>
                   <div class="player-card-bio">
-                    {{ selectedPlayer.height || "6'6\"" }} · {{ formatWeight(selectedPlayer.weight) }} lbs · Age {{ selectedPlayer.age || 25 }}
+                    {{ $t('{height} · {weight} lbs · Age {age}', { height: selectedPlayer.height || "6'6\"", weight: formatWeight(selectedPlayer.weight), age: selectedPlayer.age || 25 }) }}
                   </div>
                 </div>
               </div>
@@ -1897,7 +1916,7 @@ function formatSalary(salary) {
                     class="player-badges-toggle"
                     @click="showAllBadges = !showAllBadges"
                   >
-                    {{ showAllBadges ? 'Show Less' : `+${selectedPlayer.badges.length - 5} more` }}
+                    {{ showAllBadges ? $t('Show Less') : $t('+{n} more', { n: selectedPlayer.badges.length - 5 }) }}
                   </button>
                 </div>
               </div>
@@ -1909,21 +1928,21 @@ function formatSalary(salary) {
                   :class="{ active: playerModalTab === 'stats' }"
                   @click="playerModalTab = 'stats'"
                 >
-                  Stats
+                  {{ $t('Stats') }}
                 </button>
                 <button
                   class="player-tab"
                   :class="{ active: playerModalTab === 'attributes' }"
                   @click="playerModalTab = 'attributes'"
                 >
-                  Attributes
+                  {{ $t('Attributes') }}
                 </button>
                 <button
                   class="player-tab"
                   :class="{ active: playerModalTab === 'history' }"
                   @click="playerModalTab = 'history'"
                 >
-                  History
+                  {{ $t('History') }}
                 </button>
               </div>
 
@@ -1936,9 +1955,12 @@ function formatSalary(salary) {
                       <table class="game-log-table season-history-table">
                         <thead>
                           <tr>
-                            <th>Year</th><th>Team</th><th>GP</th>
+                            <th>{{ $t('Year') }}</th><th>{{ $t('Team') }}</th><th>GP</th>
+                            <!-- i18n-ignore -->
                             <th>PPG</th><th>RPG</th><th>APG</th>
+                            <!-- i18n-ignore -->
                             <th>SPG</th><th>BPG</th><th>FG%</th>
+                            <!-- i18n-ignore -->
                             <th>3P%</th><th>FT%</th><th>MPG</th>
                           </tr>
                         </thead>
@@ -1963,7 +1985,7 @@ function formatSalary(salary) {
                       </table>
                     </div>
                     <div v-else class="player-empty-state">
-                      <p>No season stats yet</p>
+                      <p>{{ $t('No season stats yet') }}</p>
                     </div>
                     <!-- Recent Games / Career Highs (secondary tabbed box) -->
                     <div v-if="playerRecentPerformances?.length > 0 || playerCareerHighs" class="recent-performances-section">
@@ -1972,12 +1994,12 @@ function formatSalary(salary) {
                           class="stat-subtab-btn"
                           :class="{ active: leagueStatsTab === 'recent' }"
                           @click="leagueStatsTab = 'recent'"
-                        >Recent Games</button>
+                        >{{ $t('Recent Games') }}</button>
                         <button
                           class="stat-subtab-btn"
                           :class="{ active: leagueStatsTab === 'highs' }"
                           @click="leagueStatsTab = 'highs'"
-                        >Career Highs</button>
+                        >{{ $t('Career Highs') }}</button>
                       </div>
 
                       <div v-if="leagueStatsTab === 'recent'">
@@ -1985,8 +2007,10 @@ function formatSalary(salary) {
                           <table class="game-log-table">
                             <thead>
                               <tr>
-                                <th>Date</th><th>OPP</th><th>Result</th>
+                                <!-- i18n-ignore -->
+                                <th>{{ $t('Date') }}</th><th>OPP</th><th>{{ $t('Result') }}</th>
                                 <th>MIN</th><th>PTS</th><th>REB</th><th>AST</th>
+                                <!-- i18n-ignore -->
                                 <th>STL</th><th>BLK</th><th>TO</th>
                                 <th>FG</th><th>3P</th><th>FT</th>
                               </tr>
@@ -2012,15 +2036,15 @@ function formatSalary(salary) {
                             </tbody>
                           </table>
                         </div>
-                        <div v-else class="text-secondary">No recent games yet.</div>
+                        <div v-else class="text-secondary">{{ $t('No recent games yet.') }}</div>
                       </div>
 
                       <CareerHighsPanel v-else :career-highs="playerCareerHighs" />
                     </div>
                   </template>
                   <div v-else class="player-empty-state">
-                    <p>No stats available yet</p>
-                    <span>Play some games to see this player's stats</span>
+                    <p>{{ $t('No stats available yet') }}</p>
+                    <span>{{ $t("Play some games to see this player's stats") }}</span>
                   </div>
                 </div>
 
@@ -2028,10 +2052,10 @@ function formatSalary(salary) {
                 <div v-if="playerModalTab === 'attributes'" class="player-tab-panel">
                   <!-- Ratings -->
                   <div class="player-attr-card">
-                    <h4 class="player-attr-title">Ratings</h4>
+                    <h4 class="player-attr-title">{{ $t('Ratings') }}</h4>
                     <div class="player-attr-list">
                       <div class="player-attr-row">
-                        <span class="player-attr-name">Overall</span>
+                        <span class="player-attr-name">{{ $t('Overall') }}</span>
                         <div class="player-attr-bar-wrap">
                           <div class="player-attr-bar" :style="{ width: `${selectedPlayer.overall_rating || selectedPlayer.overallRating}%`, backgroundColor: getAttrColor(selectedPlayer.overall_rating || selectedPlayer.overallRating) }"></div>
                         </div>
@@ -2040,7 +2064,7 @@ function formatSalary(salary) {
                         </span>
                       </div>
                       <div v-if="selectedPlayer.potentialRating || selectedPlayer.potential_rating" class="player-attr-row">
-                        <span class="player-attr-name">Potential</span>
+                        <span class="player-attr-name">{{ $t('Potential') }}</span>
                         <div class="player-attr-bar-wrap">
                           <div class="player-attr-bar" :style="{ width: `${selectedPlayer.potentialRating || selectedPlayer.potential_rating}%`, backgroundColor: getAttrColor(selectedPlayer.potentialRating || selectedPlayer.potential_rating) }"></div>
                         </div>
@@ -2053,7 +2077,7 @@ function formatSalary(salary) {
 
                   <!-- Offensive Attributes -->
                   <div v-if="selectedPlayer.attributes?.offense" class="player-attr-card">
-                    <h4 class="player-attr-title">Offense</h4>
+                    <h4 class="player-attr-title">{{ $t('Offense') }}</h4>
                     <div class="player-attr-list">
                       <div v-for="(value, key) in selectedPlayer.attributes.offense" :key="key" class="player-attr-row">
                         <span class="player-attr-name">{{ formatAttrName(key) }}</span>
@@ -2067,7 +2091,7 @@ function formatSalary(salary) {
 
                   <!-- Defensive Attributes -->
                   <div v-if="selectedPlayer.attributes?.defense" class="player-attr-card">
-                    <h4 class="player-attr-title">Defense</h4>
+                    <h4 class="player-attr-title">{{ $t('Defense') }}</h4>
                     <div class="player-attr-list">
                       <div v-for="(value, key) in selectedPlayer.attributes.defense" :key="key" class="player-attr-row">
                         <span class="player-attr-name">{{ formatAttrName(key) }}</span>
@@ -2081,7 +2105,7 @@ function formatSalary(salary) {
 
                   <!-- Physical Attributes -->
                   <div v-if="selectedPlayer.attributes?.physical" class="player-attr-card">
-                    <h4 class="player-attr-title">Physical</h4>
+                    <h4 class="player-attr-title">{{ $t('Physical') }}</h4>
                     <div class="player-attr-list">
                       <div v-for="(value, key) in selectedPlayer.attributes.physical" :key="key" class="player-attr-row">
                         <span class="player-attr-name">{{ formatAttrName(key) }}</span>
@@ -2095,7 +2119,7 @@ function formatSalary(salary) {
 
                   <!-- Mental Attributes -->
                   <div v-if="selectedPlayer.attributes?.mental" class="player-attr-card">
-                    <h4 class="player-attr-title">Mental</h4>
+                    <h4 class="player-attr-title">{{ $t('Mental') }}</h4>
                     <div class="player-attr-list">
                       <div v-for="(value, key) in selectedPlayer.attributes.mental" :key="key" class="player-attr-row">
                         <span class="player-attr-name">{{ formatAttrName(key) }}</span>
@@ -2109,11 +2133,11 @@ function formatSalary(salary) {
 
                   <!-- Evolution Section -->
                   <div class="player-evolution-section">
-                    <h4 class="player-attr-title">Season Evolution</h4>
+                    <h4 class="player-attr-title">{{ $t('Season Evolution') }}</h4>
 
                     <!-- Recent Evolution -->
                     <div class="player-evolution-group">
-                      <h5 class="player-evolution-label">Recent (Last 7 Days)</h5>
+                      <h5 class="player-evolution-label">{{ $t('Recent (Last 7 Days)') }}</h5>
                       <div v-if="recentEvolution.length > 0" class="player-evolution-list">
                         <div
                           v-for="item in (showAllRecentEvolution ? recentEvolution : recentEvolution.slice(0, 10))"
@@ -2131,16 +2155,16 @@ function formatSalary(salary) {
                           class="player-evolution-toggle"
                           @click="showAllRecentEvolution = !showAllRecentEvolution"
                         >
-                          {{ showAllRecentEvolution ? 'Show Less' : `Show All (${recentEvolution.length})` }}
+                          {{ showAllRecentEvolution ? $t('Show Less') : $t('Show All ({n})', { n: recentEvolution.length }) }}
                         </button>
                       </div>
-                      <div v-else class="player-evolution-empty">No recent activity</div>
+                      <div v-else class="player-evolution-empty">{{ $t('No recent activity') }}</div>
                     </div>
 
                     <!-- All-Time Evolution -->
                     <div class="player-evolution-group">
                       <button class="player-evolution-expand" @click="showAllTimeExpanded = !showAllTimeExpanded">
-                        <h5 class="player-evolution-label">All-Time</h5>
+                        <h5 class="player-evolution-label">{{ $t('All-Time') }}</h5>
                         <span>{{ showAllTimeExpanded ? '▼' : '▶' }}</span>
                       </button>
                       <div v-if="showAllTimeExpanded" class="player-evolution-list">
@@ -2162,10 +2186,10 @@ function formatSalary(salary) {
                             class="player-evolution-toggle"
                             @click="showAllTimeEvolution = !showAllTimeEvolution"
                           >
-                            {{ showAllTimeEvolution ? 'Show Less' : `Show All (${allTimeEvolution.length})` }}
+                            {{ showAllTimeEvolution ? $t('Show Less') : $t('Show All ({n})', { n: allTimeEvolution.length }) }}
                           </button>
                         </template>
-                        <div v-else class="player-evolution-empty">No history available</div>
+                        <div v-else class="player-evolution-empty">{{ $t('No history available') }}</div>
                       </div>
                     </div>
                   </div>
@@ -2179,10 +2203,11 @@ function formatSalary(salary) {
                       <span class="draft-info-pick">#{{ selectedPlayer.draftInfo.pick }}</span>
                       <div class="draft-info-details">
                         <span class="draft-info-label">
-                          Round {{ selectedPlayer.draftInfo.round }}, Pick {{ selectedPlayer.draftInfo.pick }}
+                          {{ $t('Round {round}, Pick {pick}', { round: selectedPlayer.draftInfo.round, pick: selectedPlayer.draftInfo.pick }) }}
+                          <!-- i18n-ignore -->
                           <template v-if="selectedPlayer.draftInfo.year"> &middot; {{ selectedPlayer.draftInfo.year }}</template>
                         </span>
-                        <span class="draft-info-team">Drafted by {{ selectedPlayer.draftInfo.teamAbbreviation }}</span>
+                        <span class="draft-info-team">{{ $t('Drafted by {team}', { team: selectedPlayer.draftInfo.teamAbbreviation }) }}</span>
                       </div>
                     </div>
                   </div>
@@ -2190,7 +2215,7 @@ function formatSalary(salary) {
                   <!-- Origin (school or international club + country) -->
                   <div v-if="playerOrigin" class="player-history-section">
                     <div class="origin-card">
-                      <span class="origin-label">From</span>
+                      <span class="origin-label">{{ $t('From') }}</span>
                       <span class="origin-value">{{ playerOrigin.school }}</span>
                       <span v-if="playerOrigin.country" class="origin-country">{{ playerOrigin.country }}</span>
                     </div>
@@ -2198,7 +2223,7 @@ function formatSalary(salary) {
 
                   <!-- Trade history (permanent career trade log) -->
                   <div v-if="playerTradeLog.length" class="player-history-section">
-                    <h4 class="player-attr-title">Trades</h4>
+                    <h4 class="player-attr-title">{{ $t('Trades') }}</h4>
                     <div class="trade-log-list">
                       <div v-for="(t, i) in playerTradeLog" :key="`tl-${i}`" class="trade-log-row">
                         <span class="trade-log-route">{{ t.fromAbbr || t.fromName || '—' }} → {{ t.toAbbr || t.toName || '—' }}</span>
@@ -2209,7 +2234,7 @@ function formatSalary(salary) {
 
                   <!-- All Star Selections -->
                   <div class="player-history-section">
-                    <h4 class="player-attr-title">All Star Selections</h4>
+                    <h4 class="player-attr-title">{{ $t('All Star Selections') }}</h4>
                     <div v-if="allStarSelectionList.length > 0" class="allstar-list">
                       <div v-for="(sel, i) in allStarSelectionList" :key="`as-${i}`" class="allstar-row">
                         <span class="allstar-season">{{ sel.season }}</span>
@@ -2217,47 +2242,47 @@ function formatSalary(salary) {
                       </div>
                     </div>
                     <div v-else class="player-empty-state">
-                      <p>No All-Star selections</p>
+                      <p>{{ $t('No All-Star selections') }}</p>
                     </div>
                   </div>
 
                   <!-- Awards -->
                   <div class="player-history-section">
-                    <h4 class="player-attr-title">Awards</h4>
+                    <h4 class="player-attr-title">{{ $t('Awards') }}</h4>
                     <div v-if="selectedPlayer.championships || selectedPlayer.mvp_awards || selectedPlayer.mvpAwards || selectedPlayer.finals_mvp_awards || selectedPlayer.finalsMvpAwards || selectedPlayer.conference_finals_mvp_awards || selectedPlayer.conferenceFinalsMvpAwards || selectedPlayer.all_star_selections || selectedPlayer.allStarSelections || selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear || selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections || selectedPlayer.all_rookie_team || selectedPlayer.allRookieTeam || selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam || selectedPlayer.dpoy_awards || selectedPlayer.dpoyAwards" class="player-awards-grid">
                       <span v-if="(selectedPlayer.championships || 0) > 0" class="player-award-item gold">
-                        {{ selectedPlayer.championships }}x Champion
+                        {{ $t('{n}x Champion', { n: selectedPlayer.championships }) }}
                       </span>
                       <span v-if="(selectedPlayer.finals_mvp_awards || selectedPlayer.finalsMvpAwards || 0) > 0" class="player-award-item gold">
-                        {{ selectedPlayer.finals_mvp_awards || selectedPlayer.finalsMvpAwards }}x Finals MVP
+                        {{ $t('{n}x Finals MVP', { n: selectedPlayer.finals_mvp_awards || selectedPlayer.finalsMvpAwards }) }}
                       </span>
                       <span v-if="(selectedPlayer.conference_finals_mvp_awards || selectedPlayer.conferenceFinalsMvpAwards || 0) > 0" class="player-award-item silver">
-                        {{ selectedPlayer.conference_finals_mvp_awards || selectedPlayer.conferenceFinalsMvpAwards }}x Conf Finals MVP
+                        {{ $t('{n}x Conf Finals MVP', { n: selectedPlayer.conference_finals_mvp_awards || selectedPlayer.conferenceFinalsMvpAwards }) }}
                       </span>
                       <span v-if="(selectedPlayer.mvp_awards || selectedPlayer.mvpAwards || 0) > 0" class="player-award-item gold">
-                        {{ selectedPlayer.mvp_awards || selectedPlayer.mvpAwards }}x League MVP
+                        {{ $t('{n}x League MVP', { n: selectedPlayer.mvp_awards || selectedPlayer.mvpAwards }) }}
                       </span>
                       <span v-if="(selectedPlayer.all_star_selections || selectedPlayer.allStarSelections || 0) > 0" class="player-award-item">
-                        {{ selectedPlayer.all_star_selections || selectedPlayer.allStarSelections }}x All-Star
+                        {{ $t('{n}x All-Star', { n: selectedPlayer.all_star_selections || selectedPlayer.allStarSelections }) }}
                       </span>
                       <span v-if="(selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear || 0) > 0" class="player-award-item gold">
-                        {{ selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear }}x ROTY
+                        {{ $t('{n}x ROTY', { n: selectedPlayer.rookie_of_the_year || selectedPlayer.rookieOfTheYear }) }}
                       </span>
                       <span v-if="(selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections || 0) > 0" class="player-award-item silver">
-                        {{ selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections }}x All-League
+                        {{ $t('{n}x All-League', { n: selectedPlayer.all_nba_selections || selectedPlayer.allNbaSelections }) }}
                       </span>
                       <span v-if="(selectedPlayer.dpoy_awards || selectedPlayer.dpoyAwards || 0) > 0" class="player-award-item gold">
-                        {{ selectedPlayer.dpoy_awards || selectedPlayer.dpoyAwards }}x DPOY
+                        {{ $t('{n}x DPOY', { n: selectedPlayer.dpoy_awards || selectedPlayer.dpoyAwards }) }}
                       </span>
                       <span v-if="(selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam || 0) > 0" class="player-award-item silver">
-                        {{ selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam }}x All-Defense
+                        {{ $t('{n}x All-Defense', { n: selectedPlayer.all_defensive_team || selectedPlayer.allDefensiveTeam }) }}
                       </span>
                       <span v-if="(selectedPlayer.all_rookie_team || selectedPlayer.allRookieTeam || 0) > 0" class="player-award-item">
-                        {{ selectedPlayer.all_rookie_team || selectedPlayer.allRookieTeam }}x All-Rookie
+                        {{ $t('{n}x All-Rookie', { n: selectedPlayer.all_rookie_team || selectedPlayer.allRookieTeam }) }}
                       </span>
                     </div>
                     <div v-else class="player-empty-state">
-                      <p>No awards yet</p>
+                      <p>{{ $t('No awards yet') }}</p>
                     </div>
                   </div>
                 </div>
@@ -2266,11 +2291,11 @@ function formatSalary(salary) {
               <!-- Contract Info -->
               <div v-if="selectedPlayer.contract" class="player-contract-bar">
                 <div class="player-contract-item">
-                  <span class="player-contract-label">Salary</span>
-                  <span class="player-contract-value success">{{ formatSalary(selectedPlayer.contract.salary) }}/yr</span>
+                  <span class="player-contract-label">{{ $t('Salary') }}</span>
+                  <span class="player-contract-value success">{{ $t('{salary}/yr', { salary: formatSalary(selectedPlayer.contract.salary) }) }}</span>
                 </div>
                 <div class="player-contract-item">
-                  <span class="player-contract-label">Years Left</span>
+                  <span class="player-contract-label">{{ $t('Years Left') }}</span>
                   <span class="player-contract-value">{{ selectedPlayer.contract.years_remaining }}</span>
                 </div>
               </div>
@@ -2280,9 +2305,9 @@ function formatSalary(salary) {
             <footer class="player-modal-footer">
               <button class="modal-btn-secondary" @click="backToTeamModal">
                 <ChevronLeft :size="16" />
-                Back
+                {{ $t('Back') }}
               </button>
-              <button class="modal-btn-primary" @click="closeAllModals">Done</button>
+              <button class="modal-btn-primary" @click="closeAllModals">{{ $t('Done') }}</button>
             </footer>
           </div>
         </div>

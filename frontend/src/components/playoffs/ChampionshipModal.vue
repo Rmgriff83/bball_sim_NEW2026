@@ -1,6 +1,7 @@
 <script setup>
 import { computed, watch, onUnmounted } from 'vue'
 import { Trophy, Star, Award, Crown, X } from 'lucide-vue-next'
+import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: {
@@ -53,13 +54,13 @@ const outcomeLine = computed(() => {
   const w = `${winner.value.city} ${winner.value.name}`
   const r = `${runnerUp.value.city} ${runnerUp.value.name}`
   return userWon.value
-    ? `Your ${w} defeated the ${r} ${seriesScore.value} to claim the title.`
-    : `The ${w} defeat the ${r} ${seriesScore.value} for the title.`
+    ? t('Your {w} defeated the {r} {score} to claim the title.', { w, r, score: seriesScore.value })
+    : t('The {w} defeat the {r} {score} for the title.', { w, r, score: seriesScore.value })
 })
 
 const seasonLabel = computed(() => {
   const year = props.year || 2025
-  return `${year}-${String(year + 1).slice(-2)} Season`
+  return t('{years} Season', { years: `${year}-${String(year + 1).slice(-2)}` })
 })
 
 function handleClose() {
@@ -95,7 +96,7 @@ onUnmounted(() => {
         <div class="modal-container">
           <!-- Header -->
           <header class="modal-header">
-            <h2 class="modal-title">Championship</h2>
+            <h2 class="modal-title">{{ $t('Championship') }}</h2>
             <button class="btn-close" aria-label="Close" @click="handleClose">
               <X :size="20" />
             </button>
@@ -123,7 +124,7 @@ onUnmounted(() => {
       <!-- Title -->
       <div class="title-section">
         <Crown :size="32" class="crown-icon" />
-        <h1 class="championship-title">{{ userWon ? "YOU'RE THE CHAMPIONS!" : 'LEAGUE CHAMPIONS!' }}</h1>
+        <h1 class="championship-title">{{ userWon ? $t("YOU'RE THE CHAMPIONS!") : $t('LEAGUE CHAMPIONS!') }}</h1>
       </div>
 
       <!-- Team Name -->
@@ -140,21 +141,24 @@ onUnmounted(() => {
       <div v-if="finalsMVP" class="mvp-section">
         <div class="mvp-badge">
           <Award :size="24" />
-          <span>FINALS MVP</span>
+          <span>{{ $t('FINALS MVP') }}</span>
         </div>
         <div class="mvp-card">
           <div class="mvp-name">{{ finalsMVP.name }}</div>
           <div class="mvp-stats">
             <div class="stat">
               <span class="stat-value">{{ finalsMVP.ppg }}</span>
+              <!-- i18n-ignore -->
               <span class="stat-label">PPG</span>
             </div>
             <div class="stat">
               <span class="stat-value">{{ finalsMVP.rpg }}</span>
+              <!-- i18n-ignore -->
               <span class="stat-label">RPG</span>
             </div>
             <div class="stat">
               <span class="stat-value">{{ finalsMVP.apg }}</span>
+              <!-- i18n-ignore -->
               <span class="stat-label">APG</span>
             </div>
           </div>
@@ -163,14 +167,14 @@ onUnmounted(() => {
 
       <!-- Finals result -->
       <div class="record-section">
-        <span class="record-label">Finals Result</span>
+        <span class="record-label">{{ $t('Finals Result') }}</span>
         <span class="record-value">{{ seriesScore }}<template v-if="runnerUp"> vs {{ runnerUp.abbreviation ?? runnerUp.name }}</template></span>
       </div>
 
       <!-- Championship Count (if applicable) -->
       <div v-if="winner?.championships > 0" class="dynasty-badge">
         <Star :size="16" />
-        <span>{{ winner.championships + 1 }}x Champions</span>
+        <span>{{ $t('{n}x Champions', { n: winner.championships + 1 }) }}</span>
       </div>
             </div>
           </main>
@@ -179,7 +183,7 @@ onUnmounted(() => {
           <footer class="modal-footer">
             <button class="btn-championship" @click="handleClose">
               <Trophy :size="18" />
-              <span>Continue</span>
+              <span>{{ $t('Continue') }}</span>
             </button>
           </footer>
         </div>

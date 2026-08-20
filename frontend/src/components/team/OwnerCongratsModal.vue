@@ -103,7 +103,7 @@ watch(
             <div class="hdr-avatar"><Crown :size="22" /></div>
             <div>
               <h2 class="modal-title">{{ ownerName }}</h2>
-              <p class="modal-sub">now</p>
+              <p class="modal-sub">{{ $t('now') }}</p>
             </div>
           </header>
 
@@ -118,7 +118,7 @@ watch(
                 <!-- Owner line -->
                 <div v-if="item.kind === 'say'" class="chat-row">
                   <div class="chat-avatar"><Crown :size="14" /></div>
-                  <div class="chat-bubble">{{ item.text }}</div>
+                  <div class="chat-bubble">{{ $tDynamic(item.text) }}</div>
                 </div>
 
                 <!-- Reward row -->
@@ -127,20 +127,20 @@ watch(
                     <Coins v-if="item.reward.icon === 'coins'" :size="18" />
                     <Heart v-else :size="18" />
                   </span>
-                  <span class="reward-label">{{ item.reward.label }}</span>
-                  <span class="reward-chip">{{ item.reward.chip }}</span>
+                  <span class="reward-label">{{ $tDynamic(item.reward.label) }}</span>
+                  <span class="reward-chip">{{ $tDynamic(item.reward.chip) }}</span>
                 </div>
               </template>
             </TransitionGroup>
 
-            <p v-if="!isComplete" class="tap-hint">Tap to continue…</p>
+            <p v-if="!isComplete" class="tap-hint">{{ $t('Tap to continue…') }}</p>
             <p v-else class="from-hint">— {{ ownerFirst }}</p>
           </main>
 
           <footer class="modal-footer">
             <button class="btn-confirm" :class="{ done: isComplete }" @click="advance">
-              <template v-if="isComplete">Thanks, boss <ArrowRight :size="16" /></template>
-              <template v-else>Continue <ChevronRight :size="16" /></template>
+              <template v-if="isComplete">{{ $t('Thanks, boss') }} <ArrowRight :size="16" /></template>
+              <template v-else>{{ $t('Continue') }} <ChevronRight :size="16" /></template>
             </button>
           </footer>
         </div>

@@ -29,6 +29,7 @@ import CoachResignModal from '@/components/team/CoachResignModal.vue'
 import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import OwnerCheckInModal from '@/components/team/OwnerCheckInModal.vue'
 import OwnerCongratsModal from '@/components/team/OwnerCongratsModal.vue'
+import OwnerFacilityStaffModal from '@/components/team/OwnerFacilityStaffModal.vue'
 import TeamLogo from '@/components/common/TeamLogo.vue'
 import NewsDeskCard from '@/components/game/NewsDeskCard.vue'
 import OwnerWelcomeModal from '@/components/team/OwnerWelcomeModal.vue'
@@ -66,6 +67,7 @@ import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
 import { calculateRetentionScore } from '@/engine/ai/MotivationService'
+import { t, dateLocale } from '@wl-i18n/i18n.js'
 import EndOfFreeAgencyModal from '@/components/team/EndOfFreeAgencyModal.vue'
 import UserFreeAgencyOffers from '@/components/team/UserFreeAgencyOffers.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
@@ -168,6 +170,11 @@ const showBannerCeremonyModal = ref(false)
 const showOwnerCongratsModal = ref(false)
 const ownerCongratsData = ref(null)
 const ownerCongratsApplying = ref(false)
+// Owner's quick note when hired staff preserved facilities from the offseason
+// downgrade. Transient (like NewSeasonModal): the +2 satisfaction bonus was
+// already persisted by the engine, so losing this convo on app-kill is fine.
+const showStaffFacilityModal = ref(false)
+const staffFacilityData = ref(null)
 const justHungYear = ref(null)
 let _justHungTimer = null
 
@@ -274,10 +281,10 @@ function moraleColor(pct) {
 }
 function moraleLabel(pct) {
   if (pct == null) return '—'
-  if (pct >= 80) return 'Excellent'
-  if (pct >= 50) return 'Good'
-  if (pct >= 25) return 'Low'
-  return 'Critical'
+  if (pct >= 80) return t('Excellent')
+  if (pct >= 50) return t('Good')
+  if (pct >= 25) return t('Low')
+  return t('Critical')
 }
 
 // Face icon tier matches `PlayerDetailModal.vue:594-598` so the home-view
@@ -409,7 +416,7 @@ function formatFeaturedGameDate(dateStr) {
   if (!dateStr || dateStr.length < 10) return '—'
   const [y, m, d] = dateStr.split('-').map(Number)
   const dt = new Date(y, m - 1, d)
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return dt.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' })
 }
 
 // Legacy season-averages helper, kept for the cold-start fallback above.
@@ -468,7 +475,7 @@ const teamRank = computed(() => {
 
 const conferenceLabel = computed(() => {
   if (!team.value?.conference) return ''
-  return team.value.conference === 'east' ? 'EAST' : 'WEST'
+  return team.value.conference === 'east' ? t('EAST') : t('WEST')
 })
 
 // Offseason state
@@ -718,8 +725,10 @@ function validateRosterForGame() {
   const validStarters = starters.filter(Boolean)
   if (validStarters.length < 5) {
     const shortBy = 5 - validStarters.length
-    rosterWarningMessage.value = `Your starting lineup is missing ${shortBy} player${shortBy === 1 ? '' : 's'} — likely from a recent trade or drop.`
-    rosterWarningHint.value = 'Go to the Team tab to set a full starting five and rebalance your minutes to 240.'
+    rosterWarningMessage.value = shortBy === 1
+      ? t('Your starting lineup is missing {n} player — likely from a recent trade or drop.', { n: shortBy })
+      : t('Your starting lineup is missing {n} players — likely from a recent trade or drop.', { n: shortBy })
+    rosterWarningHint.value = t('Go to the Team tab to set a full starting five and rebalance your minutes to 240.')
     showRosterWarningModal.value = true
     return false
   }
@@ -727,16 +736,18 @@ function validateRosterForGame() {
   const injuredStarters = starters.filter(p => p && (p.is_injured || p.isInjured))
   if (injuredStarters.length > 0) {
     const names = injuredStarters.map(p => p.name || `${p.first_name} ${p.last_name}`).join(', ')
-    rosterWarningMessage.value = `You have injured ${injuredStarters.length === 1 ? 'starter' : 'starters'} in your lineup: ${names}`
-    rosterWarningHint.value = 'Go to the Team tab to adjust your lineup before playing.'
+    rosterWarningMessage.value = injuredStarters.length === 1
+      ? t('You have injured starter in your lineup: {names}', { names })
+      : t('You have injured starters in your lineup: {names}', { names })
+    rosterWarningHint.value = t('Go to the Team tab to adjust your lineup before playing.')
     showRosterWarningModal.value = true
     return false
   }
 
   const totalMins = teamStore.totalTargetMinutes
   if (totalMins !== 240) {
-    rosterWarningMessage.value = `Your rotation minutes total ${totalMins} — they must equal exactly 240.`
-    rosterWarningHint.value = 'Go to the Team tab to adjust your player minutes before playing.'
+    rosterWarningMessage.value = t('Your rotation minutes total {n} — they must equal exactly 240.', { n: totalMins })
+    rosterWarningHint.value = t('Go to the Team tab to adjust your player minutes before playing.')
     showRosterWarningModal.value = true
     return false
   }
@@ -762,8 +773,8 @@ const formattedCurrentDate = computed(() => {
   if (!currentDate.value) return ''
   const date = parseLocalDate(currentDate.value)
   return {
-    weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
-    month: date.toLocaleDateString('en-US', { month: 'short' }),
+    weekday: date.toLocaleDateString(dateLocale(), { weekday: 'short' }),
+    month: date.toLocaleDateString(dateLocale(), { month: 'short' }),
     day: date.getDate(),
     year: date.getFullYear()
   }
@@ -819,7 +830,7 @@ const nextGameSeriesInfo = computed(() => {
   const opponentWins = isUserTeam1 ? (series.team2Wins ?? 0) : (series.team1Wins ?? 0)
   return {
     ...series,
-    gameLabel: gameNum ? `Game ${gameNum}` : '',
+    gameLabel: gameNum ? t('Game {n}', { n: gameNum }) : '',
     userWins,
     opponentWins,
   }
@@ -953,10 +964,10 @@ function formatGameDate(dateStr) {
   const cur = currentDate.value ? parseLocalDate(currentDate.value) : null
   if (cur) {
     const diffDays = Math.round((date - cur) / 86_400_000)
-    if (diffDays === 0) return 'Today'
-    if (diffDays === 1) return 'Tomorrow'
+    if (diffDays === 0) return t('Today')
+    if (diffDays === 1) return t('Tomorrow')
   }
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  return date.toLocaleDateString(dateLocale(), { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 // ---- Recent Games Ticker (idle detection) ----
@@ -1014,7 +1025,7 @@ const recentLeagueGames = computed(() => {
     const dateKey = game.game_date.split('T')[0].split(' ')[0]
     if (dateKey !== lastDate) {
       const d = parseLocalDate(dateKey)
-      const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      const label = d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' })
       items.push({ type: 'date', label, key: 'date-' + dateKey })
       lastDate = dateKey
     }
@@ -1346,6 +1357,7 @@ function maybeStartOffseasonTour() {
     showRookieClassModal.value ||
     showBannerCeremonyModal.value ||
     showOwnerCongratsModal.value ||
+    showStaffFacilityModal.value ||
     showCoachResignModal.value ||
     showHireCoachModal.value
   ) {
@@ -1390,6 +1402,7 @@ onUnmounted(() => {
   showRecoveryModal.value = false
   showOwnerCheckInModal.value = false
   showOwnerCongratsModal.value = false
+  showStaffFacilityModal.value = false
   showOwnerWelcomeModal.value = false
   showSimulateModal.value = false
   showCoachResignModal.value = false
@@ -1566,7 +1579,7 @@ async function handleSeasonEndContinue() {
 
   if (playoffStore.userQualified) {
     // Generate bracket and enter playoffs
-    const loadingToastId = toastStore.showLoading('Generating playoff bracket...')
+    const loadingToastId = toastStore.showLoading(t('Generating playoff bracket...'))
     try {
       await playoffStore.generateBracket(campaignId.value)
 
@@ -1595,11 +1608,11 @@ async function handleSeasonEndContinue() {
       }
 
       toastStore.removeMinimalToast(loadingToastId)
-      toastStore.showSuccess('Playoffs have begun!')
+      toastStore.showSuccess(t('Playoffs have begun!'))
       router.push(`/campaign/${campaignId.value}/playoffs`)
     } catch (err) {
       toastStore.removeMinimalToast(loadingToastId)
-      toastStore.showError('Failed to generate bracket')
+      toastStore.showError(t('Failed to generate bracket'))
     }
   } else {
     // Team missed the playoffs. handleEnterOffseason now guarantees the league
@@ -1736,6 +1749,7 @@ function maybeShowOwnerTitleCongrats() {
     showAllStarModal.value ||
     showSeasonAwardsModal.value ||
     showNewSeasonModal.value ||
+    showStaffFacilityModal.value ||
     showRookieClassModal.value ||
     showBannerCeremonyModal.value ||
     showCoachResignModal.value ||
@@ -1783,7 +1797,7 @@ async function handleCloseOwnerCongrats() {
     // Token post failed (likely offline): keep the pending marker so the
     // congrats re-offers — and re-awards — on the next surface.
     console.warn('[CampaignHome] owner congrats rewards failed, will retry:', err)
-    toastStore.showError("Couldn't deliver the owner's bonus — it will retry shortly.")
+    toastStore.showError(t("Couldn't deliver the owner's bonus — it will retry shortly."))
   } finally {
     ownerCongratsApplying.value = false
     showOwnerCongratsModal.value = false
@@ -1831,7 +1845,7 @@ async function handleEnterOffseason() {
   if (gateSettings.pendingOwnerTitleCongrats && maybeShowOwnerTitleCongrats()) return
 
   advancingToNextSeason.value = true
-  const loadingToastId = toastStore.showLoading('Processing offseason...')
+  const loadingToastId = toastStore.showLoading(t('Processing offseason...'))
   try {
     // Invariant: the league playoffs must be fully simulated and a champion
     // crowned BEFORE the offseason runs (owner evaluation / GM-contract decision
@@ -1860,7 +1874,7 @@ async function handleEnterOffseason() {
     ])
 
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showSuccess('Welcome to the offseason!')
+    toastStore.showSuccess(t('Welcome to the offseason!'))
 
     // Fire achievement toasts for anything the user team earned this season.
     // `enterOffseason` already wrote these onto `campaign.achievements`
@@ -1875,6 +1889,8 @@ async function handleEnterOffseason() {
         toastStore.showAchievement({
           label: ach.label,
           subtitle: ach.subtitle ?? '',
+          subtitleTpl: ach.subtitle_tpl ?? '',
+          subtitleParams: ach.subtitle_params ?? null,
           type: ach.type,
         })
       }, i * 900)
@@ -1907,7 +1923,7 @@ async function handleEnterOffseason() {
     maybeStartOffseasonTour()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Failed to enter offseason')
+    toastStore.showError(t('Failed to enter offseason'))
     console.error('Failed to enter offseason:', err)
   } finally {
     advancingToNextSeason.value = false
@@ -2017,7 +2033,7 @@ async function handleUnretire(retiree) {
     const player = await unretirePlayer(campaignId.value, retiree.id)
     if (!player) {
       audio.cancel()
-      toastStore.showError('Could not un-retire this player')
+      toastStore.showError(t('Could not un-retire this player'))
       return
     }
     unretiredIds.value = new Set([...unretiredIds.value, retiree.id])
@@ -2025,12 +2041,12 @@ async function handleUnretire(retiree) {
     // Mid-contract retirees go back to their team; expired deals hit the pool.
     const backAbbr = player.teamAbbreviation ?? player.team_abbreviation
     toastStore.showSuccess(backAbbr && backAbbr !== 'FA'
-      ? `${retiree.name} is coming back — re-joining ${backAbbr} on their existing contract`
-      : `${retiree.name} is coming back — available in free agency`)
+      ? t('{name} is coming back — re-joining {team} on their existing contract', { name: retiree.name, team: backAbbr })
+      : t('{name} is coming back — available in free agency', { name: retiree.name }))
     useSyncStore().markDirty()
   } catch (err) {
     audio.cancel()
-    toastStore.showError(err?.message || 'Could not un-retire this player')
+    toastStore.showError(err?.message || t('Could not un-retire this player'))
   }
 }
 
@@ -2088,7 +2104,7 @@ async function maybeShowContractDecisionModal() {
 async function handleExtendContract() {
   if (contractDecisionBusy.value) return
   contractDecisionBusy.value = true
-  const loadingToastId = toastStore.showLoading('Re-signing your contract...')
+  const loadingToastId = toastStore.showLoading(t('Re-signing your contract...'))
   try {
     await resignGmContract(campaignId.value)
     const { previous, level, promoted } = await authStore.promoteGmLevel()
@@ -2098,7 +2114,7 @@ async function handleExtendContract() {
     toastStore.removeMinimalToast(loadingToastId)
     showContractDecisionModal.value = false
     contractDecisionData.value = null
-    toastStore.showSuccess('Contract extended — your owner is keeping you on.', 4000)
+    toastStore.showSuccess(t('Contract extended — your owner is keeping you on.'), 4000)
     if (promoted) {
       await _recordGmPromotion(level)
       toastStore.showAchievement({
@@ -2111,7 +2127,7 @@ async function handleExtendContract() {
     maybeStartOffseasonTour()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Failed to re-sign contract')
+    toastStore.showError(t('Failed to re-sign contract'))
     console.error('[CampaignHome] extend contract failed:', err)
   } finally {
     contractDecisionBusy.value = false
@@ -2122,7 +2138,7 @@ async function handleExtendContract() {
 async function handleSwitchTeam(newTeamAbbreviation) {
   if (contractDecisionBusy.value || !newTeamAbbreviation) return
   contractDecisionBusy.value = true
-  const loadingToastId = toastStore.showLoading('Taking over your new team...')
+  const loadingToastId = toastStore.showLoading(t('Taking over your new team...'))
   try {
     await switchUserTeam(campaignId.value, newTeamAbbreviation)
     await _stampContractDecisionDismissed()
@@ -2140,12 +2156,12 @@ async function handleSwitchTeam(newTeamAbbreviation) {
     // resumes the offseason tour. Fall back to a toast + the tour only if no
     // owner could be resolved for the new team.
     if (!maybeShowOwnerWelcome()) {
-      toastStore.showSuccess(`You're now the GM of the ${teamStore.team?.name ?? 'new team'}.`, 4500)
+      toastStore.showSuccess(t("You're now the GM of the {team}.", { team: teamStore.team?.name ?? t('new team') }), 4500)
       maybeStartOffseasonTour()
     }
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Failed to switch teams')
+    toastStore.showError(t('Failed to switch teams'))
     console.error('[CampaignHome] switch team failed:', err)
   } finally {
     contractDecisionBusy.value = false
@@ -2519,7 +2535,7 @@ function maybeShowRookieClassSetup({ fromCheckInChain = false, force = false } =
   ) {
     return false
   }
-  if (showBannerCeremonyModal.value || showOwnerCongratsModal.value) return false
+  if (showBannerCeremonyModal.value || showOwnerCongratsModal.value || showStaffFacilityModal.value) return false
   const pending = camp.settings?.rookieClassSetupPending === true
   const shownThisYear = camp.settings?.rookieClassSetupShownYear === year
   if (!force && !pending && !(fromCheckInChain && !shownThisYear)) return false
@@ -2580,7 +2596,7 @@ async function handleRookieClassImport(build) {
     })
     _resolveRookieClassSetup()
   } catch (err) {
-    toastStore.showError(err?.message || 'Failed to apply the draft class')
+    toastStore.showError(err?.message || t('Failed to apply the draft class'))
   } finally {
     rookieClassBusy.value = false
   }
@@ -2634,6 +2650,7 @@ function maybeShowBannerCeremony() {
     showNewSeasonModal.value ||
     showRookieClassModal.value ||
     showOwnerCongratsModal.value ||
+    showStaffFacilityModal.value ||
     showCoachResignModal.value ||
     showHireCoachModal.value
   ) {
@@ -2690,6 +2707,7 @@ function maybeShowReviewNag() {
     showRookieClassModal.value ||
     showBannerCeremonyModal.value ||
     showOwnerCongratsModal.value ||
+    showStaffFacilityModal.value ||
     showCoachResignModal.value ||
     showHireCoachModal.value
   ) {
@@ -2721,7 +2739,8 @@ function maybeShowCoachDecisionModal() {
     showNewSeasonModal.value ||
     showRookieClassModal.value ||
     showBannerCeremonyModal.value ||
-    showOwnerCongratsModal.value
+    showOwnerCongratsModal.value ||
+    showStaffFacilityModal.value
   ) {
     return
   }
@@ -2747,7 +2766,7 @@ async function _stampCoachDecisionDismissed() {
 async function handleCoachResigned() {
   if (coachResignBusy.value) return
   coachResignBusy.value = true
-  const loadingToastId = toastStore.showLoading('Re-signing your coach...')
+  const loadingToastId = toastStore.showLoading(t('Re-signing your coach...'))
   try {
     const { coach, cost } = await teamStore.resignPendingCoach(campaignId.value)
     await _stampCoachDecisionDismissed()
@@ -2760,14 +2779,14 @@ async function handleCoachResigned() {
     coachDecisionData.value = null
     toastStore.showSuccess(
       cost > 0
-        ? `Re-signed ${coach?.name ?? 'your coach'} (−${cost} tokens)`
-        : `Re-signed ${coach?.name ?? 'your coach'}`,
+        ? t('Re-signed {name} (−{cost} tokens)', { name: coach?.name ?? t('your coach'), cost })
+        : t('Re-signed {name}', { name: coach?.name ?? t('your coach') }),
       4000
     )
     maybeShowReviewNag()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(err?.message || 'Failed to re-sign coach')
+    toastStore.showError(err?.message || t('Failed to re-sign coach'))
     console.error('[CampaignHome] resign coach failed:', err)
   } finally {
     coachResignBusy.value = false
@@ -2811,10 +2830,41 @@ async function handleCloseCoachResign() {
 // user sees as the new season opens.
 function handleCloseNewSeasonModal() {
   showNewSeasonModal.value = false
+  const preserved = newSeasonData.value?.preservedFacilities ?? []
   newSeasonData.value = null
+  // Staff preserved ≥1 facility → quick owner note first; its close handler
+  // continues the chain below.
+  if (preserved.length > 0 && maybeShowStaffFacilityConvo(preserved)) return
   maybeShowOwnerCheckIn()
   // If the owner check-in didn't open (already seen this year), surface the coach
   // re-sign prompt now; otherwise its close handler chains it.
+  maybeShowCoachDecisionModal()
+}
+
+// Owner's quick note explaining that hired staff kept facilities from
+// degrading over the offseason (slots between the new-season summary and the
+// owner check-in — the old facility-downgrade timing).
+function maybeShowStaffFacilityConvo(preservedFacilities) {
+  const camp = campaignStore.currentCampaign
+  if (!camp || camp.id !== campaignId.value) return false
+  const abbr = camp.teamAbbreviation ?? teamStore.team?.abbreviation ?? null
+  const owner = findOwnerForTeam(abbr)
+  if (!owner) return false
+  staffFacilityData.value = {
+    owner,
+    seasonYear: camp.currentSeasonYear ?? camp.current_season_year ?? null,
+    preservedFacilities,
+  }
+  showStaffFacilityModal.value = true
+  walkthroughStore.setSuspended(true)
+  return true
+}
+
+function handleCloseStaffFacilityConvo() {
+  showStaffFacilityModal.value = false
+  staffFacilityData.value = null
+  walkthroughStore.setSuspended(false)
+  maybeShowOwnerCheckIn()
   maybeShowCoachDecisionModal()
 }
 
@@ -2828,7 +2878,7 @@ async function handleStartNewSeason() {
     return
   }
   advancingToNextSeason.value = true
-  const loadingToastId = toastStore.showLoading('Starting new season...')
+  const loadingToastId = toastStore.showLoading(t('Starting new season...'))
   try {
     const result = await startNewSeason(campaignId.value)
 
@@ -2858,11 +2908,12 @@ async function handleStartNewSeason() {
       seasonYear: result.campaign.currentSeasonYear,
       facilitiesBefore: result.facilitiesBefore,
       facilitiesAfter: result.facilitiesAfter,
+      preservedFacilities: result.preservedFacilities ?? [],
     }
     showNewSeasonModal.value = true
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Failed to start new season')
+    toastStore.showError(t('Failed to start new season'))
     console.error('Failed to start new season:', err)
   } finally {
     advancingToNextSeason.value = false
@@ -2876,7 +2927,7 @@ async function handleStartNewSeason() {
 async function handleAiFinishStartSetup() {
   if (simmingStartSetup.value) return
   simmingStartSetup.value = true
-  const loadingToastId = toastStore.showLoading('Front office is wrapping up your roster…')
+  const loadingToastId = toastStore.showLoading(t('Front office is wrapping up your roster…'))
   try {
     const result = await aiFinishUserTeamSetup(campaignId.value)
     await Promise.all([
@@ -2886,7 +2937,7 @@ async function handleAiFinishStartSetup() {
     toastStore.removeMinimalToast(loadingToastId)
     const parts = []
     if (result.coachHired) {
-      parts.push(`Hired ${result.coachHired.name}`)
+      parts.push(t('Hired {name}', { name: result.coachHired.name }))
       // News: the front-office auto-hire is a real user-team coaching move.
       try {
         breakingNewsStore.addToFeed(BreakingNewsService.coachHired({
@@ -2898,13 +2949,13 @@ async function handleAiFinishStartSetup() {
         console.warn('[CampaignHome] coach hire news failed:', err)
       }
     }
-    if (result.playersSigned?.length) parts.push(`signed ${result.playersSigned.length} player${result.playersSigned.length === 1 ? '' : 's'}`)
+    if (result.playersSigned?.length) parts.push(result.playersSigned.length === 1 ? t('signed {n} player', { n: result.playersSigned.length }) : t('signed {n} players', { n: result.playersSigned.length }))
     // Defer a tick so the campaign / team refetch has settled before we
     // re-evaluate `startSeasonBlocked`.
     await new Promise(r => setTimeout(r, 50))
     if (!startSeasonBlocked.value) {
       // Prereqs satisfied — close the modal and chain into the actual start.
-      toastStore.showSuccess(parts.length ? parts.join(' · ') : 'Setup complete')
+      toastStore.showSuccess(parts.length ? parts.join(' · ') : t('Setup complete'))
       showStartSeasonBlockerModal.value = false
       await handleStartNewSeason()
     } else {
@@ -2912,12 +2963,12 @@ async function handleAiFinishStartSetup() {
       // too thin to fill the roster). Keep the modal open so the user sees
       // the updated state and can either retry the AI fill or finish
       // manually. Toast as a warning rather than a success.
-      const summary = parts.length ? parts.join(' · ') : 'Nothing to sign'
-      toastStore.showError(`AI couldn't fully finish setup — ${summary}. Resolve the remaining items below.`)
+      const summary = parts.length ? parts.join(' · ') : t('Nothing to sign')
+      toastStore.showError(t("AI couldn't fully finish setup — {summary}. Resolve the remaining items below.", { summary }))
     }
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(err.message || 'Failed to finish setup')
+    toastStore.showError(err.message || t('Failed to finish setup'))
     console.error('Failed to AI-finish setup:', err)
   } finally {
     simmingStartSetup.value = false
@@ -2927,7 +2978,7 @@ async function handleAiFinishStartSetup() {
 // Handle "Sim Offseason" one-click flow (auto-drafts + starts new season)
 async function handleSimOffseason() {
   advancingToNextSeason.value = true
-  const loadingToastId = toastStore.showLoading('Simulating offseason...')
+  const loadingToastId = toastStore.showLoading(t('Simulating offseason...'))
   try {
     const result = await simFullOffseason(campaignId.value)
 
@@ -2954,11 +3005,12 @@ async function handleSimOffseason() {
       seasonYear: result.campaign.currentSeasonYear,
       facilitiesBefore: result.facilitiesBefore,
       facilitiesAfter: result.facilitiesAfter,
+      preservedFacilities: result.preservedFacilities ?? [],
     }
     showNewSeasonModal.value = true
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Failed to simulate offseason')
+    toastStore.showError(t('Failed to simulate offseason'))
     console.error('Failed to sim offseason:', err)
   } finally {
     advancingToNextSeason.value = false
@@ -2984,18 +3036,18 @@ async function handleEnterFreeAgency() {
   audio.suppressClickSound() // affirmation chime instead of the generic tap
   audio.affirm()
   enteringFreeAgency.value = true
-  const loadingToastId = toastStore.showLoading('Opening free agency...')
+  const loadingToastId = toastStore.showLoading(t('Opening free agency...'))
   try {
     await financeStore.startFreeAgencyPeriod(campaignId.value)
     await campaignStore.fetchCampaign(campaignId.value, true)
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showSuccess('Free agency is open.')
+    toastStore.showSuccess(t('Free agency is open.'))
     // Drop the user directly onto the Free Agents sub-tab so they can start
     // making offers without having to hunt for it.
     navigateToFreeAgency()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(err.message || 'Failed to open free agency')
+    toastStore.showError(err.message || t('Failed to open free agency'))
     console.error('Failed to start free agency:', err)
   } finally {
     enteringFreeAgency.value = false
@@ -3012,7 +3064,7 @@ const showDraftLotteryModal = ref(false)
 async function handleRunDraftLottery() {
   if (runningLottery.value) return
   runningLottery.value = true
-  const loadingToastId = toastStore.showLoading('Running draft lottery...')
+  const loadingToastId = toastStore.showLoading(t('Running draft lottery...'))
   try {
     await runDraftLotteryForCampaign(campaignId.value)
     await campaignStore.fetchCampaign(campaignId.value, true)
@@ -3022,7 +3074,7 @@ async function handleRunDraftLottery() {
     showDraftLotteryModal.value = true
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(err.message || 'Failed to run draft lottery')
+    toastStore.showError(err.message || t('Failed to run draft lottery'))
     console.error('Failed to run draft lottery:', err)
   } finally {
     runningLottery.value = false
@@ -3042,7 +3094,7 @@ async function handleSimFreeAgencyDay() {
   audio.navigate() // generic tap; suppress the global one so it doesn't double
   audio.suppressClickSound()
   simmingFAday.value = true
-  const loadingToastId = toastStore.showLoading('Simulating free-agency day...')
+  const loadingToastId = toastStore.showLoading(t('Simulating free-agency day...'))
   try {
     const result = await financeStore.simFreeAgencyDay(campaignId.value)
     await Promise.all([
@@ -3056,13 +3108,13 @@ async function handleSimFreeAgencyDay() {
         endOfFreeAgencyResults.value = fas
         showEndOfFreeAgencyModal.value = true
       }
-      toastStore.showSuccess('Free agency complete!')
+      toastStore.showSuccess(t('Free agency complete!'))
     } else {
-      toastStore.showSuccess(`Day ${result.day}/${FREE_AGENCY_DURATION_DAYS} simulated`)
+      toastStore.showSuccess(t('Day {a}/{b} simulated', { a: result.day, b: FREE_AGENCY_DURATION_DAYS }))
     }
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(err.message || 'Failed to simulate day')
+    toastStore.showError(err.message || t('Failed to simulate day'))
     console.error('Failed to sim FA day:', err)
   } finally {
     simmingFAday.value = false
@@ -3073,7 +3125,7 @@ async function handleSimRestOfFreeAgency() {
   audio.navigate() // generic tap; suppress the global one so it doesn't double
   audio.suppressClickSound()
   simmingFAday.value = true
-  const loadingToastId = toastStore.showLoading('Simulating remainder of free agency...')
+  const loadingToastId = toastStore.showLoading(t('Simulating remainder of free agency...'))
   try {
     await financeStore.simRestOfFreeAgency(campaignId.value)
     await Promise.all([
@@ -3086,10 +3138,10 @@ async function handleSimRestOfFreeAgency() {
       endOfFreeAgencyResults.value = fas
       showEndOfFreeAgencyModal.value = true
     }
-    toastStore.showSuccess('Free agency complete!')
+    toastStore.showSuccess(t('Free agency complete!'))
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(err.message || 'Failed to simulate free agency')
+    toastStore.showError(err.message || t('Failed to simulate free agency'))
     console.error('Failed to sim rest of FA:', err)
   } finally {
     simmingFAday.value = false
@@ -3121,12 +3173,12 @@ async function handleConfirmFreeAgencyChoices(selectedIds) {
     }
     toastStore.showSuccess(
       newAccepted.length === 1
-        ? `${newAccepted[0].playerName} signed!`
-        : `Signed ${newAccepted.length} free agent${newAccepted.length === 1 ? '' : 's'}`
+        ? t('{name} signed!', { name: newAccepted[0].playerName })
+        : t('Signed {n} free agents', { n: newAccepted.length })
     )
   } catch (err) {
     console.error('Failed to finalize FA choices:', err)
-    toastStore.showError(err.message || 'Failed to finalize signings')
+    toastStore.showError(err.message || t('Failed to finalize signings'))
   } finally {
     finalizingChoices.value = false
   }
@@ -3213,21 +3265,22 @@ async function handleModalUpgradeAttribute({ playerId, category, attribute, pool
   try {
     const result = await teamStore.upgradePlayerAttribute(campaignId.value, playerId, category, attribute, pool)
     const attrLabel = attribute.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim()
-    toastStore.showSuccess(`${attrLabel} upgraded to ${Math.floor(result.new_value)}!`)
+    toastStore.showSuccess(t('{attr} upgraded to {value}!', { attr: attrLabel, value: Math.floor(result.new_value) }))
     modalPlayer.value = teamStore.roster?.find(p => p.id === playerId) ?? modalPlayer.value
   } catch (err) {
-    toastStore.showError(err.response?.data?.message || err.message || 'Upgrade failed')
+    toastStore.showError(err.response?.data?.message || err.message || t('Upgrade failed'))
   }
 }
 
 async function handleModalPurchaseUpgradePoint({ playerId, pool, price }) {
   try {
     await teamStore.purchaseUpgradePoint(campaignId.value, playerId, pool)
-    const label = pool === 'defense' ? 'defensive' : 'offensive'
-    toastStore.showSuccess(`+1 ${label} upgrade point purchased for ${price.toLocaleString()} tokens`)
+    toastStore.showSuccess(pool === 'defense'
+      ? t('+1 defensive upgrade point purchased for {price} tokens', { price: price.toLocaleString() })
+      : t('+1 offensive upgrade point purchased for {price} tokens', { price: price.toLocaleString() }))
     modalPlayer.value = teamStore.roster?.find(p => p.id === playerId) ?? modalPlayer.value
   } catch (err) {
-    toastStore.showError(err.response?.data?.message || err.message || 'Purchase failed')
+    toastStore.showError(err.response?.data?.message || err.message || t('Purchase failed'))
   }
 }
 
@@ -3235,12 +3288,12 @@ async function handleModalHoldCoachMeeting({ playerId, purchasedAction }) {
   try {
     const res = await teamStore.holdCoachMeeting(campaignId.value, playerId, { purchasedAction })
     const summary = purchasedAction
-      ? `Bought a coach meeting · morale +30 (now ${res.morale})`
-      : `Coach meeting held · morale +30 (now ${res.morale}) · ${res.actionsRemaining} actions left`
+      ? t('Bought a coach meeting · morale +30 (now {n})', { n: res.morale })
+      : t('Coach meeting held · morale +30 (now {n}) · {a} actions left', { n: res.morale, a: res.actionsRemaining })
     toastStore.showSuccess(summary)
     modalPlayer.value = teamStore.roster?.find(p => p.id === playerId) ?? modalPlayer.value
   } catch (err) {
-    toastStore.showError(err.response?.data?.message || err.message || 'Failed to hold meeting')
+    toastStore.showError(err.response?.data?.message || err.message || t('Failed to hold meeting'))
   }
 }
 
@@ -3286,7 +3339,7 @@ async function handleConfirmSimulate() {
   const preSimAwayColor = nextGame.value?.away_team?.primary_color || '#666'
 
   // Show loading toast
-  const loadingToastId = toastStore.showLoading('Simulating your game...')
+  const loadingToastId = toastStore.showLoading(t('Simulating your game...'))
 
   try {
     const response = await gameStore.simulateToNextGame(campaignId.value)
@@ -3339,7 +3392,9 @@ async function handleConfirmSimulate() {
       response.upgrade_points_awarded.forEach((award, i) => {
         setTimeout(() => {
           toastStore.showSuccess(
-            `${award.name} earned ${award.points_earned} upgrade point${award.points_earned > 1 ? 's' : ''}! (${award.total_points} total)`,
+            award.points_earned > 1
+              ? t('{name} earned {points} upgrade points! ({total} total)', { name: award.name, points: award.points_earned, total: award.total_points })
+              : t('{name} earned {points} upgrade point! ({total} total)', { name: award.name, points: award.points_earned, total: award.total_points }),
             5000
           )
         }, i * 600)
@@ -3393,7 +3448,7 @@ async function handleConfirmSimulate() {
   } catch (err) {
     // Remove loading toast and show error
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Simulation failed. Please try again.')
+    toastStore.showError(t('Simulation failed. Please try again.'))
     console.error('Failed to simulate to next game:', err)
   }
 }
@@ -3425,7 +3480,7 @@ async function handleSimToEnd() {
   const simAwayAbbr = gameToSim.away_team?.abbreviation || 'AWAY'
   const simHomeColor = gameToSim.home_team?.primary_color || '#666'
   const simAwayColor = gameToSim.away_team?.primary_color || '#666'
-  const loadingToastId = toastStore.showLoading('Simming to end...')
+  const loadingToastId = toastStore.showLoading(t('Simming to end...'))
 
   try {
     const response = await gameStore.simToEnd(campaignId.value, simGameId)
@@ -3478,7 +3533,9 @@ async function handleSimToEnd() {
       response.upgrade_points_awarded.forEach((award, i) => {
         setTimeout(() => {
           toastStore.showSuccess(
-            `${award.name} earned ${award.points_earned} upgrade point${award.points_earned > 1 ? 's' : ''}! (${award.total_points} total)`,
+            award.points_earned > 1
+              ? t('{name} earned {points} upgrade points! ({total} total)', { name: award.name, points: award.points_earned, total: award.total_points })
+              : t('{name} earned {points} upgrade point! ({total} total)', { name: award.name, points: award.points_earned, total: award.total_points }),
             5000
           )
         }, i * 600)
@@ -3515,7 +3572,7 @@ async function handleSimToEnd() {
     askPushAfterSim()
   } catch (err) {
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError('Sim to end failed. Please try again.')
+    toastStore.showError(t('Sim to end failed. Please try again.'))
     console.error('Failed to sim to end:', err)
   }
 }
@@ -3539,7 +3596,7 @@ watch(() => gameStore.backgroundSimulating, async (newVal, oldVal) => {
         gameStore.fetchGames(campaignId.value, { force: true })
       ])
       await checkPlayoffStatus()
-      toastStore.showSuccess('All league games simulated')
+      toastStore.showSuccess(t('All league games simulated'))
       // Check for trade deadline
       await checkTradeDeadline()
       // Check for new trade proposals generated during simulation
@@ -3622,7 +3679,7 @@ async function checkPendingTradeProposals() {
 async function handleAcceptProposal(proposal) {
   if (proposalActionBusy.value) return
   proposalActionBusy.value = true
-  const loadingToastId = toastStore.showLoading('Processing trade...')
+  const loadingToastId = toastStore.showLoading(t('Processing trade...'))
   try {
     const result = await tradeStore.acceptProposal(campaignId.value, proposal.id)
 
@@ -3637,7 +3694,7 @@ async function handleAcceptProposal(proposal) {
     showTradeProposalModal.value = false
     currentProposal.value = null
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showSuccess('Trade completed!')
+    toastStore.showSuccess(t('Trade completed!'))
     // Refresh team and campaign data
     await Promise.all([
       campaignStore.fetchCampaign(campaignId.value, true),
@@ -3655,7 +3712,7 @@ async function handleAcceptProposal(proposal) {
     showTradeProposalModal.value = false
     currentProposal.value = null
     toastStore.removeMinimalToast(loadingToastId)
-    toastStore.showError(tradeStore.error || 'This trade can no longer be completed.')
+    toastStore.showError(tradeStore.error || t('This trade can no longer be completed.'))
   } finally {
     proposalActionBusy.value = false
   }
@@ -3769,7 +3826,7 @@ async function handleCpuSetLineup() {
     ])
     const roster = teamStore.roster
     if (!roster || roster.length < 5) {
-      toastStore.showError('Not enough players to set lineup')
+      toastStore.showError(t('Not enough players to set lineup'))
       return
     }
     const newLineup = selectBestLineup(roster)
@@ -3785,9 +3842,9 @@ async function handleCpuSetLineup() {
     showInjuryModal.value = false
     showRecoveryModal.value = false
     showRosterWarningModal.value = false
-    toastStore.showSuccess('CPU adjusted your lineup')
+    toastStore.showSuccess(t('CPU adjusted your lineup'))
   } catch (err) {
-    toastStore.showError('Failed to auto-set lineup')
+    toastStore.showError(t('Failed to auto-set lineup'))
   }
 }
 
@@ -3830,7 +3887,7 @@ async function handleFinishSeason() {
   try {
     await gameStore.simulateRemainingSeason(campaignId.value)
   } catch (err) {
-    toastStore.showError('Failed to simulate remaining games')
+    toastStore.showError(t('Failed to simulate remaining games'))
   }
 }
 
@@ -3843,7 +3900,7 @@ async function handleContinueToPlayoffs() {
     await playoffStore.checkRegularSeasonEnd(campaignId.value)
   } catch (err) {
     console.error('Failed to re-open season-end modal:', err)
-    toastStore.showError('Failed to advance to playoffs')
+    toastStore.showError(t('Failed to advance to playoffs'))
   }
 }
 
@@ -3864,7 +3921,7 @@ async function handleConfirmSimSeason() {
     await gameStore.simulateRemainingSeason(campaignId.value)
     // Modal stays open during simulation — backgroundSimulating watcher handles refresh
   } catch (err) {
-    toastStore.showError('Failed to simulate remaining season')
+    toastStore.showError(t('Failed to simulate remaining season'))
   }
 }
 
@@ -3877,7 +3934,7 @@ async function handleSimToNextPlayoffRound() {
       await gameStore.simulateToNextPlayoffRound(campaignId.value)
     }
   } catch (err) {
-    toastStore.showError('Failed to simulate playoff games')
+    toastStore.showError(t('Failed to simulate playoff games'))
     console.error('Failed to sim to next playoff round:', err)
     return
   }
@@ -3901,7 +3958,7 @@ async function handleSimToNextPlayoffRound() {
     for (const r of refreshFailures) {
       console.warn('[PlayoffSim] Post-sim refresh partial failure:', r.reason)
     }
-    toastStore.showError('Playoffs simulated, but the page failed to refresh — reload to see the latest bracket.')
+    toastStore.showError(t('Playoffs simulated, but the page failed to refresh — reload to see the latest bracket.'))
     return
   }
 
@@ -3920,7 +3977,7 @@ async function handleSimToNextPlayoffRound() {
     // runner-up, series score, Finals MVP) like the play-the-finals path does.
     playoffStore.showChampionshipRecap(playoffStore.bracket)
   } else {
-    toastStore.showSuccess('Next round is ready!')
+    toastStore.showSuccess(t('Next round is ready!'))
   }
 
   askPushAfterSim()
@@ -3977,11 +4034,11 @@ function handleCloseSimulateModal() {
               v-for="f in facilities"
               :key="f.key"
               class="facility-tile"
-              :title="`${f.label}: ${f.level} / 5`"
+              :title="`${$tDynamic(f.label)}: ${f.level} / 5`"
               :aria-label="`${f.label} ${f.level} of 5`"
             >
               <component :is="f.icon" :size="14" class="facility-icon" />
-              <span class="facility-label">{{ f.label }}</span>
+              <span class="facility-label">{{ $tDynamic(f.label) }}</span>
               <span class="facility-rating">
                 <span class="facility-value">{{ f.level }}</span>
                 <Star :size="11" class="facility-star" />
@@ -3997,7 +4054,7 @@ function handleCloseSimulateModal() {
           v-if="teamMorale != null"
           class="team-morale-card glass-card-nebula"
           data-tour="home-team-morale"
-          :title="`Team morale: ${teamMorale} / 100 (${moraleLabel(teamMorale)})`"
+          :title="$t('Team morale: {n} / 100 ({label})', { n: teamMorale, label: moraleLabel(teamMorale) })"
         >
           <component
             :is="moraleIcon(teamMorale)"
@@ -4024,7 +4081,7 @@ function handleCloseSimulateModal() {
             :key="y"
             class="champ-banner"
             :class="{ 'just-hung': y === justHungYear }"
-            :title="`${y}-${String((y + 1) % 100).padStart(2, '0')} League Champions`"
+            :title="$t('{years} League Champions', { years: `${y}-${String((y + 1) % 100).padStart(2, '0')}` })"
           >
             <Trophy :size="8" class="champ-banner-icon" />
             <span class="champ-banner-year">'{{ String((y + 1) % 100).padStart(2, '0') }}</span>
@@ -4032,8 +4089,8 @@ function handleCloseSimulateModal() {
         </div>
         <div class="record-content">
           <div class="record-left">
-            <span class="record-label">Record</span>
-            <span class="record-rank">#{{ teamRank }} Conf. Rank</span>
+            <span class="record-label">{{ $t('Record') }}</span>
+            <span class="record-rank">{{ $t('#{rank} Conf. Rank', { rank: teamRank }) }}</span>
           </div>
           <div class="record-right">
             <span class="record-value">{{ wins }}-{{ losses }}</span>
@@ -4046,10 +4103,10 @@ function handleCloseSimulateModal() {
               <span :key="authStore.profile?.tokens" class="record-tokens-value">{{ (authStore.profile?.tokens ?? 0).toLocaleString() }}</span>
             </TransitionGroup>
           </div>
-          <span class="record-tokens-label">tokens</span>
+          <span class="record-tokens-label">{{ $t('tokens') }}</span>
           <router-link to="/store" class="shop-link">
             <ShoppingBag :size="11" />
-            Shop
+            {{ $t('Shop') }}
           </router-link>
         </div>
         <Transition name="card-loader-fade">
@@ -4068,10 +4125,10 @@ function handleCloseSimulateModal() {
         </Transition>
         <div class="next-game-header">
           <div class="next-game-label-row">
-            <h3 class="next-game-label">LAST GAME</h3>
+            <h3 class="next-game-label">{{ $t('LAST GAME') }}</h3>
             <span class="last-result-tag" :class="lastSimResultOutcome">{{ lastSimResultOutcome === 'win' ? 'W' : 'L' }}</span>
           </div>
-          <span class="next-game-location">FINAL</span>
+          <span class="next-game-location">{{ $t('FINAL') }}</span>
         </div>
         <div class="next-game-content">
           <div class="next-game-matchup">
@@ -4104,7 +4161,7 @@ function handleCloseSimulateModal() {
               @click="router.push(`/campaign/${campaignId}/game/${lastSimResult.gameId}`)"
             >
               <Search class="btn-icon" :size="16" />
-              VIEW BOX SCORE
+              {{ $t('VIEW BOX SCORE') }}
             </button>
           </div>
         </div>
@@ -4120,7 +4177,7 @@ function handleCloseSimulateModal() {
         <div class="next-game-header">
           <div class="next-game-label-group">
             <h3 class="next-game-label" :class="{ 'live': isGameInProgress }">
-              {{ isGameInProgress ? 'GAME IN PROGRESS' : 'NEXT GAME' }}
+              {{ isGameInProgress ? $t('GAME IN PROGRESS') : $t('NEXT GAME') }}
             </h3>
             <div class="next-game-meta-row">
               <span v-if="isGameInProgress && inProgressScores" class="live-quarter">Q{{ inProgressScores.quarter }}</span>
@@ -4130,18 +4187,18 @@ function handleCloseSimulateModal() {
                 <Trophy :size="14" class="playoff-info-icon" />
                 <span class="playoff-round-label">{{ playoffStore.getPlayoffRoundLabel(nextGame.playoff_round) }}</span>
                 <span v-if="nextGameSeriesInfo" class="playoff-series-record">
-                  {{ nextGameSeriesInfo.gameLabel }} &middot; Series {{ nextGameSeriesInfo.userWins }}-{{ nextGameSeriesInfo.opponentWins }}
+                  {{ $t('{game} · Series {a}-{b}', { game: nextGameSeriesInfo.gameLabel, a: nextGameSeriesInfo.userWins, b: nextGameSeriesInfo.opponentWins }) }}
                 </span>
               </div>
             </div>
           </div>
-          <span class="next-game-location">{{ nextGameOpponent?.isHome ? 'HOME' : 'AWAY' }}</span>
+          <span class="next-game-location">{{ nextGameOpponent?.isHome ? $t('HOME') : $t('AWAY') }}</span>
         </div>
         <div class="next-game-content">
           <!-- Loading state while simulating -->
           <div v-if="gameStore.simulating" class="next-game-loading">
             <LoadingSpinner size="md" />
-            <span class="next-game-loading-text">Simulating...</span>
+            <span class="next-game-loading-text">{{ $t('Simulating...') }}</span>
           </div>
 
           <!-- Normal content -->
@@ -4219,7 +4276,7 @@ function handleCloseSimulateModal() {
                 @click="navigateToGame(nextGame.id)"
               >
                 <Play class="btn-icon" :size="16" />
-                {{ isGameInProgress ? 'CONTINUE GAME' : 'PLAY GAME' }}
+                {{ isGameInProgress ? $t('CONTINUE GAME') : $t('PLAY GAME') }}
               </button>
               <button
                 v-if="!isGameInProgress"
@@ -4228,7 +4285,7 @@ function handleCloseSimulateModal() {
                 @click="handleSimulateToNextGame"
               >
                 <FastForward class="btn-icon" :size="16" />
-                SIMULATE
+                {{ $t('SIMULATE') }}
               </button>
               <button
                 v-if="isGameInProgress"
@@ -4236,7 +4293,7 @@ function handleCloseSimulateModal() {
                 @click="handleSimToEnd"
               >
                 <FastForward class="btn-icon" :size="16" />
-                SIM TO END
+                {{ $t('SIM TO END') }}
               </button>
             </div>
           </template>
@@ -4252,26 +4309,23 @@ function handleCloseSimulateModal() {
         </Transition>
         <div class="next-game-header">
           <div class="next-game-label-row">
-            <h3 class="next-game-label">{{ userEliminated ? 'SEASON OVER' : 'SERIES WON' }}</h3>
+            <h3 class="next-game-label">{{ userEliminated ? $t('SEASON OVER') : $t('SERIES WON') }}</h3>
             <Trophy :size="16" class="playoff-trophy-icon" />
           </div>
         </div>
         <div class="next-game-content">
           <div v-if="gameStore.simulating" class="next-game-loading">
             <LoadingSpinner size="md" />
-            <span class="next-game-loading-text">Simulating playoff games...</span>
+            <span class="next-game-loading-text">{{ $t('Simulating playoff games...') }}</span>
           </div>
           <template v-else>
             <p class="season-wrap-text">
-              {{ userEliminated
-                ? 'Your season has ended. Simulate the remaining playoff games to crown a champion.'
-                : 'Waiting for other playoff series to finish before the next round begins.'
-              }}
+              {{ userEliminated ? $t('Your season has ended. Simulate the remaining playoff games to crown a champion.') : $t('Waiting for other playoff series to finish before the next round begins.') }}
             </p>
             <div class="next-game-buttons">
               <button class="btn-play-game" @click="handleSimToNextPlayoffRound">
                 <FastForward class="btn-icon" :size="16" />
-                {{ userEliminated ? 'SIM REMAINING PLAYOFFS' : 'SIM TO NEXT ROUND' }}
+                {{ userEliminated ? $t('SIM REMAINING PLAYOFFS') : $t('SIM TO NEXT ROUND') }}
               </button>
             </div>
           </template>
@@ -4287,14 +4341,14 @@ function handleCloseSimulateModal() {
         </Transition>
         <div class="next-game-header">
           <div class="next-game-label-row">
-            <h3 class="next-game-label">OFFSEASON</h3>
+            <h3 class="next-game-label">{{ $t('OFFSEASON') }}</h3>
             <Trophy :size="16" class="playoff-trophy-icon" />
           </div>
         </div>
         <div class="next-game-content">
           <div v-if="advancingToNextSeason" class="next-game-loading">
             <LoadingSpinner size="md" />
-            <span class="next-game-loading-text">Starting new season...</span>
+            <span class="next-game-loading-text">{{ $t('Starting new season...') }}</span>
           </div>
           <template v-else>
             <!-- Champion Banner (with collapsible awards). Stays visible when
@@ -4311,10 +4365,10 @@ function handleCloseSimulateModal() {
                 <Trophy :size="20" class="offseason-champion-icon" />
                 <span class="offseason-champion-text">
                   <template v-if="displayedChampion">
-                    {{ displayedChampion.name }} are the champions for the {{ championSeasonLabel }} season
+                    {{ $t('{team} are the champions for the {season} season', { team: displayedChampion.name, season: championSeasonLabel }) }}
                   </template>
                   <template v-else>
-                    {{ championSeasonLabel }} Season Awards
+                    {{ $t('{season} Season Awards', { season: championSeasonLabel }) }}
                   </template>
                 </span>
                 <ChevronDown
@@ -4327,43 +4381,43 @@ function handleCloseSimulateModal() {
               <div v-if="champBannerExpanded && displayedSeasonAwards" class="offseason-champion-awards">
                 <div v-if="displayedSeasonAwards.mvp" class="offseason-award-line">
                   <Star :size="14" class="offseason-award-icon gold" />
-                  <span class="offseason-award-text">MVP: <strong>{{ displayedSeasonAwards.mvp.playerName }}</strong> ({{ displayedSeasonAwards.mvp.teamAbbr }})</span>
+                  <span class="offseason-award-text">{{ $t('MVP:') }} <strong>{{ displayedSeasonAwards.mvp.playerName }}</strong> ({{ displayedSeasonAwards.mvp.teamAbbr }})</span>
                 </div>
                 <div v-if="displayedSeasonAwards.dpoy" class="offseason-award-line">
                   <Shield :size="14" class="offseason-award-icon gold" />
-                  <span class="offseason-award-text">DPOY: <strong>{{ displayedSeasonAwards.dpoy.playerName }}</strong> ({{ displayedSeasonAwards.dpoy.teamAbbr }})</span>
+                  <span class="offseason-award-text">{{ $t('DPOY:') }} <strong>{{ displayedSeasonAwards.dpoy.playerName }}</strong> ({{ displayedSeasonAwards.dpoy.teamAbbr }})</span>
                 </div>
                 <div v-if="displayedSeasonAwards.rookieOfTheYear" class="offseason-award-line">
                   <Award :size="14" class="offseason-award-icon gold" />
-                  <span class="offseason-award-text">ROTY: <strong>{{ displayedSeasonAwards.rookieOfTheYear.playerName }}</strong> ({{ displayedSeasonAwards.rookieOfTheYear.teamAbbr }})</span>
+                  <span class="offseason-award-text">{{ $t('ROTY:') }} <strong>{{ displayedSeasonAwards.rookieOfTheYear.playerName }}</strong> ({{ displayedSeasonAwards.rookieOfTheYear.teamAbbr }})</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.first?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-League 1st: {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-League 1st:') }} {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.second?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-League 2nd: {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-League 2nd:') }} {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.third?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-League 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-League 3rd:') }} {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allDefense?.first?.length" class="offseason-award-line">
                   <Shield :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-Defense 1st: {{ displayedSeasonAwards.allDefense.first.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-Defense 1st:') }} {{ displayedSeasonAwards.allDefense.first.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allDefense?.second?.length" class="offseason-award-line">
                   <Shield :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-Defense 2nd: {{ displayedSeasonAwards.allDefense.second.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-Defense 2nd:') }} {{ displayedSeasonAwards.allDefense.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allRookie?.first?.length" class="offseason-award-line">
                   <Award :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-Rookie 1st: {{ displayedSeasonAwards.allRookie.first.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-Rookie 1st:') }} {{ displayedSeasonAwards.allRookie.first.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allRookie?.second?.length" class="offseason-award-line">
                   <Award :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-Rookie 2nd: {{ displayedSeasonAwards.allRookie.second.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-Rookie 2nd:') }} {{ displayedSeasonAwards.allRookie.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
               </div>
             </div>
@@ -4371,7 +4425,7 @@ function handleCloseSimulateModal() {
             <!-- User Season Summary -->
             <div class="offseason-summary">
               <div class="offseason-stat">
-                <span class="offseason-stat-label">Final Record</span>
+                <span class="offseason-stat-label">{{ $t('Final Record') }}</span>
                 <span class="offseason-stat-value offseason-record-row">
                   <span
                     class="offseason-team-badge"
@@ -4381,21 +4435,21 @@ function handleCloseSimulateModal() {
                 </span>
               </div>
               <div class="offseason-stat">
-                <span class="offseason-stat-label">Conference Rank</span>
+                <span class="offseason-stat-label">{{ $t('Conference Rank') }}</span>
                 <span class="offseason-stat-value">#{{ userSeasonHistory?.conferenceRank || teamRank }} {{ conferenceLabel }}</span>
               </div>
               <div v-if="previousSeasonFinish" class="offseason-stat offseason-stat-finish">
-                <span class="offseason-stat-label">Postseason Finish</span>
+                <span class="offseason-stat-label">{{ $t('Postseason Finish') }}</span>
                 <span class="offseason-stat-value" :class="`finish-${previousSeasonFinish.kind}`">
                   <template v-if="previousSeasonFinish.kind === 'champion'">
                     <Trophy :size="14" class="finish-icon" />
-                    Won the Championship
+                    {{ $t('Won the Championship') }}
                   </template>
                   <template v-else-if="previousSeasonFinish.kind === 'missed_playoffs'">
-                    Missed the Playoffs
+                    {{ $t('Missed the Playoffs') }}
                   </template>
                   <template v-else>
-                    Lost in the {{ previousSeasonFinish.roundLabel }}<template v-if="previousSeasonFinish.opponentName"> to {{ previousSeasonFinish.opponentName }}</template>
+                    {{ previousSeasonFinish.opponentName ? $t('Lost in the {round} to {team}', { round: $tDynamic(previousSeasonFinish.roundLabel), team: previousSeasonFinish.opponentName }) : $t('Lost in the {round}', { round: $tDynamic(previousSeasonFinish.roundLabel) }) }}
                   </template>
                 </span>
               </div>
@@ -4404,7 +4458,7 @@ function handleCloseSimulateModal() {
             <!-- AI Transactions Summary -->
             <div v-if="aiTransactionSummary" class="offseason-transactions">
               <span class="offseason-transactions-text">
-                League transactions: {{ aiTransactionSummary.reSignings }} re-signed, {{ aiTransactionSummary.freeAgentSignings }} FA signed{{ aiTransactionSummary.cuts > 0 ? `, ${aiTransactionSummary.cuts} released` : '' }}
+                {{ aiTransactionSummary.cuts > 0 ? $t('League transactions: {a} re-signed, {b} FA signed, {c} released', { a: aiTransactionSummary.reSignings, b: aiTransactionSummary.freeAgentSignings, c: aiTransactionSummary.cuts }) : $t('League transactions: {a} re-signed, {b} FA signed', { a: aiTransactionSummary.reSignings, b: aiTransactionSummary.freeAgentSignings }) }}
               </span>
             </div>
 
@@ -4412,9 +4466,9 @@ function handleCloseSimulateModal() {
             <div v-if="releasedUserPlayers.length > 0" class="offseason-expiring">
               <div class="offseason-expiring-header">
                 <AlertTriangle :size="16" class="offseason-expiring-icon" />
-                <span class="offseason-expiring-title">Players Released</span>
+                <span class="offseason-expiring-title">{{ $t('Players Released') }}</span>
               </div>
-              <p class="offseason-expiring-hint">These players' contracts expired and they are now free agents. You can re-sign them from Free Agents in Manage Roster.</p>
+              <p class="offseason-expiring-hint">{{ $t("These players' contracts expired and they are now free agents. You can re-sign them from Free Agents in Manage Roster.") }}</p>
               <div class="offseason-expiring-list">
                 <div
                   v-for="player in releasedUserPlayers"
@@ -4432,10 +4486,10 @@ function handleCloseSimulateModal() {
             <div v-if="isFreeAgencyActive" class="offseason-fa-banner">
               <div class="offseason-fa-header">
                 <Briefcase :size="18" class="offseason-fa-icon" />
-                <span class="offseason-fa-title">FREE AGENCY · DAY {{ freeAgencyDay }} / {{ FREE_AGENCY_DURATION_DAYS }}</span>
+                <span class="offseason-fa-title">{{ $t('FREE AGENCY · DAY {a} / {b}', { a: freeAgencyDay, b: FREE_AGENCY_DURATION_DAYS }) }}</span>
               </div>
               <p class="offseason-fa-hint">
-                Make offers from the Free Agents tab. Players evaluate every offer at the end of the period.
+                {{ $t('Make offers from the Free Agents tab. Players evaluate every offer at the end of the period.') }}
               </p>
               <div class="offseason-fa-progress">
                 <div class="offseason-fa-progress-bar" :style="{ width: (freeAgencyDay / FREE_AGENCY_DURATION_DAYS * 100) + '%' }"></div>
@@ -4455,7 +4509,7 @@ function handleCloseSimulateModal() {
                 @click="router.push(`/campaign/${campaignId}/team`)"
               >
                 <Users class="btn-icon" :size="16" />
-                MANAGE ROSTER
+                {{ $t('MANAGE ROSTER') }}
               </button>
 
               <!-- Free Agents shortcut while the window is open -->
@@ -4465,7 +4519,7 @@ function handleCloseSimulateModal() {
                 @click="navigateToFreeAgency"
               >
                 <Briefcase class="btn-icon" :size="16" />
-                FREE AGENTS
+                {{ $t('FREE AGENTS') }}
               </button>
               <button
                 v-if="isFreeAgencyActive"
@@ -4474,7 +4528,7 @@ function handleCloseSimulateModal() {
                 :disabled="simmingFAday"
               >
                 <FastForward class="btn-icon" :size="16" />
-                SIM FA DAY
+                {{ $t('SIM FA DAY') }}
               </button>
               <button
                 v-if="isFreeAgencyActive"
@@ -4483,7 +4537,7 @@ function handleCloseSimulateModal() {
                 :disabled="simmingFAday"
               >
                 <FastForward class="btn-icon" :size="16" />
-                SIM REST OF FA
+                {{ $t('SIM REST OF FA') }}
               </button>
 
               <button
@@ -4493,7 +4547,7 @@ function handleCloseSimulateModal() {
                 @click="router.push(`/campaign/${campaignId}/scouting`)"
               >
                 <Binoculars class="btn-icon" :size="16" />
-                SCOUTING
+                {{ $t('SCOUTING') }}
               </button>
               <button
                 v-if="draftLotteryCompleted && !rookieDraftCompleted && !isFreeAgencyActive"
@@ -4501,7 +4555,7 @@ function handleCloseSimulateModal() {
                 @click="showDraftLotteryModal = true"
               >
                 <Star class="btn-icon" :size="16" />
-                VIEW LOTTERY
+                {{ $t('VIEW LOTTERY') }}
               </button>
               <!-- Offseason primary CTA cycles through three states:
                    1. Draft Lottery (must run before FA opens)
@@ -4515,7 +4569,7 @@ function handleCloseSimulateModal() {
                 :disabled="runningLottery"
               >
                 <Star class="btn-icon" :size="16" />
-                {{ runningLottery ? 'RUNNING...' : 'DRAFT LOTTERY' }}
+                {{ runningLottery ? $t('RUNNING...') : $t('DRAFT LOTTERY') }}
               </button>
               <button
                 v-else-if="freeAgencyNotStarted"
@@ -4525,7 +4579,7 @@ function handleCloseSimulateModal() {
                 :disabled="enteringFreeAgency"
               >
                 <Briefcase class="btn-icon" :size="16" />
-                ENTER FREE AGENCY
+                {{ $t('ENTER FREE AGENCY') }}
               </button>
               <button
                 v-else-if="!rookieDraftCompleted && !isFreeAgencyActive"
@@ -4533,7 +4587,7 @@ function handleCloseSimulateModal() {
                 @click="router.push(`/campaign/${campaignId}/draft?mode=rookie`)"
               >
                 <Star class="btn-icon" :size="16" />
-                BEGIN DRAFT
+                {{ $t('BEGIN DRAFT') }}
               </button>
               <button
                 v-if="!isFreeAgencyActive"
@@ -4542,17 +4596,17 @@ function handleCloseSimulateModal() {
                 :disabled="advancingToNextSeason"
               >
                 <FastForward class="btn-icon" :size="16" />
-                SIM OFFSEASON
+                {{ $t('SIM OFFSEASON') }}
               </button>
               <button
                 v-if="rookieDraftCompleted"
                 class="btn-play-game"
                 @click="handleStartNewSeason"
                 :disabled="advancingToNextSeason"
-                :title="startSeasonBlocked ? 'Setup is incomplete — click for details' : ''"
+                :title="startSeasonBlocked ? $t('Setup is incomplete — click for details') : ''"
               >
                 <FastForward class="btn-icon" :size="16" />
-                START SEASON
+                {{ $t('START SEASON') }}
               </button>
             </div>
           </template>
@@ -4568,14 +4622,14 @@ function handleCloseSimulateModal() {
         </Transition>
         <div class="next-game-header">
           <div class="next-game-label-row">
-            <h3 class="next-game-label">SEASON COMPLETE</h3>
+            <h3 class="next-game-label">{{ $t('SEASON COMPLETE') }}</h3>
             <Trophy :size="16" class="playoff-trophy-icon" />
           </div>
         </div>
         <div class="next-game-content">
           <div v-if="advancingToNextSeason" class="next-game-loading">
             <LoadingSpinner size="md" />
-            <span class="next-game-loading-text">Processing offseason...</span>
+            <span class="next-game-loading-text">{{ $t('Processing offseason...') }}</span>
           </div>
           <template v-else>
             <!-- Champion Banner (with collapsible awards if available) -->
@@ -4589,7 +4643,7 @@ function handleCloseSimulateModal() {
               >
                 <Trophy :size="20" class="offseason-champion-icon" />
                 <span class="offseason-champion-text">
-                  {{ playoffStore.champion.name }} are the champions for the {{ championSeasonLabel }} season
+                  {{ $t('{team} are the champions for the {season} season', { team: playoffStore.champion.name, season: championSeasonLabel }) }}
                 </span>
                 <ChevronDown
                   v-if="displayedSeasonAwards"
@@ -4601,43 +4655,43 @@ function handleCloseSimulateModal() {
               <div v-if="champBannerExpanded && displayedSeasonAwards" class="offseason-champion-awards">
                 <div v-if="displayedSeasonAwards.mvp" class="offseason-award-line">
                   <Star :size="14" class="offseason-award-icon gold" />
-                  <span class="offseason-award-text">MVP: <strong>{{ displayedSeasonAwards.mvp.playerName }}</strong> ({{ displayedSeasonAwards.mvp.teamAbbr }})</span>
+                  <span class="offseason-award-text">{{ $t('MVP:') }} <strong>{{ displayedSeasonAwards.mvp.playerName }}</strong> ({{ displayedSeasonAwards.mvp.teamAbbr }})</span>
                 </div>
                 <div v-if="displayedSeasonAwards.dpoy" class="offseason-award-line">
                   <Shield :size="14" class="offseason-award-icon gold" />
-                  <span class="offseason-award-text">DPOY: <strong>{{ displayedSeasonAwards.dpoy.playerName }}</strong> ({{ displayedSeasonAwards.dpoy.teamAbbr }})</span>
+                  <span class="offseason-award-text">{{ $t('DPOY:') }} <strong>{{ displayedSeasonAwards.dpoy.playerName }}</strong> ({{ displayedSeasonAwards.dpoy.teamAbbr }})</span>
                 </div>
                 <div v-if="displayedSeasonAwards.rookieOfTheYear" class="offseason-award-line">
                   <Award :size="14" class="offseason-award-icon gold" />
-                  <span class="offseason-award-text">ROTY: <strong>{{ displayedSeasonAwards.rookieOfTheYear.playerName }}</strong> ({{ displayedSeasonAwards.rookieOfTheYear.teamAbbr }})</span>
+                  <span class="offseason-award-text">{{ $t('ROTY:') }} <strong>{{ displayedSeasonAwards.rookieOfTheYear.playerName }}</strong> ({{ displayedSeasonAwards.rookieOfTheYear.teamAbbr }})</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.first?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-League 1st: {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-League 1st:') }} {{ displayedSeasonAwards.allNba.first.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.second?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-League 2nd: {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-League 2nd:') }} {{ displayedSeasonAwards.allNba.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allNba?.third?.length" class="offseason-award-line">
                   <Trophy :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-League 3rd: {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-League 3rd:') }} {{ displayedSeasonAwards.allNba.third.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allDefense?.first?.length" class="offseason-award-line">
                   <Shield :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-Defense 1st: {{ displayedSeasonAwards.allDefense.first.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-Defense 1st:') }} {{ displayedSeasonAwards.allDefense.first.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allDefense?.second?.length" class="offseason-award-line">
                   <Shield :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-Defense 2nd: {{ displayedSeasonAwards.allDefense.second.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-Defense 2nd:') }} {{ displayedSeasonAwards.allDefense.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allRookie?.first?.length" class="offseason-award-line">
                   <Award :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-Rookie 1st: {{ displayedSeasonAwards.allRookie.first.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-Rookie 1st:') }} {{ displayedSeasonAwards.allRookie.first.map(p => p.playerName).join(', ') }}</span>
                 </div>
                 <div v-if="displayedSeasonAwards.allRookie?.second?.length" class="offseason-award-line">
                   <Award :size="14" class="offseason-award-icon" />
-                  <span class="offseason-award-text">All-Rookie 2nd: {{ displayedSeasonAwards.allRookie.second.map(p => p.playerName).join(', ') }}</span>
+                  <span class="offseason-award-text">{{ $t('All-Rookie 2nd:') }} {{ displayedSeasonAwards.allRookie.second.map(p => p.playerName).join(', ') }}</span>
                 </div>
               </div>
             </div>
@@ -4645,7 +4699,7 @@ function handleCloseSimulateModal() {
             <!-- User Season Summary -->
             <div class="offseason-summary">
               <div class="offseason-stat">
-                <span class="offseason-stat-label">Final Record</span>
+                <span class="offseason-stat-label">{{ $t('Final Record') }}</span>
                 <span class="offseason-stat-value offseason-record-row">
                   <span
                     class="offseason-team-badge"
@@ -4655,7 +4709,7 @@ function handleCloseSimulateModal() {
                 </span>
               </div>
               <div class="offseason-stat">
-                <span class="offseason-stat-label">Conference Rank</span>
+                <span class="offseason-stat-label">{{ $t('Conference Rank') }}</span>
                 <span class="offseason-stat-value">#{{ teamRank }} {{ conferenceLabel }}</span>
               </div>
             </div>
@@ -4663,7 +4717,7 @@ function handleCloseSimulateModal() {
             <div class="next-game-buttons">
               <button class="btn-play-game" @click="handleEnterOffseason">
                 <FastForward class="btn-icon" :size="16" />
-                ENTER OFFSEASON
+                {{ $t('ENTER OFFSEASON') }}
               </button>
             </div>
           </template>
@@ -4678,34 +4732,34 @@ function handleCloseSimulateModal() {
           </div>
         </Transition>
         <div class="next-game-header">
-          <h3 class="next-game-label">REGULAR SEASON COMPLETE</h3>
+          <h3 class="next-game-label">{{ $t('REGULAR SEASON COMPLETE') }}</h3>
         </div>
         <div class="next-game-content">
           <div v-if="gameStore.simulating" class="next-game-loading">
             <LoadingSpinner size="md" />
-            <span class="next-game-loading-text">Simulating...</span>
+            <span class="next-game-loading-text">{{ $t('Simulating...') }}</span>
           </div>
           <!-- Regular season fully done, bracket not yet generated — user dismissed
                the SeasonEndModal and is now stuck. Surface a direct path back. -->
           <template v-else-if="playoffStore.regularSeasonComplete && !playoffStore.bracketGenerated">
             <p class="season-wrap-text">
-              The regular season is over. Continue to the playoffs to generate the bracket and start the postseason.
+              {{ $t('The regular season is over. Continue to the playoffs to generate the bracket and start the postseason.') }}
             </p>
             <div class="next-game-buttons">
               <button class="btn-play-game" @click="handleContinueToPlayoffs">
                 <Trophy class="btn-icon" :size="16" />
-                CONTINUE TO PLAYOFFS
+                {{ $t('CONTINUE TO PLAYOFFS') }}
               </button>
             </div>
           </template>
           <template v-else>
             <p class="season-wrap-text">
-              You've played all your regular season games. Finish the remaining league games to see final standings and enter the playoffs.
+              {{ $t("You've played all your regular season games. Finish the remaining league games to see final standings and enter the playoffs.") }}
             </p>
             <div class="next-game-buttons">
               <button class="btn-play-game" @click="handleFinishSeason">
                 <FastForward class="btn-icon" :size="16" />
-                FINISH REGULAR SEASON
+                {{ $t('FINISH REGULAR SEASON') }}
               </button>
             </div>
           </template>
@@ -4724,7 +4778,7 @@ function handleCloseSimulateModal() {
       <section v-if="gameStore.backgroundSimulating" class="sim-progress-card glass-card-nebula">
         <div class="sim-progress-content">
           <span class="sim-progress-text">
-            Simulating league games...
+            {{ $t('Simulating league games...') }}
             <template v-if="gameStore.simulationProgress">
               {{ gameStore.simulationProgress.completed }}/{{ gameStore.simulationProgress.total }}
             </template>
@@ -4756,7 +4810,7 @@ function handleCloseSimulateModal() {
            the 14-day window averages (NOT season averages). The strip on
            the right (mobile: below) shows the games that fed the selection. -->
       <section v-if="featuredPlayer" class="featured-player-card card-cosmic" data-tour="home-featured-player" @click="openPlayerDetails">
-        <h3 class="section-header featured-header">FEATURED PLAYER</h3>
+        <h3 class="section-header featured-header">{{ $t('FEATURED PLAYER') }}</h3>
         <div class="player-content">
           <div class="player-avatar">
             <PlayerAvatar :player="featuredPlayer" :size="86" class="avatar-icon" />
@@ -4775,38 +4829,44 @@ function handleCloseSimulateModal() {
              averages. -->
         <div class="featured-window-panel">
           <div class="featured-window-header">
-            <span class="window-label">Last 2 Weeks · Per-Game Averages</span>
+            <span class="window-label">{{ $t('Last 2 Weeks · Per-Game Averages') }}</span>
             <span v-if="featuredPlayerStats.gamesPlayed" class="window-meta">{{ featuredPlayerStats.gamesPlayed }} GP</span>
           </div>
           <div class="player-stats">
             <div class="stat-item">
               <span class="stat-value">{{ featuredPlayerStats.ppg }}</span>
+              <!-- i18n-ignore -->
               <span class="stat-label">PPG</span>
             </div>
             <div class="stat-item">
               <span class="stat-value">{{ featuredPlayerStats.rpg }}</span>
+              <!-- i18n-ignore -->
               <span class="stat-label">RPG</span>
             </div>
             <div class="stat-item">
               <span class="stat-value">{{ featuredPlayerStats.apg }}</span>
+              <!-- i18n-ignore -->
               <span class="stat-label">APG</span>
             </div>
             <div class="stat-item">
               <span class="stat-value">{{ featuredPlayerStats.spg }}</span>
+              <!-- i18n-ignore -->
               <span class="stat-label">SPG</span>
             </div>
             <div class="stat-item">
               <span class="stat-value">{{ featuredPlayerStats.bpg }}</span>
+              <!-- i18n-ignore -->
               <span class="stat-label">BPG</span>
             </div>
           </div>
 
           <div v-if="featuredRecentGames.length" class="featured-recent-games">
-            <div class="recent-games-label">Recent Games</div>
+            <div class="recent-games-label">{{ $t('Recent Games') }}</div>
             <table class="recent-games-table">
               <thead>
                 <tr>
-                  <th>Date</th><th>OPP</th><th></th>
+                  <!-- i18n-ignore -->
+                  <th>{{ $t('Date') }}</th><th>OPP</th><th></th>
                   <th>PTS</th><th>REB</th><th>AST</th><th>MIN</th>
                 </tr>
               </thead>
@@ -4828,25 +4888,25 @@ function handleCloseSimulateModal() {
 
       <!-- Quick Actions Card -->
       <section class="quick-actions-card glass-card-nebula" data-tour="home-quick-actions">
-        <h3 class="section-header">QUICK ACTIONS</h3>
+        <h3 class="section-header">{{ $t('QUICK ACTIONS') }}</h3>
         <div class="quick-actions-grid">
           <button class="action-box" @click="navigateToScout">
             <div class="action-icon">
               <Binoculars :size="24" />
             </div>
-            <span class="action-label">Scout</span>
+            <span class="action-label">{{ $t('Scout') }}</span>
           </button>
           <button class="action-box" @click="navigateToRoster">
             <div class="action-icon">
               <Users :size="24" />
             </div>
-            <span class="action-label">GM View</span>
+            <span class="action-label">{{ $t('GM View') }}</span>
           </button>
           <button v-if="playoffStore.isInPlayoffs && campaign?.phase === 'playoffs'" class="action-box playoffs" @click="router.push(`/campaign/${campaignId}/playoffs`)">
             <div class="action-icon">
               <Trophy :size="24" />
             </div>
-            <span class="action-label">Bracket</span>
+            <span class="action-label">{{ $t('Bracket') }}</span>
           </button>
           <!-- Offseason: the regular season is over, so surface the playoff
                bracket here instead of standings. -->
@@ -4854,13 +4914,13 @@ function handleCloseSimulateModal() {
             <div class="action-icon">
               <Trophy :size="24" />
             </div>
-            <span class="action-label">Playoffs</span>
+            <span class="action-label">{{ $t('Playoffs') }}</span>
           </button>
           <button v-else class="action-box" @click="router.push(`/campaign/${campaignId}/league`)">
             <div class="action-icon">
               <TrendingUp :size="24" />
             </div>
-            <span class="action-label">Standings</span>
+            <span class="action-label">{{ $t('Standings') }}</span>
           </button>
           <!-- Free Agency replaces Schedule during the offseason FA window;
                Playoffs replaces it once the bracket is live; otherwise the
@@ -4873,7 +4933,7 @@ function handleCloseSimulateModal() {
             <div class="action-icon">
               <Briefcase :size="24" />
             </div>
-            <span class="action-label">Free Agency</span>
+            <span class="action-label">{{ $t('Free Agency') }}</span>
           </button>
           <button
             v-else-if="playoffStore.isInPlayoffs && !playoffStore.champion"
@@ -4883,13 +4943,13 @@ function handleCloseSimulateModal() {
             <div class="action-icon">
               <Trophy :size="24" />
             </div>
-            <span class="action-label">Playoffs</span>
+            <span class="action-label">{{ $t('Playoffs') }}</span>
           </button>
           <button v-else class="action-box" @click="router.push(`/campaign/${campaignId}/team#schedule`)">
             <div class="action-icon">
               <Calendar :size="24" />
             </div>
-            <span class="action-label">Schedule</span>
+            <span class="action-label">{{ $t('Schedule') }}</span>
           </button>
         </div>
       </section>
@@ -4903,7 +4963,7 @@ function handleCloseSimulateModal() {
         <div class="upcoming-fa-header">
           <h3 class="section-header upcoming-fa-title">
             <Clock :size="13" class="upcoming-fa-icon" />
-            EXPIRING CONTRACTS
+            {{ $t('EXPIRING CONTRACTS') }}
             <span v-if="upcomingFreeAgents.length > 0" class="upcoming-fa-count">{{ upcomingFreeAgents.length }}</span>
           </h3>
           <router-link
@@ -4911,11 +4971,11 @@ function handleCloseSimulateModal() {
             :to="`/campaign/${campaignId}/team?tab=finances&sub=expiring`"
             class="upcoming-fa-view-all"
           >
-            View all →
+            {{ $t('View all →') }}
           </router-link>
         </div>
         <div v-if="upcomingFreeAgents.length === 0" class="upcoming-fa-empty">
-          All contracts locked in for next season.
+          {{ $t('All contracts locked in for next season.') }}
         </div>
         <div v-else class="upcoming-fa-list">
           <button
@@ -4930,7 +4990,7 @@ function handleCloseSimulateModal() {
               <span class="fa-avatar-position">{{ p.position }}</span>
             </span>
             <span class="fa-name">{{ p.name || `${p.firstName ?? p.first_name ?? ''} ${p.lastName ?? p.last_name ?? ''}`.trim() }}</span>
-            <span class="fa-ovr" :title="`Overall rating: ${p.overallRating ?? p.overall_rating ?? '—'}`">
+            <span class="fa-ovr" :title="$t('Overall rating: {n}', { n: p.overallRating ?? p.overall_rating ?? '—' })">
               <span class="fa-ovr-label">OVR</span>
               <span class="fa-ovr-value">{{ p.overallRating ?? p.overall_rating ?? '—' }}</span>
             </span>
@@ -4938,9 +4998,9 @@ function handleCloseSimulateModal() {
             <span
               v-if="resignLikelihood(p) !== null"
               class="fa-meter"
-              :title="`Re-sign likelihood: ${resignLikelihood(p)}%`"
+              :title="$t('Re-sign likelihood: {n}%', { n: resignLikelihood(p) })"
             >
-              <span class="fa-meter-label">Re-sign</span>
+              <span class="fa-meter-label">{{ $t('Re-sign') }}</span>
               <span class="fa-meter-track">
                 <span
                   class="fa-meter-fill"
@@ -4957,13 +5017,11 @@ function handleCloseSimulateModal() {
     <!-- Load-error fallback: without this, a swallowed load failure rendered a
          completely BLANK page (loading=false + campaign=null had no branch). -->
     <div v-else class="load-error-container">
-      <h2 class="load-error-title">Couldn't load this campaign</h2>
+      <h2 class="load-error-title">{{ $t("Couldn't load this campaign") }}</h2>
       <p class="load-error-text">
-        Something went wrong while loading your campaign data. This is usually
-        temporary — try again, and if it keeps happening, fully close and reopen
-        the app.
+        {{ $t('Something went wrong while loading your campaign data. This is usually temporary — try again, and if it keeps happening, fully close and reopen the app.') }}
       </p>
-      <BaseButton variant="primary" @click="retryLoad">Try Again</BaseButton>
+      <BaseButton variant="primary" @click="retryLoad">{{ $t('Try Again') }}</BaseButton>
     </div>
 
     <!-- Simulate to Next Game Modal -->
@@ -4986,7 +5044,7 @@ function handleCloseSimulateModal() {
     <!-- Lineup Warning Modal -->
     <BaseModal
       :show="showLineupWarningModal"
-      title="Incomplete Lineup"
+      :title="$t('Incomplete Lineup')"
       @close="handleCloseLineupWarning"
     >
       <div class="lineup-warning-content">
@@ -4994,16 +5052,16 @@ function handleCloseSimulateModal() {
           <Users :size="48" />
         </div>
         <p class="warning-message">
-          Your starting lineup is incomplete. You need 5 starters to play or simulate games.
+          {{ $t('Your starting lineup is incomplete. You need 5 starters to play or simulate games.') }}
         </p>
         <p class="warning-hint">
-          Go to your roster to set your lineup before continuing.
+          {{ $t('Go to your roster to set your lineup before continuing.') }}
         </p>
         <div class="warning-actions">
-          <button class="btn-secondary" @click="handleCloseLineupWarning">Cancel</button>
+          <button class="btn-secondary" @click="handleCloseLineupWarning">{{ $t('Cancel') }}</button>
           <button class="btn-primary" @click="goToRosterFromWarning">
             <Users :size="16" />
-            Go to GM View
+            {{ $t('Go to GM View') }}
           </button>
         </div>
       </div>
@@ -5012,7 +5070,7 @@ function handleCloseSimulateModal() {
     <!-- Roster Warning Modal (minutes / injured starters) -->
     <StandardModal
       :show="showRosterWarningModal"
-      title="Lineup Issue"
+      :title="$t('Lineup Issue')"
       size="sm"
       @close="showRosterWarningModal = false"
     >
@@ -5026,15 +5084,15 @@ function handleCloseSimulateModal() {
       <template #footer>
         <div class="lineup-warning-footer">
           <div class="lineup-warning-btn-row">
-            <button class="warning-btn-cancel" @click="showRosterWarningModal = false">Cancel</button>
+            <button class="warning-btn-cancel" @click="showRosterWarningModal = false">{{ $t('Cancel') }}</button>
             <button class="warning-btn-cpu" @click="handleCpuSetLineup">
               <Cpu :size="16" />
-              CPU Adjust
+              {{ $t('CPU Adjust') }}
             </button>
           </div>
           <button class="warning-btn-confirm" @click="goToTeamTabFromWarning">
             <Users :size="16" />
-            View Lineup
+            {{ $t('View Lineup') }}
           </button>
         </div>
       </template>
@@ -5144,6 +5202,7 @@ function handleCloseSimulateModal() {
       :season-year="newSeasonData?.seasonYear"
       :facilities-before="newSeasonData?.facilitiesBefore"
       :facilities-after="newSeasonData?.facilitiesAfter"
+      :preserved-facilities="newSeasonData?.preservedFacilities ?? []"
       @close="handleCloseNewSeasonModal"
     />
 
@@ -5174,6 +5233,16 @@ function handleCloseSimulateModal() {
       :season-year="ownerCongratsData?.seasonYear"
       :team-name="team?.name ?? ''"
       @close="handleCloseOwnerCongrats"
+    />
+
+    <!-- Owner's quick note when hired staff preserved facilities from the
+         offseason downgrade — chained right after the new-season summary. -->
+    <OwnerFacilityStaffModal
+      :show="showStaffFacilityModal"
+      :owner="staffFacilityData?.owner"
+      :season-year="staffFacilityData?.seasonYear"
+      :preserved-facilities="staffFacilityData?.preservedFacilities ?? []"
+      @close="handleCloseStaffFacilityConvo"
     />
 
     <!-- Rookie-class setup (custom_roster owners) — chained directly after the
@@ -5249,7 +5318,7 @@ function handleCloseSimulateModal() {
                 <div class="inj-header-icon">
                   <AlertTriangle :size="18" />
                 </div>
-                <h2 class="inj-title">Injury Report</h2>
+                <h2 class="inj-title">{{ $t('Injury Report') }}</h2>
               </div>
               <button class="inj-close" @click="showInjuryModal = false" aria-label="Close">
                 <X :size="20" />
@@ -5273,13 +5342,13 @@ function handleCloseSimulateModal() {
                     </div>
                     <div class="inj-detail-row">
                       <span class="inj-type">{{ injury.injury_type }}</span>
-                      <span class="inj-duration">{{ injury.days_out ?? injury.games_out ?? 0 }} {{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? 'day' : 'days' }}</span>
+                      <span class="inj-duration">{{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('{n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('{n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <p class="inj-hint">Injured starters will be automatically benched. Update your lineup to set replacements.</p>
+              <p class="inj-hint">{{ $t('Injured starters will be automatically benched. Update your lineup to set replacements.') }}</p>
             </main>
 
             <!-- Footer — Dismiss removed; the X in the header and the
@@ -5287,11 +5356,11 @@ function handleCloseSimulateModal() {
             <footer class="inj-footer">
               <button class="inj-btn-cpu" @click="handleCpuSetLineup">
                 <Zap :size="16" />
-                CPU Set Lineup
+                {{ $t('CPU Set Lineup') }}
               </button>
               <button class="inj-btn-lineup" @click="goToLineup">
                 <Users :size="16" />
-                Update Lineup
+                {{ $t('Update Lineup') }}
               </button>
             </footer>
           </div>
@@ -5313,7 +5382,7 @@ function handleCloseSimulateModal() {
                 <div class="rec-header-icon">
                   <Heart :size="18" />
                 </div>
-                <h2 class="inj-title">Recovery Report</h2>
+                <h2 class="inj-title">{{ $t('Recovery Report') }}</h2>
               </div>
               <button class="inj-close" @click="showRecoveryModal = false" aria-label="Close">
                 <X :size="20" />
@@ -5332,17 +5401,17 @@ function handleCloseSimulateModal() {
                   <div class="inj-card-body">
                     <div class="inj-player-row">
                       <span class="inj-player-name">{{ recovery.name }}</span>
-                      <span class="inj-severity-tag">Cleared</span>
+                      <span class="inj-severity-tag">{{ $t('Cleared') }}</span>
                     </div>
                     <div class="inj-detail-row">
                       <span class="inj-type">{{ recovery.injury_type }}</span>
-                      <span class="rec-status">Ready to play</span>
+                      <span class="rec-status">{{ $t('Ready to play') }}</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <p class="inj-hint">These players are healthy and available for your lineup.</p>
+              <p class="inj-hint">{{ $t('These players are healthy and available for your lineup.') }}</p>
             </main>
 
             <footer class="inj-footer">
@@ -5350,11 +5419,11 @@ function handleCloseSimulateModal() {
                    exit the modal. -->
               <button class="inj-btn-cpu" @click="handleCpuSetLineup">
                 <Zap :size="16" />
-                CPU Set Lineup
+                {{ $t('CPU Set Lineup') }}
               </button>
               <button class="inj-btn-lineup" @click="goToLineupFromRecovery">
                 <Users :size="16" />
-                Update Lineup
+                {{ $t('Update Lineup') }}
               </button>
             </footer>
           </div>
@@ -5381,7 +5450,7 @@ function handleCloseSimulateModal() {
                   <span class="gt-rank">#{{ item.pick }}</span>
                   <TeamLogo :abbreviation="item.teamAbbr" :color="item.teamColor" :size="16" class="gt-team-logo" />
                   <span class="gt-abbr gt-pick-team">{{ item.teamAbbr }}</span>
-                  <span v-if="item.viaAbbr" class="gt-via">via {{ item.viaAbbr }}</span>
+                  <span v-if="item.viaAbbr" class="gt-via">{{ $t('via {team}', { team: item.viaAbbr }) }}</span>
                   <span v-if="item.playerName" class="gt-player">{{ item.playerName }}</span>
                   <span class="gt-divider"></span>
                 </span>

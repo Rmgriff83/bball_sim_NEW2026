@@ -89,7 +89,7 @@ function close() {
       <div v-if="show" class="modal-overlay" @click.self="close">
         <div class="modal-container">
           <header>
-            <h2 class="modal-title">Rookie Class</h2>
+            <h2 class="modal-title">{{ $t('Rookie Class') }}</h2>
             <button class="close-btn" @click="close">
               <X :size="20" />
             </button>
@@ -97,45 +97,43 @@ function close() {
 
           <main>
             <p class="intro">
-              The {{ seasonDisplay }} scouting board is set — {{ classCount ?? '…' }} prospects
-              enter the {{ draftYear }} draft at season's end. How do you want this
-              season's rookie class handled?
+              {{ $t("The {a} scouting board is set — {b} prospects enter the {c} draft at season's end. How do you want this season's rookie class handled?", { a: seasonDisplay, b: classCount ?? '…', c: draftYear }) }}
             </p>
 
             <button class="option-card" :disabled="busy" @click="emit('continue')">
               <Sparkles :size="18" class="option-icon" />
               <span class="option-text">
-                <span class="option-title">Generate &amp; Continue</span>
-                <span class="option-desc">Keep the generated class and get on with the season.</span>
+                <span class="option-title">{{ $t('Generate & Continue') }}</span>
+                <span class="option-desc">{{ $t('Keep the generated class and get on with the season.') }}</span>
               </span>
             </button>
 
             <button class="option-card" :disabled="busy" @click="emit('edit')">
               <PencilRuler :size="18" class="option-icon" />
               <span class="option-text">
-                <span class="option-title">Generate &amp; Edit</span>
-                <span class="option-desc">Open the class editor — tweak prospects, reroll the class, or build your own.</span>
+                <span class="option-title">{{ $t('Generate & Edit') }}</span>
+                <span class="option-desc">{{ $t('Open the class editor — tweak prospects, reroll the class, or build your own.') }}</span>
               </span>
             </button>
 
             <div v-if="importedClasses.length" class="option-card import-card">
               <Download :size="18" class="option-icon" />
               <span class="option-text">
-                <span class="option-title">Use an Imported Class</span>
+                <span class="option-title">{{ $t('Use an Imported Class') }}</span>
                 <select v-model="selectedBuildId" class="import-select" :disabled="busy">
                   <option v-for="b in importedClasses" :key="b.id" :value="b.id">
-                    {{ b.title }}{{ b._workshopId ? ` — Builder project (${b.prospectCount})` : (b.author ? ` — ${b.author}` : '') }}
+                    {{ b.title }}{{ b._workshopId ? $t(' — Builder project ({n})', { n: b.prospectCount }) : (b.author ? ` — ${b.author}` : '') }}
                   </option>
                 </select>
                 <button class="apply-btn" :disabled="busy" @click="applySelected">
                   <Loader2 v-if="busy" :size="14" class="spin" />
-                  <span v-else>Apply This Class</span>
+                  <span v-else>{{ $t('Apply This Class') }}</span>
                 </button>
               </span>
             </div>
 
             <button class="community-link" :disabled="busy" @click="emit('open-community')">
-              Browse community draft classes →
+              {{ $t('Browse community draft classes →') }}
             </button>
           </main>
         </div>

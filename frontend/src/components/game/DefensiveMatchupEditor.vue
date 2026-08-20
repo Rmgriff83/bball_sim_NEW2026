@@ -72,8 +72,8 @@ function isDefault(opponent, index) {
 <template>
   <div class="matchup-editor" :class="{ compact }">
     <div class="me-headers">
-      <span class="me-head">Their Offense</span>
-      <span class="me-head me-head-right">Your Defender</span>
+      <span class="me-head">{{ $t('Their Offense') }}</span>
+      <span class="me-head me-head-right">{{ $t('Your Defender') }}</span>
     </div>
 
     <div
@@ -125,7 +125,7 @@ function isDefault(opponent, index) {
       </div>
     </div>
 
-    <p class="me-hint">Tap a row to swap which of your players guards each opponent. Applies on man-to-man defense.</p>
+    <p class="me-hint">{{ $t('Tap a row to swap which of your players guards each opponent. Applies on man-to-man defense.') }}</p>
   </div>
 </template>
 

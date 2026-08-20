@@ -22,7 +22,7 @@ function select(id) {
       :data-tour="`editor-layer-${layer.id}`"
       @click="select(layer.id)"
     >
-      {{ layer.label }}
+      {{ $tDynamic(layer.label) }}
     </button>
   </aside>
 </template>

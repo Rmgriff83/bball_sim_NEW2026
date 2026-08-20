@@ -98,47 +98,45 @@ function save() {
   <Teleport to="body">
     <div v-if="show && team" class="tdp-overlay" @click.self="requestClose">
       <div class="tdp-modal">
-        <h3><Ticket :size="17" /> {{ team.abbreviation }} — Draft Picks</h3>
+        <h3><Ticket :size="17" /> {{ $t('{team} — Draft Picks', { team: team.abbreviation }) }}</h3>
 
         <section class="tdp-section">
-          <h4>{{ team.abbreviation }}'s own picks</h4>
+          <h4>{{ $t("{team}'s own picks", { team: team.abbreviation }) }}</h4>
           <p v-if="!ownPicks.length" class="tdp-empty">
-            No originating picks found for this team.
+            {{ $t('No originating picks found for this team.') }}
           </p>
           <div v-for="{ pick } in ownPicks" :key="pick.id" class="tdp-row">
             <span class="tdp-year">{{ yearLabel(pick) }}</span>
             <span class="tdp-round" :class="{ r1: pick.round === 1 }">R{{ pick.round }}</span>
-            <span class="tdp-owned-label">owned by</span>
+            <span class="tdp-owned-label">{{ $t('owned by') }}</span>
             <select v-model="owners[pick.id]" class="tdp-select">
               <option v-for="t in sortedTeams" :key="t.id" :value="t.id">
-                {{ t.abbreviation }}{{ t.id === team.id ? ' (own)' : '' }}
+                {{ t.id === team.id ? $t('{abbr} (own)', { abbr: t.abbreviation }) : t.abbreviation }}
               </option>
             </select>
           </div>
           <p class="tdp-hint">
-            Assigning a pick to another team means THEY make that selection in
-            the draft — the pick stays credited "via {{ team.abbreviation }}"
-            and its slot still follows {{ team.abbreviation }}'s record.
+            {{ $t("Assigning a pick to another team means THEY make that selection in the draft — the pick stays credited “via {a}” and its slot still follows {b}'s record.", { a: team.abbreviation, b: team.abbreviation }) }}
           </p>
         </section>
 
         <section v-if="acquiredPicks.length" class="tdp-section">
-          <h4>Acquired picks</h4>
+          <h4>{{ $t('Acquired picks') }}</h4>
           <div v-for="pick in acquiredPicks" :key="pick.id" class="tdp-row acquired">
             <span class="tdp-year">{{ yearLabel(pick) }}</span>
             <span class="tdp-round" :class="{ r1: pick.round === 1 }">R{{ pick.round }}</span>
-            <span class="tdp-via">via {{ pick.original_team_abbreviation }}</span>
+            <span class="tdp-via">{{ $t('via {team}', { team: pick.original_team_abbreviation }) }}</span>
           </div>
           <p class="tdp-hint">
-            Edit these from the originating team's Draft Picks panel.
+            {{ $t("Edit these from the originating team's Draft Picks panel.") }}
           </p>
         </section>
 
         <div class="tdp-actions">
           <!-- tdp-cancel: token class for the global dismiss SFX. -->
-          <button class="tdp-secondary tdp-cancel" @click="requestClose">Cancel</button>
+          <button class="tdp-secondary tdp-cancel" @click="requestClose">{{ $t('Cancel') }}</button>
           <button class="tdp-primary" :disabled="saving" @click="save">
-            <Loader2 v-if="saving" :size="15" class="spin" /> Save Picks
+            <Loader2 v-if="saving" :size="15" class="spin" /> {{ $t('Save Picks') }}
           </button>
         </div>
       </div>
@@ -146,11 +144,11 @@ function save() {
       <!-- Unsaved-changes discard confirm -->
       <div v-if="confirmDiscard" class="tdp-discard-overlay">
         <div class="tdp-discard-box">
-          <p>Discard unsaved changes to this team's draft picks?</p>
+          <p>{{ $t("Discard unsaved changes to this team's draft picks?") }}</p>
           <div class="tdp-discard-actions">
-            <button class="tdp-primary" @click="confirmDiscard = false">Keep editing</button>
+            <button class="tdp-primary" @click="confirmDiscard = false">{{ $t('Keep editing') }}</button>
             <button class="tdp-secondary tdp-cancel tdp-discard-confirm" @click="confirmDiscard = false; emit('close')">
-              Discard
+              {{ $t('Discard') }}
             </button>
           </div>
         </div>

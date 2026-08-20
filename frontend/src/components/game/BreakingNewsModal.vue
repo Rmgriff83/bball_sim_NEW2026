@@ -1,6 +1,7 @@
 <script setup>
 import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { X, Repeat, Clock, Star, Trophy, Pause, Play } from 'lucide-vue-next'
+import { dateLocale } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -39,7 +40,7 @@ function getCategoryColor(category) {
 function formatDate(dateStr) {
   if (!dateStr) return ''
   const d = new Date(dateStr + 'T00:00:00')
-  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  return d.toLocaleDateString(dateLocale(), { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
 function onKeydown(e) {
@@ -70,7 +71,7 @@ onUnmounted(() => {
           <!-- Breaking News Banner -->
           <div class="bn-banner" :class="{ 'bn-banner-champion': isChampion }">
             <Trophy v-if="isChampion" :size="20" class="bn-banner-trophy" />
-            <span class="bn-banner-text">{{ isChampion ? 'CHAMPIONS' : 'BREAKING NEWS' }}</span>
+            <span class="bn-banner-text">{{ isChampion ? $t('CHAMPIONS') : $t('BREAKING NEWS') }}</span>
             <Trophy v-if="isChampion" :size="20" class="bn-banner-trophy" />
             <div class="bn-banner-shimmer"></div>
           </div>
@@ -83,7 +84,9 @@ onUnmounted(() => {
                 :style="{ background: getCategoryColor(item.category), color: '#fff' }"
               >
                 <component :is="getIcon(item.icon)" :size="12" />
-                {{ item.category }}
+                <!-- Category doubles as a logic key (isChampion, color switch) —
+                     translate at display only. -->
+                {{ $tDynamic(item.category) }}
               </span>
               <button class="bn-close" @click="dismissOrPause" aria-label="Close">
                 <X :size="20" />
@@ -91,13 +94,13 @@ onUnmounted(() => {
             </div>
 
             <div class="bn-article-body">
-              <h2 class="bn-headline">{{ item.headline }}</h2>
+              <h2 class="bn-headline">{{ item.headline_tpl ? $tDynamic(item.headline_tpl, item.headline_params) : item.headline }}</h2>
               <div class="bn-rule"></div>
               <div class="bn-dateline">
                 <span>{{ formatDate(item.date) }}</span>
-                <span class="bn-wire">League Wire</span>
+                <span class="bn-wire">{{ $t('League Wire') }}</span>
               </div>
-              <p class="bn-body">{{ item.body }}</p>
+              <p class="bn-body">{{ item.body_tpl ? $tDynamic(item.body_tpl, item.body_params) : item.body }}</p>
             </div>
           </div>
 
@@ -106,15 +109,15 @@ onUnmounted(() => {
             <template v-if="isSimPause">
               <button class="bn-btn-pause" @click="emit('pause')">
                 <Pause :size="14" />
-                PAUSE SIM
+                {{ $t('PAUSE SIM') }}
               </button>
               <button class="bn-btn-continue" @click="emit('continue')">
                 <Play :size="14" fill="currentColor" />
-                CONTINUE SIM
+                {{ $t('CONTINUE SIM') }}
               </button>
             </template>
             <template v-else>
-              <button class="bn-btn-continue" @click="emit('dismiss')">CONTINUE</button>
+              <button class="bn-btn-continue" @click="emit('dismiss')">{{ $t('CONTINUE') }}</button>
             </template>
           </div>
         </div>

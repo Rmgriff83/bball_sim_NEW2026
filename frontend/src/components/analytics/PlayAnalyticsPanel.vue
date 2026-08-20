@@ -128,15 +128,15 @@ watch(
 
 <template>
   <GlassCard padding="lg" :hoverable="false" class="analytics-card">
-    <h3 class="h4 mb-3">{{ title }}</h3>
+    <h3 class="h4 mb-3">{{ $tDynamic(title) }}</h3>
 
     <div class="analytics-body" :class="{ blurred: locked }">
       <div v-if="!hasData" class="analytics-empty">
-        No data yet — play some games this season.
+        {{ $t('No data yet — play some games this season.') }}
       </div>
       <template v-else>
         <div class="filter-row">
-          <label class="filter-label" for="cat-filter">Group</label>
+          <label class="filter-label" for="cat-filter">{{ $t('Group') }}</label>
           <select
             id="cat-filter"
             v-model="selectedCategory"
@@ -144,7 +144,7 @@ watch(
             @change="userSelected = true"
           >
             <option v-for="o in categoryOptions" :key="o.value" :value="o.value">
-              {{ o.label }}
+              {{ $tDynamic(o.label) }}
             </option>
           </select>
         </div>
@@ -152,18 +152,21 @@ watch(
         <table class="analytics-table">
           <thead>
             <tr>
-              <th class="col-play">Play</th>
+              <th class="col-play">{{ $t('Play') }}</th>
+              <!-- i18n-ignore -->
               <th>POSS</th>
               <th>2P%</th>
               <th>3P%</th>
+              <!-- i18n-ignore -->
               <th>TO%</th>
+              <!-- i18n-ignore -->
               <th>PPP</th>
             </tr>
           </thead>
           <tbody>
             <template v-for="g in visibleGroups" :key="g.key">
               <tr class="group-header">
-                <td class="col-play">{{ g.label }}</td>
+                <td class="col-play">{{ $tDynamic(g.label) }}</td>
                 <td>{{ g.poss }}</td>
                 <td :title="g.twoRaw">{{ fmtPct(g.two) }}</td>
                 <td :title="g.threeRaw">{{ fmtPct(g.three) }}</td>
@@ -172,7 +175,7 @@ watch(
               </tr>
               <tr v-for="r in g.plays" :key="r.id" class="play-row">
                 <td class="col-play">
-                  <span class="play-name">{{ r.name }}</span>
+                  <span class="play-name">{{ $tDynamic(r.name) }}</span>
                 </td>
                 <td>{{ r.poss }}</td>
                 <td :title="r.twoRaw">{{ fmtPct(r.two) }}</td>
@@ -188,7 +191,7 @@ watch(
 
     <div v-if="locked" class="analytics-lock">
       <Lock :size="26" />
-      <p class="lock-msg">{{ lockedMessage }}</p>
+      <p class="lock-msg">{{ $tDynamic(lockedMessage) }}</p>
     </div>
   </GlassCard>
 </template>

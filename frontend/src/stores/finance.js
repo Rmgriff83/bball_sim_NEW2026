@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { t } from '@wl-i18n/i18n.js'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
@@ -262,7 +263,7 @@ export const useFinanceStore = defineStore('finance', () => {
       const campaign = await CampaignRepository.get(campaignId)
       const resignDeadlinePassed = isPastResignDeadline(campaign)
       if (resignDeadlinePassed) {
-        useToastStore().showError('Re-signing is closed — the deadline has passed for this season.')
+        useToastStore().showError(t('Re-signing is closed — the deadline has passed for this season.'))
         throw new Error('Re-sign deadline has passed')
       }
 
@@ -273,12 +274,12 @@ export const useFinanceStore = defineStore('finance', () => {
       if (salary != null && salary < ask.requiredSalary) {
         const askM = `$${(ask.requiredSalary / 1_000_000).toFixed(1)}M`
         useToastStore().showError(
-          `${player.name || 'He'} won't re-sign for that — he wants at least ${askM}/yr.`
+          t("{name} won't re-sign for that — he wants at least {ask}/yr.", { name: player.name || t('He'), ask: askM })
         )
         throw new Error('Offer below the player\'s asking salary')
       }
       if (years > ask.maxYears) {
-        useToastStore().showError(`You can offer at most a ${ask.maxYears}-year re-sign.`)
+        useToastStore().showError(t('You can offer at most a {n}-year re-sign.', { n: ask.maxYears }))
         throw new Error('Re-sign exceeds the maximum contract length')
       }
 

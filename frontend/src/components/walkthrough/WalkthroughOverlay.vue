@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Capacitor } from '@capacitor/core'
 import { ChevronRight, ChevronLeft } from 'lucide-vue-next'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import { t } from '@wl-i18n/i18n.js'
 
 // The single global walkthrough engine. Mounted once in App.vue. Renders a
 // full-screen dim layer, a spotlight "cutout" over the current target element
@@ -76,10 +77,10 @@ const counter = computed(() => {
       if (i <= currentIdx) displayedNum++
     }
   }
-  if (totalRenderable === 0) return `${currentIdx + 1} of ${steps.length}`
-  return `${displayedNum} of ${totalRenderable}`
+  if (totalRenderable === 0) return t('{a} of {b}', { a: currentIdx + 1, b: steps.length })
+  return t('{a} of {b}', { a: displayedNum, b: totalRenderable })
 })
-const nextLabel = computed(() => (store.isLastStep ? 'Done' : 'Next'))
+const nextLabel = computed(() => (store.isLastStep ? t('Done') : t('Next')))
 // An interactive step is advanced by the user clicking the highlighted element
 // (not the Next button) — used to hand off to a deeper tour.
 const isInteractiveStep = computed(() => !!step.value?.interactive && !centerMode.value)
@@ -553,8 +554,8 @@ onUnmounted(() => {
         :style="tooltipStyle"
       >
         <div class="wt-tooltip-counter">{{ counter }}</div>
-        <h3 class="wt-tooltip-title">{{ step.title }}</h3>
-        <p class="wt-tooltip-body">{{ step.body }}</p>
+        <h3 class="wt-tooltip-title">{{ $tDynamic(step.title) }}</h3>
+        <p class="wt-tooltip-body">{{ $tDynamic(step.body) }}</p>
         <!-- Optional "learn more" link. Web: opens in a new tab so the tour
              isn't interrupted. Native: WKWebView swallows target="_blank", so
              handleLinkClick ends the tour and navigates in-place instead. -->
@@ -566,17 +567,17 @@ onUnmounted(() => {
           rel="noopener"
           @click="handleLinkClick($event)"
         >
-          {{ step.link.label }}
+          {{ $tDynamic(step.link.label) }}
         </a>
         <div class="wt-tooltip-footer">
-          <button class="wt-skip" @click="store.skip()">Skip walkthrough</button>
+          <button class="wt-skip" @click="store.skip()">{{ $t('Skip walkthrough') }}</button>
           <div class="wt-nav">
             <button v-if="!store.isFirstStep" class="wt-btn wt-btn-ghost" @click="store.back()">
               <ChevronLeft :size="16" />
-              Back
+              {{ $t('Back') }}
             </button>
             <!-- Interactive step: the user taps the highlighted element to go on. -->
-            <span v-if="isInteractiveStep" class="wt-tap-hint">Tap the highlighted card →</span>
+            <span v-if="isInteractiveStep" class="wt-tap-hint">{{ $t('Tap the highlighted card →') }}</span>
             <button v-else class="wt-btn wt-btn-primary" @click="store.next()">
               {{ nextLabel }}
               <ChevronRight v-if="!store.isLastStep" :size="16" />

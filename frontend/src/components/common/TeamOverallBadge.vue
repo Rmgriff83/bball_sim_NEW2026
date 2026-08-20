@@ -11,7 +11,7 @@ const props = defineProps({
     v-if="overall != null"
     class="team-overall-badge"
     :class="`team-overall-badge--${size}`"
-    :title="`Team Overall (healthy roster): ${overall}`"
+    :title="$t('Team Overall (healthy roster): {n}', { n: overall })"
   >
     {{ overall }}
   </span>

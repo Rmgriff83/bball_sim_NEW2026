@@ -28,6 +28,7 @@ import { resolveHeadshotSrc, invalidateCustomHeadshot } from '@/services/headsho
 import HeadshotPreview from '@/components/headshot/HeadshotPreview.vue'
 import LayerContextMenu from '@/components/headshot/LayerContextMenu.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
+import { t } from '@wl-i18n/i18n.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -115,11 +116,11 @@ const playerName = computed(() => {
   if (player.value.firstName || player.value.lastName) {
     return `${player.value.firstName || ''} ${player.value.lastName || ''}`.trim()
   }
-  return player.value.name || 'Player'
+  return player.value.name || t('Player')
 })
 
 const playerPosition = computed(() => {
-  if (audience.value === 'coach') return 'Head Coach'
+  if (audience.value === 'coach') return t('Head Coach')
   return player.value?.position || ''
 })
 
@@ -168,7 +169,7 @@ async function loadPlayer() {
 async function _loadPlayerSubject() {
   player.value = await PlayerRepository.get(campaignId.value, playerId.value)
   if (!player.value) {
-    toastStore.showError('Player not found.')
+    toastStore.showError(t('Player not found.'))
     handleExit(true)
     return
   }
@@ -216,7 +217,7 @@ function _findPersonnelIn(campaign, kind, id) {
 async function _loadPersonnel() {
   const campaign = await CampaignRepository.get(campaignId.value)
   if (!campaign) {
-    toastStore.showError('Campaign not found.')
+    toastStore.showError(t('Campaign not found.'))
     handleExit(true)
     return
   }
@@ -224,7 +225,7 @@ async function _loadPersonnel() {
 
   const { record } = _findPersonnelIn(campaign, personnelKind.value, personnelId.value)
   if (!record) {
-    toastStore.showError('Personnel not found.')
+    toastStore.showError(t('Personnel not found.'))
     handleExit(true)
     return
   }
@@ -258,7 +259,7 @@ async function _loadCoach() {
   const teams = await TeamRepository.getAllForCampaign(campaignId.value)
   const owningTeam = teams.find(t => t?.coach?.id === coachId.value)
   if (!owningTeam) {
-    toastStore.showError('Coach not found.')
+    toastStore.showError(t('Coach not found.'))
     handleExit(true)
     return
   }
@@ -347,11 +348,11 @@ async function handleSave() {
       await _savePlayer(svg)
     }
     audio.affirm()
-    toastStore.showSuccess('Headshot saved.')
+    toastStore.showSuccess(t('Headshot saved.'))
     handleExit(true)
   } catch (err) {
     console.error('[HeadshotEditor] save failed', err)
-    toastStore.showError(err?.message || 'Save failed.')
+    toastStore.showError(err?.message || t('Save failed.'))
   } finally {
     saving.value = false
   }
@@ -509,7 +510,7 @@ onMounted(async () => {
   // route here are all v-if gated, but a direct URL (or stale bookmark) must
   // bounce non-owners rather than open the editor.
   if (!useAuthStore().hasFeature('headshot_editor')) {
-    toastStore.showError('The Headshot Editor is a separate purchase — grab it from the store to edit faces.')
+    toastStore.showError(t('The Headshot Editor is a separate purchase — grab it from the store to edit faces.'))
     router.replace(`/campaign/${route.params.id}`)
     return
   }
@@ -549,7 +550,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         @click="handleExitClick"
       >
         <ArrowLeft :size="18" />
-        <span class="header-btn-label">Exit</span>
+        <span class="header-btn-label">{{ $t('Exit') }}</span>
       </button>
       <div class="editor-title-wrap" data-tour="editor-name">
         <template v-if="editingName">
@@ -566,7 +567,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
           <button
             type="button"
             class="name-icon-btn"
-            title="Save name"
+            :title="$t('Save name')"
             @mousedown.prevent="commitNameEdit"
           >
             <Check :size="14" />
@@ -577,7 +578,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
           <button
             type="button"
             class="name-icon-btn"
-            title="Edit name"
+            :title="$t('Edit name')"
             @click="startNameEdit"
           >
             <Pencil :size="13" />
@@ -593,7 +594,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         @click="handleSave"
       >
         <Save :size="16" />
-        <span class="header-btn-label">{{ saving ? 'Saving…' : 'Save' }}</span>
+        <span class="header-btn-label">{{ saving ? $t('Saving…') : $t('Save') }}</span>
       </button>
     </header>
 
@@ -611,8 +612,8 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
         <section v-if="premades.length" class="he-premades">
           <header class="he-premades-header">
             <Sparkles :size="13" />
-            <span>Defaults</span>
-            <span class="he-premades-hint">Tap to start from a premade head</span>
+            <span>{{ $t('Defaults') }}</span>
+            <span class="he-premades-hint">{{ $t('Tap to start from a premade head') }}</span>
           </header>
           <div class="he-premades-scroll">
             <button
@@ -649,20 +650,20 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
 
     <BaseModal
       :show="showExitConfirm"
-      title="Unsaved Changes"
+      :title="$t('Unsaved Changes')"
       size="xs"
       @close="showExitConfirm = false"
     >
       <div class="exit-modal-body">
         <div class="warn-icon"><AlertTriangle :size="28" /></div>
-        <p>You have unsaved changes. What would you like to do?</p>
+        <p>{{ $t('You have unsaved changes. What would you like to do?') }}</p>
       </div>
       <template #footer>
         <div class="exit-modal-actions">
-          <button class="action-btn ghost" @click="showExitConfirm = false">Keep editing</button>
-          <button class="action-btn danger" @click="discardAndExit">Discard</button>
+          <button class="action-btn ghost" @click="showExitConfirm = false">{{ $t('Keep editing') }}</button>
+          <button class="action-btn danger" @click="discardAndExit">{{ $t('Discard') }}</button>
           <button class="action-btn primary" :disabled="saving" @click="saveAndExit">
-            {{ saving ? 'Saving…' : 'Save & Exit' }}
+            {{ saving ? $t('Saving…') : $t('Save & Exit') }}
           </button>
         </div>
       </template>

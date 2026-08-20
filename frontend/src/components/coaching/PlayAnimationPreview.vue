@@ -237,7 +237,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="rootEl" class="play-preview">
-    <div v-if="!play" class="play-preview-empty">Select a play to preview</div>
+    <div v-if="!play" class="play-preview-empty">{{ $t('Select a play to preview') }}</div>
     <CourtDiagram v-else>
       <!-- Read options (dotted lines) shown while the offense decides -->
       <line
@@ -262,7 +262,7 @@ onBeforeUnmount(() => {
       <!-- Ball -->
       <circle :cx="ball.x" :cy="ball.y" r="1.8" class="ball-dot" />
     </CourtDiagram>
-    <p v-if="play" class="play-preview-name">{{ play.name }}</p>
+    <p v-if="play" class="play-preview-name">{{ $tDynamic(play.name) }}</p>
   </div>
 </template>
 

@@ -111,8 +111,8 @@ function confirm() {
       <div class="pcp-modal">
         <header class="pcp-header">
           <div class="pcp-title">
-            <h3>Color</h3>
-            <p v-if="pieceLabel" class="pcp-piece-label">{{ pieceLabel }}</p>
+            <h3>{{ $t('Color') }}</h3>
+            <p v-if="pieceLabel" class="pcp-piece-label">{{ $tDynamic(pieceLabel) }}</p>
           </div>
           <button class="pcp-close" @click="emit('close')"><X :size="16" /></button>
         </header>
@@ -123,22 +123,21 @@ function confirm() {
             class="pcp-tab"
             :class="{ active: mode === 'palette' }"
             @click="mode = 'palette'"
-          >Palette</button>
+          >{{ $t('Palette') }}</button>
           <button
             type="button"
             class="pcp-tab"
             :class="{ active: mode === 'custom' }"
             @click="mode = 'custom'"
-          >Custom</button>
+          >{{ $t('Custom') }}</button>
         </div>
 
         <div v-if="mode === 'palette'" class="pcp-tab-body">
           <p class="pcp-hint">
-            Palette colors auto-follow the rest of your headshot — change your
-            skin or hair color later and this piece updates too.
+            {{ $t('Palette colors auto-follow the rest of your headshot — change your skin or hair color later and this piece updates too.') }}
           </p>
           <div v-for="group in PALETTE_GROUPS" :key="group.label" class="pcp-group">
-            <div class="pcp-group-label">{{ group.label }}</div>
+            <div class="pcp-group-label">{{ $tDynamic(group.label) }}</div>
             <div class="pcp-swatch-row">
               <button
                 v-for="[token, label] in group.tokens"
@@ -147,7 +146,7 @@ function confirm() {
                 class="pcp-swatch"
                 :class="{ active: selectedToken === token }"
                 :style="{ background: tokenHex(token) }"
-                :title="`${group.label} ${label}`"
+                :title="`${$tDynamic(group.label)} ${$tDynamic(label)}`"
                 @click="selectedToken = token"
               />
             </div>
@@ -156,8 +155,7 @@ function confirm() {
 
         <div v-else class="pcp-tab-body">
           <p class="pcp-hint">
-            A custom color stays locked to whatever hex you pick — it won't
-            follow your palette choices.
+            {{ $t("A custom color stays locked to whatever hex you pick — it won't follow your palette choices.") }}
           </p>
           <div class="pcp-custom-row">
             <input v-model="literalHex" type="color" class="pcp-color-input" />
@@ -166,11 +164,11 @@ function confirm() {
               type="text"
               class="pcp-hex-input"
               maxlength="7"
-              placeholder="#ffaa00"
+              :placeholder="'#ffaa00'"
             />
           </div>
           <div class="pcp-opacity-row">
-            <label>Opacity <span class="pcp-opacity-readout">{{ literalOpacityPct }}%</span></label>
+            <label>{{ $t('Opacity') }} <span class="pcp-opacity-readout">{{ literalOpacityPct }}%</span></label>
             <input
               v-model.number="literalOpacityPct"
               type="range"
@@ -183,8 +181,8 @@ function confirm() {
         </div>
 
         <footer class="pcp-footer">
-          <button class="pcp-btn ghost" @click="emit('close')">Cancel</button>
-          <button class="pcp-btn primary" @click="confirm">Apply</button>
+          <button class="pcp-btn ghost" @click="emit('close')">{{ $t('Cancel') }}</button>
+          <button class="pcp-btn primary" @click="confirm">{{ $t('Apply') }}</button>
         </footer>
       </div>
     </div>

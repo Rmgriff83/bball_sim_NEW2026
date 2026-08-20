@@ -13,6 +13,8 @@ const props = defineProps({
   seasonYear: { type: [Number, String], default: null },
   // { label, expectedWins, tier, blurb }
   expectation: { type: Object, default: null },
+  // T objects ({ text, tpl, params }) from OwnerCheckInService (plain strings
+  // also tolerated): rendered via $tDynamic(tpl, params) with English fallback.
   lines: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['close'])
@@ -51,36 +53,36 @@ onUnmounted(() => {
           <header class="modal-header">
             <div class="hdr-avatar"><Crown :size="22" /></div>
             <div>
-              <h2 class="modal-title">Welcome Aboard</h2>
+              <h2 class="modal-title">{{ $t('Welcome Aboard') }}</h2>
               <p class="modal-sub">
-                {{ ownerName }}<span v-if="seasonYear"> · {{ seasonYear }} Season</span>
+                {{ ownerName }}<span v-if="seasonYear"> {{ $t('· {year} Season', { year: seasonYear }) }}</span>
               </p>
             </div>
           </header>
 
           <main class="modal-content">
-            <p v-if="owner?.blurb" class="owner-blurb">{{ owner.blurb }}</p>
+            <p v-if="owner?.blurb" class="owner-blurb">{{ $tDynamic(owner.blurb) }}</p>
 
             <div class="chat-log">
               <div v-for="(line, i) in lines" :key="i" class="chat-row">
                 <div class="chat-avatar"><Crown :size="14" /></div>
-                <div class="chat-bubble">{{ line }}</div>
+                <div class="chat-bubble">{{ line?.tpl ? $tDynamic(line.tpl, line.params) : (line?.text ?? line) }}</div>
               </div>
             </div>
 
             <div v-if="expectation" class="expectation-card">
-              <span class="exp-label">Franchise Expectation</span>
+              <span class="exp-label">{{ $t('Franchise Expectation') }}</span>
               <span class="exp-value">
-                {{ expectation.label }}
-                <span v-if="expectation.expectedWins != null" class="exp-wins">· ~{{ expectation.expectedWins }} wins</span>
+                {{ $tDynamic(expectation.label) }}
+                <span v-if="expectation.expectedWins != null" class="exp-wins">{{ $t('· ~{n} wins', { n: expectation.expectedWins }) }}</span>
               </span>
-              <span v-if="expectation.blurb" class="exp-blurb">{{ expectation.blurb }}</span>
+              <span v-if="expectation.blurb" class="exp-blurb">{{ $tDynamic(expectation.blurb) }}</span>
             </div>
           </main>
 
           <footer class="modal-footer">
             <button class="btn-confirm" @click="close">
-              Let's get to work <ArrowRight :size="16" />
+              {{ $t("Let's get to work") }} <ArrowRight :size="16" />
             </button>
           </footer>
         </div>

@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { User, AlertTriangle, RefreshCw, UserMinus, FileSignature, Heart } from 'lucide-vue-next'
+import { t } from '@wl-i18n/i18n.js'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import { StatBadge } from '@/components/ui'
 import { useFreeAgentInterest } from '@/composables/useFreeAgentInterest'
@@ -79,8 +80,8 @@ function formatSalary(salary) {
 
 function formatContractYears(years) {
   if (!years || years <= 0) return 'FA'
-  if (years === 1) return '1 yr'
-  return `${years} yrs`
+  if (years === 1) return t('1 yr')
+  return t('{n} yrs', { n: years })
 }
 
 function roundStat(value) {
@@ -127,7 +128,7 @@ function handleInfo() {
       <div class="left-column">
         <div class="player-avatar">
           <PlayerAvatar :player="player" :size="78" />
-          <div v-if="isExpiringContract && !isFreeAgent" class="expiring-indicator" title="Expiring contract">
+          <div v-if="isExpiringContract && !isFreeAgent" class="expiring-indicator" :title="$t('Expiring contract')">
             <AlertTriangle :size="12" />
           </div>
         </div>
@@ -138,28 +139,28 @@ function handleInfo() {
             v-if="isExpiringContract && !resignDisabled"
             class="action-btn resign-btn"
             @click.stop="handleResign"
-            title="Re-sign player"
+            :title="$t('Re-sign player')"
           >
             <RefreshCw :size="14" />
-            <span>Re-sign</span>
+            <span>{{ $t('Re-sign') }}</span>
           </button>
           <!-- Deadline passed: show WHY re-sign is unavailable instead of the
                button silently vanishing (which reads as "re-signing is broken"). -->
           <span
             v-else-if="isExpiringContract && resignDisabled"
             class="action-btn resign-closed"
-            title="Re-signing is closed — the deadline has passed. Expiring players hit free agency at season end."
+            :title="$t('Re-signing is closed — the deadline has passed. Expiring players hit free agency at season end.')"
           >
             <RefreshCw :size="14" />
-            <span>Re-sign closed</span>
+            <span>{{ $t('Re-sign closed') }}</span>
           </span>
           <button
             class="action-btn drop-btn"
             @click.stop="handleDrop"
-            title="Drop player"
+            :title="$t('Drop player')"
           >
             <UserMinus :size="14" />
-            <span>Drop</span>
+            <span>{{ $t('Drop') }}</span>
           </button>
         </div>
 
@@ -169,19 +170,19 @@ function handleInfo() {
             v-if="hasUserOffer"
             class="action-btn offered-btn"
             @click.stop="handleSign"
-            title="You have an offer pending — click to edit"
+            :title="$t('You have an offer pending — click to edit')"
           >
             <FileSignature :size="14" />
-            <span>Offered</span>
+            <span>{{ $t('Offered') }}</span>
           </button>
           <button
             v-else
             class="action-btn sign-btn"
             @click.stop="handleSign"
-            title="Sign player"
+            :title="$t('Sign player')"
           >
             <User :size="14" />
-            <span>Sign</span>
+            <span>{{ $t('Sign') }}</span>
           </button>
         </div>
       </div>
@@ -191,9 +192,9 @@ function handleInfo() {
         <h4 class="player-name">{{ player.firstName }} {{ player.lastName }}</h4>
         <div class="player-meta">
           <div class="vitals-row">
-            {{ player.height || "6'6\"" }} · {{ player.age }} yrs
+            {{ player.height || "6'6\"" }} {{ $t('· {age} yrs', { age: player.age }) }}
             <span v-if="player.potentialRating && player.potentialRating > player.overallRating" class="player-potential">
-              · {{ player.potentialRating }} pot
+              {{ $t('· {n} pot', { n: player.potentialRating }) }}
             </span>
           </div>
           <div class="position-badges">
@@ -214,9 +215,9 @@ function handleInfo() {
               v-if="isFreeAgent && pendingOfferCount > 0"
               class="offer-count-badge"
               :class="{ mine: hasUserOffer }"
-              :title="hasUserOffer ? 'You have a pending offer to this player' : 'Pending offers from other teams'"
+              :title="hasUserOffer ? $t('You have a pending offer to this player') : $t('Pending offers from other teams')"
             >
-              {{ pendingOfferCount }} {{ pendingOfferCount === 1 ? 'OFFER' : 'OFFERS' }}
+              {{ pendingOfferCount === 1 ? $t('{n} OFFER', { n: pendingOfferCount }) : $t('{n} OFFERS', { n: pendingOfferCount }) }}
             </span>
             <span
               v-if="userOfferInterest"
@@ -226,10 +227,10 @@ function handleInfo() {
                 borderColor: userOfferInterest.level.color,
                 background: `color-mix(in srgb, ${userOfferInterest.level.color} 12%, transparent)`,
               }"
-              :title="`${userOfferInterest.level.label} (${userOfferInterest.score}/100) — ${userOfferInterest.level.hint}`"
+              :title="`${$tDynamic(userOfferInterest.level.label)} (${userOfferInterest.score}/100) — ${$tDynamic(userOfferInterest.level.hint)}`"
             >
               <Heart :size="10" />
-              {{ userOfferInterest.level.label }}
+              {{ $tDynamic(userOfferInterest.level.label) }}
             </span>
           </div>
         </div>
@@ -256,14 +257,17 @@ function handleInfo() {
         <div v-if="showStats && player.stats" class="stats-grid">
           <div class="stat-item">
             <span class="stat-value">{{ roundStatDecimal(player.stats.ppg) }}</span>
+            <!-- i18n-ignore -->
             <span class="stat-label">PPG</span>
           </div>
           <div class="stat-item">
             <span class="stat-value">{{ roundStatDecimal(player.stats.rpg) }}</span>
+            <!-- i18n-ignore -->
             <span class="stat-label">RPG</span>
           </div>
           <div class="stat-item">
             <span class="stat-value">{{ roundStatDecimal(player.stats.apg) }}</span>
+            <!-- i18n-ignore -->
             <span class="stat-label">APG</span>
           </div>
           <div class="stat-item">
@@ -276,18 +280,22 @@ function handleInfo() {
         <div v-if="showAttributes" class="attributes-grid">
           <div class="attr-item">
             <span class="attr-value">{{ roundStat(player.shooting) || '—' }}</span>
+            <!-- i18n-ignore -->
             <span class="attr-label">SHT</span>
           </div>
           <div class="attr-item">
             <span class="attr-value">{{ roundStat(player.playmaking) || '—' }}</span>
+            <!-- i18n-ignore -->
             <span class="attr-label">PLY</span>
           </div>
           <div class="attr-item">
             <span class="attr-value">{{ roundStat(player.defense) || '—' }}</span>
+            <!-- i18n-ignore -->
             <span class="attr-label">DEF</span>
           </div>
           <div class="attr-item">
             <span class="attr-value">{{ roundStat(player.athleticism) || '—' }}</span>
+            <!-- i18n-ignore -->
             <span class="attr-label">ATH</span>
           </div>
         </div>

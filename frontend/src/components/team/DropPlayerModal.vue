@@ -95,7 +95,7 @@ function handleConfirm() {
       <div v-if="show" class="modal-overlay" @click.self="handleClose">
         <div class="modal-container">
           <header class="modal-header">
-            <h2 class="modal-title">Drop Player</h2>
+            <h2 class="modal-title">{{ $t('Drop Player') }}</h2>
             <button
               v-if="!loading"
               class="btn-close"
@@ -109,7 +109,7 @@ function handleConfirm() {
           <main class="modal-content">
             <div v-if="loading" class="loading-state">
               <LoadingSpinner size="lg" />
-              <p>Releasing player...</p>
+              <p>{{ $t('Releasing player...') }}</p>
             </div>
 
             <div v-else-if="player" class="drop-content">
@@ -117,8 +117,8 @@ function handleConfirm() {
               <div class="warning-banner">
                 <AlertTriangle :size="24" />
                 <div class="warning-text">
-                  <strong>Are you sure you want to drop this player?</strong>
-                  <p>This action cannot be undone. The player will become a free agent.</p>
+                  <strong>{{ $t('Are you sure you want to drop this player?') }}</strong>
+                  <p>{{ $t('This action cannot be undone. The player will become a free agent.') }}</p>
                 </div>
               </div>
 
@@ -144,21 +144,21 @@ function handleConfirm() {
                       {{ player.secondaryPosition }}
                     </span>
                     <StatBadge :value="player.overallRating" size="sm" />
-                    <span class="player-age">{{ player.age }} yrs</span>
+                    <span class="player-age">{{ $t('{age} yrs', { age: player.age }) }}</span>
                   </div>
                 </div>
               </div>
 
               <!-- Motivations (compact, top 3) -->
               <div v-if="topMotivations.length > 0" class="motivations-card">
-                <h4 class="card-title">Key Motivations</h4>
+                <h4 class="card-title">{{ $t('Key Motivations') }}</h4>
                 <div class="motivation-bars">
                   <div
                     v-for="m in topMotivations"
                     :key="m.key"
                     class="motivation-row"
                   >
-                    <span class="motivation-label">{{ getMotivationLabel(m.key) }}</span>
+                    <span class="motivation-label">{{ $tDynamic(getMotivationLabel(m.key)) }}</span>
                     <div class="motivation-bar-track">
                       <div
                         class="motivation-bar-fill"
@@ -169,25 +169,25 @@ function handleConfirm() {
                   </div>
                 </div>
                 <div v-if="isContractYear && retentionPct !== null" class="retention-note">
-                  <span class="retention-label">Re-sign likelihood:</span>
+                  <span class="retention-label">{{ $t('Re-sign likelihood:') }}</span>
                   <span class="retention-pct" :style="{ color: getRetentionColor(retentionPct) }">{{ retentionPct }}%</span>
                 </div>
               </div>
 
               <!-- Contract Details -->
               <div class="contract-details">
-                <h4 class="card-title">Contract Being Terminated</h4>
+                <h4 class="card-title">{{ $t('Contract Being Terminated') }}</h4>
                 <div class="contract-info">
                   <div class="contract-row">
-                    <span class="contract-label">Annual Salary:</span>
+                    <span class="contract-label">{{ $t('Annual Salary:') }}</span>
                     <span class="contract-value">{{ formatSalary(player.contractSalary) }}</span>
                   </div>
                   <div class="contract-row">
-                    <span class="contract-label">Years Remaining:</span>
-                    <span class="contract-value">{{ player.contractYearsRemaining }} {{ player.contractYearsRemaining === 1 ? 'year' : 'years' }}</span>
+                    <span class="contract-label">{{ $t('Years Remaining:') }}</span>
+                    <span class="contract-value">{{ player.contractYearsRemaining === 1 ? $t('{n} year', { n: player.contractYearsRemaining }) : $t('{n} years', { n: player.contractYearsRemaining }) }}</span>
                   </div>
                   <div class="contract-row total">
-                    <span class="contract-label">Remaining Value:</span>
+                    <span class="contract-label">{{ $t('Remaining Value:') }}</span>
                     <span class="contract-value savings">{{ formatSalary(remainingContractValue) }}</span>
                   </div>
                 </div>
@@ -196,18 +196,18 @@ function handleConfirm() {
               <!-- Cap Space Impact -->
               <div class="impact-info">
                 <DollarSign :size="18" />
-                <span>Dropping this player will free up <strong>{{ formatSalary(player.contractSalary) }}</strong> in annual cap space.</span>
+                <span>{{ $t('Dropping this player will free up {amount} in annual cap space.', { amount: formatSalary(player.contractSalary) }) }}</span>
               </div>
             </div>
           </main>
 
           <footer class="modal-footer">
             <button class="btn-cancel" :disabled="loading" @click="handleClose">
-              Cancel
+              {{ $t('Cancel') }}
             </button>
             <button class="btn-danger" :disabled="loading" @click="handleConfirm">
               <UserMinus :size="16" class="btn-icon" />
-              Drop Player
+              {{ $t('Drop Player') }}
             </button>
           </footer>
         </div>

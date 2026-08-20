@@ -6,7 +6,7 @@
     <img
       v-if="resolvedSrc"
       :src="resolvedSrc"
-      :alt="personnel?.name || labelForKind"
+      :alt="personnel?.name || $tDynamic(labelForKind)"
       class="personnel-headshot"
       @error="onImageError"
     />
@@ -20,7 +20,7 @@
       v-if="canEdit"
       type="button"
       class="edit-headshot-overlay"
-      title="Edit headshot"
+      :title="$t('Edit headshot')"
       :aria-label="`Edit ${labelForKind.toLowerCase()} headshot`"
       @click.stop="openEditor"
     >

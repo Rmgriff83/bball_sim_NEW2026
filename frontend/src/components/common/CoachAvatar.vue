@@ -6,7 +6,7 @@
     <img
       v-if="resolvedSrc"
       :src="resolvedSrc"
-      :alt="coach?.name || 'Coach'"
+      :alt="coach?.name || $t('Coach')"
       class="coach-headshot"
       @error="onImageError"
     />
@@ -20,7 +20,7 @@
       v-if="canEdit"
       type="button"
       class="edit-headshot-overlay"
-      title="Edit headshot"
+      :title="$t('Edit headshot')"
       aria-label="Edit coach headshot"
       @click.stop="openEditor"
     >

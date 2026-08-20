@@ -100,7 +100,7 @@ function close() {
           <header class="modal-header">
             <div class="header-left">
               <Briefcase :size="22" class="header-icon" />
-              <h2 class="modal-title">Free Agency Wrap-Up</h2>
+              <h2 class="modal-title">{{ $t('Free Agency Wrap-Up') }}</h2>
             </div>
             <button class="btn-close" aria-label="Close" @click="close">
               <X :size="20" />
@@ -109,7 +109,7 @@ function close() {
 
           <main class="modal-content">
             <div v-if="!hasAnyOutcome" class="empty-state">
-              <p>You didn't make any offers this free-agency window.</p>
+              <p>{{ $t("You didn't make any offers this free-agency window.") }}</p>
             </div>
 
             <template v-else>
@@ -119,23 +119,23 @@ function close() {
               <section v-if="pendingOffers.length > 0" class="outcome-section pending-section">
                 <div class="section-header">
                   <AlertTriangle :size="16" class="section-icon pending" />
-                  <h3 class="section-title">Decision Required</h3>
+                  <h3 class="section-title">{{ $t('Decision Required') }}</h3>
                   <span class="section-count">{{ pendingOffers.length }}</span>
                 </div>
                 <p class="pending-blurb">
-                  More players accepted your offers than your cap can fit. Pick which signings to lock in — anything you skip stays a free agent.
+                  {{ $t('More players accepted your offers than your cap can fit. Pick which signings to lock in — anything you skip stays a free agent.') }}
                 </p>
                 <div class="cap-meter" :class="{ over: overCap }">
                   <div class="cap-row">
-                    <span class="cap-label">Selected payroll</span>
+                    <span class="cap-label">{{ $t('Selected payroll') }}</span>
                     <span class="cap-value">{{ formatSalary(selectedTotal) }}</span>
                   </div>
                   <div class="cap-row">
-                    <span class="cap-label">Cap space</span>
+                    <span class="cap-label">{{ $t('Cap space') }}</span>
                     <span class="cap-value">{{ formatSalary(capSpace) }}</span>
                   </div>
                   <div class="cap-row cap-row-remaining">
-                    <span class="cap-label">{{ overCap ? 'Over by' : 'Remaining' }}</span>
+                    <span class="cap-label">{{ overCap ? $t('Over by') : $t('Remaining') }}</span>
                     <span class="cap-value" :class="{ negative: overCap }">
                       {{ formatSalary(Math.abs(remainingAfterChoice)) }}
                     </span>
@@ -165,19 +165,18 @@ function close() {
                         <div class="outcome-terms">
                           <span class="terms-salary">{{ formatSalary(offer.salary) }}</span>
                           <span class="terms-divider">·</span>
-                          <span class="terms-years">{{ offer.years }} {{ offer.years === 1 ? 'yr' : 'yrs' }}</span>
+                          <span class="terms-years">{{ offer.years === 1 ? $t('{n} yr', { n: offer.years }) : $t('{n} yrs', { n: offer.years }) }}</span>
                           <span class="terms-divider">·</span>
-                          <span class="terms-total">{{ totalValue(offer.years, offer.salary) }} total</span>
+                          <span class="terms-total">{{ $t('{amount} total', { amount: totalValue(offer.years, offer.salary) }) }}</span>
                           <span v-if="offer.position" class="terms-divider">·</span>
                           <span v-if="offer.position" class="terms-pos">{{ offer.position }}</span>
                         </div>
                         <div class="pending-fallback">
                           <template v-if="offer.fallback?.teamAbbr">
-                            If passed → signs with <strong>{{ offer.fallback.teamAbbr }}</strong>
-                            ({{ formatSalary(offer.fallback.salary) }} / {{ offer.fallback.years }}yr)
+                            {{ $t('If passed → signs with {team} ({salary} / {years}yr)', { team: offer.fallback.teamAbbr, salary: formatSalary(offer.fallback.salary), years: offer.fallback.years }) }}
                           </template>
                           <template v-else>
-                            If passed → stays a free agent (no AI runner-up)
+                            {{ $t('If passed → stays a free agent (no AI runner-up)') }}
                           </template>
                         </div>
                       </div>
@@ -189,7 +188,7 @@ function close() {
               <section v-if="accepted.length > 0" class="outcome-section">
                 <div class="section-header">
                   <CheckCircle2 :size="16" class="section-icon accepted" />
-                  <h3 class="section-title">Signed With You</h3>
+                  <h3 class="section-title">{{ $t('Signed With You') }}</h3>
                   <span class="section-count">{{ accepted.length }}</span>
                 </div>
                 <ul class="outcome-list">
@@ -198,9 +197,9 @@ function close() {
                     <div class="outcome-terms">
                       <span class="terms-salary">{{ formatSalary(row.salary) }}</span>
                       <span class="terms-divider">·</span>
-                      <span class="terms-years">{{ row.years }} {{ row.years === 1 ? 'yr' : 'yrs' }}</span>
+                      <span class="terms-years">{{ row.years === 1 ? $t('{n} yr', { n: row.years }) : $t('{n} yrs', { n: row.years }) }}</span>
                       <span class="terms-divider">·</span>
-                      <span class="terms-total">{{ totalValue(row.years, row.salary) }} total</span>
+                      <span class="terms-total">{{ $t('{amount} total', { amount: totalValue(row.years, row.salary) }) }}</span>
                     </div>
                   </li>
                 </ul>
@@ -209,7 +208,7 @@ function close() {
               <section v-if="declined.length > 0" class="outcome-section">
                 <div class="section-header">
                   <XCircle :size="16" class="section-icon declined" />
-                  <h3 class="section-title">Signed Elsewhere / Unsigned</h3>
+                  <h3 class="section-title">{{ $t('Signed Elsewhere / Unsigned') }}</h3>
                   <span class="section-count">{{ declined.length }}</span>
                 </div>
                 <ul class="outcome-list">
@@ -217,21 +216,21 @@ function close() {
                     <div class="outcome-row-top">
                       <div class="outcome-name">{{ row.playerName }}</div>
                       <div class="outcome-destination">
-                        <span v-if="row.signedWith === 'unsigned'" class="dest-badge unsigned">UNSIGNED</span>
+                        <span v-if="row.signedWith === 'unsigned'" class="dest-badge unsigned">{{ $t('UNSIGNED') }}</span>
                         <span v-else class="dest-badge signed">{{ row.signedWithAbbr }}</span>
                       </div>
                     </div>
                     <div class="outcome-row-bottom">
                       <div class="offer-pair">
-                        <span class="offer-label">Your offer:</span>
-                        <span class="offer-value">{{ formatSalary(row.userOffer?.salary) }} / {{ row.userOffer?.years }}yr</span>
+                        <span class="offer-label">{{ $t('Your offer:') }}</span>
+                        <span class="offer-value">{{ $t('{salary} / {years}yr', { salary: formatSalary(row.userOffer?.salary), years: row.userOffer?.years }) }}</span>
                       </div>
                       <div v-if="row.winningOffer" class="offer-pair">
-                        <span class="offer-label">Winning offer:</span>
-                        <span class="offer-value">{{ formatSalary(row.winningOffer.salary) }} / {{ row.winningOffer.years }}yr</span>
+                        <span class="offer-label">{{ $t('Winning offer:') }}</span>
+                        <span class="offer-value">{{ $t('{salary} / {years}yr', { salary: formatSalary(row.winningOffer.salary), years: row.winningOffer.years }) }}</span>
                       </div>
                     </div>
-                    <p v-if="row.reason" class="outcome-reason">{{ row.reason }}</p>
+                    <p v-if="row.reason" class="outcome-reason">{{ $tDynamic(row.reason) }}</p>
                   </li>
                 </ul>
               </section>
@@ -239,15 +238,15 @@ function close() {
           </main>
 
           <footer class="modal-footer">
-            <button v-if="pendingOffers.length === 0" class="btn-cancel" @click="close">Close</button>
+            <button v-if="pendingOffers.length === 0" class="btn-cancel" @click="close">{{ $t('Close') }}</button>
             <template v-else>
-              <button class="btn-cancel" :disabled="finalizing" @click="close">Cancel</button>
+              <button class="btn-cancel" :disabled="finalizing" @click="close">{{ $t('Cancel') }}</button>
               <button
                 class="btn-confirm"
                 :disabled="confirmDisabled"
                 @click="confirmChoices"
               >
-                {{ finalizing ? 'Signing…' : `Confirm ${selectedIds.size} Signing${selectedIds.size === 1 ? '' : 's'}` }}
+                {{ finalizing ? $t('Signing…') : (selectedIds.size === 1 ? $t('Confirm {n} Signing', { n: selectedIds.size }) : $t('Confirm {n} Signings', { n: selectedIds.size })) }}
               </button>
             </template>
           </footer>

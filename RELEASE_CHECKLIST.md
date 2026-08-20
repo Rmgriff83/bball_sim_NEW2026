@@ -16,7 +16,16 @@ are just "as of last edit" snapshots.
 
 - [ ] All intended changes merged and the app builds clean:
       `cd frontend && npm run build` (this runs `prebuild`: headshot sync +
-      `npm run audit:gameplay`; the build fails on gameplay-wiring drift).
+      `npm run audit:gameplay` + `npm run audit:i18n`; the build fails on
+      gameplay-wiring drift or unwrapped UI strings).
+- [ ] **Translations (added 2026-08)**: `npm run release` runs
+      `translate:release` automatically as its first step (needs
+      `WL_LICENSE_KEY`/`WL_TRANSLATE_API_URL` in `frontend/.env.production`).
+      Watch its output — per-language "Up to date" or translated counts is
+      good; a `⚠ TRANSLATION FAILED` warning means the release continued but
+      NEW strings shipped as English fallbacks (run `npm run translate` and
+      patch when the API is back). After the release, **commit any updated
+      `frontend/src/locales/*.json` + `frontend/i18n/dynamic-strings.json`**.
 - [ ] Sanity-check that nothing breaks existing saved campaigns (live prod,
       500+ users on-device IndexedDB — see `CLAUDE.md`).
 - [ ] Draft the store "What's new" notes. **Google Play caps this at 500

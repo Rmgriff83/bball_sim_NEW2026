@@ -12,6 +12,7 @@ import { useToastStore } from '@/stores/toast'
 import { storeToRefs } from 'pinia'
 import { Loader2, Users, ClipboardList, ShieldCheck, ArrowLeft, AlertTriangle, Check, Plus, Save, Download, Sparkles } from 'lucide-vue-next'
 import api from '@/composables/useApi'
+import { t } from '@wl-i18n/i18n.js'
 import { fetchBuildBlob } from '@/composables/useBuildBlob'
 import { useCommunityLink } from '@/composables/useCommunityLink'
 import RosterAttributeTable from '@/components/roster/RosterAttributeTable.vue'
@@ -200,15 +201,15 @@ async function pickDownloaded() {
     // Full rich callout (not the minimal toast) — showAchievement plays the
     // affirmation sound itself, so no separate audio.affirm() here.
     toast.showAchievement({
-      header: 'Roster Applied',
-      label: picked?.title ?? 'Imported Roster',
+      header: t('Roster Applied'),
+      label: picked?.title ?? t('Imported Roster'),
       subtitle: isFantasy.value
-        ? 'All players are in your draft pool — edit anyone, then finish to start the draft.'
-        : 'Tweak anything you like, then start your season.',
+        ? t('All players are in your draft pool — edit anyone, then finish to start the draft.')
+        : t('Tweak anything you like, then start your season.'),
     })
   } catch (err) {
     audio.cancel()
-    store.error = err?.message || 'Failed to apply the imported roster'
+    store.error = err?.message || t('Failed to apply the imported roster')
   } finally {
     importing.value = false
   }
@@ -244,14 +245,14 @@ async function saveWithFeedback(op, successMsg) {
     return true
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Save failed — please try again')
+    toast.showError(err?.message || t('Save failed — please try again'))
     return false
   }
 }
 
 function saveDirtyWithFeedback() {
   const n = dirtyIds.value.size
-  return saveWithFeedback(() => store.saveDirty(), `Saved ${n} player${n === 1 ? '' : 's'}`)
+  return saveWithFeedback(() => store.saveDirty(), n === 1 ? t('Saved {n} player', { n }) : t('Saved {n} players', { n }))
 }
 
 // --- Dirty-state guards -----------------------------------------------------
@@ -324,6 +325,7 @@ function onTableEdited(player) {
 // `player.ceilingsClamped`), so potential stays equal to overall — a finished
 // vet. Manually editing a ceiling opts back out (the table clears the flag).
 // The flag persists on the player, so a resumed edit session keeps it.
+const clampTitle = computed(() => t("Keep every growth ceiling equal to the attribute's current value — potential tracks overall as you edit (a finished vet). Editing a ceiling by hand unchecks it."))
 function setCeilingsClamped(on) {
   const p = selectedPlayer.value
   if (!p) return
@@ -353,10 +355,10 @@ async function generateRemaining() {
   try {
     const n = await store.fillRoster()
     audio.affirm()
-    toast.showSuccess(`Generated ${n} player${n === 1 ? '' : 's'}`)
+    toast.showSuccess(n === 1 ? t('Generated {n} player', { n }) : t('Generated {n} players', { n }))
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Generation failed — please try again')
+    toast.showError(err?.message || t('Generation failed — please try again'))
   } finally {
     generatingFill.value = false
   }
@@ -379,13 +381,27 @@ function onRowSelect(p) {
 function closePlayerEditor() { editingPlayer.value = null }
 
 async function onPlayerSaved(p) {
-  const ok = await saveWithFeedback(() => store.savePlayer(p), 'Player saved')
+  const ok = await saveWithFeedback(() => store.savePlayer(p), t('Player saved'))
   if (ok) editingPlayer.value = null
 }
 
 // Row ✕ opens a confirm first — deletion is immediate and unrecoverable
 // (it doesn't ride the dirty/save flow), so no accidental taps.
 const pendingRemovePlayer = ref(null)
+const removePlayerName = computed(() => {
+  const p = pendingRemovePlayer.value
+  if (!p) return ''
+  return p.name ?? ((p.firstName ?? '') + ' ' + (p.lastName ?? ''))
+})
+const removePlayerPrompt = computed(() => {
+  const name = removePlayerName.value
+  if (view.value === 'pool') {
+    return poolOnlyFantasy.value
+      ? t("Remove {name} from the draft pool? This can't be undone.", { name })
+      : t("Remove {name} from the free agent pool? This can't be undone.", { name })
+  }
+  return t("Remove {name} from the roster? This can't be undone.", { name })
+})
 
 function removePlayer(p) {
   // The row ✕ uses @click.stop (so the tap doesn't also select the row),
@@ -418,33 +434,33 @@ function editCoach(team) { editingCoachTeam.value = team }
 function closeCoachEditor() { editingCoachTeam.value = null }
 
 async function onCoachSaved(team) {
-  const ok = await saveWithFeedback(() => store.saveTeamCoach(team), 'Coach saved')
+  const ok = await saveWithFeedback(() => store.saveTeamCoach(team), t('Coach saved'))
   if (ok) editingCoachTeam.value = null
 }
 
 // Team-history saves share the coach editor's immediate whole-team save path.
 async function onHistorySaved(team) {
-  const ok = await saveWithFeedback(() => store.saveTeamCoach(team), 'Team history saved')
+  const ok = await saveWithFeedback(() => store.saveTeamCoach(team), t('Team history saved'))
   if (ok) editingHistoryTeam.value = null
 }
 
 // Team renames (name + city) reuse the same whole-team upsert.
 async function onIdentitySaved(team) {
-  const ok = await saveWithFeedback(() => store.saveTeamCoach(team), 'Team renamed')
+  const ok = await saveWithFeedback(() => store.saveTeamCoach(team), t('Team renamed'))
   if (ok) editingIdentityTeam.value = null
 }
 
 // Draft-pick ownership authoring — moves picks between teams' arrays.
 async function onPicksSaved(assignments) {
   if (!assignments.length) { editingPicksTeam.value = null; return }
-  const ok = await saveWithFeedback(() => store.reassignDraftPicks(assignments), 'Draft picks updated')
+  const ok = await saveWithFeedback(() => store.reassignDraftPicks(assignments), t('Draft picks updated'))
   if (ok) editingPicksTeam.value = null
 }
 
 function coachName(team) {
   const c = team?.coach
-  if (!c) return 'No coach'
-  return c.name || `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'Coach'
+  if (!c) return t('No coach')
+  return c.name || `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || t('Coach')
 }
 
 // --- Payroll meter (display only) -------------------------------------------
@@ -465,10 +481,10 @@ async function generateFaRemaining() {
   try {
     const n = await store.fillFreeAgentPool()
     audio.affirm()
-    toast.showSuccess(`Generated ${n} free agent${n === 1 ? '' : 's'}`)
+    toast.showSuccess(n === 1 ? t('Generated {n} free agent', { n }) : t('Generated {n} free agents', { n }))
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Generation failed — please try again')
+    toast.showError(err?.message || t('Generation failed — please try again'))
   } finally {
     generatingFill.value = false
   }
@@ -597,7 +613,7 @@ async function confirmAddPlayer() {
     const p = await (view.value === 'pool' ? store.addPoolPlayer() : store.addPlayer())
     if (!p) {
       audio.cancel()
-      toast.showError('Roster is full — remove a player first')
+      toast.showError(t('Roster is full — remove a player first'))
       return
     }
     if (addArchetype.value) {
@@ -611,7 +627,7 @@ async function confirmAddPlayer() {
     editingPlayer.value = p
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Failed to create the player')
+    toast.showError(err?.message || t('Failed to create the player'))
   } finally {
     addingPlayer.value = false
   }
@@ -653,15 +669,19 @@ async function generateRestAndContinue() {
     faShortfall.value = await store.freeAgentShortfall()
     if (!finalizeProblems.value.length) {
       audio.affirm()
-      toast.showSuccess(`Generated ${players + faAdded} players${faAdded ? ` (incl. ${faAdded} free agents)` : ''} across ${filled} teams`)
+      toast.showSuccess(faAdded
+        ? t('Generated {total} players (incl. {fa} free agents) across {teams} teams', { total: players + faAdded, fa: faAdded, teams: filled })
+        : t('Generated {total} players across {teams} teams', { total: players + faAdded, teams: filled }))
       await confirmFinalize()
     } else {
       audio.affirm()
-      toast.showSuccess(`Generated ${players + faAdded} players${faAdded ? ` (incl. ${faAdded} free agents)` : ''} — remaining issues listed`)
+      toast.showSuccess(faAdded
+        ? t('Generated {total} players (incl. {fa} free agents) — remaining issues listed', { total: players + faAdded, fa: faAdded })
+        : t('Generated {total} players — remaining issues listed', { total: players + faAdded }))
     }
   } catch (err) {
     audio.cancel()
-    toast.showError(err?.message || 'Generation failed — please try again')
+    toast.showError(err?.message || t('Generation failed — please try again'))
   } finally {
     generatingRest.value = false
   }
@@ -684,7 +704,7 @@ async function confirmFinalize() {
   if (isWorkshop.value) {
     await store.markWorkshopPublishable()
     showFinalize.value = false
-    useToastStore().showSuccess('Saved to your Builder projects — publish it from the Community board anytime.')
+    useToastStore().showSuccess(t('Saved to your Builder projects — publish it from the Community board anytime.'))
     store.$reset()
     router.replace('/builder')
     return
@@ -707,30 +727,30 @@ async function confirmFinalize() {
          applying — hide it rather than let it read as wrong data. -->
     <div v-if="importing" class="rs-import-overlay">
       <Loader2 :size="42" class="spin" />
-      <p class="rs-import-title">Applying imported roster…</p>
-      <p class="rs-import-sub">Installing players, coaches, and headshots — this takes a few seconds.</p>
+      <p class="rs-import-title">{{ $t('Applying imported roster…') }}</p>
+      <p class="rs-import-sub">{{ $t('Installing players, coaches, and headshots — this takes a few seconds.') }}</p>
     </div>
 
     <!-- Sticky header bar -->
     <header class="rs-header">
       <div class="rs-header-left">
         <button v-if="view !== 'teams'" class="rs-back" @click="backToTeams">
-          <ArrowLeft :size="18" /> Teams
+          <ArrowLeft :size="18" /> {{ $t('Teams') }}
         </button>
         <button v-else class="rs-back" @click="backToCampaigns">
-          <ArrowLeft :size="18" /> {{ isWorkshop ? 'Builder' : 'Campaigns' }}
+          <ArrowLeft :size="18" /> {{ isWorkshop ? $t('Builder') : $t('Campaigns') }}
         </button>
         <h1 v-if="view === 'pool'" class="rs-title">
           <ClipboardList v-if="poolOnlyFantasy" :size="20" />
           <Users v-else :size="20" />
-          {{ poolOnlyFantasy ? 'Draft Pool' : 'Free Agents' }}
+          {{ poolOnlyFantasy ? $t('Draft Pool') : $t('Free Agents') }}
         </h1>
       </div>
       <div class="rs-header-actions">
         <button v-if="isDirty" class="rs-save-btn" :disabled="saving" @click="saveDirtyWithFeedback">
           <Loader2 v-if="saving" :size="15" class="spin" />
           <Save v-else :size="15" />
-          Save Changes ({{ dirtyIds.size }})
+          {{ $t('Save Changes ({n})', { n: dirtyIds.size }) }}
         </button>
         <button
           v-if="hasStarted"
@@ -741,33 +761,33 @@ async function confirmFinalize() {
           <Loader2 v-if="validating" :size="16" class="spin" />
           <Check v-else-if="isWorkshop" :size="16" />
           <ShieldCheck v-else :size="16" />
-          {{ isWorkshop ? 'Done' : 'Finish & Start Season' }}
+          {{ isWorkshop ? $t('Done') : $t('Finish & Start Season') }}
         </button>
       </div>
     </header>
 
-    <div v-if="loading" class="rs-loading"><Loader2 :size="28" class="spin" /> Loading league…</div>
+    <div v-if="loading" class="rs-loading"><Loader2 :size="28" class="spin" /> {{ $t('Loading league…') }}</div>
     <div v-else-if="error" class="rs-error">{{ error }}</div>
 
     <!-- Start choice -->
     <section v-else-if="!hasStarted" class="rs-start">
-      <h2>How do you want to build your league?</h2>
-      <p class="rs-sub">You can tweak everything either way — this just sets your starting point.</p>
+      <h2>{{ $t('How do you want to build your league?') }}</h2>
+      <p class="rs-sub">{{ $t('You can tweak everything either way — this just sets your starting point.') }}</p>
       <div class="rs-start-grid">
         <button class="rs-start-card" data-tour="rse-start-generated" @click="pickStart('generated')">
           <Users :size="28" />
-          <span class="rs-start-name">Start from Generated</span>
-          <span class="rs-start-desc">A full, balanced league is already built. Adjust any player or coach you like.</span>
+          <span class="rs-start-name">{{ $t('Start from Generated') }}</span>
+          <span class="rs-start-desc">{{ $t('A full, balanced league is already built. Adjust any player or coach you like.') }}</span>
         </button>
         <button class="rs-start-card" data-tour="rse-start-scratch" @click="pickStart('scratch')">
           <ClipboardList :size="28" />
-          <span class="rs-start-name">Start from Scratch</span>
-          <span class="rs-start-desc">Every roster is emptied. Build each team yourself before the season can start.</span>
+          <span class="rs-start-name">{{ $t('Start from Scratch') }}</span>
+          <span class="rs-start-desc">{{ $t('Every roster is emptied. Build each team yourself before the season can start.') }}</span>
         </button>
         <div v-if="downloadedBuilds.length" class="rs-start-card rs-start-downloaded">
           <Download :size="28" />
-          <span class="rs-start-name">Imports</span>
-          <span class="rs-start-desc">Start from a roster you imported from the Community board — tweak anything before you start.</span>
+          <span class="rs-start-name">{{ $t('Imports') }}</span>
+          <span class="rs-start-desc">{{ $t('Start from a roster you imported from the Community board — tweak anything before you start.') }}</span>
           <select v-model="selectedBuildId" class="rs-build-select" @click.stop>
             <option v-for="b in downloadedBuilds" :key="b.id" :value="b.id">
               {{ b.title }}{{ b.author ? ` — ${b.author}` : '' }}
@@ -775,19 +795,19 @@ async function confirmFinalize() {
           </select>
           <button class="rs-modal-primary" :disabled="importing" @click.stop="pickDownloaded">
             <Loader2 v-if="importing" :size="15" class="spin" />
-            Use This Roster
+            {{ $t('Use This Roster') }}
           </button>
         </div>
       </div>
       <p class="rs-note" style="text-align: center;">
-        Looking for community rosters?
-        <button class="rs-link" @click="openCommunity">Browse the Community board →</button>
+        {{ $t('Looking for community rosters?') }}
+        <button class="rs-link" @click="openCommunity">{{ $t('Browse the Community board →') }}</button>
       </p>
     </section>
 
     <!-- Team grid -->
     <section v-else-if="view === 'teams'" class="rs-teams">
-      <h2 class="rs-teams-title"><ClipboardList :size="22" /> Roster Editor</h2>
+      <h2 class="rs-teams-title"><ClipboardList :size="22" /> {{ $t('Roster Editor') }}</h2>
       <div class="rs-team-grid">
         <button
           v-for="(team, ti) in teams"
@@ -804,42 +824,38 @@ async function confirmFinalize() {
               :size="28"
             />
             <span class="rs-team-abbr">{{ team.abbreviation }}</span>
-            <span v-if="teamOveralls[team.id] != null" class="rs-team-ovr" title="Current team overall">
+            <span v-if="teamOveralls[team.id] != null" class="rs-team-ovr" :title="$t('Current team overall')">
               {{ teamOveralls[team.id] }}
             </span>
           </span>
           <span class="rs-team-name">{{ team.name }}</span>
-          <span class="rs-team-coach">HC: {{ coachName(team) }}</span>
-          <span v-if="team.id === userTeamId" class="rs-team-tag">Your team</span>
+          <span class="rs-team-coach">{{ $t('HC: {name}', { name: coachName(team) }) }}</span>
+          <span v-if="team.id === userTeamId" class="rs-team-tag">{{ $t('Your team') }}</span>
         </button>
         <!-- Authored free-agent market (imported fantasy: the full draft pool) -->
         <button class="rs-team-card rs-fa-card" @click="openPool">
           <span class="rs-team-head">
             <Users :size="26" class="rs-fa-icon" />
             <span class="rs-team-abbr">{{ poolOnlyFantasy ? 'POOL' : 'FA' }}</span>
-            <span class="rs-team-ovr" :title="poolOnlyFantasy ? 'Players in the draft pool' : 'Players in the free-agent pool'">{{ store.faCount }}</span>
+            <span class="rs-team-ovr" :title="poolOnlyFantasy ? $t('Players in the draft pool') : $t('Players in the free-agent pool')">{{ store.faCount }}</span>
           </span>
-          <span class="rs-team-name">{{ poolOnlyFantasy ? 'Draft Pool' : 'Free Agents' }}</span>
-          <span class="rs-team-coach">{{ poolOnlyFantasy ? `${teams.length * 15}+ players required` : `${MIN_FA_POOL}–${MAX_FA_POOL} players required` }}</span>
+          <span class="rs-team-name">{{ poolOnlyFantasy ? $t('Draft Pool') : $t('Free Agents') }}</span>
+          <span class="rs-team-coach">{{ poolOnlyFantasy ? $t('{n}+ players required', { n: teams.length * 15 }) : $t('{min}–{max} players required', { min: MIN_FA_POOL, max: MAX_FA_POOL }) }}</span>
         </button>
       </div>
       <p v-if="isFantasy" class="rs-note">
-        Fantasy draft: every player you author — team rosters and free agents —
-        enters the draft pool when the draft starts. Teams re-draft their
-        rosters; undrafted players become free agents.
+        {{ $t('Fantasy draft: every player you author — team rosters and free agents — enters the draft pool when the draft starts. Teams re-draft their rosters; undrafted players become free agents.') }}
       </p>
       <p class="rs-note" style="text-align: center;">
-        Looking for community rosters?
-        <button class="rs-link" @click="openCommunity">Browse the Community board →</button>
+        {{ $t('Looking for community rosters?') }}
+        <button class="rs-link" @click="openCommunity">{{ $t('Browse the Community board →') }}</button>
       </p>
     </section>
 
     <!-- Roster / pool editor -->
     <section v-else class="rs-editor">
       <p v-if="isFantasy" class="rs-note">
-        Fantasy draft: everyone authored here enters the draft pool when the
-        draft starts — teams re-draft their rosters, and undrafted players
-        become free agents.
+        {{ $t('Fantasy draft: everyone authored here enters the draft pool when the draft starts — teams re-draft their rosters, and undrafted players become free agents.') }}
       </p>
 
         <!-- No selection in a team view → team overview header (overall /
@@ -868,10 +884,10 @@ async function confirmFinalize() {
 
       <div v-if="view === 'roster'" class="rs-coach-row" data-tour="rse-coach-row">
         <div>
-          <span class="rs-coach-label">Head Coach</span>
+          <span class="rs-coach-label">{{ $t('Head Coach') }}</span>
           <span class="rs-coach-name">{{ coachName(activeTeam) }}</span>
         </div>
-        <button class="rs-edit-btn" @click="editCoach(activeTeam)">Edit Coach</button>
+        <button class="rs-edit-btn" @click="editCoach(activeTeam)">{{ $t('Edit Coach') }}</button>
       </div>
 
         <div class="rs-toolbar">
@@ -880,30 +896,28 @@ async function confirmFinalize() {
               class="rs-mode"
               :class="{ active: tableMode === 'current' }"
               @click="tableMode = 'current'"
-            >Overall</button>
+            >{{ $t('Overall') }}</button>
             <button
               class="rs-mode ceiling"
               :class="{ active: tableMode === 'ceiling' }"
               @click="tableMode = 'ceiling'"
-            >Potential</button>
+            >{{ $t('Potential') }}</button>
           </div>
           <label
             v-if="tableMode === 'ceiling' && selectedPlayer"
             class="rs-clamp-check"
-            title="Keep every growth ceiling equal to the attribute's current value — potential tracks overall as you edit (a finished vet). Editing a ceiling by hand unchecks it."
+            :title="clampTitle"
           >
             <input
               type="checkbox"
               :checked="!!selectedPlayer.ceilingsClamped"
               @change="setCeilingsClamped($event.target.checked)"
             />
-            Clamp to overall
+            {{ $t('Clamp to overall') }}
           </label>
           <PositionFilterBar v-model="posSort" />
           <span class="rs-toolbar-hint">
-            {{ tableMode === 'ceiling'
-              ? 'Editing growth ceilings — the max each attribute can develop to.'
-              : 'Tap a row to select it, then use the chevrons to adjust attributes.' }}
+            {{ tableMode === 'ceiling' ? $t('Editing growth ceilings — the max each attribute can develop to.') : $t('Tap a row to select it, then use the chevrons to adjust attributes.') }}
           </span>
         </div>
 
@@ -919,7 +933,7 @@ async function confirmFinalize() {
 
         <div v-if="!rosterFull" class="rs-add-row">
           <button class="rs-add-btn" data-tour="rse-add-btn" @click="showAddPlayer = true">
-            <Plus :size="16" /> Add Player
+            <Plus :size="16" /> {{ $t('Add Player') }}
             <em v-if="view === 'roster'" class="rs-add-count">({{ activeRoster.length }}/{{ MAX_ROSTER_SIZE }})</em>
             <em v-else-if="!poolOnlyFantasy" class="rs-add-count">({{ freeAgents.length }}/{{ MAX_FA_POOL }})</em>
           </button>
@@ -931,7 +945,7 @@ async function confirmFinalize() {
           >
             <Loader2 v-if="generatingFill" :size="16" class="spin" />
             <Sparkles v-else :size="16" />
-            Generate remaining ({{ MIN_FA_POOL - freeAgents.length }})
+            {{ $t('Generate remaining ({n})', { n: MIN_FA_POOL - freeAgents.length }) }}
           </button>
           <button
             v-if="view === 'roster'"
@@ -941,38 +955,34 @@ async function confirmFinalize() {
           >
             <Loader2 v-if="generatingFill" :size="16" class="spin" />
             <Sparkles v-else :size="16" />
-            Generate remaining ({{ MAX_ROSTER_SIZE - activeRoster.length }})
+            {{ $t('Generate remaining ({n})', { n: MAX_ROSTER_SIZE - activeRoster.length }) }}
           </button>
         </div>
-        <p v-else-if="view === 'roster'" class="rs-roster-full">Roster full ({{ MAX_ROSTER_SIZE }}/{{ MAX_ROSTER_SIZE }}) — remove a player to add another.</p>
+        <p v-else-if="view === 'roster'" class="rs-roster-full">{{ $t('Roster full ({a}/{b}) — remove a player to add another.', { a: MAX_ROSTER_SIZE, b: MAX_ROSTER_SIZE }) }}</p>
 
     </section>
 
     <!-- Acknowledgement gate -->
     <div v-if="showAck" class="rs-modal-overlay">
       <div class="rs-modal">
-        <h3><AlertTriangle :size="18" /> Before you build</h3>
+        <h3><AlertTriangle :size="18" /> {{ $t('Before you build') }}</h3>
         <p>
-          Custom rosters are for your own private league. Please don't recreate real
-          players, teams, or logos by name or likeness — keep names and content
-          original. Your builds are saved to your account only.
+          {{ $t("Custom rosters are for your own private league. Please don't recreate real players, teams, or logos by name or likeness — keep names and content original. Your builds are saved to your account only.") }}
         </p>
-        <button class="rs-modal-primary" @click="acceptAck">I understand</button>
+        <button class="rs-modal-primary" @click="acceptAck">{{ $t('I understand') }}</button>
       </div>
     </div>
 
     <!-- Remove-player confirm -->
     <div v-if="pendingRemovePlayer" class="rs-modal-overlay">
       <div class="rs-modal">
-        <h3><AlertTriangle :size="18" /> Remove player</h3>
+        <h3><AlertTriangle :size="18" /> {{ $t('Remove player') }}</h3>
         <p>
-          Remove
-          <strong>{{ pendingRemovePlayer.name ?? ((pendingRemovePlayer.firstName ?? '') + ' ' + (pendingRemovePlayer.lastName ?? '')) }}</strong>
-          from the {{ view === 'pool' ? (poolOnlyFantasy ? 'draft pool' : 'free agent pool') : 'roster' }}? This can't be undone.
+          {{ removePlayerPrompt }}
         </p>
         <div class="rs-modal-actions">
-          <button class="rs-modal-secondary rs-modal-cancel" @click="pendingRemovePlayer = null">Cancel</button>
-          <button class="rs-modal-primary" @click="confirmRemovePlayer">Remove</button>
+          <button class="rs-modal-secondary rs-modal-cancel" @click="pendingRemovePlayer = null">{{ $t('Cancel') }}</button>
+          <button class="rs-modal-primary" @click="confirmRemovePlayer">{{ $t('Remove') }}</button>
         </div>
       </div>
     </div>
@@ -980,12 +990,12 @@ async function confirmFinalize() {
     <!-- Unsaved-changes guard -->
     <div v-if="pendingGuardAction" class="rs-modal-overlay">
       <div class="rs-modal">
-        <h3><AlertTriangle :size="18" /> Unsaved changes</h3>
-        <p>You have {{ dirtyIds.size }} player{{ dirtyIds.size === 1 ? '' : 's' }} with unsaved edits.</p>
+        <h3><AlertTriangle :size="18" /> {{ $t('Unsaved changes') }}</h3>
+        <p>{{ dirtyIds.size === 1 ? $t('You have {n} player with unsaved edits.', { n: dirtyIds.size }) : $t('You have {n} players with unsaved edits.', { n: dirtyIds.size }) }}</p>
         <div class="rs-modal-actions">
-          <button class="rs-modal-secondary" @click="guardDiscard">Discard</button>
+          <button class="rs-modal-secondary" @click="guardDiscard">{{ $t('Discard') }}</button>
           <button class="rs-modal-primary" :disabled="saving" @click="guardSave">
-            <Loader2 v-if="saving" :size="16" class="spin" /> Save
+            <Loader2 v-if="saving" :size="16" class="spin" /> {{ $t('Save') }}
           </button>
         </div>
       </div>
@@ -994,30 +1004,28 @@ async function confirmFinalize() {
     <!-- Add player (archetype + talent up front) -->
     <div v-if="showAddPlayer" class="rs-modal-overlay">
       <div class="rs-modal">
-        <h3><Plus :size="18" /> New Player</h3>
+        <h3><Plus :size="18" /> {{ $t('New Player') }}</h3>
         <label class="rs-add-field">
-          <span>Archetype</span>
+          <span>{{ $t('Archetype') }}</span>
           <select v-model="addArchetype" class="rs-add-select">
-            <option value="">Random player</option>
-            <option v-for="a in addableArchetypes" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option value="">{{ $t('Random player') }}</option>
+            <option v-for="a in addableArchetypes" :key="a.id" :value="a.id">{{ $tDynamic(a.name) }}</option>
           </select>
         </label>
         <label class="rs-add-field">
-          <span>Talent level</span>
+          <span>{{ $t('Talent level') }}</span>
           <select v-model="addTalent" class="rs-add-select" :disabled="!addArchetype">
-            <option v-for="t in TALENT_TIERS" :key="t.key" :value="t.key">{{ t.label }}</option>
+            <option v-for="t in TALENT_TIERS" :key="t.key" :value="t.key">{{ $tDynamic(t.label) }}</option>
           </select>
         </label>
         <p class="rs-note" style="margin-top: 6px;">
-          {{ addArchetype
-            ? 'Attributes and ceilings are seeded from the build — tweak everything after.'
-            : 'Generates a neutral ~70 overall base to author from scratch.' }}
+          {{ addArchetype ? $t('Attributes and ceilings are seeded from the build — tweak everything after.') : $t('Generates a neutral ~70 overall base to author from scratch.') }}
         </p>
         <div class="rs-modal-actions">
-          <button class="rs-modal-secondary rs-modal-cancel" @click="showAddPlayer = false">Cancel</button>
+          <button class="rs-modal-secondary rs-modal-cancel" @click="showAddPlayer = false">{{ $t('Cancel') }}</button>
           <button class="rs-modal-primary" :disabled="addingPlayer" @click="confirmAddPlayer">
             <Loader2 v-if="addingPlayer" :size="16" class="spin" />
-            Create Player
+            {{ $t('Create Player') }}
           </button>
         </div>
       </div>
@@ -1027,12 +1035,12 @@ async function confirmFinalize() {
     <div v-if="showFinalize" class="rs-modal-overlay">
       <div class="rs-modal">
         <template v-if="finalizeProblems.length">
-          <h3><AlertTriangle :size="18" /> Not ready yet</h3>
+          <h3><AlertTriangle :size="18" /> {{ $t('Not ready yet') }}</h3>
           <ul class="rs-problems">
             <li v-for="(prob, i) in finalizeProblems" :key="i">{{ prob }}</li>
           </ul>
           <div class="rs-modal-actions">
-            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Keep editing</button>
+            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">{{ $t('Keep editing') }}</button>
             <button
               v-if="shortTeamCount > 0 || faShortfall > 0"
               class="rs-modal-primary"
@@ -1041,33 +1049,31 @@ async function confirmFinalize() {
             >
               <Loader2 v-if="generatingRest" :size="16" class="spin" />
               <Sparkles v-else :size="16" />
-              Generate the rest &amp; continue
+              {{ $t('Generate the rest & continue') }}
             </button>
           </div>
         </template>
         <template v-else-if="isWorkshop">
-          <h3><Check :size="18" /> Done editing?</h3>
+          <h3><Check :size="18" /> {{ $t('Done editing?') }}</h3>
           <p>
-            Your roster is saved to this Builder project — come back and keep
-            tweaking anytime, or publish it from the Community board.
+            {{ $t('Your roster is saved to this Builder project — come back and keep tweaking anytime, or publish it from the Community board.') }}
           </p>
           <div class="rs-modal-actions">
-            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Keep editing</button>
+            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">{{ $t('Keep editing') }}</button>
             <button class="rs-modal-primary" :disabled="saving" @click="acceptFinalize">
-              <Loader2 v-if="saving" :size="16" class="spin" /> Done
+              <Loader2 v-if="saving" :size="16" class="spin" /> {{ $t('Done') }}
             </button>
           </div>
         </template>
         <template v-else>
-          <h3><Check :size="18" /> Start the season?</h3>
+          <h3><Check :size="18" /> {{ $t('Start the season?') }}</h3>
           <p>
-            This locks in your custom league and starts the campaign. You can still
-            develop players afterward through normal gameplay.
+            {{ $t('This locks in your custom league and starts the campaign. You can still develop players afterward through normal gameplay.') }}
           </p>
           <div class="rs-modal-actions">
-            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">Not yet</button>
+            <button class="rs-modal-secondary rs-modal-cancel" @click="showFinalize = false">{{ $t('Not yet') }}</button>
             <button class="rs-modal-primary" :disabled="saving" @click="acceptFinalize">
-              <Loader2 v-if="saving" :size="16" class="spin" /> Start Season
+              <Loader2 v-if="saving" :size="16" class="spin" /> {{ $t('Start Season') }}
             </button>
           </div>
         </template>

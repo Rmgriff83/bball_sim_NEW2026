@@ -10,6 +10,7 @@ import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import { useAppUpdateStore } from '@/stores/appUpdate'
+import { t } from '@wl-i18n/i18n.js'
 import { ToastContainer, MinimalToast } from '@/components/ui'
 import BreakingNewsModal from '@/components/game/BreakingNewsModal.vue'
 import WalkthroughOverlay from '@/components/walkthrough/WalkthroughOverlay.vue'
@@ -36,7 +37,7 @@ async function handleBreakingNewsContinue() {
     await gameStore.resumeSimulation()
   } catch (err) {
     console.error('Failed to resume simulation:', err)
-    toastStore.showError('Failed to resume simulation')
+    toastStore.showError(t('Failed to resume simulation'))
   }
 }
 

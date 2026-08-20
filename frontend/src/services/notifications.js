@@ -22,6 +22,7 @@
 // =============================================================================
 
 import { Capacitor } from '@capacitor/core'
+import { t } from '@wl-i18n/i18n.js'
 
 export const NOTIF_IDS = {
   TRAINING: 1001,
@@ -38,12 +39,14 @@ const LAPSE_2D_MS = 48 * HOUR_MS
 const LAPSE_WEEK_MS = 7 * 24 * HOUR_MS
 
 // --- copy (centralized for easy iteration) ----------------------------------
+// The builders run at schedule time (never at module load), so t() here
+// resolves against the user's current locale.
 const COPY = {
   training: (playerName) => ({
-    title: 'Training complete!',
+    title: t('Training complete!'),
     body: playerName
-      ? `${playerName}'s training session is done — claim the reward.`
-      : 'A training session is done — claim the reward.',
+      ? t("{name}'s training session is done — claim the reward.", { name: playerName })
+      : t('A training session is done — claim the reward.'),
   }),
   points: (n) => {
     // Points accumulate as floats (fractional training/evolution awards) —
@@ -51,17 +54,19 @@ const COPY = {
     // "9.95000000001 attribute points" notification.
     const whole = Math.floor(Number(n) || 0)
     return {
-      title: 'Upgrade points waiting',
-      body: `You have ${whole} attribute upgrade point${whole === 1 ? '' : 's'} ready to spend on your players.`,
+      title: t('Upgrade points waiting'),
+      body: whole === 1
+        ? t('You have {n} attribute upgrade point ready to spend on your players.', { n: whole })
+        : t('You have {n} attribute upgrade points ready to spend on your players.', { n: whole }),
     }
   },
   lapse2d: () => ({
-    title: 'Your next game is waiting',
-    body: 'The league is paused until you return, GM. Jump back in and keep the run going.',
+    title: t('Your next game is waiting'),
+    body: t('The league is paused until you return, GM. Jump back in and keep the run going.'),
   }),
   lapseWeekly: () => ({
-    title: 'Your dynasty misses you',
-    body: 'Your roster, your picks, your season — all right where you left them.',
+    title: t('Your dynasty misses you'),
+    body: t('Your roster, your picks, your season — all right where you left them.'),
   }),
 }
 
@@ -92,8 +97,8 @@ async function _ensureChannel(LocalNotifications) {
   try {
     await LocalNotifications.createChannel({
       id: CHANNEL_ID,
-      name: 'Reminders',
-      description: 'Training and franchise reminders',
+      name: t('Reminders'),
+      description: t('Training and franchise reminders'),
       importance: 4,
     })
     _channelReady = true

@@ -11,6 +11,7 @@ import TeamPicker from '@/components/team/TeamPicker.vue'
 import OwnerQuickInfo from '@/components/team/OwnerQuickInfo.vue'
 import { gmLevelLabel, nextGmLevel } from '@/engine/data/gmLevels'
 import { useAudioStore } from '@/stores/audio'
+import { t } from '@wl-i18n/i18n.js'
 
 const audio = useAudioStore()
 
@@ -36,7 +37,7 @@ watch(() => props.show, (open) => {
 })
 
 const isExtend = computed(() => props.decision?.decision === 'extend')
-const ownerName = computed(() => props.decision?.ownerName ?? 'Your owner')
+const ownerName = computed(() => props.decision?.ownerName ?? t('Your owner'))
 const nextLevelLabel = computed(() => gmLevelLabel(nextGmLevel(props.gmLevel)))
 const willPromote = computed(() => nextGmLevel(props.gmLevel) !== props.gmLevel)
 const subtasks = computed(() => props.decision?.subtasks ?? [])
@@ -45,8 +46,8 @@ const subtasks = computed(() => props.decision?.subtasks ?? [])
 // extension offer vs. having been let go by the owner.
 const pickIntro = computed(() =>
   isExtend.value
-    ? `You're turning down ${ownerName.value}'s extension. Choose the franchise you want to take over instead.`
-    : 'Choose the franchise you want to take over as GM.'
+    ? t("You're turning down {name}'s extension. Choose the franchise you want to take over instead.", { name: ownerName.value })
+    : t('Choose the franchise you want to take over as GM.')
 )
 
 function confirmExtend() {
@@ -84,9 +85,9 @@ function confirmSwitch() {
             <div class="hdr-icon"><Crown :size="24" /></div>
             <div>
               <h2 class="modal-title">
-                {{ isExtend ? 'Contract Extended' : 'Contract Not Renewed' }}
+                {{ isExtend ? $t('Contract Extended') : $t('Contract Not Renewed') }}
               </h2>
-              <p class="modal-sub">{{ ownerName }} · {{ decision.expectationLabel }} mandate</p>
+              <p class="modal-sub">{{ ownerName }} · {{ $t('{label} mandate', { label: $tDynamic(decision.expectationLabel) }) }}</p>
             </div>
           </header>
 
@@ -96,46 +97,44 @@ function confirmSwitch() {
               <div class="verdict-score">
                 <div class="score-ring" :style="{ '--c': decision.satisfactionColor }">
                   <span class="score-val">{{ decision.combined }}<small>%</small></span>
-                  <span class="score-label">{{ decision.satisfactionLabel }}</span>
+                  <span class="score-label">{{ $tDynamic(decision.satisfactionLabel) }}</span>
                 </div>
                 <div class="score-breakdown">
                   <div class="sb-row">
-                    <span>Wins record</span><b>{{ decision.winsSatisfaction }}% <em>×60%</em></b>
+                    <span>{{ $t('Wins record') }}</span><b>{{ decision.winsSatisfaction }}% <em>×60%</em></b>
                   </div>
                   <div class="sb-row">
-                    <span>Sub-tasks</span><b>{{ decision.subtaskScore }}% <em>×40%</em></b>
+                    <span>{{ $t('Sub-tasks') }}</span><b>{{ decision.subtaskScore }}% <em>×40%</em></b>
                   </div>
                   <div class="sb-row total">
-                    <span>Needed to extend</span><b>{{ decision.threshold }}%</b>
+                    <span>{{ $t('Needed to extend') }}</span><b>{{ decision.threshold }}%</b>
                   </div>
                 </div>
               </div>
 
               <p class="verdict-blurb">
                 <template v-if="isExtend">
-                  {{ ownerName }} is satisfied with your work and wants to keep building with you.
-                  Re-sign a fresh 4-year deal to continue.
+                  {{ $t('{name} is satisfied with your work and wants to keep building with you. Re-sign a fresh 4-year deal to continue.', { name: ownerName }) }}
                 </template>
                 <template v-else>
-                  {{ ownerName }} has decided to move in another direction. Your time with this
-                  franchise is over — but your reputation travels. Choose a new team to lead.
+                  {{ $t('{name} has decided to move in another direction. Your time with this franchise is over — but your reputation travels. Choose a new team to lead.', { name: ownerName }) }}
                 </template>
               </p>
 
               <div v-if="isExtend && willPromote" class="promo-banner">
                 <TrendingUp :size="16" />
-                <span>Re-signing promotes you to <b>GM Level {{ nextLevelLabel }}</b>.</span>
+                <span>{{ $t('Re-signing promotes you to GM Level {level}.', { level: $tDynamic(nextLevelLabel) }) }}</span>
               </div>
 
               <div class="subtask-recap">
-                <h4 class="recap-title">Owner Sub-Tasks ({{ decision.metCount }}/{{ decision.total }})</h4>
+                <h4 class="recap-title">{{ $t('Owner Sub-Tasks ({a}/{b})', { a: decision.metCount, b: decision.total }) }}</h4>
                 <ul class="recap-list">
                   <li v-for="t in subtasks" :key="t.id" :class="{ met: t.met }">
                     <CheckCircle2 v-if="t.met" :size="15" />
                     <Circle v-else :size="15" />
-                    <span>{{ t.label }}</span>
+                    <span>{{ $tDynamic(t.label) }}</span>
                     <span v-if="t.progress" class="recap-progress" :class="{ met: t.met }">{{ t.progress.current }}/{{ t.progress.target }}</span>
-                    <span v-if="t.global" class="recap-tag">Global</span>
+                    <span v-if="t.global" class="recap-tag">{{ $t('Global') }}</span>
                   </li>
                 </ul>
               </div>
@@ -151,7 +150,7 @@ function confirmSwitch() {
                 </div>
                 <div class="sp-info">
                   <span class="sp-name">{{ selectedTeam.name }}</span>
-                  <span class="sp-meta">{{ selectedTeam.division }} Division</span>
+                  <span class="sp-meta">{{ $t('{division} Division', { division: selectedTeam.division }) }}</span>
                   <OwnerQuickInfo :team-abbreviation="selectedTeam.abbreviation" />
                 </div>
               </div>
@@ -169,14 +168,14 @@ function confirmSwitch() {
             <template v-if="phase === 'verdict'">
               <template v-if="isExtend">
                 <button class="btn-secondary decline" :disabled="busy" @click="declineExtension">
-                  Decline &amp; pursue other jobs
+                  {{ $t('Decline & pursue other jobs') }}
                 </button>
                 <button class="btn-confirm good" :disabled="busy" @click="confirmExtend">
-                  {{ busy ? 'Re-signing…' : 'Re-sign 4-Year Contract' }}
+                  {{ busy ? $t('Re-signing…') : $t('Re-sign 4-Year Contract') }}
                 </button>
               </template>
               <button v-else class="btn-confirm" @click="goToPicker">
-                Find a New Team <ArrowRight :size="16" />
+                {{ $t('Find a New Team') }} <ArrowRight :size="16" />
               </button>
             </template>
             <template v-else>
@@ -186,18 +185,14 @@ function confirmSwitch() {
                 :disabled="busy"
                 @click="goBackToVerdict"
               >
-                <ArrowLeft :size="16" /> Back
+                <ArrowLeft :size="16" /> {{ $t('Back') }}
               </button>
               <button
                 class="btn-confirm good"
                 :disabled="busy || !selectedTeam"
                 @click="confirmSwitch"
               >
-                {{ busy
-                  ? 'Taking over…'
-                  : selectedTeam
-                    ? `Become GM of the ${selectedTeam.name}`
-                    : 'Select a team' }}
+                {{ busy ? $t('Taking over…') : selectedTeam ? $t('Become GM of the {team}', { team: selectedTeam.name }) : $t('Select a team') }}
               </button>
             </template>
           </footer>

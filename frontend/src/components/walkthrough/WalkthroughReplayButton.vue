@@ -4,7 +4,7 @@
     type="button"
     class="wt-replay-btn"
     :class="[`wt-replay-${variant}`, { 'wt-replay-flush': flush }]"
-    title="Replay walkthrough"
+    :title="$t('Replay walkthrough')"
     aria-label="Replay walkthrough"
     @click="replay"
   >?</button>

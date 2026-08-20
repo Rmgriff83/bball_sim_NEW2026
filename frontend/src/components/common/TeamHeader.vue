@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { t } from '@wl-i18n/i18n.js'
 import TeamOverallBadge from './TeamOverallBadge.vue'
 
 const props = defineProps({
@@ -14,7 +15,7 @@ const props = defineProps({
 
 const conferenceLabel = computed(() => {
   if (!props.team?.conference) return ''
-  return props.team.conference === 'east' ? 'EAST' : 'WEST'
+  return props.team.conference === 'east' ? t('EAST') : t('WEST')
 })
 
 const computedSubtitle = computed(() => {

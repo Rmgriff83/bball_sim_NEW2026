@@ -54,7 +54,7 @@ onUnmounted(() => {
       <div v-if="show" class="modal-overlay" @click.self="close">
         <div class="modal-container">
           <header class="modal-header">
-            <h2 class="modal-title">{{ isBuyMode ? 'Buy Extra Meeting' : 'Coach Meeting' }}</h2>
+            <h2 class="modal-title">{{ isBuyMode ? $t('Buy Extra Meeting') : $t('Coach Meeting') }}</h2>
             <button
               v-if="!loading"
               class="btn-close"
@@ -73,13 +73,10 @@ onUnmounted(() => {
 
             <p class="meeting-blurb">
               <template v-if="isBuyMode">
-                You're out of coach meetings for this season. Buy one more for
-                <strong>{{ extraActionCost }} tokens</strong> to hold a meeting
-                with <strong>{{ playerName }}</strong>?
+                {{ $t("You're out of coach meetings for this season. Buy one more for {cost} tokens to hold a meeting with {name}?", { cost: extraActionCost, name: playerName }) }}
               </template>
               <template v-else>
-                Hold a coach meeting with <strong>{{ playerName }}</strong>?
-                This boosts their morale by 30 points (clamped at 100).
+                {{ $t('Hold a coach meeting with {name}? This boosts their morale by 30 points (clamped at 100).', { name: playerName }) }}
               </template>
             </p>
 
@@ -88,34 +85,34 @@ onUnmounted(() => {
               <div class="meeting-stat">
                 <span class="stat-label">
                   <Heart :size="13" />
-                  Morale Boost
+                  {{ $t('Morale Boost') }}
                 </span>
                 <span class="stat-value boost">+30</span>
               </div>
               <div v-if="!isBuyMode" class="meeting-stat">
                 <span class="stat-label">
                   <MessagesSquare :size="13" />
-                  Actions Used
+                  {{ $t('Actions Used') }}
                 </span>
                 <span class="stat-value">
-                  1 of {{ actionsRemaining }} remaining
+                  {{ $t('1 of {n} remaining', { n: actionsRemaining }) }}
                 </span>
               </div>
               <template v-else>
                 <div class="meeting-stat">
                   <span class="stat-label">
                     <Coins :size="13" />
-                    Cost
+                    {{ $t('Cost') }}
                   </span>
-                  <span class="stat-value cost">{{ extraActionCost }} tokens</span>
+                  <span class="stat-value cost">{{ $t('{n} tokens', { n: extraActionCost }) }}</span>
                 </div>
                 <div class="meeting-stat">
                   <span class="stat-label">
                     <Coins :size="13" />
-                    Your Balance
+                    {{ $t('Your Balance') }}
                   </span>
                   <span class="stat-value" :class="{ negative: cannotAfford }">
-                    {{ userTokens }} tokens
+                    {{ $t('{n} tokens', { n: userTokens }) }}
                   </span>
                 </div>
               </template>
@@ -123,13 +120,13 @@ onUnmounted(() => {
 
             <div v-if="cannotAfford" class="meeting-warn">
               <AlertTriangle :size="14" />
-              <span>Not enough tokens to purchase an extra meeting.</span>
+              <span>{{ $t('Not enough tokens to purchase an extra meeting.') }}</span>
             </div>
           </main>
 
           <footer class="modal-footer">
             <button class="btn-cancel" :disabled="loading" @click="close">
-              Cancel
+              {{ $t('Cancel') }}
             </button>
             <button
               class="btn-confirm"
@@ -142,7 +139,7 @@ onUnmounted(() => {
                 <Coins v-if="isBuyMode" :size="14" />
                 <MessagesSquare v-else :size="14" />
               </template>
-              <span>{{ loading ? 'Working…' : (isBuyMode ? 'Buy & Hold Meeting' : 'Hold Meeting') }}</span>
+              <span>{{ loading ? $t('Working…') : (isBuyMode ? $t('Buy & Hold Meeting') : $t('Hold Meeting')) }}</span>
             </button>
           </footer>
         </div>

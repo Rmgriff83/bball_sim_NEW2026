@@ -53,16 +53,16 @@ function sendFeedback() {
     <div class="rn">
       <!-- Step 1: the ask -->
       <template v-if="store.step === 'ask'">
-        <h2 class="rn-title">How are you liking Bball Sim so far?</h2>
-        <p class="rn-subtitle">You just wrapped up a full season — nice work, GM.</p>
+        <h2 class="rn-title">{{ $t('How are you liking Bball Sim so far?') }}</h2>
+        <p class="rn-subtitle">{{ $t('You just wrapped up a full season — nice work, GM.') }}</p>
         <div class="rn-options">
           <button class="rn-option" @click="store.choose('loving')">
             <span class="rn-icon rn-icon-love"><Heart :size="22" /></span>
-            <span class="rn-option-label">Loving it!</span>
+            <span class="rn-option-label">{{ $t('Loving it!') }}</span>
           </button>
           <button class="rn-option" @click="store.choose('feedback')">
             <span class="rn-icon rn-icon-meh"><MessageCircle :size="22" /></span>
-            <span class="rn-option-label">Not so much</span>
+            <span class="rn-option-label">{{ $t('Not so much') }}</span>
           </button>
         </div>
       </template>
@@ -70,32 +70,32 @@ function sendFeedback() {
       <!-- Step 2a: loving it → rate / review -->
       <template v-else-if="store.step === 'loving'">
         <span class="rn-big-icon"><Star :size="30" /></span>
-        <h2 class="rn-title">That's great to hear!</h2>
+        <h2 class="rn-title">{{ $t("That's great to hear!") }}</h2>
         <p class="rn-subtitle">
-          A quick rating goes a long way for a small indie game. Thank you!
+          {{ $t('A quick rating goes a long way for a small indie game. Thank you!') }}
         </p>
         <button class="rn-primary" :disabled="ratingBusy" @click="rateNow">
-          <Star :size="16" /> Rate Bball Sim
+          <Star :size="16" /> {{ $t('Rate Bball Sim') }}
         </button>
-        <button class="rn-ghost" @click="writeReview">Write a review</button>
+        <button class="rn-ghost" @click="writeReview">{{ $t('Write a review') }}</button>
       </template>
 
       <!-- Step 2b: not so much → feedback email -->
       <template v-else>
-        <h2 class="rn-title">How can we improve the game?</h2>
+        <h2 class="rn-title">{{ $t('How can we improve the game?') }}</h2>
         <p class="rn-subtitle">
-          Your feedback goes straight to the developer — every message gets read.
+          {{ $t('Your feedback goes straight to the developer — every message gets read.') }}
         </p>
         <textarea
           v-model="feedbackText"
           class="rn-textarea"
           rows="5"
-          placeholder="Tell us what's not working for you…"
+          :placeholder="$t('Tell us what’s not working for you…')"
         ></textarea>
         <button class="rn-primary" :disabled="!feedbackText.trim()" @click="sendFeedback">
-          <Send :size="15" /> Send Feedback
+          <Send :size="15" /> {{ $t('Send Feedback') }}
         </button>
-        <button class="rn-ghost" @click="store.close()">No thanks</button>
+        <button class="rn-ghost" @click="store.close()">{{ $t('No thanks') }}</button>
       </template>
     </div>
   </BaseModal>

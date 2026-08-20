@@ -11,6 +11,7 @@ import {
   PLAYER_BADGE_LEVELS,
   getBadgeStoreEntries,
 } from '@/engine/data/playerBadgeStore'
+import { t, tDynamic } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -91,7 +92,7 @@ async function purchase(entry) {
   if (purchasing.value) return
   if (!entry.nextLevel) return
   if (tokens.value < (entry.nextCost ?? Infinity)) {
-    toastStore.showError(`Need ${entry.nextCost} tokens — you have ${tokens.value}`)
+    toastStore.showError(t('Need {cost} tokens — you have {have}', { cost: entry.nextCost, have: tokens.value }))
     return
   }
 
@@ -104,11 +105,11 @@ async function purchase(entry) {
       entry.badge.id,
     )
     audio.purchase()
-    toastStore.showSuccess(`${entry.badge.name} → ${levelLabel(result.level)}`)
+    toastStore.showSuccess(`${tDynamic(entry.badge.name)} → ${tDynamic(levelLabel(result.level))}`)
     emit('purchased', { badgeId: entry.badge.id, level: result.level })
   } catch (err) {
     console.error('Failed to purchase player badge:', err)
-    toastStore.showError(err.message || 'Failed to purchase badge')
+    toastStore.showError(err.message || t('Failed to purchase badge'))
   } finally {
     purchasing.value = null
   }
@@ -133,7 +134,7 @@ function cantAfford(entry) {
 <template>
   <StandardModal
     :show="show"
-    :title="player ? `Badge Store · ${player.name || ''}` : 'Badge Store'"
+    :title="player ? $t('Badge Store · {name}', { name: player.name || '' }) : $t('Badge Store')"
     size="lg"
     @close="close"
   >
@@ -143,32 +144,32 @@ function cantAfford(entry) {
           <div class="token-balance">
             <Coins :size="16" />
             <span class="token-amount">{{ tokens.toLocaleString() }}</span>
-            <span class="token-label">tokens</span>
+            <span class="token-label">{{ $t('tokens') }}</span>
           </div>
-          <button type="button" class="buy-tokens-btn" @click="goToStore" title="Get more tokens in the Store">
+          <button type="button" class="buy-tokens-btn" @click="goToStore" :title="$t('Get more tokens in the Store')">
             <Plus :size="14" />
-            <span>Get Tokens</span>
+            <span>{{ $t('Get Tokens') }}</span>
           </button>
         </div>
         <div v-if="player" class="player-summary">
-          <span class="player-summary-label">Position</span>
+          <span class="player-summary-label">{{ $t('Position') }}</span>
           <span class="player-summary-value">{{ player.position }}<template v-if="player.secondaryPosition">/{{ player.secondaryPosition }}</template></span>
           <span class="player-summary-divider">·</span>
-          <span class="player-summary-label">Potential</span>
+          <span class="player-summary-label">{{ $t('Potential') }}</span>
           <span class="player-summary-value">{{ player.potentialRating ?? player.potential_rating ?? '—' }}</span>
         </div>
       </div>
       <p class="store-subtitle">
-        Each badge has a per-player ceiling based on position fit, attribute fit, and potential. Locked tiers can't be reached for this player.
+        {{ $t("Each badge has a per-player ceiling based on position fit, attribute fit, and potential. Locked tiers can't be reached for this player.") }}
       </p>
     </div>
 
     <div v-if="entries.length === 0" class="empty-store">
-      No badges are available for this player. Improve their attributes to unlock options.
+      {{ $t('No badges are available for this player. Improve their attributes to unlock options.') }}
     </div>
 
     <div v-for="(list, category) in grouped" :key="category" class="category-group">
-      <h3 class="category-title">{{ CATEGORY_LABELS[category] || category }}</h3>
+      <h3 class="category-title">{{ $tDynamic(CATEGORY_LABELS[category] || category) }}</h3>
       <div class="badge-grid">
         <div
           v-for="entry in list"
@@ -186,16 +187,16 @@ function cantAfford(entry) {
               :style="{ color: TIER_COLORS[entry.currentLevel || 'bronze'] }"
               :fill="entry.currentLevel ? TIER_COLORS[entry.currentLevel] : 'transparent'"
             />
-            <span class="badge-name">{{ entry.badge.name }}</span>
+            <span class="badge-name">{{ $tDynamic(entry.badge.name) }}</span>
             <span
               v-if="entry.currentLevel"
               class="badge-current-level"
               :style="{ color: TIER_COLORS[entry.currentLevel] }"
             >
-              {{ levelLabel(entry.currentLevel) }}
+              {{ $tDynamic(levelLabel(entry.currentLevel)) }}
             </span>
           </div>
-          <p class="badge-description">{{ entry.badge.description }}</p>
+          <p class="badge-description">{{ $tDynamic(entry.badge.description) }}</p>
 
           <!-- Tier dots: filled = owned, dashed = next purchase, lock-pattern = beyond per-player max -->
           <div class="tier-dots-row">
@@ -210,18 +211,18 @@ function cantAfford(entry) {
                   locked: dotState(entry, lvl).locked,
                 }"
                 :style="dotState(entry, lvl).active ? { background: TIER_COLORS[lvl] } : {}"
-                :title="dotState(entry, lvl).locked ? `Locked above ${levelLabel(entry.maxLevel)} for this player` : levelLabel(lvl)"
+                :title="dotState(entry, lvl).locked ? $t('Locked above {level} for this player', { level: $tDynamic(levelLabel(entry.maxLevel)) }) : $tDynamic(levelLabel(lvl))"
               />
             </div>
             <span class="max-level-label" :style="{ color: TIER_COLORS[entry.maxLevel] }">
-              max {{ levelLabel(entry.maxLevel) }}
+              {{ $t('max {level}', { level: $tDynamic(levelLabel(entry.maxLevel)) }) }}
             </span>
           </div>
 
           <div class="badge-card-footer">
             <span v-if="entry.isMaxedForPlayer" class="badge-maxed">
               <Check :size="14" />
-              Maxed ({{ levelLabel(entry.maxLevel) }})
+              {{ $t('Maxed ({level})', { level: $tDynamic(levelLabel(entry.maxLevel)) }) }}
             </span>
             <template v-else>
               <span class="badge-cost">
@@ -235,13 +236,7 @@ function cantAfford(entry) {
               >
                 <ChevronUp v-if="entry.currentLevel && !cantAfford(entry)" :size="14" />
                 <span>
-                  {{ purchasing === entry.badge.id
-                      ? 'Working...'
-                      : cantAfford(entry)
-                        ? 'Get Tokens'
-                        : entry.currentLevel
-                          ? `Upgrade to ${levelLabel(entry.nextLevel)}`
-                          : 'Unlock Bronze' }}
+                  {{ purchasing === entry.badge.id ? $t('Working...') : cantAfford(entry) ? $t('Get Tokens') : entry.currentLevel ? $t('Upgrade to {level}', { level: $tDynamic(levelLabel(entry.nextLevel)) }) : $t('Unlock Bronze') }}
                 </span>
               </button>
             </template>
@@ -251,7 +246,7 @@ function cantAfford(entry) {
     </div>
 
     <template #footer>
-      <button class="btn-close-footer" @click="close">Close</button>
+      <button class="btn-close-footer" @click="close">{{ $t('Close') }}</button>
     </template>
   </StandardModal>
 </template>

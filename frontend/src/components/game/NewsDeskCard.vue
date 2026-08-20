@@ -11,6 +11,7 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import {
   Newspaper, Star, Zap, ChevronDown, ChevronUp, Pause, Play,
 } from 'lucide-vue-next'
+import { tDynamic, dateLocale } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   // Newest-first list from campaign.news (CampaignHomeView's `news` computed).
@@ -46,12 +47,24 @@ function _parseLocal(dateStr) {
   return new Date(y, m - 1, d)
 }
 function _isAllStarAward(item) {
+  // Logic check — matches the stored ENGLISH headline on purpose (old and new
+  // records alike), independent of the display language.
   return _itemType(item) === 'award' && item?.headline?.includes('All-Star')
+}
+// Display strings: translate via the stored template when the record carries
+// one; legacy records (headline/body only) fall back to the English string.
+function _itemHeadline(item) {
+  if (!item) return ''
+  return item.headline_tpl ? tDynamic(item.headline_tpl, item.headline_params) : (item.headline ?? '')
+}
+function _itemBody(item) {
+  if (!item) return ''
+  return item.body_tpl ? tDynamic(item.body_tpl, item.body_params) : (item.body ?? '')
 }
 
 function formatNewsDate(dateStr) {
   const d = _parseLocal(dateStr)
-  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+  return d ? d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' }) : ''
 }
 
 // Oldest → newest so the reading ends on the freshest story.
@@ -80,7 +93,7 @@ let holdTimer = null
 
 const currentItem = computed(() => queue.value[currentIndex.value] ?? null)
 const typing = computed(() =>
-  !!currentItem.value && displayed.value.length < (currentItem.value.headline ?? '').length)
+  !!currentItem.value && displayed.value.length < _itemHeadline(currentItem.value).length)
 const isMinimized = computed(() => mode.value === 'minimized')
 const isReading = computed(() => mode.value === 'reading')
 
@@ -94,7 +107,7 @@ const upcomingItems = computed(() => {
 })
 
 // Latest headline for the minimized bar.
-const newestHeadline = computed(() => queue.value[queue.value.length - 1]?.headline ?? '')
+const newestHeadline = computed(() => _itemHeadline(queue.value[queue.value.length - 1]))
 
 function _clearTimers() {
   clearTimeout(typeTimer)
@@ -107,7 +120,7 @@ function _clearTimers() {
 // continues mid-word instead of re-typing the whole line.
 function _typeFrom(startIdx) {
   _clearTimers()
-  const text = currentItem.value?.headline ?? ''
+  const text = _itemHeadline(currentItem.value)
   let i = startIdx
   const step = () => {
     displayed.value = text.slice(0, i)
@@ -147,7 +160,7 @@ function _advance() {
 function _resume() {
   const item = currentItem.value
   if (!item) return
-  const full = item.headline ?? ''
+  const full = _itemHeadline(item)
   if (displayed.value.length < full.length) {
     _typeFrom(displayed.value.length)
   } else {
@@ -200,7 +213,7 @@ watch([newestId, () => queue.value.length], () => {
   if (remembered === 'minimized' || remembered === 'paused') {
     mode.value = remembered
     // Show the first story fully-rendered so a paused desk isn't blank.
-    displayed.value = queue.value[0]?.headline ?? ''
+    displayed.value = _itemHeadline(queue.value[0])
     showBody.value = true
     return
   }
@@ -216,9 +229,9 @@ onUnmounted(_clearTimers)
     <!-- Minimized bar (reading is paused while collapsed) -->
     <div v-if="isMinimized" class="nd-minbar">
       <span class="nd-live-dot idle"></span>
-      <span class="nd-title">News Desk</span>
-      <span class="nd-min-headline">{{ newestHeadline || 'No news yet' }}</span>
-      <button class="nd-ctrl" title="Expand and resume" @click="toggleMinimize">
+      <span class="nd-title">{{ $t('News Desk') }}</span>
+      <span class="nd-min-headline">{{ newestHeadline || $t('No news yet') }}</span>
+      <button class="nd-ctrl" :title="$t('Expand and resume')" @click="toggleMinimize">
         <ChevronUp :size="16" />
       </button>
     </div>
@@ -227,23 +240,23 @@ onUnmounted(_clearTimers)
     <template v-else>
       <div class="nd-header">
         <span class="nd-live-dot" :class="{ idle: !isReading }"></span>
-        <span class="nd-title">News Desk</span>
+        <span class="nd-title">{{ $t('News Desk') }}</span>
         <button
           class="nd-ctrl"
-          :title="isReading ? 'Pause the reading' : 'Resume the reading'"
+          :title="isReading ? $t('Pause the reading') : $t('Resume the reading')"
           @click="togglePause"
         >
           <Pause v-if="isReading" :size="15" />
           <Play v-else :size="15" />
         </button>
-        <button class="nd-ctrl" title="Minimize" @click="toggleMinimize">
+        <button class="nd-ctrl" :title="$t('Minimize')" @click="toggleMinimize">
           <ChevronDown :size="16" />
         </button>
       </div>
 
       <!-- Empty state -->
       <div v-if="!queue.length" class="nd-empty">
-        <p>No news yet. Simulate some games to generate headlines!</p>
+        <p>{{ $t('No news yet. Simulate some games to generate headlines!') }}</p>
       </div>
 
       <template v-else>
@@ -263,12 +276,12 @@ onUnmounted(_clearTimers)
             <Newspaper v-else :size="18" />
           </div>
           <div class="nd-reader-text">
-            <span v-if="currentItem.is_breaking" class="nd-breaking-tag">Breaking</span>
+            <span v-if="currentItem.is_breaking" class="nd-breaking-tag">{{ $t('Breaking') }}</span>
             <p class="nd-reader-headline">
               {{ displayed }}<span v-if="typing" class="nd-caret">▍</span>
             </p>
             <Transition name="nd-body">
-              <p v-if="showBody && currentItem.body" class="nd-reader-body">{{ currentItem.body }}</p>
+              <p v-if="showBody && currentItem.body" class="nd-reader-body">{{ _itemBody(currentItem) }}</p>
             </Transition>
             <span class="nd-reader-date">{{ formatNewsDate(_itemDate(currentItem)) }}</span>
           </div>
@@ -294,7 +307,7 @@ onUnmounted(_clearTimers)
               <Star v-else-if="_itemType(item) === 'award'" :size="12" />
               <Newspaper v-else :size="12" />
             </span>
-            <span class="nd-queue-headline">{{ item.headline }}</span>
+            <span class="nd-queue-headline">{{ _itemHeadline(item) }}</span>
             <span class="nd-queue-date">{{ formatNewsDate(_itemDate(item)) }}</span>
           </div>
         </TransitionGroup>

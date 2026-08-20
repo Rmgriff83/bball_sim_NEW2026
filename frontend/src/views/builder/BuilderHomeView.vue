@@ -18,6 +18,7 @@ import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
 import { useSyncStore } from '@/stores/sync'
 import { useCommunityLink } from '@/composables/useCommunityLink'
+import { t } from '@wl-i18n/i18n.js'
 import {
   createRosterWorkshop,
   createDraftClassWorkshop,
@@ -58,7 +59,7 @@ onMounted(async () => {
 
 function openNewProject(type) {
   if (atCap.value) {
-    toastStore.showError(`Project limit reached (${MAX_WORKSHOP_PROJECTS}) — delete one to start another.`)
+    toastStore.showError(t('Project limit reached ({n}) — delete one to start another.', { n: MAX_WORKSHOP_PROJECTS }))
     return
   }
   newProjectType.value = type
@@ -88,7 +89,7 @@ async function confirmCreate() {
     newProjectType.value = null
   } catch (err) {
     audio.cancel()
-    toastStore.showError(err?.message || 'Could not create the project')
+    toastStore.showError(err?.message || t('Could not create the project'))
   } finally {
     creating.value = false
   }
@@ -113,9 +114,9 @@ async function restoreProject(p) {
   restoringId.value = p.id
   try {
     await campaignStore.restoreCloudCampaign(p.id)
-    toastStore.showSuccess('Project restored from the cloud')
+    toastStore.showSuccess(t('Project restored from the cloud'))
   } catch (err) {
-    toastStore.showError(err?.message || 'Restore failed — check your connection')
+    toastStore.showError(err?.message || t('Restore failed — check your connection'))
   } finally {
     restoringId.value = null
   }
@@ -138,7 +139,7 @@ async function confirmRename() {
     syncStore.markDirty('workshop_rename')
     await campaignStore.fetchCampaigns().catch(() => {})
   } catch (err) {
-    toastStore.showError(err?.message || 'Rename failed')
+    toastStore.showError(err?.message || t('Rename failed'))
   }
 }
 
@@ -149,9 +150,9 @@ async function confirmDelete() {
   try {
     await campaignStore.deleteCampaign(p.id)
     pendingDelete.value = null
-    toastStore.showSuccess('Project deleted')
+    toastStore.showSuccess(t('Project deleted'))
   } catch (err) {
-    toastStore.showError(err?.message || 'Delete failed')
+    toastStore.showError(err?.message || t('Delete failed'))
   } finally {
     deleting.value = false
   }
@@ -162,38 +163,36 @@ async function confirmDelete() {
   <div class="bld">
     <header class="bld-header">
       <button class="bld-back" @click="router.push('/campaigns')">
-        <ArrowLeft :size="18" /> Campaigns
+        <ArrowLeft :size="18" /> {{ $t('Campaigns') }}
       </button>
-      <h1 class="bld-title"><Hammer :size="20" /> Builder</h1>
+      <h1 class="bld-title"><Hammer :size="20" /> {{ $t('Builder') }}</h1>
       <button class="bld-community" @click="openCommunity(null, { back: 'builder' })">
-        <Globe :size="14" /> Community
+        <Globe :size="14" /> {{ $t('Community') }}
       </button>
     </header>
 
     <p class="bld-sub">
-      Author full league rosters or rookie draft classes outside any campaign.
-      Projects save automatically, sync to your account, and can be published
-      to the Community board.
+      {{ $t('Author full league rosters or rookie draft classes outside any campaign. Projects save automatically, sync to your account, and can be published to the Community board.') }}
     </p>
 
     <div class="bld-new-grid">
       <button class="bld-new-card" :disabled="creating" @click="openNewProject('roster')">
         <Users :size="26" />
-        <span class="bld-new-name">New Roster Build</span>
-        <span class="bld-new-desc">A full 30-team league — start from a generated base and reshape everything.</span>
+        <span class="bld-new-name">{{ $t('New Roster Build') }}</span>
+        <span class="bld-new-desc">{{ $t('A full 30-team league — start from a generated base and reshape everything.') }}</span>
       </button>
       <button class="bld-new-card" :disabled="creating" @click="openNewProject('draft_class')">
         <ClipboardList :size="26" />
-        <span class="bld-new-name">New Draft Class</span>
-        <span class="bld-new-desc">A rookie class (60–120 prospects) campaigns can adopt at any season start.</span>
+        <span class="bld-new-name">{{ $t('New Draft Class') }}</span>
+        <span class="bld-new-desc">{{ $t('A rookie class (60–120 prospects) campaigns can adopt at any season start.') }}</span>
       </button>
     </div>
 
-    <div v-if="loading" class="bld-loading"><Loader2 :size="26" class="spin" /> Loading projects…</div>
+    <div v-if="loading" class="bld-loading"><Loader2 :size="26" class="spin" /> {{ $t('Loading projects…') }}</div>
 
     <template v-else>
-      <h2 v-if="projects.length" class="bld-section">Your Projects ({{ projects.length }}/{{ MAX_WORKSHOP_PROJECTS }})</h2>
-      <p v-else class="bld-empty">No projects yet — start one above.</p>
+      <h2 v-if="projects.length" class="bld-section">{{ $t('Your Projects ({a}/{b})', { a: projects.length, b: MAX_WORKSHOP_PROJECTS }) }}</h2>
+      <p v-else class="bld-empty">{{ $t('No projects yet — start one above.') }}</p>
 
       <div class="bld-list">
         <div v-for="p in projects" :key="p.id" class="bld-card">
@@ -201,19 +200,19 @@ async function confirmDelete() {
             <span class="bld-card-name">{{ p.name }}</span>
             <span class="bld-card-meta">
               <span class="bld-chip" :class="projectMode(p) ?? 'cloud'">
-                {{ p.cloudOnly ? 'Cloud' : (projectMode(p) === 'draft_class' ? 'Draft Class' : 'Roster') }}
+                {{ p.cloudOnly ? $t('Cloud') : (projectMode(p) === 'draft_class' ? $t('Draft Class') : $t('Roster')) }}
               </span>
               <span v-if="p.updatedAt" class="bld-updated">{{ new Date(p.updatedAt).toLocaleDateString() }}</span>
             </span>
           </button>
           <div class="bld-card-actions">
-            <button v-if="p.cloudOnly" class="bld-icon-btn" title="Restore from cloud" :disabled="restoringId === p.id" @click="restoreProject(p)">
+            <button v-if="p.cloudOnly" class="bld-icon-btn" :title="$t('Restore from cloud')" :disabled="restoringId === p.id" @click="restoreProject(p)">
               <Loader2 v-if="restoringId === p.id" :size="15" class="spin" />
               <CloudDownload v-else :size="15" />
             </button>
             <template v-else>
-              <button class="bld-icon-btn" title="Rename" @click="startRename(p)"><Pencil :size="15" /></button>
-              <button class="bld-icon-btn danger" title="Delete" @click="pendingDelete = p"><Trash2 :size="15" /></button>
+              <button class="bld-icon-btn" :title="$t('Rename')" @click="startRename(p)"><Pencil :size="15" /></button>
+              <button class="bld-icon-btn danger" :title="$t('Delete')" @click="pendingDelete = p"><Trash2 :size="15" /></button>
             </template>
           </div>
         </div>
@@ -223,21 +222,19 @@ async function confirmDelete() {
     <!-- New project name -->
     <div v-if="newProjectType" class="bld-modal-overlay">
       <div class="bld-modal">
-        <h3><Plus :size="18" /> {{ newProjectType === 'draft_class' ? 'New Draft Class' : 'New Roster Build' }}</h3>
+        <h3><Plus :size="18" /> {{ newProjectType === 'draft_class' ? $t('New Draft Class') : $t('New Roster Build') }}</h3>
         <label class="bld-field">
-          <span>Project name</span>
+          <span>{{ $t('Project name') }}</span>
           <input v-model="newProjectName" maxlength="60" class="bld-input" @keyup.enter="confirmCreate" />
         </label>
         <p class="bld-note">
-          {{ newProjectType === 'roster'
-            ? 'Generates a full league, then the editor asks how to start — from generated, scratch, or an import.'
-            : 'The editor will ask how to start — from a generated class, from scratch, or from an import.' }}
+          {{ newProjectType === 'roster' ? $t('Generates a full league, then the editor asks how to start — from generated, scratch, or an import.') : $t('The editor will ask how to start — from a generated class, from scratch, or from an import.') }}
         </p>
         <div class="bld-modal-actions">
-          <button class="bld-secondary" :disabled="creating" @click="newProjectType = null">Cancel</button>
+          <button class="bld-secondary" :disabled="creating" @click="newProjectType = null">{{ $t('Cancel') }}</button>
           <button class="bld-primary" :disabled="creating || !newProjectName.trim()" @click="confirmCreate">
             <Loader2 v-if="creating" :size="15" class="spin" />
-            Create
+            {{ $t('Create') }}
           </button>
         </div>
       </div>
@@ -246,14 +243,14 @@ async function confirmDelete() {
     <!-- Rename -->
     <div v-if="renaming" class="bld-modal-overlay">
       <div class="bld-modal">
-        <h3><Pencil :size="18" /> Rename Project</h3>
+        <h3><Pencil :size="18" /> {{ $t('Rename Project') }}</h3>
         <label class="bld-field">
-          <span>Project name</span>
+          <span>{{ $t('Project name') }}</span>
           <input v-model="renameValue" maxlength="60" class="bld-input" @keyup.enter="confirmRename" />
         </label>
         <div class="bld-modal-actions">
-          <button class="bld-secondary" @click="renaming = null">Cancel</button>
-          <button class="bld-primary" :disabled="!renameValue.trim()" @click="confirmRename">Save</button>
+          <button class="bld-secondary" @click="renaming = null">{{ $t('Cancel') }}</button>
+          <button class="bld-primary" :disabled="!renameValue.trim()" @click="confirmRename">{{ $t('Save') }}</button>
         </div>
       </div>
     </div>
@@ -261,17 +258,15 @@ async function confirmDelete() {
     <!-- Delete confirm -->
     <div v-if="pendingDelete" class="bld-modal-overlay">
       <div class="bld-modal">
-        <h3><AlertTriangle :size="18" /> Delete project</h3>
+        <h3><AlertTriangle :size="18" /> {{ $t('Delete project') }}</h3>
         <p class="bld-modal-text">
-          Delete <strong>{{ pendingDelete.name }}</strong> everywhere (this device
-          and the cloud)? Published community builds are unaffected. This can't
-          be undone.
+          {{ $t("Delete {name} everywhere (this device and the cloud)? Published community builds are unaffected. This can't be undone.", { name: pendingDelete.name }) }}
         </p>
         <div class="bld-modal-actions">
-          <button class="bld-secondary" @click="pendingDelete = null">Cancel</button>
+          <button class="bld-secondary" @click="pendingDelete = null">{{ $t('Cancel') }}</button>
           <button class="bld-primary danger" :disabled="deleting" @click="confirmDelete">
             <Loader2 v-if="deleting" :size="15" class="spin" />
-            Delete
+            {{ $t('Delete') }}
           </button>
         </div>
       </div>

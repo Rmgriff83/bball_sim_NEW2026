@@ -50,13 +50,12 @@ const confetti = Array.from({ length: 24 }, (_, i) => ({
           </div>
 
           <header>
-            <h2 class="bcm-title">Banner Night</h2>
+            <h2 class="bcm-title">{{ $t('Banner Night') }}</h2>
           </header>
 
           <main>
             <p class="bcm-intro">
-              The lights dim. The crowd rises. Tonight, a new banner joins the
-              rafters.
+              {{ $t('The lights dim. The crowd rises. Tonight, a new banner joins the rafters.') }}
             </p>
 
             <div class="bcm-banner-wrap">
@@ -66,19 +65,19 @@ const confetti = Array.from({ length: 24 }, (_, i) => ({
               <div class="bcm-banner">
                 <span class="bcm-banner-team">{{ teamName }}</span>
                 <Trophy :size="34" class="bcm-banner-trophy" />
-                <span class="bcm-banner-champs">League<br />Champions</span>
+                <span class="bcm-banner-champs">{{ $t('League') }}<br />{{ $t('Champions') }}</span>
                 <span class="bcm-banner-season">{{ seasonLabel }}</span>
               </div>
             </div>
 
             <p v-if="titleCount > 1" class="bcm-dynasty">
-              Banner #{{ titleCount }} — a dynasty grows.
+              {{ $t('Banner #{n} — a dynasty grows.', { n: titleCount }) }}
             </p>
           </main>
 
           <footer>
             <button class="bcm-raise-btn" @click="emit('close')">
-              <Trophy :size="15" /> Raise the Banner
+              <Trophy :size="15" /> {{ $t('Raise the Banner') }}
             </button>
           </footer>
         </div>

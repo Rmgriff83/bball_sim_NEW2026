@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { GlassCard, BaseButton, FormInput } from '@/components/ui'
 import { ArrowLeft, AlertCircle } from 'lucide-vue-next'
 import SocialAuthButtons from '@/components/auth/SocialAuthButtons.vue'
+import { t } from '@wl-i18n/i18n.js'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -21,23 +22,25 @@ const form = ref({
 const error = ref('')
 const validUsername = helpers.regex(/^[a-zA-Z0-9_]+$/)
 
+// Rules live in a computed: t() reads the reactive locale ref, so these
+// messages re-evaluate (and vuelidate rebuilds) on locale change — no freeze.
 const rules = computed(() => ({
   username: {
-    required: helpers.withMessage('Username is required', required),
-    minLength: helpers.withMessage('Username must be at least 3 characters', minLength(3)),
-    validUsername: helpers.withMessage('Username can only contain letters, numbers, and underscores', validUsername)
+    required: helpers.withMessage(t('Username is required'), required),
+    minLength: helpers.withMessage(t('Username must be at least 3 characters'), minLength(3)),
+    validUsername: helpers.withMessage(t('Username can only contain letters, numbers, and underscores'), validUsername)
   },
   email: {
-    required: helpers.withMessage('Email is required', required),
-    email: helpers.withMessage('Please enter a valid email', email)
+    required: helpers.withMessage(t('Email is required'), required),
+    email: helpers.withMessage(t('Please enter a valid email'), email)
   },
   password: {
-    required: helpers.withMessage('Password is required', required),
-    minLength: helpers.withMessage('Password must be at least 8 characters', minLength(8))
+    required: helpers.withMessage(t('Password is required'), required),
+    minLength: helpers.withMessage(t('Password must be at least 8 characters'), minLength(8))
   },
   password_confirmation: {
-    required: helpers.withMessage('Please confirm your password', required),
-    sameAs: helpers.withMessage('Passwords do not match', sameAs(computed(() => form.value.password)))
+    required: helpers.withMessage(t('Please confirm your password'), required),
+    sameAs: helpers.withMessage(t('Passwords do not match'), sameAs(computed(() => form.value.password)))
   }
 }))
 
@@ -55,7 +58,7 @@ async function handleSubmit() {
     if (err.response?.data?.errors) {
       error.value = Object.values(err.response.data.errors).flat().join(' ')
     } else {
-      error.value = err.response?.data?.message || 'Registration failed.'
+      error.value = err.response?.data?.message || t('Registration failed.')
     }
   }
 }
@@ -67,15 +70,15 @@ async function handleSubmit() {
       <!-- Back Link -->
       <router-link to="/" class="back-link">
         <ArrowLeft :size="18" />
-        <span>Back to Home</span>
+        <span>{{ $t('Back to Home') }}</span>
       </router-link>
 
       <!-- Auth Card -->
       <GlassCard padding="xl" :hoverable="false" class="auth-card">
         <!-- Header -->
         <div class="auth-header">
-          <h1 class="auth-title">Create Account</h1>
-          <p class="auth-subtitle">Start building your dynasty</p>
+          <h1 class="auth-title">{{ $t('Create Account') }}</h1>
+          <p class="auth-subtitle">{{ $t('Start building your dynasty') }}</p>
         </div>
 
         <!-- Error Message -->
@@ -88,8 +91,8 @@ async function handleSubmit() {
         <form @submit.prevent="handleSubmit" class="auth-form">
           <FormInput
             v-model="form.username"
-            label="Username"
-            placeholder="your_username"
+            :label="$t('Username')"
+            :placeholder="$t('your_username')"
             :error="v$.username.$errors[0]?.$message"
             :touched="v$.username.$dirty"
             required
@@ -98,9 +101,9 @@ async function handleSubmit() {
 
           <FormInput
             v-model="form.email"
-            label="Email"
+            :label="$t('Email')"
             type="email"
-            placeholder="you@example.com"
+            :placeholder="$t('you@example.com')"
             :error="v$.email.$errors[0]?.$message"
             :touched="v$.email.$dirty"
             required
@@ -109,9 +112,9 @@ async function handleSubmit() {
 
           <FormInput
             v-model="form.password"
-            label="Password"
+            :label="$t('Password')"
             type="password"
-            placeholder="Min. 8 characters"
+            :placeholder="$t('Min. 8 characters')"
             :error="v$.password.$errors[0]?.$message"
             :touched="v$.password.$dirty"
             required
@@ -120,9 +123,9 @@ async function handleSubmit() {
 
           <FormInput
             v-model="form.password_confirmation"
-            label="Confirm Password"
+            :label="$t('Confirm Password')"
             type="password"
-            placeholder="Confirm your password"
+            :placeholder="$t('Confirm your password')"
             :error="v$.password_confirmation.$errors[0]?.$message"
             :touched="v$.password_confirmation.$dirty"
             required
@@ -130,13 +133,13 @@ async function handleSubmit() {
           />
 
           <button type="submit" class="cosmic-btn-block" :disabled="authStore.loading">
-            {{ authStore.loading ? 'Creating Account...' : 'Create Account' }}
+            {{ authStore.loading ? $t('Creating Account...') : $t('Create Account') }}
           </button>
         </form>
 
         <!-- Divider -->
         <div class="auth-divider">
-          <span>or</span>
+          <span>{{ $t('or') }}</span>
         </div>
 
         <!-- Social sign-up (Apple/Google, platform-gated) -->
@@ -144,8 +147,8 @@ async function handleSubmit() {
 
         <!-- Footer -->
         <p class="auth-footer">
-          Already have an account?
-          <router-link to="/login" class="auth-link">Sign in</router-link>
+          {{ $t('Already have an account?') }}
+          <router-link to="/login" class="auth-link">{{ $t('Sign in') }}</router-link>
         </p>
       </GlassCard>
     </div>

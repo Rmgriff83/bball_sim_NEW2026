@@ -2,11 +2,15 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
+import { wlI18nDevCollector } from './vendor/wl-i18n/vite-dev-collector.js'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     vue(),
+    // Dev-only (apply: 'serve'): records strings passed through $tDynamic
+    // during play-testing into i18n/dynamic-strings.json for the translate CLI.
+    wlI18nDevCollector(),
     VitePWA({
       // Native (Capacitor) builds must NOT run a service worker: assets are
       // local files, and the SW's precache survives app-store updates in
@@ -97,7 +101,8 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src')
+      '@': path.resolve(__dirname, './src'),
+      '@wl-i18n': path.resolve(__dirname, './vendor/wl-i18n/src')
     }
   },
   worker: {

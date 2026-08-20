@@ -20,13 +20,13 @@ function later() {
           <div class="update-nag-icon">
             <ArrowUpCircle :size="34" />
           </div>
-          <h2 class="update-nag-title">Update available</h2>
+          <h2 class="update-nag-title">{{ $t('Update available') }}</h2>
           <p class="update-nag-body">
-            A newer version of BBALL SIM is out — update for the latest features and fixes.
+            {{ $t('A newer version of BBALL SIM is out — update for the latest features and fixes.') }}
           </p>
           <div class="update-nag-actions">
-            <button type="button" class="update-nag-btn primary" @click="update">Update</button>
-            <button type="button" class="update-nag-btn ghost" @click="later">Later</button>
+            <button type="button" class="update-nag-btn primary" @click="update">{{ $t('Update') }}</button>
+            <button type="button" class="update-nag-btn ghost" @click="later">{{ $t('Later') }}</button>
           </div>
         </div>
       </div>

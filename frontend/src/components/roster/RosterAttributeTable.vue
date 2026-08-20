@@ -195,14 +195,14 @@ function money(p) {
         <thead>
           <!-- Category group headers -->
           <tr class="rat-group-row">
-            <th class="rat-identity-col rat-sticky" rowspan="2">Player</th>
+            <th class="rat-identity-col rat-sticky" rowspan="2">{{ $t('Player') }}</th>
             <th
               v-for="cat in visibleCategories"
               :key="cat.key"
               class="rat-group-th"
               :colspan="CANONICAL_ATTRIBUTES[cat.key].length"
             >
-              {{ cat.label }}
+              {{ $tDynamic(cat.label) }}
             </th>
             <th v-if="removable" class="rat-remove-th" rowspan="2"></th>
           </tr>
@@ -213,11 +213,11 @@ function money(p) {
                 v-for="key in CANONICAL_ATTRIBUTES[cat.key]"
                 :key="key"
                 class="rat-attr-th"
-                :title="fullLabel(key)"
+                :title="$tDynamic(fullLabel(key))"
                 @click="toggleTip(key)"
               >
-                {{ label(key) }}
-                <span v-if="tipKey === key" class="rat-tip">{{ fullLabel(key) }}</span>
+                {{ $tDynamic(label(key)) }}
+                <span v-if="tipKey === key" class="rat-tip">{{ $tDynamic(fullLabel(key)) }}</span>
               </th>
             </template>
           </tr>
@@ -236,7 +236,7 @@ function money(p) {
               <button
                 v-if="p.id === selectedId"
                 class="rat-deselect"
-                title="Deselect"
+                :title="$t('Deselect')"
                 aria-label="Deselect row"
                 @click.stop="deselect"
               >
@@ -246,6 +246,7 @@ function money(p) {
               <span class="rat-sub">
                 <span class="rat-pos">{{ p.position }}</span>
                 <span class="rat-mini">OVR <strong>{{ ovr(p) }}</strong></span>
+                <!-- i18n-ignore -->
                 <span class="rat-mini pot">POT <strong>{{ pot(p) }}</strong></span>
               </span>
               <!-- Contract line only on the selected row — unselected rows
@@ -295,7 +296,7 @@ function money(p) {
             </template>
 
             <td v-if="removable" class="rat-remove-td">
-              <button class="rat-remove" title="Remove player" @click.stop="emit('remove', p)">
+              <button class="rat-remove" :title="$t('Remove player')" @click.stop="emit('remove', p)">
                 <X :size="13" />
               </button>
             </td>
@@ -303,7 +304,7 @@ function money(p) {
         </tbody>
       </table>
     </div>
-    <p v-if="!players.length" class="rat-empty">No players yet.</p>
+    <p v-if="!players.length" class="rat-empty">{{ $t('No players yet.') }}</p>
   </div>
 </template>
 

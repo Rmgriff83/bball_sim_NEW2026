@@ -12,6 +12,7 @@ import { MAX_PLAYER_BADGES } from '@/stores/rosterEditor'
 import { PERSONALITY_TRAITS, pickBadgesByFit, getBadgeLevel, _badgeCountForOvr } from '@/engine/campaign/CampaignManager'
 import { ROOKIE_TIER_NAMES } from '@/engine/draft/RookieGenerationService'
 import { useWalkthroughStore } from '@/stores/walkthrough'
+import { t, tDynamic } from '@wl-i18n/i18n.js'
 import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 
 // Tabbed player editor for the Roster Editor — the "everything the attribute
@@ -174,7 +175,9 @@ function refreshBadges() {
   draft.badges = picked.map((b) => ({ id: b.id, level: b.level ?? 'bronze', source: 'authored' }))
   draft.badgeCaps = {}
   badgeRowIds.value = draft.badges.map((b) => b.id)
-  suggestNote.value = `Refreshed — ${draft.badges.length} badge${draft.badges.length === 1 ? '' : 's'} derived from this build.`
+  suggestNote.value = draft.badges.length === 1
+    ? t('Refreshed — {n} badge derived from this build.', { n: draft.badges.length })
+    : t('Refreshed — {n} badges derived from this build.', { n: draft.badges.length })
 }
 
 function setBadge(badgeId, level) {
@@ -238,7 +241,7 @@ function effectiveAutoCap(badgeId) {
 
 function autoLabel(badgeId) {
   const auto = effectiveAutoCap(badgeId)
-  return `Auto (${auto ? auto.toUpperCase() : 'NONE'})`
+  return t('Auto ({level})', { level: auto ? auto.toUpperCase() : t('NONE') })
 }
 
 // Explicit Max options below the current level are unpickable (as is 'None'
@@ -299,7 +302,7 @@ function applyArchetype({ preserveVitals = false } = {}) {
   if (!result) return
   archetypeApplied.value = true
   archetypeNote.value =
-    `Applied — ${result.tier.label.toUpperCase()} build (OVR ${result.overall}). Attributes and ceilings re-seeded.`
+    t('Applied — {tier} build (OVR {ovr}). Attributes and ceilings re-seeded.', { tier: tDynamic(result.tier.label).toUpperCase(), ovr: result.overall })
 }
 
 // ---- Contract --------------------------------------------------------------
@@ -576,7 +579,7 @@ const POSITION_COLORS = {
       <div class="pdem-container">
         <!-- Chrome header -->
         <header class="pdem-chrome">
-          <h2 class="pdem-title">Edit Player</h2>
+          <h2 class="pdem-title">{{ $t('Edit Player') }}</h2>
           <button class="pdem-close" aria-label="Close" @click="requestClose">
             <X :size="18" />
           </button>
@@ -590,7 +593,7 @@ const POSITION_COLORS = {
               <button
                 v-if="canEditHeadshot"
                 class="pdem-edit-headshot"
-                title="Edit headshot"
+                :title="$t('Edit headshot')"
                 aria-label="Edit headshot"
                 @click.stop="editHeadshot"
               >
@@ -598,16 +601,17 @@ const POSITION_COLORS = {
               </button>
             </div>
             <div class="pdem-hero-info">
-              <h3 class="pdem-hero-name">{{ draft.name || 'New Player' }}</h3>
+              <h3 class="pdem-hero-name">{{ draft.name || $t('New Player') }}</h3>
               <div class="pdem-hero-meta">
                 <span class="pdem-pos" :style="{ backgroundColor: POSITION_COLORS[draft.position] ?? '#6B7280' }">
                   {{ draft.position }}
                 </span>
-                <span class="pdem-arch">{{ liveArchetype }}</span>
+                <span class="pdem-arch">{{ $tDynamic(liveArchetype) }}</span>
               </div>
             </div>
             <div class="pdem-hero-ratings">
               <div class="pdem-rating"><span>OVR</span><strong>{{ liveOverall }}</strong></div>
+              <!-- i18n-ignore -->
               <div class="pdem-rating pot"><span>POT</span><strong>{{ livePotential }}</strong></div>
             </div>
           </div>
@@ -621,7 +625,7 @@ const POSITION_COLORS = {
               :class="{ active: activeTab === tab.key }"
               @click="activeTab = tab.key"
             >
-              {{ tab.label }}
+              {{ $tDynamic(tab.label) }}
             </button>
           </div>
 
@@ -629,29 +633,29 @@ const POSITION_COLORS = {
           <div v-if="activeTab === 'vitals'" class="pdem-panel">
             <div class="pdem-grid two">
               <label class="pdem-field">
-                <span>First Name</span>
+                <span>{{ $t('First Name') }}</span>
                 <input v-model="draft.firstName" class="pdem-input" @input="syncName" />
               </label>
               <label class="pdem-field">
-                <span>Last Name</span>
+                <span>{{ $t('Last Name') }}</span>
                 <input v-model="draft.lastName" class="pdem-input" @input="syncName" />
               </label>
             </div>
             <div class="pdem-grid">
               <label class="pdem-field">
-                <span>Position</span>
+                <span>{{ $t('Position') }}</span>
                 <select v-model="draft.position" class="pdem-input">
                   <option v-for="p in POSITIONS" :key="p" :value="p">{{ p }}</option>
                 </select>
               </label>
               <label class="pdem-field">
-                <span>2nd Pos</span>
+                <span>{{ $t('2nd Pos') }}</span>
                 <select
                   :value="draft.secondaryPosition ?? draft.secondary_position ?? ''"
                   class="pdem-input"
                   @change="draft.secondaryPosition = $event.target.value || null; draft.secondary_position = draft.secondaryPosition"
                 >
-                  <option value="">None</option>
+                  <option value="">{{ $t('None') }}</option>
                   <option v-for="p in POSITIONS.filter(x => x !== draft.position)" :key="p" :value="p">{{ p }}</option>
                 </select>
               </label>
@@ -659,20 +663,20 @@ const POSITION_COLORS = {
                    sim/UI consumes it. Existing values pass through saves
                    untouched (sanitizePositions only dedupes them). -->
               <label class="pdem-field">
-                <span>Jersey #</span>
+                <span>{{ $t('Jersey #') }}</span>
                 <input v-model.number="draft.jerseyNumber" type="number" min="0" max="99" class="pdem-input" @input="draft.jersey_number = draft.jerseyNumber" />
               </label>
               <label class="pdem-field">
-                <span>Age</span>
+                <span>{{ $t('Age') }}</span>
                 <input v-model.number="draft.age" type="number" min="18" max="44" class="pdem-input" />
               </label>
               <label class="pdem-field">
-                <span>Height (in)</span>
+                <span>{{ $t('Height (in)') }}</span>
                 <input v-model.number="draft.heightInches" type="number" min="66" max="90" class="pdem-input" @input="draft.height_inches = draft.heightInches" />
                 <em class="pdem-hint">{{ heightFtIn }}</em>
               </label>
               <label class="pdem-field">
-                <span>Weight (lbs)</span>
+                <span>{{ $t('Weight (lbs)') }}</span>
                 <input v-model.number="draft.weightLbs" type="number" min="150" max="330" class="pdem-input" @input="draft.weight_lbs = draft.weightLbs; draft.weight = draft.weightLbs" />
               </label>
             </div>
@@ -683,28 +687,28 @@ const POSITION_COLORS = {
             <template v-if="prospect">
               <div class="pdem-grid two">
                 <label class="pdem-field">
-                  <span>College / Club</span>
-                  <input v-model="prospectMeta.college" class="pdem-input" placeholder="e.g. Duke" />
+                  <span>{{ $t('College / Club') }}</span>
+                  <input v-model="prospectMeta.college" class="pdem-input" :placeholder="$t('e.g. Duke')" />
                 </label>
                 <label class="pdem-field">
-                  <span>Country</span>
-                  <input v-model="prospectMeta.country" class="pdem-input" placeholder="e.g. United States" />
+                  <span>{{ $t('Country') }}</span>
+                  <input v-model="prospectMeta.country" class="pdem-input" :placeholder="$t('e.g. United States')" />
                 </label>
               </div>
               <div class="pdem-grid two">
                 <label class="pdem-field">
-                  <span>Prospect Tier</span>
+                  <span>{{ $t('Prospect Tier') }}</span>
                   <select v-model="prospectMeta.rookieTier" class="pdem-input">
-                    <option v-for="t in ROOKIE_TIER_NAMES" :key="t" :value="t">{{ PROSPECT_TIER_LABELS[t] }}</option>
+                    <option v-for="t in ROOKIE_TIER_NAMES" :key="t" :value="t">{{ $tDynamic(PROSPECT_TIER_LABELS[t]) }}</option>
                   </select>
-                  <em class="pdem-hint">Scouting board grouping — draft position still follows ratings.</em>
+                  <em class="pdem-hint">{{ $t('Scouting board grouping — draft position still follows ratings.') }}</em>
                 </label>
                 <label class="pdem-field">
-                  <span>Draft Year</span>
+                  <span>{{ $t('Draft Year') }}</span>
                   <input :value="draft.draftYear ?? draft.draft_year" class="pdem-input" disabled />
                   <label class="pdem-hint pdem-gem-check">
                     <input v-model="prospectMeta.isHiddenGem" type="checkbox" />
-                    Hidden gem (AI undervalues; scouting reveals the ceiling)
+                    {{ $t('Hidden gem (AI undervalues; scouting reveals the ceiling)') }}
                   </label>
                 </label>
               </div>
@@ -715,39 +719,39 @@ const POSITION_COLORS = {
           <div v-else-if="activeTab === 'history'" class="pdem-panel">
             <div class="pdem-grid two">
               <label class="pdem-field">
-                <span>College / Club</span>
-                <input v-model="history.college" class="pdem-input" placeholder="e.g. Duke" />
+                <span>{{ $t('College / Club') }}</span>
+                <input v-model="history.college" class="pdem-input" :placeholder="$t('e.g. Duke')" />
               </label>
               <label class="pdem-field">
-                <span>Country</span>
-                <input v-model="history.country" class="pdem-input" placeholder="e.g. United States" />
+                <span>{{ $t('Country') }}</span>
+                <input v-model="history.country" class="pdem-input" :placeholder="$t('e.g. United States')" />
               </label>
             </div>
             <div class="pdem-grid">
               <label class="pdem-field">
-                <span>Draft Round</span>
+                <span>{{ $t('Draft Round') }}</span>
                 <select
                   :value="history.draftRound ?? ''"
                   class="pdem-input"
                   @change="history.draftRound = $event.target.value ? Number($event.target.value) : null"
                 >
-                  <option value="">Undrafted</option>
+                  <option value="">{{ $t('Undrafted') }}</option>
                   <option :value="1">1</option>
                   <option :value="2">2</option>
                 </select>
               </label>
               <template v-if="history.draftRound">
                 <label class="pdem-field">
-                  <span>Pick</span>
+                  <span>{{ $t('Pick') }}</span>
                   <input v-model.number="history.draftPick" type="number" min="1" max="60" class="pdem-input" />
                 </label>
                 <label class="pdem-field">
-                  <span>Draft Year</span>
+                  <span>{{ $t('Draft Year') }}</span>
                   <input v-model.number="history.draftYear" type="number" min="1990" :max="maxSignedYear" class="pdem-input" />
                 </label>
               </template>
               <label class="pdem-field">
-                <span>Career Seasons</span>
+                <span>{{ $t('Career Seasons') }}</span>
                 <input v-model.number="history.careerSeasons" type="number" min="0" max="25" class="pdem-input" />
               </label>
             </div>
@@ -756,31 +760,30 @@ const POSITION_COLORS = {
           <!-- Archetype -->
           <div v-else-if="activeTab === 'archetype'" class="pdem-panel" data-tour="pdem-arch-section">
             <div class="pdem-current-arch">
-              Detected archetype: <strong>{{ liveArchetype }}</strong>
+              {{ $t('Detected archetype:') }} <strong>{{ $tDynamic(liveArchetype) }}</strong>
             </div>
             <p class="pdem-note">
-              Applying a template overwrites the player's current attributes and
-              re-seeds their growth ceilings around it — then fine-tune in the table.
+              {{ $t("Applying a template overwrites the player's current attributes and re-seeds their growth ceilings around it — then fine-tune in the table.") }}
             </p>
             <div class="pdem-arch-row">
               <Sparkles :size="14" />
               <select v-model="selectedArchetype" class="pdem-input grow">
-                <option value="">Choose an archetype template…</option>
-                <option v-for="a in ARCHETYPES.filter(x => ARCHETYPE_SEEDS[x.id])" :key="a.id" :value="a.id">{{ a.name }}</option>
+                <option value="">{{ $t('Choose an archetype template…') }}</option>
+                <option v-for="a in ARCHETYPES.filter(x => ARCHETYPE_SEEDS[x.id])" :key="a.id" :value="a.id">{{ $tDynamic(a.name) }}</option>
               </select>
-              <button class="pdem-apply" :disabled="!selectedArchetype" @click="applyArchetype">Apply</button>
+              <button class="pdem-apply" :disabled="!selectedArchetype" @click="applyArchetype">{{ $t('Apply') }}</button>
             </div>
             <label class="pdem-field pdem-talent-row">
-              <span>Talent level</span>
+              <span>{{ $t('Talent level') }}</span>
               <select v-model="selectedTalent" class="pdem-input">
                 <option v-for="t in TALENT_TIERS" :key="t.key" :value="t.key">
-                  {{ t.label }} (~{{ t.target }} OVR)
+                  {{ $t('{label} (~{target} OVR)', { label: $tDynamic(t.label), target: t.target }) }}
                 </option>
               </select>
             </label>
             <p v-if="archetypeNote" class="pdem-note">{{ archetypeNote }}</p>
             <p v-else-if="selectedArchetype && !archetypeApplied" class="pdem-note">
-              Will apply when you save (or tap Apply to preview the new ratings now).
+              {{ $t('Will apply when you save (or tap Apply to preview the new ratings now).') }}
             </p>
           </div>
 
@@ -788,43 +791,41 @@ const POSITION_COLORS = {
           <div v-else-if="activeTab === 'badges'" class="pdem-panel" data-tour="pdem-badges-panel">
             <div class="pdem-suggest-row top">
               <button class="pdem-apply" @click="refreshBadges">
-                <RefreshCw :size="13" /> Refresh Badges
+                <RefreshCw :size="13" /> {{ $t('Refresh Badges') }}
               </button>
               <span v-if="suggestNote" class="pdem-suggest-note">{{ suggestNote }}</span>
             </div>
             <p class="pdem-note">
-              <strong>Max</strong> caps what the in-game badge store can upgrade to
-              during the campaign — Auto follows the derived cap and never sits below
-              the current level; pick a level to override it. Set <strong>Lvl</strong>
-              to None to make a badge earnable later (up to Max) without owning it
-              now. Remove a badge with ✕.
+              {{ $t('Max caps what the in-game badge store can upgrade to during the campaign — Auto follows the derived cap and never sits below the current level; pick a level to override it.') }}
+              {{ $t('Set Lvl to None to make a badge earnable later (up to Max) without owning it now.') }}
+              {{ $t('Remove a badge with ✕.') }}
             </p>
-            <p v-if="!badgeRowIds.length" class="pdem-note">No badges yet — add one below.</p>
+            <p v-if="!badgeRowIds.length" class="pdem-note">{{ $t('No badges yet — add one below.') }}</p>
             <div v-for="id in badgeRowIds" :key="id" class="pdem-badge-row">
-              <button class="pdem-badge-remove" title="Remove badge" @click="removeBadgeRow(id)">
+              <button class="pdem-badge-remove" :title="$t('Remove badge')" @click="removeBadgeRow(id)">
                 <X :size="13" />
               </button>
               <div class="pdem-badge-info">
-                <span class="pdem-badge-name">{{ badgeDef(id)?.name ?? id }}</span>
-                <span class="pdem-badge-cat pdem-badge-desc">{{ badgeDef(id)?.description }}</span>
+                <span class="pdem-badge-name">{{ $tDynamic(badgeDef(id)?.name ?? id) }}</span>
+                <span class="pdem-badge-cat pdem-badge-desc">{{ $tDynamic(badgeDef(id)?.description) }}</span>
               </div>
               <div class="pdem-badge-selects">
                 <label class="pdem-badge-select">
-                  <span>Lvl</span>
+                  <span>{{ $t('Lvl') }}</span>
                   <span class="pdem-lvl-swatch" :style="{ background: levelColor(currentBadgeLevel(id)) }" />
                   <select
                     class="pdem-input sm"
                     :value="currentBadgeLevel(id) ?? ''"
                     @change="setBadgeLevel(id, $event.target.value || null)"
                   >
-                    <option value="">None</option>
+                    <option value="">{{ $t('None') }}</option>
                     <option v-for="lvl in PLAYER_BADGE_LEVELS" :key="lvl" :value="lvl">
                       {{ lvl.toUpperCase() }}
                     </option>
                   </select>
                 </label>
                 <label class="pdem-badge-select">
-                  <span>Max</span>
+                  <span>{{ $t('Max') }}</span>
                   <span class="pdem-lvl-swatch" :style="{ background: capSwatchColor(id) }" />
                   <select
                     class="pdem-input sm"
@@ -832,7 +833,7 @@ const POSITION_COLORS = {
                     @change="setBadgeCap(id, $event.target.value)"
                   >
                     <option value="">{{ autoLabel(id) }}</option>
-                    <option value="none" :disabled="!!currentBadgeLevel(id)">None</option>
+                    <option value="none" :disabled="!!currentBadgeLevel(id)">{{ $t('None') }}</option>
                     <option
                       v-for="lvl in PLAYER_BADGE_LEVELS"
                       :key="lvl"
@@ -847,45 +848,45 @@ const POSITION_COLORS = {
             </div>
 
             <label v-if="badgeRowIds.length < MAX_PLAYER_BADGES" class="pdem-add-badge" data-tour="pdem-add-badge">
-              <span>Add Badge ({{ badgeRowIds.length }}/{{ MAX_PLAYER_BADGES }})</span>
+              <span>{{ $t('Add Badge ({a}/{b})', { a: badgeRowIds.length, b: MAX_PLAYER_BADGES }) }}</span>
               <select
                 class="pdem-input"
                 :value="''"
                 @change="addBadge($event.target.value); $event.target.value = ''"
               >
-                <option value="" disabled>+ Choose a badge…</option>
-                <optgroup v-for="g in availableToAdd" :key="g.cat" :label="g.cat">
-                  <option v-for="b in g.badges" :key="b.id" :value="b.id">{{ b.name }}</option>
+                <option value="" disabled>{{ $t('+ Choose a badge…') }}</option>
+                <optgroup v-for="g in availableToAdd" :key="g.cat" :label="$tDynamic(g.cat)">
+                  <option v-for="b in g.badges" :key="b.id" :value="b.id">{{ $tDynamic(b.name) }}</option>
                 </optgroup>
               </select>
             </label>
             <p v-else class="pdem-note">
-              Badge limit reached ({{ MAX_PLAYER_BADGES }}) — remove one to add another.
+              {{ $t('Badge limit reached ({n}) — remove one to add another.', { n: MAX_PLAYER_BADGES }) }}
             </p>
           </div>
 
           <!-- Contract -->
           <div v-else-if="activeTab === 'contract'" class="pdem-panel">
             <p v-if="draft.isFreeAgent" class="pdem-note">
-              Market value — the contract follows the player when drafted.
+              {{ $t('Market value — the contract follows the player when drafted.') }}
             </p>
             <div class="pdem-grid">
               <label class="pdem-field">
-                <span>Years</span>
+                <span>{{ $t('Years') }}</span>
                 <select v-model.number="contract.years" class="pdem-input" @change="onYearsChange">
                   <option v-for="y in 4" :key="y" :value="y">{{ y }}</option>
                 </select>
               </label>
               <label class="pdem-field">
-                <span>Option (yr {{ contract.years + 1 }})</span>
+                <span>{{ $t('Option (yr {n})', { n: contract.years + 1 }) }}</span>
                 <select v-model="contract.option" class="pdem-input">
-                  <option value="">None</option>
-                  <option value="player">Player</option>
-                  <option value="team">Team</option>
+                  <option value="">{{ $t('None') }}</option>
+                  <option value="player">{{ $t('Player') }}</option>
+                  <option value="team">{{ $t('Team') }}</option>
                 </select>
               </label>
               <label class="pdem-field">
-                <span>Signed</span>
+                <span>{{ $t('Signed') }}</span>
                 <input v-model.number="contract.signedYear" type="number" min="2015" :max="maxSignedYear" class="pdem-input" />
               </label>
               <!-- No-Trade clause is deliberately NOT exposed here: the field
@@ -896,7 +897,7 @@ const POSITION_COLORS = {
             </div>
             <div class="pdem-salaries">
               <div v-for="(s, i) in contract.salaries" :key="i" class="pdem-salary-row">
-                <span>Year {{ i + 1 }}{{ i === 0 ? ' (this season)' : '' }}</span>
+                <span>{{ i === 0 ? $t('Year {n} (this season)', { n: i + 1 }) : $t('Year {n}', { n: i + 1 }) }}</span>
                 <span class="pdem-salary-input">
                   $<input
                     type="number" min="1" max="80" step="0.1" class="pdem-input sm"
@@ -907,13 +908,13 @@ const POSITION_COLORS = {
               </div>
             </div>
             <p class="pdem-contract-total">
-              Total: ${{ (contractTotal / 1_000_000).toFixed(1) }}M over {{ contract.years }} yr{{ contract.years > 1 ? 's' : '' }}
+              {{ contract.years > 1 ? $t('Total: {amt} over {n} yrs', { amt: '$' + (contractTotal / 1_000_000).toFixed(1) + 'M', n: contract.years }) : $t('Total: {amt} over {n} yr', { amt: '$' + (contractTotal / 1_000_000).toFixed(1) + 'M', n: contract.years }) }}
             </p>
           </div>
 
           <!-- Personality -->
           <div v-else class="pdem-panel">
-            <h4 class="pdem-section-title">Traits <em>(up to 3)</em></h4>
+            <h4 class="pdem-section-title">{{ $t('Traits') }} <em>{{ $t('(up to 3)') }}</em></h4>
             <div class="pdem-traits">
               <button
                 v-for="t in PERSONALITY_TRAITS"
@@ -922,24 +923,24 @@ const POSITION_COLORS = {
                 :class="{ on: draft.personality.traits.includes(t) }"
                 @click="toggleTrait(t)"
               >
-                {{ TRAIT_LABELS[t] ?? t }}
+                {{ $tDynamic(TRAIT_LABELS[t] ?? t) }}
               </button>
             </div>
             <div class="pdem-grid" style="margin-top: 14px;">
               <label class="pdem-field">
-                <span>Morale</span>
+                <span>{{ $t('Morale') }}</span>
                 <input v-model.number="draft.personality.morale" type="number" min="0" max="99" class="pdem-input" />
               </label>
               <label class="pdem-field">
-                <span>Chemistry</span>
+                <span>{{ $t('Chemistry') }}</span>
                 <input v-model.number="draft.personality.chemistry" type="number" min="0" max="99" class="pdem-input" />
               </label>
               <label class="pdem-field">
-                <span>Media Profile</span>
+                <span>{{ $t('Media Profile') }}</span>
                 <select v-model="draft.personality.mediaProfile" class="pdem-input">
-                  <option value="low_key">Low-key</option>
-                  <option value="normal">Normal</option>
-                  <option value="high_profile">High-profile</option>
+                  <option value="low_key">{{ $t('Low-key') }}</option>
+                  <option value="normal">{{ $t('Normal') }}</option>
+                  <option value="high_profile">{{ $t('High-profile') }}</option>
                 </select>
               </label>
             </div>
@@ -948,18 +949,18 @@ const POSITION_COLORS = {
         </main>
 
         <footer class="pdem-foot">
-          <button class="pdem-cancel" @click="requestClose">Cancel</button>
-          <button class="pdem-save" @click="save">Save Player</button>
+          <button class="pdem-cancel" @click="requestClose">{{ $t('Cancel') }}</button>
+          <button class="pdem-save" @click="save">{{ $t('Save Player') }}</button>
         </footer>
 
         <!-- Unsaved-changes discard confirm -->
         <div v-if="confirmDiscard" class="pdem-discard-overlay">
           <div class="pdem-discard-box">
-            <p>Discard unsaved changes to this player?</p>
+            <p>{{ $t('Discard unsaved changes to this player?') }}</p>
             <div class="pdem-discard-actions">
-              <button class="pdem-save" @click="confirmDiscard = false">Keep editing</button>
+              <button class="pdem-save" @click="confirmDiscard = false">{{ $t('Keep editing') }}</button>
               <button class="pdem-cancel pdem-discard-confirm" @click="confirmDiscard = false; emit('close')">
-                Discard
+                {{ $t('Discard') }}
               </button>
             </div>
           </div>

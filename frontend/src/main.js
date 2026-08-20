@@ -7,6 +7,7 @@ import { useToastStore } from './stores/toast'
 import { useSyncStore } from './stores/sync'
 import { useAudioStore } from './stores/audio'
 import { unlock as unlockAudio } from './services/audioEngine'
+import I18nPlugin from '@wl-i18n/plugin.js'
 
 // Styles
 import './assets/styles/main.css'
@@ -59,6 +60,10 @@ const pinia = createPinia()
 
 app.use(pinia)
 app.use(router)
+// Build-time-only i18n (vendored wl-i18n): registers $t/$tDynamic, detects the
+// saved/browser locale, and lazy-loads its committed locale chunk. Zero
+// runtime translation network calls.
+app.use(I18nPlugin, { sourceLanguage: 'en' })
 
 // Initialize toast store for API error handling
 const toastStore = useToastStore(pinia)
