@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { X, Star, Lock, Check, Coins } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
+import { useTokensStore } from '@/stores/tokens'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
@@ -10,7 +11,6 @@ import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { COACH_FIRST_NAMES, COACH_LAST_NAMES } from '@/engine/data/coaches'
 import { PERSONNEL_POOL_KEY } from '@/engine/data/personnelTiers'
 import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
-import api from '@/composables/useApi'
 import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
@@ -128,11 +128,8 @@ async function hireScout(candidate) {
   audio.suppressClickSound() // cha-ching on success instead of the generic tap
 
   try {
-    // Deduct tokens
-    const response = await api.post('/api/user/tokens', { amount: -candidate.cost })
-    if (authStore.profile) {
-      authStore.profile.tokens = response.data.tokens
-    }
+    // Deduct tokens (offline-capable: queues the spend when unreachable)
+    await useTokensStore().spendTokens(candidate.cost, 'staff_hire')
 
     // Save scout to campaign settings
     const campaign = await CampaignRepository.get(props.campaignId)

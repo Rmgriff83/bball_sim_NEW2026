@@ -10,6 +10,7 @@ import { getStrategyDisplayInfo, getDefaultTargetMinutes } from '@/engine/simula
 import { SUBSTITUTION_STRATEGIES } from '@/engine/config/GameConfig'
 import { useSyncStore } from '@/stores/sync'
 import { useAuthStore } from '@/stores/auth'
+import { useTokensStore } from '@/stores/tokens'
 import { useCampaignStore } from '@/stores/campaign'
 import { recalculateOverall, getAttrCap, derivePotential } from '@/engine/evolution/PlayerEvolution'
 import { applyCoachChangePenalty } from '@/engine/evolution/MoraleService'
@@ -23,7 +24,6 @@ import {
 } from '@/engine/data/playerBadgeStore'
 import { getCoachActionBudget, getCoachTrainBudget, getCoachResignCost, getCoachTierKey, FREE_AGENT_COACH_TIERS, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { selectBestCoachingScheme } from '@/engine/coaching/CoachStrategyService'
-import api from '@/composables/useApi'
 import { cloneForPersist } from '@/utils/cloneForPersist'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
@@ -823,11 +823,8 @@ export const useTeamStore = defineStore('team', () => {
       throw new Error('Not enough tokens')
     }
 
-    // Deduct tokens via backend
-    const response = await api.post('/api/user/tokens', { amount: -price })
-    if (authStore.profile) {
-      authStore.profile.tokens = response.data.tokens
-    }
+    // Deduct tokens (offline-capable: queues the spend when unreachable)
+    const { tokens: newBalance } = await useTokensStore().spendTokens(price, 'upgrade_point')
 
     // Apply the point + record the purchase
     const pointsField = pool === 'defense' ? 'defense_upgrade_points' : 'offense_upgrade_points'
@@ -851,7 +848,7 @@ export const useTeamStore = defineStore('team', () => {
     }
 
     return {
-      tokens: response.data.tokens,
+      tokens: newBalance,
       points: player[pointsField],
       purchasesThisSeason: purchases,
       nextPrice: purchases[pool] >= UPGRADE_POINT_MAX_PER_POOL
@@ -1011,11 +1008,8 @@ export const useTeamStore = defineStore('team', () => {
       const tokens = authStore.profile?.tokens ?? 0
       if (tokens < cost) throw new Error('Insufficient tokens')
 
-      // Deduct via backend (single source of truth for token balance)
-      const response = await api.post('/api/user/tokens', { amount: -cost })
-      if (authStore.profile) {
-        authStore.profile.tokens = response.data.tokens
-      }
+      // Deduct tokens (offline-capable: queues the spend when unreachable)
+      await useTokensStore().spendTokens(cost, 'badge_purchase')
 
       // Update or insert badge entry. Preserve `source: 'master'` when a
       // master-seeded badge is being upgraded — useful for future UI
@@ -1308,12 +1302,9 @@ export const useTeamStore = defineStore('team', () => {
       const cost = candidate.hireCost ?? 0
       if (cost > tokens) throw new Error('Insufficient tokens')
 
-      // Deduct tokens (skip API round-trip when the hire is free)
+      // Deduct tokens (skip when the hire is free; offline-capable)
       if (cost > 0) {
-        const response = await api.post('/api/user/tokens', { amount: -cost })
-        if (authStore.profile) {
-          authStore.profile.tokens = response.data.tokens
-        }
+        await useTokensStore().spendTokens(cost, 'coach_hire')
       }
 
       // Build the team-coach object: drop hireCost, add contract fields
@@ -1456,10 +1447,7 @@ export const useTeamStore = defineStore('team', () => {
       const tokens = authStore.profile?.tokens ?? 0
       if (cost > tokens) throw new Error('Insufficient tokens')
       if (cost > 0) {
-        const response = await api.post('/api/user/tokens', { amount: -cost })
-        if (authStore.profile) {
-          authStore.profile.tokens = response.data.tokens
-        }
+        await useTokensStore().spendTokens(cost, 'coach_resign')
       }
 
       const currentSeason = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? 2025
@@ -1522,10 +1510,7 @@ export const useTeamStore = defineStore('team', () => {
       const tokens = authStore.profile?.tokens ?? 0
       if (cost > tokens) throw new Error('Insufficient tokens')
       if (cost > 0) {
-        const response = await api.post('/api/user/tokens', { amount: -cost })
-        if (authStore.profile) {
-          authStore.profile.tokens = response.data.tokens
-        }
+        await useTokensStore().spendTokens(cost, 'coach_resign')
       }
 
       const currentSeason = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? 2025
@@ -1755,8 +1740,7 @@ export const useTeamStore = defineStore('team', () => {
         const authStore = useAuthStore()
         const tokens = authStore.profile?.tokens ?? 0
         if (tokens < COACH_MEETING_EXTRA_COST) throw new Error('Not enough tokens')
-        const response = await api.post('/api/user/tokens', { amount: -COACH_MEETING_EXTRA_COST })
-        if (authStore.profile) authStore.profile.tokens = response.data.tokens
+        await useTokensStore().spendTokens(COACH_MEETING_EXTRA_COST, 'coach_meeting')
       } else {
         if (remaining <= 0) throw new Error('No coach meeting actions remaining')
         coachObj.actionsRemaining = remaining - 1

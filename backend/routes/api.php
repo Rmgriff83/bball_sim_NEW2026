@@ -74,6 +74,12 @@ Route::middleware('auth:sanctum')->group(function () {
     // Token operations (spending only — credits flow via Stripe webhook)
     Route::post('/user/tokens', [UserController::class, 'updateTokens']);
 
+    // Offline token-ledger flush: idempotent batch of queued offline deltas
+    // (per-reason earn caps + 5k/day ceiling inside the controller). Tight
+    // throttle — a client flushes at most a handful of times per session.
+    Route::post('/user/tokens/ledger', [UserController::class, 'flushTokenLedger'])
+        ->middleware('throttle:12,1');
+
     // Career GM level (0-4). Persisted on contract extension / grandfathering.
     Route::post('/user/gm-level', [UserController::class, 'updateGmLevel']);
 

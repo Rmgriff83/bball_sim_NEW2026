@@ -5,10 +5,8 @@ import { PlayoffManager } from '@/engine/season/PlayoffManager'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
-import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
-import api from '@/composables/useApi'
 
 // Postseason token payouts. Each tier is paid as an INCREMENT on top of the
 // previous tier so a champion ends up with the full 5,000:
@@ -206,21 +204,16 @@ export const usePlayoffStore = defineStore('playoff', () => {
     if (bracketObj.userPayouts[tierKey]) return false // already paid this tier
 
     const amount = PLAYOFF_PAYOUTS[tierKey]
-    const authStore = useAuthStore()
     const toastStore = useToastStore()
 
-    try {
-      const response = await api.post('/api/user/tokens', { amount })
-      if (authStore.profile && typeof response.data?.tokens === 'number') {
-        authStore.profile.tokens = response.data.tokens
-      }
-      bracketObj.userPayouts[tierKey] = true
-      toastStore.showTokenAward({ label: PAYOUT_LABEL[tierKey], amount })
-      return true
-    } catch (err) {
-      console.error('Failed to award playoff tokens:', err)
-      return false
-    }
+    // Ledger-based earn: exact-once (idempotent flush endpoint) and works
+    // offline — earnTokens never throws, so the tier marker + toast always
+    // land together with the credit.
+    const { useTokensStore } = await import('@/stores/tokens')
+    await useTokensStore().earnTokens(amount, 'playoff_payout')
+    bracketObj.userPayouts[tierKey] = true
+    toastStore.showTokenAward({ label: PAYOUT_LABEL[tierKey], amount })
+    return true
   }
 
   async function generateBracket(campaignId) {

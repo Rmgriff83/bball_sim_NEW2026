@@ -4,6 +4,7 @@ import api from '@/composables/useApi'
 import { getToken, setToken, removeToken } from '@/composables/useTokenStorage'
 import { clearDatabase } from '@/engine/db/GameDatabase'
 import { useSyncStore } from '@/stores/sync'
+import { useTokensStore } from '@/stores/tokens'
 import { clampGmLevel, nextGmLevel } from '@/engine/data/gmLevels'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -41,6 +42,35 @@ export const useAuthStore = defineStore('auth', () => {
     return Array.isArray(features) && features.includes(name)
   }
 
+  // --- Cached session (offline login) ----------------------------------------
+  // The token is persisted (Keychain/Preferences) but `user`/`profile` only
+  // exist after a successful /api/user fetch — without this cache, a cold
+  // start with no network leaves isAuthenticated false and the router guard
+  // strands an already-logged-in user on the login screen. The cache holds
+  // the last known identity so offline cold starts reach the (fully local)
+  // campaigns. It can never bypass the backend: every online request is
+  // validated server-side, and a 401 still tears the session down.
+  const CACHED_SESSION_KEY = 'auth.cachedSession'
+
+  function _writeCachedSession() {
+    try {
+      localStorage.setItem(CACHED_SESSION_KEY, JSON.stringify({ user: user.value, profile: profile.value }))
+    } catch { /* best-effort */ }
+  }
+
+  function _readCachedSession() {
+    try {
+      const raw = localStorage.getItem(CACHED_SESSION_KEY)
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  }
+
+  function _clearCachedSession() {
+    try { localStorage.removeItem(CACHED_SESSION_KEY) } catch { /* best-effort */ }
+  }
+
   async function initialize() {
     if (initialized.value) return
 
@@ -55,12 +85,31 @@ export const useAuthStore = defineStore('auth', () => {
         // network/timeout error on a poor connection must NOT log the user out —
         // keep the token and retry the profile fetch in the background.
         if (error?.response?.status === 401) {
-          await logout()
+          // Keep IndexedDB + cached session: a same-account re-login (token
+          // revoked by a password reset etc.) preserves unsynced progress.
+          await logout({ preserveLocalData: true })
         } else {
           console.warn('[Auth] initialize: profile fetch failed, keeping session:', error?.message || error)
+          // Offline cold start: hydrate identity from the cached session so
+          // the router guard passes and the user reaches their local
+          // campaigns. Refreshed for real when connectivity returns.
+          const cached = _readCachedSession()
+          if (cached?.user && !user.value) {
+            user.value = cached.user
+            profile.value = cached.profile ?? null
+            try {
+              window.addEventListener('online', () => { fetchUser().catch(() => {}) }, { once: true })
+            } catch { /* SSR/odd env */ }
+          }
           fetchUser().catch(() => {})
         }
       }
+    }
+
+    // Bind the offline token ledger to the (possibly cache-hydrated) user so
+    // pending offline earns/spends show in the balance and flush when online.
+    if (user.value) {
+      try { useTokensStore().init() } catch { /* best-effort */ }
     }
 
     initialized.value = true
@@ -70,16 +119,31 @@ export const useAuthStore = defineStore('auth', () => {
     const response = await api.get('/api/user', opts)
     user.value = response.data.user
     profile.value = response.data.profile
+    // Cache stores SERVER truth (written before the tokens store re-derives
+    // the display balance as serverTokens + pending offline ledger).
+    _writeCachedSession()
+    try {
+      const tokensStore = useTokensStore()
+      tokensStore.init()
+      tokensStore.onServerProfile(response.data.profile)
+    } catch { /* tokens store is best-effort here */ }
     return user.value
   }
 
   async function login(credentials) {
     loading.value = true
     try {
-      // Clear any previous user's local data before logging in
-      await clearDatabase().catch(() => {})
-
       const response = await api.post('/api/auth/login', credentials)
+      // Clear the previous account's local data ONLY when a DIFFERENT user
+      // signs in. Same-account re-login (e.g. after a 401-forced logout from
+      // a token revocation) keeps unsynced local campaigns so they can still
+      // push to the cloud. No cached session (fresh device / manual logout,
+      // where the DB was already wiped) → clear, preserving old behavior.
+      const cachedId = _readCachedSession()?.user?.id
+      if (cachedId == null || String(cachedId) !== String(response.data.user?.id)) {
+        await clearDatabase().catch(() => {})
+        try { useTokensStore().clearAllLedgers() } catch { /* best-effort */ }
+      }
       token.value = response.data.token
       user.value = response.data.user
       await setToken(token.value)
@@ -97,6 +161,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       // Clear any previous user's local data before registering
       await clearDatabase().catch(() => {})
+      try { useTokensStore().clearAllLedgers() } catch { /* best-effort */ }
 
       const response = await api.post('/api/auth/register', data)
       token.value = response.data.token
@@ -117,9 +182,14 @@ export const useAuthStore = defineStore('auth', () => {
   async function loginWithSocial(payload) {
     loading.value = true
     try {
-      await clearDatabase().catch(() => {})
-
       const response = await api.post('/api/auth/social/token', payload)
+      // Same-account guard as login(): only wipe local data for a DIFFERENT
+      // authenticated user.
+      const cachedId = _readCachedSession()?.user?.id
+      if (cachedId == null || String(cachedId) !== String(response.data.user?.id)) {
+        await clearDatabase().catch(() => {})
+        try { useTokensStore().clearAllLedgers() } catch { /* best-effort */ }
+      }
       token.value = response.data.token
       user.value = response.data.user
       await setToken(token.value)
@@ -191,7 +261,11 @@ export const useAuthStore = defineStore('auth', () => {
     return response.data
   }
 
-  async function logout() {
+  // `preserveLocalData` is set by the 401-forced logout path (revoked token):
+  // it keeps IndexedDB and the cached session so a same-account re-login can
+  // preserve — and then cloud-push — unsynced progress. A user-initiated
+  // logout always wipes both (the next user must not see this data).
+  async function logout({ preserveLocalData = false } = {}) {
     // Flush any pending campaign changes to the cloud BEFORE clearing IndexedDB,
     // otherwise unsynced gameplay (e.g. games played since the last sync) is lost.
     try {
@@ -201,6 +275,14 @@ export const useAuthStore = defineStore('auth', () => {
       }
     } catch (e) {
       console.warn('[Auth] Pre-logout sync failed:', e)
+    }
+
+    // Same for queued offline token deltas — best-effort flush before the
+    // ledger is wiped below (no-op when offline or empty).
+    try {
+      await useTokensStore().flush()
+    } catch (e) {
+      console.warn('[Auth] Pre-logout token flush failed:', e)
     }
 
     try {
@@ -215,11 +297,15 @@ export const useAuthStore = defineStore('auth', () => {
       profile.value = null
       await removeToken()
 
-      // Clear all local campaign data so the next user doesn't see it
-      try {
-        await clearDatabase()
-      } catch (e) {
-        console.warn('[Auth] Failed to clear IndexedDB on logout:', e)
+      if (!preserveLocalData) {
+        _clearCachedSession()
+        try { useTokensStore().clearAllLedgers() } catch { /* best-effort */ }
+        // Clear all local campaign data so the next user doesn't see it
+        try {
+          await clearDatabase()
+        } catch (e) {
+          console.warn('[Auth] Failed to clear IndexedDB on logout:', e)
+        }
       }
     }
   }
@@ -279,6 +365,8 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = null
       profile.value = null
       await removeToken()
+      _clearCachedSession()
+      try { useTokensStore().clearAllLedgers() } catch { /* best-effort */ }
       try {
         await clearDatabase()
       } catch (e) {

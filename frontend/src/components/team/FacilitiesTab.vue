@@ -2,13 +2,13 @@
 import { ref, computed, onMounted, markRaw } from 'vue'
 import { useTeamStore } from '@/stores/team'
 import { useAuthStore } from '@/stores/auth'
+import { useTokensStore } from '@/stores/tokens'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { useSyncStore } from '@/stores/sync'
-import api from '@/composables/useApi'
 import FacilityUpgradeConfirmModal from '@/components/team/FacilityUpgradeConfirmModal.vue'
 import HireScoutModal from '@/components/team/HireScoutModal.vue'
 import HireTrainerModal from '@/components/team/HireTrainerModal.vue'
@@ -263,11 +263,8 @@ async function upgradeFacility() {
   audio.suppressClickSound() // cha-ching on success instead of the generic tap
 
   try {
-    // Deduct tokens via backend API
-    const response = await api.post('/api/user/tokens', { amount: -UPGRADE_COST })
-    if (authStore.profile) {
-      authStore.profile.tokens = response.data.tokens
-    }
+    // Deduct tokens (offline-capable: queues the spend when unreachable)
+    await useTokensStore().spendTokens(UPGRADE_COST, 'facility_upgrade')
 
     // Upgrade team facility
     const facilityKey = activeSubTab.value

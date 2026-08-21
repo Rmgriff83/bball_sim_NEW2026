@@ -114,7 +114,10 @@ async function _postWire(api, campaignId, payload, timeout) {
   const raw = JSON.stringify(payload)
   const b64 = await _gzipBase64(raw)
   const body = b64 && b64.length + 24 < raw.length ? { gz: b64 } : payload
-  return api.post(`/api/sync/${campaignId}/push`, body, { timeout })
+  // skipErrorToast: syncNow's catch is the single toast decider — without
+  // this the axios interceptor adds a second "Network error" toast per
+  // failed part on top of the "Sync failed" one.
+  return api.post(`/api/sync/${campaignId}/push`, body, { timeout, skipErrorToast: true })
 }
 
 /**
@@ -183,6 +186,7 @@ export const useSyncStore = defineStore('sync', () => {
   const activeCampaignId = ref(null)
   const _lastEventSyncAt = ref(0) // timestamp of last event-driven sync
   const _visibilityHandler = ref(null)
+  const _onlineHandler = ref(null)
   // Parts that still need to be pushed (failed or never attempted since last clean sync).
   // Lets a 413 on one part avoid re-pushing the parts that already succeeded.
   const _dirtyParts = ref(new Set(PUSH_PARTS))
@@ -266,7 +270,10 @@ export const useSyncStore = defineStore('sync', () => {
     _visibilityHandler.value = async () => {
       if (document.hidden) {
         if (activeCampaignId.value && hasPendingChanges.value && !isSyncing.value) {
-          syncNow()
+          // Cooldown-guarded: backgrounding repeatedly (especially offline)
+          // must not re-attempt a full push every toggle. Local IndexedDB is
+          // already current; the dirty flag persists for the next window.
+          _eventDrivenSync()
         }
       } else if (activeCampaignId.value && !isPulling.value && !isSyncing.value) {
         // Tab regained focus. Pull cloud state silently — failures here are
@@ -292,6 +299,16 @@ export const useSyncStore = defineStore('sync', () => {
       }
     }
     document.addEventListener('visibilitychange', _visibilityHandler.value)
+
+    // Reconnect: push pending changes the moment connectivity returns.
+    // Single real event (not bursty), so it bypasses the event-sync cooldown
+    // to get the backup up promptly after an offline stretch.
+    _onlineHandler.value = () => {
+      if (activeCampaignId.value && hasPendingChanges.value && !isSyncing.value) {
+        syncNow()
+      }
+    }
+    window.addEventListener('online', _onlineHandler.value)
   }
 
   /**
@@ -301,6 +318,10 @@ export const useSyncStore = defineStore('sync', () => {
     if (_visibilityHandler.value) {
       document.removeEventListener('visibilitychange', _visibilityHandler.value)
       _visibilityHandler.value = null
+    }
+    if (_onlineHandler.value) {
+      window.removeEventListener('online', _onlineHandler.value)
+      _onlineHandler.value = null
     }
   }
 
@@ -689,6 +710,11 @@ export const useSyncStore = defineStore('sync', () => {
   async function syncNow() {
     if (!activeCampaignId.value) return
     if (isSyncing.value) return
+    // Offline: don't attempt (each doomed attempt burns 20-30s timeouts) and
+    // don't toast — the game is local-first, IndexedDB already has everything,
+    // and the dirty flag persists so the 'online' listener / next trigger
+    // pushes the full current snapshot. Fully silent by design.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
 
     const toastStore = useToastStore()
 
@@ -707,6 +733,14 @@ export const useSyncStore = defineStore('sync', () => {
       toastStore.showSuccess(t('Saved to cloud'), 2000)
     } catch (err) {
       syncError.value = err.message || 'Sync failed'
+      // Network-level failure (no HTTP response) or gone-offline mid-push:
+      // stay silent — same reasoning as the offline early-return above.
+      // Server-level failures (real HTTP errors) still surface below.
+      const isNetworkError = err?.networkError === true ||
+        (err?.request && !err?.response) ||
+        (typeof navigator !== 'undefined' && navigator.onLine === false)
+      if (isNetworkError) return
+
       if (err.tooLargeParts && err.tooLargeParts.length > 0) {
         // Size-specific: retrying the identical payload can't succeed, so
         // don't pretend it will. Local data is untouched either way.
@@ -826,6 +860,7 @@ export const useSyncStore = defineStore('sync', () => {
 
     const failed = []
     const tooLargeParts = []
+    let networkFailure = false
     let first = true
     // meta must succeed before any other part on a brand-new campaign (server
     // creates the Campaign row on the meta push), so we always lead with it
@@ -870,6 +905,8 @@ export const useSyncStore = defineStore('sync', () => {
         }
         failed.push(part)
         if (err?.tooLarge) tooLargeParts.push(part)
+        // No HTTP response at all = network-level failure (offline/unreachable).
+        if (err?.request && !err?.response) networkFailure = true
         // If meta failed on a fresh push, the other player/season requests
         // will 404 ("Campaign not found"). Skip them this cycle.
         if (part === 'meta') {
@@ -882,6 +919,7 @@ export const useSyncStore = defineStore('sync', () => {
       const err = new Error(`Sync partial: ${failed.length} of ${order.length} parts failed`)
       err.failedParts = failed
       err.tooLargeParts = tooLargeParts
+      err.networkError = networkFailure
       throw err
     }
   }
@@ -1205,7 +1243,9 @@ export const useSyncStore = defineStore('sync', () => {
       // them). New clients request them explicitly; the campaign store splits
       // them out of the playable-campaign list via settings.workshopMode /
       // the stub's `workshop` field.
-      const response = await api.get('/api/sync/campaigns', { params: { include_workshop: 1 } })
+      // skipErrorToast: callers fall back to local IndexedDB on null — an
+      // offline campaigns screen must not flash "Network error".
+      const response = await api.get('/api/sync/campaigns', { params: { include_workshop: 1 }, skipErrorToast: true })
       return response.data?.campaigns ?? []
     } catch {
       return null
@@ -1318,6 +1358,7 @@ export const useSyncStore = defineStore('sync', () => {
     startAutoSync,
     stopAutoSync,
     syncNow,
+    requestSync: _eventDrivenSync,
     syncOnRouteLeave,
     pushChanges,
     pullChanges,

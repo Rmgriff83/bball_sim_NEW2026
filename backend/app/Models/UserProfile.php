@@ -129,6 +129,33 @@ class UserProfile extends Model
     }
 
     /**
+     * Like creditTokens, but a negative $amount that exceeds the balance
+     * CLAMPS the balance to 0 instead of being rejected. Used only by the
+     * offline-ledger flush (UserController::flushTokenLedger): the client's
+     * offline purchases are already applied on-device, so rejecting the
+     * reconciliation would strand the user — flooring at zero bounds the
+     * damage of the (cross-device-only) overdraw case instead.
+     *
+     * Same single-statement atomic JSON arithmetic as creditTokens — the
+     * GREATEST() rides inside the one UPDATE, so there is no read-retry
+     * window under concurrency.
+     */
+    public function creditTokensClamped(int $amount): int
+    {
+        $tokensExpr = "COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(rewards, '$.tokens')) AS SIGNED), 0)";
+
+        static::query()->whereKey($this->getKey())->update([
+            // $amount is an int-typed parameter — interpolation is safe.
+            'rewards' => DB::raw("JSON_SET(COALESCE(rewards, '{}'), '$.tokens', GREATEST(0, {$tokensExpr} + {$amount}))"),
+            'updated_at' => now(),
+        ]);
+
+        $this->refresh();
+
+        return $this->getTokens();
+    }
+
+    /**
      * Get the user's career GM level (0-4). Profile-global, like tokens; rises
      * by +1 each time an owner extends the GM's contract. Backed by
      * rewards.gm_level so no dedicated column is needed.

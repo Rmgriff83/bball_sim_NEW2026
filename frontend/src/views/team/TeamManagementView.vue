@@ -2038,10 +2038,10 @@ async function onCoachBadgePurchased() {
            the four facility staff moved into the Facilities tab) -->
       <div v-else-if="activeTab === 'personnel'" class="coach-content">
         <!-- Coach content -->
-        <div data-tour="gm-personnel-coach">
+        <div>
 
         <!-- No coach signed: empty state -->
-        <GlassCard v-if="!coach" padding="lg" :hoverable="false">
+        <GlassCard v-if="!coach" padding="lg" :hoverable="false" data-tour="gm-personnel-coach">
           <div class="coach-empty-state">
             <div class="coach-empty-icon">
               <User :size="40" />
@@ -2056,8 +2056,9 @@ async function onCoachBadgePurchased() {
           </div>
         </GlassCard>
 
-        <!-- Coach Info Card -->
-        <GlassCard v-else padding="lg" :hoverable="false">
+        <!-- Coach Info Card (only one of the two cards renders, so the
+             gm-personnel-coach tour anchor is never duplicated) -->
+        <GlassCard v-else padding="lg" :hoverable="false" data-tour="gm-personnel-coach">
           <h3 class="h4 mb-4">{{ $t('Head Coach') }}</h3>
           <div class="coach-header">
             <div class="coach-avatar-wrap">
@@ -2234,13 +2235,14 @@ async function onCoachBadgePurchased() {
 
             <div v-else class="schemes-grid">
               <div
-                v-for="(scheme, schemeId) in teamStore.coachingSchemes?.offensive"
+                v-for="(scheme, schemeId, schemeIdx) in teamStore.coachingSchemes?.offensive"
                 :key="schemeId"
                 class="scheme-card"
                 :class="{
                   active: (selectedScheme || team?.coaching_scheme?.offensive || team?.coaching_scheme) === schemeId,
                   recommended: teamStore.recommendedScheme === schemeId
                 }"
+                :data-tour="schemeIdx === 0 ? 'gm-coach-scheme-card' : null"
                 @click="updateOffensiveScheme(schemeId)"
               >
                 <div class="scheme-header">

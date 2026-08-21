@@ -117,8 +117,15 @@ const languageOptions = computed(() =>
     name: LANGUAGE_NAMES[code] ?? code.toUpperCase(),
   }))
 )
-function selectLanguage(code) {
-  i18n.setLocale(code)
+async function selectLanguage(code) {
+  await i18n.setLocale(code)
+  // Notification copy is baked into the OS queue at schedule time — re-bake
+  // anything pending (training timer, retention ladder) in the new locale so
+  // reminders scheduled under the old language don't fire in it.
+  try {
+    const n = await import('@/services/notifications')
+    await n.relocalizePendingNotifications()
+  } catch { /* best-effort — web or plugin failure */ }
 }
 
 // Sound settings

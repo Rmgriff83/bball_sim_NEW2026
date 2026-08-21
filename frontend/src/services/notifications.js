@@ -22,7 +22,7 @@
 // =============================================================================
 
 import { Capacitor } from '@capacitor/core'
-import { t } from '@wl-i18n/i18n.js'
+import { t, currentLocale, loadLocale } from '@wl-i18n/i18n.js'
 
 export const NOTIF_IDS = {
   TRAINING: 1001,
@@ -236,8 +236,9 @@ export async function scheduleTrainingReady({ playerName = null, endsAt, campaig
       body,
       schedule: { at, allowWhileIdle: true },
       // Tap target: App.vue's localNotificationActionPerformed listener
-      // routes to this campaign's home.
-      extra: campaignId ? { campaignId } : undefined,
+      // routes to this campaign's home. playerName rides along so
+      // relocalizePendingNotifications can rebuild the body in a new locale.
+      extra: { ...(campaignId ? { campaignId } : {}), ...(playerName ? { playerName } : {}) },
     }])
   } catch (err) {
     console.warn('[notif] scheduleTrainingReady failed', err)
@@ -278,7 +279,9 @@ export async function scheduleRetentionReminders({ pendingPoints = 0, campaignId
         title,
         body,
         schedule: { at: new Date(now + POINTS_DELAY_MS), allowWhileIdle: true },
-        extra,
+        // pendingPoints rides along so relocalizePendingNotifications can
+        // rebuild the body in a new locale.
+        extra: { ...(extra ?? {}), pendingPoints: wholePoints },
       })
     }
 
@@ -315,4 +318,64 @@ export async function scheduleRetentionReminders({ pendingPoints = 0, campaignId
 export async function cancelRetentionReminders() {
   if (!isNative()) return
   await _cancel([NOTIF_IDS.POINTS, NOTIF_IDS.LAPSE_2D, NOTIF_IDS.LAPSE_WEEKLY])
+}
+
+/**
+ * Re-bake the text of every PENDING notification in the current locale,
+ * preserving each one's fire time. Notification copy is translated at
+ * SCHEDULE time and frozen into the OS queue — without this, a reminder
+ * queued while the app was in French still fires in French after the user
+ * switches to English. Called after every language change (ProfileView).
+ * Best-effort: unknown ids and un-rebuildable entries are left untouched.
+ */
+export async function relocalizePendingNotifications() {
+  if (!isNative()) return
+  try {
+    // On cold start the active locale's chunk may still be in flight —
+    // re-baking before it lands would freeze ENGLISH text for a non-English
+    // user. Await readiness (no-op for 'en' and already-loaded locales).
+    await loadLocale(currentLocale.value)
+    const { LocalNotifications } = await _plugin()
+    const { notifications: pending = [] } = await LocalNotifications.getPending()
+    if (!pending.length) return
+
+    const batch = []
+    for (const p of pending) {
+      const id = Number(p.id)
+      const at = p.schedule?.at ? new Date(p.schedule.at) : null
+      if (!at || Number.isNaN(at.getTime())) continue
+      // A one-shot whose time already passed can't be re-queued (it would
+      // fire immediately); repeating ones keep their cadence.
+      if (at.getTime() <= Date.now() && !p.schedule?.every) continue
+
+      let copy = null
+      if (id === NOTIF_IDS.TRAINING) {
+        copy = COPY.training(p.extra?.playerName ?? null)
+      } else if (id === NOTIF_IDS.POINTS) {
+        // Pre-relocalization schedules didn't stash the count — leave those.
+        const n = Number(p.extra?.pendingPoints)
+        if (Number.isFinite(n) && n > 0) copy = COPY.points(n)
+      } else if (id === NOTIF_IDS.LAPSE_2D) {
+        copy = COPY.lapse2d()
+      } else if (id === NOTIF_IDS.LAPSE_WEEKLY) {
+        copy = COPY.lapseWeekly()
+      }
+      if (!copy) continue
+
+      // Same id → Capacitor replaces the pending entry in place.
+      batch.push({
+        id,
+        ...copy,
+        schedule: {
+          at,
+          ...(p.schedule?.every ? { every: p.schedule.every } : {}),
+          allowWhileIdle: true,
+        },
+        extra: p.extra ?? undefined,
+      })
+    }
+    if (batch.length) await _schedule(batch)
+  } catch (err) {
+    console.warn('[notif] relocalizePendingNotifications failed', err)
+  }
 }

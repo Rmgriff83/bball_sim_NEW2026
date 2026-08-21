@@ -3,13 +3,13 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { Coins, Check, Star, ChevronUp, Plus } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
+import { useTokensStore } from '@/stores/tokens'
 import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
 import { useSyncStore } from '@/stores/sync'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { coachBadges, COACH_BADGE_LEVELS, nextCoachBadgeLevel } from '@/engine/data/coachBadges'
 import { StandardModal } from '@/components/ui'
-import api from '@/composables/useApi'
 import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
@@ -125,10 +125,8 @@ async function purchase(badge) {
   purchasing.value = badge.id
   audio.suppressClickSound() // cha-ching on success instead of the generic tap
   try {
-    const response = await api.post('/api/user/tokens', { amount: -cost })
-    if (authStore.profile) {
-      authStore.profile.tokens = response.data.tokens
-    }
+    // Deduct tokens (offline-capable: queues the spend when unreachable)
+    await useTokensStore().spendTokens(cost, 'badge_purchase')
 
     // Refetch the team to avoid clobbering concurrent writes, then upgrade
     // the badge entry in place (or insert at bronze if not yet owned).

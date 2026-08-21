@@ -1773,12 +1773,11 @@ async function handleCloseOwnerCongrats() {
   if (ownerCongratsApplying.value) return
   ownerCongratsApplying.value = true
   try {
-    // Same grant pattern as the playoff payouts: server returns the new
-    // authoritative balance.
-    const res = await api.post('/api/user/tokens', { amount: 1000 })
-    if (authStore.profile && typeof res.data?.tokens === 'number') {
-      authStore.profile.tokens = res.data.tokens
-    }
+    // Clear the marker FIRST (the only fallible step — if it throws, nothing
+    // was awarded and the modal cleanly re-offers), THEN credit through the
+    // token ledger. earnTokens never throws and the ledger flush endpoint is
+    // idempotent, so the bonus lands exactly once — the old direct-POST +
+    // marker-retry could double-award when a success response was lost.
     const bonus = (campaignStore.currentCampaign?.settings?.ownerSatisfactionBonus ?? 0) + 15
     await CampaignRepository.updateSettings(campaignId.value, {
       ownerSatisfactionBonus: bonus,
@@ -1791,11 +1790,13 @@ async function handleCloseOwnerCongrats() {
         pendingOwnerTitleCongrats: null,
       }
     }
+    const { useTokensStore } = await import('@/stores/tokens')
+    await useTokensStore().earnTokens(1000, 'owner_bonus')
     useSyncStore().markDirty()
     toastStore.showTokenAward({ label: "Owner's Championship Bonus", amount: 1000 })
   } catch (err) {
-    // Token post failed (likely offline): keep the pending marker so the
-    // congrats re-offers — and re-awards — on the next surface.
+    // Marker write failed: nothing was awarded — keep the pending marker so
+    // the congrats re-offers on the next surface.
     console.warn('[CampaignHome] owner congrats rewards failed, will retry:', err)
     toastStore.showError(t("Couldn't deliver the owner's bonus — it will retry shortly."))
   } finally {

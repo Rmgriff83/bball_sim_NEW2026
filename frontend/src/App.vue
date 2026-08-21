@@ -75,8 +75,14 @@ onMounted(() => {
     // Fire-and-forget; native-only + fail-open inside the store/service.
     appUpdateStore.check()
 
-    // Cold start = the user came back — clear the ladder.
-    import('@/services/notifications').then(n => n.cancelRetentionReminders()).catch(() => {})
+    // Cold start = the user came back — clear the ladder. Also re-bake any
+    // surviving pending notifications (e.g. the training timer) in the
+    // CURRENT locale: their text was frozen at schedule time and may be in a
+    // language the user has since switched away from.
+    import('@/services/notifications').then(n => {
+      n.cancelRetentionReminders()
+      n.relocalizePendingNotifications()
+    }).catch(() => {})
 
     // Notification taps: route straight to the campaign the notification was
     // scheduled for (extra.campaignId — see services/notifications.js).

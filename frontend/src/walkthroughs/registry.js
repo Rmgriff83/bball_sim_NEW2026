@@ -322,11 +322,11 @@ export const WALKTHROUGHS = {
       body: "Your coach's per-season action pools — Coach Meetings (lift a player's morale) and Player Trainings — showing how many remain this season and what each one does. They reset every season, so spend them wisely.",
     },
     {
-      target: 'gm-coach-schemes',
+      target: ['gm-coach-scheme-card', 'gm-coach-schemes'],
       tab: { view: 'gm', tab: 'personnel' },
-      placement: 'left',
-      title: 'Coach & Schemes',
-      body: "Your head coach sets the offensive and defensive schemes. Match the scheme to your roster's strengths for a real in-game edge.",
+      placement: 'right',
+      title: 'Scheme Cards',
+      body: "Each scheme card shows pace, strengths, weaknesses, and a Fit rating for your current roster — rough ratings at Analytics Facility Level 1, exact percentages once it reaches Level 2. Tap View plays to watch the set's plays as live animations, with real season efficiency stats at higher Analytics levels.",
     },
   ],
 

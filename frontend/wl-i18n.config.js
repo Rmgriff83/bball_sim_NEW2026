@@ -6,7 +6,7 @@
 // so every imported data module must stay import-free (they currently are).
 // Proper nouns (player/coach/owner names, team names/cities) are deliberately
 // excluded — they are never translated.
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 
 const labelRegex = (file, re) =>
   [...readFileSync(new URL(file, import.meta.url), 'utf-8').matchAll(re)].map(m => m[1])
@@ -175,6 +175,29 @@ export default {
       const start = src.indexOf('export const LAYERS = [')
       const block = start === -1 ? '' : src.slice(start, src.indexOf('\n]', start))
       return [...block.matchAll(/label:\s*'((?:[^'\\]|\\.)*)'/g)].map(m => m[1])
+    },
+    // Headshot-editor style-variant labels. Derived at runtime from the
+    // bundled layer SVG filenames: `big-afro.svg` → config key `big_afro` →
+    // "Big Afro" via LayerContextMenu's labelForVariant (hyphens→underscores
+    // in headshotComposer._filenameToConfigKey, then underscores→spaces +
+    // title-case). Mirror that derivation over all four audience/tier asset
+    // folders. Numeric variants (jaw width, brow thickness) render as bare
+    // digits and need no translation; 'none' + the browAngle axis are
+    // virtual variants with no file.
+    async () => {
+      const dirs = ['headshot-layers', 'headshot-layers-upgraded', 'headshot-layers-coaches', 'headshot-layers-coaches-upgraded']
+      const layers = ['hair', 'eyes', 'nose', 'mouth', 'headband', 'neck', 'stubble']
+      const keys = new Set(['none', 'flat', 'up', 'down'])
+      for (const dir of dirs) {
+        for (const layer of layers) {
+          const folder = new URL(`./src/assets/${dir}/${layer}/`, import.meta.url)
+          if (!existsSync(folder)) continue
+          for (const file of readdirSync(folder)) {
+            if (file.endsWith('.svg')) keys.add(file.slice(0, -4).replace(/-/g, '_'))
+          }
+        }
+      }
+      return [...keys].map(k => k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()))
     },
     // Walkthrough step copy is pure data rendered via $tDynamic in the
     // walkthrough overlay component.

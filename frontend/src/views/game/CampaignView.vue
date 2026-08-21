@@ -168,11 +168,14 @@ onMounted(async () => {
   // Initialize the simulation engine for this campaign
   await engineStore.initialize(campaignId.value)
 
-  // Start cloud sync timer and push immediately if dirty (e.g. just created)
+  // Start cloud sync triggers and push if dirty (e.g. just created).
+  // Cooldown-guarded: repeated campaign mounts (especially while offline)
+  // must not each fire a full push attempt — the just-created initial push
+  // is already handled by createCampaign's own syncNow.
   syncStore.setActiveCampaign(campaignId.value)
   syncStore.startAutoSync()
   if (syncStore.hasPendingChanges) {
-    syncStore.syncNow()
+    syncStore.requestSync()
   }
 })
 

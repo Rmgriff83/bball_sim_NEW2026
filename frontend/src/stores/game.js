@@ -325,19 +325,15 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * Accumulate award tokens from game rewards into campaign settings.
+   * Accumulate award tokens from game rewards. Ledger-based earn: exact-once
+   * via the idempotent flush endpoint, and queues while offline instead of
+   * silently losing the reward (the old direct-POST behavior on any network
+   * blip).
    */
   async function _accumulateAwardTokens(campaignId, rewards) {
     if (!rewards || !rewards.tokens_awarded) return
-    try {
-      const response = await api.post('/api/user/tokens', { amount: rewards.tokens_awarded })
-      const authStore = useAuthStore()
-      if (authStore.profile) {
-        authStore.profile.tokens = response.data.tokens
-      }
-    } catch (err) {
-      console.warn('[GameStore] Failed to push tokens to backend:', err)
-    }
+    const { useTokensStore } = await import('@/stores/tokens')
+    await useTokensStore().earnTokens(rewards.tokens_awarded, 'game_reward')
   }
 
   /**
