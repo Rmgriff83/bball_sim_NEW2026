@@ -222,6 +222,63 @@ export class PlayoffManager {
    * Get all series for a given round.
    * @private
    */
+  /**
+   * Self-heal a torn playoff bracket against the schedule (source of truth).
+   * Historical cause: concurrent background sims each saved their own copy of
+   * seasonData, so one copy's series-win updates could be wholesale clobbered
+   * by another's — leaving states like "winner advanced to the next round but
+   * the series still shows 0-0". Idempotent and conservative:
+   *   - a team's series wins are only ever RAISED to match completed games
+   *     (never lowered — clobbered game rows can't resurrect lost results);
+   *   - a stamped winner keeps 4 wins minimum and 'complete' status;
+   *   - a series with wins but no winner is at least 'in_progress'.
+   * Returns true when anything changed (caller persists).
+   */
+  static reconcileBracketWithSchedule(seasonData) {
+    const bracket = seasonData?.playoffBracket
+    if (!bracket || !Array.isArray(seasonData.schedule)) return false
+
+    // Completed-game win counts per series per team.
+    const winsBySeries = {}
+    for (const g of seasonData.schedule) {
+      if (!(g.isPlayoff ?? false) || !g.playoffSeriesId) continue
+      if (!g.isComplete || g.isCancelled) continue
+      if (g.homeScore == null || g.awayScore == null || g.homeScore === g.awayScore) continue
+      const byTeam = winsBySeries[g.playoffSeriesId] ?? (winsBySeries[g.playoffSeriesId] = {})
+      const winnerId = g.homeScore > g.awayScore ? g.homeTeamId : g.awayTeamId
+      byTeam[winnerId] = (byTeam[winnerId] ?? 0) + 1
+    }
+
+    let changed = false
+    for (const round of [1, 2, 3, 4]) {
+      for (const series of PlayoffManager._getSeriesForRound(bracket, round)) {
+        if (!series?.team1?.teamId || !series?.team2?.teamId) continue
+        const byTeam = winsBySeries[series.seriesId] ?? {}
+
+        const target1 = Math.min(4, Math.max(series.team1Wins ?? 0, byTeam[series.team1.teamId] ?? 0))
+        const target2 = Math.min(4, Math.max(series.team2Wins ?? 0, byTeam[series.team2.teamId] ?? 0))
+        if (target1 !== series.team1Wins) { series.team1Wins = target1; changed = true }
+        if (target2 !== series.team2Wins) { series.team2Wins = target2; changed = true }
+
+        const winnerId = series.winner?.teamId ?? null
+        if (winnerId) {
+          // A stamped winner demonstrably took the series — display 4 wins.
+          if (winnerId === series.team1.teamId && series.team1Wins < 4) { series.team1Wins = 4; changed = true }
+          if (winnerId === series.team2.teamId && series.team2Wins < 4) { series.team2Wins = 4; changed = true }
+          if (series.status !== 'complete') { series.status = 'complete'; changed = true }
+        } else if ((series.team1Wins > 0 || series.team2Wins > 0) && series.status === 'pending') {
+          series.status = 'in_progress'
+          changed = true
+        }
+      }
+    }
+
+    if (changed && seasonData.metadata) {
+      seasonData.metadata.updatedAt = new Date().toISOString()
+    }
+    return changed
+  }
+
   static _getSeriesForRound(bracket, round) {
     const series = []
 

@@ -66,6 +66,24 @@ onMounted(() => {
     document.documentElement.setAttribute('data-theme', savedTheme)
   }
 
+  // Profile refresh on foreground (native resume + web tab focus), throttled
+  // to once per 60s. Backstop for server-side balance changes the client
+  // otherwise never learns about mid-session — most importantly IAP/Stripe
+  // webhook credits that landed after the store's fulfillment poll gave up
+  // (routine in the Apple sandbox; possible under production load). fetchUser
+  // flows through the tokens store so display balance, cached session, and
+  // the pending offline ledger stay coherent.
+  let _lastForegroundProfileFetch = 0
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return
+    if (!authStore.isAuthenticated) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    const now = Date.now()
+    if (now - _lastForegroundProfileFetch < 60 * 1000) return
+    _lastForegroundProfileFetch = now
+    authStore.fetchUser().catch(() => {})
+  })
+
   // Retention notifications (native only): cancel the lapse/points reminders
   // whenever the user is HERE, and (re)schedule them whenever the app goes to
   // the background. The training-ready notification is managed separately by

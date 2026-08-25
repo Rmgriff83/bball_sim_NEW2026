@@ -89,16 +89,22 @@ export const WALKTHROUGHS = {
       body: 'Short on time? SIMULATE resolves the game instantly using your current lineup and minutes. The engine still respects your rotations and schemes.',
     },
     {
-      target: 'home-quick-actions',
+      target: 'home-news',
       placement: 'top',
-      title: 'Quick Actions',
-      body: 'These shortcuts jump straight to the key areas of your franchise — the GM Desk to manage your lineup and staff, Scouting to study the draft class, Standings, and your Schedule. You can also reach all of them from the navigation bar at the top.',
+      title: 'Around the League',
+      body: 'Trades, injuries, awards, and breaking storylines land here. Keep an eye out — they hint at trade targets and roster risks.',
     },
     {
       target: 'home-featured-player',
       placement: 'top',
       title: 'Featured Player',
       body: 'Every couple of weeks we spotlight a standout on your roster with their recent form. Tap the card to open their full profile.',
+    },
+    {
+      target: 'home-quick-actions',
+      placement: 'top',
+      title: 'Quick Actions',
+      body: 'These shortcuts jump straight to the key areas of your franchise — the GM Desk to manage your lineup and staff, Scouting to study the draft class, Standings, and your Schedule. You can also reach all of them from the navigation bar at the top.',
     },
     {
       target: 'home-upcoming-fa',
@@ -111,10 +117,12 @@ export const WALKTHROUGHS = {
       skipIfMissing: true,
     },
     {
-      target: 'home-news',
+      target: 'home-staff-overview',
       placement: 'top',
-      title: 'Around the League',
-      body: 'Trades, injuries, awards, and breaking storylines land here. Keep an eye out — they hint at trade targets and roster risks.',
+      title: 'Your Staff',
+      body: 'A quick pulse on your four staff hires. A warning here means a staff member is hired but their perks are locked because the matching facility level is too low — tap any row to jump straight to that facility and fix it.',
+      // Renders once a team is loaded — skip cleanly on a cold-load mid-tour.
+      skipIfMissing: true,
     },
     {
       // Desktop puts the nav in a horizontal strip in the campaign header;

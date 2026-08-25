@@ -148,6 +148,10 @@ export default {
       'const STAFF_CONFIG = {',
       /(?:starLabel|emptyTitle|hireLabel|releaseLabel|releasedToast|releaseFailedToast|perkReq|label|description):\s*(['"])((?:(?!\1).)*)\1/g
     ),
+    // Homepage staff-overview rows (STAFF_ROWS in StaffOverviewCard.vue) —
+    // role/empty/star labels rendered via $tDynamic (same canonical keys the
+    // Facilities tab uses; enumerated so they stay pinned independently).
+    async () => blockStrings('./src/components/game/StaffOverviewCard.vue', 'const STAFF_ROWS = [', /(?:label|emptyLabel|starLabel):\s*'([^']+)'/g),
     // Rough scheme-fit tier labels (FIT_TIERS in TeamManagementView.vue,
     // rendered via $tDynamic below Analytics facility Lv2).
     async () => blockStrings('./src/views/team/TeamManagementView.vue', 'const FIT_TIERS = [', /label:\s*'([^']+)'/g),

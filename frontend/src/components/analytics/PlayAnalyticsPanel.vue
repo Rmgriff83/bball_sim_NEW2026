@@ -149,6 +149,10 @@ watch(
           </select>
         </div>
 
+        <!-- Six columns don't fit narrow phones at intrinsic width — the
+             table keeps a readable min-width and scrolls inside this wrapper
+             instead of overflowing the page horizontally. -->
+        <div class="table-scroll">
         <table class="analytics-table">
           <thead>
             <tr>
@@ -186,6 +190,7 @@ watch(
             </template>
           </tbody>
         </table>
+        </div>
       </template>
     </div>
 
@@ -240,8 +245,17 @@ watch(
 }
 .cat-filter:focus { outline: none; border-color: rgba(168, 85, 247, 0.6); }
 
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* Flex/grid ancestors must not force the card wider than the viewport. */
+  min-width: 0;
+  max-width: 100%;
+}
+
 .analytics-table {
   width: 100%;
+  min-width: 420px;
   border-collapse: collapse;
   font-size: 0.82rem;
 }

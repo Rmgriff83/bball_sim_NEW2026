@@ -23,6 +23,12 @@ const props = defineProps({
   campaignId: {
     type: [String, Number],
     required: true
+  },
+  // Optional deep-link target (?tab=facilities&sub=<key>), e.g. from the
+  // homepage staff overview card. Invalid/absent → default 'scouting'.
+  initialSubTab: {
+    type: String,
+    default: null
   }
 })
 
@@ -33,7 +39,11 @@ const toastStore = useToastStore()
 const syncStore = useSyncStore()
 const audio = useAudioStore()
 
-const activeSubTab = ref('scouting')
+const activeSubTab = ref(
+  ['scouting', 'training', 'medical', 'analytics'].includes(props.initialSubTab)
+    ? props.initialSubTab
+    : 'scouting'
+)
 const upgrading = ref(false)
 const confirmingUpgrade = ref(false)
 const showHireModal = ref(false)
@@ -213,6 +223,13 @@ function isPerkActive(perk) {
   return (facilities.value[activeSubTab.value] ?? 1) >= (perk.requiredLevel ?? 1)
 }
 
+// Perks the hired staff member carries that the facility level can't
+// activate yet — drives the amber notice + slot tint so a hired-but-gated
+// staffer is impossible to miss.
+const lockedPerks = computed(() =>
+  (hiredStaff.value?.perks ?? []).filter(p => !isPerkActive(p))
+)
+
 async function fireStaff() {
   if (firing.value) return
   firing.value = true
@@ -354,7 +371,7 @@ async function upgradeFacility() {
       <p class="facility-description">{{ $tDynamic(currentFacility.description) }}</p>
 
       <!-- Staff slot — the specialist who runs this facility -->
-      <div class="staff-slot" :class="{ empty: !hiredStaff }" data-tour="gm-facility-staff">
+      <div class="staff-slot" :class="{ empty: !hiredStaff, 'perks-locked': lockedPerks.length > 0 }" data-tour="gm-facility-staff">
         <template v-if="hiredStaff">
           <div class="staff-slot-header">
             <div class="staff-slot-avatar">
@@ -381,6 +398,11 @@ async function upgradeFacility() {
             >
               {{ firing ? $t('Releasing...') : $tDynamic(staffCfg.releaseLabel) }}
             </button>
+          </div>
+
+          <div v-if="lockedPerks.length > 0" class="staff-perks-notice">
+            <AlertTriangle :size="14" />
+            <span>{{ lockedPerks.length === 1 ? $t('{n} perk is locked — upgrade this facility to activate it', { n: lockedPerks.length }) : $t('{n} perks are locked — upgrade this facility to activate them', { n: lockedPerks.length }) }}</span>
           </div>
 
           <div v-if="hiredStaff.perks?.length" class="staff-slot-perks">
@@ -774,6 +796,29 @@ async function upgradeFacility() {
 .staff-slot.empty {
   border-style: dashed;
   background: transparent;
+}
+
+.staff-slot.perks-locked {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.staff-perks-notice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #F59E0B;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.staff-perks-notice svg {
+  flex-shrink: 0;
 }
 
 .staff-slot-header {

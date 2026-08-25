@@ -48,18 +48,53 @@ async function _waitForFulfillment(bundle, beforeTokens) {
   const hadFeature = isUnlock && bundle.feature
     ? authStore.hasFeature(bundle.feature)
     : false
+  const fulfilled = () => {
+    if (isUnlock && bundle.feature) return !hadFeature && authStore.hasFeature(bundle.feature)
+    return (authStore.profile?.tokens ?? 0) > beforeTokens
+  }
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     try { await authStore.fetchUser() } catch { /* network blip — retry */ }
-    if (isUnlock && bundle.feature) {
-      if (!hadFeature && authStore.hasFeature(bundle.feature)) return
-    } else {
-      const after = authStore.profile?.tokens ?? 0
-      if (after > beforeTokens) return
-    }
+    if (fulfilled()) return true
     if (i < MAX_ATTEMPTS - 1) {
       await new Promise(resolve => setTimeout(resolve, DELAY_MS))
     }
   }
+  return false
+}
+
+// Detached long-tail poll for slow webhooks (Apple SANDBOX server-to-server
+// notifications routinely take 30s+; production spikes happen too). Runs
+// AFTER the blocking wait gave up, without holding the purchase spinner:
+// up to ~100 more seconds of gentle fetchUser polling, then a success toast
+// when the credit finally lands so the user gets closure. Best-effort and
+// single-flight; the app-resume profile refresh (App.vue) is the final
+// backstop if the app backgrounds before this finishes.
+let _slowFulfillmentPolling = false
+function _pollSlowFulfillment(bundle, beforeTokens, successMessage) {
+  if (_slowFulfillmentPolling) return
+  _slowFulfillmentPolling = true
+  const isUnlock = bundle.kind === 'unlock'
+  const hadFeature = isUnlock && bundle.feature
+    ? authStore.hasFeature(bundle.feature)
+    : false
+  const fulfilled = () => {
+    if (isUnlock && bundle.feature) return !hadFeature && authStore.hasFeature(bundle.feature)
+    return (authStore.profile?.tokens ?? 0) > beforeTokens
+  }
+  ;(async () => {
+    try {
+      for (let i = 0; i < 20; i++) {
+        await new Promise(resolve => setTimeout(resolve, 5000))
+        try { await authStore.fetchUser() } catch { /* keep polling */ }
+        if (fulfilled()) {
+          toastStore.showSuccess(successMessage)
+          return
+        }
+      }
+    } finally {
+      _slowFulfillmentPolling = false
+    }
+  })()
 }
 
 // Consumable token bundles (existing).
@@ -155,8 +190,18 @@ async function confirmPurchase() {
         confirmBundle.value = null
         return
       }
-      await _waitForFulfillment(bundle, beforeTokens)
-      toastStore.showSuccess(successMessage)
+      const landed = await _waitForFulfillment(bundle, beforeTokens)
+      if (landed) {
+        toastStore.showSuccess(successMessage)
+      } else {
+        // Webhook slower than the ~12s blocking window (routine in the Apple
+        // sandbox): reassure now, keep polling in the background, and let the
+        // success toast fire when the credit actually lands.
+        toastStore.showSuccess(isUnlock
+          ? t('Purchase confirmed! Your unlock is on the way — it will activate in a moment.')
+          : t('Purchase confirmed! Your tokens are on the way — they will appear in a moment.'))
+        _pollSlowFulfillment(bundle, beforeTokens, successMessage)
+      }
       confirmBundle.value = null
     } catch (err) {
       console.error('IAP purchase failed', err)

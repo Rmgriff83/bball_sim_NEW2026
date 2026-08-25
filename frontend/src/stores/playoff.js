@@ -178,7 +178,18 @@ export const usePlayoffStore = defineStore('playoff', () => {
     loading.value = true
     error.value = null
     try {
-      const { seasonData } = await _getSeasonData(campaignId)
+      const { year, seasonData } = await _getSeasonData(campaignId)
+
+      // Self-heal torn brackets (see PlayoffManager.reconcileBracketWithSchedule
+      // — historical concurrent-save clobbering could leave advanced winners
+      // with frozen series win counts). Idempotent; persists only on change.
+      if (seasonData && PlayoffManager.reconcileBracketWithSchedule(seasonData)) {
+        try {
+          await SeasonRepository.save({ campaignId, year, ...seasonData })
+        } catch (err) {
+          console.warn('[Playoffs] bracket reconcile persist failed:', err)
+        }
+      }
 
       bracket.value = PlayoffManager.getBracket(seasonData)
       return bracket.value

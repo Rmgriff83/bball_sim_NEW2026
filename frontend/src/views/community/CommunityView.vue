@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
-import { Loader2, Globe, Upload, Download, Flag, ArrowLeft, Check, ShieldAlert } from 'lucide-vue-next'
+import { useRoute, useRouter } from 'vue-router'
+import { Loader2, Globe, Upload, Download, Flag, ArrowLeft, Check, ShieldAlert, LayoutDashboard, Hammer, User, LogOut } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
@@ -13,9 +13,15 @@ import { t } from '@wl-i18n/i18n.js'
 // via the login handoff. Server enforces the custom_roster entitlement on
 // every endpoint — the client gate below is UX only.
 const route = useRoute()
+const router = useRouter()
 const authStore = useAuthStore()
 const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
+
+async function handleLogout() {
+  await authStore.logout()
+  router.push('/login')
+}
 
 const isOwner = computed(() => authStore.hasFeature('custom_roster'))
 
@@ -255,6 +261,40 @@ onMounted(async () => {
 
 <template>
   <div class="community">
+    <!-- Standard site header (mirrors CampaignsView's campaigns-header) so
+         the web community board carries the same top navigation. -->
+    <header class="campaigns-header">
+      <div class="header-container">
+        <!-- i18n-ignore -->
+        <router-link to="/dashboard" class="app-logo">BBALL SIM</router-link>
+        <nav class="header-nav">
+          <router-link to="/dashboard" class="nav-link">
+            <LayoutDashboard :size="18" />
+            <span>{{ $t('Dashboard') }}</span>
+          </router-link>
+          <span class="nav-link current-page">
+            <Globe :size="18" />
+            <span>{{ $t('Community') }}</span>
+          </span>
+          <router-link v-if="canCustomRoster" to="/builder" class="nav-link">
+            <Hammer :size="18" />
+            <span>{{ $t('Builder') }}</span>
+          </router-link>
+          <router-link to="/profile" class="nav-link">
+            <User :size="18" />
+            <span>{{ $t('Profile') }}</span>
+          </router-link>
+          <button @click="handleLogout" class="nav-link logout-btn">
+            <LogOut :size="18" />
+            <span>{{ $t('Sign Out') }}</span>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Page content — carries the width cap + padding so the site header
+         above stays full-bleed like on the campaigns screen. -->
+    <div class="community-content">
     <header class="cm-header">
       <h1 class="cm-title"><Globe :size="22" /> {{ isDraftClass ? $t('Community Draft Classes') : $t('Community Rosters') }}</h1>
       <a v-if="fromNativeApp" class="cm-back-app" :href="backToAppUrl">
@@ -401,14 +441,97 @@ onMounted(async () => {
         </div>
       </section>
     </template>
+    </div><!-- /community-content -->
   </div>
 </template>
 
 <style scoped>
 .community {
+  /* Full-bleed wrapper — width cap + padding live on .community-content so
+     the sticky site header spans the whole viewport. */
+}
+
+.community-content {
   max-width: 860px;
   margin: 0 auto;
   padding: 24px 18px 80px;
+}
+
+/* Site header — mirrors CampaignsView's campaigns-header styles (scoped CSS
+   doesn't cross views, so the rules are duplicated here). */
+.campaigns-header {
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--glass-border);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  backdrop-filter: blur(12px);
+}
+
+.header-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-logo {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  background: linear-gradient(135deg, var(--color-primary), #F4A259);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-lg);
+  transition: all 0.2s ease;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.nav-link:hover {
+  color: var(--color-text-primary);
+  background: var(--glass-bg);
+}
+
+.nav-link.current-page {
+  color: var(--color-text-primary);
+  background: var(--glass-bg);
+  cursor: default;
+}
+
+.logout-btn:hover {
+  color: #EF4444;
+}
+
+@media (max-width: 768px) {
+  .nav-link span {
+    display: none;
+  }
+
+  .nav-link {
+    padding: 0.5rem;
+  }
 }
 
 .cm-header {

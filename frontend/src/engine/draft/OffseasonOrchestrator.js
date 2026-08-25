@@ -36,7 +36,11 @@ import { capNumbersFor, veteranMinSalary } from '../data/salaryScale'
 /**
  * Run the entire offseason in one shot:
  * 1. Generate rookies if needed
- * 2. Build draft order from standings
+ * 2. Build draft order from standings (honoring/rolling the lottery)
+ * 2b. Run the free-agency market headlessly (AI offers all 14 days at
+ *     market prices under the campaign cap set, then resolveFreeAgency
+ *     distributes every FA to their best offer — identical rules to a
+ *     manually played window where the user placed no bids)
  * 3. Auto-draft all 60 picks (user: BPA, AI: direction-aware)
  * 4. Apply rookie contracts
  * 5. Handle undrafted rookies
@@ -121,6 +125,61 @@ export async function simFullOffseason(campaignId) {
     await CampaignRepository.save(campaign)
   }
   const draftOrder = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
+
+  // 2b. Free-agency market. The user skipped the FA window, so run the REAL
+  // market headlessly: AI teams place their paced, cap-gated offers for all
+  // 14 window days (priced via the same market-value engine, gated against
+  // the campaign's current cap set incl. the first/second aprons via
+  // capNumbersFor), then resolveFreeAgency distributes every FA to their
+  // best offer — identical to fast-forwarding the window without bidding.
+  // The user places no offers, so stars spread across AI teams at market
+  // salaries; the roster-floor fill later only sees genuine leftovers.
+  // Skipped when FA already resolved this year (phase 'offseason_draft').
+  if (campaign.phase === 'offseason' && !campaign[`freeAgencyCompleted_${gameYear}`]) {
+    // Enter the window on the already-loaded object (mirrors startFreeAgency);
+    // saved immediately so a mid-step failure leaves the campaign in a
+    // normal, manually playable FA window instead of a broken state.
+    campaign.phase = 'offseason_free_agency'
+    campaign.settings = campaign.settings ?? {}
+    campaign.settings.freeAgencyDay = 0
+    campaign.settings.freeAgencyStartDate = new Date().toISOString()
+    campaign.settings.freeAgencyOffers = {}
+    campaign.settings.freeAgencyResults = null
+    await CampaignRepository.save(campaign)
+
+    const faStatsLookup = buildSeasonStatsLookup(seasonData)
+    const getPlayerStatsFn = (id) => faStatsLookup[id] ?? null
+    const faAiTeams = teams.filter(t => t.id !== campaign.teamId)
+    const faCapNumbers = capNumbersFor(campaign)
+    // One roster snapshot for all 14 days is faithful: offers never change
+    // rosters mid-window (signings only resolve at day 14) and the skip
+    // path has no user actions between days.
+    for (let faDay = 1; faDay <= FREE_AGENCY_DURATION_DAYS; faDay++) {
+      generateAIFreeAgencyOffers({
+        aiTeams: faAiTeams,
+        leaguePlayers: allPlayers,
+        standings,
+        allTeams: teams,
+        offersMap: campaign.settings.freeAgencyOffers,
+        day: faDay,
+        campaignId,
+        gameYear,
+        getPlayerStatsFn,
+        capNumbers: faCapNumbers,
+      })
+      campaign.settings.freeAgencyDay = faDay
+    }
+
+    // Signs every FA to their best AI offer, saves players, sets
+    // freeAgencyCompleted_{gameYear} and phase='offseason_draft'.
+    await resolveFreeAgency(campaign, { teams, allPlayers, standings, seasonData })
+    // No user offers existed, so the wrap-up payload is empty — drop it
+    // rather than leave a stale record (persisted by the later campaign save).
+    campaign.settings.freeAgencyResults = null
+    // Rosters changed league-wide — reload so direction analysis and the
+    // AI draft evaluate post-market rosters.
+    allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+  }
 
   // 3. Compute team directions for AI. The user team carries its live (dynamic)
   // owner expectation so its direction reflects how the franchise is trending.

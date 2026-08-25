@@ -32,6 +32,7 @@ import OwnerCongratsModal from '@/components/team/OwnerCongratsModal.vue'
 import OwnerFacilityStaffModal from '@/components/team/OwnerFacilityStaffModal.vue'
 import TeamLogo from '@/components/common/TeamLogo.vue'
 import NewsDeskCard from '@/components/game/NewsDeskCard.vue'
+import StaffOverviewCard from '@/components/game/StaffOverviewCard.vue'
 import OwnerWelcomeModal from '@/components/team/OwnerWelcomeModal.vue'
 import ReviewNagModal from '@/components/common/ReviewNagModal.vue'
 import { useReviewNagStore } from '@/stores/reviewNag'
@@ -5013,6 +5014,11 @@ function handleCloseSimulateModal() {
           </button>
         </div>
       </section>
+
+      <!-- Franchise staff at 1000 ft — who's hired and whether their perks
+           are actually active (or locked behind a low facility level). Rows
+           deep-link to the matching facility sub-tab on the GM view. -->
+      <StaffOverviewCard v-if="team" :campaign-id="campaignId" />
     </template>
 
     <!-- Load-error fallback: without this, a swallowed load failure rendered a

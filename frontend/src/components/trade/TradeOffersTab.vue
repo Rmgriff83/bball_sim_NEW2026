@@ -27,6 +27,7 @@ const breakingNewsStore = useBreakingNewsStore()
 
 const proposals = computed(() => tradeStore.pendingProposals)
 const deadlinePassed = computed(() => tradeStore.tradeDeadlinePassed)
+const blockedReason = computed(() => tradeStore.tradingBlockedReason)
 const selectedProposal = ref(null)
 const showProposalModal = ref(false)
 
@@ -122,7 +123,8 @@ function formatExpiration(expiresAt) {
     <!-- Deadline banner -->
     <div v-if="deadlinePassed" class="deadline-banner">
       <AlertTriangle :size="16" />
-      <span>{{ $t('The trade deadline has passed. Pending offers can be reviewed or rejected, but not accepted.') }}</span>
+      <span v-if="blockedReason === 'draft'">{{ $t('Trading is paused during the rookie draft — it reopens as soon as the draft wraps up.') }}</span>
+      <span v-else>{{ $t('The trade deadline has passed. Pending offers can be reviewed or rejected, but not accepted.') }}</span>
     </div>
 
     <!-- Empty State -->

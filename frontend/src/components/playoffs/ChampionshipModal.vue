@@ -1,6 +1,7 @@
 <script setup>
 import { computed, watch, onUnmounted } from 'vue'
 import { Trophy, Star, Award, Crown, X } from 'lucide-vue-next'
+import TeamLogo from '@/components/common/TeamLogo.vue'
 import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
@@ -105,8 +106,9 @@ onUnmounted(() => {
           <!-- Content -->
           <main class="modal-content">
             <div class="championship-content">
-      <!-- Confetti Animation -->
-      <div class="confetti-layer">
+      <!-- Confetti Animation — only when the USER won the title; an AI
+           champion shouldn't look like the user's celebration -->
+      <div v-if="userWon" class="confetti-layer">
         <div v-for="i in 50" :key="i" class="confetti-piece" :style="{
           '--delay': `${Math.random() * 3}s`,
           '--x': `${Math.random() * 100}%`,
@@ -129,8 +131,18 @@ onUnmounted(() => {
 
       <!-- Team Name -->
       <div v-if="winner" class="champion-team">
-        <span class="team-city">{{ winner.city }}</span>
-        <span class="team-name">{{ winner.name }}</span>
+        <div class="champion-team-identity">
+          <TeamLogo
+            :abbreviation="winner.abbreviation"
+            :color="winner.primaryColor"
+            :size="44"
+            class="champion-team-logo"
+          />
+          <div class="champion-team-names">
+            <span class="team-city">{{ winner.city }}</span>
+            <span class="team-name">{{ winner.name }}</span>
+          </div>
+        </div>
         <span class="season-label">{{ seasonLabel }}</span>
       </div>
 
@@ -429,6 +441,25 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+.champion-team-identity {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.champion-team-logo {
+  flex-shrink: 0;
+}
+
+.champion-team-names {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: flex-start;
+  text-align: left;
 }
 
 .team-city {

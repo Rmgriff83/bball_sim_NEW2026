@@ -150,11 +150,15 @@ onMounted(async () => {
     const year = campaign?.currentSeasonYear ?? campaign?.gameYear ?? 2025
     currentSeasonYear.value = year
 
-    const [allTeams, allPlayers, seasonData] = await Promise.all([
+    const [allTeams, allPlayersRaw, seasonData] = await Promise.all([
       TeamRepository.getAllForCampaign(props.campaignId),
       PlayerRepository.getAllForCampaign(props.campaignId),
       SeasonRepository.get(props.campaignId, year),
     ])
+    // Offseason retirees still have player rows (kept until the season
+    // rollover for the un-retire veto) and can linger on persisted
+    // tradingBlock id lists — a retired player must never show on the block.
+    const allPlayers = allPlayersRaw.filter(p => !p.isRetired && !p.is_retired)
 
     // Build regular-season + playoff stats maps. Playoff stats are stored
     // in a parallel bucket on seasonData so award eligibility isn't inflated
@@ -177,8 +181,13 @@ onMounted(async () => {
     playoffStatsMap.value = buildMap(seasonData?.playoffPlayerStats)
 
     // User trading block
+    // Block id lists go stale when a player changes teams (free-agency
+    // signing, trade, waiver) — a listed id only counts while the player is
+    // STILL on the listing team's roster.
     const userBlockIds = campaign?.settings?.tradingBlock ?? []
-    const userPlayers = allPlayers.filter(p => userBlockIds.includes(p.id))
+    const userPlayers = allPlayers.filter(p =>
+      userBlockIds.includes(p.id) && String(p.teamId ?? p.team_id) === String(userTeamId)
+    )
     userBlockPlayers.value = userPlayers
 
     // AI trading blocks
@@ -189,7 +198,7 @@ onMounted(async () => {
       if (blockIds.length === 0) continue
       for (const pid of blockIds) {
         const player = allPlayers.find(p => p.id === pid)
-        if (player) {
+        if (player && String(player.teamId ?? player.team_id) === String(team.id)) {
           leaguePlayers.push({ ...player, _teamId: team.id, _teamName: team.name, _teamAbbr: team.abbreviation })
         }
       }

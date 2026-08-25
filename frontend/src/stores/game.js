@@ -1309,6 +1309,26 @@ export const useGameStore = defineStore('game', () => {
     return { homeTeam, awayTeam, homePlayers, awayPlayers }
   }
 
+  // ---------------------------------------------------------------------------
+  // Season write lock. Several paths independently load-mutate-save the ENTIRE
+  // season record (schedule + standings + playoff bracket): the background
+  // same-day AI sim, the missed-games catch-up, the orphan sweep, and the
+  // live-game completion persist. When two of them overlap (all are fired
+  // fire-and-forget around a live game), the last save wholesale clobbers the
+  // other copy's game results and playoff-series updates — the exact cause of
+  // torn playoff brackets (winners advanced but series win counts frozen).
+  // Every such writer runs through this per-campaign promise queue so each
+  // one loads AFTER the previous writer's save has landed.
+  // ---------------------------------------------------------------------------
+  const _seasonWriteQueues = new Map()
+  function _withSeasonWriteLock(campaignId, fn) {
+    const key = String(campaignId)
+    const prev = _seasonWriteQueues.get(key) ?? Promise.resolve()
+    const next = prev.catch(() => {}).then(fn)
+    _seasonWriteQueues.set(key, next)
+    return next
+  }
+
   /**
    * Persist a single game result into seasonData, update standings, player stats.
    * Mutates seasonData in place and saves to IndexedDB.
@@ -2153,56 +2173,62 @@ export const useGameStore = defineStore('game', () => {
         const allPossessions = quarterAnimationData.value.flatMap(q => q.possessions)
         const quarterEndIndices = quarterAnimationData.value.map(q => q.quarterEndIndex)
 
-        // Process post-game evolution
-        const seasonData = await SeasonRepository.get(campaignId, year)
-        const game = seasonData.schedule.find(g => g.id === gameId)
+        // Post-game evolution + persist. The whole load→mutate→save window
+        // runs under the season write lock so a still-running background AI
+        // sim (fired at game start) can neither clobber this save nor have
+        // its own playoff-series updates clobbered by it.
+        const { seasonData, game, evolution, rewards, playoffUpdate } = await _withSeasonWriteLock(campaignId, async () => {
+          const seasonData = await SeasonRepository.get(campaignId, year)
+          const game = seasonData.schedule.find(g => g.id === gameId)
 
-        const [homePlayers, awayPlayers] = await Promise.all([
-          PlayerRepository.getByTeam(campaignId, game.homeTeamId),
-          PlayerRepository.getByTeam(campaignId, game.awayTeamId),
-        ])
+          const [homePlayers, awayPlayers] = await Promise.all([
+            PlayerRepository.getByTeam(campaignId, game.homeTeamId),
+            PlayerRepository.getByTeam(campaignId, game.awayTeamId),
+          ])
 
-        const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
-        const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
-          userTeamId,
-          homeTeamId: game.homeTeamId,
-          awayTeamId: game.awayTeamId,
-          difficulty: campaign.difficulty || 'pro',
-          gameDate: game.gameDate,
-          trainerPerks,
+          const trainerPerks = { ...await _getTrainerPerks(campaign), ...await _getStaffTrainerPerks(campaign) }
+          const evolution = await worker.processPostGame(homePlayers, awayPlayers, result, {
+            userTeamId,
+            homeTeamId: game.homeTeamId,
+            awayTeamId: game.awayTeamId,
+            difficulty: campaign.difficulty || 'pro',
+            gameDate: game.gameDate,
+            trainerPerks,
+          })
+          result.evolution = evolution
+
+          // Process rewards
+          const isHome = game.homeTeamId === userTeamId
+          const didWin = isHome
+            ? result.home_score > result.away_score
+            : result.away_score > result.home_score
+          const synCount = isHome
+            ? result.synergies_activated?.home
+            : result.synergies_activated?.away
+          const rewards = processGameRewards({
+            animationData: { possessions: allPossessions },
+            isHome,
+            didWin,
+            synergiesActivated: synCount,
+          })
+          result.rewards = rewards
+
+          // Accumulate award tokens
+          await _accumulateAwardTokens(campaignId, rewards)
+
+          // Persist game result and clear saved in-progress state
+          const { playoffUpdate } = await _persistGameResult(campaignId, year, seasonData, gameId, result, true)
+          // Clean up the savedGameState from the schedule entry (already handled by _persistGameResult setting isComplete)
+          const completedEntry = seasonData.schedule.find(g => g.id === gameId)
+          if (completedEntry) {
+            delete completedEntry.savedGameState
+            delete completedEntry.savedMidQuarter
+            delete completedEntry.savedPacingMode
+            completedEntry.isInProgress = false
+            await SeasonRepository.save({ campaignId, year, ...seasonData })
+          }
+          return { seasonData, game, evolution, rewards, playoffUpdate }
         })
-        result.evolution = evolution
-
-        // Process rewards
-        const isHome = game.homeTeamId === userTeamId
-        const didWin = isHome
-          ? result.home_score > result.away_score
-          : result.away_score > result.home_score
-        const synCount = isHome
-          ? result.synergies_activated?.home
-          : result.synergies_activated?.away
-        const rewards = processGameRewards({
-          animationData: { possessions: allPossessions },
-          isHome,
-          didWin,
-          synergiesActivated: synCount,
-        })
-        result.rewards = rewards
-
-        // Accumulate award tokens
-        await _accumulateAwardTokens(campaignId, rewards)
-
-        // Persist game result and clear saved in-progress state
-        const { playoffUpdate } = await _persistGameResult(campaignId, year, seasonData, gameId, result, true)
-        // Clean up the savedGameState from the schedule entry (already handled by _persistGameResult setting isComplete)
-        const completedEntry = seasonData.schedule.find(g => g.id === gameId)
-        if (completedEntry) {
-          delete completedEntry.savedGameState
-          delete completedEntry.savedMidQuarter
-          delete completedEntry.savedPacingMode
-          completedEntry.isInProgress = false
-          await SeasonRepository.save({ campaignId, year, ...seasonData })
-        }
         _pendingGameState.value = null
 
         // Save evolution changes to player records
@@ -3670,6 +3696,12 @@ export const useGameStore = defineStore('game', () => {
    * Does not touch the user's own games.
    */
   async function _catchUpMissedAiGames(campaignId, year, cutoffDate, userTeamId) {
+    // Serialized with the day-sim / orphan sweep / live-completion persist.
+    return _withSeasonWriteLock(campaignId, () =>
+      _catchUpMissedAiGamesLocked(campaignId, year, cutoffDate, userTeamId))
+  }
+
+  async function _catchUpMissedAiGamesLocked(campaignId, year, cutoffDate, userTeamId) {
     try {
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData) return
@@ -3721,6 +3753,12 @@ export const useGameStore = defineStore('game', () => {
    * @returns {Promise<number>} number of games swept
    */
   async function sweepOrphanedGames(campaignId) {
+    // Serialized with the background sims / live-completion persist (runs on
+    // homepage mount, so it can otherwise overlap an in-flight day sim).
+    return _withSeasonWriteLock(campaignId, () => _sweepOrphanedGamesLocked(campaignId))
+  }
+
+  async function _sweepOrphanedGamesLocked(campaignId) {
     try {
       const campaign = await CampaignRepository.get(campaignId)
       if (!campaign?.currentDate) return 0
@@ -3769,6 +3807,14 @@ export const useGameStore = defineStore('game', () => {
    * Used during live games to simulate same-day AI matchups.
    */
   async function _simulateAiGamesForDay(campaignId, year, gameDate, userTeamId) {
+    // Serialized: see _withSeasonWriteLock — this and the catch-up sweep are
+    // fired back-to-back fire-and-forget, and un-serialized their two season
+    // copies clobbered each other's results (torn playoff brackets).
+    return _withSeasonWriteLock(campaignId, () =>
+      _simulateAiGamesForDayLocked(campaignId, year, gameDate, userTeamId))
+  }
+
+  async function _simulateAiGamesForDayLocked(campaignId, year, gameDate, userTeamId) {
     try {
       const seasonData = await SeasonRepository.get(campaignId, year)
       if (!seasonData) return

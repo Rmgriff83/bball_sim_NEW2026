@@ -195,6 +195,18 @@ export const useTradeStore = defineStore('trade', () => {
   // fetchPendingProposals so the UI can disable trade actions (the execute paths
   // also hard-block, but disabling avoids a dead-end error after building a deal).
   const tradeDeadlinePassed = ref(false)
+  // WHY trading is currently blocked: null | 'deadline' | 'draft'. The
+  // offseason draft phase pauses trading too (picks are being consumed in the
+  // draft room) — without this, its banner showed the misleading
+  // "trade deadline has passed" copy.
+  const tradingBlockedReason = ref(null)
+
+  function _updateTradingGate(campaign, currentDate, year) {
+    const blocked = !userTradingAllowed(campaign, currentDate, year)
+    tradeDeadlinePassed.value = blocked
+    const phase = campaign?.phase ?? campaign?.settings?.season_phase ?? 'regular_season'
+    tradingBlockedReason.value = blocked ? (phase === 'offseason_draft' ? 'draft' : 'deadline') : null
+  }
 
   // Negotiation prefill — set when the user clicks "Negotiate" on an inbound
   // AI proposal. TradesTab watches this and forwards it to TradeCenter, which
@@ -370,7 +382,13 @@ export const useTradeStore = defineStore('trade', () => {
       const campaign = await CampaignRepository.get(campaignId)
       const userTeamId = campaign?.team_id ?? campaign?.teamId
       const allTeams = await TeamRepository.getAllForCampaign(campaignId)
-      const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+      // Retirees are excluded everywhere in the trade center: during the
+      // offseason a retired player's row still exists (kept until the season
+      // rollover for the un-retire veto window) and may still sit on a team's
+      // persisted tradingBlock list — but a retired player can't be traded,
+      // valued, or displayed as an asset.
+      const allPlayers = (await PlayerRepository.getAllForCampaign(campaignId))
+        .filter(p => !p.isRetired && !p.is_retired)
 
       // Load standings to attach win/loss records. Use the canonical season-year
       // chain (matching the other trade.js callers) — NOT campaign.gameYear, which
@@ -381,7 +399,7 @@ export const useTradeStore = defineStore('trade', () => {
         ?? campaign?.year
         ?? new Date().getFullYear()
       const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
-      tradeDeadlinePassed.value = !userTradingAllowed(campaign, currentDate, year)
+      _updateTradingGate(campaign, currentDate, year)
       const seasonData = await SeasonRepository.get(campaignId, year)
       const standings = seasonData?.standings ?? { east: [], west: [] }
       const allStandings = [...(standings.east ?? []), ...(standings.west ?? [])]
@@ -468,7 +486,11 @@ export const useTradeStore = defineStore('trade', () => {
         }
         for (const pid of blockIds) {
           const player = playerById.get(pid)
-          if (player) block.push({ ...player, _teamId: t.id, _teamName: t.name, _teamAbbr: t.abbreviation })
+          // Stale-list guard: a listed id only counts while the player is
+          // STILL on this team (block lists aren't cleaned on FA/trade moves).
+          if (player && String(player.teamId ?? player.team_id) === String(t.id)) {
+            block.push({ ...player, _teamId: t.id, _teamName: t.name, _teamAbbr: t.abbreviation })
+          }
         }
       }
       block.sort((a, b) => (b.overallRating ?? b.overall_rating ?? 0) - (a.overallRating ?? a.overall_rating ?? 0))
@@ -574,7 +596,9 @@ export const useTradeStore = defineStore('trade', () => {
       const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
 
       const aiTeamId = selectedTeam.value.id
-      const aiTeamRoster = await PlayerRepository.getByTeam(campaignId, aiTeamId)
+      // Exclude offseason retirees from the AI's own-roster evaluation math.
+      const aiTeamRoster = (await PlayerRepository.getByTeam(campaignId, aiTeamId))
+        .filter(p => !p.isRetired && !p.is_retired)
       const getPlayerFn = _buildPlayerLookup(allPlayers)
 
       const standings = seasonData?.standings ?? { east: [], west: [] }
@@ -918,7 +942,7 @@ export const useTradeStore = defineStore('trade', () => {
         ?? new Date().getFullYear()
       const difficulty = campaign?.settings?.difficulty ?? 'pro'
       const currentDate = campaign?.currentDate ?? campaign?.current_date ?? new Date().toISOString().split('T')[0]
-      tradeDeadlinePassed.value = !userTradingAllowed(campaign, currentDate, year)
+      _updateTradingGate(campaign, currentDate, year)
 
       const allTeams = await TeamRepository.getAllForCampaign(campaignId)
       const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
@@ -1591,6 +1615,7 @@ export const useTradeStore = defineStore('trade', () => {
     playoffStatsMap,
     currentSeasonYear,
     tradeDeadlinePassed,
+    tradingBlockedReason,
     negotiationPrefill,
     loading,
     proposing,

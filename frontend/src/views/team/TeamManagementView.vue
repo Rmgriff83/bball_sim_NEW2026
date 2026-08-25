@@ -157,6 +157,12 @@ function startTabTour(tab) {
   walkthroughStore.maybeStart(key)
 }
 
+// Deep-link target for the Facilities tab's sub-tab
+// (?tab=facilities&sub=scouting|training|medical|analytics) — e.g. from the
+// homepage staff overview card's per-row links.
+const initialFacilitiesSubTab = ['scouting', 'training', 'medical', 'analytics']
+  .includes(route.query?.sub) ? route.query.sub : null
+
 // Only show loading if we don't have cached team data
 const loading = ref(!teamStore.team)
 const validTabs = ['team', 'personnel', 'finances', 'trades', 'facilities', 'owner', 'schedule']
@@ -2547,7 +2553,7 @@ async function onCoachBadgePurchased() {
 
       <!-- Facilities View -->
       <div v-else-if="activeTab === 'facilities'" class="facilities-content" data-tour="gm-facilities-content">
-        <FacilitiesTab :campaign-id="campaignId" />
+        <FacilitiesTab :campaign-id="campaignId" :initial-sub-tab="initialFacilitiesSubTab" />
       </div>
 
       <!-- Owner View -->
@@ -4479,6 +4485,10 @@ async function onCoachBadgePurchased() {
 /* Analytics Lv3: own-team season play analytics under the offensive grid */
 .season-analytics-section {
   margin-top: 20px;
+  /* Guard: never let the analytics table's intrinsic width push this
+     section (and the page) wider than the viewport on mobile. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .playbook-select {

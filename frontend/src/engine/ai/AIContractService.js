@@ -744,18 +744,19 @@ function backfillRoster({
     const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
     return !teamAbbr || teamAbbr === 'FA';
   });
-  freeAgents.sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
-
-  // Less selective — just need warm bodies
+  // Less selective — just need warm bodies. WORST-first: floor fills are
+  // emergency signings, never star acquisitions (see ensureMinimumRosters).
   const minRating = 50;
+  freeAgents = freeAgents.filter(player => getPlayerRating(player) >= minRating);
+  freeAgents.sort((a, b) => getPlayerRating(a) - getPlayerRating(b));
+
   let filled = 0;
 
   for (const player of freeAgents) {
     if (filled >= slotsNeeded) break;
-    if (getPlayerRating(player) < minRating) break;
 
-    // Minimum-salary 1-year contract
-    const salary = 2_000_000;
+    // Vet-minimum 1-year contract (cap-exempt by design — minimum exception).
+    const salary = getVeteranMinSalary(player);
     const years = 1;
 
     for (let i = 0; i < updatedPlayers.length; i++) {
@@ -928,18 +929,23 @@ export function ensureMinimumRosters({ aiTeams, leaguePlayers, minRating = 50 })
       const teamAbbr = player.teamAbbreviation ?? player.team_abbreviation ?? null;
       return !teamAbbr || teamAbbr === 'FA';
     });
-    freeAgents.sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
+    // Emergency floor-fill signs the WORST eligible bodies, not the best —
+    // real FA distribution happens in the free-agency window (market-priced,
+    // cap-gated, player-choice). Best-first here let skipped offseasons
+    // scoop star FAs onto whichever team backfilled first. Quality floor —
+    // AI uses 50 by default; callers can pass minRating: 0 for emergency
+    // fills (e.g. UserTeamFinalizer's "let AI finish setup") where filling
+    // the roster trumps player quality.
+    freeAgents = freeAgents.filter(player => getPlayerRating(player) >= minRating);
+    freeAgents.sort((a, b) => getPlayerRating(a) - getPlayerRating(b));
 
     let filled = 0;
     for (const player of freeAgents) {
       if (filled >= slotsNeeded) break;
 
-      // Quality floor — AI uses 50 by default. Callers can pass minRating: 0
-      // for emergency fills (e.g. UserTeamFinalizer's "let AI finish setup")
-      // where filling the roster trumps player quality.
-      if (getPlayerRating(player) < minRating) break;
-
-      const salary = 2_000_000;
+      // Vet-minimum, 1 year. Minimum-salary signings are deliberately
+      // cap-exempt (minimum-exception analog) — no cap plumbing by design.
+      const salary = getVeteranMinSalary(player);
       const years = 1;
 
       for (let i = 0; i < currentPlayers.length; i++) {

@@ -71,6 +71,28 @@ export const useAuthStore = defineStore('auth', () => {
     try { localStorage.removeItem(CACHED_SESSION_KEY) } catch { /* best-effort */ }
   }
 
+  /**
+   * Keep the cached session's token balance current with SERVER truth.
+   * Called by the tokens store after every server-confirmed balance change
+   * (ledger flush / legacy spend POST) — without this, only fetchUser()
+   * refreshed the cache, so an offline cold start after an online play
+   * session hydrated the balance from app-OPEN time, not app-close.
+   * Must receive the server balance, never the effective display value
+   * (cold-start init re-adds the pending ledger on top).
+   */
+  function updateCachedTokens(tokens) {
+    try {
+      const cached = _readCachedSession()
+      if (!cached?.profile) return
+      // Never mutate another account's cache (belt-and-suspenders — the
+      // login/logout wipe paths already isolate accounts).
+      if (user.value?.id != null && cached.user?.id != null &&
+          String(cached.user.id) !== String(user.value.id)) return
+      cached.profile.tokens = tokens
+      localStorage.setItem(CACHED_SESSION_KEY, JSON.stringify(cached))
+    } catch { /* best-effort */ }
+  }
+
   async function initialize() {
     if (initialized.value) return
 
@@ -463,6 +485,7 @@ export const useAuthStore = defineStore('auth', () => {
     ensureGmLevelAtLeast,
     initialize,
     fetchUser,
+    updateCachedTokens,
     login,
     register,
     loginWithSocial,

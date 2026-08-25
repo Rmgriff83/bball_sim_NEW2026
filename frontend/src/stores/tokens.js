@@ -191,6 +191,9 @@ export const useTokensStore = defineStore('tokens', () => {
     try {
       const response = await api.post('/api/user/tokens', { amount: -cost }, { skipErrorToast: true })
       serverTokens.value = Number(response.data?.tokens) || 0
+      // Keep the offline-login cache holding SERVER truth so a later offline
+      // cold start shows the post-spend balance, not the app-open one.
+      try { authStore.updateCachedTokens(serverTokens.value) } catch { /* best-effort */ }
       _recomputeDisplay()
       return { tokens: authStore.profile.tokens, offline: false }
     } catch (err) {
@@ -284,6 +287,8 @@ export const useTokensStore = defineStore('tokens', () => {
         deferCooldownUntil.value = deferred.length > 0 ? Date.now() + DEFER_COOLDOWN_MS : null
         batch.value = null
         serverTokens.value = Number(tokens) || 0
+        // Keep the offline-login cache holding SERVER truth (see spendTokens).
+        try { useAuthStore().updateCachedTokens(serverTokens.value) } catch { /* best-effort */ }
         _persist()
         _recomputeDisplay()
 
