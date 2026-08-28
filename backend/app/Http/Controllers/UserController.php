@@ -392,12 +392,16 @@ class UserController extends Controller
     /**
      * Ledger-flush earn ceiling: max tokens creditable per user per UTC day
      * through this endpoint. Excess earn entries are returned as `deferred`
-     * (the client keeps them queued and re-flushes on a later day). Sized so
-     * legitimate heavy play (~1-2k/day; a full championship season nets
-     * ~5-6k) catches up within days, while a forged-entry attacker is capped
-     * far below what the legacy endpoint already allows.
+     * (the client keeps them queued and re-flushes on a later day). Prod
+     * logs (2026-08-28) showed heavy legitimate play sustains ~770/hr —
+     * back-to-back season sims where a single championship run nets 5.5k+
+     * (250+750+3500 playoff + 1000 owner bonus) — so the original 5000 cap
+     * deferred real players by mid-morning and their balances drifted below
+     * what the app displayed. Sized ~5x the heaviest observed legitimate
+     * day so real play never defers, while forged-entry farming stays
+     * bounded (and below what the legacy endpoint already allows).
      */
-    private const LEDGER_DAILY_EARN_CAP = 5000;
+    private const LEDGER_DAILY_EARN_CAP = 25000;
 
     /**
      * Per-reason validation for ledger EARN entries — the abuse surface.
@@ -529,6 +533,7 @@ class UserController extends Controller
             $credited = [];
             $deferred = [];
             $earnSum = 0;
+            $deferredSum = 0;
             foreach ($earns as $entry) {
                 $amount = (int) $entry['amount'];
                 if ($amount <= $headroom) {
@@ -537,6 +542,7 @@ class UserController extends Controller
                     $headroom -= $amount;
                 } else {
                     $deferred[] = $entry['id'];
+                    $deferredSum += $amount;
                 }
             }
             if ($earnSum > 0) {
@@ -568,6 +574,7 @@ class UserController extends Controller
                 'credited' => $credited,
                 'deferred' => $deferred,
                 'rejected' => $rejected,
+                'deferred_sum' => $deferredSum,
             ];
 
             DB::table('token_ledger_batches')
@@ -591,6 +598,9 @@ class UserController extends Controller
             'new_balance' => $result['tokens'],
             'credited' => count($result['credited']),
             'deferred' => count($result['deferred']),
+            // Total tokens NOT credited this flush (over the daily cap) — the
+            // count alone can't reconstruct how much a user is owed.
+            'deferred_sum' => (int) ($result['deferred_sum'] ?? 0),
             'rejected' => count($result['rejected']),
             'replayed' => (bool) ($result['replayed'] ?? false),
         ]);
