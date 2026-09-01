@@ -11,8 +11,9 @@ import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import {
   Loader2, Hammer, Users, ClipboardList, ArrowLeft, Plus, Pencil, Trash2,
-  CloudDownload, Globe, AlertTriangle,
+  CloudDownload, Globe, AlertTriangle, LayoutDashboard, User, LogOut,
 } from 'lucide-vue-next'
+import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { useToastStore } from '@/stores/toast'
 import { useAudioStore } from '@/stores/audio'
@@ -27,10 +28,16 @@ import {
 } from '@/engine/campaign/WorkshopService'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const campaignStore = useCampaignStore()
 const toastStore = useToastStore()
 const { workshopCampaigns } = storeToRefs(campaignStore)
-const { openCommunity } = useCommunityLink()
+const { openCommunity, hasCommunity } = useCommunityLink()
+
+async function handleLogout() {
+  await authStore.logout()
+  router.push('/login')
+}
 
 const loading = ref(true)
 const creating = ref(false)
@@ -161,6 +168,40 @@ async function confirmDelete() {
 
 <template>
   <div class="bld">
+    <!-- Standard site header (mirrors CampaignsView's campaigns-header) so the
+         Builder carries the same top navigation. -->
+    <header class="campaigns-header">
+      <div class="header-container">
+        <!-- i18n-ignore -->
+        <router-link to="/dashboard" class="app-logo">BBALL SIM</router-link>
+        <nav class="header-nav">
+          <router-link to="/dashboard" class="nav-link">
+            <LayoutDashboard :size="18" />
+            <span>{{ $t('Dashboard') }}</span>
+          </router-link>
+          <button v-if="hasCommunity" class="nav-link" @click="openCommunity(null, { back: 'builder' })">
+            <Globe :size="18" />
+            <span>{{ $t('Community') }}</span>
+          </button>
+          <span class="nav-link current-page">
+            <Hammer :size="18" />
+            <span>{{ $t('Builder') }}</span>
+          </span>
+          <router-link to="/profile" class="nav-link">
+            <User :size="18" />
+            <span>{{ $t('Profile') }}</span>
+          </router-link>
+          <button @click="handleLogout" class="nav-link logout-btn">
+            <LogOut :size="18" />
+            <span>{{ $t('Sign Out') }}</span>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Page content — carries the width cap + padding so the site header
+         above stays full-bleed like on the campaigns screen. -->
+    <div class="bld-content">
     <header class="bld-header">
       <button class="bld-back" @click="router.push('/campaigns')">
         <ArrowLeft :size="18" /> {{ $t('Campaigns') }}
@@ -271,15 +312,98 @@ async function confirmDelete() {
         </div>
       </div>
     </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* Full-width so the sticky site header can bleed edge-to-edge; the width cap
+   and padding moved to .bld-content below. */
 .bld {
+  min-height: 100vh;
+}
+
+.bld-content {
   max-width: 760px;
   margin: 0 auto;
-  min-height: 100vh;
-  padding: calc(var(--safe-area-inset-top, env(safe-area-inset-top)) + 14px) 16px 80px;
+  padding: 14px 16px 80px;
+}
+
+/* Site header — mirrors CampaignsView's campaigns-header styles (scoped CSS
+   doesn't cross views, so the rules are duplicated here). */
+.campaigns-header {
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--glass-border);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  backdrop-filter: blur(12px);
+}
+
+.header-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-logo {
+  font-family: var(--font-display, 'Bebas Neue', sans-serif);
+  font-size: 1.5rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  background: linear-gradient(135deg, var(--color-primary), #F4A259);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-lg);
+  transition: all 0.2s ease;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.nav-link:hover {
+  color: var(--color-text-primary);
+  background: var(--glass-bg);
+}
+
+.nav-link.current-page {
+  color: var(--color-text-primary);
+  background: var(--glass-bg);
+  cursor: default;
+}
+
+.logout-btn:hover {
+  color: #EF4444;
+}
+
+@media (max-width: 768px) {
+  .nav-link span {
+    display: none;
+  }
+
+  .nav-link {
+    padding: 0.5rem;
+  }
 }
 
 .bld-header {

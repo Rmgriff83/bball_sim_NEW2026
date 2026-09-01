@@ -57,6 +57,7 @@ const FACILITY_LABELS = [
   ['medical', 'Medical'],
   ['scouting', 'Scouting'],
   ['analytics', 'Analytics'],
+  ['arena', 'Arena'],
 ]
 
 const facilities = computed(() => {

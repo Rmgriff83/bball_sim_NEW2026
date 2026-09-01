@@ -2,6 +2,8 @@
 import { computed, ref, watch, onUnmounted } from 'vue'
 import { X, AlertTriangle, Calendar, Star, Zap, Users, Pause, Play } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
+import MedicalStaffPanel from '@/components/game/MedicalStaffPanel.vue'
+import { useMedicalBenefits, effectiveDaysOut, daysSaved } from '@/composables/useMedicalBenefits'
 
 // PlayerAvatar expects `player.id` (headshot resolver keys on that). All-Star
 // roster entries carry `playerId` instead, so adapt to the avatar's contract.
@@ -85,6 +87,23 @@ function severityColor(severity) {
     case 'season_ending': return '#ef4444'
     default: return '#fbbf24'
   }
+}
+
+// Medical staff/facility recovery bonus — same math the sim applies, read
+// live from the campaign/team stores (this modal always mounts inside the
+// campaign layout, so Pinia state is available without prop changes).
+const { medicalBreakdown, campaignId } = useMedicalBenefits()
+
+function injRolledDays(injury) {
+  return injury.days_out ?? injury.games_out ?? 0
+}
+
+function injEffDays(injury) {
+  return effectiveDaysOut(injRolledDays(injury), medicalBreakdown.value.totalBonus)
+}
+
+function injSavedDays(injury) {
+  return daysSaved(injRolledDays(injury), medicalBreakdown.value.totalBonus)
 }
 
 function close() { emit('close') }
@@ -260,11 +279,18 @@ onUnmounted(() => {
                     </div>
                     <div class="inj-detail-row">
                       <span class="inj-type">{{ $tDynamic(injury.injury_type) }}</span>
-                      <span class="inj-duration">{{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('{n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('{n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
+                      <span v-if="injSavedDays(injury) >= 1" class="inj-duration">
+                        {{ injEffDays(injury) === 1 ? $t('~{n} day', { n: injEffDays(injury) }) : $t('~{n} days', { n: injEffDays(injury) }) }}
+                        <span class="inj-saved">{{ injSavedDays(injury) === 1 ? $t('{n} day saved', { n: injSavedDays(injury) }) : $t('{n} days saved', { n: injSavedDays(injury) }) }}</span>
+                      </span>
+                      <span v-else class="inj-duration">{{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('{n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('{n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
                     </div>
                   </div>
                 </div>
               </div>
+
+              <MedicalStaffPanel :breakdown="medicalBreakdown" :campaign-id="campaignId" mode="injury" />
+
               <p class="body-hint">{{ $t('Choose how to handle your lineup before the simulation continues.') }}</p>
             </template>
           </main>
@@ -728,6 +754,15 @@ onUnmounted(() => {
 .inj-duration {
   font-weight: 600;
   color: var(--color-text-primary);
+}
+
+/* Green medical-staff affordance: days shaved off the estimate. */
+.inj-saved {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #22c55e;
+  text-align: right;
 }
 
 /* Footer */

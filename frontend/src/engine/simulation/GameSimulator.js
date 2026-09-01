@@ -14,6 +14,7 @@
 
 import PlayExecutionEngine from './PlayExecutionEngine'
 import { T } from './commentaryTemplate'
+import { calculateHomeCourtAdvantageFromFandom } from '../fandom/FandomService'
 import { selectPlay } from './PlayService'
 import { coachingEngine } from './CoachingEngine'
 import { evaluateSubstitutions, applyVariance, getDefaultTargetMinutes, computeAITargetMinutes, aiStarterCapFor } from './SubstitutionEngine'
@@ -986,7 +987,7 @@ class GameSimulator {
     const awayAvgMorale = this.averageMorale(this.awayPlayers)
     this.homeChemistryModifier = this.calculateChemistryModifier(homeAvgMorale)
     this.awayChemistryModifier = this.calculateChemistryModifier(awayAvgMorale)
-    this.homeCourtAdvantage = this.calculateHomeCourtAdvantage(homeAvgMorale)
+    this.homeCourtAdvantage = this.calculateHomeCourtAdvantage(homeAvgMorale, this.homeTeam?.fandom)
   }
 
   // =========================================================================
@@ -2810,13 +2811,15 @@ class GameSimulator {
 
   /**
    * Home court advantage applied to the home team's made-shot probability.
-   * Baseline +1.5%, bumped to +2.5% when the home team's average morale is
-   * ≥ 65 (engaged crowd / locker-room buy-in amplifying the edge). Sits in
-   * the same magnitude band as the chemistry shot bonus so they stack
-   * without one swamping the other.
+   * Scales with the home team's FANDOM meter (0.010 at a dead building up
+   * to 0.026 at 100% fandom) plus a +0.004 locker-room bump when average
+   * morale is ≥ 65 — band 0.010–0.030, same magnitude as the chemistry
+   * bonus so they stack without one swamping the other. A team without a
+   * fandom field (legacy save pre-backfill) reads as the neutral 50 →
+   * 0.018/0.022, within a hair of the old fixed 0.015/0.025.
    */
-  calculateHomeCourtAdvantage(homeAvgMorale) {
-    return homeAvgMorale >= 65 ? 0.025 : 0.015
+  calculateHomeCourtAdvantage(homeAvgMorale, homeFandom) {
+    return calculateHomeCourtAdvantageFromFandom(homeAvgMorale, homeFandom)
   }
 
   /**
@@ -3310,6 +3313,10 @@ class GameSimulator {
       awayStarterIds: this.awayStarterIds,
       isLiveGame: this.isLiveGame,
       userTeamId: this.userTeamId,
+      // Computed once at tip-off (fandom + morale); carried through resumes —
+      // deserializeState previously left it at the constructor's 0.0 for
+      // every post-Q1 quarter of a live game.
+      homeCourtAdvantage: this.homeCourtAdvantage,
       lastUpdatedAt: new Date().toISOString(),
     }
   }
@@ -3379,6 +3386,11 @@ class GameSimulator {
     // Restore team references (lightweight)
     this.homeTeam = { id: state.homeTeamId, name: state.homeTeamName || null, abbreviation: state.homeTeamAbbreviation || null }
     this.awayTeam = { id: state.awayTeamId, name: state.awayTeamName || null, abbreviation: state.awayTeamAbbreviation || null }
+
+    // Additive: pre-fandom saved states lack the field — recompute from the
+    // restored roster (no fandom → neutral) rather than resuming with 0.
+    this.homeCourtAdvantage = state.homeCourtAdvantage
+      ?? this.calculateHomeCourtAdvantage(this.averageMorale(this.homePlayers))
 
     // Restore synergy counters
     this.homeSynergiesActivated = state.homeSynergiesActivated || 0

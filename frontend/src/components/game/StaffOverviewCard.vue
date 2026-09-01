@@ -9,7 +9,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
-import { Binoculars, Heart, Activity, BarChart3, Check, AlertTriangle, ChevronRight } from 'lucide-vue-next'
+import { Binoculars, Heart, Activity, BarChart3, Ticket, Check, AlertTriangle, ChevronRight } from 'lucide-vue-next'
 import { PERSONNEL_SETTINGS_KEY } from '@/engine/data/personnelTiers'
 import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
 
@@ -28,6 +28,7 @@ const STAFF_ROWS = [
   { key: 'medical', kind: 'physician', settingsKey: PERSONNEL_SETTINGS_KEY.physician, label: 'Team Physician', emptyLabel: 'No Team Physician', starLabel: '{n}-Star Physician', icon: Heart },
   { key: 'training', kind: 'staff_trainer', settingsKey: PERSONNEL_SETTINGS_KEY.staff_trainer, label: 'Trainer', emptyLabel: 'No Trainer', starLabel: '{n}-Star Trainer', icon: Activity },
   { key: 'analytics', kind: 'analyst', settingsKey: PERSONNEL_SETTINGS_KEY.analyst, label: 'Analyst', emptyLabel: 'No Analyst Hired', starLabel: '{n}-Star Analyst', icon: BarChart3 },
+  { key: 'arena', kind: 'arena_manager', settingsKey: PERSONNEL_SETTINGS_KEY.arena_manager, label: 'Arena Manager', emptyLabel: 'No Arena Manager', starLabel: '{n}-Star Arena Manager', icon: Ticket },
 ]
 
 const rows = computed(() => {

@@ -11,13 +11,14 @@ import { useAudioStore } from '@/stores/audio'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { validateSalaryCap, isPickApronFrozen } from '@/engine/finance/TradeExecutor'
+import { isPlayerTradeLocked, tradeEligibleDate } from '@/engine/finance/tradeEligibility'
 import { capNumbersFor } from '@/engine/data/salaryScale'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge } from '@/components/ui'
 import { User, ArrowRight, ArrowLeft, X, Check, AlertCircle, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus, Package, Users, Repeat, AlertTriangle, CheckCircle, Info, Star, Calendar, DollarSign } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import ApronPickBadge from '@/components/common/ApronPickBadge.vue'
 import TradePartnerStep from './TradePartnerStep.vue'
-import { t, tDynamic } from '@wl-i18n/i18n.js'
+import { t, tDynamic, dateLocale } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   campaignId: {
@@ -438,7 +439,33 @@ const wizardPicks = computed(() => {
   return selectedTeamPicks.value || []
 })
 
+// League-wide 30-day recently-traded cooldown: locked players render dimmed
+// with an "eligible <date>" label and can't be selected.
+const gameDate = computed(() =>
+  campaignStore.currentCampaign?.currentDate ?? campaignStore.currentCampaign?.current_date ?? null
+)
+
+function isPlayerLocked(player) {
+  return isPlayerTradeLocked(player, gameDate.value)
+}
+
+function lockedUntilLabel(player) {
+  const iso = tradeEligibleDate(player)
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString(dateLocale(), {
+    month: 'short', day: 'numeric', year: 'numeric',
+  })
+}
+
 function togglePlayerSelection(player) {
+  if (isPlayerLocked(player)) {
+    toastStore.showError(t("{player} was traded recently and can't be traded again until {date}.", {
+      player: `${player.firstName} ${player.lastName}`,
+      date: lockedUntilLabel(player),
+    }))
+    return
+  }
   if (wizardStep.value === 1) {
     if (tradeStore.isInOffering('player', player.id)) {
       removeFromOffer({ type: 'player', id: player.id })
@@ -557,7 +584,10 @@ async function executeTrade() {
     emit('trade-completed')
   } catch (err) {
     console.error('Trade execution failed:', err)
-    confirmModalState.value = 'result'
+    // Stay on the confirm view — flipping to 'result' would render a
+    // success-style trade summary for a trade that never happened.
+    toastStore.showError(tradeStore.error || t('This trade can no longer be completed.'))
+    confirmModalState.value = 'confirm'
   }
 }
 
@@ -819,7 +849,7 @@ function formatAge(age) {
               v-for="player in wizardRoster"
               :key="player.id"
               class="wizard-asset-card player"
-              :class="{ selected: isPlayerSelected(player.id) }"
+              :class="{ selected: isPlayerSelected(player.id), locked: isPlayerLocked(player) }"
               @click="togglePlayerSelection(player)"
             >
               <div class="wizard-asset-card-content">
@@ -849,6 +879,9 @@ function formatAge(age) {
                     <Star v-for="s in getAssetStars(player)" :key="`s-${s}`" :size="11" class="star filled" />
                     <Star v-for="s in (5 - getAssetStars(player))" :key="`e-${s}`" :size="11" class="star empty" />
                   </div>
+                  <span v-if="isPlayerLocked(player)" class="wizard-asset-locked-label">
+                    {{ $t('Recently traded — eligible {date}', { date: lockedUntilLabel(player) }) }}
+                  </span>
                 </div>
                 <div class="wizard-asset-rating">
                   <StatBadge :value="player.overallRating" size="sm" />
@@ -3579,6 +3612,19 @@ function formatAge(age) {
 .wizard-asset-card.pick.frozen {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.wizard-asset-card.player.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wizard-asset-locked-label {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #FBBF24;
 }
 
 .wizard-asset-card.pick:hover {

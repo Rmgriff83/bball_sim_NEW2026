@@ -10,11 +10,20 @@ import { ref } from 'vue'
 // left off — no separate route params or query strings on the host pages.
 
 export const useHeadshotEditorReturnStore = defineStore('headshotEditorReturn', () => {
-  const returnRoute = ref(null)   // { name, params }
+  const returnRoute = ref(null)   // { name, params, query }
   const playerId = ref(null)
 
-  function capture({ routeName, routeParams, playerId: pid }) {
-    returnRoute.value = { name: routeName, params: routeParams ? { ...routeParams } : {} }
+  // `routeQuery` keeps tab state alive across the round-trip — views like
+  // TeamManagementView drive their active tab/sub-tab entirely from the query
+  // (?tab=facilities&sub=scouting), so dropping it would dump the user back
+  // on the view's default tab. `playerId` is optional: coach/staff avatar
+  // edits capture only the route (no modal to reopen on return).
+  function capture({ routeName, routeParams, routeQuery, playerId: pid = null }) {
+    returnRoute.value = {
+      name: routeName,
+      params: routeParams ? { ...routeParams } : {},
+      query: routeQuery ? { ...routeQuery } : {},
+    }
     playerId.value = pid
   }
 

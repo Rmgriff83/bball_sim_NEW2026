@@ -164,7 +164,9 @@ export const useAuthStore = defineStore('auth', () => {
       const cachedId = _readCachedSession()?.user?.id
       if (cachedId == null || String(cachedId) !== String(response.data.user?.id)) {
         await clearDatabase().catch(() => {})
-        try { useTokensStore().clearAllLedgers() } catch { /* best-effort */ }
+        // Ledgers are per-user keyed — detach (don't wipe) so the previous
+        // user's queued-but-uncredited earns survive until they log back in.
+        try { useTokensStore().detach() } catch { /* best-effort */ }
       }
       token.value = response.data.token
       user.value = response.data.user
@@ -181,9 +183,10 @@ export const useAuthStore = defineStore('auth', () => {
   async function register(data) {
     loading.value = true
     try {
-      // Clear any previous user's local data before registering
+      // Clear any previous user's local data before registering (token
+      // ledgers stay — per-user keyed, see login()).
       await clearDatabase().catch(() => {})
-      try { useTokensStore().clearAllLedgers() } catch { /* best-effort */ }
+      try { useTokensStore().detach() } catch { /* best-effort */ }
 
       const response = await api.post('/api/auth/register', data)
       token.value = response.data.token
@@ -210,7 +213,8 @@ export const useAuthStore = defineStore('auth', () => {
       const cachedId = _readCachedSession()?.user?.id
       if (cachedId == null || String(cachedId) !== String(response.data.user?.id)) {
         await clearDatabase().catch(() => {})
-        try { useTokensStore().clearAllLedgers() } catch { /* best-effort */ }
+        // Detach, don't wipe — see login().
+        try { useTokensStore().detach() } catch { /* best-effort */ }
       }
       token.value = response.data.token
       user.value = response.data.user
@@ -321,7 +325,10 @@ export const useAuthStore = defineStore('auth', () => {
 
       if (!preserveLocalData) {
         _clearCachedSession()
-        try { useTokensStore().clearAllLedgers() } catch { /* best-effort */ }
+        // Detach, don't wipe: any entries the pre-logout flush couldn't credit
+        // (offline, or server-deferred over the daily cap) stay persisted and
+        // flush on this user's next login instead of being lost.
+        try { useTokensStore().detach() } catch { /* best-effort */ }
         // Clear all local campaign data so the next user doesn't see it
         try {
           await clearDatabase()

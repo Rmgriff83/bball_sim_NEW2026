@@ -26,6 +26,7 @@ const FACILITY_LABELS = {
   medical: 'Medical',
   scouting: 'Scouting',
   analytics: 'Analytics',
+  arena: 'Arena',
 }
 
 // Deterministic variant pick (no Math.random — mirrors OwnerCheckInService).

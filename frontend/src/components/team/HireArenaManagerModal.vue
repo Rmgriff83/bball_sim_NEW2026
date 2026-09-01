@@ -1,4 +1,7 @@
 <script setup>
+// Hire modal for the Arena facility's staff kind (arena_manager). Direct
+// clone of HireAnalystModal — same pool-first candidate sourcing, canonical
+// requiredLevel resolution, and offline-capable token spend.
 import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { X, Star, Lock, Check, Coins, Plus } from 'lucide-vue-next'
@@ -10,14 +13,14 @@ import { useAudioStore } from '@/stores/audio'
 import { useSyncStore } from '@/stores/sync'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { COACH_FIRST_NAMES, COACH_LAST_NAMES } from '@/engine/data/coaches'
-import { PERSONNEL_POOL_KEY } from '@/engine/data/personnelTiers'
+import { PERSONNEL_POOL_KEY, ARENA_MANAGER_TIERS, generateCandidatePerks } from '@/engine/data/personnelTiers'
 import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
 import { t } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
   campaignId: { type: [String, Number], required: true },
-  medicalFacilityLevel: { type: Number, default: 1 },
+  arenaFacilityLevel: { type: Number, default: 1 },
 })
 
 const emit = defineEmits(['close', 'hired'])
@@ -34,26 +37,6 @@ const candidates = ref([])
 const hiring = ref(false)
 
 const tokens = computed(() => authStore.profile?.tokens ?? 0)
-
-const TRAINER_TIERS = {
-  3: {
-    cost: 1500,
-    label: '3-Star Physician',
-    rating: 70,
-    perks: [
-      { key: 'fast_recovery', label: 'Fast Recovery', description: 'Players recover from injuries 10% faster', requiredLevel: 3 },
-    ]
-  },
-  4: {
-    cost: 2500,
-    label: '4-Star Physician',
-    rating: 85,
-    perks: [
-      { key: 'fast_recovery', label: 'Fast Recovery', description: 'Players recover from injuries 15% faster', requiredLevel: 3 },
-      { key: 'injury_prevention', label: 'Injury Prevention', description: 'Players have 10% less risk of getting injured', requiredLevel: 4 },
-    ]
-  }
-}
 
 function generateCandidates() {
   const used = new Set()
@@ -72,27 +55,12 @@ function generateCandidates() {
 
   // 2x 3-star
   for (let i = 0; i < 2; i++) {
-    const tier = TRAINER_TIERS[3]
-    results.push({
-      name: randomName(),
-      tier: 3,
-      cost: tier.cost,
-      label: tier.label,
-      rating: tier.rating,
-      perks: tier.perks,
-    })
+    const tier = ARENA_MANAGER_TIERS[3]
+    results.push({ name: randomName(), tier: 3, cost: tier.cost, label: tier.label, rating: tier.rating, perks: generateCandidatePerks('arena_manager', 3) })
   }
-
   // 1x 4-star
-  const tier4 = TRAINER_TIERS[4]
-  results.push({
-    name: randomName(),
-    tier: 4,
-    cost: tier4.cost,
-    label: tier4.label,
-    rating: tier4.rating,
-    perks: tier4.perks,
-  })
+  const tier4 = ARENA_MANAGER_TIERS[4]
+  results.push({ name: randomName(), tier: 4, cost: tier4.cost, label: tier4.label, rating: tier4.rating, perks: generateCandidatePerks('arena_manager', 4) })
 
   candidates.value = results
 }
@@ -100,9 +68,12 @@ function generateCandidates() {
 watch(() => props.show, async (val) => {
   if (val) {
     hiring.value = false
+    // Prefer the persistent pool (seeded at creation for new campaigns, by
+    // the fandom/arena backfill for old ones). Fall back to the on-demand
+    // generator if neither ran.
     try {
       const campaign = await CampaignRepository.get(props.campaignId)
-      const pool = campaign?.settings?.[PERSONNEL_POOL_KEY.physician]
+      const pool = campaign?.settings?.[PERSONNEL_POOL_KEY.arena_manager]
       if (Array.isArray(pool) && pool.length > 0) {
         candidates.value = pool
         return
@@ -112,8 +83,17 @@ watch(() => props.show, async (val) => {
   }
 })
 
-function isPerkActive(perk) {
-  return props.medicalFacilityLevel >= perk.requiredLevel
+// Resolve the CANONICAL facility requirement for a candidate's perk (keeps
+// display + new hires on current gating regardless of pool vintage). The
+// optional Game-Night DJ perk isn't in the tier consts — its stored
+// requiredLevel is authoritative.
+function requiredLevelFor(candidate, perk) {
+  const canonical = ARENA_MANAGER_TIERS[candidate.tier]?.perks?.find((p) => p.key === perk.key)
+  return canonical?.requiredLevel ?? perk.requiredLevel ?? 1
+}
+
+function isPerkActive(candidate, perk) {
+  return props.arenaFacilityLevel >= requiredLevelFor(candidate, perk)
 }
 
 function goToStore() {
@@ -125,53 +105,51 @@ function close() {
   if (!hiring.value) emit('close')
 }
 
-async function hireTrainer(candidate) {
+async function hireArenaManager(candidate) {
   if (hiring.value || tokens.value < candidate.cost) return
   hiring.value = true
-  audio.suppressClickSound() // cha-ching on success instead of the generic tap
+  audio.suppressClickSound()
 
   try {
     // Deduct tokens (offline-capable: queues the spend when unreachable)
     await useTokensStore().spendTokens(candidate.cost, 'staff_hire')
 
-    // Save trainer to campaign settings
     const campaign = await CampaignRepository.get(props.campaignId)
     if (!campaign) throw new Error('Campaign not found')
 
     const currentSeason = campaignStore.currentCampaign?.currentSeasonYear ?? 2025
     campaign.settings = campaign.settings ?? {}
-    campaign.settings.trainer = {
+    campaign.settings.arena_manager = {
       id: candidate.id,
       name: candidate.name,
       tier: candidate.tier,
       hiredSeason: currentSeason,
       contractYears: 2,
-      perks: candidate.perks.map(p => ({ key: p.key, requiredLevel: p.requiredLevel })),
+      perks: candidate.perks.map(p => ({ key: p.key, requiredLevel: requiredLevelFor(candidate, p) })),
       headshot: candidate.headshot ?? null,
       hasCustomHeadshot: candidate.hasCustomHeadshot ?? false,
     }
-    const poolKey = PERSONNEL_POOL_KEY.physician
+    const poolKey = PERSONNEL_POOL_KEY.arena_manager
     if (Array.isArray(campaign.settings[poolKey])) {
       campaign.settings[poolKey] = campaign.settings[poolKey].filter(p => p.id !== candidate.id)
     }
     await CampaignRepository.save(campaign)
 
-    // Update campaign store
     if (campaignStore.currentCampaign) {
       campaignStore.currentCampaign.settings = {
         ...campaignStore.currentCampaign.settings,
-        trainer: campaign.settings.trainer,
+        arena_manager: campaign.settings.arena_manager,
       }
     }
 
     syncStore.markDirty()
     audio.purchase()
-    toastStore.showSuccess(t('Team physician hired successfully!'))
+    toastStore.showSuccess(t('Arena manager hired successfully!'))
     emit('hired')
     emit('close')
   } catch (err) {
-    console.error('Failed to hire trainer:', err)
-    toastStore.showError(t('Failed to hire physician'))
+    console.error('Failed to hire arena manager:', err)
+    toastStore.showError(t('Failed to hire arena manager'))
   } finally {
     hiring.value = false
   }
@@ -183,17 +161,14 @@ async function hireTrainer(candidate) {
     <Transition name="modal">
       <div v-if="show" class="modal-overlay" @click.self="close">
         <div class="modal-container">
-          <!-- Header -->
           <header class="modal-header">
-            <h2 class="modal-title">{{ $t('Hire a Team Physician') }}</h2>
+            <h2 class="modal-title">{{ $t('Hire an Arena Manager') }}</h2>
             <button class="btn-close" @click="close" aria-label="Close">
               <X :size="20" />
             </button>
           </header>
 
-          <!-- Content -->
           <main class="modal-content">
-            <!-- Token balance -->
             <div class="token-group">
               <div class="token-balance">
                 <Coins :size="16" />
@@ -206,7 +181,6 @@ async function hireTrainer(candidate) {
               </button>
             </div>
 
-            <!-- Candidates -->
             <div class="candidates-list">
               <div
                 v-for="(candidate, i) in candidates"
@@ -216,11 +190,7 @@ async function hireTrainer(candidate) {
               >
                 <div class="candidate-header">
                   <div class="candidate-avatar-wrap">
-                    <PersonnelAvatar
-                      :personnel="candidate"
-                      kind="physician"
-                      :size="48"
-                    />
+                    <PersonnelAvatar :personnel="candidate" kind="arena_manager" :size="48" />
                   </div>
                   <div class="candidate-info">
                     <h4 class="candidate-name">{{ candidate.name }}</h4>
@@ -243,16 +213,18 @@ async function hireTrainer(candidate) {
                     v-for="perk in candidate.perks"
                     :key="perk.key"
                     class="perk-row"
-                    :class="{ inactive: !isPerkActive(perk) }"
+                    :class="{ inactive: !isPerkActive(candidate, perk) }"
                   >
                     <div class="perk-icon">
-                      <Check v-if="isPerkActive(perk)" :size="14" />
+                      <Check v-if="isPerkActive(candidate, perk)" :size="14" />
                       <Lock v-else :size="14" />
                     </div>
                     <div class="perk-text">
                       <span class="perk-label">{{ $tDynamic(perk.label) }}</span>
                       <span class="perk-desc">{{ $tDynamic(perk.description) }}</span>
-                      <span v-if="!isPerkActive(perk)" class="perk-req">{{ $t('Requires Medical Facility Lv {n}', { n: perk.requiredLevel }) }}</span>
+                      <span v-if="!isPerkActive(candidate, perk)" class="perk-req">
+                        {{ $t('Requires Arena Facility Lv {n}', { n: requiredLevelFor(candidate, perk) }) }}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -260,15 +232,14 @@ async function hireTrainer(candidate) {
                 <button
                   class="btn-hire"
                   :disabled="tokens < candidate.cost || hiring"
-                  @click="hireTrainer(candidate)"
+                  @click="hireArenaManager(candidate)"
                 >
-                  {{ tokens < candidate.cost ? $t('Insufficient Tokens') : $t('Hire Physician') }}
+                  {{ tokens < candidate.cost ? $t('Insufficient Tokens') : $t('Hire Arena Manager') }}
                 </button>
               </div>
             </div>
           </main>
 
-          <!-- Footer -->
           <footer class="modal-footer">
             <button class="btn-cancel" @click="close">{{ $t('Close') }}</button>
           </footer>
@@ -294,7 +265,6 @@ async function hireTrainer(candidate) {
 .modal-container {
   width: 100%;
   max-width: 520px;
-  max-height: 90vh;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-2xl);
@@ -302,6 +272,8 @@ async function hireTrainer(candidate) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 90vh;
+  max-height: 90vh;
 }
 
 .modal-header {
@@ -376,7 +348,6 @@ async function hireTrainer(candidate) {
   border-color: var(--color-text-secondary);
 }
 
-/* Token Balance */
 .token-balance {
   display: flex;
   align-items: center;
@@ -399,7 +370,6 @@ async function hireTrainer(candidate) {
   font-size: 0.8rem;
 }
 
-/* Candidates */
 .candidates-list {
   display: flex;
   flex-direction: column;
@@ -419,8 +389,8 @@ async function hireTrainer(candidate) {
 }
 
 .candidate-card.tier-4 {
-  border-color: rgba(34, 197, 94, 0.3);
-  background: linear-gradient(135deg, var(--color-bg-tertiary), rgba(34, 197, 94, 0.05));
+  border-color: rgba(232, 90, 79, 0.3);
+  background: linear-gradient(135deg, var(--color-bg-tertiary), rgba(232, 90, 79, 0.05));
 }
 
 .candidate-header {
@@ -428,20 +398,6 @@ async function hireTrainer(candidate) {
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
-}
-
-.candidate-avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.2rem;
-  font-weight: 700;
-  color: white;
-  flex-shrink: 0;
 }
 
 .candidate-info {
@@ -467,17 +423,9 @@ async function hireTrainer(candidate) {
   gap: 2px;
 }
 
-.star-display.tier-3 {
-  color: #F59E0B;
-}
-
-.star-display.tier-4 {
-  color: #22c55e;
-}
-
-.star-display :deep(svg) {
-  fill: currentColor;
-}
+.star-display.tier-3 { color: #F59E0B; }
+.star-display.tier-4 { color: #E85A4F; }
+.star-display :deep(svg) { fill: currentColor; }
 
 .tier-label {
   font-size: 0.75rem;
@@ -504,7 +452,6 @@ async function hireTrainer(candidate) {
   flex-shrink: 0;
 }
 
-/* Perks */
 .perks-list {
   display: flex;
   flex-direction: column;
@@ -518,9 +465,7 @@ async function hireTrainer(candidate) {
   align-items: flex-start;
 }
 
-.perk-row.inactive {
-  opacity: 0.5;
-}
+.perk-row.inactive { opacity: 0.5; }
 
 .perk-icon {
   flex-shrink: 0;
@@ -533,13 +478,8 @@ async function hireTrainer(candidate) {
   margin-top: 1px;
 }
 
-.perk-row:not(.inactive) .perk-icon {
-  color: #22c55e;
-}
-
-.perk-row.inactive .perk-icon {
-  color: var(--color-text-secondary);
-}
+.perk-row:not(.inactive) .perk-icon { color: #22c55e; }
+.perk-row.inactive .perk-icon { color: var(--color-text-secondary); }
 
 .perk-text {
   display: flex;
@@ -553,9 +493,7 @@ async function hireTrainer(candidate) {
   color: var(--color-text-primary);
 }
 
-.perk-row.inactive .perk-label {
-  color: var(--color-text-secondary);
-}
+.perk-row.inactive .perk-label { color: var(--color-text-secondary); }
 
 .perk-desc {
   font-size: 0.75rem;
@@ -569,7 +507,6 @@ async function hireTrainer(candidate) {
   font-weight: 500;
 }
 
-/* Hire Button */
 .btn-hire {
   width: 100%;
   padding: 10px 16px;
@@ -595,43 +532,21 @@ async function hireTrainer(candidate) {
   cursor: not-allowed;
 }
 
-/* Modal transitions */
-.modal-enter-active {
-  transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1);
-}
-
-.modal-leave-active {
-  transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1);
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
+.modal-enter-active { transition: opacity 0.3s cubic-bezier(0, 0, 0.2, 1); }
+.modal-leave-active { transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1); }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
 
 @keyframes scaleIn {
   from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: scale(1); }
 }
-
 @keyframes scaleOut {
   from { opacity: 1; transform: scale(1); }
   to { opacity: 0; transform: scale(0.96); }
 }
 
-.modal-enter-active .modal-container {
-  animation: scaleIn 0.3s cubic-bezier(0, 0, 0.2, 1);
-}
-
-.modal-leave-active .modal-container {
-  animation: scaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
-}
-
-/* Standardized modal heights (90vh desktop, 85vh mobile) */
-.modal-container {
-  min-height: 90vh;
-  max-height: 90vh;
-}
+.modal-enter-active .modal-container { animation: scaleIn 0.3s cubic-bezier(0, 0, 0.2, 1); }
+.modal-leave-active .modal-container { animation: scaleOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards; }
 
 @media (max-width: 480px) {
   .modal-container {

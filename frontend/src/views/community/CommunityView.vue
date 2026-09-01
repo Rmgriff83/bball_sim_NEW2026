@@ -24,6 +24,9 @@ async function handleLogout() {
 }
 
 const isOwner = computed(() => authStore.hasFeature('custom_roster'))
+// Header nav gate — same feature flag as isOwner, named to match the
+// CampaignsView header it mirrors.
+const canCustomRoster = isOwner
 
 // Content type: full league rosters vs rookie draft classes. Same board/
 // publish/imports machinery, same endpoints — the ?type= param discriminates

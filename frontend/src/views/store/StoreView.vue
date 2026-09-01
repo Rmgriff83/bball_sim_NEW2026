@@ -113,7 +113,7 @@ const unlockBundles = [
     feature: 'headshot_editor',
     price: '$3.99',
     label: 'Headshot Editor',
-    description: 'Unlock full headshot customization for every player, coach, and staff member — plus team renaming on campaign creation. New styles, faces, and assets are added regularly, and owners get every drop free. One-time purchase, applies across all your campaigns.'
+    description: 'Unlock full headshot customization for every player, coach, and staff member — plus team renaming on campaign creation. Owners get access to any new styles, faces, and assets that are added, free. One-time purchase, applies across all your campaigns.'
   },
   {
     id: 'custom_roster_unlock',

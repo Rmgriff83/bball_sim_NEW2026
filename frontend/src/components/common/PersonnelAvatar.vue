@@ -10,7 +10,12 @@
       class="personnel-headshot"
       @error="onImageError"
     />
-    <component :is="fallbackIcon" v-else :size="size" />
+    <!-- No headshot resolved: icon on a circular tinted disc (matches the
+         vacant-slot icon treatment) instead of a bare glyph that reads as
+         a black cutout on dark themes. -->
+    <span v-else class="personnel-fallback">
+      <component :is="fallbackIcon" :size="Math.round(size / 2)" />
+    </span>
 
     <!-- Always-visible brush badge — mirrors the player one in
          PlayerDetailModal's header. Shown only when the user has the
@@ -31,9 +36,10 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { UserCog, HeartPulse, Dumbbell, Eye, Brush, BarChart3 } from 'lucide-vue-next'
+import { useRouter, useRoute } from 'vue-router'
+import { UserCog, HeartPulse, Dumbbell, Eye, Brush, BarChart3, Ticket } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
+import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
 import { getCoachHeadshotByName } from '@/services/headshotPremades'
 import { PersonnelHeadshotRepository } from '@/engine/db/PersonnelHeadshotRepository'
 
@@ -46,7 +52,7 @@ const props = defineProps({
   kind: {
     type: String,
     default: 'coach',
-    validator: v => ['coach', 'scout', 'physician', 'staff_trainer', 'analyst'].includes(v),
+    validator: v => ['coach', 'scout', 'physician', 'staff_trainer', 'analyst', 'arena_manager'].includes(v),
   },
   size: { type: Number, default: 32 },
   // Required for IDB custom-edit lookup. Passing this alone enables the
@@ -59,6 +65,7 @@ const props = defineProps({
 })
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 
 const imageError = ref(false)
@@ -70,6 +77,7 @@ const FALLBACK_ICONS = {
   physician: HeartPulse,
   staff_trainer: Dumbbell,
   analyst: BarChart3,
+  arena_manager: Ticket,
 }
 const KIND_LABELS = {
   coach: 'Coach',
@@ -77,6 +85,7 @@ const KIND_LABELS = {
   physician: 'Physician',
   staff_trainer: 'Trainer',
   analyst: 'Analyst',
+  arena_manager: 'Arena Manager',
 }
 
 const fallbackIcon = computed(() => FALLBACK_ICONS[props.kind] || UserCog)
@@ -153,6 +162,13 @@ const canEdit = computed(() =>
 
 function openEditor() {
   if (!canEdit.value) return
+  // Capture the host route (incl. query — tab state) so the editor sends the
+  // user back to the exact page/tab they left instead of campaign home.
+  useHeadshotEditorReturnStore().capture({
+    routeName: route.name,
+    routeParams: { ...route.params },
+    routeQuery: { ...route.query },
+  })
   router.push({
     name: 'personnel-headshot-editor',
     params: {
@@ -181,6 +197,17 @@ function onImageError() {
   height: 100%;
   object-fit: cover;
   border-radius: 50%;
+}
+
+.personnel-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
 }
 
 /* Matches the brush badge on PlayerAvatar in PlayerDetailModal so player,

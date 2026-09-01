@@ -31,9 +31,10 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { UserCog, Brush } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
+import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
 import { useSyncStore } from '@/stores/sync'
 import { getCoachHeadshotByName } from '@/services/headshotPremades'
 import { CoachHeadshotRepository } from '@/engine/db/CoachHeadshotRepository'
@@ -54,6 +55,7 @@ const props = defineProps({
 })
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 
 const imageError = ref(false)
@@ -141,6 +143,13 @@ const canEdit = computed(() =>
 
 function openEditor() {
   if (!canEdit.value) return
+  // Capture the host route (incl. query — tab state) so the editor sends the
+  // user back to the exact page/tab they left instead of campaign home.
+  useHeadshotEditorReturnStore().capture({
+    routeName: route.name,
+    routeParams: { ...route.params },
+    routeQuery: { ...route.query },
+  })
   router.push({
     name: 'coach-headshot-editor',
     params: { id: String(props.campaignId), coachId: String(props.coach.id) },

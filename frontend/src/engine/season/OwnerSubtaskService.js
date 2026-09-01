@@ -286,6 +286,7 @@ function _subtasksForExpectation(expectation, ctx) {
  * @param {object} [params.settings]       - campaign.settings (scout/trainer/staff_trainer with .tier)
  * @param {number} [params.payroll]        - current team payroll
  * @param {object} [params.progress]       - gmContract.progress { allStarAppearances, badgesAdded, starPlayerIdsAtSign }
+ * @param {number} [params.fandom]         - team.fandom (0-100); enables the superfan-owner goal
  * @param {string|number} [params.userTeamId]
  * @param {number} [params.salaryCap]      - injected SALARY_CAP (defaults to league value)
  * @param {object} [params.capLine]        - injected owner mandate { amount, label } from
@@ -304,6 +305,7 @@ export function evaluateSubtasks({
   settings = {},
   payroll = 0,
   progress = {},
+  fandom = null,
   userTeamId = null,
   coach = null,
   salaryCap = DEFAULT_SALARY_CAP,
@@ -390,6 +392,23 @@ export function evaluateSubtasks({
     weight: moneyConsciousness,
     global: true,
   });
+
+  // Superfan owners (flagged in data/owners.js) add a franchise-health goal:
+  // keep the fanbase engaged. Global like under_cap — it applies at every
+  // expectation tier. Callers that don't thread `fandom` (legacy) simply
+  // never surface it.
+  if (owner?.superfan === true && fandom != null) {
+    const f = Math.round(_num(fandom, 0));
+    list.push({
+      id: 'superfan_fandom',
+      label: 'Keep the fans engaged',
+      description: 'Keep the fandom meter at 50% or higher.',
+      met: f >= 50,
+      progress: { current: Math.min(f, 50), target: 50 },
+      weight: 2,
+      global: true,
+    });
+  }
 
   const totalWeight = list.reduce((s, t) => s + (t.weight || 0), 0);
   const metWeight = list.reduce((s, t) => s + (t.met ? t.weight || 0 : 0), 0);

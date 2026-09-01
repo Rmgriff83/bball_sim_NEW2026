@@ -16,6 +16,7 @@ import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
+import { fitTierLabel } from '@/utils/fitTiers'
 import { generateRoleAwareTargetMinutes } from '@/engine/simulation/SubstitutionEngine'
 import TradesTab from '@/components/trade/TradesTab.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
@@ -158,9 +159,9 @@ function startTabTour(tab) {
 }
 
 // Deep-link target for the Facilities tab's sub-tab
-// (?tab=facilities&sub=scouting|training|medical|analytics) — e.g. from the
-// homepage staff overview card's per-row links.
-const initialFacilitiesSubTab = ['scouting', 'training', 'medical', 'analytics']
+// (?tab=facilities&sub=scouting|training|medical|analytics|arena) — e.g.
+// from the homepage staff overview card's per-row links.
+const initialFacilitiesSubTab = ['scouting', 'training', 'medical', 'analytics', 'arena']
   .includes(route.query?.sub) ? route.query.sub : null
 
 // Only show loading if we don't have cached team data
@@ -193,6 +194,19 @@ watch(tradeDeadlinePassed, (passed) => {
 
 // Let the walkthrough engine drive the active tab when a step needs one shown.
 useWalkthroughTab('gm', (tab) => { activeTab.value = tab })
+
+// Mirror the active tab into the URL query (replace — no history spam) so a
+// refresh, a shared link, and especially the headshot-editor round trip all
+// land back on the tab the user was actually on. `sub` (facilities sub-tab,
+// synced by FacilitiesTab) only makes sense on the facilities tab — drop it
+// when leaving.
+watch(activeTab, (tab) => {
+  const query = { ...route.query, tab }
+  if (tab !== 'facilities') delete query.sub
+  if (route.query.tab !== tab || (tab !== 'facilities' && route.query.sub != null)) {
+    router.replace({ query }).catch(() => {})
+  }
+})
 const selectedPlayer = ref(null)
 const showPlayerModal = ref(false)
 
@@ -312,18 +326,6 @@ function selectedPlayObj(schemeId) {
 const analyticsLevel = computed(() =>
   Math.min(5, Math.max(1, teamStore.team?.facilities?.analytics ?? 1))
 )
-
-// Rough fit buckets shown below analytics Lv2 in place of the exact Fit %.
-const FIT_TIERS = [
-  { min: 80, label: 'Elite Fit' },
-  { min: 65, label: 'Good Fit' },
-  { min: 50, label: 'Fair Fit' },
-  { min: 0, label: 'Poor Fit' },
-]
-
-function fitTierLabel(value) {
-  return FIT_TIERS.find(t => (value ?? 0) >= t.min)?.label ?? 'Poor Fit'
-}
 
 // Lv4: season efficiency for the play currently selected in a scheme's
 // playbook viewer. Null (chips hidden) when the play has no season data yet.

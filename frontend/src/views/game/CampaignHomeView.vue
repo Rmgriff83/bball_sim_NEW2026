@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/composables/useApi'
+import { FANDOM_DEFAULT } from '@/engine/fandom/FandomService'
 import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
 import { useGameStore } from '@/stores/game'
@@ -62,7 +63,7 @@ import { simFullOffseason, runDraftLotteryForCampaign } from '@/engine/draft/Off
 import { buildRookieDraftOrder } from '@/engine/draft/DraftOrderService'
 import { generateAndSaveRookieClass } from '@/engine/draft/RookieGenerationService'
 import { FREE_AGENCY_DURATION_DAYS, isPastResignDeadline } from '@/engine/season/SeasonDeadlines'
-import { Play, Search, Users, User, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase, Dumbbell, HeartPulse, Telescope, BarChart3, Clock, Smile, Meh, Frown, Shield } from 'lucide-vue-next'
+import { Play, Search, Users, User, FastForward, Calendar, TrendingUp, Settings, Trophy, Star, AlertTriangle, Heart, X, Zap, Binoculars, Coins, Award, ShoppingBag, ChevronDown, Cpu, Briefcase, Dumbbell, HeartPulse, Telescope, BarChart3, Ticket, Clock, Smile, Meh, Frown, Shield } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
@@ -70,6 +71,8 @@ import { computeTeamOverall } from '@/utils/teamOverall'
 import { calculateRetentionScore } from '@/engine/ai/MotivationService'
 import { t, dateLocale } from '@wl-i18n/i18n.js'
 import EndOfFreeAgencyModal from '@/components/team/EndOfFreeAgencyModal.vue'
+import MedicalStaffPanel from '@/components/game/MedicalStaffPanel.vue'
+import { useMedicalBenefits, effectiveDaysOut, daysSaved } from '@/composables/useMedicalBenefits'
 import UserFreeAgencyOffers from '@/components/team/UserFreeAgencyOffers.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 
@@ -214,6 +217,7 @@ const FACILITIES_ORDER = [
   { key: 'medical', label: 'Medical', icon: HeartPulse },
   { key: 'scouting', label: 'Scouting', icon: Telescope },
   { key: 'analytics', label: 'Analytics', icon: BarChart3 },
+  { key: 'arena', label: 'Arena', icon: Ticket },
 ]
 const facilities = computed(() => {
   const src = teamStore.team?.facilities ?? team.value?.facilities ?? null
@@ -294,6 +298,24 @@ function moraleIcon(pct) {
   if (pct == null || pct >= 80) return Smile
   if (pct >= 25) return Meh
   return Frown
+}
+
+// Franchise fandom — the 0-100 meter persisted on the team row. Old saves
+// without the field read as the neutral default until the backfill runs.
+const teamFandom = computed(() => {
+  if (!teamStore.team) return null
+  const v = Number(teamStore.team.fandom ?? FANDOM_DEFAULT)
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : FANDOM_DEFAULT
+})
+
+// Meter fill on the gold record card: amber/orange midtones vanish against
+// the gradient, so only the extremes get color — green at 90+, red below
+// 25, and the card's dark ink for everything in between.
+function fandomColor(pct) {
+  if (pct == null) return 'var(--color-text-tertiary)'
+  if (pct >= 90) return '#22c55e'
+  if (pct < 25) return '#ef4444'
+  return '#1a1520'
 }
 
 // Re-sign likelihood for an expiring player. Same scoring used by the
@@ -2411,6 +2433,7 @@ function maybeShowOwnerCheckIn() {
     settings: camp.settings ?? {},
     payroll: teamStore.totalSalary ?? 0,
     progress: gmc?.progress ?? {},
+    fandom: teamStore.team?.fandom ?? null,
     userTeamId: camp.teamId ?? teamStore.team?.id ?? null,
     coach: teamStore.coach ?? teamStore.team?.coach ?? null,
     salaryCap: campCapNumbers.salaryCap,
@@ -3810,6 +3833,30 @@ function getInjurySeverityColor(severity) {
   }
 }
 
+// Medical staff/facility recovery bonus — surfaced in the injury/recovery
+// modals so upgrades are visibly doing something. Same math as the sim.
+const { medicalBreakdown } = useMedicalBenefits()
+
+function injRolledDays(injury) {
+  return injury.days_out ?? injury.games_out ?? 0
+}
+
+function injEffDays(injury) {
+  return effectiveDaysOut(injRolledDays(injury), medicalBreakdown.value.totalBonus)
+}
+
+function injSavedDays(injury) {
+  return daysSaved(injRolledDays(injury), medicalBreakdown.value.totalBonus)
+}
+
+// Days shaved off a completed recovery; 0 (hidden) when the recovery payload
+// predates duration_days (legacy saves) or no bonus is active anymore.
+function recSoonerDays(recovery) {
+  const duration = recovery.duration_days ?? 0
+  const bonus = medicalBreakdown.value.totalBonus
+  return duration > 0 && bonus > 0 ? daysSaved(duration, bonus) : 0
+}
+
 function goToLineup() {
   showInjuryModal.value = false
   router.push(`/campaign/${campaignId.value}/team`)
@@ -4039,11 +4086,11 @@ function handleCloseSimulateModal() {
               :title="`${$tDynamic(f.label)}: ${f.level} / 5`"
               :aria-label="`${f.label} ${f.level} of 5`"
             >
-              <component :is="f.icon" :size="14" class="facility-icon" />
+              <component :is="f.icon" :size="18" class="facility-icon" />
               <span class="facility-label">{{ $tDynamic(f.label) }}</span>
               <span class="facility-rating">
+                <Star :size="19" class="facility-star" />
                 <span class="facility-value">{{ f.level }}</span>
-                <Star :size="11" class="facility-star" />
               </span>
             </div>
           </div>
@@ -4097,6 +4144,21 @@ function handleCloseSimulateModal() {
           <div class="record-right">
             <span class="record-value">{{ wins }}-{{ losses }}</span>
           </div>
+        </div>
+        <!-- Fandom meter — minimal bar under rank/record, above the tokens
+             divider. Deep detail lives on the Arena facility sub-tab. -->
+        <div
+          v-if="teamFandom != null"
+          class="record-fandom"
+          data-tour="home-fandom"
+          :title="$t('Fandom: {n} / 100', { n: teamFandom })"
+        >
+          <Users :size="13" class="record-fandom-icon" />
+          <span class="record-fandom-label">{{ $t('Fans') }}</span>
+          <div class="record-fandom-bar">
+            <div class="record-fandom-fill" :style="{ width: teamFandom + '%', background: fandomColor(teamFandom) }"></div>
+          </div>
+          <span class="record-fandom-pct">{{ teamFandom }}%</span>
         </div>
         <div class="record-tokens" data-tour="home-tokens">
           <Coins :size="13" class="record-tokens-icon" />
@@ -5348,12 +5410,18 @@ function handleCloseSimulateModal() {
                       <span class="inj-severity-tag">{{ injury.severity }}</span>
                     </div>
                     <div class="inj-detail-row">
-                      <span class="inj-type">{{ injury.injury_type }}</span>
-                      <span class="inj-duration">{{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('{n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('{n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
+                      <span class="inj-type">{{ $tDynamic(injury.injury_type) }}</span>
+                      <span v-if="injSavedDays(injury) >= 1" class="inj-duration">
+                        {{ injEffDays(injury) === 1 ? $t('~{n} day', { n: injEffDays(injury) }) : $t('~{n} days', { n: injEffDays(injury) }) }}
+                        <span class="inj-saved">{{ injSavedDays(injury) === 1 ? $t('{n} day saved', { n: injSavedDays(injury) }) : $t('{n} days saved', { n: injSavedDays(injury) }) }}</span>
+                      </span>
+                      <span v-else class="inj-duration">{{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('{n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('{n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
                     </div>
                   </div>
                 </div>
               </div>
+
+              <MedicalStaffPanel :breakdown="medicalBreakdown" :campaign-id="campaignId" mode="injury" />
 
               <p class="inj-hint">{{ $t('Injured starters will be automatically benched. Update your lineup to set replacements.') }}</p>
             </main>
@@ -5411,12 +5479,17 @@ function handleCloseSimulateModal() {
                       <span class="inj-severity-tag">{{ $t('Cleared') }}</span>
                     </div>
                     <div class="inj-detail-row">
-                      <span class="inj-type">{{ recovery.injury_type }}</span>
+                      <span class="inj-type">{{ $tDynamic(recovery.injury_type) }}</span>
                       <span class="rec-status">{{ $t('Ready to play') }}</span>
+                    </div>
+                    <div v-if="recSoonerDays(recovery) >= 1" class="rec-sooner">
+                      {{ recSoonerDays(recovery) === 1 ? $t('Back ~{n} day sooner', { n: recSoonerDays(recovery) }) : $t('Back ~{n} days sooner', { n: recSoonerDays(recovery) }) }}
                     </div>
                   </div>
                 </div>
               </div>
+
+              <MedicalStaffPanel :breakdown="medicalBreakdown" :campaign-id="campaignId" mode="recovery" />
 
               <p class="inj-hint">{{ $t('These players are healthy and available for your lineup.') }}</p>
             </main>
@@ -5708,6 +5781,52 @@ function handleCloseSimulateModal() {
 }
 
 /* Record card token info */
+/* Fandom meter — minimal bar between rank/record and the tokens divider.
+   Dark-on-gradient palette matches the record card's text. */
+.record-fandom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  position: relative;
+  z-index: 1;
+}
+
+.record-fandom-icon {
+  color: rgba(26, 21, 32, 0.7);
+  flex-shrink: 0;
+}
+
+.record-fandom-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(26, 21, 32, 0.7);
+  flex-shrink: 0;
+}
+
+.record-fandom-bar {
+  flex: 1;
+  min-width: 0;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(26, 21, 32, 0.15);
+  overflow: hidden;
+}
+
+.record-fandom-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.record-fandom-pct {
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #1a1520;
+  flex-shrink: 0;
+}
+
 .record-tokens {
   display: flex;
   align-items: center;
@@ -6240,18 +6359,29 @@ function handleCloseSimulateModal() {
   white-space: nowrap;
 }
 
+/* Level badge — the number sits INSIDE the star glyph (instead of beside
+   it) so five facility tiles fit the strip on phone widths. The star stays
+   the same size as the facility icon (14px) so the pair reads as one unit. */
 .facility-rating {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  font-weight: 700;
-  color: var(--color-text-primary);
+  flex-shrink: 0;
 }
 
 .facility-value {
-  font-size: 0.85rem;
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  /* The star's pentagon body sits slightly above the box center. */
+  padding-top: 2px;
+  font-size: 9.5px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1;
+  color: #78350f;
+  pointer-events: none;
 }
 
 .facility-star {
@@ -6543,11 +6673,18 @@ function handleCloseSimulateModal() {
 }
 
 @media (max-width: 640px) {
-  /* Hide the verbose label on phones so all four tiles fit one line.
-     Icon + N★ is enough; the title attr still provides the full label
-     on long-press. */
+  /* Hide the verbose label on phones so all five tiles fit one line.
+     Icon + the number-in-star badge is enough; the title attr still
+     provides the full label on long-press. */
   .facility-label {
     display: none;
+  }
+  .facilities-strip {
+    gap: 4px;
+    flex-wrap: nowrap;
+  }
+  .facility-tile {
+    gap: 3px;
   }
   .fa-row {
     grid-template-columns: 44px 1fr auto;
@@ -7845,6 +7982,22 @@ function handleCloseSimulateModal() {
   font-weight: 600;
   color: var(--severity-color, #fbbf24);
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+/* Green medical-staff affordances: days shaved off the estimate. */
+.inj-saved {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #22c55e;
+  text-align: right;
+}
+
+.rec-sooner {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #22c55e;
 }
 
 .inj-hint {

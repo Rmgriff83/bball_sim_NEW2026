@@ -1,7 +1,12 @@
 <script setup>
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
-import { X, ExternalLink, Trophy, XCircle, Binoculars, BadgeCheck, Coins, Crown, CalendarCheck, Medal, TrendingUp, Download } from 'lucide-vue-next'
+import { X, ExternalLink, Trophy, XCircle, Binoculars, BadgeCheck, Coins, Crown, CalendarCheck, Medal, TrendingUp, Download, Eye, Sparkles } from 'lucide-vue-next'
+import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
+
+// Badge tier display labels — canonical strings, translated at render via
+// $tDynamic (enumerated in wl-i18n.config.js).
+const TIER_LABELS = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold', hof: 'HOF' }
 
 const toastStore = useToastStore()
 const router = useRouter()
@@ -234,6 +239,70 @@ function isWin(toast) {
               <div class="achievement-subtitle">{{ $t("Fresh coach goals added — the ones you're chasing stay. Tap to view the Owner.") }}</div>
             </div>
             <button class="toast-close" @click.stop="toastStore.removeToast(toast.id)">
+              <X :size="16" />
+            </button>
+          </template>
+
+          <!-- Scout Report Toast — full-scout milestone with the hired scout's
+               headshot and generated synopsis (tpl/params via $tDynamic). -->
+          <template v-if="toast.type === 'scout-report'">
+            <div class="scout-report-avatar">
+              <PersonnelAvatar
+                :personnel="toast.scout"
+                kind="scout"
+                :size="36"
+                :campaign-id="toast.campaignId"
+              />
+            </div>
+            <div class="toast-content">
+              <div class="game-result-header scout-report-header">{{ $t('SCOUTING REPORT') }}</div>
+              <div class="draft-pick-player">{{ toast.playerName }}</div>
+              <div class="scout-report-synopsis">
+                <template v-for="(line, i) in toast.synopsis?.lines ?? []" :key="i">{{ i > 0 ? ' ' : '' }}{{ line.tpl ? $tDynamic(line.tpl, line.params) : line.text }}</template>
+              </div>
+              <div v-if="toast.synopsis?.redFlag" class="scout-report-flag">
+                <span class="intel-chip">
+                  <Eye :size="11" />
+                  {{ $tDynamic('Insider Intel') }}
+                </span>
+                <span class="scout-report-flag-text">{{ toast.synopsis.redFlag.line.tpl ? $tDynamic(toast.synopsis.redFlag.line.tpl, toast.synopsis.redFlag.line.params) : toast.synopsis.redFlag.line.text }}</span>
+              </div>
+              <div class="scout-report-attribution">— {{ toast.scout?.name }}</div>
+            </div>
+            <button class="toast-close" @click="toastStore.removeToast(toast.id)">
+              <X :size="16" />
+            </button>
+          </template>
+
+          <!-- Training Report Toast — training-claim milestone with the hired
+               staff trainer's headshot (fallback icon when unhired). -->
+          <template v-if="toast.type === 'training-report'">
+            <div class="scout-report-avatar training-report-avatar">
+              <PersonnelAvatar
+                :personnel="toast.trainer"
+                kind="staff_trainer"
+                :size="36"
+                :campaign-id="toast.campaignId"
+              />
+            </div>
+            <div class="toast-content">
+              <div class="game-result-header training-report-header">{{ $t('TRAINING COMPLETE') }}</div>
+              <div class="draft-pick-player">{{ toast.playerName }}</div>
+              <div class="training-badge-row">
+                <span class="training-badge-name">{{ $tDynamic(toast.badgeName) }}</span>
+                <span class="training-tier-chip" :class="`training-tier-chip--${toast.level}`">{{ $tDynamic(TIER_LABELS[toast.level] ?? toast.level) }}</span>
+              </div>
+              <div v-if="toast.flavor" class="scout-report-synopsis">{{ toast.flavor.tpl ? $tDynamic(toast.flavor.tpl, toast.flavor.params) : toast.flavor.text }}</div>
+              <div v-if="toast.breakthrough" class="scout-report-flag">
+                <span class="intel-chip breakthrough-chip">
+                  <Sparkles :size="11" />
+                  {{ $tDynamic('Breakthrough Training') }}
+                </span>
+                <span v-if="toast.breakthrough.line" class="scout-report-flag-text breakthrough-text">{{ toast.breakthrough.line.tpl ? $tDynamic(toast.breakthrough.line.tpl, toast.breakthrough.line.params) : toast.breakthrough.line.text }}</span>
+              </div>
+              <div v-if="toast.trainer?.name" class="scout-report-attribution">— {{ toast.trainer.name }}</div>
+            </div>
+            <button class="toast-close" @click="toastStore.removeToast(toast.id)">
               <X :size="16" />
             </button>
           </template>
@@ -598,6 +667,122 @@ function isWin(toast) {
 .achievement-subtitle {
   font-size: 0.8rem;
   color: var(--color-text-secondary);
+}
+
+/* Scout report toast (full-scout milestone) */
+.toast-scout-report {
+  border-left: 3px solid var(--color-primary);
+}
+.scout-report-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: rgba(232, 90, 79, 0.15);
+  box-shadow: 0 0 0 2px rgba(232, 90, 79, 0.25);
+}
+.scout-report-header {
+  color: var(--color-primary);
+}
+.scout-report-synopsis {
+  font-size: 0.8rem;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  margin: 4px 0 6px;
+}
+.scout-report-flag {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.intel-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.14);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.3);
+}
+.scout-report-flag-text {
+  font-size: 0.78rem;
+  font-style: italic;
+  line-height: 1.4;
+  color: #f59e0b;
+}
+.scout-report-attribution {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+/* Training report toast (training-claim milestone) */
+.toast-training-report {
+  border-left: 3px solid #FFD700;
+}
+.training-report-avatar {
+  background: rgba(255, 215, 0, 0.14);
+  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.28);
+}
+.training-report-header {
+  color: #FFD700;
+}
+.training-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.training-badge-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.training-tier-chip {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.training-tier-chip--bronze {
+  color: #CD7F32;
+  background: rgba(205, 127, 50, 0.14);
+  box-shadow: 0 0 0 1px rgba(205, 127, 50, 0.3);
+}
+.training-tier-chip--silver {
+  color: #C0C0C0;
+  background: rgba(192, 192, 192, 0.14);
+  box-shadow: 0 0 0 1px rgba(192, 192, 192, 0.3);
+}
+.training-tier-chip--gold {
+  color: #FFD700;
+  background: rgba(255, 215, 0, 0.14);
+  box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.35);
+}
+.training-tier-chip--hof {
+  color: #9333EA;
+  background: rgba(147, 51, 234, 0.14);
+  box-shadow: 0 0 0 1px rgba(147, 51, 234, 0.35);
+}
+/* Breakthrough proc — gold restyle of the intel-chip amber pill. */
+.breakthrough-chip {
+  color: #FFD700;
+  background: rgba(255, 215, 0, 0.14);
+  box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.35);
+}
+.breakthrough-text {
+  color: #FFD700;
 }
 
 /* Verified "Player Signed" toast */

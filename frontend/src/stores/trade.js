@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { t } from '@wl-i18n/i18n.js'
+import { t, dateLocale } from '@wl-i18n/i18n.js'
 import { TeamRepository } from '@/engine/db/TeamRepository'
 import { capNumbersFor } from '@/engine/data/salaryScale'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
@@ -28,6 +28,19 @@ import {
   executeTrade as executeTradeEngine,
   formatTradeForDisplay,
 } from '@/engine/finance/TradeExecutor'
+import { isPlayerTradeLocked, tradeEligibleDate } from '@/engine/finance/tradeEligibility'
+
+// Localized long-form date a recently-traded player becomes tradeable again
+// (manual ISO split — `new Date('YYYY-MM-DD')` parses as UTC and shifts a day
+// in western timezones).
+function _fmtEligibleDate(player) {
+  const iso = tradeEligibleDate(player)
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString(dateLocale(), {
+    month: 'long', day: 'numeric', year: 'numeric',
+  })
+}
 
 /**
  * Move draft picks between teams during a trade and persist the changed
@@ -343,6 +356,18 @@ export const useTradeStore = defineStore('trade', () => {
         throw new Error(`${who} is no longer available — the other team's roster changed since this offer.`)
       }
     }
+
+    // League-wide 30-day recently-traded cooldown (players only).
+    for (const a of [...userGiving, ...userReceiving]) {
+      if (a.type !== 'player') continue
+      const p = getPlayerFn(a.playerId)
+      if (p && isPlayerTradeLocked(p, currentDate)) {
+        throw new Error(t("{player} was traded recently and can't be traded again until {date}.", {
+          player: nameOf(p) || t('This player'),
+          date: _fmtEligibleDate(p),
+        }))
+      }
+    }
   }
 
   // Recompute and persist `total_payroll` for the two teams a trade touched, so
@@ -625,6 +650,27 @@ export const useTradeStore = defineStore('trade', () => {
         }
         lastProposalResult.value = result
         return result
+      }
+
+      // 30-day recently-traded cooldown: reject inline (mirrors the deadline
+      // gate) so the wizard shows the reason instead of an AI "accept" that
+      // would then hard-fail at commit time.
+      for (const a of [...proposal.aiReceives, ...proposal.aiGives]) {
+        if (a.type !== 'player') continue
+        const lockedP = getPlayerFn(a.playerId)
+        if (lockedP && isPlayerTradeLocked(lockedP, currentDate)) {
+          const who = `${lockedP.firstName || lockedP.first_name || ''} ${lockedP.lastName || lockedP.last_name || ''}`.trim()
+          const result = {
+            decision: 'reject',
+            reason: t("{player} was traded recently and can't be traded again until {date}.", {
+              player: who || t('This player'),
+              date: _fmtEligibleDate(lockedP),
+            }),
+            recentlyTraded: true,
+          }
+          lastProposalResult.value = result
+          return result
+        }
       }
 
       const result = evaluateTrade({
@@ -978,7 +1024,14 @@ export const useTradeStore = defineStore('trade', () => {
           currentPayroll: userPayroll,
           capNumbers: campCapNumbers,
         })
-        if (!check.valid) {
+        // Also expire offers containing a player inside the 30-day
+        // recently-traded window (covers offers persisted before the
+        // cooldown rule existed — the accept path hard-blocks them anyway).
+        const hasLockedPlayer = [
+          ...(p.proposal?.aiReceives ?? []),
+          ...(p.proposal?.aiGives ?? []),
+        ].some(a => a.type === 'player' && isPlayerTradeLocked(getPlayerFn(a.playerId), currentDate))
+        if (!check.valid || hasLockedPlayer) {
           p.status = 'expired'
           p.resolved_at = currentDate
         }

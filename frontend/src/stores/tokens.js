@@ -301,8 +301,25 @@ export const useTokensStore = defineStore('tokens', () => {
   }
 
   /**
-   * Remove every persisted ledger (all users) — called beside clearDatabase
-   * on manual logout / different-user login / register / account deletion.
+   * Unbind from the current user WITHOUT touching persisted ledgers. Used on
+   * logout / user-switch / register: ledgers are per-user keyed and only ever
+   * flushed for the bound user, so leaving them in storage is safe — and it
+   * preserves queued-but-uncredited earns (e.g. server-deferred entries) that
+   * a wipe would permanently destroy. They flush when that user next logs in.
+   */
+  function detach() {
+    userId.value = null
+    serverTokens.value = null
+    entries.value = []
+    batch.value = null
+    deferCooldownUntil.value = null
+    deferredIds.value = new Set()
+  }
+
+  /**
+   * Remove every persisted ledger (all users) — reserved for account
+   * deletion, where the queued deltas can never be credited again. Logout /
+   * user-switch use detach() instead so uncredited earns survive.
    */
   function clearAllLedgers() {
     try {
@@ -330,6 +347,7 @@ export const useTokensStore = defineStore('tokens', () => {
     spendTokens,
     earnTokens,
     flush,
+    detach,
     clearAllLedgers,
   }
 })

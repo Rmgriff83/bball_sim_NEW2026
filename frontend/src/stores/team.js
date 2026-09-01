@@ -22,6 +22,7 @@ import {
   nextPlayerBadgeLevel,
   compareBadgeLevels,
 } from '@/engine/data/playerBadgeStore'
+import { BADGE_BREAKTHROUGH_CHANCES } from '@/engine/data/personnelTiers'
 import { getCoachActionBudget, getCoachTrainBudget, getCoachResignCost, getCoachTierKey, FREE_AGENT_COACH_TIERS, COACH_MEETING_EXTRA_COST } from '@/engine/data/coaches'
 import { selectBestCoachingScheme } from '@/engine/coaching/CoachStrategyService'
 import { cloneForPersist } from '@/utils/cloneForPersist'
@@ -1219,14 +1220,49 @@ export const useTeamStore = defineStore('team', () => {
       }
 
       const picked = _pickWeightedTrainingReward(eligible) ?? eligible[0]
-      const badge = BADGES.find(b => b.id === picked.badge.id)
+
+      // --- Breakthrough Training (staff-trainer optional perk) --------------
+      // Claim-time tier-upgrade roll. Strictly additive: `awarded` is never
+      // worse than `picked`, the per-player maxLevel cap always holds, and
+      // saves without the perk take the exact legacy path.
+      let awarded = picked
+      let perkProc = null
+      const staffTrainer = campaign?.settings?.staff_trainer ?? null
+      const trainingLvl = Math.min(5, Math.max(1, teamData?.facilities?.training ?? 1))
+      const hasBreakthrough = Array.isArray(staffTrainer?.perks) &&
+        staffTrainer.perks.some(p => p?.key === 'badge_breakthrough' && (p.requiredLevel ?? 0) <= trainingLvl)
+      if (hasBreakthrough) {
+        const chances = BADGE_BREAKTHROUGH_CHANCES[staffTrainer.tier] ?? BADGE_BREAKTHROUGH_CHANCES[3]
+        const rolled = Math.random() < chances.gold ? 'gold'
+          : Math.random() < chances.silver ? 'silver' : null
+        // Try the rolled tier; a failed gold degrades to silver (still a free
+        // upgrade) before giving up. A proc that wouldn't beat the normal
+        // pick is a silent no-op (no chip shown).
+        const tiersToTry = rolled === 'gold' ? ['gold', 'silver'] : rolled === 'silver' ? ['silver'] : []
+        for (const tier of tiersToTry) {
+          if (compareBadgeLevels(tier, picked.nextLevel) <= 0) break
+          const legal = eligible.filter(e =>
+            compareBadgeLevels(e.maxLevel, tier) >= 0 &&
+            compareBadgeLevels(e.currentLevel, tier) < 0)
+          if (legal.length === 0) continue
+          // Keep the naturally-picked badge when it can absorb the jump;
+          // otherwise weighted pick among the legal targets.
+          const target = legal.find(e => e.badge.id === picked.badge.id)
+            ?? _pickWeightedTrainingReward(legal) ?? legal[0]
+          awarded = { ...target, nextLevel: tier }
+          perkProc = tier
+          break
+        }
+      }
+
+      const badge = BADGES.find(b => b.id === awarded.badge.id)
 
       // Apply the badge mutation — same shape as purchasePlayerBadge.
       const existing = Array.isArray(player.badges) ? [...player.badges] : []
-      const idx = existing.findIndex(b => b?.id === picked.badge.id)
+      const idx = existing.findIndex(b => b?.id === awarded.badge.id)
       const newEntry = {
-        id: picked.badge.id,
-        level: picked.nextLevel,
+        id: awarded.badge.id,
+        level: awarded.nextLevel,
         source: 'trained',
         trainedAt: new Date().toISOString(),
       }
@@ -1255,7 +1291,16 @@ export const useTeamStore = defineStore('team', () => {
       // Reward claimed — drop the pending "training ready" notification.
       import('@/services/notifications').then(n => n.cancelTrainingReady()).catch(() => {})
 
-      return { badge, level: picked.nextLevel, badgeId: picked.badge.id }
+      return {
+        badge,
+        level: awarded.nextLevel,
+        badgeId: awarded.badge.id,
+        // Additive fields (older callers ignore them): whether Breakthrough
+        // Training procced + a plain copy of the trainer for the rich toast.
+        perkProc,
+        trainer: staffTrainer ? JSON.parse(JSON.stringify(staffTrainer)) : null,
+        trainingLevel: trainingLvl,
+      }
     } catch (err) {
       error.value = err.message || 'Failed to claim training reward'
       throw err

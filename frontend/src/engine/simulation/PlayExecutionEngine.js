@@ -536,8 +536,9 @@ class PlayExecutionEngine {
     // using the average roster morale. Already clamped to ±0.03 upstream.
     const chemistryShotBonus = this.offensiveModifiers.chemistryShotBonus ?? 0;
     // Home court advantage — only set when the offense is the home team
-    // (zero for away). +1.5% baseline, +2.5% when the home crowd is engaged
-    // (avg roster morale ≥ 65). See GameSimulator.calculateHomeCourtAdvantage.
+    // (zero for away). Scales with the home team's fandom meter (band
+    // 0.010–0.030, incl. a small morale bump). See
+    // GameSimulator.calculateHomeCourtAdvantage / FandomService.
     const homeCourtBonus = this.offensiveModifiers.homeCourtBonus ?? 0;
 
     let clutchShotBias = 0;

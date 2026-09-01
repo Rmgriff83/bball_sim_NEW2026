@@ -11,12 +11,16 @@ import { usePlayoffStore } from '@/stores/playoff'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
-import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X, Volume2, VolumeX } from 'lucide-vue-next'
+import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X, Volume2, VolumeX, Shield } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
+import { CampaignRepository } from '@/engine/db/CampaignRepository'
+import { useSyncStore } from '@/stores/sync'
+import { TIMEOUT_TRACKS } from '@/audio/timeoutMusic'
 import { computeTeamOverall } from '@/utils/teamOverall'
+import { fitTierLabel } from '@/utils/fitTiers'
 import { coachingEngine } from '@/engine/simulation/CoachingEngine'
 import { QUARTER_LENGTH_MINUTES } from '@/engine/config/GameConfig'
 import { t, tDynamic, dateLocale } from '@wl-i18n/i18n.js'
@@ -25,6 +29,8 @@ import BoxScore from '@/components/game/BoxScore.vue'
 import PlayAnalyticsPanel from '@/components/analytics/PlayAnalyticsPanel.vue'
 import DefensiveMatchupEditor from '@/components/game/DefensiveMatchupEditor.vue'
 import { SimulateConfirmModal, EvolutionSummary, MomentumRail, CoachOverview } from '@/components/game'
+import MedicalStaffPanel from '@/components/game/MedicalStaffPanel.vue'
+import { useMedicalBenefits, effectiveDaysOut, daysSaved } from '@/composables/useMedicalBenefits'
 import { usePlayAnimation } from '@/composables/usePlayAnimation'
 import { usePositionValidation } from '@/composables/usePositionValidation'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
@@ -438,6 +444,45 @@ function analystPerkUnlocked(key) {
 const postgameAnalyticsUnlocked = computed(
   () => analystTier.value >= 3 && analystPerkUnlocked('postgame_analytics')
 )
+
+// Timeout-song picker — arena-manager "Game-Night DJ" perk, gated on the
+// Arena facility reaching the perk's stored requiredLevel (Lv 3; the `?? 1`
+// grandfather rule mirrors analystPerkUnlocked).
+const arenaFacilityLevel = computed(() => userTeam.value?.facilities?.arena ?? 1)
+const songPickerUnlocked = computed(() => {
+  const perk = (campaign.value?.settings?.arena_manager?.perks ?? []).find((p) => p.key === 'song_picker')
+  if (!perk) return false
+  return arenaFacilityLevel.value >= (perk.requiredLevel ?? 1)
+})
+
+const selectedTimeoutSong = computed(() => campaign.value?.settings?.timeoutSong ?? 'random')
+const previewingTrackId = ref(null)
+
+// Pregame defensive-matchups popup (trigger beside the Starting Lineups
+// title — keeps the page shorter than the old always-expanded card).
+const showMatchupsModal = ref(false)
+
+async function selectTimeoutSong(trackId) {
+  if (!campaign.value) return
+  campaign.value.settings = { ...campaign.value.settings, timeoutSong: trackId }
+  try {
+    await CampaignRepository.updateSettings(campaignId.value, { timeoutSong: trackId })
+    useSyncStore().markDirty()
+  } catch (err) {
+    console.warn('[GameView] failed to persist timeout song:', err)
+  }
+}
+
+function previewTimeoutSong(trackId) {
+  audioStore.suppressClickSound()
+  if (previewingTrackId.value === trackId) {
+    audioStore.stopTimeoutMusic()
+    previewingTrackId.value = null
+    return
+  }
+  audioStore.previewTimeoutTrack(trackId)
+  previewingTrackId.value = trackId
+}
 const opponentAnalyticsUnlocked = computed(
   () => analystTier.value >= 4 && analystPerkUnlocked('opponent_analytics')
 )
@@ -535,6 +580,11 @@ function fitFor(scheme) {
     : coachingEngine.calculateDefensiveSchemeEffectiveness(scheme, roster)
   return Math.round(eff)
 }
+
+// The exact Fit % is an ANALYTICS-facility Lv2 unlock (same gate as the GM
+// view's coaching subtab). Below Lv2 the strategy pills show the rough fit
+// tier (fitTierLabel) instead — never leak the precise number on a surface
+// the GM view keeps opaque. Uses analyticsFacilityLevel defined above.
 
 // Coach for each side. Prefer the coach embedded on the game's team payload
 // if present; otherwise fall back to teamStore.coach for the user-controlled
@@ -1334,6 +1384,11 @@ onMounted(async () => {
  * Check if there are games to simulate first, show modal if so.
  */
 async function handlePlayGame() {
+  // Stop any timeout-song preview before tip-off.
+  if (previewingTrackId.value) {
+    audioStore.stopTimeoutMusic()
+    previewingTrackId.value = null
+  }
   // If game is already in progress, skip the modal check
   if (isInProgress.value) {
     await startGame()
@@ -1361,6 +1416,30 @@ function getInjurySeverityColor(severity) {
     case 'season_ending': return '#ef4444'
     default: return '#fbbf24'
   }
+}
+
+// Medical staff/facility recovery bonus — surfaced in the injury/recovery
+// modals so upgrades are visibly doing something. Same math as the sim.
+const { medicalBreakdown } = useMedicalBenefits()
+
+function injRolledDays(injury) {
+  return injury.days_out ?? injury.games_out ?? 0
+}
+
+function injEffDays(injury) {
+  return effectiveDaysOut(injRolledDays(injury), medicalBreakdown.value.totalBonus)
+}
+
+function injSavedDays(injury) {
+  return daysSaved(injRolledDays(injury), medicalBreakdown.value.totalBonus)
+}
+
+// Days shaved off a completed recovery; 0 (hidden) when the recovery payload
+// predates duration_days (legacy saves) or no bonus is active anymore.
+function recSoonerDays(recovery) {
+  const duration = recovery.duration_days ?? 0
+  const bonus = medicalBreakdown.value.totalBonus
+  return duration > 0 && bonus > 0 ? daysSaved(duration, bonus) : 0
 }
 
 function goToLineup() {
@@ -1720,7 +1799,11 @@ function startTimeoutSequence() {
   audioStore.playEventSfx('foul_whistle')
   _clearTimeoutAudioTimers()
   timeoutAudioTimers.push(setTimeout(() => audioStore.playEventSfx('timeout_airhorn'), 500))
-  timeoutAudioTimers.push(setTimeout(() => audioStore.startTimeoutMusic(), 3500))
+  // Game-Night DJ: the user's chosen track when the perk is active,
+  // otherwise the classic random pick.
+  timeoutAudioTimers.push(setTimeout(() => audioStore.startTimeoutMusic(
+    songPickerUnlocked.value ? selectedTimeoutSong.value : null
+  ), 3500))
   timeoutSecondsLeft.value = TIMEOUT_SECONDS
   _clearTimeoutTimer()
   timeoutTimer = setInterval(() => {
@@ -3165,7 +3248,8 @@ onUnmounted(() => {
                               @click="selectedOffense = style.value"
                             >
                               <span class="strategy-pill-label">{{ $tDynamic(style.label) }}</span>
-                              <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                              <span v-if="analyticsFacilityLevel >= 2" class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                              <span v-else class="strategy-pill-fit">{{ $tDynamic(fitTierLabel(fitFor(style.value))) }}</span>
                             </button>
                           </div>
                         </div>
@@ -3180,7 +3264,8 @@ onUnmounted(() => {
                               @click="selectedDefense = style.value"
                             >
                               <span class="strategy-pill-label">{{ $tDynamic(style.label) }}</span>
-                              <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                              <span v-if="analyticsFacilityLevel >= 2" class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                              <span v-else class="strategy-pill-fit">{{ $tDynamic(fitTierLabel(fitFor(style.value))) }}</span>
                             </button>
                           </div>
                         </div>
@@ -3827,7 +3912,20 @@ onUnmounted(() => {
           <div class="pregame-layout">
             <!-- Court Preview with Starters Overlay -->
             <GlassCard padding="lg" :hoverable="false" class="pregame-court-card">
-              <h3 class="h4 mb-4">{{ $t('Starting Lineups') }}</h3>
+              <div class="pregame-court-header">
+                <h3 class="h4">{{ $t('Starting Lineups') }}</h3>
+                <!-- Defensive matchups live in a popup so the page scrolls
+                     less — trigger sits beside the lineups title. -->
+                <button
+                  v-if="isUserGame"
+                  class="matchups-open-btn"
+                  data-tour="game-matchups"
+                  @click="showMatchupsModal = true"
+                >
+                  <Shield :size="14" />
+                  {{ $t('Matchups') }}
+                </button>
+              </div>
               <div class="court-container court-container-with-overlay" data-tour="game-court">
                 <BasketballCourt
                   :width="500"
@@ -4091,7 +4189,8 @@ onUnmounted(() => {
                           @click="selectedOffense = style.value"
                         >
                           <span class="strategy-pill-label">{{ $tDynamic(style.label) }}</span>
-                          <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                          <span v-if="analyticsFacilityLevel >= 2" class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                          <span v-else class="strategy-pill-fit">{{ $tDynamic(fitTierLabel(fitFor(style.value))) }}</span>
                         </button>
                       </div>
                     </div>
@@ -4106,7 +4205,8 @@ onUnmounted(() => {
                           @click="selectedDefense = style.value"
                         >
                           <span class="strategy-pill-label">{{ $tDynamic(style.label) }}</span>
-                          <span class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                          <span v-if="analyticsFacilityLevel >= 2" class="strategy-pill-fit">{{ fitFor(style.value) }}%</span>
+                          <span v-else class="strategy-pill-fit">{{ $tDynamic(fitTierLabel(fitFor(style.value))) }}</span>
                         </button>
                       </div>
                     </div>
@@ -4130,6 +4230,42 @@ onUnmounted(() => {
                       <span class="pacing-hint">
                         {{ selectedPacing === 'quarter' ? $t('Watch a full quarter, adjust at breaks') : selectedPacing === 'play' ? $t('Pause after every possession') : $t('Pause at fouls, out-of-bounds & other stoppages') }}{{ isInProgress ? ' — ' + $t('applies when you resume') : '' }}
                       </span>
+                    </div>
+
+                    <!-- Timeout song — arena-manager Game-Night DJ perk
+                         (arena facility Lv 3+). Pick the track that plays
+                         during your timeouts; speaker icon previews it. -->
+                    <div v-if="songPickerUnlocked" class="strategy-group" data-tour="game-timeout-song">
+                      <span class="strategy-label">{{ $t('Timeout Song') }}</span>
+                      <div class="strategy-pills">
+                        <button
+                          class="strategy-pill"
+                          :class="{ active: selectedTimeoutSong === 'random' }"
+                          @click="selectTimeoutSong('random')"
+                        >
+                          <span class="strategy-pill-label">{{ $t('Random') }}</span>
+                        </button>
+                        <button
+                          v-for="track in TIMEOUT_TRACKS"
+                          :key="track.id"
+                          class="strategy-pill timeout-song-pill"
+                          :class="{ active: selectedTimeoutSong === track.id }"
+                          @click="selectTimeoutSong(track.id)"
+                        >
+                          <span class="strategy-pill-label">{{ $tDynamic(track.label) }}</span>
+                          <span
+                            class="song-preview-btn"
+                            :class="{ previewing: previewingTrackId === track.id }"
+                            role="button"
+                            aria-label="Preview"
+                            @click.stop="previewTimeoutSong(track.id)"
+                          >
+                            <VolumeX v-if="previewingTrackId === track.id" :size="15" />
+                            <Volume2 v-else :size="15" />
+                          </span>
+                        </button>
+                      </div>
+                      <span class="pacing-hint">{{ $t('Your arena manager cues this song up during every timeout.') }}</span>
                     </div>
 
                   </div>
@@ -4180,22 +4316,6 @@ onUnmounted(() => {
               </div>
             </GlassCard>
 
-            <!-- Defensive Matchups — own card, always expanded (swap who guards whom) -->
-            <GlassCard
-              v-if="isUserGame"
-              padding="lg"
-              :hoverable="false"
-              class="pregame-matchups-card"
-              data-tour="game-matchups"
-            >
-              <h4 class="strategy-section-label">{{ $t('Defensive Matchups') }}</h4>
-              <DefensiveMatchupEditor
-                v-model="defensiveMatchups"
-                :opponent-starters="opponentOffense"
-                :defenders="userDefenders"
-              />
-            </GlassCard>
-
             <!-- Opponent Analytics — obscured (not hidden) until a Level 4 analyst
                  AND an Analytics Facility at the perk's required level, so users
                  see what they're missing and are nudged to hire the analyst.
@@ -4211,6 +4331,32 @@ onUnmounted(() => {
               />
             </div>
           </div>
+
+          <!-- Defensive matchups popup (swap who guards whom) -->
+          <Teleport to="body">
+            <Transition name="matchups-modal">
+              <div v-if="showMatchupsModal" class="matchups-modal-overlay" @click.self="showMatchupsModal = false">
+                <div class="matchups-modal">
+                  <header class="matchups-modal-header">
+                    <h3 class="matchups-modal-title">
+                      <Shield :size="16" />
+                      {{ $t('Defensive Matchups') }}
+                    </h3>
+                    <button class="matchups-modal-close" aria-label="Close" @click="showMatchupsModal = false">
+                      <X :size="18" />
+                    </button>
+                  </header>
+                  <main class="matchups-modal-body">
+                    <DefensiveMatchupEditor
+                      v-model="defensiveMatchups"
+                      :opponent-starters="opponentOffense"
+                      :defenders="userDefenders"
+                    />
+                  </main>
+                </div>
+              </div>
+            </Transition>
+          </Teleport>
         </template>
       </template>
 
@@ -4967,11 +5113,17 @@ onUnmounted(() => {
                     </div>
                     <div class="inj-detail-row">
                       <span class="inj-type">{{ $tDynamic(injury.injury_type) }}</span>
-                      <span class="inj-duration">{{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('{n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('{n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
+                      <span v-if="injSavedDays(injury) >= 1" class="inj-duration">
+                        {{ injEffDays(injury) === 1 ? $t('~{n} day', { n: injEffDays(injury) }) : $t('~{n} days', { n: injEffDays(injury) }) }}
+                        <span class="inj-saved">{{ injSavedDays(injury) === 1 ? $t('{n} day saved', { n: injSavedDays(injury) }) : $t('{n} days saved', { n: injSavedDays(injury) }) }}</span>
+                      </span>
+                      <span v-else class="inj-duration">{{ (injury.days_out ?? injury.games_out ?? 0) === 1 ? $t('{n} day', { n: injury.days_out ?? injury.games_out ?? 0 }) : $t('{n} days', { n: injury.days_out ?? injury.games_out ?? 0 }) }}</span>
                     </div>
                   </div>
                 </div>
               </div>
+
+              <MedicalStaffPanel :breakdown="medicalBreakdown" :campaign-id="campaignId" mode="injury" />
 
               <p class="inj-hint">{{ $t('Injured starters will be automatically benched. Update your lineup to set replacements.') }}</p>
             </main>
@@ -5032,9 +5184,14 @@ onUnmounted(() => {
                       <span class="inj-type">{{ $tDynamic(recovery.injury_type) }}</span>
                       <span class="rec-status">{{ $t('Ready to play') }}</span>
                     </div>
+                    <div v-if="recSoonerDays(recovery) >= 1" class="rec-sooner">
+                      {{ recSoonerDays(recovery) === 1 ? $t('Back ~{n} day sooner', { n: recSoonerDays(recovery) }) : $t('Back ~{n} days sooner', { n: recSoonerDays(recovery) }) }}
+                    </div>
                   </div>
                 </div>
               </div>
+
+              <MedicalStaffPanel :breakdown="medicalBreakdown" :campaign-id="campaignId" mode="recovery" />
 
               <p class="inj-hint">{{ $t('These players are healthy and available for your lineup.') }}</p>
             </main>
@@ -5891,6 +6048,123 @@ onUnmounted(() => {
   grid-template-columns: 1fr 1fr;
   gap: 24px;
 }
+
+/* Grid items default to min-width:auto (= min-content), so any fixed-width
+   descendant — e.g. the opponent-analytics table's 420px min-width — would
+   set a hard floor on the whole page's width on phones (content stopped
+   shrinking ~505px and the court overflowed right). Zeroing the automatic
+   minimum lets each card shrink to the viewport and keeps wide content
+   scrolling inside its own overflow wrapper instead. */
+.pregame-layout > * {
+  min-width: 0;
+}
+
+/* Starting Lineups title + the matchups-popup trigger, space-between. */
+.pregame-court-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.pregame-court-header h3 {
+  margin-bottom: 0;
+}
+
+.matchups-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.matchups-open-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Matchups popup chrome (Teleported — scoped attrs still apply). */
+.matchups-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+.matchups-modal {
+  width: 100%;
+  max-width: 520px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+}
+
+.matchups-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.matchups-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.matchups-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.matchups-modal-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.matchups-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.matchups-modal-enter-active { transition: opacity 0.25s ease; }
+.matchups-modal-leave-active { transition: opacity 0.2s ease; }
+.matchups-modal-enter-from,
+.matchups-modal-leave-to { opacity: 0; }
 
 .pregame-court-card {
   min-height: 400px;
@@ -7066,7 +7340,7 @@ onUnmounted(() => {
   text-align: left;
   gap: 2px;
   line-height: 1.15;
-  height: 50px;
+  height: 60px;
 }
 
 .strategy-pill-fit {
@@ -7074,6 +7348,40 @@ onUnmounted(() => {
   font-weight: 600;
   opacity: 0.65;
   letter-spacing: 0.02em;
+}
+
+/* Timeout-song pills: inline preview control (span, not a nested button —
+   invalid HTML — with role="button" for a11y). */
+.timeout-song-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.song-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  /* Pull the circle's extra height back out of the pill so the row doesn't
+     grow — the visual pill stays compact while the tap target is ~30px. */
+  margin: -6px -4px -6px 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.song-preview-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--color-text-primary);
+}
+
+.song-preview-btn.previewing {
+  background: var(--color-primary);
+  color: white;
 }
 
 /* Active pill's fit % loses the muted opacity so it stays legible on the
@@ -9973,6 +10281,22 @@ onUnmounted(() => {
   font-weight: 600;
   color: var(--severity-color, #fbbf24);
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+/* Green medical-staff affordances: days shaved off the estimate. */
+.inj-saved {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #22c55e;
+  text-align: right;
+}
+
+.rec-sooner {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #22c55e;
 }
 
 .inj-hint {

@@ -23,6 +23,7 @@ import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import PlayerDetailModal from '@/components/team/PlayerDetailModal.vue'
 import { SCOUTABLE_ATTRIBUTES, SCOUTABLE_ATTRIBUTE_CATEGORIES } from '@/engine/data/attributeSchema'
 import { computeScoutReveal } from '@/engine/scouting/scoutReveal'
+import { useScoutReportToast } from '@/composables/useScoutReportToast'
 
 const route = useRoute()
 const campaignStore = useCampaignStore()
@@ -32,6 +33,7 @@ const toastStore = useToastStore()
 const audio = useAudioStore()
 const syncStore = useSyncStore()
 const walkthroughStore = useWalkthroughStore()
+const { notifyScoutMilestone } = useScoutReportToast()
 
 const campaignId = computed(() => route.params.id)
 const loading = ref(true)
@@ -238,21 +240,15 @@ async function scoutPlayer(player) {
 
     syncStore.markDirty()
 
-    // Success toast only on a milestone: full scout reached or badges revealed
+    // Toast only on a milestone: full scout reached (rich scout-report toast
+    // when a scout is hired, plain success toast otherwise) or badges revealed
     // by the scout's perk. Routine reveals stay silent (generic tap only).
-    if (hitFullScout || badgesJustRevealed) {
-      const playerName = player.firstName + ' ' + player.lastName
-      let message
-      if (hitFullScout && badgesJustRevealed) {
-        message = t('{name} fully scouted — badges revealed!', { name: playerName })
-      } else if (hitFullScout) {
-        message = t('{name} fully scouted!', { name: playerName })
-      } else {
-        message = t('Badges revealed for {name}!', { name: playerName })
-      }
-      audio.affirm()
-      toastStore.showSuccess(message)
-    }
+    await notifyScoutMilestone({
+      campaign: campaignStore.currentCampaign,
+      player,
+      hitFullScout,
+      badgesJustRevealed,
+    })
 
     // Trigger stat-pop animation on newly revealed attributes
     const newAnims = {}

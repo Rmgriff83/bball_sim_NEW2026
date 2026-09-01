@@ -109,6 +109,7 @@ const subtaskResult = computed(() => {
     settings,
     payroll,
     progress: progress.value,
+    fandom: team.value?.fandom ?? null,
     userTeamId: campaign.value?.teamId ?? team.value?.id ?? null,
     coach: teamStore.coach ?? team.value?.coach ?? null,
     salaryCap: capNumbersFor(campaign.value).salaryCap,

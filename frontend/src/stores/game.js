@@ -8,6 +8,7 @@ import { useSyncStore } from '@/stores/sync'
 import { usePlayoffStore } from '@/stores/playoff'
 import { useAuthStore } from '@/stores/auth'
 import { useLeagueStore } from '@/stores/league'
+import { useTeamStore } from '@/stores/team'
 import api from '@/composables/useApi'
 import { SeasonRepository } from '@/engine/db/SeasonRepository'
 import { PlayerRepository } from '@/engine/db/PlayerRepository'
@@ -15,6 +16,7 @@ import { TeamRepository } from '@/engine/db/TeamRepository'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { getEffectiveExpectation, maybeRaiseExpectationMidSeason } from '@/engine/season/OwnerExpectationService'
 import { findOwnerForTeam } from '@/engine/data/owners'
+import { applyFandomDelta, playoffWinRaw, totalLossMitigation, REGULAR_WIN_RAW, REGULAR_LOSS_RAW, CHAMPIONSHIP_RAW, FANDOM_DEFAULT, FANDOM_NEWS_THRESHOLDS } from '@/engine/fandom/FandomService'
 import { SeasonManager } from '@/engine/season/SeasonManager'
 import { PlayoffManager } from '@/engine/season/PlayoffManager'
 import { processGameRewards } from '@/engine/rewards/RewardService'
@@ -34,6 +36,7 @@ import { BreakingNewsService } from '@/engine/season/BreakingNewsService'
 import { appendTradeLogEntry } from '@/engine/finance/TradeExecutor'
 import { useBreakingNewsStore } from '@/stores/breakingNews'
 import { processRecovery as processInjuryRecovery, isInjured as isPlayerInjured } from '@/engine/evolution/InjuryService'
+import { computeMedicalRecoveryBreakdown } from '@/engine/evolution/medicalBenefits'
 import { applySeasonalAging } from '@/engine/evolution/AttributeAging'
 import { recalculateOverall, processMultiDayRestRecovery } from '@/engine/evolution/PlayerEvolution'
 
@@ -408,18 +411,11 @@ export const useGameStore = defineStore('game', () => {
     return 0
   }
 
-  // Baseline medical-facility benefits, no physician required (mirrors how
-  // the scouting facility grants points per level on its own). Recovery speed
-  // is deliberately modest and CAPS at Lv3 (+6%) so severe injuries keep
-  // realistic timelines even stacked with the physician's fast_recovery
-  // (worst case +21%, not +35%); Lv4/Lv5 shift to injury PREVENTION instead,
-  // stacking with the physician's injury_prevention perk (up to −20% risk).
-  const MEDICAL_RECOVERY_BONUS_PER_LEVEL = 0.03
-  const MEDICAL_INJURY_RISK_REDUCTION_BY_LEVEL = { 4: 0.05, 5: 0.10 }
-
   /**
    * Compute the user team's medical benefits: the per-level facility bonuses
-   * (staff-independent) plus any hired-physician perks.
+   * (staff-independent) plus any hired-physician perks. The math lives in the
+   * shared pure helper (engine/evolution/medicalBenefits.js) so the injury
+   * modals display exactly the numbers the sim applies.
    * Returns { injuryRiskReduction, recoverySpeedBonus } ({} when all zero).
    */
   async function _getTrainerPerks(campaign) {
@@ -427,25 +423,13 @@ export const useGameStore = defineStore('game', () => {
     if (!userTeamId) return {}
 
     const userTeam = await TeamRepository.get(campaign.id, userTeamId)
-    const medicalLevel = Math.min(5, userTeam?.facilities?.medical ?? 1)
+    const { injuryRiskReduction, totalBonus } = computeMedicalRecoveryBreakdown({
+      medicalLevel: userTeam?.facilities?.medical ?? 1,
+      trainer: campaign.settings?.trainer ?? null,
+    })
 
-    let injuryRiskReduction = MEDICAL_INJURY_RISK_REDUCTION_BY_LEVEL[medicalLevel] ?? 0
-    let recoverySpeedBonus = MEDICAL_RECOVERY_BONUS_PER_LEVEL * Math.max(0, Math.min(3, medicalLevel) - 1)
-
-    const trainer = campaign.settings?.trainer
-    for (const perk of (trainer?.perks || [])) {
-      if (medicalLevel < perk.requiredLevel) continue
-
-      if (perk.key === 'fast_recovery') {
-        recoverySpeedBonus += trainer.tier === 4 ? 0.15 : 0.10
-      }
-      if (perk.key === 'injury_prevention') {
-        injuryRiskReduction += 0.10
-      }
-    }
-
-    if (injuryRiskReduction === 0 && recoverySpeedBonus === 0) return {}
-    return { injuryRiskReduction, recoverySpeedBonus }
+    if (injuryRiskReduction === 0 && totalBonus === 0) return {}
+    return { injuryRiskReduction, recoverySpeedBonus: totalBonus }
   }
 
   /**
@@ -505,6 +489,9 @@ export const useGameStore = defineStore('game', () => {
       // Medical facility + physician recovery bonus applies to USER players
       // only; AI/free-agent players tick at the plain 1 day per day rate.
       const isUserPlayer = userTeamId != null && String(player.teamId) === String(userTeamId)
+      // Snapshot the injury before processRecovery clears it on full recovery,
+      // so the Recovery Report can show what healed and how long it ran.
+      const priorInjury = player.injury_details ?? player.injuryDetails ?? null
       const next = processInjuryRecovery(
         player,
         daysElapsed,
@@ -522,6 +509,12 @@ export const useGameStore = defineStore('game', () => {
             player_id: next.id,
             name,
             teamId: next.teamId ?? player.teamId ?? null,
+            // Additive fields (old consumers ignore them): what the injury
+            // was + its original rolled duration. duration_days is null on
+            // legacy pre-migration injuries — readers must hide the
+            // "days sooner" line in that case.
+            injury_type: priorInjury?.name ?? null,
+            duration_days: priorInjury?.duration_days ?? null,
           })
         }
       }
@@ -1404,6 +1397,20 @@ export const useGameStore = defineStore('game', () => {
       )
     }
 
+    // Fandom: winner up, loser down (playoff wins scale by round; clinching
+    // the title adds a one-time surge). After the playoff block so the
+    // champion flag is known.
+    if (game) {
+      try {
+        const fandomShift = await _updateFandomAfterGame(campaignId, game, result, {
+          isChampion: !!(playoffUpdate?.seriesComplete && playoffUpdate?.round === 4),
+        })
+        _maybeQueueFandomNews(seasonData, game, fandomShift)
+      } catch (err) {
+        console.warn('[GameStore] fandom update failed:', err)
+      }
+    }
+
     // Save to IndexedDB
     await SeasonRepository.save({
       campaignId,
@@ -1521,6 +1528,141 @@ export const useGameStore = defineStore('game', () => {
 
     if (dirty.size > 0) {
       await TeamRepository.saveBulk([...dirty])
+    }
+  }
+
+  /**
+   * Move both teams' fandom meters for one finished game (winner up, loser
+   * down; playoff wins scale by round and the title adds a one-time surge).
+   * Rides the team rows like coach career stats so sync's normal team push
+   * picks it up. The user team's losses are softened by the Arena facility's
+   * baseline protection (per level, no staff needed) stacked with a hired
+   * arena manager's Damage Control perk. Returns the user team's
+   * before/after so callers can fire threshold news.
+   */
+  async function _updateFandomAfterGame(campaignId, game, result, { isChampion = false } = {}) {
+    const homeWon = result.home_score > result.away_score
+    const isPlayoff = !!(game.isPlayoff || game.is_playoff)
+    const round = game.playoffRound ?? game.playoff_round ?? null
+
+    const [homeTeam, awayTeam] = await Promise.all([
+      TeamRepository.get(campaignId, game.homeTeamId),
+      TeamRepository.get(campaignId, game.awayTeamId),
+    ])
+    const winner = homeWon ? homeTeam : awayTeam
+    const loser = homeWon ? awayTeam : homeTeam
+
+    const camp = useCampaignStore().currentCampaign
+    const userTeamId = camp?.id === campaignId ? (camp.teamId ?? camp.team_id ?? null) : null
+
+    let userBefore = null
+    let userAfter = null
+    const dirty = []
+
+    if (winner) {
+      let raw = isPlayoff ? playoffWinRaw(round ?? 1) : REGULAR_WIN_RAW
+      if (isChampion) raw += CHAMPIONSHIP_RAW
+      const before = winner.fandom
+      winner.fandom = applyFandomDelta(winner.fandom, raw)
+      if (winner.id === userTeamId) { userBefore = before; userAfter = winner.fandom }
+      dirty.push(winner)
+    }
+    if (loser) {
+      let raw = REGULAR_LOSS_RAW
+      if (loser.id === userTeamId) {
+        // Arena baseline (per facility level, no staff needed) + Damage
+        // Control perk, additive — see FandomService.totalLossMitigation.
+        raw *= 1 - totalLossMitigation(loser.facilities?.arena, camp?.settings?.arena_manager)
+      }
+      const before = loser.fandom
+      loser.fandom = applyFandomDelta(loser.fandom, raw)
+      if (loser.id === userTeamId) { userBefore = before; userAfter = loser.fandom }
+      dirty.push(loser)
+    }
+
+    if (dirty.length > 0) {
+      await TeamRepository.saveBulk(dirty)
+      // Keep the live team store in step for the user's own team.
+      const teamStore = useTeamStore()
+      const updated = dirty.find(t => t.id === teamStore.team?.id)
+      if (updated) teamStore.team.fandom = updated.fandom
+    }
+
+    return { userBefore, userAfter }
+  }
+
+  // Same fandom story fires at most once per 14 in-game days, so W/L
+  // oscillation right around a threshold can't spam the feed.
+  const FANDOM_NEWS_DEBOUNCE_DAYS = 14
+
+  function _fandomNewsEligible(marks, key, dateISO) {
+    const last = typeof marks?.[key] === 'string' ? marks[key] : null
+    if (!last) return true
+    const [y, m, d] = last.split('-').map(Number)
+    if (!y || !m || !d) return true
+    const next = new Date(Date.UTC(y, m - 1, d + FANDOM_NEWS_DEBOUNCE_DAYS)).toISOString().slice(0, 10)
+    return String(dateISO ?? '').slice(0, 10) >= next
+  }
+
+  /**
+   * Fire a fandom threshold story (user team only) when the meter crossed
+   * one of the FANDOM_NEWS_THRESHOLDS in this game. Pushes straight onto the
+   * in-hand seasonData.news so it rides _persistGameResult's save — never
+   * re-loads the season mid-persist.
+   */
+  function _maybeQueueFandomNews(seasonData, game, shift) {
+    if (!shift || shift.userAfter == null) return
+    const beforeRaw = Number(shift.userBefore)
+    const before = Number.isFinite(beforeRaw) ? beforeRaw : FANDOM_DEFAULT
+    const after = Number(shift.userAfter)
+    if (!Number.isFinite(after)) return
+
+    const teamStore = useTeamStore()
+    const teamName = teamStore.team?.name ?? null
+    if (!teamName) return
+    const date = game?.gameDate ?? game?.game_date ?? null
+
+    const camp = useCampaignStore().currentCampaign
+    const marks = camp?.settings?.fandomNewsMarks ?? {}
+    const TH = FANDOM_NEWS_THRESHOLDS
+
+    let key = null
+    let item = null
+    if (before >= TH.paperBags && after < TH.paperBags) {
+      key = 'paperBags'
+      item = BreakingNewsService.fandomPaperBags({ teamName, date })
+    } else if (before >= TH.emptySeats && after < TH.emptySeats) {
+      key = 'emptySeats'
+      item = BreakingNewsService.fandomEmptySeats({ teamName, date })
+    } else if (before < TH.rocking && after >= TH.rocking) {
+      key = 'rocking'
+      item = BreakingNewsService.fandomRockingArena({ teamName, date })
+    } else if (before < TH.believing && after >= TH.believing) {
+      key = 'believing'
+      item = BreakingNewsService.fandomBelieving({ teamName, date })
+    }
+    if (!item || !_fandomNewsEligible(marks, key, date)) return
+
+    if (!seasonData.news) seasonData.news = []
+    seasonData.news.push({
+      id: `news_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      event_type: 'fandom',
+      headline: item.headline,
+      body: item.body,
+      date,
+      team_id: teamStore.team?.id ?? null,
+      headline_tpl: item.headline_tpl,
+      headline_params: item.headline_params ?? null,
+      body_tpl: item.body_tpl,
+      body_params: item.body_params ?? null,
+    })
+    if (seasonData.news.length > 50) seasonData.news = seasonData.news.slice(-50)
+
+    // Stamp the debounce mark (mirrored in memory now, persisted best-effort).
+    const newMarks = { ...marks, [key]: String(date ?? '').slice(0, 10) }
+    if (camp) {
+      camp.settings = { ...camp.settings, fandomNewsMarks: newMarks }
+      CampaignRepository.updateSettings(camp.id, { fandomNewsMarks: newMarks }).catch(() => {})
     }
   }
 
@@ -3623,6 +3765,19 @@ export const useGameStore = defineStore('game', () => {
       } catch (err) {
         console.warn('[GameStore] Coach career stat update failed for bulk AI game:', err)
       }
+      // Fandom moves for AI-vs-AI games too (league-wide meter). Playoff
+      // games are handled in the playoff loop below where the round/champion
+      // context is known — skip them here to avoid double-applying.
+      if (!game.isPlayoff) {
+        try {
+          await _updateFandomAfterGame(campaignId, game, {
+            home_score: r.homeScore,
+            away_score: r.awayScore,
+          })
+        } catch (err) {
+          console.warn('[GameStore] fandom update failed for bulk AI game:', err)
+        }
+      }
     }
 
     // Update playoff series for any AI playoff games
@@ -3648,6 +3803,18 @@ export const useGameStore = defineStore('game', () => {
           if (nextRound <= 4) {
             PlayoffManager.generatePlayoffSchedule(seasonData, teams, nextRound, year)
           }
+        }
+        // Round-scaled fandom for AI playoff games (title surge when this
+        // game clinched the finals).
+        try {
+          await _updateFandomAfterGame(campaignId, updatedGame, {
+            home_score: r.homeScore,
+            away_score: r.awayScore,
+          }, {
+            isChampion: !!(seriesUpdate?.seriesComplete && seriesUpdate?.round === 4),
+          })
+        } catch (err) {
+          console.warn('[GameStore] fandom update failed for bulk playoff game:', err)
         }
       }
     }

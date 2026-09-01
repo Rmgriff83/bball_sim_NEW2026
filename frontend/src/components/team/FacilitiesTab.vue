@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed, onMounted, markRaw } from 'vue'
+import { ref, computed, onMounted, markRaw, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useTeamStore } from '@/stores/team'
 import { useAuthStore } from '@/stores/auth'
 import { useTokensStore } from '@/stores/tokens'
@@ -14,10 +15,16 @@ import HireScoutModal from '@/components/team/HireScoutModal.vue'
 import HireTrainerModal from '@/components/team/HireTrainerModal.vue'
 import HireStaffTrainerModal from '@/components/team/HireStaffTrainerModal.vue'
 import HireAnalystModal from '@/components/team/HireAnalystModal.vue'
+import HireArenaManagerModal from '@/components/team/HireArenaManagerModal.vue'
 import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
-import { AlertTriangle, Check, Lock, Binoculars, Heart, Activity, BarChart3 } from 'lucide-vue-next'
+import { AlertTriangle, Check, Lock, Binoculars, Heart, Activity, BarChart3, Ticket, Megaphone, X, Coins, Plus } from 'lucide-vue-next'
 import { PERSONNEL_SETTINGS_KEY } from '@/engine/data/personnelTiers'
-import { t, tDynamic } from '@wl-i18n/i18n.js'
+import {
+  applyFandomDelta, ARENA_UPGRADE_RAW, FANDOM_DEFAULT,
+  canRunMarketingEvent, MARKETING_EVENTS_PER_SEASON, MARKETING_BOOST_MULTIPLIER,
+} from '@/engine/fandom/FandomService'
+import { MARKETING_EVENTS } from '@/engine/data/marketingEvents'
+import { t, tDynamic, dateLocale } from '@wl-i18n/i18n.js'
 
 const props = defineProps({
   campaignId: {
@@ -40,10 +47,21 @@ const syncStore = useSyncStore()
 const audio = useAudioStore()
 
 const activeSubTab = ref(
-  ['scouting', 'training', 'medical', 'analytics'].includes(props.initialSubTab)
+  ['scouting', 'training', 'medical', 'analytics', 'arena'].includes(props.initialSubTab)
     ? props.initialSubTab
     : 'scouting'
 )
+
+// Mirror the active facility sub-tab into the URL query (replace — no history
+// spam) so refreshes and the headshot-editor round trip land back on the same
+// department. Guarded to the team view's facilities tab so this component
+// never rewrites another host's query.
+const route = useRoute()
+const router = useRouter()
+watch(activeSubTab, (sub) => {
+  if (route.query.tab !== 'facilities' || route.query.sub === sub) return
+  router.replace({ query: { ...route.query, sub } }).catch(() => {})
+})
 const upgrading = ref(false)
 const confirmingUpgrade = ref(false)
 const showHireModal = ref(false)
@@ -61,7 +79,7 @@ const facilityTypes = {
     perks: [
       'Level 1: 1 scouting point every two weeks',
       'Level 2: 2 scouting points every two weeks — activates your scout\'s Extra Reveals perk',
-      'Level 3: 3 scouting points every two weeks — activates Badge Intel + Personality Intel (4-star scout)',
+      'Level 3: 3 scouting points every two weeks — activates Badge Intel + Personality Intel (4-star scout) and Insider Intel (select scouts)',
       'Level 4: 4 scouting points every two weeks',
       'Level 5: 5 scouting points every two weeks',
     ]
@@ -99,6 +117,17 @@ const facilityTypes = {
       'Level 5: Season Proven — highlights your best-performing scheme from live season data',
     ]
   },
+  arena: {
+    name: 'Arena',
+    description: 'Your home floor and everything around it. Every upgrade gives fandom an immediate boost and softens how much losses hurt it, and an energized fanbase amplifies your home-court advantage — hire an arena manager to protect fandom even further.',
+    perks: [
+      'Level 1: A rundown arena — flickering scoreboard, stale popcorn, and rows of empty seats',
+      'Level 2: Losses hurt your fandom 5% less — activates your arena manager\'s Promo Machine perk',
+      'Level 3: Losses hurt your fandom 10% less — activates the Game-Night DJ perk (select arena managers)',
+      'Level 4: Losses hurt your fandom 15% less — a destination arena that keeps casual fans coming back',
+      'Level 5: Losses hurt your fandom 20% less — a league-famous cathedral of basketball',
+    ]
+  },
 }
 
 // The staff member who runs each facility, moved here from the old Personnel
@@ -117,7 +146,6 @@ const STAFF_CONFIG = {
     starLabel: '{n}-Star Scout',
     emptyTitle: 'No Scout Hired',
     hireLabel: 'Hire Scout',
-    releaseLabel: 'Release Scout',
     releasedToast: 'Scout released',
     releaseFailedToast: 'Failed to release scout',
     perkReq: 'Requires Scouting Facility Lv {n}',
@@ -125,6 +153,7 @@ const STAFF_CONFIG = {
       extra_reveals: { label: 'Extra Reveals', description: 'Reveals 33% of attributes per scout action (3 actions to fully scout)' },
       badge_reveal: { label: 'Badge Intel', description: '35% chance per scout action to reveal badges' },
       morale_reveal: { label: 'Personality Intel', description: '35% chance per scout action to reveal morale/personality' },
+      red_flag_intel: { label: 'Insider Intel', description: 'Full scouting reports call out character and durability red flags buried in the numbers' },
     },
   },
   medical: {
@@ -136,7 +165,6 @@ const STAFF_CONFIG = {
     starLabel: '{n}-Star Physician',
     emptyTitle: 'No Team Physician',
     hireLabel: 'Hire Physician',
-    releaseLabel: 'Release Physician',
     releasedToast: 'Physician released',
     releaseFailedToast: 'Failed to release physician',
     perkReq: 'Requires Medical Facility Lv {n}',
@@ -154,13 +182,13 @@ const STAFF_CONFIG = {
     starLabel: '{n}-Star Trainer',
     emptyTitle: 'No Trainer',
     hireLabel: 'Hire Trainer',
-    releaseLabel: 'Release Trainer',
     releasedToast: 'Trainer released',
     releaseFailedToast: 'Failed to release trainer',
     perkReq: 'Requires Training Facility Lv {n}',
     perkLabels: {
       growth_boost: { label: 'Enhanced Development', description: 'Players develop faster from game performance' },
       fatigue_reduction: { label: 'Conditioning Program', description: 'Players generate less fatigue during games' },
+      badge_breakthrough: { label: 'Breakthrough Training', description: 'Training rewards can break through straight to Silver or Gold' },
     },
   },
   analytics: {
@@ -172,7 +200,6 @@ const STAFF_CONFIG = {
     starLabel: '{n}-Star Analyst',
     emptyTitle: 'No Analyst Hired',
     hireLabel: 'Hire Analyst',
-    releaseLabel: 'Release Analyst',
     releasedToast: 'Analyst released',
     releaseFailedToast: 'Failed to release analyst',
     perkReq: 'Requires Analytics Facility Lv {n}',
@@ -181,10 +208,28 @@ const STAFF_CONFIG = {
       opponent_analytics: { label: 'Opponent Scouting Report', description: "Scout the opponent's play-set tendencies before games." },
     },
   },
+  arena: {
+    kind: 'arena_manager',
+    settingsKey: PERSONNEL_SETTINGS_KEY.arena_manager,
+    modal: markRaw(HireArenaManagerModal),
+    modalLevelProp: 'arenaFacilityLevel',
+    emptyIcon: markRaw(Ticket),
+    starLabel: '{n}-Star Arena Manager',
+    emptyTitle: 'No Arena Manager',
+    hireLabel: 'Hire Arena Manager',
+    releasedToast: 'Arena manager released',
+    releaseFailedToast: 'Failed to release arena manager',
+    perkReq: 'Requires Arena Facility Lv {n}',
+    perkLabels: {
+      arena_loss_mitigation: { label: 'Damage Control', description: "Losses drag your fandom down less (stacks with your arena's built-in protection)" },
+      marketing_boost: { label: 'Promo Machine', description: 'Marketing events boost fandom 25% more' },
+      song_picker: { label: 'Game-Night DJ', description: 'Pick the song that plays during your timeouts from the pregame screen' },
+    },
+  },
 }
 
 const facilities = computed(() => {
-  return teamStore.team?.facilities || { training: 1, medical: 1, scouting: 1, analytics: 1 }
+  return teamStore.team?.facilities || { training: 1, medical: 1, scouting: 1, analytics: 1, arena: 1 }
 })
 
 const awardTokens = computed(() => {
@@ -294,11 +339,17 @@ async function upgradeFacility() {
 
     team.facilities = team.facilities ?? {}
     team.facilities[facilityKey] = Math.min(5, (team.facilities[facilityKey] ?? 1) + 1)
+    // An arena upgrade energizes the fanbase immediately (mirrored by the
+    // -4 hit when an unstaffed arena degrades at season rollover).
+    if (facilityKey === 'arena') {
+      team.fandom = applyFandomDelta(team.fandom, ARENA_UPGRADE_RAW)
+    }
     await TeamRepository.save(team)
 
     // Update local stores
     if (teamStore.team) {
       teamStore.team.facilities = { ...team.facilities }
+      if (facilityKey === 'arena') teamStore.team.fandom = team.fandom
     }
 
     syncStore.markDirty()
@@ -310,6 +361,121 @@ async function upgradeFacility() {
     toastStore.showError(msg)
   } finally {
     upgrading.value = false
+  }
+}
+
+// --- Arena sub-tab: fandom meter + marketing events --------------------------
+
+const teamFandom = computed(() => {
+  const v = Number(teamStore.team?.fandom ?? FANDOM_DEFAULT)
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : FANDOM_DEFAULT
+})
+
+// Same bands as the home-view fandom chip (aligned with news thresholds).
+const fandomColor = computed(() => {
+  const pct = teamFandom.value
+  if (pct >= 85) return '#22c55e'
+  if (pct >= 50) return '#f59e0b'
+  if (pct >= 15) return '#f97316'
+  return '#ef4444'
+})
+
+const _gameDate = computed(() =>
+  campaignStore.currentCampaign?.currentDate ?? campaignStore.currentCampaign?.current_date ?? null
+)
+
+const marketingState = computed(() => campaignStore.currentCampaign?.settings?.marketing ?? null)
+
+const marketingCheck = computed(() => canRunMarketingEvent(marketingState.value, _gameDate.value))
+
+const marketingUsed = computed(() =>
+  Math.min(MARKETING_EVENTS_PER_SEASON, Number(marketingState.value?.usedThisSeason) || 0)
+)
+
+// Promo Machine (marketing_boost) perk: hired arena manager + arena level
+// meeting the perk's stored requiredLevel (grandfather rule `?? 1`).
+const marketingBoostActive = computed(() => {
+  const mgr = campaignStore.currentCampaign?.settings?.arena_manager
+  const perk = (mgr?.perks ?? []).find(p => p.key === 'marketing_boost')
+  if (!perk) return false
+  return (facilities.value.arena ?? 1) >= (perk.requiredLevel ?? 1)
+})
+
+const marketingCooldownLabel = computed(() => {
+  const iso = marketingCheck.value.eligibleDate
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return ''
+  return new Date(y, m - 1, d).toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' })
+})
+
+const runningEventId = ref(null)
+const showMarketingModal = ref(false)
+
+// Confirm step before the token spend — mirrors the facility-upgrade
+// confirm pattern, rendered as an overlay inside the marketing popup.
+const confirmingEvent = ref(null)
+watch(showMarketingModal, (open) => {
+  if (!open) confirmingEvent.value = null
+})
+
+async function confirmMarketingEvent() {
+  const event = confirmingEvent.value
+  if (!event) return
+  await runMarketingEvent(event)
+  confirmingEvent.value = null
+}
+
+function goToStore() {
+  showMarketingModal.value = false
+  router.push('/store')
+}
+
+async function runMarketingEvent(event) {
+  if (runningEventId.value) return
+  if (!marketingCheck.value.allowed || awardTokens.value < event.cost) return
+  runningEventId.value = event.id
+  audio.suppressClickSound()
+
+  try {
+    // Deduct tokens (offline-capable: queues the spend when unreachable)
+    await useTokensStore().spendTokens(event.cost, 'marketing_event')
+
+    const campaign = await CampaignRepository.get(props.campaignId)
+    if (!campaign) throw new Error('Campaign not found')
+    const team = await TeamRepository.get(props.campaignId, campaign.teamId)
+    if (!team) throw new Error('Team not found')
+
+    const raw = event.raw * (marketingBoostActive.value ? MARKETING_BOOST_MULTIPLIER : 1)
+    team.fandom = applyFandomDelta(team.fandom, raw)
+    await TeamRepository.save(team)
+
+    campaign.settings = campaign.settings ?? {}
+    const prev = campaign.settings.marketing ?? {}
+    campaign.settings.marketing = {
+      ...prev,
+      usedThisSeason: (Number(prev.usedThisSeason) || 0) + 1,
+      lastUsedDate: _gameDate.value,
+    }
+    await CampaignRepository.save(campaign)
+
+    // Mirror into the live stores
+    if (teamStore.team) teamStore.team.fandom = team.fandom
+    if (campaignStore.currentCampaign) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        marketing: campaign.settings.marketing,
+      }
+    }
+
+    syncStore.markDirty()
+    audio.purchase()
+    toastStore.showSuccess(t('{name} boosted your fandom to {pct}%!', { name: tDynamic(event.name), pct: Math.round(team.fandom) }))
+  } catch (err) {
+    console.error('Failed to run marketing event:', err)
+    toastStore.showError(t('Failed to run marketing event'))
+  } finally {
+    runningEventId.value = null
   }
 }
 </script>
@@ -342,7 +508,7 @@ async function upgradeFacility() {
         :key="key"
         class="facility-tab-btn"
         :class="{ active: activeSubTab === key }"
-        @click="activeSubTab = key; confirmingUpgrade = false; showHireModal = false"
+        @click="activeSubTab = key; confirmingUpgrade = false; showHireModal = false; showMarketingModal = false"
       >
         {{ $tDynamic(facility.name) }}
         <span v-if="!hiredStaffFor(key)" class="tab-badge tab-badge-warning">
@@ -370,6 +536,19 @@ async function upgradeFacility() {
 
       <p class="facility-description">{{ $tDynamic(currentFacility.description) }}</p>
 
+      <!-- Arena-only: marketing events live in a popup — trigger sits under
+           the description, above the staff slot. -->
+      <button
+        v-if="activeSubTab === 'arena'"
+        class="marketing-open-btn"
+        data-tour="arena-marketing"
+        @click="showMarketingModal = true"
+      >
+        <Megaphone :size="14" />
+        <span>{{ $t('Marketing Events') }}</span>
+        <span class="marketing-open-count">{{ marketingUsed }}/3</span>
+      </button>
+
       <!-- Staff slot — the specialist who runs this facility -->
       <div class="staff-slot" :class="{ empty: !hiredStaff, 'perks-locked': lockedPerks.length > 0 }" data-tour="gm-facility-staff">
         <template v-if="hiredStaff">
@@ -378,7 +557,7 @@ async function upgradeFacility() {
               <PersonnelAvatar
                 :personnel="hiredStaff"
                 :kind="staffCfg.kind"
-                :size="44"
+                :size="64"
                 :campaign-id="campaignId"
                 :editable="true"
               />
@@ -396,7 +575,7 @@ async function upgradeFacility() {
               :disabled="firing"
               @click="fireStaff"
             >
-              {{ firing ? $t('Releasing...') : $tDynamic(staffCfg.releaseLabel) }}
+              {{ firing ? $t('Releasing...') : $t('Release') }}
             </button>
           </div>
 
@@ -430,7 +609,7 @@ async function upgradeFacility() {
         <template v-else>
           <div class="staff-slot-header">
             <div class="staff-slot-avatar empty-icon-wrap">
-              <component :is="staffCfg.emptyIcon" :size="22" />
+              <component :is="staffCfg.emptyIcon" :size="62" />
             </div>
             <div class="staff-slot-info">
               <p class="staff-slot-name empty-title">{{ $tDynamic(staffCfg.emptyTitle) }}</p>
@@ -483,6 +662,103 @@ async function upgradeFacility() {
 
     </div>
 
+    <!-- Marketing events popup (arena) -->
+    <Teleport to="body">
+      <Transition name="marketing-modal">
+        <div v-if="showMarketingModal" class="marketing-modal-overlay" @click.self="showMarketingModal = false">
+          <div class="marketing-modal">
+            <header class="marketing-modal-header">
+              <h3 class="marketing-modal-title">
+                <Megaphone :size="16" />
+                {{ $t('Marketing Events') }}
+              </h3>
+              <button class="marketing-modal-close" aria-label="Close" @click="showMarketingModal = false">
+                <X :size="18" />
+              </button>
+            </header>
+
+            <main class="marketing-modal-body">
+              <!-- Fandom meter — the campaign's live meter, shown here where
+                   the actions that move it live. -->
+              <div class="fandom-section" data-tour="arena-fandom">
+                <div class="fandom-header">
+                  <span class="fandom-title">{{ $t('Fandom') }}</span>
+                  <span class="fandom-pct" :style="{ color: fandomColor }">{{ teamFandom }}%</span>
+                </div>
+                <div class="fandom-bar">
+                  <div class="fandom-bar-fill" :style="{ width: teamFandom + '%', background: fandomColor }"></div>
+                </div>
+                <p class="fandom-hint">{{ $t('Winning, playoff runs, and arena upgrades grow your fanbase — losing shrinks it. High fandom amplifies your home-court advantage.') }}</p>
+              </div>
+
+              <div class="marketing-header">
+                <span class="marketing-usage">{{ $t('{used} of {max} used this season', { used: marketingUsed, max: 3 }) }}</span>
+                <span class="marketing-token-group">
+                  <span class="marketing-tokens">
+                    <Coins :size="12" />
+                    {{ awardTokens.toLocaleString() }}
+                  </span>
+                  <button type="button" class="buy-tokens-btn" @click="goToStore" :title="$t('Get more tokens in the Store')">
+                    <Plus :size="12" />
+                    <span>{{ $t('Get Tokens') }}</span>
+                  </button>
+                </span>
+              </div>
+              <p v-if="!marketingCheck.allowed && marketingCheck.reason === 'cooldown'" class="marketing-notice">
+                {{ $t('Next event available {date}', { date: marketingCooldownLabel }) }}
+              </p>
+              <p v-else-if="!marketingCheck.allowed && marketingCheck.reason === 'season_cap'" class="marketing-notice">
+                {{ $t('No marketing events left this season') }}
+              </p>
+              <p v-if="marketingBoostActive" class="marketing-boost-note">
+                {{ $t('Promo Machine active — events boost fandom 25% more') }}
+              </p>
+
+              <div class="marketing-list">
+                <div
+                  v-for="event in MARKETING_EVENTS"
+                  :key="event.id"
+                  class="marketing-event"
+                  :class="{ unavailable: !marketingCheck.allowed || awardTokens < event.cost }"
+                >
+                  <div class="marketing-event-info">
+                    <span class="marketing-event-name">{{ $tDynamic(event.name) }}</span>
+                    <span class="marketing-event-desc">{{ $tDynamic(event.description) }}</span>
+                    <span class="marketing-event-gain">{{ $t('+{n} fandom', { n: event.raw }) }}</span>
+                  </div>
+                  <button
+                    class="marketing-event-btn"
+                    :disabled="!marketingCheck.allowed || awardTokens < event.cost || runningEventId !== null"
+                    @click="confirmingEvent = event"
+                  >
+                    {{ runningEventId === event.id ? $t('Running...') : $t('{n} tokens', { n: event.cost.toLocaleString() }) }}
+                  </button>
+                </div>
+              </div>
+            </main>
+
+            <!-- Confirm step before the token spend -->
+            <div v-if="confirmingEvent" class="marketing-confirm-overlay">
+              <div class="marketing-confirm-box">
+                <p class="marketing-confirm-name">{{ $tDynamic(confirmingEvent.name) }}</p>
+                <p class="marketing-confirm-text">
+                  {{ $t('Spend {n} tokens to boost your fandom by {gain}?', { n: confirmingEvent.cost.toLocaleString(), gain: confirmingEvent.raw }) }}
+                </p>
+                <div class="marketing-confirm-actions">
+                  <button class="marketing-confirm-cancel" :disabled="runningEventId !== null" @click="confirmingEvent = null">
+                    {{ $t('Cancel') }}
+                  </button>
+                  <button class="marketing-confirm-btn" :disabled="runningEventId !== null" @click="confirmMarketingEvent">
+                    {{ runningEventId !== null ? $t('Running...') : $t('Confirm') }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <!-- Upgrade confirmation popup — consistent with other token-spend confirms -->
     <FacilityUpgradeConfirmModal
       :show="confirmingUpgrade"
@@ -521,6 +797,365 @@ async function upgradeFacility() {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
   margin-bottom: 20px;
+}
+
+/* --- Arena: fandom meter (top of the marketing popup) ---------------------- */
+.fandom-section {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+}
+
+.fandom-header,
+.marketing-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.fandom-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+}
+
+/* Trigger button — sits under the arena description, above the staff slot. */
+.marketing-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 9px 14px;
+  border-radius: var(--radius-lg);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #F59E0B;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.marketing-open-btn:hover {
+  background: rgba(245, 158, 11, 0.22);
+}
+
+.marketing-open-count {
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.18);
+  font-size: 0.7rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Popup chrome (Teleported — scoped attrs still apply). */
+.marketing-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+.marketing-modal {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+}
+
+/* Spend-confirm overlay inside the popup (mirrors the discard-confirm
+   pattern used by the roster-editor modals). */
+.marketing-confirm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.marketing-confirm-box {
+  width: 100%;
+  max-width: 320px;
+  padding: 20px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  text-align: center;
+}
+
+.marketing-confirm-name {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.marketing-confirm-text {
+  margin: 0 0 16px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+.marketing-confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.marketing-confirm-cancel {
+  padding: 9px 16px;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.marketing-confirm-cancel:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+}
+
+.marketing-confirm-btn {
+  padding: 9px 18px;
+  border-radius: var(--radius-lg);
+  background: var(--color-primary);
+  border: none;
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.marketing-confirm-btn:disabled,
+.marketing-confirm-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.marketing-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.marketing-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.marketing-modal-title svg { color: #F59E0B; }
+
+.marketing-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.marketing-modal-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.marketing-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.marketing-token-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.marketing-tokens {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #F59E0B;
+}
+
+.buy-tokens-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.buy-tokens-btn:hover {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.06));
+  border-color: var(--color-primary);
+}
+
+.marketing-modal-enter-active { transition: opacity 0.25s ease; }
+.marketing-modal-leave-active { transition: opacity 0.2s ease; }
+.marketing-modal-enter-from,
+.marketing-modal-leave-to { opacity: 0; }
+
+.fandom-pct {
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.fandom-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.fandom-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.fandom-hint {
+  margin: 10px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+.marketing-usage {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.marketing-notice {
+  margin: 0 0 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #f59e0b;
+}
+
+.marketing-boost-note {
+  margin: 0 0 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #22c55e;
+}
+
+.marketing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.marketing-event {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-lg);
+}
+
+.marketing-event.unavailable {
+  opacity: 0.6;
+}
+
+.marketing-event-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.marketing-event-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.marketing-event-desc {
+  font-size: 0.72rem;
+  line-height: 1.3;
+  color: var(--color-text-secondary);
+}
+
+.marketing-event-gain {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #22c55e;
+}
+
+.marketing-event-btn {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #F59E0B;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.marketing-event-btn:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.25);
+}
+
+.marketing-event-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .facility-overview-item {
@@ -828,8 +1463,8 @@ async function upgradeFacility() {
 }
 
 .staff-slot-avatar {
-  width: 44px;
-  height: 44px;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
   display: flex;
   align-items: center;

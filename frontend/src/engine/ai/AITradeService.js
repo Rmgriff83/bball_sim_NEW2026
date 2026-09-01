@@ -11,6 +11,7 @@ import { calculateRetentionScore } from './MotivationService';
 import { LUXURY_TAX, FIRST_APRON, capLineForExpectation } from '../data/salaryScale';
 import { findOwnerForTeam } from '../data/owners';
 import { validateSalaryCap, isPickApronFrozen } from '../finance/TradeExecutor';
+import { isPlayerTradeLocked } from '../finance/tradeEligibility';
 import { T } from '../simulation/commentaryTemplate';
 
 // Salary total of a trade-asset list (picks carry no salary).
@@ -159,7 +160,10 @@ function getPlayerContractYears(player) {
  * @param {Array} tradingBlock - Array of player IDs on the trading block
  * @returns {boolean}
  */
-function isPlayerAvailableForTrade(player, tradingBlock = []) {
+function isPlayerAvailableForTrade(player, tradingBlock = [], currentDate = null) {
+  // League-wide 30-day cooldown: a just-traded player can't be moved again.
+  // Must precede the low-rating early return below.
+  if (currentDate && isPlayerTradeLocked(player, currentDate)) return false;
   const rating = getPlayerRating(player);
   // Low-rated players are always available
   if (rating < 82) return true;
@@ -1382,9 +1386,11 @@ export function generateWeeklyProposals({
 
     // Filter out players this team already had rejected for (exact team+player combo, 30-day cooldown)
     // Also filter out players on global cooldown (ANY team was rejected for them in last 14 days)
+    // and players inside the league-wide 30-day recently-traded window.
     let filteredTargets = targetPlayers.filter(p =>
       !rejectedTeamPlayerCombos.has(`${teamIdStr}::${String(p.id)}`) &&
-      !recentlyDeclinedPlayers.has(String(p.id))
+      !recentlyDeclinedPlayers.has(String(p.id)) &&
+      !isPlayerTradeLocked(p, currentDate)
     );
 
     // Retention-based targeting: only pursue genuinely disgruntled players.
@@ -1412,7 +1418,9 @@ export function generateWeeklyProposals({
     // Find AI players to offer in return
     const teamPicks = getTeamPicksFn(aiTeam.id);
     const aiOffer = buildAiOffer({
-      aiRoster,
+      // Recently-traded players can't be offered out (analysis above keeps the
+      // full roster — this only trims asset selection).
+      aiRoster: aiRoster.filter(p => !isPlayerTradeLocked(p, currentDate)),
       targetPlayer: target,
       direction,
       teamPicks,
@@ -1566,12 +1574,12 @@ function _teamMandateLine(team, capNumbers = null) {
  * Find target players from any roster that match a team's need.
  * Adapts findTargetPlayers() for bilateral AI-to-AI use.
  */
-function _findTargetPlayersFromRoster(roster, need, direction, tradingBlock = []) {
+function _findTargetPlayersFromRoster(roster, need, direction, tradingBlock = [], currentDate = null) {
   const targets = [];
 
   for (const player of roster) {
     // Gate: skip protected players
-    if (!isPlayerAvailableForTrade(player, tradingBlock)) continue;
+    if (!isPlayerAvailableForTrade(player, tradingBlock, currentDate)) continue;
 
     const rating = getPlayerRating(player);
     const age = getPlayerAge(player);
@@ -1617,11 +1625,11 @@ function _calculateTeamPayroll(roster) {
  * "big swing." Availability respects the trading block (a healthy multi-year star
  * is only here if the rebuilder has dangled them; see computeAiTradingBlock).
  */
-function _findAvailableStar(roster, tradingBlock = [], minRating = 82) {
+function _findAvailableStar(roster, tradingBlock = [], minRating = 82, currentDate = null) {
   let best = null;
   for (const p of roster) {
     if (getPlayerRating(p) < minRating) continue;
-    if (!isPlayerAvailableForTrade(p, tradingBlock)) continue;
+    if (!isPlayerAvailableForTrade(p, tradingBlock, currentDate)) continue;
     if (!best || getPlayerTradeValue(p) > getPlayerTradeValue(best)) best = p;
   }
   return best;
@@ -1631,14 +1639,14 @@ function _findAvailableStar(roster, tradingBlock = [], minRating = 82) {
  * Best AVAILABLE veteran a rebuilder would proactively shop for picks: rating
  * >= 76 and either on an expiring deal or aging (>= 29).
  */
-function _findShoppableVet(roster, tradingBlock = []) {
+function _findShoppableVet(roster, tradingBlock = [], currentDate = null) {
   let best = null;
   for (const p of roster) {
     if (getPlayerRating(p) < 76) continue;
     const yrs = getPlayerContractYears(p);
     const age = getPlayerAge(p);
     if (!(yrs === 1 || age >= 29)) continue;
-    if (!isPlayerAvailableForTrade(p, tradingBlock)) continue;
+    if (!isPlayerAvailableForTrade(p, tradingBlock, currentDate)) continue;
     if (!best || getPlayerTradeValue(p) > getPlayerTradeValue(best)) best = p;
   }
   return best;
@@ -1648,10 +1656,11 @@ function _findShoppableVet(roster, tradingBlock = []) {
  * A young, non-core player a contender can throw into a big swing as a sweetener
  * (age <= 24, rating 70-79, outside the team's top 3).
  */
-function _findYoungSweetener(roster) {
+function _findYoungSweetener(roster, currentDate = null) {
   const sorted = [...roster].sort((a, b) => getPlayerRating(b) - getPlayerRating(a));
   let best = null;
   for (const p of sorted.slice(3)) {
+    if (isPlayerTradeLocked(p, currentDate)) continue;
     const rating = getPlayerRating(p);
     if (getPlayerAge(p) <= 24 && rating >= 70 && rating <= 79) {
       if (!best || getPlayerTradeValue(p) > getPlayerTradeValue(best)) best = p;
@@ -1669,6 +1678,7 @@ function _findAiToAiTrade({
   team2, team2Roster, team2Dir, team2Picks,
   team1TradingBlock = [], team2TradingBlock = [],
   context, difficulty, getPlayerFn, getPickValueFn = () => 5,
+  currentDate = null,
 }) {
   const diffConfig = getDifficultyConfig(difficulty);
   const need1 = identifyNeed(team1Dir, team1Roster);
@@ -1677,8 +1687,8 @@ function _findAiToAiTrade({
   if (!need1 && !need2) return null;
 
   // Find targets: what team1 wants from team2's roster and vice versa
-  const targets1 = need1 ? _findTargetPlayersFromRoster(team2Roster, need1, team1Dir, team2TradingBlock) : [];
-  const targets2 = need2 ? _findTargetPlayersFromRoster(team1Roster, need2, team2Dir, team1TradingBlock) : [];
+  const targets1 = need1 ? _findTargetPlayersFromRoster(team2Roster, need1, team1Dir, team2TradingBlock, currentDate) : [];
+  const targets2 = need2 ? _findTargetPlayersFromRoster(team1Roster, need2, team2Dir, team1TradingBlock, currentDate) : [];
 
   const patterns = [];
 
@@ -1737,9 +1747,9 @@ function _findAiToAiTrade({
     const pickAssets = (n) => pool.slice(0, n).map(pk => ({ type: 'pick', pickId: pk.id }));
 
     // D — big swing for an available star (escalating cost: picks, then + youth)
-    const star = _findAvailableStar(rebRoster, rebBlock, 82);
+    const star = _findAvailableStar(rebRoster, rebBlock, 82, currentDate);
     if (star) {
-      const young = _findYoungSweetener(conRoster);
+      const young = _findYoungSweetener(conRoster, currentDate);
       const youngAsset = young ? { type: 'player', playerId: young.id } : null;
       const rebGives = [{ type: 'player', playerId: star.id }];
       const p2 = pickAssets(2);
@@ -1751,7 +1761,7 @@ function _findAiToAiTrade({
 
     // E — rebuilder shop: aging/expiring vet for a pick package (2, escalating to 3
     // for a star-level vet)
-    const vet = _findShoppableVet(rebRoster, rebBlock);
+    const vet = _findShoppableVet(rebRoster, rebBlock, currentDate);
     if (vet) {
       const maxN = Math.min(getPlayerRating(vet) >= 82 ? 3 : 2, pool.length);
       const rebGives = [{ type: 'player', playerId: vet.id }];
@@ -1818,6 +1828,7 @@ function _findAiToAiTrade({
       const targetVal = getPlayerTradeValue(pattern.target);
       let sendBack = null;
       for (const c of candidates) {
+        if (isPlayerTradeLocked(c, currentDate)) continue;
         const cVal = getPlayerTradeValue(c);
         if (cVal >= targetVal * 0.4 && cVal <= targetVal * 0.85) {
           sendBack = c;
@@ -2035,9 +2046,17 @@ export function processAiToAiTrades({
         team2: info2.team, team2Roster: info2.roster, team2Dir: info2.dir, team2Picks: info2.picks,
         team1TradingBlock: info1.tradingBlock, team2TradingBlock: info2.tradingBlock,
         context, difficulty, getPlayerFn, getPickValueFn,
+        currentDate,
       });
 
       if (!deal) continue;
+
+      // 30-day recently-traded cooldown backstop — players only, picks exempt.
+      // The target finders above already skip locked players; this guarantees no
+      // deal pattern can slip one through regardless of how it was assembled.
+      const hasLockedPlayer = [...deal.team1Gives, ...deal.team2Gives].some(a =>
+        a.type === 'player' && isPlayerTradeLocked(getPlayerFn(a.playerId), currentDate));
+      if (hasLockedPlayer) continue;
 
       tradedTeams.add(t1.id);
       tradedTeams.add(t2.id);

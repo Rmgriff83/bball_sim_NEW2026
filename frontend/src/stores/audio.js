@@ -5,7 +5,7 @@ import { UI_SOUNDS } from '@/audio/sounds'
 import { MUSIC, GAME_SFX } from '@/audio/tracks'
 import EVENT_SFX from '@/audio/eventSfx'
 import AMBIENT_SFX from '@/audio/ambientSfx'
-import { TIMEOUT_MUSIC } from '@/audio/timeoutMusic'
+import { TIMEOUT_MUSIC, timeoutTrackById } from '@/audio/timeoutMusic'
 
 // Public audio API for the app. Holds the user preferences (enabled + volume,
 // persisted to localStorage) and delegates actual sound production to the
@@ -231,18 +231,36 @@ export const useAudioStore = defineStore('audio', () => {
     for (const url of TIMEOUT_MUSIC.urls) engine.preloadSample(url)
   }
 
-  function startTimeoutMusic() {
+  // `preferredTrackId` (arena-manager Game-Night DJ perk): play that track
+  // when it exists in the pool; anything else — null, 'random', or a stale id
+  // whose file was removed — falls back to the classic random pick.
+  function startTimeoutMusic(preferredTrackId = null) {
     if (!enabled.value || gameMuted.value) return
     if (TIMEOUT_MUSIC.urls.length === 0) return // no tracks yet — safe no-op
     engine.unlock()
     stopTimeoutMusic()
-    const url = TIMEOUT_MUSIC.urls[Math.floor(Math.random() * TIMEOUT_MUSIC.urls.length)]
+    const preferred = preferredTrackId && preferredTrackId !== 'random'
+      ? timeoutTrackById(preferredTrackId)
+      : null
+    const url = preferred?.url
+      ?? TIMEOUT_MUSIC.urls[Math.floor(Math.random() * TIMEOUT_MUSIC.urls.length)]
     timeoutMusicHandle = engine.playStoppableSample(url, { volume: TIMEOUT_MUSIC.volume * GAME_AUDIO_ATTENUATION })
   }
 
   function stopTimeoutMusic() {
     engine.stopLoop(timeoutMusicHandle) // handle.stop() — same contract as playLoop
     timeoutMusicHandle = null
+  }
+
+  // Preview one specific track (pregame song picker). Reuses the timeout
+  // handle so a second preview (or a real timeout) stops the previous one.
+  function previewTimeoutTrack(trackId) {
+    if (!enabled.value) return
+    const track = timeoutTrackById(trackId)
+    if (!track) return
+    engine.unlock()
+    stopTimeoutMusic()
+    timeoutMusicHandle = engine.playStoppableSample(track.url, { volume: TIMEOUT_MUSIC.volume * GAME_AUDIO_ATTENUATION })
   }
 
   // ---- Ambient loops (layered in-game beds: court noise, crowd, ...) ----
@@ -310,6 +328,7 @@ export const useAudioStore = defineStore('audio', () => {
     preloadTimeoutMusic,
     startTimeoutMusic,
     stopTimeoutMusic,
+    previewTimeoutTrack,
     preloadAmbientSfx,
     startAmbient,
     stopAmbient,

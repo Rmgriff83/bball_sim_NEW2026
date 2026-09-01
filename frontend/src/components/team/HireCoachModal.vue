@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { X, Coins, Star, AlertTriangle, ArrowRight } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import { X, Coins, Star, AlertTriangle, ArrowRight, Plus } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useCampaignStore } from '@/stores/campaign'
 import { useTeamStore } from '@/stores/team'
@@ -24,6 +25,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'hired'])
+
+const router = useRouter()
 
 const authStore = useAuthStore()
 const campaignStore = useCampaignStore()
@@ -61,6 +64,11 @@ function badgeDescription(badge) {
   const def = COACH_BADGE_DEFS.find(b => b.id === badge.id)
   if (!def) return badge.id
   return `${tDynamic(def.description)} (${badge.level.toUpperCase()})`
+}
+
+function goToStore() {
+  emit('close')
+  router.push('/store')
 }
 
 function close() {
@@ -163,10 +171,16 @@ function confirmReplace() {
 
           <!-- Candidates list -->
           <main v-else class="modal-content">
-            <div class="token-balance">
-              <Coins :size="16" />
-              <span class="token-amount">{{ tokens.toLocaleString() }}</span>
-              <span class="token-label">{{ $t('Award Tokens') }}</span>
+            <div class="token-group">
+              <div class="token-balance">
+                <Coins :size="16" />
+                <span class="token-amount">{{ tokens.toLocaleString() }}</span>
+                <span class="token-label">{{ $t('Award Tokens') }}</span>
+              </div>
+              <button type="button" class="buy-tokens-btn" @click="goToStore" :title="$t('Get more tokens in the Store')">
+                <Plus :size="14" />
+                <span>{{ $t('Get Tokens') }}</span>
+              </button>
             </div>
 
             <div v-if="candidates.length === 0" class="empty-state">
@@ -718,5 +732,39 @@ function confirmReplace() {
   .modal-container.is-confirm {
     min-height: 0;
   }
+}
+.token-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.token-group .token-balance {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.buy-tokens-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.buy-tokens-btn:hover {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.06));
+  border-color: var(--color-primary);
 }
 </style>

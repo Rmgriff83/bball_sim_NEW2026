@@ -13,6 +13,7 @@ import { backfillGmContract } from '@/engine/migrations/backfillGmContract'
 import { backfillPersonnelIds } from '@/engine/migrations/backfillPersonnelIds'
 import { backfillInitialRookies } from '@/engine/migrations/backfillInitialRookies'
 import { reconcileTeamFields } from '@/engine/migrations/reconcileTeamFields'
+import { backfillFandomArena } from '@/engine/migrations/backfillFandomArena'
 import { rescaleContracts } from '@/engine/migrations/rescaleContracts'
 import { pruneRetiredPlayers } from '@/engine/migrations/pruneRetiredPlayers'
 import { useAuthStore } from '@/stores/auth'
@@ -417,6 +418,15 @@ export const useCampaignStore = defineStore('campaign', () => {
         await reconcileTeamFields(id)
       } catch (reconcileErr) {
         console.warn('[Campaign] team-field reconcile failed:', reconcileErr)
+      }
+
+      // One-shot legacy migration: inject facilities.arena + fandom on teams
+      // saved before the Arena/Fandom feature, and seed the arena-manager
+      // hire pool. Additive only; guarded by settings.fandomArenaBackfilled.
+      try {
+        await backfillFandomArena(id)
+      } catch (fandomErr) {
+        console.warn('[Campaign] fandom/arena backfill failed:', fandomErr)
       }
 
       // One-shot catch-up: prune retired players accumulated before the

@@ -6,6 +6,7 @@
 // and the community-build export — renaming name/city touches none of those.
 import { ref, computed, watch } from 'vue'
 import { Pencil, Loader2 } from 'lucide-vue-next'
+import { fandomForFacilities } from '@/engine/fandom/FandomService'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -16,6 +17,9 @@ const emit = defineEmits(['close', 'save'])
 
 const city = ref('')
 const nickname = ref('')
+// Starting fandom (0-100) — editable ONLY here in the roster editor. In-game
+// the meter moves through play (wins, playoffs, arena, marketing).
+const fandom = ref(50)
 const saving = ref(false)
 
 // Silent-discard guard (mirrors the history/coach editors): snapshot the
@@ -25,7 +29,7 @@ const confirmDiscard = ref(false)
 let _initialSnapshot = ''
 
 function _snapshot() {
-  return JSON.stringify({ c: city.value, n: nickname.value })
+  return JSON.stringify({ c: city.value, n: nickname.value, f: fandom.value })
 }
 
 function requestClose() {
@@ -48,6 +52,12 @@ watch(() => props.show, (open) => {
   nickname.value = teamCity && fullName.startsWith(`${teamCity} `)
     ? fullName.slice(teamCity.length + 1)
     : fullName
+  // Seed from the stored value; teams saved before the fandom feature show
+  // their facility-derived default.
+  const f = Number(props.team.fandom)
+  fandom.value = Number.isFinite(f)
+    ? Math.max(0, Math.min(100, Math.round(f)))
+    : fandomForFacilities(props.team.facilities)
   confirmDiscard.value = false
   _initialSnapshot = _snapshot()
 })
@@ -61,10 +71,12 @@ function save() {
   if (!props.team || saving.value || !canSave.value) return
   saving.value = true
   try {
+    const f = Number(fandom.value)
     emit('save', {
       ...props.team,
       city: city.value.trim().slice(0, 40),
       name: composedName.value.slice(0, 60),
+      fandom: Number.isFinite(f) ? Math.max(0, Math.min(100, Math.round(f))) : 50,
     })
   } finally {
     saving.value = false
@@ -86,6 +98,13 @@ function save() {
           <label class="tie-field">
             <span>{{ $t('Team Name') }}</span>
             <input v-model="nickname" type="text" maxlength="40" class="tie-input" :placeholder="$t('e.g. Shamrocks')" />
+          </label>
+          <label class="tie-field">
+            <span>{{ $t('Starting Fandom') }}</span>
+            <div class="tie-fandom-row">
+              <input v-model.number="fandom" type="range" min="0" max="100" step="1" class="tie-fandom-slider" />
+              <span class="tie-fandom-value">{{ fandom }}%</span>
+            </div>
           </label>
         </div>
 
@@ -234,6 +253,27 @@ function save() {
   font-size: 0.7rem;
   line-height: 1.45;
   color: var(--color-text-tertiary);
+}
+
+.tie-fandom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tie-fandom-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--color-primary);
+}
+
+.tie-fandom-value {
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+  min-width: 38px;
+  text-align: right;
 }
 
 .tie-actions { display: flex; gap: 10px; justify-content: flex-end; }

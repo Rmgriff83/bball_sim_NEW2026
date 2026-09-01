@@ -250,7 +250,8 @@ async function _loadPersonnel() {
     }
   }
   originalSvg.value = svgText
-  config.value = configFromSvg(svgText, personnelId.value)
+  // Personnel faces render with the coach layer set — seed defaults from it.
+  config.value = configFromSvg(svgText, personnelId.value, 'coach')
   if (!svgText) forceComposedPreview.value = true
 }
 
@@ -293,7 +294,7 @@ async function _loadCoach() {
     }
   }
   originalSvg.value = svgText
-  config.value = configFromSvg(svgText, coachId.value)
+  config.value = configFromSvg(svgText, coachId.value, 'coach')
   // If we couldn't load an SVG (PNG master / no headshot), force the
   // preview to render from the parsed-or-default config so the user sees
   // something editable instead of a blank canvas. Uses the dedicated
@@ -328,7 +329,7 @@ function selectPremade(p) {
   // Swap is wholesale and silent per the "immediately replaces" spec; any
   // unsaved tweaks the user had on the canvas are discarded.
   if (!p?.svgContent) return
-  const nextConfig = configFromSvg(p.svgContent, subjectId.value)
+  const nextConfig = configFromSvg(p.svgContent, subjectId.value, audience.value)
   applyConfigUpdate(nextConfig)
 }
 
@@ -457,7 +458,9 @@ function handleExit(skipDirtyCheck = false) {
   // tab) and the editor has done its job.
   const ctx = returnStore.consume()
   if (ctx.route?.name) {
-    router.push({ name: ctx.route.name, params: ctx.route.params || {} })
+    // Query included so tab-driven views (e.g. team ?tab=facilities&sub=…)
+    // restore the exact tab the user was on before opening the editor.
+    router.push({ name: ctx.route.name, params: ctx.route.params || {}, query: ctx.route.query || {} })
   } else {
     // Fallback — return to campaign home.
     router.push({ name: 'campaign-home', params: { id: campaignId.value } })

@@ -419,7 +419,7 @@ class UserController extends Controller
 
     private const LEDGER_SPEND_REASONS = [
         'facility_upgrade', 'staff_hire', 'coach_hire', 'coach_resign',
-        'coach_meeting', 'badge_purchase', 'upgrade_point',
+        'coach_meeting', 'badge_purchase', 'upgrade_point', 'marketing_event',
     ];
 
     /**
@@ -437,7 +437,7 @@ class UserController extends Controller
             'entries.*.id' => 'required|uuid|distinct',
             'entries.*.amount' => 'required|integer|not_in:0|between:-100000,3500',
             'entries.*.reason' => 'required|string|in:game_reward,playoff_payout,owner_bonus,'
-                . 'facility_upgrade,staff_hire,coach_hire,coach_resign,coach_meeting,badge_purchase,upgrade_point',
+                . 'facility_upgrade,staff_hire,coach_hire,coach_resign,coach_meeting,badge_purchase,upgrade_point,marketing_event',
         ]);
 
         $user = $request->user();

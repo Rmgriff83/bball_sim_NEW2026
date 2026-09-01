@@ -10,6 +10,7 @@
 // =============================================================================
 
 import { TEAMS, SALARY_CAP, TEAM_TIERS } from '../data/teams'
+import { applyFandomDelta, fandomForFacilities, ARENA_DOWNGRADE_RAW } from '../fandom/FandomService'
 import { baseSalaryForRating, veteranMinSalary, CAP_SET_2026, capNumbersFor, capLineForExpectation } from '../data/salaryScale'
 import { recomputeAllTimeHighs, recomputeHighsLeaders, mergeHighsBoards } from '../stats/careerHighs'
 import { PlayerHeadshotRepository } from '../db/PlayerHeadshotRepository'
@@ -108,8 +109,8 @@ import {
 } from '../season/OwnerExpectationService'
 import { listCoachHeadshots } from '../../services/headshotPremades'
 import {
-  SCOUT_TIERS, PHYSICIAN_TIERS, STAFF_TRAINER_TIERS, ANALYST_TIERS,
-  PERSONNEL_POOL_COUNTS, PERSONNEL_POOL_KEY,
+  SCOUT_TIERS, PHYSICIAN_TIERS, STAFF_TRAINER_TIERS, ANALYST_TIERS, ARENA_MANAGER_TIERS,
+  PERSONNEL_POOL_COUNTS, PERSONNEL_POOL_KEY, generateCandidatePerks,
 } from '../data/personnelTiers'
 
 // =============================================================================
@@ -1241,11 +1242,13 @@ export async function createCampaign(options) {
     physician: generatePersonnelPool('physician'),
     staff_trainer: generatePersonnelPool('staff_trainer'),
     analyst: generatePersonnelPool('analyst'),
+    arena_manager: generatePersonnelPool('arena_manager'),
   }
   campaign.settings[PERSONNEL_POOL_KEY.scout] = personnelPools.scout
   campaign.settings[PERSONNEL_POOL_KEY.physician] = personnelPools.physician
   campaign.settings[PERSONNEL_POOL_KEY.staff_trainer] = personnelPools.staff_trainer
   campaign.settings[PERSONNEL_POOL_KEY.analyst] = personnelPools.analyst
+  campaign.settings[PERSONNEL_POOL_KEY.arena_manager] = personnelPools.arena_manager
 
   // Distribute admin-authored coach headshots across every personnel slot
   // — coaches first, then scouts, physicians, staff trainers — so the
@@ -2696,6 +2699,7 @@ export async function enterOffseason(campaignId) {
           settings: campaign.settings,
           payroll,
           progress: gmc.progress ?? {},
+          fandom: userTeam?.fandom ?? null,
           userTeamId,
           coach: userTeam?.coach ?? null,
           salaryCap: campCapNumbers.salaryCap,
@@ -3163,12 +3167,13 @@ export async function startNewSeason(campaignId) {
     medical: 'trainer', // physician — legacy settings key
     scouting: 'scout',
     analytics: 'analyst',
+    arena: 'arena_manager',
   }
   const userTeam = teams.find(t => t.id === campaign.teamId)
   const userTeamFacilitiesBefore = userTeam?.facilities ? { ...userTeam.facilities } : {}
   const preservedFacilities = []
   if (userTeam?.facilities) {
-    for (const key of ['training', 'medical', 'scouting', 'analytics']) {
+    for (const key of ['training', 'medical', 'scouting', 'analytics', 'arena']) {
       if (userTeam.facilities[key] > 1) {
         const staff = campaign.settings?.[STAFF_BY_FACILITY[key]]
         if (staff) {
@@ -3176,6 +3181,11 @@ export async function startNewSeason(campaignId) {
           preservedFacilities.push({ key, level: userTeam.facilities[key], staffName: staff.name ?? null })
         } else {
           userTeam.facilities[key] = userTeam.facilities[key] - 1
+          // A decaying arena deflates the fanbase (mirror of the +4 an
+          // upgrade grants).
+          if (key === 'arena') {
+            userTeam.fandom = applyFandomDelta(userTeam.fandom, ARENA_DOWNGRADE_RAW)
+          }
         }
       }
     }
@@ -3196,6 +3206,9 @@ export async function startNewSeason(campaignId) {
   campaign.settings.lastScoutingBiweek = 0
   campaign.settings.scoutedPlayers = {}
 
+  // Fresh season = fresh marketing-event budget (3/season, 1-week cooldown).
+  campaign.settings.marketing = { usedThisSeason: 0, lastUsedDate: null }
+
   // 3c-bis. Clear any unviewed retirement list from the offseason that just
   // ended. Belt-and-suspenders alongside the modal's own dismissal — if the
   // user closed the tab without clicking Continue, the next regular season
@@ -3207,13 +3220,41 @@ export async function startNewSeason(campaignId) {
   // tick from their stored value like scout/analyst always have. `?? 2`
   // heals old saves lacking the field with one fresh full term instead of a
   // surprise same-rollover deletion.
-  for (const key of ['scout', 'analyst', 'trainer', 'staff_trainer']) {
+  for (const key of ['scout', 'analyst', 'trainer', 'staff_trainer', 'arena_manager']) {
     const staff = campaign.settings[key]
     if (!staff) continue
     staff.contractYears = (staff.contractYears ?? 2) - 1
     if (staff.contractYears <= 0) {
       delete campaign.settings[key]
     }
+  }
+
+  // 3d-ter. PERSONNEL POOL TOP-UP — refill every hire pool to the per-tier
+  // targets in PERSONNEL_POOL_COUNTS (2× 3★ + 2× 4★) with freshly rolled
+  // candidates so all perk variants keep circulating season over season.
+  // Purely additive and idempotent: existing candidates (any vintage/shape)
+  // are never touched or re-rolled — only the per-tier shortfall is appended.
+  // Old saves without a pool key get a full fresh pool here.
+  {
+    const newPersonnel = []
+    for (const kind of Object.keys(PERSONNEL_POOL_KEY)) {
+      const poolKey = PERSONNEL_POOL_KEY[kind]
+      const pool = Array.isArray(campaign.settings[poolKey]) ? campaign.settings[poolKey] : []
+      const usedNames = new Set(pool.map(c => c?.name).filter(Boolean))
+      const counts = PERSONNEL_POOL_COUNTS[kind] ?? {}
+      for (const tierKey of Object.keys(counts)) {
+        const tierNum = Number(tierKey)
+        const have = pool.filter(c => Number(c?.tier) === tierNum).length
+        for (let i = have; i < counts[tierKey]; i++) {
+          const candidate = generatePersonnelCandidate(kind, tierNum, usedNames)
+          if (!candidate) continue
+          pool.push(candidate)
+          newPersonnel.push(candidate)
+        }
+      }
+      campaign.settings[poolKey] = pool
+    }
+    assignHeadshotsToNewPersonnel(newPersonnel, teams)
   }
 
   // 3d-bis. Staff held ≥1 facility that would otherwise have degraded — flat
@@ -3552,6 +3593,9 @@ export function generateTeams(campaignId, modes = null, salaryCap = SALARY_CAP) 
       primary_color: template.primary_color,
       secondary_color: template.secondary_color,
       facilities: template.facilities,
+      // Starting fandom: an authored template value wins (roster-editor
+      // custom leagues); otherwise derive it from facility quality.
+      fandom: template.fandom ?? fandomForFacilities(template.facilities),
       salaryCap,
       salary_cap: salaryCap,
       totalPayroll: 0,
@@ -3585,44 +3629,84 @@ export function generateTeams(campaignId, modes = null, salaryCap = SALARY_CAP) 
  * @param {'scout'|'physician'|'staff_trainer'} kind
  * @returns {Array} pool of candidate objects
  */
-function generatePersonnelPool(kind) {
-  const tiers = kind === 'scout' ? SCOUT_TIERS
-    : kind === 'physician' ? PHYSICIAN_TIERS
-    : kind === 'analyst' ? ANALYST_TIERS
-    : STAFF_TRAINER_TIERS
+const PERSONNEL_TIERS_BY_KIND = {
+  scout: SCOUT_TIERS,
+  physician: PHYSICIAN_TIERS,
+  staff_trainer: STAFF_TRAINER_TIERS,
+  analyst: ANALYST_TIERS,
+  arena_manager: ARENA_MANAGER_TIERS,
+}
+
+/**
+ * Generate ONE hire-pool candidate. Perks come from the shared 2-perk-cap
+ * roll in personnelTiers.js (fresh copies, core + at most one variant), so
+ * different candidates of the same tier surface different perk combos.
+ *
+ * @param {Set<string>} usedNames - names already taken in the target pool
+ */
+function generatePersonnelCandidate(kind, tierNum, usedNames) {
+  const tier = PERSONNEL_TIERS_BY_KIND[kind]?.[tierNum]
+  if (!tier) return null
+
+  let name
+  do {
+    const first = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)]
+    const last = LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)]
+    name = `${first} ${last}`
+  } while (usedNames.has(name))
+  usedNames.add(name)
+
+  return {
+    id: generateUUID(),
+    name,
+    tier: tierNum,
+    cost: tier.cost,
+    label: tier.label,
+    rating: tier.rating,
+    perks: generateCandidatePerks(kind, tierNum),
+    headshot: null,    // filled in by the headshot assigners below
+  }
+}
+
+export function generatePersonnelPool(kind) {
   const counts = PERSONNEL_POOL_COUNTS[kind] || {}
   const used = new Set()
   const pool = []
 
-  function randomName() {
-    let name
-    do {
-      const first = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)]
-      const last = LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)]
-      name = `${first} ${last}`
-    } while (used.has(name))
-    used.add(name)
-    return name
-  }
-
   for (const tierKey of Object.keys(counts)) {
     const tierNum = Number(tierKey)
-    const tier = tiers[tierNum]
-    if (!tier) continue
     for (let i = 0; i < counts[tierKey]; i++) {
-      pool.push({
-        id: generateUUID(),
-        name: randomName(),
-        tier: tierNum,
-        cost: tier.cost,
-        label: tier.label,
-        rating: tier.rating,
-        perks: tier.perks,
-        headshot: null,    // filled in by assignPersonnelHeadshots below
-      })
+      const candidate = generatePersonnelCandidate(kind, tierNum, used)
+      if (candidate) pool.push(candidate)
     }
   }
   return pool
+}
+
+/**
+ * Rollover-time headshot assignment for freshly generated pool candidates.
+ * Excludes master-coach portraits (same rule as assignPersonnelHeadshots);
+ * existing pool/hired headshots are never reassigned. Empty admin pool →
+ * candidates stay headshot-less and PersonnelAvatar falls back to its icon.
+ */
+function assignHeadshotsToNewPersonnel(candidates, teams) {
+  if (!candidates || candidates.length === 0) return
+  const masterUsed = new Set(
+    (teams ?? [])
+      .map(t => t?.coach?.headshot)
+      .filter(Boolean)
+      .map(s => String(s).toLowerCase()),
+  )
+  const files = listCoachHeadshots().filter(name => !masterUsed.has(name.toLowerCase()))
+  if (files.length === 0) return
+
+  for (let i = files.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [files[i], files[j]] = [files[j], files[i]]
+  }
+  candidates.forEach((candidate, i) => {
+    if (!candidate.headshot) candidate.headshot = files[i % files.length]
+  })
 }
 
 /**
@@ -3671,8 +3755,9 @@ function assignPersonnelHeadshots(teams, pools) {
     if (team.coach.headshot) continue
     team.coach.headshot = claim()
   }
-  // 2) Scouts, 3) Physicians, 4) Staff trainers, 5) Analysts — pool order.
-  for (const kind of ['scout', 'physician', 'staff_trainer', 'analyst']) {
+  // 2) Scouts, 3) Physicians, 4) Staff trainers, 5) Analysts,
+  // 6) Arena managers — pool order.
+  for (const kind of ['scout', 'physician', 'staff_trainer', 'analyst', 'arena_manager']) {
     for (const candidate of (pools[kind] || [])) {
       candidate.headshot = claim()
     }

@@ -20,6 +20,7 @@ import { getBadgeStoreEntries, PLAYER_BADGE_LEVELS } from '@/engine/data/playerB
 import { BADGES, badgeDisplayName } from '@/engine/data/badges'
 import { getCoachTrainBudget } from '@/engine/data/coaches'
 import { useBadgeSynergies } from '@/composables/useBadgeSynergies'
+import { useTrainingReportToast } from '@/composables/useTrainingReportToast'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { useHeadshotEditorReturnStore } from '@/stores/headshotEditorReturn'
@@ -307,6 +308,7 @@ watch(() => props.show, (newVal) => {
 const tradeStore = useTradeStore()
 const toastStore = useToastStore()
 const teamStore = useTeamStore()
+const { notifyTrainingComplete } = useTrainingReportToast()
 const audio = useAudioStore()
 const authStore = useAuthStore()
 const route = useRoute()
@@ -322,6 +324,7 @@ function openHeadshotEditor() {
   headshotEditorReturnStore.capture({
     routeName: route.name,
     routeParams: { ...route.params },
+    routeQuery: { ...route.query },
     playerId: pid,
   })
   // Close the modal before navigating so the route change doesn't fight
@@ -922,9 +925,14 @@ async function handleClaimTraining() {
   try {
     const result = await teamStore.claimTrainingReward(props.campaignId, props.player.id)
     if (result?.badge && result.level) {
-      audio.affirm()
-      const badgeName = result.badge.name ?? result.badgeId
-      toastStore.showSuccess(t('🏅 Trained: {badge} → {level}', { badge: tDynamic(badgeName), level: String(result.level).toUpperCase() }), 4500)
+      // Rich training-report toast (staff headshot, tier chip, flavor line,
+      // Breakthrough callout) — the toast factory plays the affirm. Any
+      // failure falls back to the exact legacy toast this replaced.
+      if (!notifyTrainingComplete({ campaignId: props.campaignId, player: props.player, result })) {
+        audio.affirm()
+        const badgeName = result.badge.name ?? result.badgeId
+        toastStore.showSuccess(t('🏅 Trained: {badge} → {level}', { badge: tDynamic(badgeName), level: String(result.level).toUpperCase() }), 4500)
+      }
     } else {
       // No eligible pool remained — surface gracefully.
       toastStore.showSuccess(t('Training complete (no eligible badges remained)'))

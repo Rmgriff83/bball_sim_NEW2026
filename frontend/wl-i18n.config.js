@@ -38,10 +38,30 @@ export default {
     async () => (await import('./src/engine/data/coachBadges.js')).coachBadges.flatMap(b => [b.name, b.description]),
     async () => {
       const m = await import('./src/engine/data/personnelTiers.js')
-      return [m.SCOUT_TIERS, m.PHYSICIAN_TIERS, m.STAFF_TRAINER_TIERS, m.ANALYST_TIERS]
-        .flatMap(tiers => Object.values(tiers))
-        .flatMap(tier => [tier.label, ...(tier.perks ?? []).flatMap(p => [p.label, p.description])])
+      return [
+        ...[m.SCOUT_TIERS, m.PHYSICIAN_TIERS, m.STAFF_TRAINER_TIERS, m.ANALYST_TIERS, m.ARENA_MANAGER_TIERS]
+          .flatMap(tiers => Object.values(tiers))
+          .flatMap(tier => [tier.label, ...(tier.perks ?? []).flatMap(p => [p.label, p.description])]),
+        // Optional per-candidate perks (scout Insider Intel, arena manager
+        // Game-Night DJ) live outside the tier objects.
+        ...(m.SCOUT_OPTIONAL_PERKS ?? []).flatMap(p => [p.label, p.description]),
+        ...(m.ARENA_MANAGER_OPTIONAL_PERKS ?? []).flatMap(p => [p.label, p.description]),
+        // Breakthrough Training (optional staff-trainer perk, per-tier copy).
+        ...Object.values(m.BADGE_BREAKTHROUGH_PERKS ?? {}).flatMap(p => [p.label, p.description]),
+      ]
     },
+    // Marketing events (Arena facility) — names/descriptions rendered via
+    // $tDynamic on the arena sub-tab; ids are stable save keys, excluded.
+    async () => (await import('./src/engine/data/marketingEvents.js')).MARKETING_EVENTS
+      .flatMap(e => [e.name, e.description]),
+    // Timeout-song display labels (TRACK_LABELS in audio/timeoutMusic.js) —
+    // the module uses import.meta.glob so plain Node can't import it;
+    // extract the const block instead. Unlabeled tracks fall back to a
+    // prettified filename stem at runtime (deliberately untranslated).
+    async () => blockStrings('./src/audio/timeoutMusic.js', 'const TRACK_LABELS = {', /:\s*'([^']+)'/g),
+    // Badge tier labels — derived at runtime (levelLabel in the badge store
+    // modal, TIER_LABELS in ToastContainer); enumerate the canonical four.
+    async () => ['Bronze', 'Silver', 'Gold', 'HOF'],
     // Archetype names double as badge-tag lookup keys — translated at render
     // time only; the data objects are never mutated.
     async () => (await import('./src/engine/data/archetypes.js')).ARCHETYPE_NAMES,
@@ -152,9 +172,10 @@ export default {
     // role/empty/star labels rendered via $tDynamic (same canonical keys the
     // Facilities tab uses; enumerated so they stay pinned independently).
     async () => blockStrings('./src/components/game/StaffOverviewCard.vue', 'const STAFF_ROWS = [', /(?:label|emptyLabel|starLabel):\s*'([^']+)'/g),
-    // Rough scheme-fit tier labels (FIT_TIERS in TeamManagementView.vue,
+    // Rough scheme-fit tier labels (FIT_TIERS in src/utils/fitTiers.js —
+    // shared by the GM view, pregame Game Plan, and live coaches overlay;
     // rendered via $tDynamic below Analytics facility Lv2).
-    async () => blockStrings('./src/views/team/TeamManagementView.vue', 'const FIT_TIERS = [', /label:\s*'([^']+)'/g),
+    async () => blockStrings('./src/utils/fitTiers.js', 'const FIT_TIERS = [', /label:\s*'([^']+)'/g),
     // Facility names/descriptions/per-level perk lines (facilityTypes in
     // FacilitiesTab.vue, rendered via $tDynamic; unescape \' to match runtime).
     async () => blockStrings('./src/components/team/FacilitiesTab.vue', 'const facilityTypes = {', /'((?:[^'\\]|\\.)+)'/g).map(s => s.replace(/\\'/g, "'")),
@@ -262,6 +283,8 @@ export default {
       './src/engine/season/AwardService.js',
       './src/engine/season/AllStarService.js',
       './src/engine/ai/AITradeService.js',
+      './src/engine/scouting/scoutSynopsis.js',
+      './src/engine/training/trainingCommentary.js',
     ].flatMap(f => {
       const src = readFileSync(new URL(f, import.meta.url), 'utf-8')
       const fromCalls = [...src.matchAll(/\bT\(\s*(['"])((?:(?!\1).)*)\1/g)].map(m => m[2])

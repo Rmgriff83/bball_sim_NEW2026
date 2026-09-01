@@ -44,7 +44,7 @@ export const WALKTHROUGHS = {
       target: 'home-facilities',
       placement: 'bottom',
       title: 'Facilities',
-      body: 'A quick read on your four franchise facilities — Training, Medical, Scouting, and Analytics — each rated 1 to 5 stars. They degrade a step every offseason unless the matching staff member (trainer, physician, scout, analyst) is on payroll to maintain them. Higher facility levels unlock the perks your hired staff can apply, so upgrading here is what turns a 4-star trainer or scout into their full-strength version.',
+      body: 'A quick read on your five franchise facilities — Training, Medical, Scouting, Analytics, and Arena — each rated 1 to 5 stars. They degrade a step every offseason unless the matching staff member (trainer, physician, scout, analyst, arena manager) is on payroll to maintain them. Higher facility levels unlock the perks your hired staff can apply, so upgrading here is what turns a 4-star trainer or scout into their full-strength version.',
       // Strip only renders once a team is loaded with facilities data —
       // skip cleanly if it's not on screen (e.g. cold-load mid-tour).
       skipIfMissing: true,
@@ -63,6 +63,15 @@ export const WALKTHROUGHS = {
       placement: 'bottom',
       title: 'Your Standing',
       body: 'Your win-loss record and conference rank live here. Climb the standings to lock in playoff seeding — top seeds get home court through the bracket.',
+    },
+    {
+      target: 'home-fandom',
+      placement: 'bottom',
+      title: 'Fandom',
+      body: "This meter tracks how energized your fanbase is. Winning, playoff runs, draft lottery luck, and arena upgrades grow it; losing shrinks it — and a packed, rocking building amplifies your home-court advantage. Manage it from the Arena facility, where upgrades soften losing streaks and token-funded marketing events give it a one-time jolt.",
+      // Meter renders inside the record card only once the team row is
+      // loaded — skip cleanly on a cold-load mid-tour.
+      skipIfMissing: true,
     },
     {
       target: 'home-tokens',
@@ -120,7 +129,7 @@ export const WALKTHROUGHS = {
       target: 'home-staff-overview',
       placement: 'top',
       title: 'Your Staff',
-      body: 'A quick pulse on your four staff hires. A warning here means a staff member is hired but their perks are locked because the matching facility level is too low — tap any row to jump straight to that facility and fix it.',
+      body: 'A quick pulse on your five staff hires. A warning here means a staff member is hired but their perks are locked because the matching facility level is too low — tap any row to jump straight to that facility and fix it.',
       // Renders once a team is loaded — skip cleanly on a cold-load mid-tour.
       skipIfMissing: true,
     },
@@ -438,7 +447,7 @@ export const WALKTHROUGHS = {
       tab: { view: 'gm', tab: 'facilities' },
       placement: 'bottom',
       title: 'Facilities',
-      body: 'Upgrade your training, medical, scouting, and analytics facilities — and hire the staff member who runs each one. Staff perks only take effect once the matching facility reaches the level listed on each perk — a 4-star hire runs at partial strength until the facility catches up.',
+      body: 'Upgrade your training, medical, scouting, analytics, and arena facilities — and hire the staff member who runs each one. Staff perks only take effect once the matching facility reaches the level listed on each perk — a 4-star hire runs at partial strength until the facility catches up.',
     },
     {
       target: 'gm-facility-header',
@@ -452,14 +461,21 @@ export const WALKTHROUGHS = {
       tab: { view: 'gm', tab: 'facilities' },
       placement: 'bottom',
       title: 'Hire Your Staff',
-      body: "Every facility needs a specialist running it. Hire or release this facility's staff member right here — scouts sharpen your draft intel, physicians and trainers keep your roster healthy and developing, and analysts unlock game reports. A warning badge on a sub-tab means that role is still unfilled.",
+      body: "Hire or release this facility's staff member right here — scouts sharpen your draft intel, physicians and trainers keep your roster healthy and developing, analysts unlock game reports, and arena managers protect your fandom. Staff are optional, but while one is on payroll their facility will not degrade over the offseason. A warning badge on a sub-tab just means that role is unfilled.",
     },
     {
       target: 'gm-facility-tabs',
       tab: { view: 'gm', tab: 'facilities' },
       placement: 'bottom',
-      title: 'Four Departments',
-      body: 'Switch between Scouting, Training, Medical, and Analytics here — check out the available upgrades for each facility and the staff member who runs it.',
+      title: 'Five Departments',
+      body: 'Switch between Scouting, Training, Medical, Analytics, and Arena here — check out the available upgrades for each facility and the staff member who runs it.',
+    },
+    {
+      target: 'gm-facility-tabs',
+      tab: { view: 'gm', tab: 'facilities' },
+      placement: 'bottom',
+      title: 'Marketing Events',
+      body: "The Arena department is where your fandom lives. Open its Marketing Events popup to spend tokens on one-time fandom boosts — from t-shirt cannons to downtown rallies — limited to one a week and three per season. Winning grows the fanbase on its own, arena upgrades soften how much losses shrink it, and a big fanbase amplifies your home-court advantage.",
     },
   ],
 
@@ -557,6 +573,13 @@ export const WALKTHROUGHS = {
       body: "Need to swap a starter or adjust the rotation before tipoff? This dropdown is your full lineup control — same as the GM Desk, contextual to this game.",
     },
     {
+      target: 'game-matchups',
+      placement: 'bottom',
+      title: 'Defensive Matchups',
+      body: "This button opens your defensive matchups — choose who guards whom. Swap any defender onto a different opponent: put your best stopper on their star, or hide a weak defender on a low-usage player. Your assignments carry into the game and can be adjusted at quarter breaks.",
+      skipIfMissing: true,
+    },
+    {
       target: 'game-coaches',
       placement: 'top',
       title: 'Head Coaches',
@@ -566,20 +589,13 @@ export const WALKTHROUGHS = {
       target: 'game-plan',
       placement: 'top',
       title: 'Your Game Plan',
-      body: "Pick your offensive and defensive schemes for tonight. The percentage on each pill is the fit % — how well your current roster matches that scheme. Higher fit means a bigger in-game edge.",
+      body: "Pick your offensive and defensive schemes for tonight. Each pill shows how well your current roster fits that scheme — upgrade your Analytics facility to unlock the exact fit %. Higher fit means a bigger in-game edge.",
     },
     {
       target: 'game-pacing',
       placement: 'top',
       title: 'Game Pacing',
       body: "Pacing controls how often a live game pauses for your input. By Quarter plays a full quarter straight through and stops at the breaks — the fastest, most hands-off way to watch. Every Play pauses after every single possession for maximum control. Dead Balls is the middle ground: play runs until a natural stoppage — a foul, an out-of-bounds, a timeout — then pauses so you can sub and adjust. You can change it any time from this screen, and for a game in progress the new mode applies when you resume.",
-    },
-    {
-      target: 'game-matchups',
-      placement: 'top',
-      title: 'Defensive Matchups',
-      body: "Choose who guards whom. Swap any defender onto a different opponent — put your best stopper on their star, or hide a weak defender on a low-usage player. Your assignments carry into the game and can be adjusted at quarter breaks.",
-      skipIfMissing: true,
     },
     {
       target: 'game-start-btn',

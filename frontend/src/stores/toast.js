@@ -145,6 +145,49 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
+  // Scout's report on a fully-scouted prospect — rich toast with the hired
+  // scout's headshot (PersonnelAvatar in the container) and a generated
+  // synopsis. `synopsis` = buildScoutSynopsis() output: { lines, redFlag, text }
+  // of T()-shaped entries the container renders via $tDynamic. Ephemeral only.
+  function showScoutReport({ scout, playerName, synopsis, campaignId = null }) {
+    try {
+      const audio = useAudioStore()
+      audio.play('affirm')
+    } catch { /* audio is best-effort */ }
+
+    return addToast({
+      type: 'scout-report',
+      scout,
+      playerName,
+      synopsis,
+      campaignId,
+      duration: 8000,
+    })
+  }
+
+  // Training-complete report — rich toast with the hired staff trainer's
+  // headshot (fallback icon when unhired), the awarded badge + tier chip, a
+  // flavor line, and the Breakthrough Training callout when the perk procced.
+  // `flavor` / `breakthrough.line` are T()-shaped ({ text, tpl, params }).
+  function showTrainingReport({ trainer = null, playerName, badgeName, level, flavor = null, breakthrough = null, campaignId = null }) {
+    try {
+      const audio = useAudioStore()
+      audio.play('affirm')
+    } catch { /* audio is best-effort */ }
+
+    return addToast({
+      type: 'training-report',
+      trainer,
+      playerName,
+      badgeName,
+      level,
+      flavor,
+      breakthrough,
+      campaignId,
+      duration: 8000,
+    })
+  }
+
   function showDraftPick({ pickNumber, teamAbbr, teamColor, playerName, position, overallRating, isUserTeam }) {
     return addToast({
       type: 'draft-pick',
@@ -247,6 +290,8 @@ export const useToastStore = defineStore('toast', () => {
     showTokenAward,
     showAchievement,
     showOwnerExpectation,
+    showScoutReport,
+    showTrainingReport,
     addMinimalToast,
     removeMinimalToast,
     showLoading,

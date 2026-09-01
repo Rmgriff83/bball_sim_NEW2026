@@ -13,6 +13,7 @@ import { BreakingNewsService } from '../season/BreakingNewsService'
 import { generateAndSaveRookieClass, shouldGenerateGenerational } from './RookieGenerationService'
 import { buildRookieDraftOrder } from './DraftOrderService'
 import { runDraftLottery } from './DraftLotteryService'
+import { applyFandomDelta, lotteryJumpRaw, topPickRaw, classStrengthFromProspects } from '../fandom/FandomService'
 import { assignRookieContract, assignUndraftedContract } from './RookieContractService'
 import { rollDraftPicks } from './DraftPickService'
 import { selectRookieDraftPick } from '../../services/AIDraftService'
@@ -123,6 +124,7 @@ export async function simFullOffseason(campaignId) {
     campaign.settings.draftLottery = lotteryResult
     campaign.settings.draftLotteryCompleted = true
     await CampaignRepository.save(campaign)
+    await applyLotteryFandomBoosts(campaignId, teams, lotteryResult)
   }
   const draftOrder = buildRookieDraftOrder(teams, standings, gameYear, lotteryResult)
 
@@ -788,6 +790,44 @@ export async function resolveFreeAgency(campaign, preloaded = {}) {
 }
 
 /**
+ * Fandom boosts from a freshly rolled lottery: any team that jumped UP gets
+ * a per-slot bump, and landing a top-4 pick adds a pick-scaled boost
+ * multiplied by draft-class strength. Class strength is neutral (1.0) when
+ * the rookie class hasn't been generated yet at lottery time — it's real
+ * for campaigns with imported/pre-generated classes.
+ *
+ * MUST only be called from the block that first rolls + persists the
+ * lottery (both call sites set draftLotteryCompleted in the same breath) —
+ * the cached-result early returns are what keep this one-shot.
+ */
+async function applyLotteryFandomBoosts(campaignId, teams, lotteryResult) {
+  try {
+    const order = Array.isArray(lotteryResult?.actualOrder) ? lotteryResult.actualOrder : []
+    if (order.length === 0) return
+    const allPlayers = await PlayerRepository.getAllForCampaign(campaignId)
+    const prospects = (allPlayers || []).filter(p => p?.isDraftProspect || p?.is_draft_prospect)
+    const classStrength = classStrengthFromProspects(prospects)
+
+    const byId = new Map((teams || []).map(t => [String(t.id), t]))
+    const dirty = []
+    for (const slot of order) {
+      let raw = lotteryJumpRaw(Math.max(0, Number(slot?.delta) || 0))
+      if (slot?.actualPick >= 1 && slot?.actualPick <= 4) {
+        raw += topPickRaw(slot.actualPick, classStrength)
+      }
+      if (raw <= 0) continue
+      const team = byId.get(String(slot.teamId))
+      if (!team) continue
+      team.fandom = applyFandomDelta(team.fandom, raw)
+      dirty.push(team)
+    }
+    if (dirty.length > 0) await TeamRepository.saveBulk(dirty)
+  } catch (err) {
+    console.warn('[Offseason] lottery fandom boosts failed:', err)
+  }
+}
+
+/**
  * Run the rookie draft lottery for the current offseason. Persists the
  * result on the campaign so subsequent reads (results view, the actual
  * draft trigger) all see the same outcome. Idempotent — if the lottery
@@ -840,6 +880,8 @@ export async function runDraftLotteryForCampaign(campaignId) {
   campaign.settings.draftLottery = lotteryResult
   campaign.settings.draftLotteryCompleted = true
   await CampaignRepository.save(campaign)
+
+  await applyLotteryFandomBoosts(campaignId, teams, lotteryResult)
 
   return lotteryResult
 }

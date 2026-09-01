@@ -810,6 +810,9 @@ function _resolvePieceFills(text, tokens, layerOverrides = null) {
  * file content with arbitrary SVG (used by the admin variant editor to
  * render its in-memory pieces in place of the on-disk variant).
  */
+// Session-scoped dedupe for the missing-layer warning below.
+const _warnedMissingLayers = new Set()
+
 function _renderLayer(layerId, variantKey, tokens, metaAttrs = {}, overrideContent = null, pieceOverrides = null, audience = 'player') {
   const attrStr = _buildAttrString(layerId, metaAttrs)
   // 'none' is a virtual variant that hides the layer entirely — already
@@ -824,7 +827,14 @@ function _renderLayer(layerId, variantKey, tokens, metaAttrs = {}, overrideConte
   // (e.g. config.mouthFullness="wide_grin" → mouth/wide-grin.svg).
   const content = overrideContent ?? getVariantSource(layerId, variantKey, audience)
   if (!content) {
-    console.warn(`[headshotComposer] missing layer file: ${audience}/${layerId}/${variantKey}.svg`)
+    // Warn once per unique missing file per session — the editor re-composes
+    // on every keystroke/thumbnail render and a config referencing a variant
+    // absent from this audience's folder would otherwise flood the console.
+    const missKey = `${audience}/${layerId}/${variantKey}`
+    if (!_warnedMissingLayers.has(missKey)) {
+      _warnedMissingLayers.add(missKey)
+      console.warn(`[headshotComposer] missing layer file: ${missKey}.svg`)
+    }
     return `<g${attrStr}>\n</g>`
   }
   // Three-pass resolution:
@@ -1192,7 +1202,7 @@ export function parseSvgConfig(svgString) {
  * A reasonable default config. Used as the editor's starting point when
  * parseSvgConfig returns an empty object (legacy non-metadata SVG).
  */
-export function defaultConfig(seed) {
+export function defaultConfig(seed, audience = 'player') {
   // Seed-deterministic so opening the editor on the same player twice gives
   // the same default face. Tiny LCG keyed on the string seed.
   let s = 0
@@ -1206,7 +1216,7 @@ export function defaultConfig(seed) {
   }
   const ethnicity = pick(Object.keys(ETHNICITY_PROFILES))
   const profile = ETHNICITY_PROFILES[ethnicity]
-  return normalizeConfig({
+  const base = {
     ethnicity,
     skin: pick(profile.skins),
     hair: pick(profile.hairs),
@@ -1221,7 +1231,38 @@ export function defaultConfig(seed) {
     mouthFullness: pick(VARIANTS.mouthFullness),
     hasStubble: pick([true, false]),
     headband: 'none',
-  })
+  }
+
+  // Coach/staff faces draw from a small curated layer set that doesn't share
+  // filenames with the player pools (e.g. neck/tie vs neck/default). Restrict
+  // every string-keyed pick to variants that actually exist for the audience
+  // so the seeded default renders complete instead of warning on missing
+  // layers. Any layer with no audience files keeps the union pick (renders
+  // empty, same as before).
+  if (audience === 'coach') {
+    const forLayer = (layerId, fallback) => {
+      const files = listAllVariantsForAudience(layerId, 'coach')
+      return files.length ? pick(files).replace(/-/g, '_') : fallback
+    }
+    base.hairStyle = forLayer('hair', base.hairStyle)
+    base.eyeShape = forLayer('eyes', base.eyeShape)
+    base.noseShape = forLayer('nose', base.noseShape)
+    base.mouthFullness = forLayer('mouth', base.mouthFullness)
+    base.neckStyle = forLayer('neck', 'default')
+    // Coach eyebrows are single-name variants (angry/normal), not the
+    // player thickness×angle grid — pin the whole filename via the override.
+    const brows = listAllVariantsForAudience('eyebrows', 'coach')
+    if (brows.length) base.browVariantOverride = pick(brows)
+    // Roughly half start clean-shaven, half with a coach stubble variant.
+    const stubbles = listAllVariantsForAudience('stubble', 'coach')
+    base.stubbleStyle = base.hasStubble && stubbles.length
+      ? pick(stubbles).replace(/-/g, '_')
+      : 'none'
+    const jaws = listJawIndicesForAudience('coach')
+    if (jaws.length) base.jawWidth = pick(jaws)
+  }
+
+  return normalizeConfig(base)
 }
 
 /**
@@ -1229,10 +1270,10 @@ export function defaultConfig(seed) {
  * player's existing SVG first; falls back to a seeded default keyed by
  * playerId when parsing yields nothing.
  */
-export function configFromSvg(svgString, seedFallback) {
+export function configFromSvg(svgString, seedFallback, audience = 'player') {
   const parsed = parseSvgConfig(svgString || '')
   if (Object.keys(parsed).length === 0) {
-    return defaultConfig(seedFallback)
+    return defaultConfig(seedFallback, audience)
   }
   return normalizeConfig(parsed)
 }

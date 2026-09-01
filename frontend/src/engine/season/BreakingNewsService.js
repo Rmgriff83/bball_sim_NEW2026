@@ -152,6 +152,61 @@ export const BreakingNewsService = {
     }
   },
 
+  // --- Fandom threshold stories (user team only; fired on meter crossings
+  // with a per-story in-game debounce — see game.js _maybeQueueFandomNews) ---
+
+  fandomPaperBags({ teamName, date }) {
+    const headline = T('PAPER BAGS SPOTTED IN THE {team} STANDS', { team: teamName.toUpperCase() })
+    const body = T('Fan morale around the {team} has hit rock bottom — some season-ticket holders showed up wearing paper bags over their heads, and whole sections sat silent by the fourth quarter. The franchise has serious work to do to win this city back.', { team: teamName })
+    return {
+      headline: headline.text,
+      body: body.text,
+      ...tplFields(headline, body),
+      category: 'FANDOM',
+      icon: 'Frown',
+      date,
+    }
+  },
+
+  fandomEmptySeats({ teamName, date }) {
+    const headline = T('EMPTY SEATS PILING UP AT {team} HOME GAMES', { team: teamName.toUpperCase() })
+    const body = T('Attendance is sliding for the {team} as frustrated fans stay home and resale prices crater. Insiders say the front office is feeling the pressure to give the fanbase a reason to show up again.', { team: teamName })
+    return {
+      headline: headline.text,
+      body: body.text,
+      ...tplFields(headline, body),
+      category: 'FANDOM',
+      icon: 'Armchair',
+      date,
+    }
+  },
+
+  fandomBelieving({ teamName, date }) {
+    const headline = T('{team} FANS ARE STARTING TO BELIEVE', { team: teamName.toUpperCase() })
+    const body = T('The buzz is back around the {team}. Jersey sales are climbing, sports radio is all in, and the home crowd has found its voice again — this fanbase believes something special is building.', { team: teamName })
+    return {
+      headline: headline.text,
+      body: body.text,
+      ...tplFields(headline, body),
+      category: 'FANDOM',
+      icon: 'Flame',
+      date,
+    }
+  },
+
+  fandomRockingArena({ teamName, date }) {
+    const headline = T('{team} CROWD TURNS HOME ARENA INTO A FORTRESS', { team: teamName.toUpperCase() })
+    const body = T('Every {team} home game is a sellout and the building is shaking from tip-off to the final buzzer. Opposing coaches are calling it the toughest road environment in the league.', { team: teamName })
+    return {
+      headline: headline.text,
+      body: body.text,
+      ...tplFields(headline, body),
+      category: 'FANDOM',
+      icon: 'Flame',
+      date,
+    }
+  },
+
   seasonMVP({ playerName, teamName, stats, date }) {
     const headline = T('{player} WINS LEAGUE MVP', { player: playerName.toUpperCase() })
     const body = stats

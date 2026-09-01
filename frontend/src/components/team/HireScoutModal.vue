@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { X, Star, Lock, Check, Coins } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import { X, Star, Lock, Check, Coins, Plus } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useTokensStore } from '@/stores/tokens'
 import { useCampaignStore } from '@/stores/campaign'
@@ -9,7 +10,7 @@ import { useAudioStore } from '@/stores/audio'
 import { useSyncStore } from '@/stores/sync'
 import { CampaignRepository } from '@/engine/db/CampaignRepository'
 import { COACH_FIRST_NAMES, COACH_LAST_NAMES } from '@/engine/data/coaches'
-import { PERSONNEL_POOL_KEY } from '@/engine/data/personnelTiers'
+import { PERSONNEL_POOL_KEY, generateCandidatePerks } from '@/engine/data/personnelTiers'
 import PersonnelAvatar from '@/components/common/PersonnelAvatar.vue'
 import { t } from '@wl-i18n/i18n.js'
 
@@ -20,6 +21,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'hired'])
+
+const router = useRouter()
 
 const authStore = useAuthStore()
 const campaignStore = useCampaignStore()
@@ -77,7 +80,7 @@ function generateCandidates() {
       cost: tier.cost,
       label: tier.label,
       rating: tier.rating,
-      perks: tier.perks,
+      perks: generateCandidatePerks('scout', 3),
     })
   }
 
@@ -89,7 +92,7 @@ function generateCandidates() {
     cost: tier4.cost,
     label: tier4.label,
     rating: tier4.rating,
-    perks: tier4.perks,
+    perks: generateCandidatePerks('scout', 4),
   })
 
   candidates.value = results
@@ -116,6 +119,11 @@ watch(() => props.show, async (val) => {
 
 function isPerkActive(perk) {
   return props.scoutingFacilityLevel >= perk.requiredLevel
+}
+
+function goToStore() {
+  emit('close')
+  router.push('/store')
 }
 
 function close() {
@@ -194,10 +202,16 @@ async function hireScout(candidate) {
           <!-- Content -->
           <main class="modal-content">
             <!-- Token balance -->
-            <div class="token-balance">
-              <Coins :size="16" />
-              <span class="token-amount">{{ tokens.toLocaleString() }}</span>
-              <span class="token-label">{{ $t('Award Tokens') }}</span>
+            <div class="token-group">
+              <div class="token-balance">
+                <Coins :size="16" />
+                <span class="token-amount">{{ tokens.toLocaleString() }}</span>
+                <span class="token-label">{{ $t('Award Tokens') }}</span>
+              </div>
+              <button type="button" class="buy-tokens-btn" @click="goToStore" :title="$t('Get more tokens in the Store')">
+                <Plus :size="14" />
+                <span>{{ $t('Get Tokens') }}</span>
+              </button>
             </div>
 
             <!-- Candidates -->
@@ -632,5 +646,39 @@ async function hireScout(candidate) {
     min-height: 85vh;
     max-height: 85vh;
   }
+}
+.token-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.token-group .token-balance {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.buy-tokens-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.buy-tokens-btn:hover {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.06));
+  border-color: var(--color-primary);
 }
 </style>

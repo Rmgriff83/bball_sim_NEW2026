@@ -28,7 +28,7 @@ const faces = [face1, face2, face3]
 const perks = [
   'Custom headshots for every player, coach & staff member',
   'Rename your team when starting a campaign',
-  'New styles, faces & assets added regularly — owners get them all, free',
+  'Access to any new styles, faces & assets that get added — free',
   'One-time purchase — yours in every campaign, forever'
 ]
 
