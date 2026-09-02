@@ -56,9 +56,11 @@ export default {
       .flatMap(e => [e.name, e.description]),
     // Timeout-song display labels (TRACK_LABELS in audio/timeoutMusic.js) —
     // the module uses import.meta.glob so plain Node can't import it;
-    // extract the const block instead. Unlabeled tracks fall back to a
-    // prettified filename stem at runtime (deliberately untranslated).
-    async () => blockStrings('./src/audio/timeoutMusic.js', 'const TRACK_LABELS = {', /:\s*'([^']+)'/g),
+    // extract the const block instead (quote-agnostic: labels containing
+    // apostrophes are double-quoted in the source). Unlabeled tracks fall
+    // back to a prettified filename stem at runtime (deliberately
+    // untranslated).
+    async () => blockStrings('./src/audio/timeoutMusic.js', 'const TRACK_LABELS = {', /:\s*(['"])((?:(?!\1).)*)\1/g),
     // Badge tier labels — derived at runtime (levelLabel in the badge store
     // modal, TIER_LABELS in ToastContainer); enumerate the canonical four.
     async () => ['Bronze', 'Silver', 'Gold', 'HOF'],

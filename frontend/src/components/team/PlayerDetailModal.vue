@@ -433,8 +433,12 @@ const normalizedPlayer = computed(() => {
     // Recent performances
     recentPerformances: p.recent_performances || p.recentPerformances || [],
     careerHighs: p.careerHighs || p.career_highs || null,
-    // Morale & personality
-    morale: p.morale ?? p.personality?.morale ?? 80,
+    // Morale & personality. personality.morale is CANONICAL (the sim reads
+    // and writes only that path); top-level p.morale is a legacy mirror that
+    // freezes at whatever the last coach meeting stamped — preferring it
+    // showed stale values (e.g. a meeting-boosted player stuck displaying
+    // his old morale forever while his real morale drifted).
+    morale: p.personality?.morale ?? p.morale ?? 80,
     personality: p.personality || null,
     personalityTraits: p.personality?.traits || [],
     headshot: p.headshot || null,

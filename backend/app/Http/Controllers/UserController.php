@@ -397,11 +397,13 @@ class UserController extends Controller
      * back-to-back season sims where a single championship run nets 5.5k+
      * (250+750+3500 playoff + 1000 owner bonus) — so the original 5000 cap
      * deferred real players by mid-morning and their balances drifted below
-     * what the app displayed. Sized ~5x the heaviest observed legitimate
-     * day so real play never defers, while forged-entry farming stays
-     * bounded (and below what the legacy endpoint already allows).
+     * what the app displayed. Raised 25k → 35k (2026-09) after the heaviest
+     * legitimate grinder brushed 25k on a backlog-recovery day: sized so
+     * even a recovered multi-day deferral queue plus an ultra-heavy play
+     * day clears in one flush, while forged-entry farming stays bounded
+     * (and below what the legacy endpoint already allows).
      */
-    private const LEDGER_DAILY_EARN_CAP = 25000;
+    private const LEDGER_DAILY_EARN_CAP = 35000;
 
     /**
      * Per-reason validation for ledger EARN entries — the abuse surface.

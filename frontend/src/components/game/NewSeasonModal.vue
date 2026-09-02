@@ -69,8 +69,7 @@ const seasonDisplay = computed(() => {
             <!-- Facility Degradation -->
             <section v-if="degradedFacilities.length > 0 || preservedRows.length > 0" class="summary-section">
               <h3 class="section-title">{{ $t('Facility Degradation') }}</h3>
-              <p v-if="preservedRows.length > 0" class="section-desc">{{ $t('Facilities degrade by 1 level each season — unless a staff member is there to maintain them.') }}</p>
-              <p v-else class="section-desc">{{ $t('All team facilities degrade by 1 level at the start of each season.') }}</p>
+              <p class="section-desc">{{ $t('Facilities degrade by 1 level each season — unless a staff member is there to maintain them.') }}</p>
               <div class="facilities-list">
                 <div
                   v-for="facility in degradedFacilities"

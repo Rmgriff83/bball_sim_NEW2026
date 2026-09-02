@@ -125,11 +125,29 @@ export async function aiFinishUserTeamSetup(campaignId) {
   let playersSigned = []
 
   // --- Step 1: hire a free coach if needed --------------------------------
-  // Skip the auto-hire while the user has an unresolved coach re-sign decision
-  // pending — they're being prompted to re-sign their expiring coach or pick a
-  // replacement, so we must not pre-empt that with a random free hire.
-  const hasPendingCoachDecision = !!campaign.settings?.pendingCoachDecision
-  if (!team.coach && !hasPendingCoachDecision) {
+  // An unresolved coach decision here means the user delegated the rest of
+  // the offseason (Sim Offseason / "Let AI Finish Setup") without picking —
+  // resolve it by re-signing the stashed expired coach for free (continuity;
+  // no token charge, matching the free auto-hire below). Without this the
+  // rollover's coach gate would throw with the team still coachless.
+  const pendingCoach = campaign.settings?.pendingCoachDecision?.coach ?? null
+  if (!team.coach && pendingCoach) {
+    const currentSeason = campaign.currentSeasonYear ?? campaign.settings?.currentSeasonYear ?? 2025
+    const restored = {
+      ...pendingCoach,
+      hiredSeason: currentSeason,
+      contractYearsRemaining: 2,
+      contract_years_remaining: 2,
+      activeTraining: null,
+    }
+    restored.actionsRemaining = getCoachActionBudget(restored)
+    team.coach = restored
+    await TeamRepository.save(team)
+    campaign.settings = campaign.settings ?? {}
+    campaign.settings.pendingCoachDecision = null
+    coachHired = restored
+  }
+  if (!team.coach) {
     const pool = Array.isArray(campaign.settings?.availableCoaches)
       ? campaign.settings.availableCoaches
       : []

@@ -16,10 +16,13 @@ const glob = import.meta.glob('@/assets/audio/timeout/hype_music_*.m4a', { eager
 // picker falls back to a prettified stem ("Hype Music 4") — so dropping new
 // m4a files never requires touching this map. Labels render via $tDynamic
 // and are enumerated in wl-i18n.config.js dynamicSources.
+// NOTE: labels with apostrophes use double quotes (never escaped quotes) —
+// the wl-i18n.config.js block regex doesn't handle escapes.
 const TRACK_LABELS = {
-  hype_music_1: 'Pump It Up',
-  hype_music_2: 'Big Game Energy',
   hype_music_3: 'Bball Sim Theme',
+  hype_music_4: 'Zen Xylo',
+  hype_music_5: 'Dingle Dorf',
+  hype_music_6: "Wild'n Free",
 }
 
 // Stable per-track registry: id = filename stem (what campaign.settings.

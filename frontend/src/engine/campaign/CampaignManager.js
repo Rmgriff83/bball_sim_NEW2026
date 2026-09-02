@@ -2792,6 +2792,40 @@ export async function enterOffseason(campaignId) {
     console.warn('[CampaignManager] owner evaluation failed (non-fatal):', err?.message || err)
   }
 
+  // --- User head-coach contract: decrement at SEASON END (mirrors the player
+  // model — players tick down in processSeasonEnd above). This used to happen
+  // at startNewSeason, which (a) let the coach show "1 season remaining" all
+  // offseason and then surprise-expire on day one of the NEW season, and
+  // (b) shaved a year off any coach re-signed or hired during the offseason.
+  // Expired → stash pendingCoachDecision + clear team.coach so the offseason
+  // UI prompts re-sign/replace and the start-season coach gate actually
+  // holds. coachContractProcessedYear tells the rollover carousel to skip the
+  // user coach (old saves already mid-offseason lack the flag and keep the
+  // legacy rollover decrement one last time).
+  try {
+    const coachTeam = teams.find(t => t.id === campaign.teamId) ?? null
+    if (coachTeam?.coach) {
+      const coach = coachTeam.coach
+      const yearsLeft = (coach.contractYearsRemaining ?? coach.contract_years_remaining ?? 1) - 1
+      if (yearsLeft <= 0) {
+        campaign.settings.pendingCoachDecision = {
+          coach: { ...coach },
+          resignCost: getCoachResignCost(coach),
+          year: currentYear,
+          teamId: coachTeam.id,
+        }
+        coachTeam.coach = null
+      } else {
+        coach.contractYearsRemaining = yearsLeft
+        coach.contract_years_remaining = yearsLeft
+      }
+      await TeamRepository.save(coachTeam)
+    }
+    campaign.settings.coachContractProcessedYear = currentYear
+  } catch (err) {
+    console.warn('[CampaignManager] coach season-end processing failed (non-fatal):', err?.message || err)
+  }
+
   await CampaignRepository.save(campaign)
 
   return {
@@ -3375,6 +3409,16 @@ export async function startNewSeason(campaignId) {
     const yearsLeft = (coach.contractYearsRemaining ?? coach.contract_years_remaining ?? 1) - 1
 
     if (team.id === userTeamIdForCoach) {
+      // Season-end processing (enterOffseason) now owns the user coach's
+      // decrement/expiry — any coach present here either survived it or was
+      // re-signed/hired DURING the offseason (fresh contract that must NOT
+      // lose a year). Just refill the per-season action budgets. Old saves
+      // whose offseason ran before the move lack the flag and take the
+      // legacy decrement below one last time.
+      if (campaign.settings?.coachContractProcessedYear === currentYear) {
+        refillBudgets(coach)
+        continue
+      }
       if (yearsLeft <= 0) {
         // Contract up. Don't silently drop the coach — stash it + flag a pending
         // decision so the campaign home can prompt the user to re-sign (at the

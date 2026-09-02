@@ -17,6 +17,7 @@ import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import TeamHeader from '@/components/common/TeamHeader.vue'
 import { computeTeamOverall } from '@/utils/teamOverall'
 import { fitTierLabel } from '@/utils/fitTiers'
+import { t } from '@wl-i18n/i18n.js'
 import { generateRoleAwareTargetMinutes } from '@/engine/simulation/SubstitutionEngine'
 import TradesTab from '@/components/trade/TradesTab.vue'
 import FinancesTab from '@/components/team/FinancesTab.vue'
@@ -1449,6 +1450,42 @@ async function resignCoach() {
   }
 }
 
+// Expired-coach decision — stashed by the season-end contract processing
+// when the head coach's deal ran out. Surfaced on the empty state so a user
+// who dismissed the campaign-home popup can still re-sign their coach here
+// at the stashed cost (instead of only being offered fresh hires).
+const pendingCoachDecision = computed(() => {
+  const pending = campaignStore.currentCampaign?.settings?.pendingCoachDecision
+  if (!pending?.coach) return null
+  if (pending.teamId && team.value?.id && pending.teamId !== team.value.id) return null
+  return pending
+})
+const canAffordPendingResign = computed(() =>
+  (authStore.profile?.tokens ?? 0) >= (pendingCoachDecision.value?.resignCost ?? 0))
+const resigningPendingCoach = ref(false)
+
+async function resignExpiredCoach() {
+  if (resigningPendingCoach.value) return
+  resigningPendingCoach.value = true
+  try {
+    const { cost } = await teamStore.resignPendingCoach(campaignId.value)
+    // Mirror the cleared decision into the reactive campaign so the banner
+    // swaps to the coach card without a refetch.
+    if (campaignStore.currentCampaign?.settings) {
+      campaignStore.currentCampaign.settings = {
+        ...campaignStore.currentCampaign.settings,
+        pendingCoachDecision: null,
+      }
+    }
+    toastStore.showSuccess(t('Head coach re-signed for 2 more seasons (−{cost} tokens)', { cost }))
+  } catch (err) {
+    console.error('Failed to re-sign expired coach:', err)
+    toastStore.showError(err.message || t('Failed to re-sign coach'))
+  } finally {
+    resigningPendingCoach.value = false
+  }
+}
+
 function onCoachHired() {
   // teamStore.hireCoach already updated coach.value, team.coach, and
   // campaignStore.currentCampaign.settings.availableCoaches optimistically,
@@ -2054,13 +2091,33 @@ async function onCoachBadgePurchased() {
             <div class="coach-empty-icon">
               <User :size="40" />
             </div>
-            <h3 class="empty-title">{{ $t('No Head Coach Signed') }}</h3>
-            <p class="empty-desc">
-              {{ $t('Hire a head coach from the free-agent pool. Coaches affect scheme effectiveness, player development, and clutch-time decisions. A signed coach is required before you can start a new season.') }}
-            </p>
-            <button class="btn-browse-coaches" @click="showHireCoachModal = true">
-              {{ $t('Browse Coaches') }}
-            </button>
+            <template v-if="pendingCoachDecision">
+              <h3 class="empty-title">{{ $t("Your Head Coach's Contract Is Up") }}</h3>
+              <p class="empty-desc">
+                {{ $t("{name}'s deal has expired. Re-sign him for 2 more seasons, or hire a replacement from the free-agent pool. A signed coach is required before you can start a new season.", { name: pendingCoachDecision.coach.name }) }}
+              </p>
+              <div class="coach-expired-actions">
+                <button
+                  class="btn-resign-coach"
+                  :disabled="resigningPendingCoach || !canAffordPendingResign"
+                  @click="resignExpiredCoach"
+                >
+                  {{ canAffordPendingResign ? $t('Re-sign {name} · {cost}', { name: pendingCoachDecision.coach.name, cost: pendingCoachDecision.resignCost }) : $t('Need {n} tokens to re-sign', { n: pendingCoachDecision.resignCost }) }} <Coins :size="12" class="btn-coin-icon" />
+                </button>
+                <button class="btn-browse-coaches" @click="showHireCoachModal = true">
+                  {{ $t('Browse Coaches') }}
+                </button>
+              </div>
+            </template>
+            <template v-else>
+              <h3 class="empty-title">{{ $t('No Head Coach Signed') }}</h3>
+              <p class="empty-desc">
+                {{ $t('Hire a head coach from the free-agent pool. Coaches affect scheme effectiveness, player development, and clutch-time decisions. A signed coach is required before you can start a new season.') }}
+              </p>
+              <button class="btn-browse-coaches" @click="showHireCoachModal = true">
+                {{ $t('Browse Coaches') }}
+              </button>
+            </template>
           </div>
         </GlassCard>
 
@@ -4057,6 +4114,15 @@ async function onCoachBadgePurchased() {
   margin: 0 0 20px 0;
   line-height: 1.5;
   max-width: 380px;
+}
+
+/* Expired-coach empty state: re-sign + browse side by side (wraps on
+   phones). Reuses the coach card's .btn-resign-coach styling. */
+.coach-expired-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
 .btn-browse-coaches {
