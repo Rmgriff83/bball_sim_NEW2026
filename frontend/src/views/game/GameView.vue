@@ -11,7 +11,7 @@ import { usePlayoffStore } from '@/stores/playoff'
 import { useWalkthroughStore } from '@/stores/walkthrough'
 import WalkthroughReplayButton from '@/components/walkthrough/WalkthroughReplayButton.vue'
 import { GlassCard, BaseButton, LoadingSpinner, StatBadge, BaseModal } from '@/components/ui'
-import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X, Volume2, VolumeX, Shield } from 'lucide-vue-next'
+import { User, Users, Play, Pause, ArrowUpDown, ArrowLeft, ChevronRight, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Flame, Snowflake, Heart, Activity, Newspaper, Coins, Trophy, Zap, FastForward, X, Volume2, VolumeX, Shield, Lock } from 'lucide-vue-next'
 import PlayerAvatar from '@/components/common/PlayerAvatar.vue'
 import CoachAvatar from '@/components/common/CoachAvatar.vue'
 import TeamOverallBadge from '@/components/common/TeamOverallBadge.vue'
@@ -457,6 +457,14 @@ const songPickerUnlocked = computed(() => {
 
 const selectedTimeoutSong = computed(() => campaign.value?.settings?.timeoutSong ?? 'random')
 const previewingTrackId = ref(null)
+
+// Obscured-not-hidden lock message (mirrors the opponent-analytics panel):
+// name the missing piece so the picker doubles as a nudge toward the Arena.
+const songPickerLockedMessage = computed(() => {
+  const perk = (campaign.value?.settings?.arena_manager?.perks ?? []).find((p) => p.key === 'song_picker')
+  if (!perk) return t('Hire an arena manager with the Game-Night DJ perk (Team → GM → Facilities → Arena) to choose your timeout song.')
+  return t('Upgrade your Arena Facility to Lv {n} to activate the Game-Night DJ perk.', { n: perk.requiredLevel ?? 3 })
+})
 
 // Pregame defensive-matchups popup (trigger beside the Starting Lineups
 // title — keeps the page shorter than the old always-expanded card).
@@ -4233,39 +4241,49 @@ onUnmounted(() => {
                     </div>
 
                     <!-- Timeout song — arena-manager Game-Night DJ perk
-                         (arena facility Lv 3+). Pick the track that plays
-                         during your timeouts; speaker icon previews it. -->
-                    <div v-if="songPickerUnlocked" class="strategy-group" data-tour="game-timeout-song">
+                         (arena facility Lv 3+). Always rendered; obscured
+                         (not hidden) behind a lock overlay until the perk is
+                         active, so users see what they're missing — same
+                         treatment as the opponent-analytics panel below. -->
+                    <div class="strategy-group timeout-song-group" data-tour="game-timeout-song">
                       <span class="strategy-label">{{ $t('Timeout Song') }}</span>
-                      <div class="strategy-pills">
-                        <button
-                          class="strategy-pill"
-                          :class="{ active: selectedTimeoutSong === 'random' }"
-                          @click="selectTimeoutSong('random')"
-                        >
-                          <span class="strategy-pill-label">{{ $t('Random') }}</span>
-                        </button>
-                        <button
-                          v-for="track in TIMEOUT_TRACKS"
-                          :key="track.id"
-                          class="strategy-pill timeout-song-pill"
-                          :class="{ active: selectedTimeoutSong === track.id }"
-                          @click="selectTimeoutSong(track.id)"
-                        >
-                          <span class="strategy-pill-label">{{ $tDynamic(track.label) }}</span>
-                          <span
-                            class="song-preview-btn"
-                            :class="{ previewing: previewingTrackId === track.id }"
-                            role="button"
-                            aria-label="Preview"
-                            @click.stop="previewTimeoutSong(track.id)"
+                      <div class="timeout-song-body" :class="{ blurred: !songPickerUnlocked }">
+                        <div class="strategy-pills">
+                          <button
+                            class="strategy-pill"
+                            :class="{ active: selectedTimeoutSong === 'random' }"
+                            :disabled="!songPickerUnlocked"
+                            @click="selectTimeoutSong('random')"
                           >
-                            <VolumeX v-if="previewingTrackId === track.id" :size="15" />
-                            <Volume2 v-else :size="15" />
-                          </span>
-                        </button>
+                            <span class="strategy-pill-label">{{ $t('Random') }}</span>
+                          </button>
+                          <button
+                            v-for="track in TIMEOUT_TRACKS"
+                            :key="track.id"
+                            class="strategy-pill timeout-song-pill"
+                            :class="{ active: selectedTimeoutSong === track.id }"
+                            :disabled="!songPickerUnlocked"
+                            @click="selectTimeoutSong(track.id)"
+                          >
+                            <span class="strategy-pill-label">{{ $tDynamic(track.label) }}</span>
+                            <span
+                              class="song-preview-btn"
+                              :class="{ previewing: previewingTrackId === track.id }"
+                              role="button"
+                              aria-label="Preview"
+                              @click.stop="previewTimeoutSong(track.id)"
+                            >
+                              <VolumeX v-if="previewingTrackId === track.id" :size="15" />
+                              <Volume2 v-else :size="15" />
+                            </span>
+                          </button>
+                        </div>
+                        <span class="pacing-hint">{{ $t('Your arena manager cues this song up during every timeout.') }}</span>
                       </div>
-                      <span class="pacing-hint">{{ $t('Your arena manager cues this song up during every timeout.') }}</span>
+                      <div v-if="!songPickerUnlocked" class="timeout-song-lock">
+                        <Lock :size="18" />
+                        <p class="timeout-song-lock-msg">{{ songPickerLockedMessage }}</p>
+                      </div>
                     </div>
 
                   </div>
@@ -7356,6 +7374,46 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Locked state: blur the picker (obscured, not hidden) with a lock overlay
+   naming the missing arena manager/facility level — mirrors the
+   opponent-analytics panel treatment. */
+.timeout-song-group {
+  position: relative;
+}
+
+.timeout-song-body.blurred {
+  filter: blur(5px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.timeout-song-lock {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 8px 14px;
+  color: var(--color-text-primary);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--radius-lg);
+}
+
+[data-theme='light'] .timeout-song-lock {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.timeout-song-lock-msg {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-text-secondary);
 }
 
 .song-preview-btn {

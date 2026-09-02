@@ -30,6 +30,7 @@ import CoachResignModal from '@/components/team/CoachResignModal.vue'
 import HireCoachModal from '@/components/team/HireCoachModal.vue'
 import OwnerCheckInModal from '@/components/team/OwnerCheckInModal.vue'
 import OwnerCongratsModal from '@/components/team/OwnerCongratsModal.vue'
+import OwnerExpectationRaiseModal from '@/components/team/OwnerExpectationRaiseModal.vue'
 import OwnerFacilityStaffModal from '@/components/team/OwnerFacilityStaffModal.vue'
 import TeamLogo from '@/components/common/TeamLogo.vue'
 import NewsDeskCard from '@/components/game/NewsDeskCard.vue'
@@ -52,7 +53,7 @@ import { enterOffseason, startNewSeason, backfillPlayerAwards, resignGmContract,
 import { gmLevelLabel } from '@/engine/data/gmLevels'
 import { evaluateSubtasks } from '@/engine/season/OwnerSubtaskService'
 import { buildOwnerCheckIn } from '@/engine/season/OwnerCheckInService'
-import { findOwnerForTeam, EXPECTATION_BLURB_DEFAULT, EXPECTATION_LABEL } from '@/engine/data/owners'
+import { findOwnerForTeam, EXPECTATION_BLURB_DEFAULT } from '@/engine/data/owners'
 import { getEffectiveExpectation, effectiveOwner } from '@/engine/season/OwnerExpectationService'
 import { capNumbersFor, capLineForExpectation } from '@/engine/data/salaryScale'
 import { aiFinishUserTeamSetup } from '@/engine/campaign/UserTeamFinalizer'
@@ -174,6 +175,10 @@ const showBannerCeremonyModal = ref(false)
 const showOwnerCongratsModal = ref(false)
 const ownerCongratsData = ref(null)
 const ownerCongratsApplying = ref(false)
+// Owner expectation-raise conversation (tier moved up mid-season/season-end).
+const showExpectationRaiseModal = ref(false)
+const expectationRaiseData = ref(null)
+const expectationRaiseApplying = ref(false)
 // Owner's quick note when hired staff preserved facilities from the offseason
 // downgrade. Transient (like NewSeasonModal): the +2 satisfaction bonus was
 // already persisted by the engine, so losing this convo on app-kill is fine.
@@ -1776,6 +1781,7 @@ function maybeShowOwnerTitleCongrats() {
     showRookieClassModal.value ||
     showBannerCeremonyModal.value ||
     showCoachResignModal.value ||
+    showExpectationRaiseModal.value ||
     showHireCoachModal.value
   ) {
     return false
@@ -2337,25 +2343,76 @@ async function maybeShowExpectationRaise() {
   if (!raise?.tier) return
 
   // Never surface while the user's game is in progress: the raise marker
-  // can be written by the pre-game intervening sim, and toasting it
+  // can be written by the pre-game intervening sim, and surfacing it
   // mid-game reads as a spoiler for the unfinished game. Leave the marker
   // in place — it fires on the next visit once the game is done.
   if (isGameInProgress.value) return
 
-  const label = EXPECTATION_LABEL[raise.tier] ?? raise.tier
-  const fromLabel = raise.fromTier ? (EXPECTATION_LABEL[raise.fromTier] ?? raise.fromTier) : ''
-  toastStore.showOwnerExpectation({ label, fromLabel, campaignId: campaignId.value })
+  // Owner conversation, not a toast: the raise now carries a +10 goodwill
+  // reward (padding the harder win bar), applied exactly once on close
+  // (which also clears the marker — mirrors the championship congrats).
+  // Don't stack over any other blocking conversation/modal.
+  if (
+    showExpectationRaiseModal.value ||
+    showOwnerCongratsModal.value ||
+    playoffStore.showChampionshipModal ||
+    showOwnerCheckInModal.value ||
+    showOwnerWelcomeModal.value ||
+    showContractDecisionModal.value ||
+    showRetirementModal.value ||
+    showAllStarModal.value ||
+    showSeasonAwardsModal.value ||
+    showNewSeasonModal.value ||
+    showStaffFacilityModal.value ||
+    showRookieClassModal.value ||
+    showBannerCeremonyModal.value ||
+    showCoachResignModal.value ||
+    showHireCoachModal.value
+  ) {
+    return
+  }
+  const abbr = camp.teamAbbreviation ?? teamStore.team?.abbreviation ?? null
+  const owner = findOwnerForTeam(abbr)
+  if (!owner) return
 
+  expectationRaiseData.value = {
+    owner,
+    seasonYear: camp.currentSeasonYear ?? camp.current_season_year ?? null,
+    tier: raise.tier,
+    fromTier: raise.fromTier ?? null,
+    expectedWins: camp.settings?.ownerExpectation?.expectedWins ?? null,
+  }
+  showExpectationRaiseModal.value = true
+  walkthroughStore.setSuspended(true)
+}
+
+async function handleCloseExpectationRaise() {
+  if (expectationRaiseApplying.value) return
+  expectationRaiseApplying.value = true
   try {
-    await CampaignRepository.updateSettings(campaignId.value, { pendingOwnerExpectationRaise: null })
+    // Marker clear + goodwill land in ONE settings write, so the +10 applies
+    // exactly once: if the write throws, nothing was awarded and the
+    // conversation cleanly re-offers on the next surface.
+    const bonus = (campaignStore.currentCampaign?.settings?.ownerSatisfactionBonus ?? 0) + 10
+    await CampaignRepository.updateSettings(campaignId.value, {
+      ownerSatisfactionBonus: bonus,
+      pendingOwnerExpectationRaise: null,
+    })
     if (campaignStore.currentCampaign?.id === campaignId.value) {
       campaignStore.currentCampaign.settings = {
         ...campaignStore.currentCampaign.settings,
+        ownerSatisfactionBonus: bonus,
         pendingOwnerExpectationRaise: null,
       }
     }
+    useSyncStore().markDirty()
   } catch (err) {
-    console.warn('[CampaignHome] failed to clear expectation-raise marker:', err)
+    console.warn('[CampaignHome] expectation-raise goodwill failed, will retry:', err)
+  } finally {
+    expectationRaiseApplying.value = false
+    showExpectationRaiseModal.value = false
+    expectationRaiseData.value = null
+    walkthroughStore.setSuspended(false)
   }
 }
 
@@ -2765,6 +2822,7 @@ function maybeShowCoachDecisionModal() {
     showRookieClassModal.value ||
     showBannerCeremonyModal.value ||
     showOwnerCongratsModal.value ||
+    showExpectationRaiseModal.value ||
     showStaffFacilityModal.value
   ) {
     return
@@ -5302,6 +5360,19 @@ function handleCloseSimulateModal() {
       :season-year="ownerCongratsData?.seasonYear"
       :team-name="team?.name ?? ''"
       @close="handleCloseOwnerCongrats"
+    />
+
+    <!-- Owner's impromptu note when they RAISE their expectation tier — the
+         +10 goodwill pad applies once on close. -->
+    <OwnerExpectationRaiseModal
+      :show="showExpectationRaiseModal"
+      :owner="expectationRaiseData?.owner"
+      :season-year="expectationRaiseData?.seasonYear"
+      :team-name="team?.name ?? ''"
+      :tier="expectationRaiseData?.tier"
+      :from-tier="expectationRaiseData?.fromTier"
+      :expected-wins="expectationRaiseData?.expectedWins"
+      @close="handleCloseExpectationRaise"
     />
 
     <!-- Owner's quick note when hired staff preserved facilities from the

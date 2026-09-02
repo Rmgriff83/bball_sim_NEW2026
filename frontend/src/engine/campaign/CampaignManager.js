@@ -2786,6 +2786,15 @@ export async function enterOffseason(campaignId) {
           if (!tiers.includes(updated.tier)) tiers.push(updated.tier)
           gmc.expectationTiers = tiers
         }
+        // A TIER promotion (not an in-tier win-bar nudge) gets the same
+        // owner-conversation + one-time +10 goodwill as the mid-season raise
+        // — the campaign home consumes this marker on the offseason hub.
+        if (updated.tier && updated.tier !== eff.tier) {
+          campaign.settings.pendingOwnerExpectationRaise = {
+            tier: updated.tier,
+            fromTier: eff.tier,
+          }
+        }
       }
     }
   } catch (err) {

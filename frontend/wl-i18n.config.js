@@ -187,6 +187,13 @@ export default {
       ...blockStrings('./src/components/team/OwnerFacilityStaffModal.vue', 'const PRESERVE_VARIANTS = [', /'((?:[^'\\]|\\.)+)'/g).map(s => s.replace(/\\'/g, "'")),
       ...blockStrings('./src/components/team/OwnerFacilityStaffModal.vue', 'const REWARDS = [', /label:\s*'((?:[^'\\]|\\.)+)'/g),
     ],
+    // Owner expectation-raise dialogue + reward label/chip (tier-keyed
+    // variants in the .vue, rendered via $tDynamic; unescape \' to match
+    // runtime keys).
+    async () => [
+      ...blockStrings('./src/components/team/OwnerExpectationRaiseModal.vue', 'const RAISE_VARIANTS = {', /'((?:[^'\\]|\\.)+)'/g).map(s => s.replace(/\\'/g, "'")),
+      ...blockStrings('./src/components/team/OwnerExpectationRaiseModal.vue', 'const REWARDS = [', /(?:label|chip):\s*'((?:[^'\\]|\\.)+)'/g),
+    ],
     // Playoff token-award labels (module-level const in the playoff store,
     // rendered via $tDynamic on the token toast) — store imports pinia, so
     // regex the const block instead of importing.
